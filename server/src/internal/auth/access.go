@@ -264,6 +264,11 @@ func resolveConnectionAccess(privs map[int]string, connID int) (string, bool) {
 // and the user's effective level over the {Read, ReadWrite} lattice. An
 // empty tokenLevel means the token scope did not specify a level and only
 // the user's level applies.
+//
+// userLevel must be a valid access level (AccessLevelRead or
+// AccessLevelReadWrite); callers must verify that the user has access
+// (e.g. via resolveConnectionAccess) before calling this function. If
+// userLevel is empty the result is undefined.
 func applyTokenCeiling(tokenLevel, userLevel string) string {
 	if tokenLevel == AccessLevelRead || userLevel == AccessLevelRead {
 		return AccessLevelRead

@@ -497,6 +497,11 @@ func TestConnectionHandler_HandleSubpath_EmptyPath(t *testing.T) {
 // listConnectionsIssue83TestSchema creates the minimum columns listed in
 // database.ConnectionListItem. The schema is intentionally trimmed to
 // only what GetAllConnections selects.
+//
+// NOTE: This is a trimmed snapshot of the production connections table
+// DDL. It must track the columns selected by GetAllConnections in
+// database/datastore.go. If the production schema adds NOT NULL columns
+// or renames fields, update this constant to match.
 const listConnectionsIssue83TestSchema = `
 DROP TABLE IF EXISTS connections CASCADE;
 CREATE TABLE connections (

@@ -251,8 +251,6 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const moveClusterToGroup = useCallback(async (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const clusterIdStr = clusterId.toString();
-
         // Resolve the target group id to a numeric group_id or a null
         // (ungroup / auto-bucket) payload. Reject every other shape.
         let numericGroupId: number | null = null;
@@ -277,7 +275,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             body.name = clusterName;
         }
 
-        await apiPut(`/api/v1/clusters/${clusterIdStr}`, body);
+        await apiPut(`/api/v1/clusters/${clusterId}`, body);
 
         await fetchClusterData();
     }, [user, fetchClusterData]);

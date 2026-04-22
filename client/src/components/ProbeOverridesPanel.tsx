@@ -210,7 +210,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
     return (
         <Box>
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}
@@ -330,7 +330,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         margin="dense"
                         value={editInterval}
-                        onChange={(e) => setEditInterval(e.target.value)}
+                        onChange={(e) => { setEditInterval(e.target.value); }}
                         disabled={saving}
                         inputProps={{ min: 1 }}
                         InputLabelProps={{ shrink: true }}
@@ -342,7 +342,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         margin="dense"
                         value={editRetention}
-                        onChange={(e) => setEditRetention(e.target.value)}
+                        onChange={(e) => { setEditRetention(e.target.value); }}
                         disabled={saving}
                         inputProps={{ min: 1 }}
                         InputLabelProps={{ shrink: true }}

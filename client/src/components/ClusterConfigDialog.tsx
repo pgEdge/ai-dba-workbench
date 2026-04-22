@@ -302,7 +302,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                             fullWidth
                             label="Description"
                             value={description}
-                            onChange={(e) => setDescription(e.target.value)}
+                            onChange={(e) => { setDescription(e.target.value); }}
                             disabled={isSaving || (isCreateMode && createdClusterId != null)}
                             margin="dense"
                             multiline

@@ -119,7 +119,7 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
             triggerRefreshRef.current();
         }, autoRefresh.intervalMs);
 
-        return () => clearInterval(intervalId);
+        return () => { clearInterval(intervalId); };
     }, [autoRefresh.enabled, autoRefresh.intervalMs]);
 
     const currentOverlay = overlayStack.length > 0

@@ -78,8 +78,7 @@ const ObjectDashboard: React.FC<ObjectDashboardProps> = ({
             parts.push(databaseName);
         }
         const name = currentOverlay?.connectionName;
-        parts.push(name || `Connection ${connectionId}`);
-        return parts.join(' | ');
+        parts.push(name ?? `Connection ${connectionId}`);        return parts.join(' | ');
     }, [databaseName, connectionId, currentOverlay?.connectionName]);
 
     if (!objectName) {

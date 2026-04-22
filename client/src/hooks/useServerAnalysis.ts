@@ -163,7 +163,7 @@ export const useServerAnalysis = (): UseServerAnalysisReturn => {
             systemPrompt = BASE_SYSTEM_PROMPT + CLUSTER_ADDENDUM;
 
             const serverList = input.servers || [];
-            const serverIdList = input.serverIds || serverList.map(s => s.id);
+            const serverIdList = input.serverIds ?? serverList.map(s => s.id);
 
             const contextPromises = serverIdList.map(serverId => {
                 const serverInfo = serverList.find(s => s.id === serverId);

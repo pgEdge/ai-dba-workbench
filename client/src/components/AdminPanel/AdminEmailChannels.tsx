@@ -553,7 +553,7 @@ const AdminEmailChannels: React.FC = () => {
             </Box>
 
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}

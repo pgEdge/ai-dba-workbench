@@ -156,7 +156,7 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                 </Alert>
             )}
 
-            {(textPlan || jsonPlan) && (
+            {(textPlan ?? jsonPlan) && (
                 <>
                     <Tabs
                         value={tabIndex}

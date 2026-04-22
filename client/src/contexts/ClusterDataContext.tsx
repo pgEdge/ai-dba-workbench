@@ -124,7 +124,7 @@ export const generateDataFingerprint = (data: ClusterGroup[]): string => {
 export const collectServerFingerprints = (servers: ClusterServer[]): string => {
     if (!servers || servers.length === 0) {return '';}
     return servers.map(server => {
-        const childFingerprints = collectServerFingerprints(server.children || []);
+        const childFingerprints = collectServerFingerprints(server.children ?? []);
         return `${server.id}:${server.name}:${server.description || ''}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}:${server.membership_source || ''}${childFingerprints ? ':' + childFingerprints : ''}`;
     }).join(',');
 };
@@ -138,7 +138,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
     const groups = new Map<string, GroupBuildEntry>();
 
     connections.forEach((conn) => {
-        const groupName = conn.cluster_group || 'Ungrouped';
+        const groupName = conn.cluster_group ?? 'Ungrouped';
         const clusterName = conn.cluster_name || null;
 
         if (!groups.has(groupName)) {
@@ -149,7 +149,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
             });
         }
 
-        const group = groups.get(groupName) as GroupBuildEntry;
+        const group = groups.get(groupName)!;
 
         if (clusterName) {
             // Server belongs to a cluster

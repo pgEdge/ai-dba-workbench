@@ -128,7 +128,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                 ) as { error?: string };
                 throw new Error(
                     errorData.error
-                    || `Failed to fetch database summaries: ${response.status}`
+                    ?? `Failed to fetch database summaries: ${response.status}`
                 );
             }
 

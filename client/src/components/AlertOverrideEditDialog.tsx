@@ -444,7 +444,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             fullWidth
                             label="Operator"
                             value={editOperator}
-                            onChange={(e) => setEditOperator(e.target.value)}
+                            onChange={(e) => { setEditOperator(e.target.value); }}
                             disabled={saving}
                             margin="dense"
                             InputLabelProps={{ shrink: true }}

@@ -256,7 +256,7 @@ const AdminProbes: React.FC = () => {
                         fullWidth
                         margin="dense"
                         value={editRetention}
-                        onChange={(e) => setEditRetention(e.target.value)}
+                        onChange={(e) => { setEditRetention(e.target.value); }}
                         disabled={saving}
                         inputProps={{ min: 1 }}
                         InputLabelProps={{ shrink: true }}

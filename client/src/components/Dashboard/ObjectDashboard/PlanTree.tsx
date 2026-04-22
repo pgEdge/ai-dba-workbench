@@ -207,7 +207,7 @@ function nodeTypeLabel(node: PlanNode): string {
  */
 function secondaryLabel(node: PlanNode): string {
     if (node['Relation Name']) {
-        if (node['Schema']) {
+        if (node.Schema) {
             return `${node['Schema']}.${node['Relation Name']}`;
         }
         return node['Relation Name'];

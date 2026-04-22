@@ -250,7 +250,7 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
         isMountedRef.current = true;
 
         if (user) {
-            fetchData();
+            void fetchData();
         }
 
         return () => {

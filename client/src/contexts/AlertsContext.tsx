@@ -68,7 +68,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
             if (isMountedRef.current) {
                 setAlertCounts({
                     total: data.total || 0,
-                    byServer: data.by_server || {},
+                    byServer: data.by_server ?? {},
                     byCluster: data.by_cluster || {},
                 });
                 setLastFetch(new Date());

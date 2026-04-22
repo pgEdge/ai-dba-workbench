@@ -155,7 +155,7 @@ export function useQueryOverview(
                 const text = result.content
                     ?.filter(c => c.type === 'text')
                     .map(c => c.text)
-                    .join('\n') || '';
+                    .join('\n') ?? '';
 
                 setAnalysis(text);
                 setGeneratedAt(new Date());

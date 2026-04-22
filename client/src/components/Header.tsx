@@ -334,7 +334,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
             <HelpPanel open={helpOpen} onClose={handleHelpClose} helpContext={helpContext} />
 
             {/* Admin Panel */}
-            <AdminPanel open={adminOpen} onClose={() => setAdminOpen(false)} />
+            <AdminPanel open={adminOpen} onClose={() => { setAdminOpen(false); }} />
         </>
     );
 };

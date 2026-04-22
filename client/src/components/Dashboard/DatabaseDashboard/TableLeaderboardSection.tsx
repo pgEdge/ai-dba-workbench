@@ -435,7 +435,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                 isCached ? 'warning' : 'secondary'
                             }
                             onClick={
-                                () => setAnalysisOpen(true)
+                                () => { setAnalysisOpen(true); }
                             }
                         >
                             <PsychologyIcon

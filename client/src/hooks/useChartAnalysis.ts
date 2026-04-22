@@ -284,7 +284,7 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
             const textContent = data.content
                 ?.filter(c => c.type === 'text')
                 .map(c => c.text)
-                .join('\n') || '';
+                .join('\n') ?? '';
 
             const cleanedText = stripPreamble(textContent);
             setAnalysis(cleanedText);

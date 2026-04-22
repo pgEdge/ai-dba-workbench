@@ -59,7 +59,7 @@ export const extractExecutableSQL = (code: string): string => {
  * no language tag and the trimmed content starts with a common SQL keyword.
  */
 export const isSqlCodeBlock = (className: string | undefined, content: string): boolean => {
-    const langMatch = /language-(\w+)/.exec(className || '');
+    const langMatch = /language-(\w+)/.exec(className ?? '');
     if (langMatch) {
         return langMatch[1].toLowerCase() === 'sql';
     }

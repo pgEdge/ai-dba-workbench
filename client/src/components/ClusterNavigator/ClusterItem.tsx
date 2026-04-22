@@ -247,7 +247,7 @@ const ClusterItem = memo<ClusterItemProps>(({
                     status={clusterStatus}
                     alertCount={clusterAlertCount}
                     blackoutActive={getClusterBlackoutStatus?.(cluster.id)?.active}
-                    blackoutInherited={getClusterBlackoutStatus?.(cluster.id)?.inherited}
+                    blackoutInherited={getClusterBlackoutStatus?.(cluster.id).inherited}
                 />
                 <ClusterIcon sx={getClusterIconSx(isSelected)} />
                 <Box sx={flexMinWidthSx}>

@@ -228,7 +228,7 @@ describe('useQueryPlan', () => {
             result.current.jsonPlan![0]['Node Type'],
         ).toBe('Seq Scan');
         expect(
-            result.current.jsonPlan![0]['Total Cost'],
+            result.current.jsonPlan?.[0]['Total Cost'],
         ).toBe(35.5);
     });
 

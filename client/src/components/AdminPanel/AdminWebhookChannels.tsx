@@ -276,7 +276,7 @@ const AdminWebhookChannels: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        fetchChannels();
+        void fetchChannels();
     }, [fetchChannels]);
 
     // --- Helpers ---

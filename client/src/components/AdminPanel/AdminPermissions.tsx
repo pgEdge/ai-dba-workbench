@@ -182,7 +182,7 @@ const AdminPermissions: React.FC = () => {
                 ).catch(() => null),
             ]);
             setMcpPermissions(groupData.mcp_privileges || []);
-            setConnPermissions(groupData.connection_privileges || []);
+            setConnPermissions(groupData.connection_privileges ?? []);
             if (connData) {
                 if (Array.isArray(connData)) {
                     setConnections(connData);

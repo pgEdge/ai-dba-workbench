@@ -109,28 +109,50 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// RBAC first: resolve the caller's visible connection set before any
+	// datastore work so a zero-grant caller never triggers a refresh or
+	// a topology build. VisibleConnectionIDs loads sharing metadata once
+	// so this check does not issue per-server lookups.
+	lister := newConnectionVisibilityLister(h.datastore)
+	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
+	if err != nil {
+		log.Printf("[ERROR] Failed to resolve visible connections for topology: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster topology")
+		return
+	}
+
+	// Zero-grant caller: return an empty topology without refreshing
+	// cluster assignments or reading the topology table. This is the
+	// defense-in-depth gate that makes issue #67 regressions catchable
+	// at the HTTP boundary without a datastore mock.
+	if !allConnections && len(visibleIDs) == 0 {
+		RespondJSON(w, http.StatusOK, []database.TopologyGroup{})
+		return
+	}
+
 	// Sync cluster_id assignments before reading topology
 	if err := h.datastore.RefreshClusterAssignments(ctx); err != nil {
 		log.Printf("[WARN] Failed to refresh cluster assignments: %v", err)
 	}
 
-	topology, err := h.datastore.GetClusterTopology(ctx)
+	// Push the caller's allow-list into the topology query. A nil slice
+	// (superuser or wildcard scope) means "no filter"; a non-nil slice
+	// prunes servers, empty clusters, and empty groups inside the
+	// datastore before the result crosses the boundary.
+	var filterIDs []int
+	if !allConnections {
+		filterIDs = visibleIDs
+	}
+	topology, err := h.datastore.GetClusterTopology(ctx, filterIDs)
 	if err != nil {
 		log.Printf("[ERROR] Failed to get cluster topology: %v", err)
 		RespondError(w, http.StatusInternalServerError, "Failed to get cluster topology")
 		return
 	}
 
-	// RBAC: prune servers, clusters, and groups the caller cannot see.
-	// VisibleConnectionIDs loads sharing metadata once so this filter
-	// does not issue per-server lookups.
-	lister := newConnectionVisibilityLister(h.datastore)
-	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
-	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections for topology: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to filter cluster topology")
-		return
-	}
+	// Belt-and-suspenders: re-apply the handler-level pruning in case
+	// the datastore query missed a join. This keeps filterTopologyByVisibility
+	// as a defensive net that runs on every response.
 	if !allConnections {
 		topology = filterTopologyByVisibility(topology, visibleIDs)
 	}
@@ -176,7 +198,9 @@ func filterTopologyByVisibility(groups []database.TopologyGroup, visibleIDs []in
 // recursively so a hidden parent with visible children is dropped along
 // with those children; this matches the existing "cluster visibility"
 // contract where children are only meaningful under an accessible
-// parent.
+// parent. Relationships pointing at hidden peers are also dropped so
+// TargetServerID and TargetServerName never leak across the visibility
+// boundary at the handler layer.
 func filterTopologyServers(servers []database.TopologyServerInfo, visible map[int]bool) []database.TopologyServerInfo {
 	out := make([]database.TopologyServerInfo, 0, len(servers))
 	for i := range servers {
@@ -187,6 +211,16 @@ func filterTopologyServers(servers []database.TopologyServerInfo, visible map[in
 		if len(s.Children) > 0 {
 			s.Children = filterTopologyServers(s.Children, visible)
 		}
+		if len(s.Relationships) > 0 {
+			rels := make([]database.TopologyRelationship, 0, len(s.Relationships))
+			for _, rel := range s.Relationships {
+				if visible[rel.TargetServerID] {
+					rels = append(rels, rel)
+				}
+			}
+			s.Relationships = rels
+		}
+		s.IsExpandable = len(s.Children) > 0
 		out = append(out, s)
 	}
 	return out

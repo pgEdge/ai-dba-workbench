@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/logger"
@@ -1901,8 +1902,19 @@ type ClusterSummary struct {
 }
 
 // GetClusterTopology returns the combined topology including manually-created
-// cluster groups and auto-detected replication topology
-func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, error) {
+// cluster groups and auto-detected replication topology. When
+// visibleConnectionIDs is non-nil the topology is pruned to servers whose
+// connection ID is in the slice; clusters with no visible servers and
+// groups with no visible clusters are dropped. A nil slice means the
+// caller has unrestricted visibility (superuser or wildcard scope) and
+// the full topology is returned.
+func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs []int) ([]TopologyGroup, error) {
+	// An explicit empty allow-list means no connections are visible;
+	// short-circuit before any datastore work.
+	if visibleConnectionIDs != nil && len(visibleConnectionIDs) == 0 {
+		return []TopologyGroup{}, nil
+	}
+
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -2003,7 +2015,80 @@ func (d *Datastore) GetClusterTopology(ctx context.Context) ([]TopologyGroup, er
 	// Step 8: Populate relationships on each server in the topology
 	d.populateTopologyRelationships(ctx, result)
 
+	// Step 9: Apply the caller's visibility filter, if any. Pruning
+	// happens after the full topology is assembled so that relationships
+	// are populated before servers are dropped; downstream code relies on
+	// relationship metadata only for servers the caller can see.
+	if visibleConnectionIDs != nil {
+		result = pruneTopologyByVisibility(result, visibleConnectionIDs)
+	}
+
 	return result, nil
+}
+
+// pruneTopologyByVisibility removes servers, clusters, and groups that
+// the caller is not allowed to see. A cluster with no visible servers is
+// dropped; a group with no visible clusters is dropped. The visibleIDs
+// slice is converted to a set once so the filter walks the topology in
+// linear time. Child servers are filtered recursively so a hidden parent
+// with visible children is dropped along with those children; this
+// matches the "cluster visibility" contract where children are only
+// meaningful under an accessible parent.
+func pruneTopologyByVisibility(groups []TopologyGroup, visibleIDs []int) []TopologyGroup {
+	visible := make(map[int]bool, len(visibleIDs))
+	for _, id := range visibleIDs {
+		visible[id] = true
+	}
+
+	filtered := make([]TopologyGroup, 0, len(groups))
+	for i := range groups {
+		group := groups[i]
+		clusters := make([]TopologyCluster, 0, len(group.Clusters))
+		for j := range group.Clusters {
+			cluster := group.Clusters[j]
+			servers := pruneTopologyServers(cluster.Servers, visible)
+			if len(servers) == 0 {
+				continue
+			}
+			cluster.Servers = servers
+			clusters = append(clusters, cluster)
+		}
+		if len(clusters) == 0 {
+			continue
+		}
+		group.Clusters = clusters
+		filtered = append(filtered, group)
+	}
+	return filtered
+}
+
+// pruneTopologyServers returns the subset of servers whose connection IDs
+// appear in the visible set, recursing into Children. Relationships
+// pointing at hidden peers are also dropped so TargetServerID and
+// TargetServerName never leak across the visibility boundary.
+func pruneTopologyServers(servers []TopologyServerInfo, visible map[int]bool) []TopologyServerInfo {
+	out := make([]TopologyServerInfo, 0, len(servers))
+	for i := range servers {
+		s := servers[i]
+		if !visible[s.ID] {
+			continue
+		}
+		if len(s.Children) > 0 {
+			s.Children = pruneTopologyServers(s.Children, visible)
+		}
+		if len(s.Relationships) > 0 {
+			rels := make([]TopologyRelationship, 0, len(s.Relationships))
+			for _, rel := range s.Relationships {
+				if visible[rel.TargetServerID] {
+					rels = append(rels, rel)
+				}
+			}
+			s.Relationships = rels
+		}
+		s.IsExpandable = len(s.Children) > 0
+		out = append(out, s)
+	}
+	return out
 }
 
 // populateTopologyRelationships loads relationships from the database
@@ -4215,31 +4300,67 @@ type AlertCountsResult struct {
 	ByServer map[int]int64 `json:"by_server"`
 }
 
-// GetAlertCounts returns counts of active alerts grouped by connection_id
-func (d *Datastore) GetAlertCounts(ctx context.Context) (*AlertCountsResult, error) {
+// GetAlertCounts returns counts of active alerts grouped by connection_id.
+// When connectionIDs is non-nil, the query is restricted to alerts whose
+// connection_id appears in the slice. A nil slice means "no filter"
+// (superuser or wildcard-scoped caller); an empty non-nil slice returns
+// an empty result without touching the database.
+func (d *Datastore) GetAlertCounts(ctx context.Context, connectionIDs []int) (*AlertCountsResult, error) {
+	// An explicit empty allow-list means the caller can see no
+	// connections; avoid the database round-trip entirely.
+	if connectionIDs != nil && len(connectionIDs) == 0 {
+		return &AlertCountsResult{
+			Total:    0,
+			ByServer: make(map[int]int64),
+		}, nil
+	}
+
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	// Get total count of active alerts
-	var total int64
-	err := d.pool.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM alerts
-		WHERE status = 'active'
-	`).Scan(&total)
-	if err != nil {
-		return nil, fmt.Errorf("failed to count total alerts: %w", err)
-	}
+	var (
+		total    int64
+		rows     pgx.Rows
+		queryErr error
+	)
 
-	// Get counts grouped by connection_id
-	rows, err := d.pool.Query(ctx, `
-		SELECT connection_id, COUNT(*) as count
-		FROM alerts
-		WHERE status = 'active'
-		GROUP BY connection_id
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query alert counts: %w", err)
+	if connectionIDs == nil {
+		queryErr = d.pool.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM alerts
+			WHERE status = 'active'
+		`).Scan(&total)
+		if queryErr != nil {
+			return nil, fmt.Errorf("failed to count total alerts: %w", queryErr)
+		}
+
+		rows, queryErr = d.pool.Query(ctx, `
+			SELECT connection_id, COUNT(*) as count
+			FROM alerts
+			WHERE status = 'active'
+			GROUP BY connection_id
+		`)
+	} else {
+		queryErr = d.pool.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM alerts
+			WHERE status = 'active'
+			  AND connection_id = ANY($1)
+		`, connectionIDs).Scan(&total)
+		if queryErr != nil {
+			return nil, fmt.Errorf("failed to count total alerts: %w", queryErr)
+		}
+
+		rows, queryErr = d.pool.Query(ctx, `
+			SELECT connection_id, COUNT(*) as count
+			FROM alerts
+			WHERE status = 'active'
+			  AND connection_id = ANY($1)
+			GROUP BY connection_id
+		`, connectionIDs)
+	}
+	if queryErr != nil {
+		return nil, fmt.Errorf("failed to query alert counts: %w", queryErr)
 	}
 	defer rows.Close()
 
@@ -4251,6 +4372,9 @@ func (d *Datastore) GetAlertCounts(ctx context.Context) (*AlertCountsResult, err
 			return nil, fmt.Errorf("failed to scan alert count: %w", err)
 		}
 		byServer[connID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate alert counts: %w", err)
 	}
 
 	return &AlertCountsResult{
@@ -4438,7 +4562,7 @@ func (d *Datastore) gatherEstateServerData(ctx context.Context, snapshot *Estate
 		logger.Infof("gatherEstateServerData: failed to refresh cluster assignments: %v", err)
 	}
 
-	groups, err := d.GetClusterTopology(ctx)
+	groups, err := d.GetClusterTopology(ctx, nil)
 	if err != nil {
 		logger.Errorf("GetEstateSnapshot: failed to get cluster topology: %v", err)
 		return
@@ -4779,7 +4903,7 @@ func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *Estate
 		logger.Infof("gatherScopedServerData: failed to refresh cluster assignments: %v", err)
 	}
 
-	groups, err := d.GetClusterTopology(ctx)
+	groups, err := d.GetClusterTopology(ctx, connectionIDs)
 	if err != nil {
 		logger.Errorf("GetScopedSnapshot: failed to get cluster topology: %v", err)
 		return

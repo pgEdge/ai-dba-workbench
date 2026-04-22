@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -687,55 +688,575 @@ func TestAlertHandler_HandleAlerts_GroupGranted_ProceedsPastGate(t *testing.T) {
 }
 
 // =============================================================================
-// AlertHandler.handleAlertCounts — production-code constraint
+// AlertHandler.handleAlertCounts — issue #67 regression coverage
 //
-// handleAlertCounts invokes h.datastore.GetAlertCounts BEFORE the RBAC
-// filter runs (see alert_handlers.go:172). With a nil datastore the
-// handler panics before reaching the VisibleConnectionIDs call, so a
-// handler-level RBAC test is not meaningful without a real or mocked
-// datastore.
+// The issue #67 refactor moved VisibleConnectionIDs AHEAD of
+// GetAlertCounts so a zero-grant caller short-circuits to the empty
+// counts response without touching the datastore. With a nil datastore
+// we can now assert that behavior purely from the HTTP boundary: denial
+// returns 200 + {total:0, by_server:{}} without panicking on the
+// datastore call.
 //
-// The filtering logic itself is covered indirectly via
-// TestVisibleConnectionIDs_* in auth/access_test.go. A full handler-
-// level test of handleAlertCounts would require a mocked Datastore
-// (pgxmock or an interface extraction), which the task forbids.
-//
-// Leaving this commentary in place so a future refactor can move the
-// RBAC check to run BEFORE GetAlertCounts (safe because the counts are
-// projected through VisibleConnectionIDs anyway) and pick up a real
-// regression test here.
+// The group-granted positive path panics against the nil datastore at
+// GetAlertCounts; the test recovers and verifies that the empty
+// short-circuit did NOT fire.
 // =============================================================================
 
-// =============================================================================
-// AlertHandler mutation handlers — production-code constraint
-//
-// acknowledgeAlert, unacknowledgeAlert, and handleSaveAnalysis call
-// h.datastore.GetAlertConnectionID BEFORE the RBAC check. The lookup is
-// intrinsic to the flow (the handler must know which connection owns
-// the alert before authorizing) and cannot be elided. With a nil
-// datastore the lookup panics before RBAC, so the handler-level 403
-// path cannot be asserted without a real or mocked datastore.
-//
-// Coverage for the RBAC call itself is via the per-connection tests
-// above (same rbacChecker.CanAccessConnection code path). A full
-// handler-level test would require injecting a stub that returns a
-// controllable (connectionID, error) pair for GetAlertConnectionID.
-// The task forbids adding such infrastructure.
-// =============================================================================
+// TestAlertHandler_HandleAlertCounts_NonOwnerUnshared_EmptyResult verifies
+// that a zero-grant caller receives {total:0, by_server:{}} without
+// invoking GetAlertCounts against the datastore.
+func TestAlertHandler_HandleAlertCounts_NonOwnerUnshared_EmptyResult(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	bobID := newTestUser(t, store, "bob")
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts/counts", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	handler.handleAlertCounts(rec, req)
+
+	requireStatus(t, rec, http.StatusOK)
+
+	var body database.AlertCountsResult
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode response: %v", err)
+	}
+	if body.Total != 0 {
+		t.Errorf("Expected Total=0, got %d", body.Total)
+	}
+	if len(body.ByServer) != 0 {
+		t.Errorf("Expected empty ByServer, got %+v", body.ByServer)
+	}
+}
+
+// TestAlertHandler_HandleAlertCounts_GroupGranted_ProceedsPastGate
+// verifies that a group-granted caller is not short-circuited by the
+// zero-grant gate and reaches GetAlertCounts (which panics against the
+// nil datastore; the test recovers and asserts the empty JSON body was
+// NOT written).
+func TestAlertHandler_HandleAlertCounts_GroupGranted_ProceedsPastGate(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	bobID := newGroupGrantedUser(t, store, "bob",
+		rbacUnsharedConnID, auth.AccessLevelRead)
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts/counts", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	noRespPanic(func() {
+		handler.handleAlertCounts(rec, req)
+	})
+
+	// The zero-grant shortcut writes a 200 with {total:0, by_server:{}}.
+	// A group-granted caller must not trip that shortcut: the panic
+	// inside GetAlertCounts happens BEFORE any write reaches the
+	// response, so the body must be empty.
+	if rec.Body.Len() != 0 {
+		t.Errorf("Expected empty body (panic-before-write), got %q",
+			rec.Body.String())
+	}
+	requireNotForbidden(t, rec, "handleAlertCounts/group-granted")
+}
+
+// TestAlertHandler_HandleAlertCounts_Superuser_ProceedsPastGate verifies
+// that a superuser request is NOT short-circuited by the zero-grant
+// gate. VisibleConnectionIDs returns allConnections=true for a
+// superuser; the handler must proceed to GetAlertCounts (panic against
+// nil datastore) without writing the empty shortcut.
+func TestAlertHandler_HandleAlertCounts_Superuser_ProceedsPastGate(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts/counts", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	noRespPanic(func() {
+		handler.handleAlertCounts(rec, req)
+	})
+
+	if rec.Body.Len() != 0 {
+		t.Errorf("Expected empty body (panic-before-write), got %q",
+			rec.Body.String())
+	}
+	requireNotForbidden(t, rec, "handleAlertCounts/superuser")
+}
 
 // =============================================================================
-// ClusterHandler.getClusterTopology — production-code constraint
+// AlertHandler mutation handlers — issue #67 regression coverage
 //
-// getClusterTopology calls h.datastore.RefreshClusterAssignments and
-// h.datastore.GetClusterTopology BEFORE any RBAC filtering. With a nil
-// datastore the handler panics before VisibleConnectionIDs is reached,
-// so the handler-level pruning behavior cannot be asserted here.
+// The issue #67 refactor introduced a narrow alertConnectionResolver
+// interface so tests can inject a fake that returns a known connection
+// ID without stubbing the full datastore. That unlocks HTTP-level tests
+// for the three mutation handlers: fakeAlertResolver returns
+// rbacUnsharedConnID; the handler then runs CanAccessConnection; a
+// denied caller hits 403 before any datastore mutation call executes
+// (the mutation call would panic against the nil datastore; we do NOT
+// recover from that because a panic would mean the gate was bypassed).
+// =============================================================================
+
+// fakeAlertResolver is a deterministic alertConnectionResolver for
+// tests. It returns a fixed connection ID for every alert ID and tracks
+// how many times GetAlertConnectionID was called so tests can assert
+// that the resolver DID run (the RBAC check depends on it).
+type fakeAlertResolver struct {
+	connID int
+	calls  int
+	err    error
+}
+
+func (f *fakeAlertResolver) GetAlertConnectionID(_ context.Context, _ int64) (int, error) {
+	f.calls++
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.connID, nil
+}
+
+// alertMutationInvoker is the minimal shape of a mutation handler method
+// on AlertHandler. Each case in the table below supplies one of these
+// to parameterize the common setup.
+type alertMutationInvoker func(h *AlertHandler, w http.ResponseWriter, r *http.Request)
+
+type alertMutationCase struct {
+	name    string
+	method  string
+	url     string
+	body    []byte
+	invoker alertMutationInvoker
+}
+
+var alertMutationHandlers = []alertMutationCase{
+	{
+		name:   "acknowledgeAlert",
+		method: http.MethodPost,
+		url:    "/api/v1/alerts/acknowledge",
+		body:   []byte(`{"alert_id": 7, "message": "test"}`),
+		invoker: func(h *AlertHandler, w http.ResponseWriter, r *http.Request) {
+			h.acknowledgeAlert(w, r)
+		},
+	},
+	{
+		name:   "unacknowledgeAlert",
+		method: http.MethodDelete,
+		url:    "/api/v1/alerts/acknowledge?alert_id=7",
+		invoker: func(h *AlertHandler, w http.ResponseWriter, r *http.Request) {
+			h.unacknowledgeAlert(w, r)
+		},
+	},
+	{
+		name:   "handleSaveAnalysis",
+		method: http.MethodPut,
+		url:    "/api/v1/alerts/analysis",
+		body:   []byte(`{"alert_id": 7, "analysis": "test analysis"}`),
+		invoker: func(h *AlertHandler, w http.ResponseWriter, r *http.Request) {
+			h.handleSaveAnalysis(w, r)
+		},
+	},
+}
+
+// TestAlertHandler_Mutation_NonOwnerUnshared_403 verifies every alert
+// mutation handler returns 403 when a non-owner user with no group
+// grants targets an unshared connection. The nil datastore would panic
+// if the handler reached any mutation call after the RBAC gate; we do
+// NOT recover here because a panic would indicate a gate bypass.
+func TestAlertHandler_Mutation_NonOwnerUnshared_403(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newTestUser(t, store, "bob")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			resolver := &fakeAlertResolver{connID: rbacUnsharedConnID}
+			handler.setAlertResolver(resolver)
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, bobID)
+			req = withUsername(req, "bob")
+			rec := httptest.NewRecorder()
+
+			tc.invoker(handler, rec, req)
+
+			requireStatus(t, rec, http.StatusForbidden)
+
+			if resolver.calls != 1 {
+				t.Errorf("Expected resolver to run once, got %d calls",
+					resolver.calls)
+			}
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_Owner_NotDenied verifies every alert
+// mutation handler clears the RBAC gate for the connection's owner.
+// With a nil datastore the handler panics after the gate when attempting
+// the actual mutation; the test recovers and asserts the response code
+// never became 403.
+func TestAlertHandler_Mutation_Owner_NotDenied(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			aliceID := newTestUser(t, store, "alice")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setAlertResolver(&fakeAlertResolver{
+				connID: rbacUnsharedConnID,
+			})
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, aliceID)
+			req = withUsername(req, "alice")
+			rec := httptest.NewRecorder()
+
+			noRespPanic(func() {
+				tc.invoker(handler, rec, req)
+			})
+
+			requireNotForbidden(t, rec, tc.name+"/owner")
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_SharedNonOwner_NotDenied verifies that a
+// non-owner caller accessing a shared connection is not denied.
+func TestAlertHandler_Mutation_SharedNonOwner_NotDenied(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newTestUser(t, store, "bob")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", true)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setAlertResolver(&fakeAlertResolver{
+				connID: rbacUnsharedConnID,
+			})
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, bobID)
+			req = withUsername(req, "bob")
+			rec := httptest.NewRecorder()
+
+			noRespPanic(func() {
+				tc.invoker(handler, rec, req)
+			})
+
+			requireNotForbidden(t, rec, tc.name+"/shared")
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_GroupGranted_NotDenied verifies that a user
+// with an explicit group grant is not denied for an unshared connection.
+func TestAlertHandler_Mutation_GroupGranted_NotDenied(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newGroupGrantedUser(t, store, "bob",
+				rbacUnsharedConnID, auth.AccessLevelReadWrite)
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setAlertResolver(&fakeAlertResolver{
+				connID: rbacUnsharedConnID,
+			})
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, bobID)
+			req = withUsername(req, "bob")
+			rec := httptest.NewRecorder()
+
+			noRespPanic(func() {
+				tc.invoker(handler, rec, req)
+			})
+
+			requireNotForbidden(t, rec, tc.name+"/group-granted")
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_Superuser_NotDenied verifies that a
+// superuser is never denied, even against unshared non-owned resources.
+func TestAlertHandler_Mutation_Superuser_NotDenied(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setAlertResolver(&fakeAlertResolver{
+				connID: rbacUnsharedConnID,
+			})
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withSuperuser(req)
+			rec := httptest.NewRecorder()
+
+			noRespPanic(func() {
+				tc.invoker(handler, rec, req)
+			})
+
+			requireNotForbidden(t, rec, tc.name+"/superuser")
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_ResolverMissing_500 exercises the defensive
+// branch that rejects a request when the resolver has not been
+// configured. Production never hits this (the constructor wires the
+// datastore), but the nil-interface case must fail safely rather than
+// panic.
+func TestAlertHandler_Mutation_ResolverMissing_500(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newTestUser(t, store, "bob")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			// Deliberately leave alertResolver nil.
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, bobID)
+			req = withUsername(req, "bob")
+			rec := httptest.NewRecorder()
+
+			tc.invoker(handler, rec, req)
+
+			requireStatus(t, rec, http.StatusInternalServerError)
+		})
+	}
+}
+
+// TestAlertHandler_Mutation_ResolverError_404 exercises the branch that
+// returns 404 when the resolver reports an error (e.g. the alert does
+// not exist). This keeps parity with the old code path and ensures the
+// RBAC gate does not fire for an unknown alert.
+func TestAlertHandler_Mutation_ResolverError_404(t *testing.T) {
+	for _, tc := range alertMutationHandlers {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, store, cleanup := createTestRBACHandler(t)
+			defer cleanup()
+
+			bobID := newTestUser(t, store, "bob")
+
+			checker := mockSharingChecker(t, store,
+				rbacUnsharedConnID, "alice", false)
+			handler := NewAlertHandler(nil, store, checker)
+			handler.setAlertResolver(&fakeAlertResolver{
+				err: errors.New("alert not found"),
+			})
+
+			req := httptest.NewRequest(tc.method, tc.url,
+				bytes.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, bobID)
+			req = withUsername(req, "bob")
+			rec := httptest.NewRecorder()
+
+			tc.invoker(handler, rec, req)
+
+			requireStatus(t, rec, http.StatusNotFound)
+		})
+	}
+}
+
+// =============================================================================
+// ClusterHandler.getClusterTopology — issue #67 regression coverage
 //
-// The filtering logic that IS exercised once the datastore returns is
-// covered by the filterTopologyByVisibility unit tests already in
-// cluster_handlers_test.go. That is the meaningful regression surface
-// because filterTopologyByVisibility is the pure function that decides
-// which groups, clusters, and servers to drop.
+// The issue #67 refactor moved VisibleConnectionIDs AHEAD of
+// RefreshClusterAssignments and GetClusterTopology so a zero-grant
+// caller returns an empty topology without triggering any datastore
+// work. With a nil datastore we can now assert that behavior purely
+// from the HTTP boundary: denial returns 200 + []; no panic, no
+// refresh, no topology read.
+// =============================================================================
+
+// TestClusterHandler_GetClusterTopology_NonOwnerUnshared_EmptyTopology
+// verifies a zero-grant caller gets an empty topology array without
+// invoking any datastore method on the handler.
+func TestClusterHandler_GetClusterTopology_NonOwnerUnshared_EmptyTopology(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	bobID := newTestUser(t, store, "bob")
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewClusterHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	handler.getClusterTopology(rec, req)
+
+	requireStatus(t, rec, http.StatusOK)
+
+	var body []database.TopologyGroup
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode response: %v", err)
+	}
+	if len(body) != 0 {
+		t.Errorf("Expected empty topology, got %d groups", len(body))
+	}
+}
+
+// TestClusterHandler_GetClusterTopology_GroupGranted_ProceedsPastGate
+// verifies a group-granted caller does NOT receive the zero-grant
+// shortcut. The handler must proceed past the gate into
+// RefreshClusterAssignments, which panics against the nil datastore;
+// the test recovers and asserts the empty JSON body was NOT written.
+func TestClusterHandler_GetClusterTopology_GroupGranted_ProceedsPastGate(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	bobID := newGroupGrantedUser(t, store, "bob",
+		rbacUnsharedConnID, auth.AccessLevelRead)
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewClusterHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
+	req = withUser(req, bobID)
+	req = withUsername(req, "bob")
+	rec := httptest.NewRecorder()
+
+	noRespPanic(func() {
+		handler.getClusterTopology(rec, req)
+	})
+
+	// The zero-grant shortcut writes an empty array with a 200 status.
+	// A group-granted caller must not trip that shortcut: the panic
+	// inside RefreshClusterAssignments happens BEFORE any write reaches
+	// the response.
+	if rec.Body.Len() != 0 {
+		t.Errorf("Expected empty body (panic-before-write), got %q",
+			rec.Body.String())
+	}
+	requireNotForbidden(t, rec, "getClusterTopology/group-granted")
+}
+
+// TestClusterHandler_GetClusterTopology_Superuser_ProceedsPastGate
+// verifies that a superuser is NOT short-circuited by the zero-grant
+// gate; the handler proceeds into the datastore (which panics against
+// the nil datastore).
+func TestClusterHandler_GetClusterTopology_Superuser_ProceedsPastGate(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewClusterHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	noRespPanic(func() {
+		handler.getClusterTopology(rec, req)
+	})
+
+	if rec.Body.Len() != 0 {
+		t.Errorf("Expected empty body (panic-before-write), got %q",
+			rec.Body.String())
+	}
+	requireNotForbidden(t, rec, "getClusterTopology/superuser")
+}
+
+// TestClusterHandler_GetClusterTopology_WildcardToken_ProceedsPastGate
+// covers the wildcard-scoped token path. A token scoped to
+// ConnectionIDAll with read access resolves allConnections=true; the
+// handler must not short-circuit and must proceed into the datastore.
+func TestClusterHandler_GetClusterTopology_WildcardToken_ProceedsPastGate(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	userID := newTestUser(t, store, "tok")
+	// Grant the user the ConnectionIDAll wildcard through a group so the
+	// effective privileges include the wildcard.
+	groupID, err := store.CreateGroup("tok_group", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, userID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	if err := store.GrantConnectionPrivilege(groupID,
+		auth.ConnectionIDAll, auth.AccessLevelRead); err != nil {
+		t.Fatalf("GrantConnectionPrivilege: %v", err)
+	}
+
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewClusterHandler(nil, store, checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
+	req = withUser(req, userID)
+	req = withUsername(req, "tok")
+	rec := httptest.NewRecorder()
+
+	noRespPanic(func() {
+		handler.getClusterTopology(rec, req)
+	})
+
+	if rec.Body.Len() != 0 {
+		t.Errorf("Expected empty body (panic-before-write), got %q",
+			rec.Body.String())
+	}
+	requireNotForbidden(t, rec, "getClusterTopology/wildcard")
+}
+
 // =============================================================================
 
 // TestFilterTopologyByVisibility_Issue35_PrunesUnsharedNonOwned adds

@@ -10,6 +10,7 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -17,20 +18,42 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
+// alertConnectionResolver is the narrow contract the alert mutation
+// handlers use to look up which connection owns an alert before running
+// the RBAC gate. The concrete *database.Datastore satisfies this
+// interface via GetAlertConnectionID; tests inject a lightweight fake so
+// the RBAC branch can be exercised without a real database.
+type alertConnectionResolver interface {
+	GetAlertConnectionID(ctx context.Context, alertID int64) (int, error)
+}
+
 // AlertHandler handles REST API requests for alerts
 type AlertHandler struct {
-	datastore   *database.Datastore
-	authStore   *auth.AuthStore
-	rbacChecker *auth.RBACChecker
+	datastore     *database.Datastore
+	authStore     *auth.AuthStore
+	rbacChecker   *auth.RBACChecker
+	alertResolver alertConnectionResolver
 }
 
 // NewAlertHandler creates a new alert handler
 func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *AlertHandler {
-	return &AlertHandler{
+	h := &AlertHandler{
 		datastore:   datastore,
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
 	}
+	if datastore != nil {
+		h.alertResolver = datastore
+	}
+	return h
+}
+
+// setAlertResolver overrides the alert-connection resolver for tests. The
+// production constructor defaults to the datastore; tests replace it with
+// a fake that returns a known connection ID without touching the
+// database.
+func (h *AlertHandler) setAlertResolver(r alertConnectionResolver) {
+	h.alertResolver = r
 }
 
 // RegisterRoutes registers alert management routes on the mux
@@ -168,17 +191,10 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Fetch alert counts
-	counts, err := h.datastore.GetAlertCounts(r.Context())
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch alert counts: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")
-		return
-	}
-
-	// RBAC: filter counts to visible connections only. Visibility
-	// includes owned and shared connections, not just group/token
-	// grants.
+	// RBAC first: resolve the caller's visible connection set before any
+	// datastore work so a zero-grant caller never hits the alerts table.
+	// Visibility includes owned and shared connections, not just
+	// group/token grants.
 	lister := newConnectionVisibilityLister(h.datastore)
 	accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
 	if err != nil {
@@ -186,21 +202,31 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")
 		return
 	}
+
+	// Zero-grant caller: return an empty counts response without
+	// invoking GetAlertCounts. A nil datastore test can rely on this
+	// short-circuit to prove the RBAC gate runs before any database
+	// call.
+	if !allConnections && len(accessibleIDs) == 0 {
+		RespondJSON(w, http.StatusOK, &database.AlertCountsResult{
+			Total:    0,
+			ByServer: map[int]int64{},
+		})
+		return
+	}
+
+	// Push the caller's allow-list into the query. A nil slice (superuser
+	// or wildcard scope) means "no filter"; a non-nil slice restricts the
+	// SQL to the caller's visible connection IDs.
+	var filterIDs []int
 	if !allConnections {
-		accessibleSet := make(map[int]bool, len(accessibleIDs))
-		for _, id := range accessibleIDs {
-			accessibleSet[id] = true
-		}
-		var filteredTotal int64
-		filteredByServer := make(map[int]int64)
-		for connID, count := range counts.ByServer {
-			if accessibleSet[connID] {
-				filteredByServer[connID] = count
-				filteredTotal += count
-			}
-		}
-		counts.Total = filteredTotal
-		counts.ByServer = filteredByServer
+		filterIDs = accessibleIDs
+	}
+	counts, err := h.datastore.GetAlertCounts(r.Context(), filterIDs)
+	if err != nil {
+		log.Printf("[ERROR] Failed to fetch alert counts: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch alert counts")
+		return
 	}
 
 	RespondJSON(w, http.StatusOK, counts)
@@ -239,8 +265,17 @@ func (h *AlertHandler) acknowledgeAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// RBAC: verify the user has access to the alert's connection.
-	connID, err := h.datastore.GetAlertConnectionID(r.Context(), req.AlertID)
+	// Resolve the alert's connection via the narrow resolver interface so
+	// tests can inject a fake without stubbing the full datastore. This
+	// is the minimum datastore work required before the RBAC gate; the
+	// gate runs immediately after so no mutation datastore call executes
+	// for a denied caller.
+	if h.alertResolver == nil {
+		log.Printf("[ERROR] acknowledgeAlert: alert resolver is not configured")
+		RespondError(w, http.StatusInternalServerError, "Failed to acknowledge alert")
+		return
+	}
+	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), req.AlertID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
 		RespondError(w, http.StatusNotFound, "Alert not found")
@@ -288,8 +323,16 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		return // Error already sent
 	}
 
-	// RBAC: verify the user has access to the alert's connection.
-	connID, err := h.datastore.GetAlertConnectionID(r.Context(), alertID)
+	// Resolve the alert's connection via the narrow resolver interface so
+	// tests can inject a fake without stubbing the full datastore. The
+	// RBAC gate runs immediately after so no mutation datastore call
+	// executes for a denied caller.
+	if h.alertResolver == nil {
+		log.Printf("[ERROR] unacknowledgeAlert: alert resolver is not configured")
+		RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert")
+		return
+	}
+	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), alertID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
 		RespondError(w, http.StatusNotFound, "Alert not found")
@@ -338,8 +381,16 @@ func (h *AlertHandler) handleSaveAnalysis(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// RBAC: verify the user has access to the alert's connection.
-	connID, err := h.datastore.GetAlertConnectionID(r.Context(), req.AlertID)
+	// Resolve the alert's connection via the narrow resolver interface so
+	// tests can inject a fake without stubbing the full datastore. The
+	// RBAC gate runs immediately after so no write call executes for a
+	// denied caller.
+	if h.alertResolver == nil {
+		log.Printf("[ERROR] handleSaveAnalysis: alert resolver is not configured")
+		RespondError(w, http.StatusInternalServerError, "Failed to save analysis")
+		return
+	}
+	connID, err := h.alertResolver.GetAlertConnectionID(r.Context(), req.AlertID)
 	if err != nil {
 		log.Printf("[ERROR] Failed to look up alert connection: %v", err)
 		RespondError(w, http.StatusNotFound, "Alert not found")

@@ -170,7 +170,7 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	isRestricted, err := rc.authStore.IsConnectionAssignedToAnyGroup(connectionID)
 	if err != nil {
 		// On error, deny access for safety
-		return false, ""
+		return false, AccessLevelNone
 	}
 
 	// If not restricted by group assignment, check sharing status
@@ -180,13 +180,13 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 			isShared, ownerUsername, lookupErr := rc.connSharingLookupFn(ctx, connectionID)
 			if lookupErr != nil {
 				// On error, deny access for safety
-				return false, ""
+				return false, AccessLevelNone
 			}
 			if !isShared {
 				// Not shared: only the owner gets access
 				username := GetUsernameFromContext(ctx)
 				if ownerUsername == "" || username != ownerUsername {
-					return false, ""
+					return false, AccessLevelNone
 				}
 			}
 		}
@@ -197,13 +197,13 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	userID := GetUserIDFromContext(ctx)
 	if userID == 0 {
 		// Defensive check - all tokens now have owners
-		return false, ""
+		return false, AccessLevelNone
 	}
 
 	// Get user's connection privileges through group membership
 	privileges, err := rc.authStore.GetUserConnectionPrivileges(userID)
 	if err != nil {
-		return false, ""
+		return false, AccessLevelNone
 	}
 
 	// Check if user has access to this connection (specific or via "all
@@ -211,7 +211,7 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	// are present.
 	accessLevel, hasAccess := resolveConnectionAccess(privileges, connectionID)
 	if !hasAccess {
-		return false, ""
+		return false, AccessLevelNone
 	}
 
 	// Check token scoping (if applicable)
@@ -220,10 +220,10 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		// Token-based access - check if token is scoped to this connection
 		inScope, scopeAccessLevel, err := rc.authStore.IsConnectionInTokenScope(tokenID, connectionID)
 		if err != nil {
-			return false, ""
+			return false, AccessLevelNone
 		}
 		if !inScope {
-			return false, ""
+			return false, AccessLevelNone
 		}
 		// Apply minimum access level: token scope can restrict but not elevate
 		accessLevel = applyTokenCeiling(scopeAccessLevel, accessLevel)
@@ -241,7 +241,7 @@ func resolveConnectionAccess(privs map[int]string, connID int) (string, bool) {
 	specificLevel, hasSpecific := privs[connID]
 	wildcardLevel, hasWildcard := privs[ConnectionIDAll]
 	if !hasSpecific && !hasWildcard {
-		return "", false
+		return AccessLevelNone, false
 	}
 
 	// If only one side is present, use it directly.
@@ -333,7 +333,7 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 			if len(scope.Connections) > 0 {
 				// Check for wildcard connection (connection_id = 0)
 				hasWildcard := false
-				wildcardLevel := ""
+				wildcardLevel := AccessLevelNone
 				for _, sc := range scope.Connections {
 					if sc.ConnectionID == ConnectionIDAll {
 						hasWildcard = true
@@ -394,7 +394,8 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 					for _, privID := range scope.MCPPrivileges {
 						priv, err := rc.authStore.GetMCPPrivilegeByID(privID)
 						if err == nil && priv != nil {
-							if result.MCPPrivileges[priv.Identifier] {
+							// Check if user has this privilege (specific or via wildcard "*")
+							if result.MCPPrivileges[priv.Identifier] || result.MCPPrivileges["*"] {
 								scopedMCPPrivs[priv.Identifier] = true
 							}
 						}
@@ -418,7 +419,8 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 				if !hasWildcard {
 					scopedAdminPerms := make(map[string]bool)
 					for _, perm := range scope.AdminPermissions {
-						if result.AdminPermissions[perm] {
+						// Check if user has this permission (specific or via wildcard "*")
+						if result.AdminPermissions[perm] || result.AdminPermissions[AdminPermissionWildcard] {
 							scopedAdminPerms[perm] = true
 						}
 					}

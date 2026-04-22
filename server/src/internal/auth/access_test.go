@@ -2130,7 +2130,7 @@ func TestResolveConnectionAccessSpecificOnlyNoWildcard(t *testing.T) {
 	}
 
 	// Connection 2 should have no access
-	level, hasAccess = resolveConnectionAccess(privs, 2)
+	_, hasAccess = resolveConnectionAccess(privs, 2)
 	if hasAccess {
 		t.Error("Expected no access for ungrant connection")
 	}

@@ -99,6 +99,14 @@ func (p *WorkerPool[T]) worker() {
 //
 // Returns false if the pool has been stopped.
 func (p *WorkerPool[T]) Submit(job T) bool {
+	// Check if stopped first to avoid select's pseudo-random case selection
+	// when both stopChan and queue are ready.
+	select {
+	case <-p.stopChan:
+		return false
+	default:
+	}
+
 	select {
 	case <-p.stopChan:
 		return false
@@ -114,6 +122,14 @@ func (p *WorkerPool[T]) Submit(job T) bool {
 // or the pool is stopped. Returns true if the job was queued, false if
 // the pool was stopped before the job could be queued.
 func (p *WorkerPool[T]) SubmitWait(job T) bool {
+	// Check if stopped first to avoid select's pseudo-random case selection
+	// when both stopChan and queue are ready.
+	select {
+	case <-p.stopChan:
+		return false
+	default:
+	}
+
 	select {
 	case <-p.stopChan:
 		return false
@@ -123,7 +139,7 @@ func (p *WorkerPool[T]) SubmitWait(job T) bool {
 }
 
 // Stop gracefully shuts down the worker pool. It signals all workers to
-// stop, waits for in-flight jobs to complete, and closes the queue.
+// stop and waits for in-flight jobs to complete.
 // It is safe to call multiple times; only the first call has any effect.
 //
 // After Stop returns, all workers have exited and no more jobs will be
@@ -132,7 +148,8 @@ func (p *WorkerPool[T]) Stop() {
 	p.stopOnce.Do(func() {
 		close(p.stopChan)
 		p.wg.Wait()
-		close(p.queue)
+		// Don't close p.queue - workers already exited via stopChan,
+		// and closing it causes panic in post-Stop Submit/SubmitWait calls.
 	})
 }
 

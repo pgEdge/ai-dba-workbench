@@ -128,16 +128,11 @@ func TestWorkerPool_SubmitAfterStop(t *testing.T) {
 	pool.Start()
 	pool.Stop()
 
-	// After Stop, Submit should cleanly return false without panicking.
-	// The pool's select statement checks stopChan first, which is closed
-	// before the queue channel is closed.
-	result := pool.Submit(1)
-	if result {
+	// After Stop, Submit and SubmitWait must cleanly return false without panicking.
+	if pool.Submit(1) {
 		t.Error("Expected Submit to return false after Stop")
 	}
-
-	result = pool.SubmitWait(1)
-	if result {
+	if pool.SubmitWait(1) {
 		t.Error("Expected SubmitWait to return false after Stop")
 	}
 }

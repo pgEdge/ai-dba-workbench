@@ -97,7 +97,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
     }, [open, fetchInfo]);
 
     useEffect(() => {
-        if (!open || !data || !connectionId) {
+        if (!open || !data || data.connection_id !== connectionId || !connectionId) {
             return;
         }
         // Fetch AI analysis asynchronously
@@ -144,8 +144,18 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
     const exts = data?.extensions;
     const settings = data?.key_settings;
     const ai = aiAnalysis;
-    const hasSystem = sys && (
-        sys.os_name || sys.cpu_model || sys.memory_total_bytes
+    const hasSystem = !!sys && (
+        sys.os_name ||
+        sys.os_version ||
+        sys.architecture ||
+        sys.hostname ||
+        sys.cpu_model ||
+        sys.cpu_cores != null ||
+        sys.cpu_logical != null ||
+        sys.cpu_clock_speed != null ||
+        sys.memory_total_bytes != null ||
+        sys.memory_used_bytes != null ||
+        (sys.disks?.length ?? 0) > 0
     );
 
     // Group settings by category

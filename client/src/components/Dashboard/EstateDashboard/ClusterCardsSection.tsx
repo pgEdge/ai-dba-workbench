@@ -16,6 +16,7 @@ import Chip from '@mui/material/Chip';
 import { alpha, useTheme, Theme } from '@mui/material/styles';
 import { useClusterSelection } from '../../../contexts/ClusterSelectionContext';
 import { ClusterEntry } from '../../../contexts/ClusterDataContext';
+import { collectServers, ServerLike } from '../../../utils/clusterHelpers';
 
 interface ClusterCardsSectionProps {
     selection: Record<string, unknown>;
@@ -118,20 +119,6 @@ const getCardSx = (theme: Theme) => ({
 });
 
 /**
- * Collect servers recursively including children.
- */
-const collectAllServers = (servers: Array<Record<string, unknown>>): Array<Record<string, unknown>> => {
-    const result: Array<Record<string, unknown>> = [];
-    servers.forEach(s => {
-        result.push(s);
-        if (s.children) {
-            result.push(...collectAllServers(s.children as Array<Record<string, unknown>>));
-        }
-    });
-    return result;
-};
-
-/**
  * Extract cluster card data from the estate selection hierarchy.
  */
 const extractClusterCards = (selection: Record<string, unknown>): ClusterCardData[] => {
@@ -142,7 +129,7 @@ const extractClusterCards = (selection: Record<string, unknown>): ClusterCardDat
         const clusters = group.clusters as Array<Record<string, unknown>> | undefined;
         clusters?.forEach(clusterObj => {
             const rawServers = (clusterObj.servers || []) as Array<Record<string, unknown>>;
-            const allServers = collectAllServers(rawServers);
+            const allServers = collectServers(rawServers as ServerLike[]);
 
             let online = 0;
             let warning = 0;

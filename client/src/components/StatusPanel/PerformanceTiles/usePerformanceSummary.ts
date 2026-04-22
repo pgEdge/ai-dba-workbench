@@ -13,40 +13,13 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { PerformanceSummaryData } from './types';
+import { extractEstateServerIds } from '../../../utils/clusterHelpers';
 
 interface UsePerformanceSummaryReturn {
     data: PerformanceSummaryData | null;
     loading: boolean;
     error: string | null;
 }
-
-/**
- * Extract all server IDs from an estate selection by traversing
- * groups, clusters, and servers (including nested children).
- */
-const extractEstateServerIds = (selection: Record<string, unknown>): number[] => {
-    const ids: number[] = [];
-    const groups = selection.groups as Array<Record<string, unknown>> | undefined;
-
-    groups?.forEach(group => {
-        const clusters = group.clusters as Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const collectServers = (servers: Array<Record<string, unknown>> | undefined) => {
-                servers?.forEach(s => {
-                    if (typeof s.id === 'number') {
-                        ids.push(s.id);
-                    }
-                    if (s.children) {
-                        collectServers(s.children as Array<Record<string, unknown>>);
-                    }
-                });
-            };
-            collectServers(cluster.servers as Array<Record<string, unknown>> | undefined);
-        });
-    });
-
-    return ids;
-};
 
 /**
  * Custom hook for fetching performance summary data.

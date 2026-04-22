@@ -15,34 +15,7 @@ import CollapsibleSection from '../CollapsibleSection';
 import HealthOverviewSection from './HealthOverviewSection';
 import KpiTilesSection from './KpiTilesSection';
 import ClusterCardsSection from './ClusterCardsSection';
-
-/**
- * Extract all server IDs from an estate selection by traversing
- * groups, clusters, and nested server children.
- */
-const extractAllServerIds = (selection: Record<string, unknown>): number[] => {
-    const ids: number[] = [];
-    const groups = selection.groups as Array<Record<string, unknown>> | undefined;
-
-    groups?.forEach(group => {
-        const clusters = group.clusters as Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const collectServers = (servers: Array<Record<string, unknown>> | undefined): void => {
-                servers?.forEach(s => {
-                    if (typeof s.id === 'number') {
-                        ids.push(s.id);
-                    }
-                    if (s.children) {
-                        collectServers(s.children as Array<Record<string, unknown>>);
-                    }
-                });
-            };
-            collectServers(cluster.servers as Array<Record<string, unknown>> | undefined);
-        });
-    });
-
-    return ids;
-};
+import { extractEstateServerIds } from '../../../utils/clusterHelpers';
 
 /**
  * EstateDashboard displays fleet-wide health and provides a
@@ -50,7 +23,7 @@ const extractAllServerIds = (selection: Record<string, unknown>): number[] => {
  * rings, KPI tiles, and cluster cards for the entire estate.
  */
 const EstateDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
-    const serverIds = useMemo(() => extractAllServerIds(selection), [selection]);
+    const serverIds = useMemo(() => extractEstateServerIds(selection), [selection]);
 
     return (
         <Box>

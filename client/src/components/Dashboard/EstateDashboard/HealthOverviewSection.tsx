@@ -16,15 +16,10 @@ import { useTheme } from '@mui/material/styles';
 import { Chart } from '../../Chart';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
+import { computeEstateServerCounts } from '../../../utils/clusterHelpers';
 
 interface HealthOverviewSectionProps {
     selection: Record<string, unknown>;
-}
-
-interface ServerCounts {
-    online: number;
-    warning: number;
-    offline: number;
 }
 
 interface AlertCounts {
@@ -57,39 +52,6 @@ const LOADING_CONTAINER_SX = {
 };
 
 /**
- * Compute server status counts from the estate selection data.
- */
-const computeServerCounts = (selection: Record<string, unknown>): ServerCounts => {
-    const counts: ServerCounts = { online: 0, warning: 0, offline: 0 };
-    const groups = selection.groups as Array<Record<string, unknown>> | undefined;
-
-    groups?.forEach(group => {
-        const clusters = group.clusters as Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const collectServers = (servers: Array<Record<string, unknown>> | undefined): void => {
-                servers?.forEach(s => {
-                    const status = s.status as string;
-                    const alertCount = s.active_alert_count as number | undefined;
-                    if (status === 'offline') {
-                        counts.offline += 1;
-                    } else if (alertCount && alertCount > 0) {
-                        counts.warning += 1;
-                    } else {
-                        counts.online += 1;
-                    }
-                    if (s.children) {
-                        collectServers(s.children as Array<Record<string, unknown>>);
-                    }
-                });
-            };
-            collectServers(cluster.servers as Array<Record<string, unknown>> | undefined);
-        });
-    });
-
-    return counts;
-};
-
-/**
  * HealthOverviewSection shows fleet health via two donut charts:
  * one for server status distribution (online/warning/offline) and
  * one for alert severity distribution (critical/warning/info).
@@ -102,7 +64,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
 
-    const serverCounts = useMemo(() => computeServerCounts(selection), [selection]);
+    const serverCounts = useMemo(() => computeEstateServerCounts(selection), [selection]);
 
     const fetchAlertCounts = useCallback(async (): Promise<void> => {
         if (!user) { return; }

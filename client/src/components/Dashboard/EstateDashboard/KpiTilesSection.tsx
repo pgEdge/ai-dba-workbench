@@ -18,6 +18,7 @@ import { useClusterData } from '../../../contexts/ClusterDataContext';
 import KpiTile from '../KpiTile';
 import { formatNumber } from '../../../utils/formatters';
 import { KPI_GRID_SX } from '../styles';
+import { countEstateServers } from '../../../utils/clusterHelpers';
 
 interface KpiTilesSectionProps {
     selection: Record<string, unknown>;
@@ -45,31 +46,6 @@ const ERROR_SX = {
 };
 
 /**
- * Count all servers across the estate selection hierarchy.
- */
-const countServers = (selection: Record<string, unknown>): number => {
-    let count = 0;
-    const groups = selection.groups as Array<Record<string, unknown>> | undefined;
-
-    groups?.forEach(group => {
-        const clusters = group.clusters as Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const collectServers = (servers: Array<Record<string, unknown>> | undefined): void => {
-                servers?.forEach(s => {
-                    count += 1;
-                    if (s.children) {
-                        collectServers(s.children as Array<Record<string, unknown>>);
-                    }
-                });
-            };
-            collectServers(cluster.servers as Array<Record<string, unknown>> | undefined);
-        });
-    });
-
-    return count;
-};
-
-/**
  * KpiTilesSection shows fleet-wide KPI tiles for the estate:
  * total servers, total connections, transaction rate, and
  * alert count. Fetches aggregate data from the performance
@@ -84,7 +60,7 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
 
-    const totalServers = useMemo(() => countServers(selection), [selection]);
+    const totalServers = useMemo(() => countEstateServers(selection), [selection]);
     const serverIdsKey = serverIds.join(',');
 
     const fetchAggregateData = useCallback(async (): Promise<void> => {

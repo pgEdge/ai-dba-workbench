@@ -199,7 +199,14 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			sb.WriteString("id\tname\thost\tport\tdatabase_name\tis_monitored\tstatus\terror\n")
 			for _, conn := range connections {
 				fmt.Fprintf(&sb, "%d\t%s\t%s\t%d\t%s\t%t\t%s\t%s\n",
-					conn.ID, conn.Name, conn.Host, conn.Port, conn.DatabaseName, conn.IsMonitored, conn.Status, conn.ConnectionError)
+					conn.ID,
+					sanitizeTSVField(conn.Name),
+					sanitizeTSVField(conn.Host),
+					conn.Port,
+					sanitizeTSVField(conn.DatabaseName),
+					conn.IsMonitored,
+					sanitizeTSVField(conn.Status),
+					sanitizeTSVField(conn.ConnectionError))
 			}
 
 			sb.WriteString("\nNote: Use the 'id' column value as the connection_id parameter in query_metrics and all monitored-database tools.\n")

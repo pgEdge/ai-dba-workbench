@@ -10,10 +10,60 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
+
+func TestBuildNoTextColumnsHint(t *testing.T) {
+	t.Run("qualified table splits schema and table", func(t *testing.T) {
+		hint := buildNoTextColumnsHint("public.items")
+
+		if !strings.Contains(hint, `get_schema_info(schema_name="public")`) {
+			t.Errorf("expected schema hint for qualified name; got %q", hint)
+		}
+		if !strings.Contains(hint,
+			"table_schema = 'public' AND table_name = 'items'") {
+			t.Errorf("expected table_schema + table_name filters; got %q", hint)
+		}
+		if strings.Contains(hint, "table_name = 'public.items'") {
+			t.Errorf("hint must not use the full qualified name as table_name; got %q", hint)
+		}
+	})
+
+	t.Run("unqualified table omits table_schema and notes search_path", func(t *testing.T) {
+		hint := buildNoTextColumnsHint("items")
+
+		if !strings.Contains(hint, "search_path") {
+			t.Errorf("expected search_path note for unqualified name; got %q", hint)
+		}
+		if strings.Contains(hint, "get_schema_info(schema_name=\"items\")") {
+			t.Errorf("unqualified name must not be emitted as a schema; got %q", hint)
+		}
+		if strings.Contains(hint, "table_schema =") {
+			t.Errorf("expected no table_schema clause for unqualified name; got %q", hint)
+		}
+		if !strings.Contains(hint, "table_name = 'items'") {
+			t.Errorf("expected information_schema filter on table_name='items'; got %q", hint)
+		}
+	})
+
+	t.Run("multiple dots splits only on the first", func(t *testing.T) {
+		// Preserves everything after the first dot as the table name,
+		// which avoids silently dropping information from the name.
+		hint := buildNoTextColumnsHint("weird.schema.name")
+
+		if !strings.Contains(hint,
+			`get_schema_info(schema_name="weird")`) {
+			t.Errorf("expected schema 'weird'; got %q", hint)
+		}
+		if !strings.Contains(hint,
+			"table_schema = 'weird' AND table_name = 'schema.name'") {
+			t.Errorf("expected table_name 'schema.name'; got %q", hint)
+		}
+	})
+}
 
 func TestInferTextColumnName(t *testing.T) {
 	tests := []struct {

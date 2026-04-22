@@ -11,6 +11,7 @@ package compactor
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -362,7 +363,10 @@ func TestCompactor_ExtractContextLongTopic(t *testing.T) {
 	compactor := NewCompactor(CompactRequest{})
 
 	// A very long user message should produce a topic truncated with
-	// "..." suffix to bound prompt growth.
+	// "..." suffix to bound prompt growth. The extractor keeps the
+	// first five words of the user message and, if the resulting
+	// string exceeds 80 characters, trims it to 80 characters plus a
+	// literal "..." suffix (total length 83).
 	longWords := make([]string, 0, 20)
 	for i := 0; i < 20; i++ {
 		longWords = append(longWords, "verylongwordthatmakesatopicwaytoowide")
@@ -381,9 +385,24 @@ func TestCompactor_ExtractContextLongTopic(t *testing.T) {
 		t.Fatalf("expected one topic, got %d", len(extracted.Topics))
 	}
 	for topic := range extracted.Topics {
-		// Truncation produces a short-prefixed topic ending in "...".
 		if len(topic) == 0 {
 			t.Errorf("expected non-empty topic")
+		}
+		// The extracted topic must be strictly shorter than the
+		// original input; otherwise no truncation/slicing happened.
+		if len(topic) >= len(text) {
+			t.Errorf("expected truncated topic length < input length %d, got %d",
+				len(text), len(topic))
+		}
+		// The extractor appends "..." when the joined five-word prefix
+		// exceeds 80 characters (our input satisfies that).
+		if !strings.HasSuffix(topic, "...") {
+			t.Errorf("expected topic to end with \"...\", got %q", topic)
+		}
+		// The truncated topic is bounded at 80 characters of content
+		// plus the three-character ellipsis marker.
+		if len(topic) > 83 {
+			t.Errorf("expected topic length <= 83, got %d", len(topic))
 		}
 	}
 }

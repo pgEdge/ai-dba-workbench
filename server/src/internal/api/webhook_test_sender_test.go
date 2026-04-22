@@ -94,7 +94,11 @@ func TestSendTestWebhook_Success(t *testing.T) {
 	var gotContentType string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotContentType = r.Header.Get("Content-Type")
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+			return
+		}
 		gotBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -165,7 +169,11 @@ func TestSendTestGenericWebhook_DefaultMethodAndBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotContentType = r.Header.Get("Content-Type")
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+			return
+		}
 		gotBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -193,7 +201,11 @@ func TestSendTestGenericWebhook_GetNoBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotContentType = r.Header.Get("Content-Type")
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+			return
+		}
 		gotBodyLen = len(body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -403,7 +415,11 @@ func TestSendTestGenericWebhook_PutAndPatch(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotMethod = r.Method
 				gotContentType = r.Header.Get("Content-Type")
-				body, _ := io.ReadAll(r.Body)
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("failed to read request body: %v", err)
+					return
+				}
 				gotBodyLen = len(body)
 				w.WriteHeader(http.StatusOK)
 			}))

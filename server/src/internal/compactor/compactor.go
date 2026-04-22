@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -311,16 +312,19 @@ func (c *Compactor) createSummary(middle, kept []Message) *Summary {
 	for topic := range extracted.Topics {
 		topics = append(topics, topic)
 	}
+	sort.Strings(topics)
 
 	tables := make([]string, 0, len(extracted.Tables))
 	for table := range extracted.Tables {
 		tables = append(tables, table)
 	}
+	sort.Strings(tables)
 
 	tools := make([]string, 0, len(extracted.Tools))
 	for tool := range extracted.Tools {
 		tools = append(tools, tool)
 	}
+	sort.Strings(tools)
 
 	droppedCount := len(middle) - len(kept)
 	description := c.buildSummaryDescription(topics, tables, tools, droppedCount)

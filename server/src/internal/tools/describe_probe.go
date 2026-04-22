@@ -163,10 +163,11 @@ Returns TSV with:
 				if col.IsMetric {
 					colType = "metric"
 				}
-				// Clean up description (remove newlines)
-				desc := strings.ReplaceAll(col.Description, "\n", " ")
 				fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\n",
-					col.Name, col.DataType, desc, colType)
+					sanitizeTSVField(col.Name),
+					sanitizeTSVField(col.DataType),
+					sanitizeTSVField(col.Description),
+					colType)
 			}
 
 			return mcp.NewToolSuccess(sb.String())

@@ -307,14 +307,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				errMsg.WriteString("- Vector column 'content_embedding' → text column 'content'\n")
 				errMsg.WriteString("- Vector column 'title_vector' → text column 'title'\n")
 				errMsg.WriteString("</diagnosis>\n\n")
-				errMsg.WriteString("<next_steps>\n")
-				errMsg.WriteString("1. Check table structure:\n")
-				fmt.Fprintf(&errMsg, "   → get_schema_info(schema_name=%q)\n\n", strings.Split(tableName, ".")[0])
-				errMsg.WriteString("2. List columns in this table:\n")
-				fmt.Fprintf(&errMsg, "   → query_database(query=\"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '%s'\")\n\n", tableName)
-				errMsg.WriteString("3. This table might not be suitable for semantic search\n")
-				errMsg.WriteString("   → Try a different table with get_schema_info(vector_tables_only=true)\n")
-				errMsg.WriteString("</next_steps>\n")
+				errMsg.WriteString(buildNoTextColumnsHint(tableName))
 
 				return mcp.NewToolError(errMsg.String())
 			}
@@ -488,6 +481,42 @@ To avoid rate limits (30,000 input tokens/minute):
 }
 
 // Helper functions
+
+// buildNoTextColumnsHint returns the "<next_steps>" block emitted when a
+// table has vector columns but no companion text columns. The helper
+// splits the optional "schema.table" form on the first "." so the hint
+// issues well-formed information_schema queries: when the caller passes
+// a qualified name, both table_schema and table_name clauses are
+// emitted; when no schema is supplied, the query omits table_schema and
+// tells the user that search_path determines the effective schema.
+func buildNoTextColumnsHint(tableName string) string {
+	var hintSchema, hintTable string
+	if idx := strings.IndexByte(tableName, '.'); idx >= 0 {
+		hintSchema = tableName[:idx]
+		hintTable = tableName[idx+1:]
+	} else {
+		hintTable = tableName
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<next_steps>\n")
+	sb.WriteString("1. Check table structure:\n")
+	if hintSchema != "" {
+		fmt.Fprintf(&sb, "   → get_schema_info(schema_name=%q)\n\n", hintSchema)
+	} else {
+		sb.WriteString("   → get_schema_info()  (schema will be resolved via search_path; default is \"public\")\n\n")
+	}
+	sb.WriteString("2. List columns in this table:\n")
+	if hintSchema != "" {
+		fmt.Fprintf(&sb, "   → query_database(query=\"SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = '%s' AND table_name = '%s'\")\n\n", hintSchema, hintTable)
+	} else {
+		fmt.Fprintf(&sb, "   → query_database(query=\"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '%s'\")  -- add table_schema filter if the name is not unique across schemas\n\n", hintTable)
+	}
+	sb.WriteString("3. This table might not be suitable for semantic search\n")
+	sb.WriteString("   → Try a different table with get_schema_info(vector_tables_only=true)\n")
+	sb.WriteString("</next_steps>\n")
+	return sb.String()
+}
 
 func findTableInMetadataMap(metadata map[string]database.TableInfo, tableName string) (database.TableInfo, error) {
 	// Handle schema.table format

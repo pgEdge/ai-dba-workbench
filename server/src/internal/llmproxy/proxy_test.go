@@ -724,6 +724,7 @@ func TestIsValidModelName(t *testing.T) {
 		{"newline rejected", "bad\nmodel", false},
 		{"hash rejected", "model#1", false},
 		{"paren rejected", "model(1)", false},
+		{"non-ascii rejected", "gpt-4✅", false},
 	}
 
 	for _, tt := range tests {

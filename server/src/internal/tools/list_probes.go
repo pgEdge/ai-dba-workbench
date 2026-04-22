@@ -123,7 +123,10 @@ Returns a TSV table with:
 			sb.WriteString("name\tdescription\trow_count\tscope\n")
 			for _, probe := range probes {
 				fmt.Fprintf(&sb, "%s\t%s\t%d\t%s\n",
-					probe.Name, probe.Description, probe.RowCount, probe.Scope)
+					sanitizeTSVField(probe.Name),
+					sanitizeTSVField(probe.Description),
+					probe.RowCount,
+					sanitizeTSVField(probe.Scope))
 			}
 
 			return mcp.NewToolSuccess(sb.String())

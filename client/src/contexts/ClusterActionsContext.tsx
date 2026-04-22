@@ -14,18 +14,7 @@ import { useAuth } from './AuthContext';
 import { useClusterData } from './ClusterDataContext';
 import { useClusterSelection } from './ClusterSelectionContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
-import { parseGroupNumericId } from '../components/ClusterNavigator/utils';
-
-/**
- * Strict matcher for auto-detected group ids.
- *
- * The auto bucket arrives as either the bare token "group-auto" or as
- * "group-auto-<suffix>" where the suffix is a url-safe token. The
- * earlier, looser pattern /^group-auto/ also matched malformed ids
- * like "group-autobad"; this anchored form keeps the refactor's
- * explicit-rejection contract intact.
- */
-const AUTO_GROUP_ID = /^group-auto(?:-[A-Za-z0-9_-]+)?$/;
+import { parseGroupNumericId, isAutoGroupId } from '../components/ClusterNavigator/utils';
 
 export interface ServerData {
     name?: string;
@@ -87,7 +76,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         // Anything else (missing prefix, malformed suffix like
         // "group-autobad", mixed alphanumerics like "group-1a") is
         // rejected outright so the server never receives an unknown shape.
-        if (!AUTO_GROUP_ID.test(groupId)) {
+        if (!isAutoGroupId(groupId)) {
             throw new Error('Invalid group ID');
         }
 
@@ -242,21 +231,40 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     }, [user, fetchClusterData]);
 
     /**
-     * Move a cluster to a different group
-     * Supports both database-backed clusters and auto-detected clusters
+     * Move a cluster to a different group.
+     *
+     * The target group id can take three valid shapes:
+     *   1. `null`: an intentional ungroup; the server receives
+     *      `group_id: null`.
+     *   2. `"group-<numeric>"`: a database-backed group; the server
+     *      receives the parsed numeric id.
+     *   3. `"group-auto"` or `"group-auto-<key>"`: an auto-detected
+     *      bucket. The UI lets users drag clusters onto auto-groups so
+     *      they can correct a missed relationship, so this path is
+     *      preserved: `group_id` stays `null` and the server routes the
+     *      move through `auto_cluster_key`.
+     *
+     * Anything else (missing prefix, mixed alphanumeric suffix,
+     * malformed auto form, stray characters) is rejected so the server
+     * never receives an unknown shape.
      */
     const moveClusterToGroup = useCallback(async (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
         const clusterIdStr = clusterId.toString();
 
-        // Extract the target group's numeric ID from the group ID string (e.g., "group-123")
+        // Resolve the target group id to a numeric group_id or a null
+        // (ungroup / auto-bucket) payload. Reject every other shape.
         let numericGroupId: number | null = null;
-        if (targetGroupId) {
+        if (targetGroupId !== null) {
             const parsed = parseGroupNumericId(targetGroupId);
             if (parsed !== undefined) {
                 numericGroupId = parsed;
+            } else if (!isAutoGroupId(targetGroupId)) {
+                throw new Error('Invalid group ID');
             }
+            // Auto-group form: leave numericGroupId as null; the server
+            // uses auto_cluster_key to place the cluster.
         }
 
         // Build request body

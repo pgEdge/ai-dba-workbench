@@ -474,21 +474,80 @@ describe('ClusterActionsContext', () => {
             });
         });
 
-        it('leaves group_id null when target format is unrecognized', async () => {
+        it('sends group_id = null when dropping on the bare "group-auto" bucket', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
             await act(async () => {
                 await result.current.moveClusterToGroup(
-                    'cluster-1',
-                    'not-a-group-ref',
+                    'server-3',
+                    'group-auto',
                 );
             });
 
-            expect(mockApiPut).toHaveBeenCalledWith(
-                '/api/v1/clusters/cluster-1',
-                { group_id: null },
-            );
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: null,
+            });
         });
+
+        it('sends group_id = null when dropping on a "group-auto-<key>" bucket', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup(
+                    'server-3',
+                    'group-auto-foo',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: null,
+            });
+        });
+
+        it('forwards auto_cluster_key when dropping on an auto-group', async () => {
+            // The caller (handleDragEnd) passes the dragged cluster's own
+            // auto_cluster_key. Verify moveClusterToGroup forwards it
+            // verbatim so the server-side auto-group path receives it.
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup(
+                    'server-3',
+                    'group-auto-foo',
+                    'caller-provided-key',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: null,
+                auto_cluster_key: 'caller-provided-key',
+            });
+        });
+
+        it.each([
+            ['group-foo'],
+            ['group-1a'],
+            ['group-'],
+            ['group-auto_bad'],
+            ['group-autobad'],
+            ['group-auto-'],
+            ['not-a-group'],
+            ['42'],
+            [''],
+        ])(
+            'throws "Invalid group ID" and does not call fetch for %j',
+            async (malformed) => {
+                const { result } = renderHook(() => useClusterActions(), {
+                    wrapper,
+                });
+
+                await expect(
+                    result.current.moveClusterToGroup('cluster-1', malformed),
+                ).rejects.toThrow('Invalid group ID');
+                expect(mockApiPut).not.toHaveBeenCalled();
+                expect(mockFetchClusterData).not.toHaveBeenCalled();
+            },
+        );
     });
 
     describe('hook outside provider', () => {

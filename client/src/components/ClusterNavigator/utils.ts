@@ -205,3 +205,24 @@ export const parseGroupNumericId = (
     const parsed = Number(match[1]);
     return Number.isNaN(parsed) ? undefined : parsed;
 };
+
+/**
+ * Strict matcher for auto-detected group ids.
+ *
+ * Auto buckets arrive as either the bare token "group-auto" or as
+ * "group-auto-<suffix>" where the suffix is a url-safe token made up
+ * of letters, digits, underscores, and hyphens. Looser forms like
+ * `/^group-auto/` let malformed ids through (for example
+ * "group-autobad" or "group-auto_foo" with non-url-safe suffixes);
+ * this anchored, url-safe-suffix pattern rejects them.
+ *
+ * This helper is the single source of truth for the auto-form check
+ * so that every call site stays in lockstep if the pattern ever
+ * changes.
+ */
+const AUTO_GROUP_ID_REGEX = /^group-auto(?:-[A-Za-z0-9_-]+)?$/;
+
+export const isAutoGroupId = (id: string | undefined): boolean => {
+    if (!id) {return false;}
+    return AUTO_GROUP_ID_REGEX.test(id);
+};

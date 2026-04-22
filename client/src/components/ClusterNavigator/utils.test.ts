@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseGroupNumericId } from './utils';
+import { parseGroupNumericId, isAutoGroupId } from './utils';
 
 describe('parseGroupNumericId', () => {
     describe('matches database-backed ids', () => {
@@ -86,6 +86,48 @@ describe('parseGroupNumericId', () => {
         it('parses leading-zero numeric suffixes as plain numbers', () => {
             // /^group-(\d+)$/ matches "group-01"; Number("01") === 1.
             expect(parseGroupNumericId('group-01')).toBe(1);
+        });
+    });
+});
+
+describe('isAutoGroupId', () => {
+    describe('matches the bare and suffixed auto forms', () => {
+        it.each([
+            ['group-auto'],
+            ['group-auto-foo'],
+            ['group-auto-some_key-123'],
+            ['group-auto-A_B-c_d'],
+            ['group-auto-0'],
+            ['group-auto-UPPER'],
+            ['group-auto-a'],
+            ['group-auto--'],
+        ])('returns true for %j', (input) => {
+            expect(isAutoGroupId(input)).toBe(true);
+        });
+    });
+
+    describe('rejects malformed or unrelated inputs', () => {
+        it.each([
+            ['group-autobad'],
+            ['group-automatic'],
+            ['group-auto_foo'],
+            ['group-auto-'],
+            ['group-auto/evil'],
+            ['group-auto-bad id'],
+            ['group-'],
+            ['group-5'],
+            ['group-1a'],
+            ['group-Production'],
+            ['not-a-group'],
+            ['auto'],
+            ['group'],
+            [''],
+        ])('returns false for %j', (input) => {
+            expect(isAutoGroupId(input)).toBe(false);
+        });
+
+        it('returns false for undefined input', () => {
+            expect(isAutoGroupId(undefined)).toBe(false);
         });
     });
 });

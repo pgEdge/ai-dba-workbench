@@ -125,6 +125,22 @@ func TestDatastoreConfigYAMLMarshal(t *testing.T) {
 		t.Fatalf("failed to marshal config: %v", err)
 	}
 
+	// Verify YAML keys are present in marshaled output
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("failed to unmarshal marshaled YAML into map: %v", err)
+	}
+
+	expectedKeys := []string{
+		"host", "hostaddr", "database", "username", "password",
+		"password_file", "port", "sslmode", "sslcert", "sslkey", "sslrootcert",
+	}
+	for _, key := range expectedKeys {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("missing YAML key %q in marshaled output", key)
+		}
+	}
+
 	// Unmarshal back to verify round-trip
 	var cfg2 DatastoreConfig
 	if err := yaml.Unmarshal(data, &cfg2); err != nil {

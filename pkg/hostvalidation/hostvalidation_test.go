@@ -242,7 +242,14 @@ func TestValidateURLHost_DNSResolution(t *testing.T) {
 	t.Run("google.com resolves to public IP", func(t *testing.T) {
 		err := ValidateURLHost("https://google.com/webhook")
 		if err != nil {
-			t.Skipf("skipping network-dependent DNS check: %v", err)
+			errStr := err.Error()
+			if containsCI(errStr, "cannot resolve") ||
+				containsCI(errStr, "no such host") ||
+				containsCI(errStr, "i/o timeout") ||
+				containsCI(errStr, "temporary failure") {
+				t.Skipf("skipping network-dependent DNS check: %v", err)
+			}
+			t.Fatalf("unexpected validation error for public hostname: %v", err)
 		}
 	})
 
@@ -250,7 +257,14 @@ func TestValidateURLHost_DNSResolution(t *testing.T) {
 		err := ValidateURLHost("https://localhost/webhook")
 		// localhost should resolve to 127.0.0.1 which is private
 		if err == nil {
-			t.Error("expected error for localhost")
+			t.Fatal("expected error for localhost")
+		}
+		errStr := err.Error()
+		if containsCI(errStr, "cannot resolve") || containsCI(errStr, "no such host") {
+			t.Skipf("skipping localhost DNS-dependent check: %v", err)
+		}
+		if !containsCI(errStr, "internal IP") && !containsCI(errStr, "private") {
+			t.Fatalf("expected private-IP rejection for localhost, got: %v", err)
 		}
 	})
 

@@ -44,7 +44,7 @@ export function collectServers<T extends ServerLike>(servers: T[]): T[] {
 export const extractEstateServerIds = (
     selection: Record<string, unknown>
 ): number[] => {
-    const ids: number[] = [];
+    const ids = new Set<number>();
     const groups = selection.groups as
         Array<Record<string, unknown>> | undefined;
 
@@ -56,13 +56,13 @@ export const extractEstateServerIds = (
                 ServerLike[] | undefined;
             if (servers) {
                 collectServers(servers).forEach(s => {
-                    ids.push(s.id);
+                    ids.add(s.id);
                 });
             }
         });
     });
 
-    return ids;
+    return [...ids];
 };
 
 /**

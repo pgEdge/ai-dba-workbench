@@ -311,6 +311,26 @@ describe('extractEstateServerIds', () => {
         };
         expect(extractEstateServerIds(selection)).toEqual([1, 2, 3, 4]);
     });
+
+    it('deduplicates server IDs when children share parent IDs', () => {
+        const selection = {
+            groups: [{
+                clusters: [{
+                    servers: [
+                        {
+                            id: 1,
+                            name: 'parent',
+                            children: [
+                                { id: 1, name: 'same-id' },
+                                { id: 2, name: 'child' },
+                            ],
+                        },
+                    ],
+                }],
+            }],
+        };
+        expect(extractEstateServerIds(selection)).toEqual([1, 2]);
+    });
 });
 
 describe('extractClusterServerIds', () => {

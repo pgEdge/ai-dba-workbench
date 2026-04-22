@@ -50,6 +50,16 @@ project adheres to
 
 ### Fixed
 
+- Fix MCP and admin scope privileges granted through a
+  wildcard group grant (`"*"`) being silently dropped
+  during token scope intersection; the intersection
+  logic now recognises wildcard grants and preserves
+  the scoped privileges. The fix also introduces an
+  explicit `AccessLevelNone` constant to replace raw
+  empty strings for "no access" semantics, improving
+  code clarity and reducing error-prone comparisons.
+  (#96)
+
 - Fix the ClusterNavigator group-editing flow
   round-tripping string group ids (`"group-{x}"`)
   through numeric parses; the string id now travels

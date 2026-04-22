@@ -1562,3 +1562,866 @@ func TestGetEffectivePrivilegesScopedTokenWildcardUserReadOnly(t *testing.T) {
 			level)
 	}
 }
+
+// =============================================================================
+// GetEffectivePrivileges MCP/Admin Wildcard Scope Tests (Issue #96)
+//
+// Issue #96: GetEffectivePrivileges ignored user wildcard grants ("*") when
+// intersecting with a scoped token. If a user's ONLY MCP or admin access came
+// through a wildcard group grant, a token scoped to specific privileges would
+// silently drop those privileges. These tests pin the corrected behavior.
+// =============================================================================
+
+func TestGetEffectivePrivilegesScopedTokenWithUserMCPWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has access to all MCP privileges via the wildcard "*" group grant.
+	// Prior to the fix, a scoped token that named specific MCP privileges
+	// would be intersected against the MCPPrivileges map and the scoped
+	// entries would be dropped because only "*" was present.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Register MCP privileges and grant wildcard access
+	store.RegisterMCPPrivilege("tool_alpha", MCPPrivilegeTypeTool, "Tool Alpha", false)
+	store.RegisterMCPPrivilege("tool_beta", MCPPrivilegeTypeTool, "Tool Beta", false)
+	store.GrantMCPPrivilegeByName(groupID, "*") // Wildcard grant ONLY
+
+	// Token scoped to tool_alpha only
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_alpha"})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should have tool_alpha (in token scope and user has wildcard access)
+	if len(privs.MCPPrivileges) != 1 {
+		t.Fatalf("Expected exactly 1 MCP privilege, got %d: %+v",
+			len(privs.MCPPrivileges), privs.MCPPrivileges)
+	}
+	if !privs.MCPPrivileges["tool_alpha"] {
+		t.Fatalf("Expected tool_alpha in privileges, got %+v",
+			privs.MCPPrivileges)
+	}
+	// Wildcard "*" must not survive a non-wildcard token scope
+	if privs.MCPPrivileges["*"] {
+		t.Error("Expected '*' to be removed by non-wildcard scope")
+	}
+	// tool_beta should NOT be present (not in token scope)
+	if privs.MCPPrivileges["tool_beta"] {
+		t.Error("Expected tool_beta to be excluded (not in token scope)")
+	}
+}
+
+func TestGetEffectivePrivilegesScopedTokenWithUserAdminWildcard(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has access to all admin permissions via the wildcard "*" group grant.
+	// Prior to the fix, a scoped token that named specific admin permissions
+	// would be intersected against the AdminPermissions map and the scoped
+	// entries would be dropped because only "*" was present.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant wildcard admin access ONLY (no specific permissions)
+	store.GrantAdminPermission(groupID, AdminPermissionWildcard)
+
+	// Token scoped to manage_users only
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should have manage_users (in token scope and user has wildcard access)
+	if len(privs.AdminPermissions) != 1 {
+		t.Fatalf("Expected exactly 1 admin permission, got %d: %+v",
+			len(privs.AdminPermissions), privs.AdminPermissions)
+	}
+	if !privs.AdminPermissions[PermManageUsers] {
+		t.Fatalf("Expected %s in permissions, got %+v",
+			PermManageUsers, privs.AdminPermissions)
+	}
+	// Wildcard "*" must not survive a non-wildcard token scope
+	if privs.AdminPermissions[AdminPermissionWildcard] {
+		t.Error("Expected '*' to be removed by non-wildcard scope")
+	}
+	// manage_connections should NOT be present (not in token scope)
+	if privs.AdminPermissions[PermManageConnections] {
+		t.Error("Expected manage_connections to be excluded (not in token scope)")
+	}
+}
+
+func TestGetEffectivePrivilegesMCPWildcardUserMultipleScopedPrivileges(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has wildcard MCP access only. Token scopes to multiple privileges.
+	// All scoped privileges should resolve successfully.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Register several MCP privileges
+	store.RegisterMCPPrivilege("tool_a", MCPPrivilegeTypeTool, "Tool A", false)
+	store.RegisterMCPPrivilege("tool_b", MCPPrivilegeTypeTool, "Tool B", false)
+	store.RegisterMCPPrivilege("tool_c", MCPPrivilegeTypeTool, "Tool C", false)
+	store.GrantMCPPrivilegeByName(groupID, "*") // Wildcard grant ONLY
+
+	// Token scoped to tool_a and tool_b
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_a", "tool_b"})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should have both tool_a and tool_b
+	if len(privs.MCPPrivileges) != 2 {
+		t.Fatalf("Expected exactly 2 MCP privileges, got %d: %+v",
+			len(privs.MCPPrivileges), privs.MCPPrivileges)
+	}
+	if !privs.MCPPrivileges["tool_a"] {
+		t.Error("Expected tool_a in privileges")
+	}
+	if !privs.MCPPrivileges["tool_b"] {
+		t.Error("Expected tool_b in privileges")
+	}
+	// tool_c should NOT be present (not in token scope)
+	if privs.MCPPrivileges["tool_c"] {
+		t.Error("Expected tool_c to be excluded (not in token scope)")
+	}
+}
+
+func TestGetEffectivePrivilegesAdminWildcardUserMultipleScopedPermissions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has wildcard admin access only. Token scopes to multiple permissions.
+	// All scoped permissions should resolve successfully.
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant wildcard admin access ONLY
+	store.GrantAdminPermission(groupID, AdminPermissionWildcard)
+
+	// Token scoped to manage_users and manage_connections
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers, PermManageConnections})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should have both manage_users and manage_connections
+	if len(privs.AdminPermissions) != 2 {
+		t.Fatalf("Expected exactly 2 admin permissions, got %d: %+v",
+			len(privs.AdminPermissions), privs.AdminPermissions)
+	}
+	if !privs.AdminPermissions[PermManageUsers] {
+		t.Error("Expected manage_users in permissions")
+	}
+	if !privs.AdminPermissions[PermManageConnections] {
+		t.Error("Expected manage_connections in permissions")
+	}
+	// manage_groups should NOT be present (not in token scope)
+	if privs.AdminPermissions[PermManageGroups] {
+		t.Error("Expected manage_groups to be excluded (not in token scope)")
+	}
+}
+
+// =============================================================================
+// AccessLevelNone Constant Tests (Issue #96)
+// =============================================================================
+
+func TestAccessLevelNoneConstant(t *testing.T) {
+	// Verify AccessLevelNone equals empty string for backward compatibility
+	if AccessLevelNone != "" {
+		t.Errorf("Expected AccessLevelNone to equal empty string, got %q", AccessLevelNone)
+	}
+
+	// Verify AccessLevelNone is distinct from Read and ReadWrite
+	if AccessLevelNone == AccessLevelRead {
+		t.Error("AccessLevelNone should not equal AccessLevelRead")
+	}
+	if AccessLevelNone == AccessLevelReadWrite {
+		t.Error("AccessLevelNone should not equal AccessLevelReadWrite")
+	}
+}
+
+func TestCanAccessConnectionReturnsAccessLevelNone(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user without any group membership
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+
+	// Create restricted connection (assigned to another group)
+	otherGroupID, _ := store.CreateGroup("other-group", "Other group")
+	store.GrantConnectionPrivilege(otherGroupID, 1, AccessLevelReadWrite)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// User should be denied with AccessLevelNone
+	canAccess, level := checker.CanAccessConnection(ctx, 1)
+	if canAccess {
+		t.Error("Expected access to be denied")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone when denied, got %q", level)
+	}
+}
+
+func TestResolveConnectionAccessReturnsAccessLevelNone(t *testing.T) {
+	// Test that resolveConnectionAccess returns AccessLevelNone when no access
+	privs := make(map[int]string)
+
+	level, hasAccess := resolveConnectionAccess(privs, 1)
+	if hasAccess {
+		t.Error("Expected no access for empty privs map")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone, got %q", level)
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - CanAccessConnection
+// =============================================================================
+
+func TestCanAccessConnection_EmptyOwnerUsername(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Connection 10 is not shared and has empty owner username
+	// This should deny access because we cannot determine ownership
+	checker.SetConnectionSharingLookup(mockSharingLookup(map[int]struct {
+		isShared      bool
+		ownerUsername string
+	}{
+		10: {isShared: false, ownerUsername: ""},
+	}))
+
+	// User tries to access connection with empty owner
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(1))
+	ctx = context.WithValue(ctx, UsernameContextKey, "alice")
+
+	canAccess, level := checker.CanAccessConnection(ctx, 10)
+	if canAccess {
+		t.Error("Expected access to be denied when owner is empty string")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone, got %q", level)
+	}
+}
+
+func TestCanAccessConnection_SharingLookupError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Set up a sharing lookup function that returns an error
+	checker.SetConnectionSharingLookup(func(_ context.Context, _ int) (bool, string, error) {
+		return false, "", fmt.Errorf("database connection failed")
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, int64(1))
+	ctx = context.WithValue(ctx, UsernameContextKey, "alice")
+
+	// Should deny access when sharing lookup returns error
+	canAccess, level := checker.CanAccessConnection(ctx, 99)
+	if canAccess {
+		t.Error("Expected access to be denied when sharing lookup returns error")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone, got %q", level)
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - HasAdminPermission with Token Scoping
+// =============================================================================
+
+func TestHasAdminPermissionTokenScopeDenied(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user with both manage_users and manage_connections
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("admin-group", "Admin group")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+	store.GrantAdminPermission(groupID, PermManageConnections)
+
+	// Create token scoped to ONLY manage_connections (not manage_users)
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped admin token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{PermManageConnections})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// User has manage_users via group but token scope excludes it
+	// This should return false because token scope restricts access
+	if checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected manage_users to be denied due to token scope restriction")
+	}
+
+	// manage_connections should still work (in token scope)
+	if !checker.HasAdminPermission(ctx, PermManageConnections) {
+		t.Error("Expected manage_connections to be allowed (in token scope)")
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - CanAccessMCPItem with Token Scoping
+// =============================================================================
+
+func TestCanAccessMCPItemTokenScopeDenied(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user with privileges
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant multiple MCP privileges
+	store.RegisterMCPPrivilege("tool_x", MCPPrivilegeTypeTool, "Tool X", false)
+	store.RegisterMCPPrivilege("tool_y", MCPPrivilegeTypeTool, "Tool Y", false)
+	store.GrantMCPPrivilegeByName(groupID, "tool_x")
+	store.GrantMCPPrivilegeByName(groupID, "tool_y")
+
+	// Create token scoped to ONLY tool_x
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped MCP token", nil)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_x"})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// tool_x should be accessible (in scope)
+	if !checker.CanAccessMCPItem(ctx, "tool_x") {
+		t.Error("Expected tool_x to be accessible (in token scope)")
+	}
+
+	// tool_y should be denied (user has it but token scope excludes it)
+	if checker.CanAccessMCPItem(ctx, "tool_y") {
+		t.Error("Expected tool_y to be denied due to token scope restriction")
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - GetEffectivePrivileges MCP Scope with Invalid IDs
+// =============================================================================
+
+func TestGetEffectivePrivilegesMCPScopeWithNonexistentPrivilegeID(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user with MCP privileges
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Register and grant MCP privileges
+	store.RegisterMCPPrivilege("tool_valid", MCPPrivilegeTypeTool, "Valid Tool", false)
+	store.GrantMCPPrivilegeByName(groupID, "tool_valid")
+
+	// Create token with a valid MCP scope entry
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenMCPScopeByNames(storedToken.ID, []string{"tool_valid"})
+
+	// Now manually insert an invalid privilege ID into token_mcp_scope
+	// This exercises the GetMCPPrivilegeByID error/nil path in GetEffectivePrivileges
+	store.db.Exec(
+		"INSERT INTO token_mcp_scope (token_id, privilege_identifier_id) VALUES (?, ?)",
+		storedToken.ID, 99999, // Non-existent privilege ID
+	)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should still return the valid tool_valid privilege
+	if !privs.MCPPrivileges["tool_valid"] {
+		t.Error("Expected tool_valid in effective privileges")
+	}
+	// The invalid ID 99999 should be silently skipped (GetMCPPrivilegeByID returns nil)
+	// Total privileges should be 1 (only tool_valid)
+	if len(privs.MCPPrivileges) != 1 {
+		t.Errorf("Expected 1 MCP privilege, got %d: %+v",
+			len(privs.MCPPrivileges), privs.MCPPrivileges)
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - CanAccessConnection Token Scope Error Paths
+// =============================================================================
+
+func TestCanAccessConnectionTokenScopeNotInScope(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user with connection privileges
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant access to connections 1 and 2 via group
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
+
+	// Create token scoped to ONLY connection 1
+	_, storedToken, _ := store.CreateToken("testuser", "Scoped token", nil)
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: 1, AccessLevel: AccessLevelReadWrite},
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// Connection 1 should be accessible (in token scope)
+	canAccess, level := checker.CanAccessConnection(ctx, 1)
+	if !canAccess {
+		t.Error("Expected connection 1 to be accessible (in token scope)")
+	}
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for connection 1, got %q", level)
+	}
+
+	// Connection 2 should be DENIED (user has group access but token scope excludes it)
+	canAccess, level = checker.CanAccessConnection(ctx, 2)
+	if canAccess {
+		t.Error("Expected connection 2 to be denied due to token scope restriction")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone for denied connection, got %q", level)
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - GetEffectivePrivileges Connection Wildcard Scope
+// =============================================================================
+
+func TestGetEffectivePrivilegesConnectionWildcardReadCeiling(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// User has read_write to multiple connections
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+	store.GrantConnectionPrivilege(groupID, 2, AccessLevelReadWrite)
+
+	// Token with wildcard connection scope at read level
+	// This should cap all connections to read access
+	_, storedToken, _ := store.CreateToken("testuser", "Wildcard read token", nil)
+	store.SetTokenConnectionScope(storedToken.ID, []ScopedConnection{
+		{ConnectionID: ConnectionIDAll, AccessLevel: AccessLevelRead},
+	})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Both connections should be capped to read
+	if privs.ConnectionPrivileges[1] != AccessLevelRead {
+		t.Errorf("Expected read for connection 1 (wildcard ceiling), got %q",
+			privs.ConnectionPrivileges[1])
+	}
+	if privs.ConnectionPrivileges[2] != AccessLevelRead {
+		t.Errorf("Expected read for connection 2 (wildcard ceiling), got %q",
+			privs.ConnectionPrivileges[2])
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - resolveConnectionAccess edge cases
+// =============================================================================
+
+func TestResolveConnectionAccessWildcardReadWriteElevates(t *testing.T) {
+	// Test that when both specific and wildcard are present,
+	// and wildcard is ReadWrite, the result is ReadWrite
+	privs := map[int]string{
+		1:               AccessLevelRead,      // Specific grant is read
+		ConnectionIDAll: AccessLevelReadWrite, // Wildcard is read_write
+	}
+
+	level, hasAccess := resolveConnectionAccess(privs, 1)
+	if !hasAccess {
+		t.Error("Expected access to be granted")
+	}
+	// Wildcard read_write should elevate the result
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write (wildcard elevates), got %q", level)
+	}
+}
+
+func TestResolveConnectionAccessSpecificOnlyNoWildcard(t *testing.T) {
+	// Test when only specific grant exists (no wildcard)
+	privs := map[int]string{
+		1: AccessLevelRead,
+	}
+
+	level, hasAccess := resolveConnectionAccess(privs, 1)
+	if !hasAccess {
+		t.Error("Expected access to be granted")
+	}
+	if level != AccessLevelRead {
+		t.Errorf("Expected read (specific grant), got %q", level)
+	}
+
+	// Connection 2 should have no access
+	level, hasAccess = resolveConnectionAccess(privs, 2)
+	if hasAccess {
+		t.Error("Expected no access for ungrant connection")
+	}
+}
+
+func TestResolveConnectionAccessWildcardOnlyNoSpecific(t *testing.T) {
+	// Test when only wildcard grant exists (no specific)
+	privs := map[int]string{
+		ConnectionIDAll: AccessLevelRead,
+	}
+
+	level, hasAccess := resolveConnectionAccess(privs, 999)
+	if !hasAccess {
+		t.Error("Expected access via wildcard")
+	}
+	if level != AccessLevelRead {
+		t.Errorf("Expected read (wildcard grant), got %q", level)
+	}
+}
+
+func TestResolveConnectionAccessBothPresentWildcardRead(t *testing.T) {
+	// Test when both specific and wildcard are present,
+	// and wildcard is Read (not ReadWrite)
+	privs := map[int]string{
+		1:               AccessLevelReadWrite, // Specific is read_write
+		ConnectionIDAll: AccessLevelRead,      // Wildcard is read
+	}
+
+	level, hasAccess := resolveConnectionAccess(privs, 1)
+	if !hasAccess {
+		t.Error("Expected access to be granted")
+	}
+	// Should use specific level (wildcard is not ReadWrite)
+	if level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write (specific grant), got %q", level)
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - CanAccessConnection with restricted connection, no userID
+// =============================================================================
+
+func TestCanAccessConnectionRestrictedNoUserID(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create a group and assign connection 1 to it (makes it restricted)
+	groupID, _ := store.CreateGroup("some-group", "Group with connection access")
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+
+	// Context without user ID but connection is restricted (assigned to group)
+	// This exercises the userID == 0 check in the restricted path
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	// Deliberately NOT setting UserIDContextKey
+
+	canAccess, level := checker.CanAccessConnection(ctx, 1)
+	if canAccess {
+		t.Error("Expected access to be denied when userID is 0 and connection is restricted")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone, got %q", level)
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - CanAccessMCPItem without userID for non-public tool
+// =============================================================================
+
+func TestCanAccessMCPItemNoUserIDForNonPublicTool(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Register a non-public tool
+	store.RegisterMCPPrivilege("private_tool", MCPPrivilegeTypeTool, "Private Tool", false)
+
+	// Grant it to a group (so it's restricted)
+	groupID, _ := store.CreateGroup("tool-group", "Group with tool access")
+	store.GrantMCPPrivilegeByName(groupID, "private_tool")
+
+	// Context without user ID
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	// Deliberately NOT setting UserIDContextKey
+
+	// The tool is registered and not public, so it should hit userID == 0 check
+	if checker.CanAccessMCPItem(ctx, "private_tool") {
+		t.Error("Expected denial when userID is 0 for non-public registered tool")
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - HasAdminPermission token scope returns false
+// =============================================================================
+
+func TestHasAdminPermissionTokenScopeReturnsFalse(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user with admin permissions
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("admin-group", "Admin group")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant wildcard admin permission to user via group
+	store.GrantAdminPermission(groupID, AdminPermissionWildcard)
+
+	// Create token with scope to only manage_connections
+	_, storedToken, _ := store.CreateToken("testuser", "Limited admin token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{PermManageConnections})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	// User has wildcard admin via group, but token scope restricts to manage_connections
+	// manage_users should be denied
+	if checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected manage_users to be denied (not in token admin scope)")
+	}
+
+	// manage_connections should be allowed
+	if !checker.HasAdminPermission(ctx, PermManageConnections) {
+		t.Error("Expected manage_connections to be allowed (in token admin scope)")
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - GetEffectivePrivileges admin scope filtering
+// =============================================================================
+
+func TestGetEffectivePrivilegesAdminScopeFiltering(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	// Create user with admin permissions
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("admin-group", "Admin group")
+	store.AddUserToGroup(groupID, userID)
+
+	// Grant multiple admin permissions
+	store.GrantAdminPermission(groupID, PermManageUsers)
+	store.GrantAdminPermission(groupID, PermManageConnections)
+	store.GrantAdminPermission(groupID, PermManageGroups)
+
+	// Create token with scope to only manage_users
+	_, storedToken, _ := store.CreateToken("testuser", "Limited admin token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers})
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+
+	privs := checker.GetEffectivePrivileges(ctx)
+
+	// Should only have manage_users (the only one in token scope)
+	if len(privs.AdminPermissions) != 1 {
+		t.Errorf("Expected 1 admin permission after scope filtering, got %d: %+v",
+			len(privs.AdminPermissions), privs.AdminPermissions)
+	}
+	if !privs.AdminPermissions[PermManageUsers] {
+		t.Error("Expected manage_users in scoped admin permissions")
+	}
+	if privs.AdminPermissions[PermManageConnections] {
+		t.Error("Expected manage_connections to be filtered out by token scope")
+	}
+	if privs.AdminPermissions[PermManageGroups] {
+		t.Error("Expected manage_groups to be filtered out by token scope")
+	}
+}
+
+// =============================================================================
+// Coverage Gap Tests - Database Error Paths (using closed DB)
+// =============================================================================
+
+func TestCanAccessMCPItemDatabaseError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+
+	checker := NewRBACChecker(store)
+
+	// Register a non-public privilege before closing
+	store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test Tool", false)
+
+	// Create user and give them access
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantMCPPrivilegeByName(groupID, "test_tool")
+
+	// Close the database to trigger errors
+	cleanup()
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Should return false due to database error in IsPrivilegePublic
+	if checker.CanAccessMCPItem(ctx, "test_tool") {
+		t.Error("Expected false when database is closed")
+	}
+}
+
+func TestHasAdminPermissionDatabaseError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+
+	checker := NewRBACChecker(store)
+
+	// Create user and give them admin permission
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("admin-group", "Admin")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+
+	// Close the database to trigger errors
+	cleanup()
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Should return false due to database error in GetUserAdminPermissions
+	if checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected false when database is closed")
+	}
+}
+
+func TestCanAccessConnectionDatabaseError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+
+	checker := NewRBACChecker(store)
+
+	// Create user and give them connection access
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantConnectionPrivilege(groupID, 1, AccessLevelReadWrite)
+
+	// Close the database to trigger errors
+	cleanup()
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Should return false due to database error in IsConnectionAssignedToAnyGroup
+	canAccess, level := checker.CanAccessConnection(ctx, 1)
+	if canAccess {
+		t.Error("Expected false when database is closed")
+	}
+	if level != AccessLevelNone {
+		t.Errorf("Expected AccessLevelNone, got %q", level)
+	}
+}
+
+func TestHasAdminPermissionTokenScopeDatabaseError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+
+	checker := NewRBACChecker(store)
+
+	// Create user with admin permission and token
+	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("admin-group", "Admin")
+	store.AddUserToGroup(groupID, userID)
+	store.GrantAdminPermission(groupID, PermManageUsers)
+
+	// Create token with admin scope
+	_, storedToken, _ := store.CreateToken("testuser", "Admin token", nil)
+	store.SetTokenAdminScope(storedToken.ID, []string{PermManageUsers})
+
+	// Store the token ID before closing
+	tokenID := storedToken.ID
+
+	// Close the database to trigger errors
+	cleanup()
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, TokenIDContextKey, tokenID)
+
+	// Should return false due to database error in GetUserAdminPermissions
+	// (the first DB call in the function after nil and superuser checks)
+	if checker.HasAdminPermission(ctx, PermManageUsers) {
+		t.Error("Expected false when database is closed")
+	}
+}

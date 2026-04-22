@@ -243,7 +243,7 @@ func (s *AuthStore) IsConnectionInTokenScope(tokenID int64, connectionID int) (b
 
 	// No scope means unrestricted
 	if count == 0 {
-		return true, "", nil
+		return true, AccessLevelNone, nil
 	}
 
 	// Check for specific connection
@@ -265,7 +265,7 @@ func (s *AuthStore) IsConnectionInTokenScope(tokenID int64, connectionID int) (b
 		tokenID, ConnectionIDAll,
 	).Scan(&accessLevel)
 	if err == sql.ErrNoRows {
-		return false, "", nil
+		return false, AccessLevelNone, nil
 	}
 	if err != nil {
 		return false, "", fmt.Errorf("failed to check wildcard connection in scope: %w", err)

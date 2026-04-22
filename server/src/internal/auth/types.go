@@ -94,6 +94,7 @@ const ConnectionIDAll = 0
 
 // ConnectionAccessLevel constants
 const (
+	AccessLevelNone      = "" // No access or unrestricted scope
 	AccessLevelRead      = "read"
 	AccessLevelReadWrite = "read_write"
 )

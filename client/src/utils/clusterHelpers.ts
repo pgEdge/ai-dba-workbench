@@ -75,7 +75,7 @@ export const extractClusterServerIds = (
     const servers = selection.servers as
         ServerLike[] | undefined;
     if (!servers) { return []; }
-    return collectServers(servers).map(s => s.id);
+    return [...new Set(collectServers(servers).map(s => s.id))];
 };
 
 /**

@@ -364,6 +364,22 @@ describe('extractClusterServerIds', () => {
         };
         expect(extractClusterServerIds(selection)).toEqual([1, 2, 3]);
     });
+
+    it('deduplicates server IDs when children share parent IDs', () => {
+        const selection = {
+            servers: [
+                {
+                    id: 1,
+                    name: 'parent',
+                    children: [
+                        { id: 1, name: 'same-id-child' },
+                        { id: 2, name: 'child2' },
+                    ],
+                },
+            ],
+        };
+        expect(extractClusterServerIds(selection)).toEqual([1, 2]);
+    });
 });
 
 describe('computeEstateServerCounts', () => {

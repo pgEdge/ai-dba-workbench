@@ -14,30 +14,7 @@ import { BaseDashboardProps } from '../types';
 import CollapsibleSection from '../CollapsibleSection';
 import ReplicationLagSection from './ReplicationLagSection';
 import ComparativeChartsSection from './ComparativeChartsSection';
-
-
-/**
- * Extract all server IDs from a cluster selection, including
- * nested children.
- */
-const extractServerIds = (selection: Record<string, unknown>): number[] => {
-    const ids = new Set<number>();
-    const servers = selection.servers as Array<Record<string, unknown>> | undefined;
-
-    const collectIds = (serverList: Array<Record<string, unknown>> | undefined): void => {
-        serverList?.forEach(s => {
-            if (typeof s.id === 'number') {
-                ids.add(s.id);
-            }
-            if (s.children) {
-                collectIds(s.children as Array<Record<string, unknown>>);
-            }
-        });
-    };
-
-    collectIds(servers);
-    return Array.from(ids);
-};
+import { extractClusterServerIds } from '../../../utils/clusterHelpers';
 
 /**
  * ClusterDashboard focuses on replication health and shows
@@ -46,7 +23,7 @@ const extractServerIds = (selection: Record<string, unknown>): number[] => {
  * the cluster.
  */
 const ClusterDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
-    const serverIds = useMemo(() => extractServerIds(selection), [selection]);
+    const serverIds = useMemo(() => extractClusterServerIds(selection), [selection]);
 
     return (
         <Box>

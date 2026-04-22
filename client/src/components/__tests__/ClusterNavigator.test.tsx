@@ -10,7 +10,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { ThemeProvider } from '@mui/material/styles';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ClusterNavigator from '../ClusterNavigator';
@@ -483,11 +482,23 @@ describe('ClusterNavigator', () => {
     });
 
     describe('configure group round-trip (issue #63)', () => {
+        // These tests intentionally avoid userEvent.type / userEvent.clear for
+        // the name field. Under v8 coverage instrumentation every keystroke
+        // re-enters heavily instrumented MUI transitions, and typing a full
+        // string character-by-character pushes the test past the default
+        // 5s timeout. fireEvent.change is equivalent for a controlled
+        // TextField (single synchronous state update) and is deterministic
+        // under both plain `npm test` and `npm run test:coverage`. The
+        // generous waitFor timeout is a belt-and-suspenders guard for the
+        // dialog's Grow/Collapse transitions, which are also slowed down
+        // significantly by v8 instrumentation.
+
+        const WAIT_TIMEOUT = 15000;
+
         it('passes the unchanged "group-{id}" string from configure to updateGroupName', async () => {
             // Superuser is required to see the settings (configure) button
             mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
 
-            const user = userEvent.setup({ delay: null });
             renderWithTheme(
                 <ClusterNavigator
                     data={mockClusterData}
@@ -505,42 +516,51 @@ describe('ClusterNavigator', () => {
             expect(settingsButtons.length).toBeGreaterThan(0);
             fireEvent.click(settingsButtons[0]);
 
-            // Verify the edit dialog shows the correct group name
-            await waitFor(() => {
-                expect(
-                    screen.getByText(/Group Settings: Production/)
-                ).toBeInTheDocument();
-            });
+            // Verify the edit dialog shows the correct group name.
+            await waitFor(
+                () => {
+                    expect(
+                        screen.getByText(/Group Settings: Production/)
+                    ).toBeInTheDocument();
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
 
             // Name field should be pre-populated from the group data
             const nameField = screen.getByRole('textbox', { name: /^name/i });
             expect(nameField).toHaveValue('Production');
 
-            // Change the name and submit
-            await user.clear(nameField);
-            await user.type(nameField, 'Production Renamed');
+            // Change the name and submit. fireEvent.change is a single
+            // synchronous update that bypasses per-keystroke instrumentation
+            // overhead in v8 coverage runs.
+            fireEvent.change(nameField, {
+                target: { value: 'Production Renamed' },
+            });
+            expect(nameField).toHaveValue('Production Renamed');
 
             const saveButton = screen.getByRole('button', { name: /^save$/i });
             fireEvent.click(saveButton);
 
             // Root-cause check: updateGroupName must receive the original
             // "group-1" string, not "1" and not the number 1.
-            await waitFor(() => {
-                expect(mockUpdateGroupName).toHaveBeenCalledWith(
-                    'group-1',
-                    'Production Renamed'
-                );
-            });
+            await waitFor(
+                () => {
+                    expect(mockUpdateGroupName).toHaveBeenCalledWith(
+                        'group-1',
+                        'Production Renamed'
+                    );
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
             // Type-level sanity: the first argument must be a string.
             const [firstArg] = mockUpdateGroupName.mock.calls[0];
             expect(typeof firstArg).toBe('string');
             expect(firstArg).toBe('group-1');
-        });
+        }, 20000);
 
         it('calls createGroup (not updateGroupName) when saving from the Add Group flow', async () => {
             mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
 
-            const user = userEvent.setup({ delay: null });
             renderWithTheme(
                 <ClusterNavigator
                     data={mockClusterData}
@@ -555,40 +575,46 @@ describe('ClusterNavigator', () => {
             });
             fireEvent.click(addButton);
 
-            // Click the "Add Cluster Group" option in the menu
-            await waitFor(() => {
-                expect(
-                    screen.getByRole('menuitem', { name: /add cluster group/i })
-                ).toBeInTheDocument();
-            });
-            fireEvent.click(
-                screen.getByRole('menuitem', { name: /add cluster group/i })
+            // Click the "Add Cluster Group" option in the menu (Grow
+            // transition can take noticeable time under v8 coverage).
+            const menuItem = await screen.findByRole(
+                'menuitem',
+                { name: /add cluster group/i },
+                { timeout: WAIT_TIMEOUT }
             );
+            fireEvent.click(menuItem);
 
             // Dialog opens in create mode
-            await waitFor(() => {
-                expect(
-                    screen.getByText('Add Cluster Group')
-                ).toBeInTheDocument();
-            });
+            await waitFor(
+                () => {
+                    expect(
+                        screen.getByText('Add Cluster Group')
+                    ).toBeInTheDocument();
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
 
             const nameField = screen.getByRole('textbox', { name: /^name/i });
-            await user.type(nameField, 'New Group');
+            // Use fireEvent.change for the same reason as above.
+            fireEvent.change(nameField, { target: { value: 'New Group' } });
+            expect(nameField).toHaveValue('New Group');
 
             fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-            await waitFor(() => {
-                expect(mockCreateGroup).toHaveBeenCalledWith(
-                    expect.objectContaining({ name: 'New Group' })
-                );
-            });
+            await waitFor(
+                () => {
+                    expect(mockCreateGroup).toHaveBeenCalledWith(
+                        expect.objectContaining({ name: 'New Group' })
+                    );
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
             expect(mockUpdateGroupName).not.toHaveBeenCalled();
-        });
+        }, 20000);
 
         it('renders the Alert overrides panel with a numeric scopeId extracted from "group-{id}"', async () => {
             mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
 
-            const user = userEvent.setup({ delay: null });
             renderWithTheme(
                 <ClusterNavigator
                     data={mockClusterData}
@@ -602,23 +628,29 @@ describe('ClusterNavigator', () => {
             );
             fireEvent.click(settingsButtons[0]);
 
-            await waitFor(() => {
-                expect(
-                    screen.getByText(/Group Settings: Production/)
-                ).toBeInTheDocument();
-            });
+            await waitFor(
+                () => {
+                    expect(
+                        screen.getByText(/Group Settings: Production/)
+                    ).toBeInTheDocument();
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
 
-            await user.click(
+            fireEvent.click(
                 screen.getByRole('tab', { name: /alert overrides/i })
             );
 
             // The panel mock echoes its scope/scopeId props; this asserts
             // that the numeric 1 (not the string "group-1") reached the panel.
-            await waitFor(() => {
-                expect(
-                    screen.getByTestId('alert-overrides-panel')
-                ).toHaveTextContent('AlertOverridesPanel: group 1');
-            });
-        });
+            await waitFor(
+                () => {
+                    expect(
+                        screen.getByTestId('alert-overrides-panel')
+                    ).toHaveTextContent('AlertOverridesPanel: group 1');
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
+        }, 20000);
     });
 });

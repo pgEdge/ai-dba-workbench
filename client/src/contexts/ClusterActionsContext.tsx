@@ -14,6 +14,18 @@ import { useAuth } from './AuthContext';
 import { useClusterData } from './ClusterDataContext';
 import { useClusterSelection } from './ClusterSelectionContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
+import { parseGroupNumericId } from '../components/ClusterNavigator/utils';
+
+/**
+ * Strict matcher for auto-detected group ids.
+ *
+ * The auto bucket arrives as either the bare token "group-auto" or as
+ * "group-auto-<suffix>" where the suffix is a url-safe token. The
+ * earlier, looser pattern /^group-auto/ also matched malformed ids
+ * like "group-autobad"; this anchored form keeps the refactor's
+ * explicit-rejection contract intact.
+ */
+const AUTO_GROUP_ID = /^group-auto(?:-[A-Za-z0-9_-]+)?$/;
 
 export interface ServerData {
     name?: string;
@@ -63,20 +75,23 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const updateGroupName = useCallback(async (groupId: string, newName: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        if (!/^group-/.test(groupId)) {
+        // Database-backed id: address the server row by its numeric id.
+        const numericId = parseGroupNumericId(groupId);
+        if (numericId !== undefined) {
+            await apiPut(`/api/v1/cluster-groups/${numericId}`, { name: newName });
+            await fetchClusterData();
+            return;
+        }
+
+        // Auto-detected bucket: forward the full "group-auto..." token.
+        // Anything else (missing prefix, malformed suffix like
+        // "group-autobad", mixed alphanumerics like "group-1a") is
+        // rejected outright so the server never receives an unknown shape.
+        if (!AUTO_GROUP_ID.test(groupId)) {
             throw new Error('Invalid group ID');
         }
 
-        const isAutoDetected = /^group-auto/.test(groupId);
-        const groupIdentifier = isAutoDetected
-            ? groupId
-            : groupId.slice('group-'.length);
-
-        if (!isAutoDetected && !/^\d+$/.test(groupIdentifier)) {
-            throw new Error('Invalid group ID');
-        }
-
-        await apiPut(`/api/v1/cluster-groups/${groupIdentifier}`, { name: newName });
+        await apiPut(`/api/v1/cluster-groups/${groupId}`, { name: newName });
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
@@ -110,14 +125,14 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             throw new Error('Invalid cluster ID');
         }
 
-        const groupMatch = /^group-(\d+)$/.exec(groupId);
-        if (!groupMatch) {
+        const numericGroupId = parseGroupNumericId(groupId);
+        if (numericGroupId === undefined) {
             throw new Error('Invalid group ID');
         }
 
         await apiPut(`/api/v1/clusters/${clusterMatch[1]}`, {
             name: newName,
-            group_id: parseInt(groupMatch[1], 10),
+            group_id: numericGroupId,
         });
 
         await fetchClusterData();
@@ -216,12 +231,12 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const deleteGroup = useCallback(async (groupId: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const match = /^group-(\d+)$/.exec(groupId);
-        if (!match) {
+        const numericId = parseGroupNumericId(groupId);
+        if (numericId === undefined) {
             throw new Error('Invalid group ID');
         }
 
-        await apiDelete(`/api/v1/cluster-groups/${match[1]}`);
+        await apiDelete(`/api/v1/cluster-groups/${numericId}`);
 
         await fetchClusterData();
     }, [user, fetchClusterData]);
@@ -238,10 +253,9 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         // Extract the target group's numeric ID from the group ID string (e.g., "group-123")
         let numericGroupId: number | null = null;
         if (targetGroupId) {
-            const groupIdStr = targetGroupId.toString();
-            const match = groupIdStr.match(/^group-(\d+)$/);
-            if (match) {
-                numericGroupId = parseInt(match[1], 10);
+            const parsed = parseGroupNumericId(targetGroupId.toString());
+            if (parsed !== undefined) {
+                numericGroupId = parsed;
             }
         }
 

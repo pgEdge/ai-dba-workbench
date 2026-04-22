@@ -37,6 +37,7 @@ import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
 import SlideTransition from './shared/SlideTransition';
+import { parseGroupNumericId } from './ClusterNavigator/utils';
 
 // --- Style constants (Issue 23) ---
 
@@ -141,20 +142,6 @@ interface GroupDialogProps {
 }
 
 /**
- * Extract the numeric scope id from a "group-{id}" formatted id.
- * Override panel endpoints require a numeric scope id; the "group-auto"
- * bucket has no backing database row and therefore no numeric id.
- * Returns undefined when the id does not match the numeric shape.
- */
-const extractNumericGroupId = (groupId?: string): number | undefined => {
-    if (!groupId) {return undefined;}
-    const match = /^group-(\d+)$/.exec(groupId);
-    if (!match) {return undefined;}
-    const parsed = parseInt(match[1], 10);
-    return Number.isNaN(parsed) ? undefined : parsed;
-};
-
-/**
  * GroupDialog - Dialog for creating and editing cluster groups
  */
 const GroupDialog: React.FC<GroupDialogProps> = ({
@@ -178,7 +165,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
     // Override panel endpoints address groups by their numeric database id.
     // The group id arrives in the "group-{id}" form; extract the tail here
     // so the string id can flow through the rest of the edit flow unchanged.
-    const numericGroupId = extractNumericGroupId(group?.id);
+    const numericGroupId = parseGroupNumericId(group?.id);
 
     // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {

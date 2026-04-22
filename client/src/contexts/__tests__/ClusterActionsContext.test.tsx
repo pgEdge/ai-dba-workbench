@@ -157,6 +157,56 @@ describe('ClusterActionsContext', () => {
             ).rejects.toThrow('Invalid group ID');
             expect(mockApiPut).not.toHaveBeenCalled();
         });
+
+        it.each([
+            ['group-autobad'],
+            ['group-automatic'],
+            ['group-auto_foo'],
+            ['group-auto/evil'],
+            ['group-auto-'],
+            ['group-auto-bad id'],
+        ])(
+            'rejects malformed auto-prefixed id %j and never forwards it',
+            async (malformed) => {
+                const { result } = renderHook(() => useClusterActions(), {
+                    wrapper,
+                });
+
+                await expect(
+                    result.current.updateGroupName(malformed, 'X'),
+                ).rejects.toThrow('Invalid group ID');
+                expect(mockApiPut).not.toHaveBeenCalled();
+            },
+        );
+
+        it('accepts the bare "group-auto" bucket id', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName('group-auto', 'Auto');
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto',
+                { name: 'Auto' },
+            );
+        });
+
+        it('accepts "group-auto-<token>" with url-safe suffix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName(
+                    'group-auto-some_key-123',
+                    'X',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto-some_key-123',
+                { name: 'X' },
+            );
+        });
     });
 
     describe('updateClusterName', () => {

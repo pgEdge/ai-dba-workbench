@@ -155,6 +155,9 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
         sys.cpu_clock_speed != null ||
         sys.memory_total_bytes != null ||
         sys.memory_used_bytes != null ||
+        sys.memory_free_bytes != null ||
+        sys.swap_total_bytes != null ||
+        sys.swap_used_bytes != null ||
         (sys.disks?.length ?? 0) > 0
     );
 

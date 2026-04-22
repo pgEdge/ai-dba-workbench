@@ -147,5 +147,17 @@ describe('serverInfoFormatters', () => {
         it('returns 0 when used is 0', () => {
             expect(pct(0, 100)).toBe(0);
         });
+
+        it('caps values above 100%', () => {
+            expect(pct(120, 100)).toBe(100);
+        });
+
+        it('caps negative values at 0%', () => {
+            expect(pct(-10, 100)).toBe(0);
+        });
+
+        it('returns null when total is negative', () => {
+            expect(pct(50, -100)).toBeNull();
+        });
     });
 });

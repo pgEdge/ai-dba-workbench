@@ -18,19 +18,26 @@ import { INPUT_HISTORY_KEY, INPUT_HISTORY_MAX } from './chatConstants';
 // ---------------------------------------------------------------
 
 /**
- * Estimate token count from an array of API messages by dividing
- * the total serialised character length by 4.
+ * Estimate token count from an array of API messages.
+ * Adds per-message overhead (4 tokens for role, formatting, delimiters)
+ * plus content length divided by 4.
  */
 export function estimateTokenCount(msgs: APIMessage[]): number {
-    let totalLength = 0;
+    let totalTokens = 0;
     for (const msg of msgs) {
+        // Per-message overhead (role, formatting, delimiters)
+        totalTokens += 4;
         if (typeof msg.content === 'string') {
-            totalLength += msg.content.length;
-        } else {
-            totalLength += JSON.stringify(msg.content).length;
+            totalTokens += Math.ceil(msg.content.length / 4);
+        } else if (Array.isArray(msg.content)) {
+            for (const block of msg.content) {
+                if ('text' in block) {
+                    totalTokens += Math.ceil(block.text.length / 4);
+                }
+            }
         }
     }
-    return Math.ceil(totalLength / 4);
+    return totalTokens;
 }
 
 // ---------------------------------------------------------------

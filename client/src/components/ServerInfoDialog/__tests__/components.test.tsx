@@ -290,6 +290,122 @@ describe('ServerInfoDialog components', () => {
 
             expect(screen.getByTestId('ExpandMoreIcon')).toBeInTheDocument();
         });
+
+        it('has role="button" and tabIndex for keyboard accessibility', () => {
+            renderWithTheme(
+                <Section
+                    sectionId="test"
+                    icon={<HomeIcon />}
+                    title="Test Section"
+                    defaultOpen={true}
+                >
+                    <div>Content</div>
+                </Section>
+            );
+
+            const header = screen.getByRole('button');
+            expect(header).toBeInTheDocument();
+            expect(header).toHaveAttribute('tabindex', '0');
+        });
+
+        it('toggles section on Enter key press', async () => {
+            renderWithTheme(
+                <Section
+                    sectionId="test"
+                    icon={<HomeIcon />}
+                    title="Test Section"
+                    defaultOpen={true}
+                >
+                    <div>Enter Key Content</div>
+                </Section>
+            );
+
+            // Content is visible initially
+            expect(screen.getByText('Enter Key Content')).toBeVisible();
+
+            // Press Enter on header
+            const header = screen.getByRole('button');
+            fireEvent.keyDown(header, { key: 'Enter' });
+
+            // Content should be hidden after collapse
+            await waitFor(() => {
+                expect(screen.getByText('Enter Key Content')).not.toBeVisible();
+            });
+        });
+
+        it('toggles section on Space key press', async () => {
+            renderWithTheme(
+                <Section
+                    sectionId="test"
+                    icon={<HomeIcon />}
+                    title="Test Section"
+                    defaultOpen={true}
+                >
+                    <div>Space Key Content</div>
+                </Section>
+            );
+
+            // Content is visible initially
+            expect(screen.getByText('Space Key Content')).toBeVisible();
+
+            // Press Space on header
+            const header = screen.getByRole('button');
+            fireEvent.keyDown(header, { key: ' ' });
+
+            // Content should be hidden after collapse
+            await waitFor(() => {
+                expect(screen.getByText('Space Key Content')).not.toBeVisible();
+            });
+        });
+
+        it('has aria-expanded reflecting open state', async () => {
+            renderWithTheme(
+                <Section
+                    sectionId="test"
+                    icon={<HomeIcon />}
+                    title="Test Section"
+                    defaultOpen={true}
+                >
+                    <div>Aria Content</div>
+                </Section>
+            );
+
+            const header = screen.getByRole('button');
+
+            // Initially open
+            expect(header).toHaveAttribute('aria-expanded', 'true');
+
+            // Click to close
+            fireEvent.click(header);
+
+            // aria-expanded should be false
+            await waitFor(() => {
+                expect(header).toHaveAttribute('aria-expanded', 'false');
+            });
+        });
+
+        it('does not toggle on other key presses', () => {
+            renderWithTheme(
+                <Section
+                    sectionId="test"
+                    icon={<HomeIcon />}
+                    title="Test Section"
+                    defaultOpen={true}
+                >
+                    <div>Other Key Content</div>
+                </Section>
+            );
+
+            // Content is visible initially
+            expect(screen.getByText('Other Key Content')).toBeVisible();
+
+            // Press a different key on header
+            const header = screen.getByRole('button');
+            fireEvent.keyDown(header, { key: 'Tab' });
+
+            // Content should still be visible
+            expect(screen.getByText('Other Key Content')).toBeVisible();
+        });
     });
 
     // -----------------------------------------------------------------------
@@ -327,11 +443,10 @@ describe('ServerInfoDialog components', () => {
             expect(screen.getByText('\u2014')).toBeInTheDocument();
         });
 
-        it('renders em dash for 0 value (falsy in JS)', () => {
-            // The KV component uses `value || em_dash` which treats 0 as falsy
+        it('renders numeric zero values', () => {
             renderWithTheme(<KV label="Zero Label" value={0} />);
 
-            expect(screen.getByText('\u2014')).toBeInTheDocument();
+            expect(screen.getByText('0')).toBeInTheDocument();
         });
 
         it('uses monospace font by default', () => {

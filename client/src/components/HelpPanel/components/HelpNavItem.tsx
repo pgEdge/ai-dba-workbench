@@ -45,6 +45,8 @@ const HelpNavItem: React.FC<HelpNavItemProps> = ({
 
     return (
         <ListItemButton
+            selected={isActive}
+            aria-current={isActive ? 'page' : undefined}
             onClick={() => onClick(pageId)}
             sx={getNavItemSx(isActive)}
         >

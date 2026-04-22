@@ -32,7 +32,7 @@ const KV: React.FC<KVProps> = ({ label, value, mono = true, span = false }) => {
                 ...getKvValueSx(),
                 fontFamily: mono ? MONO_FONT : 'inherit',
             }}>
-                {value || '\u2014'}
+                {value === null || value === undefined || value === '' ? '\u2014' : value}
             </Typography>
         </Box>
     );

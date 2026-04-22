@@ -45,8 +45,9 @@ export function formatClockSpeed(hz: number | null | undefined): string {
  * Calculate the percentage of used out of total.
  */
 export function pct(used: number | null, total: number | null): number | null {
-    if (used == null || total == null || total === 0) {
+    if (used == null || total == null || total <= 0) {
         return null;
     }
-    return Math.round((used / total) * 100);
+    const raw = Math.round((used / total) * 100);
+    return Math.min(100, Math.max(0, raw));
 }

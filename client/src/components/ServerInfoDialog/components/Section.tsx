@@ -77,6 +77,15 @@ const Section: React.FC<SectionProps> = ({
             <Box
                 sx={getSectionHeaderSx(theme)}
                 onClick={handleToggle}
+                role="button"
+                tabIndex={0}
+                aria-expanded={open}
+                onKeyDown={(e: React.KeyboardEvent) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleToggle();
+                    }
+                }}
             >
                 {icon}
                 <Typography sx={getSectionTitleSx()}>

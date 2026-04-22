@@ -69,19 +69,21 @@ describe('chatHelpers', () => {
             const msgs: APIMessage[] = [
                 { role: 'user', content: 'Hello world' },
             ];
-            // "Hello world" = 11 chars, 11/4 = 2.75, ceil = 3
+            // Per-message overhead: 4 tokens
+            // "Hello world" = 11 chars, ceil(11/4) = 3 tokens
+            // Total: 4 + 3 = 7
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(3);
+            expect(result).toBe(7);
         });
 
         it('estimates tokens for multiple messages', () => {
             const msgs: APIMessage[] = [
-                { role: 'user', content: 'Hello' },          // 5 chars
-                { role: 'assistant', content: 'Hi there!' }, // 9 chars
+                { role: 'user', content: 'Hello' },          // 4 + ceil(5/4) = 4 + 2 = 6
+                { role: 'assistant', content: 'Hi there!' }, // 4 + ceil(9/4) = 4 + 3 = 7
             ];
-            // Total 14 chars, 14/4 = 3.5, ceil = 4
+            // Total: 6 + 7 = 13
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(4);
+            expect(result).toBe(13);
         });
 
         it('estimates tokens for content block arrays', () => {
@@ -94,36 +96,36 @@ describe('chatHelpers', () => {
                     ],
                 },
             ];
-            // JSON.stringify of the content array
-            const serialized = JSON.stringify(msgs[0].content);
-            const expectedTokens = Math.ceil(serialized.length / 4);
-
+            // Per-message overhead: 4 tokens
+            // "Hello" = 5 chars, ceil(5/4) = 2 tokens
+            // tool_use block has no 'text' field, so not counted
+            // Total: 4 + 2 = 6
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(expectedTokens);
+            expect(result).toBe(6);
         });
 
         it('handles mixed string and array content', () => {
             const msgs: APIMessage[] = [
-                { role: 'user', content: 'Test' },  // 4 chars
+                { role: 'user', content: 'Test' },  // 4 + ceil(4/4) = 4 + 1 = 5
                 {
                     role: 'assistant',
-                    content: [{ type: 'text', text: 'Response' }],
+                    content: [{ type: 'text', text: 'Response' }], // 4 + ceil(8/4) = 4 + 2 = 6
                 },
             ];
-            const arrayContent = JSON.stringify(msgs[1].content);
-            const totalChars = 4 + arrayContent.length;
-            const expectedTokens = Math.ceil(totalChars / 4);
-
+            // Total: 5 + 6 = 11
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(expectedTokens);
+            expect(result).toBe(11);
         });
 
         it('handles empty string content', () => {
             const msgs: APIMessage[] = [
                 { role: 'user', content: '' },
             ];
+            // Per-message overhead: 4 tokens
+            // Empty string: ceil(0/4) = 0 tokens
+            // Total: 4
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(0);
+            expect(result).toBe(4);
         });
 
         it('handles tool result content', () => {
@@ -139,11 +141,11 @@ describe('chatHelpers', () => {
                     ],
                 },
             ];
-            const serialized = JSON.stringify(msgs[0].content);
-            const expectedTokens = Math.ceil(serialized.length / 4);
-
+            // Per-message overhead: 4 tokens
+            // tool_result block has 'content' not 'text', so not counted
+            // Total: 4
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(expectedTokens);
+            expect(result).toBe(4);
         });
     });
 

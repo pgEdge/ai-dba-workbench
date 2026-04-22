@@ -64,7 +64,7 @@ const SystemSection: React.FC<SystemSectionProps> = ({ system: sys }) => {
                 {sys.cpu_cores != null && (
                     <KV
                         label="Cores"
-                        value={`${sys.cpu_cores} physical${sys.cpu_logical ? ` / ${sys.cpu_logical} logical` : ''}`}
+                        value={`${sys.cpu_cores} physical${sys.cpu_logical != null ? ` / ${sys.cpu_logical} logical` : ''}`}
                     />
                 )}
                 {sys.cpu_clock_speed != null && (

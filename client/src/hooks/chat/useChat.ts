@@ -386,7 +386,7 @@ export function useChat(): UseChatReturn {
                             const resultText =
                                 toolData.content?.[0]?.text ||
                                 (toolData.isError
-                                    ? `Error: ${toolData.content?.[0]?.text}`
+                                    ? 'Tool execution failed'
                                     : 'No data returned');
 
                             activity.status = toolData.isError

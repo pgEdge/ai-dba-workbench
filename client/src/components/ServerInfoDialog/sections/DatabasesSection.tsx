@@ -131,7 +131,7 @@ const DatabasesSection: React.FC<DatabasesSectionProps> = ({
                             </Box>
                         )}
                         {/* AI Analysis for this database */}
-                        {ai?.databases?.[db.name] ? (
+                        {ai?.databases?.[db.name] != null ? (
                             <Box sx={getAiBoxSx(theme)}>
                                 <Box sx={{
                                     display: 'flex',

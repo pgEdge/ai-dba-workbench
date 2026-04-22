@@ -57,30 +57,39 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
     const [aiAnalysis, setAiAnalysis] = useState<AIAnalysisInfo | null>(null);
     const [aiLoading, setAiLoading] = useState(false);
 
-    const fetchInfo = useCallback(async () => {
+    const fetchInfo = useCallback(async (signal?: AbortSignal) => {
         if (!connectionId) {
             return;
         }
         setLoading(true);
         setError(null);
+        setData(null);
         try {
             const resp = await apiGet<ServerInfoResponse>(
-                `/api/v1/server-info/${connectionId}`
+                `/api/v1/server-info/${connectionId}`,
+                { signal }
             );
-            setData(resp);
+            if (!signal?.aborted) {
+                setData(resp);
+            }
         } catch (err) {
+            if (signal?.aborted) return;
             console.error('Failed to fetch server info:', err);
             setError(
                 err instanceof Error ? err.message : 'Failed to load server information'
             );
         } finally {
-            setLoading(false);
+            if (!signal?.aborted) {
+                setLoading(false);
+            }
         }
     }, [connectionId]);
 
     useEffect(() => {
         if (open) {
-            fetchInfo();
+            const controller = new AbortController();
+            fetchInfo(controller.signal);
+            return () => controller.abort();
         }
     }, [open, fetchInfo]);
 
@@ -90,15 +99,19 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
         }
         // Fetch AI analysis asynchronously
         let cancelled = false;
+        const controller = new AbortController();
         setAiLoading(true);
-        apiGet<AIAnalysisInfo>(`/api/v1/server-info/${connectionId}/ai-analysis`)
+        setAiAnalysis(null);
+        apiGet<AIAnalysisInfo | null>(`/api/v1/server-info/${connectionId}/ai-analysis`, { signal: controller.signal })
             .then((resp) => {
                 if (!cancelled) {
                     setAiAnalysis(resp);
                 }
             })
             .catch((err) => {
-                console.error('Failed to fetch AI analysis:', err);
+                if (!cancelled) {
+                    console.error('Failed to fetch AI analysis:', err);
+                }
             })
             .finally(() => {
                 if (!cancelled) {
@@ -107,6 +120,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
             });
         return () => {
             cancelled = true;
+            controller.abort();
         };
     }, [open, data, connectionId]);
 

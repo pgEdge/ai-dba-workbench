@@ -92,6 +92,14 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
         }
     }, [open, helpContext]);
 
+    // Normalize page when AI is disabled to prevent showing Overview
+    // content under an "Ask Ellie" title
+    useEffect(() => {
+        if (!aiEnabled && currentPage === HELP_PAGES.askEllie) {
+            setCurrentPage(HELP_PAGES.overview);
+        }
+    }, [aiEnabled, currentPage]);
+
     const renderPage = () => {
         switch (currentPage) {
             case HELP_PAGES.navigator:
@@ -157,6 +165,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
                 <Box sx={styles.headerWrapper}>
                     {currentPage !== HELP_PAGES.overview && (
                         <IconButton
+                            aria-label="back to help overview"
                             onClick={() => setCurrentPage(HELP_PAGES.overview)}
                             size="small"
                             sx={styles.backButton}

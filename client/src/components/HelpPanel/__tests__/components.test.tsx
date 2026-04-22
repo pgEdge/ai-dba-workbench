@@ -73,20 +73,20 @@ describe('HelpPanel components', () => {
             expect(chevron).toBeInTheDocument();
         });
 
-        it('applies active styling when currentPage matches pageId', () => {
+        it('renders with selected state when active', () => {
             renderWithTheme(
                 <HelpNavItem {...defaultProps} currentPage="testPage" />
             );
-            const button = screen.getByRole('button');
-            expect(button).toBeInTheDocument();
+            const button = screen.getByRole('button', { name: /Test Label/i });
+            expect(button).toHaveAttribute('aria-current', 'page');
         });
 
-        it('applies inactive styling when currentPage does not match', () => {
+        it('renders without selected state when inactive', () => {
             renderWithTheme(
                 <HelpNavItem {...defaultProps} currentPage="otherPage" />
             );
-            const button = screen.getByRole('button');
-            expect(button).toBeInTheDocument();
+            const button = screen.getByRole('button', { name: /Test Label/i });
+            expect(button).not.toHaveAttribute('aria-current');
         });
 
         it('renders with different icon', () => {

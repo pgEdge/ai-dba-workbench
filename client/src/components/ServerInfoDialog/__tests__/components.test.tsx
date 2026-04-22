@@ -23,8 +23,9 @@ describe('ServerInfoDialog components', () => {
 
     describe('Section', () => {
         beforeEach(() => {
-            vi.clearAllMocks();
+            vi.resetAllMocks();
             vi.mocked(localStorage.getItem).mockReturnValue(null);
+            vi.mocked(localStorage.setItem).mockImplementation(() => undefined);
         });
 
         it('renders the title', () => {
@@ -469,24 +470,27 @@ describe('ServerInfoDialog components', () => {
             const { container } = renderWithTheme(
                 <KV label="Span Label" value="Span Value" span={true} />
             );
-
-            // Check the sx prop is applied by checking for MUI-generated styles
-            const box = container.querySelector('.MuiBox-root');
-            expect(box).toBeInTheDocument();
-            // When span=true, the sx prop has gridColumn
-            // We can verify the prop was set by checking the component renders
-            expect(screen.getByText('Span Value')).toBeInTheDocument();
+            // The outer Box element receives the gridColumn style
+            const outerBox = container.firstChild as HTMLElement;
+            expect(outerBox).toBeInTheDocument();
+            expect(outerBox).toHaveClass('MuiBox-root');
+            // Verify getComputedStyle shows the gridColumn property
+            // Browser may normalize '1 / -1' to '1/-1' (no spaces)
+            const style = window.getComputedStyle(outerBox);
+            expect(style.gridColumn.replace(/\s/g, '')).toBe('1/-1');
         });
 
         it('does not apply span styling by default', () => {
             const { container } = renderWithTheme(
                 <KV label="No Span Label" value="No Span Value" />
             );
-
-            const box = container.querySelector('.MuiBox-root');
-            expect(box).toBeInTheDocument();
-            // Verify the component renders without span
-            expect(screen.getByText('No Span Value')).toBeInTheDocument();
+            // The outer Box element should not have gridColumn style
+            const outerBox = container.firstChild as HTMLElement;
+            expect(outerBox).toBeInTheDocument();
+            expect(outerBox).toHaveClass('MuiBox-root');
+            // Verify getComputedStyle does not show gridColumn spanning
+            const style = window.getComputedStyle(outerBox);
+            expect(style.gridColumn.replace(/\s/g, '')).not.toBe('1/-1');
         });
 
         it('renders React node values', () => {

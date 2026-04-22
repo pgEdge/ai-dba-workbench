@@ -259,6 +259,8 @@ export function useChat(): UseChatReturn {
                 role: 'user',
                 content: text,
             };
+            // Capture snapshot before modification for rollback on abort
+            const apiMessagesAtTurnStart = [...apiMessagesRef.current];
             apiMessagesRef.current = [
                 ...apiMessagesRef.current,
                 userAPIMessage,
@@ -380,6 +382,15 @@ export function useChat(): UseChatReturn {
                                     signal: abortController.signal,
                                 },
                             );
+
+                            if (!toolResponse.ok) {
+                                const errorText =
+                                    await toolResponse.text();
+                                throw new Error(
+                                    errorText ||
+                                        `Tool call failed with status ${toolResponse.status}`,
+                                );
+                            }
 
                             const toolData: ToolCallResponse =
                                 await toolResponse.json();
@@ -539,7 +550,8 @@ export function useChat(): UseChatReturn {
                 }
             } catch (err) {
                 if ((err as Error).name === 'AbortError') {
-                    // Request was intentionally cancelled
+                    // Request was intentionally cancelled; rollback API history
+                    apiMessagesRef.current = apiMessagesAtTurnStart;
                     return;
                 }
 
@@ -600,6 +612,12 @@ export function useChat(): UseChatReturn {
 
     const loadConversation = useCallback(
         async (id: string): Promise<void> => {
+            // Cancel any in-flight send operation
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+            }
+
             setIsLoading(true);
             setError(null);
             setActiveTools([]);

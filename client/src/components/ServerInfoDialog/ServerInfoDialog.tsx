@@ -59,6 +59,9 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
 
     const fetchInfo = useCallback(async (signal?: AbortSignal) => {
         if (!connectionId) {
+            setLoading(false);
+            setData(null);
+            setError(null);
             return;
         }
         setLoading(true);
@@ -126,6 +129,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
 
     useEffect(() => {
         if (!open) {
+            setLoading(false);
             setData(null);
             setError(null);
             setAiAnalysis(null);

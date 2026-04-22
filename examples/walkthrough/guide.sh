@@ -246,10 +246,37 @@ if docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt
         chmod 600 "$SCRIPT_DIR/secret/llm-api-key"
       fi
 
+      for f in ai-dba.secret pg-password llm-api-key; do
+        if [[ ! -f "$SCRIPT_DIR/secret/$f" ]]; then
+          error "Missing secret file: secret/$f"
+          error "Tear down and start fresh (option 1) to regenerate."
+          exit 1
+        fi
+      done
+
       info "Restarting server..."
-      (cd "$SCRIPT_DIR" && docker compose restart server 2>/dev/null) || true
+      if ! docker restart wt-server; then
+        error "Failed to restart server container."
+        exit 1
+      fi
+
+      local elapsed=0
+      while [[ $elapsed -lt 30 ]]; do
+        if docker exec wt-server bash -c 'echo > /dev/tcp/localhost/8080' 2>/dev/null; then
+          break
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+      done
+
+      if [[ $elapsed -ge 30 ]]; then
+        error "Server did not become healthy after restart."
+        warn "Check logs with: docker compose logs server"
+        exit 1
+      fi
+
       echo ""
-      info "LLM configuration updated. The server is restarting."
+      info "LLM configuration updated. Server is healthy."
 
       if [[ -n "$SELECTED_LLM_PROVIDER" ]]; then
         info "Provider: $SELECTED_LLM_PROVIDER ($SELECTED_LLM_MODEL)"

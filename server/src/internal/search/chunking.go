@@ -169,15 +169,15 @@ func FormatChunksForOutput(chunks []ScoredChunk, queryText string) string {
 
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("Search Results for: %q\n", queryText))
+	fmt.Fprintf(&sb, "Search Results for: %q\n", queryText)
 	sb.WriteString(strings.Repeat("=", 80))
 	sb.WriteString("\n\n")
 
 	totalTokens := 0
 	for i, chunk := range chunks {
-		sb.WriteString(fmt.Sprintf("--- Result %d ---\n", i+1))
-		sb.WriteString(fmt.Sprintf("Source: %s (row rank: %d)\n", chunk.SourceColumn, chunk.OriginalRank+1))
-		sb.WriteString(fmt.Sprintf("Relevance Score: %.3f\n\n", chunk.Score))
+		fmt.Fprintf(&sb, "--- Result %d ---\n", i+1)
+		fmt.Fprintf(&sb, "Source: %s (row rank: %d)\n", chunk.SourceColumn, chunk.OriginalRank+1)
+		fmt.Fprintf(&sb, "Relevance Score: %.3f\n\n", chunk.Score)
 		sb.WriteString(chunk.Text)
 		sb.WriteString("\n\n")
 
@@ -185,7 +185,7 @@ func FormatChunksForOutput(chunks []ScoredChunk, queryText string) string {
 	}
 
 	sb.WriteString(strings.Repeat("=", 80))
-	sb.WriteString(fmt.Sprintf("\nTotal Results: %d chunks (~%d tokens)\n", len(chunks), totalTokens))
+	fmt.Fprintf(&sb, "\nTotal Results: %d chunks (~%d tokens)\n", len(chunks), totalTokens)
 
 	return sb.String()
 }

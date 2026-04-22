@@ -116,7 +116,7 @@ func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth
 
 	visible, allConnections, err := resolveVisibleConnectionSet(ctx, rbac, ds)
 	if err != nil {
-		log.Printf("[ERROR] Failed to resolve visible connections for %s scope %d: %v", scope, scopeID, err)
+		log.Printf("[ERROR] Failed to resolve visible connections for %s scope %d: %v", scope, scopeID, err) //nolint:gosec // G706: scope validated against allowlist; scopeID is an integer
 		RespondError(w, http.StatusInternalServerError, "Failed to check scope visibility")
 		return false
 	}
@@ -134,7 +134,7 @@ func scopeVisibleToCaller(ctx context.Context, w http.ResponseWriter, rbac *auth
 		ok, err = groupHasVisibleConnectionFn(ctx, ds, scopeID, visible)
 	}
 	if err != nil {
-		log.Printf("[ERROR] Failed to check %s scope %d visibility: %v", scope, scopeID, err)
+		log.Printf("[ERROR] Failed to check %s scope %d visibility: %v", scope, scopeID, err) //nolint:gosec // G706: scope validated against allowlist; scopeID is an integer
 		RespondError(w, http.StatusInternalServerError, "Failed to check scope visibility")
 		return false
 	}

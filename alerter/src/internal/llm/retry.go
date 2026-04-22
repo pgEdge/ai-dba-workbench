@@ -51,7 +51,11 @@ func doRequestWithRetry(ctx context.Context, client *http.Client, req *http.Requ
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
 
-		resp, err := client.Do(req)
+		// The request URL is constructed from admin-configured provider
+		// base URLs (openaiBaseURL, anthropicBaseURL, geminiBaseURL, or
+		// operator-supplied overrides) and is not influenced by end-user
+		// input, so SSRF via this call is not reachable.
+		resp, err := client.Do(req) //nolint:gosec // G704: URL is built from admin-configured BaseURL (e.g., cfg.LLM.OpenAI.BaseURL, cfg.LLM.Anthropic.BaseURL, cfg.LLM.Gemini.BaseURL); not reachable from user input.
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ErrContextCanceled

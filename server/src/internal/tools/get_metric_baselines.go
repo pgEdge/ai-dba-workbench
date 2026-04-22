@@ -218,8 +218,8 @@ func baselinesSingleConnection(
 	if metricName != nil {
 		metricInfo = fmt.Sprintf("metric: %s", *metricName)
 	}
-	sb.WriteString(fmt.Sprintf("Metric Baselines | Connection: %d | %s\n\n",
-		connectionID, metricInfo))
+	fmt.Fprintf(&sb, "Metric Baselines | Connection: %d | %s\n\n",
+		connectionID, metricInfo)
 
 	// Header
 	sb.WriteString("metric_name\tperiod_type\tday_of_week\thour_of_day\tmean\tstddev\tmin\tmax\tsample_count\n")
@@ -246,7 +246,7 @@ func baselinesSingleConnection(
 		}
 
 		// Format row
-		sb.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
+		fmt.Fprintf(&sb, "%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
 			metricNameVal,
 			periodType,
 			formatOptionalInt(dayOfWeek),
@@ -255,8 +255,7 @@ func baselinesSingleConnection(
 			stddev,
 			minVal,
 			maxVal,
-			sampleCount,
-		))
+			sampleCount)
 		rowCount++
 	}
 
@@ -268,7 +267,7 @@ func baselinesSingleConnection(
 		return mcp.NewToolSuccess(fmt.Sprintf("No metric baselines found for connection %d. Baselines are calculated after sufficient historical data is collected.", connectionID))
 	}
 
-	sb.WriteString(fmt.Sprintf("\n(%d baselines)\n", rowCount))
+	fmt.Fprintf(&sb, "\n(%d baselines)\n", rowCount)
 
 	return mcp.NewToolSuccess(sb.String())
 }
@@ -308,7 +307,7 @@ func baselinesAllConnections(
 	if metricName != nil {
 		metricInfo = fmt.Sprintf("metric: %s", *metricName)
 	}
-	sb.WriteString(fmt.Sprintf("Metric Baselines | All accessible connections | %s\n\n", metricInfo))
+	fmt.Fprintf(&sb, "Metric Baselines | All accessible connections | %s\n\n", metricInfo)
 
 	// Header - includes connection columns
 	sb.WriteString("connection_id\tconnection_name\tmetric_name\tperiod_type\tday_of_week\thour_of_day\tmean\tstddev\tmin\tmax\tsample_count\n")
@@ -336,7 +335,7 @@ func baselinesAllConnections(
 			return mcp.NewToolError(fmt.Sprintf("Failed to scan row: %v", err))
 		}
 
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
+		fmt.Fprintf(&sb, "%d\t%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%d\n",
 			connID,
 			connNameVal,
 			metricNameVal,
@@ -347,8 +346,7 @@ func baselinesAllConnections(
 			stddev,
 			minVal,
 			maxVal,
-			sampleCount,
-		))
+			sampleCount)
 		rowCount++
 	}
 
@@ -360,7 +358,7 @@ func baselinesAllConnections(
 		return mcp.NewToolSuccess("No metric baselines found across accessible connections. Baselines are calculated after sufficient historical data is collected.")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n(%d baselines)\n", rowCount))
+	fmt.Fprintf(&sb, "\n(%d baselines)\n", rowCount)
 
 	return mcp.NewToolSuccess(sb.String())
 }

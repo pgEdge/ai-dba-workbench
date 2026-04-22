@@ -97,12 +97,12 @@ func GenerateEmbeddingTool(cfg *config.Config) Tool {
 			sb.WriteString("Embedding Generated Successfully\n")
 			sb.WriteString(strings.Repeat("=", 50))
 			sb.WriteString("\n\n")
-			sb.WriteString(fmt.Sprintf("Provider: %s\n", provider.ProviderName()))
-			sb.WriteString(fmt.Sprintf("Model: %s\n", provider.ModelName()))
-			sb.WriteString(fmt.Sprintf("Dimensions: %d\n", provider.Dimensions()))
-			sb.WriteString(fmt.Sprintf("Text Length: %d characters\n", len(text)))
-			sb.WriteString(fmt.Sprintf("\nText:\n%s\n\n", text))
-			sb.WriteString(fmt.Sprintf("Embedding Vector (%d dimensions):\n%s", len(vector), string(vectorJSON)))
+			fmt.Fprintf(&sb, "Provider: %s\n", provider.ProviderName())
+			fmt.Fprintf(&sb, "Model: %s\n", provider.ModelName())
+			fmt.Fprintf(&sb, "Dimensions: %d\n", provider.Dimensions())
+			fmt.Fprintf(&sb, "Text Length: %d characters\n", len(text))
+			fmt.Fprintf(&sb, "\nText:\n%s\n\n", text)
+			fmt.Fprintf(&sb, "Embedding Vector (%d dimensions):\n%s", len(vector), string(vectorJSON))
 
 			return mcp.NewToolSuccess(sb.String())
 		},

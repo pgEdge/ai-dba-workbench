@@ -11,6 +11,7 @@ package compactor
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -320,5 +321,118 @@ func TestCompactor_SingleMessage(t *testing.T) {
 
 	if result.CompactionInfo.DroppedCount != 0 {
 		t.Error("Expected no messages to be dropped")
+	}
+}
+
+func TestCompactor_ExtractContext(t *testing.T) {
+	compactor := NewCompactor(CompactRequest{})
+
+	messages := []Message{
+		// User messages drive topic extraction. The user messages must
+		// be longer than 20 chars and have more than 2 words to produce
+		// a topic. References to "<word> table" populate the tables
+		// map; SQL keywords like "from table" are filtered out. Tool
+		// names come from tool_use blocks.
+		createMessage("user",
+			"Please analyze the orders table and the users table for me"),
+		createMessage("user", "Also look at select from table please now"),
+		createToolMessage("assistant", "query_database", "SELECT 1"),
+		createMessage("user", "hi"), // too short, not a topic
+	}
+
+	extracted := compactor.extractContext(messages)
+
+	if !extracted.Tables["orders"] {
+		t.Errorf("expected 'orders' in Tables, got %v", extracted.Tables)
+	}
+	if !extracted.Tables["users"] {
+		t.Errorf("expected 'users' in Tables, got %v", extracted.Tables)
+	}
+	if extracted.Tables["select"] || extracted.Tables["from"] {
+		t.Errorf("SQL keywords should be filtered, got %v", extracted.Tables)
+	}
+	if !extracted.Tools["query_database"] {
+		t.Errorf("expected 'query_database' in Tools, got %v", extracted.Tools)
+	}
+	if len(extracted.Topics) == 0 {
+		t.Errorf("expected at least one topic, got %v", extracted.Topics)
+	}
+}
+
+func TestCompactor_ExtractContextLongTopic(t *testing.T) {
+	compactor := NewCompactor(CompactRequest{})
+
+	// A very long user message should produce a topic truncated with
+	// "..." suffix to bound prompt growth. The extractor keeps the
+	// first five words of the user message and, if the resulting
+	// string exceeds 80 characters, trims it to 80 characters plus a
+	// literal "..." suffix (total length 83).
+	longWords := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		longWords = append(longWords, "verylongwordthatmakesatopicwaytoowide")
+	}
+	text := ""
+	for _, w := range longWords {
+		if text != "" {
+			text += " "
+		}
+		text += w
+	}
+	messages := []Message{createMessage("user", text)}
+
+	extracted := compactor.extractContext(messages)
+	if len(extracted.Topics) != 1 {
+		t.Fatalf("expected one topic, got %d", len(extracted.Topics))
+	}
+	for topic := range extracted.Topics {
+		if len(topic) == 0 {
+			t.Errorf("expected non-empty topic")
+		}
+		// The extracted topic must be strictly shorter than the
+		// original input; otherwise no truncation/slicing happened.
+		if len(topic) >= len(text) {
+			t.Errorf("expected truncated topic length < input length %d, got %d",
+				len(text), len(topic))
+		}
+		// The extractor appends "..." when the joined five-word prefix
+		// exceeds 80 characters (our input satisfies that).
+		if !strings.HasSuffix(topic, "...") {
+			t.Errorf("expected topic to end with \"...\", got %q", topic)
+		}
+		// The truncated topic is bounded at 80 characters of content
+		// plus the three-character ellipsis marker.
+		if len(topic) > 83 {
+			t.Errorf("expected topic length <= 83, got %d", len(topic))
+		}
+	}
+}
+
+func TestCompactor_CreateSummary(t *testing.T) {
+	compactor := NewCompactor(CompactRequest{})
+
+	middle := []Message{
+		createMessage("user",
+			"Please analyze the orders table for performance tuning"),
+		createToolMessage("assistant", "query_database", "SELECT 1"),
+	}
+	kept := []Message{middle[0]} // one dropped
+
+	summary := compactor.createSummary(middle, kept)
+
+	if summary == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	found := false
+	for _, table := range summary.Tables {
+		if table == "orders" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'orders' in summary Tables, got %v", summary.Tables)
+	}
+	if summary.Description == "" {
+		t.Errorf("expected non-empty description")
 	}
 }

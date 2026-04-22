@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // validTimeRanges maps time_range parameter values to their duration.
@@ -385,7 +386,7 @@ func (h *PerfSummaryHandler) getConnectionNames(
 	for _, id := range connectionIDs {
 		conn, err := h.datastore.GetConnection(ctx, id)
 		if err != nil {
-			log.Printf("[DEBUG] Could not look up connection %d: %v", id, err)
+			log.Printf("[DEBUG] Could not look up connection %d: %s", id, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: id is an integer and err is sanitized via logging.SanitizeForLog
 			names[id] = ""
 			continue
 		}
@@ -414,8 +415,7 @@ func (h *PerfSummaryHandler) queryXIDAage(
         ORDER BY age_datfrozenxid DESC
     `, connectionID)
 	if err != nil {
-		log.Printf("[DEBUG] No XID age data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No XID age data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return []XIDAgeEntry{}
 	}
 	defer rows.Close()
@@ -464,8 +464,7 @@ func (h *PerfSummaryHandler) queryCacheHitCurrent(
           )
     `, connectionID).Scan(&blksHit, &blksRead)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No cache hit data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return 0, 0, 0
 	}
 
@@ -498,8 +497,7 @@ func (h *PerfSummaryHandler) queryCacheHitTimeSeries(
         ORDER BY bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit time series for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No cache hit time series for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return []CacheHitRatioPoint{}
 	}
 	defer rows.Close()
@@ -571,8 +569,7 @@ func (h *PerfSummaryHandler) queryTransactions(
         ORDER BY bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No transaction data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No transaction data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return 0, 0, []TransactionPoint{}
 	}
 	defer rows.Close()
@@ -645,8 +642,7 @@ func (h *PerfSummaryHandler) queryCheckpoints(
         ORDER BY bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No checkpoint data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No checkpoint data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return []CheckpointPoint{}
 	}
 	defer rows.Close()
@@ -788,8 +784,7 @@ func (h *PerfSummaryHandler) queryDatabaseSizes(
           AND datistemplate = false
     `, connectionID)
 	if err != nil {
-		log.Printf("[DEBUG] No database size data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No database size data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
 	}
 	defer rows.Close()
@@ -835,8 +830,7 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
           )
     `, connectionID)
 	if err != nil {
-		log.Printf("[DEBUG] No pg_stat_database data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No pg_stat_database data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
 	}
 	defer rows.Close()
@@ -893,8 +887,7 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
         GROUP BY database_name
     `, connectionID)
 	if err != nil {
-		log.Printf("[DEBUG] No dead tuple data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No dead tuple data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
 	}
 	defer rows.Close()
@@ -961,8 +954,7 @@ func (h *PerfSummaryHandler) queryTransactionRates(
         WHERE (p1.xact_commit - p2.xact_commit) >= 0
     `, connectionID)
 	if err != nil {
-		log.Printf("[DEBUG] No transaction rate data for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No transaction rate data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
 	}
 	defer rows.Close()
@@ -1016,8 +1008,7 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
         ORDER BY datname, bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit time series for connection %d: %v",
-			connectionID, err)
+		log.Printf("[DEBUG] No cache hit time series for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
 		return
 	}
 	defer rows.Close()
@@ -1187,8 +1178,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %v",
-			connID, err)
+		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
 		RespondJSON(w, http.StatusOK, []TopQueryRow{})
 		return
 	}

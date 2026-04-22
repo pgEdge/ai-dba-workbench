@@ -610,7 +610,7 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 
 	conn, err := h.datastore.GetConnection(ctx, session.ConnectionID)
 	if err != nil {
-		log.Printf("[ERROR] Failed to get connection details (id=%d): %v", session.ConnectionID, err)
+		log.Printf("[ERROR] Failed to get connection details (id=%d): %v", session.ConnectionID, err) //nolint:gosec // G706: ConnectionID is an integer, cannot contain newlines
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to get connection details")
 		return

@@ -107,7 +107,7 @@ type ChatResponse struct {
 }
 
 // HandleProviders handles GET /api/v1/llm/providers
-func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
+func HandleProviders(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -116,41 +116,41 @@ func HandleProviders(w http.ResponseWriter, r *http.Request, config *Config) {
 	providers := []ProviderInfo{}
 
 	// Check which providers are configured
-	if config.AnthropicAPIKey != "" {
+	if cfg.AnthropicAPIKey != "" {
 		providers = append(providers, ProviderInfo{
 			Name:      "anthropic",
 			Display:   "Anthropic Claude",
-			IsDefault: config.Provider == "anthropic",
+			IsDefault: cfg.Provider == "anthropic",
 		})
 	}
 
-	if config.OpenAIAPIKey != "" || config.OpenAIBaseURL != "" {
+	if cfg.OpenAIAPIKey != "" || cfg.OpenAIBaseURL != "" {
 		providers = append(providers, ProviderInfo{
 			Name:      "openai",
 			Display:   "OpenAI",
-			IsDefault: config.Provider == "openai",
+			IsDefault: cfg.Provider == "openai",
 		})
 	}
 
-	if config.GeminiAPIKey != "" {
+	if cfg.GeminiAPIKey != "" {
 		providers = append(providers, ProviderInfo{
 			Name:      "gemini",
 			Display:   "Google Gemini",
-			IsDefault: config.Provider == "gemini",
+			IsDefault: cfg.Provider == "gemini",
 		})
 	}
 
-	if config.OllamaURL != "" {
+	if cfg.OllamaURL != "" {
 		providers = append(providers, ProviderInfo{
 			Name:      "ollama",
 			Display:   "Ollama",
-			IsDefault: config.Provider == "ollama",
+			IsDefault: cfg.Provider == "ollama",
 		})
 	}
 
 	response := ProvidersResponse{
 		Providers:    providers,
-		DefaultModel: config.Model,
+		DefaultModel: cfg.Model,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -170,7 +170,7 @@ var validProviders = map[string]bool{
 }
 
 // HandleModels handles GET /api/v1/llm/models?provider=<provider>
-func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
+func HandleModels(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -192,53 +192,53 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 	var client chat.LLMClient
 	switch provider {
 	case "anthropic":
-		if config.AnthropicAPIKey == "" {
+		if cfg.AnthropicAPIKey == "" {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "anthropic")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "anthropic")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.AnthropicBaseURL, config.UseCompactDescriptions, headers)
+		client = chat.NewAnthropicClient(cfg.AnthropicAPIKey, cfg.Model, cfg.MaxTokens, cfg.Temperature, false, cfg.AnthropicBaseURL, cfg.UseCompactDescriptions, headers)
 	case "openai":
-		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
+		if cfg.OpenAIAPIKey == "" && cfg.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "openai")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "openai")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.OpenAIBaseURL, config.UseCompactDescriptions, headers)
+		client = chat.NewOpenAIClient(cfg.OpenAIAPIKey, cfg.Model, cfg.MaxTokens, cfg.Temperature, false, cfg.OpenAIBaseURL, cfg.UseCompactDescriptions, headers)
 	case "gemini":
-		if config.GeminiAPIKey == "" {
+		if cfg.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "gemini")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "gemini")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewGeminiClient(config.GeminiAPIKey, config.Model, config.MaxTokens, config.Temperature, false, config.GeminiBaseURL, config.UseCompactDescriptions, headers)
+		client = chat.NewGeminiClient(cfg.GeminiAPIKey, cfg.Model, cfg.MaxTokens, cfg.Temperature, false, cfg.GeminiBaseURL, cfg.UseCompactDescriptions, headers)
 	case "ollama":
-		if config.OllamaURL == "" {
+		if cfg.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "ollama")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "ollama")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewOllamaClient(config.OllamaURL, config.Model, false, config.UseCompactDescriptions, headers)
+		client = chat.NewOllamaClient(cfg.OllamaURL, cfg.Model, false, cfg.UseCompactDescriptions, headers)
 	}
 
 	// List models
@@ -269,7 +269,7 @@ func HandleModels(w http.ResponseWriter, r *http.Request, config *Config) {
 }
 
 // HandleChat handles POST /api/v1/llm/chat
-func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
+func HandleChat(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -316,7 +316,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	// Use provided provider/model or defaults
 	provider := req.Provider
 	if provider == "" {
-		provider = config.Provider
+		provider = cfg.Provider
 	}
 
 	// Validate provider against allowlist before use
@@ -327,7 +327,7 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 
 	model := req.Model
 	if model == "" {
-		model = config.Model
+		model = cfg.Model
 	}
 
 	// Validate model name: allow only safe characters, max 256 chars
@@ -340,53 +340,53 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	var client chat.LLMClient
 	switch provider {
 	case "anthropic":
-		if config.AnthropicAPIKey == "" {
+		if cfg.AnthropicAPIKey == "" {
 			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "anthropic")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "anthropic")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewAnthropicClient(config.AnthropicAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.AnthropicBaseURL, config.UseCompactDescriptions, headers)
+		client = chat.NewAnthropicClient(cfg.AnthropicAPIKey, model, cfg.MaxTokens, cfg.Temperature, req.Debug, cfg.AnthropicBaseURL, cfg.UseCompactDescriptions, headers)
 	case "openai":
-		if config.OpenAIAPIKey == "" && config.OpenAIBaseURL == "" {
+		if cfg.OpenAIAPIKey == "" && cfg.OpenAIBaseURL == "" {
 			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "openai")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "openai")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewOpenAIClient(config.OpenAIAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.OpenAIBaseURL, config.UseCompactDescriptions, headers)
+		client = chat.NewOpenAIClient(cfg.OpenAIAPIKey, model, cfg.MaxTokens, cfg.Temperature, req.Debug, cfg.OpenAIBaseURL, cfg.UseCompactDescriptions, headers)
 	case "gemini":
-		if config.GeminiAPIKey == "" {
+		if cfg.GeminiAPIKey == "" {
 			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "gemini")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "gemini")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewGeminiClient(config.GeminiAPIKey, model, config.MaxTokens, config.Temperature, req.Debug, config.GeminiBaseURL, config.UseCompactDescriptions, headers)
+		client = chat.NewGeminiClient(cfg.GeminiAPIKey, model, cfg.MaxTokens, cfg.Temperature, req.Debug, cfg.GeminiBaseURL, cfg.UseCompactDescriptions, headers)
 	case "ollama":
-		if config.OllamaURL == "" {
+		if cfg.OllamaURL == "" {
 			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
 			return
 		}
-		headers, err := getProviderHeaders(config.LLMConfig, "ollama")
+		headers, err := getProviderHeaders(cfg.LLMConfig, "ollama")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
 			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
 			return
 		}
-		client = chat.NewOllamaClient(config.OllamaURL, model, req.Debug, config.UseCompactDescriptions, headers)
+		client = chat.NewOllamaClient(cfg.OllamaURL, model, req.Debug, cfg.UseCompactDescriptions, headers)
 	}
 
 	// Convert proxy messages to chat messages
@@ -403,9 +403,9 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	// The tools arrive from the web client without CompactDescription
 	// populated, so we swap the full description for the compact one
 	// before sending tools to the LLM.
-	if config.UseCompactDescriptions && len(config.CompactDescriptions) > 0 {
+	if cfg.UseCompactDescriptions && len(cfg.CompactDescriptions) > 0 {
 		for i := range req.Tools {
-			if compact, ok := config.CompactDescriptions[req.Tools[i].Name]; ok {
+			if compact, ok := cfg.CompactDescriptions[req.Tools[i].Name]; ok {
 				req.Tools[i].Description = compact
 			}
 		}
@@ -414,10 +414,10 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 	// Inject pinned memories into the system prompt when available.
 	// This ensures the LLM always has access to important stored context.
 	effectiveSystemPrompt := req.System
-	if config.MemoryStore != nil {
+	if cfg.MemoryStore != nil {
 		username := auth.GetUsernameFromContext(ctx)
 		if username != "" {
-			pinnedMemories, memErr := config.MemoryStore.GetPinned(ctx, username)
+			pinnedMemories, memErr := cfg.MemoryStore.GetPinned(ctx, username)
 			if memErr != nil {
 				fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch pinned memories: %v\n", memErr)
 			} else if len(pinnedMemories) > 0 {
@@ -432,11 +432,11 @@ func HandleChat(w http.ResponseWriter, r *http.Request, config *Config) {
 
 	// Inject user context into the system prompt when available.
 	// This gives the LLM awareness of who it is talking to.
-	if config.AuthStore != nil {
+	if cfg.AuthStore != nil {
 		userID := auth.GetUserIDFromContext(ctx)
 		username := auth.GetUsernameFromContext(ctx)
 		if userID > 0 && username != "" {
-			userInfo := buildUserInfo(config.AuthStore, userID, username)
+			userInfo := buildUserInfo(cfg.AuthStore, userID, username)
 			if userInfo != nil {
 				base := effectiveSystemPrompt
 				if base == "" {
@@ -529,10 +529,10 @@ func isValidModelName(model string) bool {
 		return false
 	}
 	for _, c := range model {
-		if !((c >= 'a' && c <= 'z') ||
-			(c >= 'A' && c <= 'Z') ||
-			(c >= '0' && c <= '9') ||
-			c == '-' || c == '.' || c == ':' || c == '/' || c == '_') {
+		if (c < 'a' || c > 'z') &&
+			(c < 'A' || c > 'Z') &&
+			(c < '0' || c > '9') &&
+			c != '-' && c != '.' && c != ':' && c != '/' && c != '_' {
 			return false
 		}
 	}

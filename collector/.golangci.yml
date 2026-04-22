@@ -1,39 +1,68 @@
-linters-settings:
-    errcheck:
-        check-type-assertions: true
-        check-blank: true
-    govet:
-        enable-all: true
-        disable:
-            - fieldalignment
-            - shadow
-    misspell:
-        locale: US
-
-linters:
-    enable:
-        - errcheck      # Check for unchecked errors (enabled by default)
-        - govet         # Vet examines Go source code (enabled by default)
-        - ineffassign   # Detects unused assignments (enabled by default)
-        - staticcheck   # Advanced static analysis (enabled by default)
-        - unused        # Checks for unused code (enabled by default)
-        - misspell      # Finds commonly misspelled English words
-        - gosec         # Inspects source code for security problems
-
-issues:
-    exclude-dirs:
-        - vendor
-    exclude-rules:
-        # Exclude some linters from running on tests files
-        - path: _test\.go
-          linters:
-              - gosec
-        # Exclude known issues with defer Close() in tests
-        - path: _test\.go
-          linters:
-              - errcheck
-          text: "Error return value of.*Close.*not checked"
-
+# golangci-lint v2 configuration.
+# To install:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+# Migrated from v1 with `golangci-lint migrate`; the set of enabled linters
+# and per-path exclusions is preserved.
+version: "2"
 run:
-    timeout: 5m
-    tests: true
+  tests: true
+linters:
+  # In v2 `errcheck`, `govet`, `ineffassign`, `staticcheck`, and `unused`
+  # are default-enabled, but we list them explicitly so the
+  # `linters.settings.errcheck` and `linters.settings.govet` blocks below
+  # cannot silently become dead config if upstream defaults change.
+  enable:
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    govet:
+      disable:
+        - fieldalignment
+        - shadow
+      enable-all: true
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - gosec
+        path: _test\.go
+      - linters:
+          - errcheck
+        path: _test\.go
+        text: Error return value of.*Close.*not checked
+    paths:
+      - vendor
+      # The following three entries are golangci-lint defaults retained
+      # for forward-compatibility. The `$` anchor means they only match
+      # paths ending in the name, so they would NOT exclude files inside
+      # those directories; none of these directories exist in this tree,
+      # so the patterns are effectively dead code kept to match upstream
+      # defaults. If any such directory is added, switch to `third_party/`
+      # (etc.) to match files inside it.
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      # See note above: these mirror upstream defaults and only match
+      # paths ending in these names, not files inside such directories.
+      - third_party$
+      - builtin$
+      - examples$

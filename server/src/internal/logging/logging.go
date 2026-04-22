@@ -13,9 +13,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 )
+
+// logSanitizer replaces control characters that could be used for log
+// injection (fake log entries, terminal escape sequences) with their
+// escaped visual representation. Backspace, vertical tab, form feed,
+// and DEL are included because they can forge log entries in terminal
+// output or confuse less-strict log parsers.
+var logSanitizer = strings.NewReplacer(
+	"\r", "\\r",
+	"\n", "\\n",
+	"\t", "\\t",
+	"\x00", "\\x00",
+	"\x08", "\\x08",
+	"\x0b", "\\x0b",
+	"\x0c", "\\x0c",
+	"\x1b", "\\x1b",
+	"\x7f", "\\x7f",
+)
+
+// SanitizeForLog escapes control characters in s so that user-controlled
+// values logged to a line-oriented log stream cannot forge new log
+// entries or inject terminal escape sequences. Use this on any value
+// derived from HTTP input, environment variables, or other untrusted
+// sources before embedding it in a log message.
+func SanitizeForLog(s string) string {
+	return logSanitizer.Replace(s)
+}
 
 // LogLevel represents the severity of a log message
 type LogLevel int32

@@ -195,11 +195,18 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 
 			// Format as TSV
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Found %d connections (%d monitored):\n\n", len(connections), monitoredCount))
+			fmt.Fprintf(&sb, "Found %d connections (%d monitored):\n\n", len(connections), monitoredCount)
 			sb.WriteString("id\tname\thost\tport\tdatabase_name\tis_monitored\tstatus\terror\n")
 			for _, conn := range connections {
-				sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%d\t%s\t%t\t%s\t%s\n",
-					conn.ID, conn.Name, conn.Host, conn.Port, conn.DatabaseName, conn.IsMonitored, conn.Status, conn.ConnectionError))
+				fmt.Fprintf(&sb, "%d\t%s\t%s\t%d\t%s\t%t\t%s\t%s\n",
+					conn.ID,
+					sanitizeTSVField(conn.Name),
+					sanitizeTSVField(conn.Host),
+					conn.Port,
+					sanitizeTSVField(conn.DatabaseName),
+					conn.IsMonitored,
+					sanitizeTSVField(conn.Status),
+					sanitizeTSVField(conn.ConnectionError))
 			}
 
 			sb.WriteString("\nNote: Use the 'id' column value as the connection_id parameter in query_metrics and all monitored-database tools.\n")

@@ -26,6 +26,7 @@ func TestLogLevels(t *testing.T) {
 		{LevelInfo, "INFO"},
 		{LevelWarn, "WARN"},
 		{LevelError, "ERROR"},
+		{LogLevel(42), "UNKNOWN"},
 	}
 
 	for _, tt := range tests {
@@ -237,6 +238,51 @@ func TestLogWithMultipleKeyValuePairs(t *testing.T) {
 		if entry.Fields[key] != expectedValue {
 			t.Errorf("Fields[%s] = %v, want %v", key, entry.Fields[key], expectedValue)
 		}
+	}
+}
+
+func TestSanitizeForLog(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty", "", ""},
+		{"plain ascii", "hello world", "hello world"},
+		{"single CR", "foo\rbar", "foo\\rbar"},
+		{"single LF", "foo\nbar", "foo\\nbar"},
+		{"CRLF", "foo\r\nbar", "foo\\r\\nbar"},
+		{"tab", "foo\tbar", "foo\\tbar"},
+		{"null byte", "foo\x00bar", "foo\\x00bar"},
+		{"backspace", "foo\x08bar", "foo\\x08bar"},
+		{"vertical tab", "foo\x0bbar", "foo\\x0bbar"},
+		{"form feed", "foo\x0cbar", "foo\\x0cbar"},
+		{"escape byte", "foo\x1bbar", "foo\\x1bbar"},
+		{"DEL byte", "foo\x7fbar", "foo\\x7fbar"},
+		{
+			name:     "log injection attempt",
+			input:    "user\n[AUTH] fake admin login",
+			expected: "user\\n[AUTH] fake admin login",
+		},
+		{
+			name:     "terminal escape injection",
+			input:    "alert \x1b[31mRED\x1b[0m",
+			expected: "alert \\x1b[31mRED\\x1b[0m",
+		},
+		{
+			name:     "unicode preserved",
+			input:    "useré",
+			expected: "useré",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeForLog(tt.input)
+			if got != tt.expected {
+				t.Errorf("SanitizeForLog(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
 	}
 }
 

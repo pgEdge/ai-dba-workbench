@@ -20,6 +20,24 @@ project adheres to
   Fetch spec. Operators should configure an explicit
   origin or leave the option empty for same-origin
   deployments. (#81)
+- Migrate the `collector`, `alerter`, and `server`
+  `.golangci.yml` configurations to the golangci-lint v2
+  format, and update the CI workflows to install
+  `golangci-lint/v2`; `make test-all` now works again on
+  developer machines that have golangci-lint v2
+  installed locally. (#66)
+
+### Security
+
+- Fix log, SQL, and SMTP injection findings surfaced by
+  the golangci-lint v2 upgrade; the knowledgebase search
+  now binds its filter values through `?` placeholders
+  instead of string concatenation, the email test sender
+  sanitizes envelope and header fields before writing
+  them to the SMTP connection, and user-tainted values
+  are escaped through a new `logging.SanitizeForLog`
+  helper at log sites across the api, auth, and config
+  packages. (#66)
 
 - Hoist RBAC access-control checks above all
   datastore calls in the alert-counts, alert

@@ -264,7 +264,7 @@ To avoid rate limits (30,000 input tokens/minute):
 				errMsg.WriteString("3. Check current database connection:\n")
 				errMsg.WriteString("   → read_resource(uri=\"pg://system-info\")\n\n")
 				errMsg.WriteString("4. If table is in a different schema, use qualified name:\n")
-				fmt.Fprintf(&errMsg, "   → similarity_search(table_name=\"schema_name.%s\", query_text=\"...\")\n", tableName)
+				fmt.Fprintf(&errMsg, "   → similarity_search(table_name=%q, query_text=\"...\")\n", qualifiedTableNameHint(tableName))
 				errMsg.WriteString("</next_steps>\n")
 
 				return mcp.NewToolError(errMsg.String())
@@ -339,7 +339,8 @@ To avoid rate limits (30,000 input tokens/minute):
 				errMsg.WriteString("1. Contact server administrator to check embedding configuration\n\n")
 				errMsg.WriteString("2. Verify API keys and service availability\n\n")
 				errMsg.WriteString("3. For non-semantic queries, use query_database instead:\n")
-				fmt.Fprintf(&errMsg, "   → query_database(query=\"SELECT * FROM %s WHERE text_column ILIKE '%%%s%%'\")\n", tableName, queryText)
+				escapedQueryText := escapeSQLSingleQuotes(queryText)
+				fmt.Fprintf(&errMsg, "   → query_database(query=\"SELECT * FROM %s WHERE text_column ILIKE '%%%s%%'\")\n", tableName, escapedQueryText)
 				errMsg.WriteString("</next_steps>\n")
 
 				return mcp.NewToolError(errMsg.String())
@@ -516,6 +517,30 @@ func buildNoTextColumnsHint(tableName string) string {
 	sb.WriteString("   → Try a different table with get_schema_info(vector_tables_only=true)\n")
 	sb.WriteString("</next_steps>\n")
 	return sb.String()
+}
+
+// qualifiedTableNameHint returns a qualified "schema.table" form suitable
+// for interpolation into a "try with the correct schema" hint. If the
+// caller already passed a qualified name (contains a ".") the name is
+// returned unchanged so the hint does not produce a nonsensical triple
+// like "schema_name.public.items". Otherwise the literal placeholder
+// "schema_name." is prepended to guide the user toward providing a
+// schema.
+func qualifiedTableNameHint(tableName string) string {
+	if strings.Contains(tableName, ".") {
+		return tableName
+	}
+	return "schema_name." + tableName
+}
+
+// escapeSQLSingleQuotes doubles any single-quote characters in s so the
+// result is safe to interpolate into a PostgreSQL single-quoted string
+// literal. It is intended for building hint text that a user may copy
+// into query_database; without this escape, a query_text containing an
+// apostrophe (for example "what's new") would emit syntactically broken
+// SQL that fails to parse.
+func escapeSQLSingleQuotes(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 func findTableInMetadataMap(metadata map[string]database.TableInfo, tableName string) (database.TableInfo, error) {

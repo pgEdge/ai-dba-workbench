@@ -259,3 +259,78 @@ func TestOllamaProvider_Embed_UpdatesDimensions(t *testing.T) {
 		t.Errorf("expected 512 dimensions after embed, got %d", dims)
 	}
 }
+
+func TestOllamaProvider_Embed_RateLimit(t *testing.T) {
+	// Create mock server that returns rate limit error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		if _, err := w.Write([]byte(`{"error": "rate limit exceeded"}`)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	provider := &OllamaProvider{
+		baseURL: server.URL,
+		model:   "nomic-embed-text",
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err == nil {
+		t.Fatal("expected error for rate limit")
+	}
+}
+
+func TestOllamaProvider_Embed_MalformedJSON(t *testing.T) {
+	// Create mock server that returns malformed JSON
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{invalid json`)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	provider := &OllamaProvider{
+		baseURL: server.URL,
+		model:   "nomic-embed-text",
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+}
+
+func TestOllamaProvider_Embed_EmptyFirstEmbedding(t *testing.T) {
+	// Create mock server that returns embeddings array with empty first embedding
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := ollamaEmbeddingResponse{
+			Embeddings: [][]float64{
+				{}, // Empty first embedding
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	provider := &OllamaProvider{
+		baseURL: server.URL,
+		model:   "nomic-embed-text",
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err == nil {
+		t.Fatal("expected error for empty first embedding")
+	}
+}

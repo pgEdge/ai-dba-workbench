@@ -273,3 +273,285 @@ func TestLogLLMResponseTrace_OnlyAtTraceLevel(t *testing.T) {
 	// Restore original logger
 	globalLogger = original
 }
+
+func TestGetLogLevel(t *testing.T) {
+	// Save original logger
+	original := globalLogger
+
+	// Test GetLogLevel
+	globalLogger = &Logger{
+		level:  LogLevelDebug,
+		logger: log.New(os.Stderr, "[LLM] ", 0),
+	}
+
+	if GetLogLevel() != LogLevelDebug {
+		t.Errorf("Expected LogLevelDebug, got %v", GetLogLevel())
+	}
+
+	SetLogLevel(LogLevelTrace)
+	if GetLogLevel() != LogLevelTrace {
+		t.Errorf("Expected LogLevelTrace, got %v", GetLogLevel())
+	}
+
+	// Restore original logger
+	globalLogger = original
+}
+
+func TestLogAPICallDetails(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelDebug,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	LogAPICallDetails("voyage", "voyage-3-lite", "https://api.voyageai.com/v1/embeddings", 100)
+	output := buf.String()
+
+	if !strings.Contains(output, "Starting API call") {
+		t.Errorf("Expected starting API call message, got: %s", output)
+	}
+	if !strings.Contains(output, "provider=voyage") {
+		t.Errorf("Expected provider info, got: %s", output)
+	}
+	if !strings.Contains(output, "text_length=100") {
+		t.Errorf("Expected text length, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestLogRequestTrace(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelTrace,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	LogRequestTrace("openai", "text-embedding-3-small", "This is a test text for embedding")
+	output := buf.String()
+
+	if !strings.Contains(output, "Request details") {
+		t.Errorf("Expected request details message, got: %s", output)
+	}
+	if !strings.Contains(output, "text_preview=") {
+		t.Errorf("Expected text preview, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestLogResponseTrace(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelTrace,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	LogResponseTrace("gemini", "text-embedding-004", 200, 768)
+	output := buf.String()
+
+	if !strings.Contains(output, "Response details") {
+		t.Errorf("Expected response details message, got: %s", output)
+	}
+	if !strings.Contains(output, "status_code=200") {
+		t.Errorf("Expected status code, got: %s", output)
+	}
+	if !strings.Contains(output, "dimensions=768") {
+		t.Errorf("Expected dimensions, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestLogRateLimitError(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelInfo,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	LogRateLimitError("openai", "text-embedding-3-small", 429, `{"error": "rate limit exceeded"}`)
+	output := buf.String()
+
+	if !strings.Contains(output, "RATE LIMIT ERROR") {
+		t.Errorf("Expected rate limit error message, got: %s", output)
+	}
+	if !strings.Contains(output, "status_code=429") {
+		t.Errorf("Expected status code, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestLogConnectionError(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelInfo,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	LogConnectionError("ollama", "http://localhost:11434", os.ErrNotExist)
+	output := buf.String()
+
+	if !strings.Contains(output, "Connection failed") {
+		t.Errorf("Expected connection failed message, got: %s", output)
+	}
+	if !strings.Contains(output, "provider=ollama") {
+		t.Errorf("Expected provider info, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestLogProviderInit(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelDebug,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	config := map[string]string{
+		"base_url": "https://api.openai.com/v1",
+		"api_key":  "sk-12345678",
+	}
+	LogProviderInit("openai", "text-embedding-3-small", config)
+	output := buf.String()
+
+	if !strings.Contains(output, "Provider initialized") {
+		t.Errorf("Expected provider initialized message, got: %s", output)
+	}
+	// API key should be redacted
+	if !strings.Contains(output, "***REDACTED***") {
+		t.Errorf("Expected API key to be redacted, got: %s", output)
+	}
+	if strings.Contains(output, "sk-12345678") {
+		t.Errorf("API key should not appear in output, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestLogProviderInit_NoLogAtInfo(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelInfo,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	config := map[string]string{
+		"base_url": "https://api.openai.com/v1",
+	}
+	LogProviderInit("openai", "text-embedding-3-small", config)
+
+	// Should not log at Info level
+	if buf.Len() > 0 {
+		t.Errorf("Expected no output at Info level, got: %s", buf.String())
+	}
+
+	globalLogger = original
+}
+
+func TestLogLLMRequestTrace(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelTrace,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	LogLLMRequestTrace("anthropic", "claude-sonnet-4", "sql_generation", "Generate SQL for: SELECT * FROM users")
+	output := buf.String()
+
+	if !strings.Contains(output, "LLM request details") {
+		t.Errorf("Expected LLM request details message, got: %s", output)
+	}
+	if !strings.Contains(output, "operation=sql_generation") {
+		t.Errorf("Expected operation, got: %s", output)
+	}
+
+	globalLogger = original
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},
+		{"this is a longer string", 10, "this is a ..."},
+		{"", 5, ""},
+		{"abc", 0, "..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := truncate(tt.input, tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("truncate(%q, %d) = %q, want %q",
+					tt.input, tt.maxLen, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLogLevelConstants(t *testing.T) {
+	// Verify log level constants are in increasing order
+	if LogLevelNone >= LogLevelInfo {
+		t.Error("LogLevelNone should be less than LogLevelInfo")
+	}
+	if LogLevelInfo >= LogLevelDebug {
+		t.Error("LogLevelInfo should be less than LogLevelDebug")
+	}
+	if LogLevelDebug >= LogLevelTrace {
+		t.Error("LogLevelDebug should be less than LogLevelTrace")
+	}
+}
+
+func TestLoggerWithFormat(t *testing.T) {
+	original := globalLogger
+
+	var buf bytes.Buffer
+	globalLogger = &Logger{
+		level:  LogLevelTrace,
+		logger: log.New(&buf, "[LLM] ", 0),
+	}
+
+	// Test Info with format arguments
+	globalLogger.Info("value=%d, name=%s", 42, "test")
+	if !strings.Contains(buf.String(), "value=42, name=test") {
+		t.Errorf("Expected formatted output, got: %s", buf.String())
+	}
+
+	// Test Debug with format arguments
+	buf.Reset()
+	globalLogger.Debug("config=%v", map[string]int{"a": 1})
+	if !strings.Contains(buf.String(), "config=") {
+		t.Errorf("Expected formatted output, got: %s", buf.String())
+	}
+
+	// Test Trace with format arguments
+	buf.Reset()
+	globalLogger.Trace("data=%+v", struct{ X int }{X: 5})
+	if !strings.Contains(buf.String(), "X:5") {
+		t.Errorf("Expected formatted output, got: %s", buf.String())
+	}
+
+	globalLogger = original
+}

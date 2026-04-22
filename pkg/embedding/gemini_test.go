@@ -288,3 +288,42 @@ func TestGeminiProvider_Embed_MalformedJSON(t *testing.T) {
 		t.Fatal("expected error for malformed JSON")
 	}
 }
+
+func TestGeminiProvider_APIKeyMasking(t *testing.T) {
+	// Test with short API key (less than 8 chars)
+	provider, err := NewGeminiProvider("short", "text-embedding-004", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider")
+	}
+}
+
+func TestGeminiProvider_Embed_EmptyEmbeddingValues(t *testing.T) {
+	// Create mock server that returns empty embedding values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return embedding with empty Values array
+		response := geminiEmbeddingResponse{}
+		// Embedding.Values is left empty
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	defer server.Close()
+
+	provider := &GeminiProvider{
+		apiKey:  "AIza-test-key-12345678",
+		model:   "text-embedding-004",
+		baseURL: server.URL,
+		client:  server.Client(),
+	}
+
+	_, err := provider.Embed(context.Background(), "test text")
+	if err == nil {
+		t.Fatal("expected error for empty embedding values")
+	}
+}

@@ -7,9 +7,11 @@
 [![CI - Docs](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml)
 [![CI - Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml)
 
-The pgEdge AI DBA Workbench is a unified environment for
-interacting with pgEdge's distributed and non-distributed PostgreSQL
-systems through artificial intelligence and traditional methods.
+The pgEdge AI DBA Workbench is a unified environment for monitoring 
+and management of any PostgreSQL v14+ instance, including Supabase 
+and Amazon RDS, with an optional AI agent.  It watches every instance, 
+catches anomalies before they become outages and walks through a 
+diagnosis and resolution step by step.
 
 The Workbench combines a Model Context Protocol (MCP) Server with a
 web-based user interface and data collector. Users can query,

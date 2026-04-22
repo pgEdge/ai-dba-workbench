@@ -260,7 +260,7 @@ if docker ps --filter "name=wt-" --format "{{.Names}}" 2>/dev/null | grep -q "wt
         exit 1
       fi
 
-      local elapsed=0
+      elapsed=0
       while [[ $elapsed -lt 30 ]]; do
         if docker exec wt-server bash -c 'echo > /dev/tcp/localhost/8080' 2>/dev/null; then
           break

@@ -15,7 +15,7 @@ import { Chart } from '../../Chart/Chart';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
-import { ConnectionPerformance } from './types';
+import { ConnectionPerformance, DatabaseCacheHitData } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
 import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
@@ -24,43 +24,128 @@ interface CacheHitTileProps {
     connections: ConnectionPerformance[];
     loading: boolean;
     isMultiServer: boolean;
+    /** Per-database cache hit data for single-server view */
+    databaseData?: DatabaseCacheHitData[];
 }
 
 /**
+ * Find the database with the worst (lowest) cache hit ratio.
+ * Returns database name and value, or null if no data.
+ */
+const findWorstDatabase = (
+    databases: DatabaseCacheHitData[]
+): { name: string; value: number } | null => {
+    if (!databases.length) {return null;}
+
+    let worst: { name: string; value: number } | null = null;
+    databases.forEach(db => {
+        if (db.cache_hit_ratio?.current !== undefined) {
+            if (worst === null || db.cache_hit_ratio.current < worst.value) {
+                worst = {
+                    name: db.database_name,
+                    value: db.cache_hit_ratio.current,
+                };
+            }
+        }
+    });
+    return worst;
+};
+
+/**
  * CacheHitTile shows a large cache hit ratio percentage with a
- * mini sparkline chart below it. For cluster or estate views,
- * the headline displays the worst (lowest) ratio.
+ * mini sparkline chart below it.
+ *
+ * For single-server view with database data:
+ *   - Shows one series per database
+ *   - Headline displays the worst (lowest) ratio with database name
+ *
+ * For cluster or estate views:
+ *   - Shows one series per server
+ *   - Headline displays the worst (lowest) server ratio
  */
 const CacheHitTile: React.FC<CacheHitTileProps> = ({
     connections,
     loading,
     isMultiServer,
+    databaseData,
 }) => {
     const theme = useTheme();
     const { aiEnabled } = useAICapabilities();
-    // Find the headline value: worst ratio for multi-server, current for single
-    const headlineValue = useMemo(() => {
+
+    // Determine if we should use per-database view
+    const usePerDatabaseView = !isMultiServer && databaseData && databaseData.length > 0;
+
+    // Find the headline value and optional label
+    const headlineInfo = useMemo(() => {
+        if (usePerDatabaseView && databaseData) {
+            const worst = findWorstDatabase(databaseData);
+            if (worst) {
+                return {
+                    value: worst.value,
+                    label: worst.name,
+                    showLabel: databaseData.length > 1,
+                };
+            }
+            return null;
+        }
+
+        // Multi-server or fallback: use server-level data
         if (!connections.length) {return null;}
 
         if (isMultiServer) {
-            let worst = Infinity;
+            let worstValue = Infinity;
+            let worstName = '';
             connections.forEach(conn => {
                 if (conn.cache_hit_ratio?.current !== undefined) {
-                    worst = Math.min(worst, conn.cache_hit_ratio.current);
+                    if (conn.cache_hit_ratio.current < worstValue) {
+                        worstValue = conn.cache_hit_ratio.current;
+                        worstName = conn.connection_name || `Server ${conn.connection_id}`;
+                    }
                 }
             });
-            return worst === Infinity ? null : worst;
+            if (worstValue === Infinity) {return null;}
+            return {
+                value: worstValue,
+                label: worstName,
+                showLabel: connections.length > 1,
+            };
         }
 
-        return connections[0]?.cache_hit_ratio?.current ?? null;
-    }, [connections, isMultiServer]);
+        // Single server without database data - fallback to connection data
+        const current = connections[0]?.cache_hit_ratio?.current;
+        if (current === undefined) {return null;}
+        return { value: current, label: null, showLabel: false };
+    }, [connections, isMultiServer, usePerDatabaseView, databaseData]);
 
-    // Build chart data: one series per connection for multi-server,
-    // or a single series for single-server views
+    // Build chart data
     const chartData = useMemo(() => {
+        if (usePerDatabaseView && databaseData && databaseData.length > 0) {
+            // Per-database series for single-server view
+            let categories: string[] = [];
+            const series: Array<{ name: string; data: number[] }> = [];
+
+            databaseData.forEach(db => {
+                const ts = db.cache_hit_ratio?.time_series;
+                if (!ts?.length) {return;}
+
+                if (categories.length === 0) {
+                    categories = ts.map(p => p.time);
+                }
+
+                series.push({
+                    name: db.database_name,
+                    data: ts.map(p => p.value),
+                });
+            });
+
+            if (series.length === 0) {return null;}
+            return { categories, series };
+        }
+
+        // Multi-server or fallback view
         if (!connections.length) {return null;}
 
-        // For single server, use one series
+        // For single server without database data, use one series
         if (!isMultiServer || connections.length === 1) {
             const conn = connections[0];
             const ts = conn?.cache_hit_ratio?.time_series;
@@ -93,10 +178,10 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
         if (series.length === 0) {return null;}
 
         return { categories, series };
-    }, [connections, isMultiServer]);
+    }, [connections, isMultiServer, usePerDatabaseView, databaseData]);
 
-    const hasData = headlineValue !== null;
-    const color = hasData ? getCacheColor(headlineValue) : undefined;
+    const hasData = headlineInfo !== null;
+    const color = hasData ? getCacheColor(headlineInfo.value) : undefined;
 
     const [analysisOpen, setAnalysisOpen] = useState(false);
     const handleAnalyzeClick = useCallback((e: React.MouseEvent) => {
@@ -120,15 +205,19 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
         analysisContext.timeRange,
     ) : false;
 
+    // Determine the label to show (database name for single-server, "(worst)" for multi)
+    const showWorstLabel = headlineInfo?.showLabel;
+    const labelText = isMultiServer ? '(worst)' : headlineInfo?.label;
+
     return (
         <TileContainer
             title="Cache Hit Ratio"
             loading={loading}
             hasData={hasData}
-            headerRight={headlineValue !== null ? (
+            headerRight={headlineInfo !== null ? (
                 <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5 }}>
                     <Typography sx={{ ...TILE_VALUE_SX, fontSize: '1.25rem', color }}>
-                        {headlineValue.toFixed(1)}
+                        {headlineInfo.value.toFixed(1)}
                     </Typography>
                     <Typography sx={{
                         fontSize: '0.875rem',
@@ -137,13 +226,17 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                     }}>
                         %
                     </Typography>
-                    {isMultiServer && (
+                    {showWorstLabel && labelText && (
                         <Typography sx={{
                             fontSize: '0.875rem',
                             color: 'text.disabled',
                             ml: 0.5,
+                            maxWidth: isMultiServer ? 'none' : 100,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                         }}>
-                            (worst)
+                            {isMultiServer ? labelText : `(${labelText})`}
                         </Typography>
                     )}
                 </Box>

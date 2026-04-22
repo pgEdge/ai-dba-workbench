@@ -27,11 +27,10 @@ const EmbeddingDimension = 1536
 
 // Common errors
 var (
-	ErrProviderNotConfigured = errors.New("LLM provider not configured")
-	ErrAPIKeyMissing         = errors.New("API key is required but not configured")
-	ErrInvalidResponse       = errors.New("invalid response from LLM provider")
-	ErrRateLimited           = errors.New("rate limited by LLM provider")
-	ErrContextCanceled       = errors.New("context canceled")
+	ErrAPIKeyMissing   = errors.New("API key is required but not configured")
+	ErrInvalidResponse = errors.New("invalid response from LLM provider")
+	ErrRateLimited     = errors.New("rate limited by LLM provider")
+	ErrContextCanceled = errors.New("context canceled")
 )
 
 // EmbeddingProvider generates vector embeddings from text.

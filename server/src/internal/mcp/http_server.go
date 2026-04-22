@@ -534,7 +534,7 @@ func validateCORSOrigin(origin string, authEnabled bool) error {
 					"with Access-Control-Allow-Credentials: true (per the "+
 					"Fetch spec). Set cors_origin to an explicit origin "+
 					"(e.g., https://dba.example.com) or leave it empty for "+
-					"same-origin deployments.",
+					"same-origin deployments",
 				origin)
 		}
 		return nil

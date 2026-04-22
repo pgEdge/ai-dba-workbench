@@ -315,6 +315,20 @@ func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client,
 		}
 
 		if session != nil {
+			// Verify the token still has access to this connection.
+			// The session may have been established before token scope
+			// was restricted; enforce the scope at use-time.
+			if r.rbacChecker != nil {
+				canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, session.ConnectionID)
+				if !canAccess {
+					// Clear the stale session so subsequent calls get
+					// a clean "no connection selected" error.
+					//nolint:errcheck // Best effort cleanup; we return the access denied error regardless
+					r.authStore.ClearConnectionSession(tokenHash)
+					return nil, fmt.Errorf("access denied: the selected connection is no longer accessible with this token's scope. Please select a permitted connection")
+				}
+			}
+
 			// Get connection info from datastore
 			conn, password, err := r.datastore.GetConnectionWithPassword(ctx, session.ConnectionID)
 			if err != nil {

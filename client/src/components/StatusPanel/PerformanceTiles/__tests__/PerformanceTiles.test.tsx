@@ -1,0 +1,203 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import PerformanceTiles from '../index';
+
+// Mock usePerformanceSummary hook
+vi.mock('../usePerformanceSummary', () => ({
+    usePerformanceSummary: vi.fn(),
+    default: vi.fn(),
+}));
+
+// Mock useDatabaseCacheHit hook
+vi.mock('../useDatabaseCacheHit', () => ({
+    useDatabaseCacheHit: vi.fn(),
+    default: vi.fn(),
+}));
+
+// Mock the tile components to simplify testing
+vi.mock('../DatabaseAgeTile', () => ({
+    default: () => <div data-testid="database-age-tile">DatabaseAgeTile</div>,
+}));
+
+vi.mock('../CacheHitTile', () => ({
+    default: ({ databaseData }: { databaseData?: unknown[] }) => (
+        <div data-testid="cache-hit-tile">
+            CacheHitTile
+            {databaseData && (
+                <span data-testid="has-database-data">
+                    databases: {databaseData.length}
+                </span>
+            )}
+        </div>
+    ),
+}));
+
+vi.mock('../TransactionTile', () => ({
+    default: () => <div data-testid="transaction-tile">TransactionTile</div>,
+}));
+
+vi.mock('../CheckpointTile', () => ({
+    default: () => <div data-testid="checkpoint-tile">CheckpointTile</div>,
+}));
+
+import { usePerformanceSummary } from '../usePerformanceSummary';
+import { useDatabaseCacheHit } from '../useDatabaseCacheHit';
+
+const mockUsePerformanceSummary = vi.mocked(usePerformanceSummary);
+const mockUseDatabaseCacheHit = vi.mocked(useDatabaseCacheHit);
+
+const theme = createTheme();
+
+const renderWithTheme = (ui: React.ReactElement) => {
+    return render(
+        <ThemeProvider theme={theme}>
+            {ui}
+        </ThemeProvider>
+    );
+};
+
+describe('PerformanceTiles', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUsePerformanceSummary.mockReturnValue({
+            data: {
+                time_range: '24h',
+                connections: [],
+            },
+            loading: false,
+            error: null,
+        });
+        mockUseDatabaseCacheHit.mockReturnValue({
+            databases: [],
+            loading: false,
+            error: null,
+        });
+    });
+
+    it('renders all four tiles', () => {
+        renderWithTheme(
+            <PerformanceTiles selection={{ type: 'server', id: 1 }} />
+        );
+
+        expect(screen.getByTestId('database-age-tile')).toBeInTheDocument();
+        expect(screen.getByTestId('cache-hit-tile')).toBeInTheDocument();
+        expect(screen.getByTestId('transaction-tile')).toBeInTheDocument();
+        expect(screen.getByTestId('checkpoint-tile')).toBeInTheDocument();
+    });
+
+    it('calls useDatabaseCacheHit with connectionId for single-server view', () => {
+        renderWithTheme(
+            <PerformanceTiles selection={{ type: 'server', id: 123 }} />
+        );
+
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(123);
+    });
+
+    it('calls useDatabaseCacheHit with null for cluster view', () => {
+        renderWithTheme(
+            <PerformanceTiles
+                selection={{ type: 'cluster', serverIds: [1, 2, 3] }}
+            />
+        );
+
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
+    });
+
+    it('calls useDatabaseCacheHit with null for estate view', () => {
+        renderWithTheme(
+            <PerformanceTiles
+                selection={{ type: 'estate', groups: [] }}
+            />
+        );
+
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
+    });
+
+    it('passes database data to CacheHitTile in single-server view', () => {
+        mockUseDatabaseCacheHit.mockReturnValue({
+            databases: [
+                {
+                    database_name: 'postgres',
+                    cache_hit_ratio: {
+                        current: 99.5,
+                        time_series: [],
+                    },
+                },
+                {
+                    database_name: 'ecommerce',
+                    cache_hit_ratio: {
+                        current: 85.0,
+                        time_series: [],
+                    },
+                },
+            ],
+            loading: false,
+            error: null,
+        });
+
+        renderWithTheme(
+            <PerformanceTiles selection={{ type: 'server', id: 1 }} />
+        );
+
+        expect(screen.getByTestId('has-database-data')).toBeInTheDocument();
+        expect(screen.getByText('databases: 2')).toBeInTheDocument();
+    });
+
+    it('does not pass database data to CacheHitTile in multi-server view', () => {
+        mockUseDatabaseCacheHit.mockReturnValue({
+            databases: [
+                {
+                    database_name: 'postgres',
+                    cache_hit_ratio: {
+                        current: 99.5,
+                        time_series: [],
+                    },
+                },
+            ],
+            loading: false,
+            error: null,
+        });
+
+        renderWithTheme(
+            <PerformanceTiles
+                selection={{ type: 'cluster', serverIds: [1, 2] }}
+            />
+        );
+
+        expect(screen.queryByTestId('has-database-data')).not.toBeInTheDocument();
+    });
+
+    it('handles selection with non-numeric id', () => {
+        renderWithTheme(
+            <PerformanceTiles
+                selection={{ type: 'server', id: 'invalid' }}
+            />
+        );
+
+        // Should call useDatabaseCacheHit with null since id is not a number
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
+    });
+
+    it('handles selection with undefined id', () => {
+        renderWithTheme(
+            <PerformanceTiles
+                selection={{ type: 'server' }}
+            />
+        );
+
+        // Should call useDatabaseCacheHit with null since id is undefined
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
+    });
+});

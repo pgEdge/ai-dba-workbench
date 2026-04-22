@@ -11,6 +11,7 @@
 import React from 'react';
 import { Box } from '@mui/material';
 import { usePerformanceSummary } from './usePerformanceSummary';
+import { useDatabaseCacheHit } from './useDatabaseCacheHit';
 import { PerformanceTilesProps } from './types';
 import { TILE_GRID_SX } from './styles';
 import DatabaseAgeTile from './DatabaseAgeTile';
@@ -28,6 +29,12 @@ const PerformanceTiles: React.FC<PerformanceTilesProps> = ({ selection }) => {
     const connections = data?.connections ?? [];
     const isMultiServer = selection.type !== 'server';
 
+    // For single-server view, fetch per-database cache hit data
+    const connectionId = !isMultiServer && typeof selection.id === 'number'
+        ? selection.id
+        : null;
+    const { databases: databaseData } = useDatabaseCacheHit(connectionId);
+
     return (
         <Box sx={TILE_GRID_SX}>
             <DatabaseAgeTile
@@ -39,6 +46,7 @@ const PerformanceTiles: React.FC<PerformanceTilesProps> = ({ selection }) => {
                 connections={connections}
                 loading={loading}
                 isMultiServer={isMultiServer}
+                databaseData={!isMultiServer ? databaseData : undefined}
             />
             <TransactionTile
                 connections={connections}

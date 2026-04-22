@@ -74,3 +74,23 @@ export interface PerformanceSummaryData {
 export interface PerformanceTilesProps {
     selection: Record<string, unknown>;
 }
+
+/**
+ * Per-database cache hit ratio data from the database-summaries endpoint.
+ * Used by CacheHitTile to show per-database series in single-server view.
+ */
+export interface DatabaseCacheHitData {
+    database_name: string;
+    cache_hit_ratio: CacheHitRatio;
+}
+
+/**
+ * Response structure from /api/v1/metrics/database-summaries.
+ * We only use the fields relevant to cache hit ratio.
+ */
+export interface DatabaseSummariesResponse {
+    databases: Array<{
+        database_name: string;
+        cache_hit_ratio: CacheHitRatio;
+    }>;
+}

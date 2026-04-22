@@ -131,10 +131,11 @@ func TestHandleGroupMCPPrivileges_GrantMissingField(t *testing.T) {
 	}
 }
 
-// TestHandleGroupMCPPrivileges_GrantStoreError verifies that a store
-// error (unknown privilege name) results in 500 and that the log
-// sanitization path is exercised (the privilege value flows through
-// logging.SanitizeForLog).
+// TestHandleGroupMCPPrivileges_GrantStoreError verifies that CRLF-bearing
+// input does not cause the handler to panic and that the handler returns
+// 500 when the privilege is unknown. This implicitly exercises the
+// sanitization path; verifying actual log output would require capturing
+// stderr.
 func TestHandleGroupMCPPrivileges_GrantStoreError(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -598,10 +599,11 @@ func TestGrantGroupPermission_MissingField(t *testing.T) {
 	}
 }
 
-// TestGrantGroupPermission_StoreError verifies that a store error (here
-// forced by closing the underlying database) results in 500 and
-// exercises the logging.SanitizeForLog path on the CRLF-bearing
-// permission value without panicking.
+// TestGrantGroupPermission_StoreError verifies that CRLF-bearing input
+// does not cause the handler to panic and that the handler returns 500
+// when the underlying store is closed. This implicitly exercises the
+// sanitization path; verifying actual log output would require capturing
+// stderr.
 func TestGrantGroupPermission_StoreError(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()

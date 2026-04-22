@@ -269,20 +269,12 @@ func TestKBSearchResultStruct(t *testing.T) {
 	}
 }
 
-// buildSearchKBTestDB creates a temporary SQLite knowledgebase pre-
-// populated with chunk rows for searchKB tests. It returns the path to
-// the database file.
-func buildSearchKBTestDB(t *testing.T) string {
+// createSearchKBChunksSchema creates the `chunks` table used by searchKB
+// tests. Centralizing the DDL keeps the schema consistent across test
+// fixtures.
+func createSearchKBChunksSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "kb.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	defer db.Close()
-
-	schema := `
+	const schema = `
         CREATE TABLE chunks (
             text TEXT,
             title TEXT,
@@ -298,6 +290,22 @@ func buildSearchKBTestDB(t *testing.T) string {
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
+}
+
+// buildSearchKBTestDB creates a temporary SQLite knowledgebase pre-
+// populated with chunk rows for searchKB tests. It returns the path to
+// the database file.
+func buildSearchKBTestDB(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kb.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	createSearchKBChunksSchema(t, db)
 
 	// Serialize a float32 embedding to little-endian blob.
 	encode := func(vec []float32) []byte {
@@ -448,22 +456,7 @@ func TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(`
-        CREATE TABLE chunks (
-            text TEXT,
-            title TEXT,
-            section TEXT,
-            project_name TEXT,
-            project_version TEXT,
-            file_path TEXT,
-            openai_embedding BLOB,
-            voyage_embedding BLOB,
-            ollama_embedding BLOB
-        );
-    `)
-	if err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
+	createSearchKBChunksSchema(t, db)
 
 	// Row with no embeddings at all - should be skipped entirely.
 	_, err = db.Exec(`INSERT INTO chunks VALUES

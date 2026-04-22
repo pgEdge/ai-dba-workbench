@@ -703,6 +703,13 @@ func TestIsValidModelName(t *testing.T) {
 	for i := range tooLong {
 		tooLong[i] = 'a'
 	}
+	// Build a 256-character string of all 'a' to exercise the inclusive
+	// upper bound (validator rejects only strings strictly longer than
+	// 256).
+	maxLen := make([]byte, 256)
+	for i := range maxLen {
+		maxLen[i] = 'a'
+	}
 
 	tests := []struct {
 		name  string
@@ -711,6 +718,7 @@ func TestIsValidModelName(t *testing.T) {
 	}{
 		{"empty", "", false},
 		{"too long", string(tooLong), false},
+		{"max length accepted", string(maxLen), true},
 		{"simple lowercase", "gpt-4", true},
 		{"simple uppercase", "GPT-4", true},
 		{"with digits", "claude-3-5-sonnet", true},
@@ -725,6 +733,7 @@ func TestIsValidModelName(t *testing.T) {
 		{"hash rejected", "model#1", false},
 		{"paren rejected", "model(1)", false},
 		{"non-ascii rejected", "gpt-4✅", false},
+		{"whitespace-only rejected", "   ", false},
 	}
 
 	for _, tt := range tests {

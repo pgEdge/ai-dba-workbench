@@ -73,6 +73,13 @@ linters:
       - .*\.pb\.go$
       - vendor
       - bin
+      # The following three entries are golangci-lint defaults retained
+      # for forward-compatibility. The `$` anchor means they only match
+      # paths ending in the name, so they would NOT exclude files inside
+      # those directories; none of these directories exist in this tree,
+      # so the patterns are effectively dead code kept to match upstream
+      # defaults. If any such directory is added, switch to `third_party/`
+      # (etc.) to match files inside it.
       - third_party$
       - builtin$
       - examples$
@@ -80,6 +87,8 @@ formatters:
   exclusions:
     generated: lax
     paths:
+      # See note above: these mirror upstream defaults and only match
+      # paths ending in these names, not files inside such directories.
       - third_party$
       - builtin$
       - examples$

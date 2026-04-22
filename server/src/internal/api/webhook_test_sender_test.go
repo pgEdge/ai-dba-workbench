@@ -151,8 +151,14 @@ func TestSendTestWebhook_BadURL(t *testing.T) {
 // TestSendTestWebhook_UnreachableHost verifies that a dial failure is
 // wrapped with a descriptive error.
 func TestSendTestWebhook_UnreachableHost(t *testing.T) {
-	// Port 1 is virtually guaranteed to refuse a connection.
-	err := sendTestWebhook("http://127.0.0.1:1/", "slack")
+	// Bind a real ephemeral port and immediately release it; the resulting
+	// URL is guaranteed to refuse connections without relying on magic
+	// low-numbered ports that may behave differently across systems.
+	closedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedURL := closedServer.URL
+	closedServer.Close()
+
+	err := sendTestWebhook(closedURL, "slack")
 	if err == nil {
 		t.Fatal("expected error for unreachable host, got nil")
 	}
@@ -395,7 +401,14 @@ func TestSendTestGenericWebhook_BadURL(t *testing.T) {
 // TestSendTestGenericWebhook_UnreachableHost verifies dial-failure error
 // wrapping for the generic webhook sender.
 func TestSendTestGenericWebhook_UnreachableHost(t *testing.T) {
-	err := sendTestGenericWebhook("http://127.0.0.1:1/", http.MethodPost, nil, "", "")
+	// Bind a real ephemeral port and immediately release it to obtain a
+	// URL guaranteed to refuse connections, without relying on magic
+	// low-numbered ports.
+	closedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedURL := closedServer.URL
+	closedServer.Close()
+
+	err := sendTestGenericWebhook(closedURL, http.MethodPost, nil, "", "")
 	if err == nil {
 		t.Fatal("expected error for unreachable host, got nil")
 	}

@@ -28,7 +28,7 @@ import {
     Settings as SettingsIcon,
 } from '@mui/icons-material';
 import InlineEditText from '../InlineEditText';
-import { getClusterType, countServersRecursive } from './utils';
+import { getClusterType, countServersRecursive, parseGroupNumericId } from './utils';
 import ClusterContainer from './ClusterContainer';
 import ClusterItem from './ClusterItem';
 import ServerItem from './ServerItem';
@@ -183,7 +183,7 @@ const GroupItem = memo<GroupItemProps>(({
 
     // Superusers can edit both database-backed groups (ID: group-{number})
     // and auto-detected groups (groups with auto_group_key)
-    const isEditableGroup = /^group-\d+$/.test(group.id) || !!group.auto_group_key;
+    const isEditableGroup = parseGroupNumericId(group.id) !== undefined || !!group.auto_group_key;
     const canEditGroup = user?.isSuperuser && isEditableGroup;
     const totalServers = group.clusters?.reduce(
         (acc, c) => acc + countServersRecursive(c.servers),

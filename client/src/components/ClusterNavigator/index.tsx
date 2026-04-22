@@ -314,7 +314,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const [editingServer, setEditingServer] = useState<Record<string, unknown> | null>(null);
     const [groupDialogOpen, setGroupDialogOpen] = useState(false);
     const [groupDialogMode, setGroupDialogMode] = useState<'create' | 'edit'>('create');
-    const [editingGroup, setEditingGroup] = useState<Record<string, unknown> | null>(null);
+    const [editingGroup, setEditingGroup] = useState<(GroupData & { id: string }) | null>(null);
     const [groupDialogInitialTab, setGroupDialogInitialTab] = useState(0);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<{ type: string; item: { id: number | string; name?: string } } | null>(null);
@@ -544,7 +544,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             await createGroup(groupData);
         } else {
             // For edit, we just update the name using existing function
-            await updateGroupName(editingGroup!.id as string, groupData.name);
+            await updateGroupName(editingGroup!.id, groupData.name);
         }
         setGroupDialogOpen(false);
     };
@@ -563,9 +563,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
 
     // Handler for configuring a group (opens edit dialog on Alert Overrides tab)
     const handleConfigureGroup = (group: GroupData) => {
-        const groupId = group.id as string;
-        const numericId = parseInt(groupId.replace('group-', ''), 10);
-        setEditingGroup({ ...group, id: numericId });
+        setEditingGroup(group);
         setGroupDialogMode('edit');
         setGroupDialogInitialTab(0);
         setGroupDialogOpen(true);
@@ -645,7 +643,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             } else if (deleteTarget.type === 'cluster') {
                 await deleteCluster(deleteTarget.item.id as string);
             } else {
-                await deleteGroup(deleteTarget.item.id);
+                await deleteGroup(deleteTarget.item.id as string);
             }
             setDeleteDialogOpen(false);
             setDeleteTarget(null);

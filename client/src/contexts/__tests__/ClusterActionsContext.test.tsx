@@ -111,6 +111,22 @@ describe('ClusterActionsContext', () => {
             expect(mockFetchClusterData).toHaveBeenCalled();
         });
 
+        it('passes through auto-detected ids with a key suffix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName(
+                    'group-auto-some-key',
+                    'Auto Prod',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto-some-key',
+                { name: 'Auto Prod' },
+            );
+        });
+
         it('uses numeric id for database-backed groups', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
@@ -124,15 +140,70 @@ describe('ClusterActionsContext', () => {
             );
         });
 
-        it('uses the full id for named (non-numeric) database groups', async () => {
+        it('rejects ids without the "group-" prefix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.updateGroupName('42', 'Bad'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
+        it('rejects ids with a non-numeric, non-auto suffix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.updateGroupName('group-named', 'Bad'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ['group-autobad'],
+            ['group-automatic'],
+            ['group-auto_foo'],
+            ['group-auto/evil'],
+            ['group-auto-'],
+            ['group-auto-bad id'],
+        ])(
+            'rejects malformed auto-prefixed id %j and never forwards it',
+            async (malformed) => {
+                const { result } = renderHook(() => useClusterActions(), {
+                    wrapper,
+                });
+
+                await expect(
+                    result.current.updateGroupName(malformed, 'X'),
+                ).rejects.toThrow('Invalid group ID');
+                expect(mockApiPut).not.toHaveBeenCalled();
+            },
+        );
+
+        it('accepts the bare "group-auto" bucket id', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
             await act(async () => {
-                await result.current.updateGroupName('group-named', 'X');
+                await result.current.updateGroupName('group-auto', 'Auto');
             });
 
             expect(mockApiPut).toHaveBeenCalledWith(
-                '/api/v1/cluster-groups/group-named',
+                '/api/v1/cluster-groups/group-auto',
+                { name: 'Auto' },
+            );
+        });
+
+        it('accepts "group-auto-<token>" with url-safe suffix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroupName(
+                    'group-auto-some_key-123',
+                    'X',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto-some_key-123',
                 { name: 'X' },
             );
         });
@@ -337,16 +408,25 @@ describe('ClusterActionsContext', () => {
             });
 
             expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/cluster-groups/42');
+            expect(mockFetchClusterData).toHaveBeenCalled();
         });
 
-        it('deleteGroup accepts raw numeric IDs', async () => {
+        it('deleteGroup rejects ids without a numeric suffix', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
-            await act(async () => {
-                await result.current.deleteGroup(7);
-            });
+            await expect(
+                result.current.deleteGroup('group-auto'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiDelete).not.toHaveBeenCalled();
+        });
 
-            expect(mockApiDelete).toHaveBeenCalledWith('/api/v1/cluster-groups/7');
+        it('deleteGroup rejects ids without the "group-" prefix', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.deleteGroup('42'),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiDelete).not.toHaveBeenCalled();
         });
     });
 
@@ -394,21 +474,80 @@ describe('ClusterActionsContext', () => {
             });
         });
 
-        it('leaves group_id null when target format is unrecognized', async () => {
+        it('sends group_id = null when dropping on the bare "group-auto" bucket', async () => {
             const { result } = renderHook(() => useClusterActions(), { wrapper });
 
             await act(async () => {
                 await result.current.moveClusterToGroup(
-                    'cluster-1',
-                    'not-a-group-ref',
+                    'server-3',
+                    'group-auto',
                 );
             });
 
-            expect(mockApiPut).toHaveBeenCalledWith(
-                '/api/v1/clusters/cluster-1',
-                { group_id: null },
-            );
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: null,
+            });
         });
+
+        it('sends group_id = null when dropping on a "group-auto-<key>" bucket', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup(
+                    'server-3',
+                    'group-auto-foo',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: null,
+            });
+        });
+
+        it('forwards auto_cluster_key when dropping on an auto-group', async () => {
+            // The caller (handleDragEnd) passes the dragged cluster's own
+            // auto_cluster_key. Verify moveClusterToGroup forwards it
+            // verbatim so the server-side auto-group path receives it.
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.moveClusterToGroup(
+                    'server-3',
+                    'group-auto-foo',
+                    'caller-provided-key',
+                );
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith('/api/v1/clusters/server-3', {
+                group_id: null,
+                auto_cluster_key: 'caller-provided-key',
+            });
+        });
+
+        it.each([
+            ['group-foo'],
+            ['group-1a'],
+            ['group-'],
+            ['group-auto_bad'],
+            ['group-autobad'],
+            ['group-auto-'],
+            ['not-a-group'],
+            ['42'],
+            [''],
+        ])(
+            'throws "Invalid group ID" and does not call fetch for %j',
+            async (malformed) => {
+                const { result } = renderHook(() => useClusterActions(), {
+                    wrapper,
+                });
+
+                await expect(
+                    result.current.moveClusterToGroup('cluster-1', malformed),
+                ).rejects.toThrow('Invalid group ID');
+                expect(mockApiPut).not.toHaveBeenCalled();
+                expect(mockFetchClusterData).not.toHaveBeenCalled();
+            },
+        );
     });
 
     describe('hook outside provider', () => {

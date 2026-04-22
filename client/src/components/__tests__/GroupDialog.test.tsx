@@ -119,7 +119,7 @@ describe('GroupDialog', () => {
 
     describe('edit mode rendering', () => {
         const editGroup = {
-            id: 1,
+            id: 'group-1',
             name: 'Production',
             description: 'Production cluster group',
             is_shared: true,
@@ -184,7 +184,7 @@ describe('GroupDialog', () => {
             );
         });
 
-        it('shows AlertOverridesPanel when Alert overrides tab is clicked', async () => {
+        it('shows AlertOverridesPanel with numeric scope id when Alert overrides tab is clicked', async () => {
             const user = userEvent.setup({ delay: null });
             renderWithTheme(
                 <GroupDialog
@@ -203,9 +203,13 @@ describe('GroupDialog', () => {
                     screen.getByTestId('alert-overrides-panel')
                 ).toBeInTheDocument();
             });
+            // Verify the string id "group-1" was converted to numeric 1
+            expect(screen.getByTestId('alert-overrides-panel')).toHaveTextContent(
+                'AlertOverridesPanel: group 1'
+            );
         });
 
-        it('shows ProbeOverridesPanel when Probe configuration tab is clicked', async () => {
+        it('shows ProbeOverridesPanel with numeric scope id when Probe configuration tab is clicked', async () => {
             const user = userEvent.setup({ delay: null });
             renderWithTheme(
                 <GroupDialog
@@ -224,9 +228,12 @@ describe('GroupDialog', () => {
                     screen.getByTestId('probe-overrides-panel')
                 ).toBeInTheDocument();
             });
+            expect(screen.getByTestId('probe-overrides-panel')).toHaveTextContent(
+                'ProbeOverridesPanel: group 1'
+            );
         });
 
-        it('shows ChannelOverridesPanel when Notification channels tab is clicked', async () => {
+        it('shows ChannelOverridesPanel with numeric scope id when Notification channels tab is clicked', async () => {
             const user = userEvent.setup({ delay: null });
             renderWithTheme(
                 <GroupDialog
@@ -245,6 +252,44 @@ describe('GroupDialog', () => {
                     screen.getByTestId('channel-overrides-panel')
                 ).toBeInTheDocument();
             });
+            expect(screen.getByTestId('channel-overrides-panel')).toHaveTextContent(
+                'ChannelOverridesPanel: group 1'
+            );
+        });
+
+        it('extracts multi-digit numeric ids at the panel boundary', async () => {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={{ ...editGroup, id: 'group-12345' }}
+                />
+            );
+
+            await user.click(
+                screen.getByRole('tab', { name: /alert overrides/i })
+            );
+
+            await waitFor(() => {
+                expect(
+                    screen.getByTestId('alert-overrides-panel')
+                ).toHaveTextContent('AlertOverridesPanel: group 12345');
+            });
+        });
+
+        it('handles edit mode with a group missing optional fields', () => {
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={{ id: 'group-7' }}
+                />
+            );
+            // Name field should be empty (group.name is undefined)
+            expect(getNameField()).toHaveValue('');
+            // Description field should be empty (group.description is undefined)
+            expect(getDescriptionField()).toHaveValue('');
         });
 
         it('renders close button in edit mode', () => {
@@ -257,6 +302,125 @@ describe('GroupDialog', () => {
             );
             expect(
                 screen.getByRole('button', { name: /close edit group/i })
+            ).toBeInTheDocument();
+        });
+    });
+
+    describe('override panels for non-numeric groups', () => {
+        const autoGroup = {
+            id: 'group-auto',
+            name: 'Auto-detected',
+            description: '',
+            is_shared: false,
+        };
+
+        it('shows info alert instead of AlertOverridesPanel for auto-detected group', async () => {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={autoGroup}
+                />
+            );
+
+            await user.click(
+                screen.getByRole('tab', { name: /alert overrides/i })
+            );
+
+            expect(
+                screen.queryByTestId('alert-overrides-panel')
+            ).not.toBeInTheDocument();
+            expect(
+                screen.getByText(/overrides are not available for auto-detected groups/i)
+            ).toBeInTheDocument();
+        });
+
+        it('shows info alert instead of ProbeOverridesPanel for auto-detected group', async () => {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={autoGroup}
+                />
+            );
+
+            await user.click(
+                screen.getByRole('tab', { name: /probe configuration/i })
+            );
+
+            expect(
+                screen.queryByTestId('probe-overrides-panel')
+            ).not.toBeInTheDocument();
+            expect(
+                screen.getByText(/overrides are not available for auto-detected groups/i)
+            ).toBeInTheDocument();
+        });
+
+        it('shows info alert instead of ChannelOverridesPanel for auto-detected group', async () => {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={autoGroup}
+                />
+            );
+
+            await user.click(
+                screen.getByRole('tab', { name: /notification channels/i })
+            );
+
+            expect(
+                screen.queryByTestId('channel-overrides-panel')
+            ).not.toBeInTheDocument();
+            expect(
+                screen.getByText(/overrides are not available for auto-detected groups/i)
+            ).toBeInTheDocument();
+        });
+
+        it('shows info alert when group id is undefined', async () => {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={{ name: 'No id', description: '', is_shared: false }}
+                />
+            );
+
+            await user.click(
+                screen.getByRole('tab', { name: /alert overrides/i })
+            );
+
+            expect(
+                screen.queryByTestId('alert-overrides-panel')
+            ).not.toBeInTheDocument();
+            expect(
+                screen.getByText(/overrides are not available for auto-detected groups/i)
+            ).toBeInTheDocument();
+        });
+
+        it('shows info alert when group id is a named (non-numeric) string', async () => {
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={{ ...autoGroup, id: 'group-Production' }}
+                />
+            );
+
+            await user.click(
+                screen.getByRole('tab', { name: /alert overrides/i })
+            );
+
+            expect(
+                screen.queryByTestId('alert-overrides-panel')
+            ).not.toBeInTheDocument();
+            expect(
+                screen.getByText(/overrides are not available for auto-detected groups/i)
             ).toBeInTheDocument();
         });
     });
@@ -341,6 +505,23 @@ describe('GroupDialog', () => {
             });
         });
 
+        it('shows a fallback message when save rejects with a non-Error value', async () => {
+            const user = userEvent.setup({ delay: null });
+            const onSave = vi.fn().mockRejectedValue('some string reject');
+            renderWithTheme(
+                <GroupDialog {...defaultProps} onSave={onSave} />
+            );
+
+            await user.type(getNameField(), 'Test Group');
+            await user.click(screen.getByRole('button', { name: /save/i }));
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText(/failed to save group/i)
+                ).toBeInTheDocument();
+            });
+        });
+
         it('does not call onClose when save fails', async () => {
             const user = userEvent.setup({ delay: null });
             const onSave = vi.fn().mockRejectedValue(new Error('Save failed'));
@@ -379,6 +560,37 @@ describe('GroupDialog', () => {
 
             await waitFor(() => {
                 expect(getNameField()).toBeDisabled();
+            });
+
+            await act(async () => {
+                resolvePromise(undefined);
+                await savePromise;
+            });
+        });
+
+        it('shows the saving spinner in edit mode while save is in flight', async () => {
+            const user = userEvent.setup({ delay: null });
+            let resolvePromise: (value: unknown) => void = () => undefined;
+            const savePromise = new Promise((resolve) => {
+                resolvePromise = resolve;
+            });
+            const onSave = vi.fn().mockReturnValue(savePromise);
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    group={{ id: 'group-1', name: 'Production' }}
+                    onSave={onSave}
+                />
+            );
+
+            // Save button is on the Details tab in edit mode
+            await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText('Saving')
+                ).toBeInTheDocument();
             });
 
             await act(async () => {

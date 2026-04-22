@@ -179,3 +179,50 @@ export const formatRelativeTime = (date: Date | null | undefined): string => {
     const minutes = Math.floor(seconds / 60);
     return `${minutes}m ago`;
 };
+
+/**
+ * Parse the numeric database id from a "group-{id}" formatted string.
+ *
+ * Group ids flow through the client as strings of the form
+ * "group-{suffix}". The database-backed form has a bare numeric suffix
+ * (e.g. "group-42"); auto-detected buckets use a non-numeric suffix
+ * (e.g. "group-auto" or "group-auto-<key>"). Callers that need to
+ * address a group by its database row id must strip the prefix and
+ * reject every non-numeric shape.
+ *
+ * This helper is the single source of truth for that parsing. It
+ * matches only `/^group-(\d+)$/` and returns `undefined` for every
+ * other input, including `undefined`, the empty string, auto-detected
+ * ids, and partially-numeric suffixes like "group-1a". It also guards
+ * against `NaN` so the return type is truly `number | undefined`.
+ */
+export const parseGroupNumericId = (
+    id: string | undefined,
+): number | undefined => {
+    if (!id) {return undefined;}
+    const match = /^group-(\d+)$/.exec(id);
+    if (!match) {return undefined;}
+    const parsed = Number(match[1]);
+    return Number.isNaN(parsed) ? undefined : parsed;
+};
+
+/**
+ * Strict matcher for auto-detected group ids.
+ *
+ * Auto buckets arrive as either the bare token "group-auto" or as
+ * "group-auto-<suffix>" where the suffix is a url-safe token made up
+ * of letters, digits, underscores, and hyphens. Looser forms like
+ * `/^group-auto/` let malformed ids through (for example
+ * "group-autobad" or "group-auto_foo" with non-url-safe suffixes);
+ * this anchored, url-safe-suffix pattern rejects them.
+ *
+ * This helper is the single source of truth for the auto-form check
+ * so that every call site stays in lockstep if the pattern ever
+ * changes.
+ */
+const AUTO_GROUP_ID_REGEX = /^group-auto(?:-[A-Za-z0-9_-]+)?$/;
+
+export const isAutoGroupId = (id: string | undefined): boolean => {
+    if (!id) {return false;}
+    return AUTO_GROUP_ID_REGEX.test(id);
+};

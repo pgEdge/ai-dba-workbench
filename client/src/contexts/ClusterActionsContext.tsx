@@ -14,6 +14,7 @@ import { useAuth } from './AuthContext';
 import { useClusterData } from './ClusterDataContext';
 import { useClusterSelection } from './ClusterSelectionContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
+import { parseGroupNumericId, isAutoGroupId } from '../components/ClusterNavigator/utils';
 
 export interface ServerData {
     name?: string;
@@ -37,7 +38,7 @@ export interface ClusterActionsContextValue {
     deleteServer: (serverId: number) => Promise<void>;
     deleteCluster: (clusterId: string) => Promise<void>;
     createGroup: (groupData: GroupData) => Promise<unknown>;
-    deleteGroup: (groupId: string | number) => Promise<void>;
+    deleteGroup: (groupId: string) => Promise<void>;
     moveClusterToGroup: (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string) => Promise<void>;
 }
 
@@ -53,75 +54,76 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const { selectedServer, clearSelection } = useClusterSelection();
 
     /**
-     * Update a cluster group's name
-     * Handles both database-backed groups (group-{id}) and
-     * auto-detected groups (group-auto)
+     * Update a cluster group's name.
+     * Group ids always arrive as "group-{suffix}" strings, where the suffix
+     * is either the numeric database id (e.g. "group-42") or the auto-
+     * detected bucket key (e.g. "group-auto"). For database-backed groups
+     * the server expects a bare numeric id, so strip the prefix; the auto
+     * bucket is addressed by its full "group-auto..." form.
      */
     const updateGroupName = useCallback(async (groupId: string, newName: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const groupIdStr = groupId.toString();
-
-        // Check if it's an auto-detected group (group-auto)
-        const isAutoDetected = /^group-auto/.test(groupIdStr);
-
-        if (isAutoDetected) {
-            // Auto-detected groups: send the group ID as-is
-            await apiPut(`/api/v1/cluster-groups/${groupIdStr}`, { name: newName });
-        } else {
-            // Extract suffix after "group-" prefix
-            const suffix = groupIdStr.replace('group-', '');
-
-            // Use numeric ID for database-backed groups, full ID for named groups
-            const groupIdentifier = /^\d+$/.test(suffix)
-                ? parseInt(suffix, 10)
-                : groupIdStr;
-
-            await apiPut(`/api/v1/cluster-groups/${groupIdentifier}`, { name: newName });
+        // Database-backed id: address the server row by its numeric id.
+        const numericId = parseGroupNumericId(groupId);
+        if (numericId !== undefined) {
+            await apiPut(`/api/v1/cluster-groups/${numericId}`, { name: newName });
+            await fetchClusterData();
+            return;
         }
+
+        // Auto-detected bucket: forward the full "group-auto..." token.
+        // Anything else (missing prefix, malformed suffix like
+        // "group-autobad", mixed alphanumerics like "group-1a") is
+        // rejected outright so the server never receives an unknown shape.
+        if (!isAutoGroupId(groupId)) {
+            throw new Error('Invalid group ID');
+        }
+
+        await apiPut(`/api/v1/cluster-groups/${groupId}`, { name: newName });
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
     }, [user, fetchClusterData]);
 
     /**
-     * Update a cluster's name
-     * Handles both database-backed clusters (cluster-{id}) and
-     * auto-detected clusters (server-{id}, cluster-spock-{prefix})
+     * Update a cluster's name.
+     * Cluster ids arrive as either "cluster-{numeric}" (database-backed),
+     * "server-{numeric}", or "cluster-spock-{prefix}" (auto-detected);
+     * group ids always arrive as "group-{numeric}" strings.
      */
     const updateClusterName = useCallback(async (clusterId: string, newName: string, groupId: string, autoClusterKey?: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const clusterIdStr = clusterId.toString();
-
-        // Check if it's an auto-detected cluster
-        const isAutoDetected = /^(server-\d+|cluster-spock-.+)$/.test(clusterIdStr);
-
-        if (isAutoDetected) {
-            // Auto-detected clusters: send the cluster ID as-is and include auto_cluster_key
+        // Auto-detected clusters: send the cluster ID as-is so the server
+        // can match against server-{id} / cluster-spock-{prefix} shapes.
+        if (/^(server-\d+|cluster-spock-.+)$/.test(clusterId)) {
             const body: Record<string, unknown> = { name: newName };
             if (autoClusterKey) {
                 body.auto_cluster_key = autoClusterKey;
             }
 
-            await apiPut(`/api/v1/clusters/${clusterIdStr}`, body);
-        } else {
-            // Database-backed clusters: extract numeric IDs
-            const numericId = parseInt(clusterIdStr.replace('cluster-', ''), 10);
-            if (isNaN(numericId)) {
-                throw new Error('Invalid cluster ID');
-            }
-
-            // Extract numeric group ID
-            const numericGroupId = parseInt(groupId.toString().replace('group-', ''), 10);
-            if (isNaN(numericGroupId)) {
-                throw new Error('Invalid group ID');
-            }
-
-            await apiPut(`/api/v1/clusters/${numericId}`, { name: newName, group_id: numericGroupId });
+            await apiPut(`/api/v1/clusters/${clusterId}`, body);
+            await fetchClusterData();
+            return;
         }
 
-        // Refresh cluster data to reflect the change
+        // Database-backed clusters: extract numeric ids for both.
+        const clusterMatch = /^cluster-(\d+)$/.exec(clusterId);
+        if (!clusterMatch) {
+            throw new Error('Invalid cluster ID');
+        }
+
+        const numericGroupId = parseGroupNumericId(groupId);
+        if (numericGroupId === undefined) {
+            throw new Error('Invalid group ID');
+        }
+
+        await apiPut(`/api/v1/clusters/${clusterMatch[1]}`, {
+            name: newName,
+            group_id: numericGroupId,
+        });
+
         await fetchClusterData();
     }, [user, fetchClusterData]);
 
@@ -210,15 +212,18 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     }, [user, fetchClusterData]);
 
     /**
-     * Delete a cluster group
+     * Delete a cluster group.
+     * Group ids always arrive as "group-{numeric}" strings. Auto-detected
+     * groups are not deletable (the UI hides the delete affordance), so a
+     * bare numeric id is always the correct server-side addressing.
      */
-    const deleteGroup = useCallback(async (groupId: string | number): Promise<void> => {
+    const deleteGroup = useCallback(async (groupId: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        // Extract numeric ID from group-{id} format if needed
-        const numericId = typeof groupId === 'string' && groupId.startsWith('group-')
-            ? parseInt(groupId.replace('group-', ''), 10)
-            : groupId;
+        const numericId = parseGroupNumericId(groupId);
+        if (numericId === undefined) {
+            throw new Error('Invalid group ID');
+        }
 
         await apiDelete(`/api/v1/cluster-groups/${numericId}`);
 
@@ -226,22 +231,38 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     }, [user, fetchClusterData]);
 
     /**
-     * Move a cluster to a different group
-     * Supports both database-backed clusters and auto-detected clusters
+     * Move a cluster to a different group.
+     *
+     * The target group id can take three valid shapes:
+     *   1. `null`: an intentional ungroup; the server receives
+     *      `group_id: null`.
+     *   2. `"group-<numeric>"`: a database-backed group; the server
+     *      receives the parsed numeric id.
+     *   3. `"group-auto"` or `"group-auto-<key>"`: an auto-detected
+     *      bucket. The UI lets users drag clusters onto auto-groups so
+     *      they can correct a missed relationship, so this path is
+     *      preserved: `group_id` stays `null` and the server routes the
+     *      move through `auto_cluster_key`.
+     *
+     * Anything else (missing prefix, mixed alphanumeric suffix,
+     * malformed auto form, stray characters) is rejected so the server
+     * never receives an unknown shape.
      */
     const moveClusterToGroup = useCallback(async (clusterId: string, targetGroupId: string | null, autoClusterKey?: string, clusterName?: string): Promise<void> => {
         if (!user) {throw new Error('Not authenticated');}
 
-        const clusterIdStr = clusterId.toString();
-
-        // Extract the target group's numeric ID from the group ID string (e.g., "group-123")
+        // Resolve the target group id to a numeric group_id or a null
+        // (ungroup / auto-bucket) payload. Reject every other shape.
         let numericGroupId: number | null = null;
-        if (targetGroupId) {
-            const groupIdStr = targetGroupId.toString();
-            const match = groupIdStr.match(/^group-(\d+)$/);
-            if (match) {
-                numericGroupId = parseInt(match[1], 10);
+        if (targetGroupId !== null) {
+            const parsed = parseGroupNumericId(targetGroupId);
+            if (parsed !== undefined) {
+                numericGroupId = parsed;
+            } else if (!isAutoGroupId(targetGroupId)) {
+                throw new Error('Invalid group ID');
             }
+            // Auto-group form: leave numericGroupId as null; the server
+            // uses auto_cluster_key to place the cluster.
         }
 
         // Build request body
@@ -254,7 +275,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             body.name = clusterName;
         }
 
-        await apiPut(`/api/v1/clusters/${clusterIdStr}`, body);
+        await apiPut(`/api/v1/clusters/${clusterId}`, body);
 
         await fetchClusterData();
     }, [user, fetchClusterData]);

@@ -108,11 +108,10 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                         areaFill
                         smooth
                         showToolbar={false}
-                        showLegend
+                        showLegend={false}
                         showTooltip
                         echartsOptions={{
-                            grid: { top: 10, right: 10, bottom: 40, left: 10, containLabel: true },
-                            legend: { bottom: 8, textStyle: { color: theme.palette.text.primary } },
+                            grid: { top: 10, right: 10, bottom: 20, left: 10, containLabel: true },
                             xAxis: {
                                 boundaryGap: false,
                                 axisLabel: {

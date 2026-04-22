@@ -63,8 +63,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
         const axisLabelStyle = { fontSize: 14, color: theme.palette.text.secondary };
 
         const options = {
-            grid: { top: 8, right: 4, bottom: 40, left: 4, containLabel: true },
-            legend: { bottom: 8, textStyle: { color: theme.palette.text.primary } },
+            grid: { top: 8, right: 4, bottom: 20, left: 4, containLabel: true },
             xAxis: {
                 boundaryGap: false,
                 axisLabel: {
@@ -160,7 +159,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
                         data={chartData}
                         height={150}
                         showToolbar={false}
-                        showLegend
+                        showLegend={false}
                         showTooltip
                         echartsOptions={dualAxisOptions}
                     />

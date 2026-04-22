@@ -268,7 +268,7 @@ BEGIN
 
         -- 3. Determine the date range of shifted data and create
         --    weekly partitions (Monday boundaries, matching the
-        --    collector's EnsurePartition logic).
+        --    the collector EnsurePartition logic).
         EXECUTE 'SELECT date_trunc(''week'', MIN(collected_at))::date, '
              || '(date_trunc(''week'', MAX(collected_at)) + interval ''7 days'')::date '
              || 'FROM _rebase_tmp'

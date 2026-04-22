@@ -89,11 +89,12 @@ export const extractClusterServerIds = (
     const servers = selection.servers as
         ServerLike[] | undefined;
     if (!servers) { return []; }
-    return collectServers(servers).map(s => s.id);
+    return [...new Set(collectServers(servers).map(s => s.id))];
 };
 ```
 
-Replaces `extractServerIds` in `ClusterDashboard/index.tsx`.
+Replaces `extractServerIds` in `ClusterDashboard/index.tsx`;
+preserves the Set-based deduplication from the original.
 
 #### `computeEstateServerCounts`
 

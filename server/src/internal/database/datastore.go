@@ -4903,7 +4903,7 @@ func (d *Datastore) gatherScopedServerData(ctx context.Context, snapshot *Estate
 		logger.Infof("gatherScopedServerData: failed to refresh cluster assignments: %v", err)
 	}
 
-	groups, err := d.GetClusterTopology(ctx, nil)
+	groups, err := d.GetClusterTopology(ctx, connectionIDs)
 	if err != nil {
 		logger.Errorf("GetScopedSnapshot: failed to get cluster topology: %v", err)
 		return

@@ -206,15 +206,6 @@ func (d *Datastore) GetEffectiveThreshold(ctx context.Context, ruleID int64, con
 	return threshold, operator, severity, enabled
 }
 
-// MetricValue represents a metric value for a specific connection
-type MetricValue struct {
-	ConnectionID int
-	DatabaseName *string
-	ObjectName   *string
-	Value        float64
-	CollectedAt  time.Time
-}
-
 // queryMetricValues executes a SQL query that returns rows with three columns
 // (connection_id, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValues(ctx context.Context, sql string) ([]MetricValue, error) {
@@ -2131,15 +2122,6 @@ func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName st
 	return results, nil
 }
 
-// SimilarAnomaly represents a past anomaly found by similarity search
-type SimilarAnomaly struct {
-	CandidateID   int64
-	Similarity    float64
-	FinalDecision *string
-	MetricName    string
-	Context       string
-}
-
 // StoreAnomalyEmbedding stores an embedding for an anomaly candidate
 func (d *Datastore) StoreAnomalyEmbedding(ctx context.Context, candidateID int64, embedding []float32, modelName string) error {
 	// Convert []float32 to PostgreSQL vector format
@@ -2237,15 +2219,6 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 		return nil, err
 	}
 	return &c, nil
-}
-
-// ProbeStaleness represents a probe's staleness ratio for a connection
-type ProbeStaleness struct {
-	ConnectionID       int
-	ConnectionName     string
-	ProbeName          string
-	CollectionInterval int     // seconds
-	StalenessRatio     float64 // elapsed / interval
 }
 
 // GetProbeStalenessByConnection retrieves staleness ratios for all enabled probes

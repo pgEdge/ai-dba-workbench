@@ -135,18 +135,6 @@ type BlackoutSchedule struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// MetricDefinition describes a metric for anomaly detection
-type MetricDefinition struct {
-	ID             int64    `json:"id"`
-	Name           string   `json:"name"`
-	Category       string   `json:"category"`
-	Description    string   `json:"description"`
-	Unit           string   `json:"unit"`
-	AnomalyEnabled bool     `json:"anomaly_enabled"`
-	MinValue       *float64 `json:"min_value,omitempty"`
-	MaxValue       *float64 `json:"max_value,omitempty"`
-}
-
 // MetricBaseline holds baseline statistics for a metric
 type MetricBaseline struct {
 	ID             int64     `json:"id"`
@@ -162,17 +150,6 @@ type MetricBaseline struct {
 	Max            float64   `json:"max"`
 	SampleCount    int64     `json:"sample_count"`
 	LastCalculated time.Time `json:"last_calculated"`
-}
-
-// CorrelationGroup holds related anomalies
-type CorrelationGroup struct {
-	ID             int64      `json:"id"`
-	ConnectionID   int        `json:"connection_id"`
-	DatabaseName   *string    `json:"database_name,omitempty"`
-	StartTime      time.Time  `json:"start_time"`
-	EndTime        *time.Time `json:"end_time,omitempty"`
-	AnomalyCount   int        `json:"anomaly_count"`
-	RootCauseGuess *string    `json:"root_cause_guess,omitempty"`
 }
 
 // AnomalyCandidate represents a candidate anomaly for tier 2/3 processing
@@ -196,31 +173,39 @@ type AnomalyCandidate struct {
 	ProcessedAt   *time.Time `json:"processed_at,omitempty"`
 }
 
-// AlertListFilter holds filter options for listing alerts
-type AlertListFilter struct {
-	ConnectionID *int
-	DatabaseName *string
-	Status       *string
-	Severity     *string
-	AlertType    *string
-	StartTime    *time.Time
-	EndTime      *time.Time
-	Limit        int
-	Offset       int
-}
-
-// AlertListResult holds the result of listing alerts
-type AlertListResult struct {
-	Alerts []Alert `json:"alerts"`
-	Total  int64   `json:"total"`
-}
-
 // HistoricalMetricValue represents a metric value with timestamp for baseline calculation
 type HistoricalMetricValue struct {
 	ConnectionID int
 	DatabaseName *string
 	Value        float64
 	CollectedAt  time.Time
+}
+
+// MetricValue represents a metric value for a specific connection
+type MetricValue struct {
+	ConnectionID int
+	DatabaseName *string
+	ObjectName   *string
+	Value        float64
+	CollectedAt  time.Time
+}
+
+// SimilarAnomaly represents a past anomaly found by similarity search
+type SimilarAnomaly struct {
+	CandidateID   int64
+	Similarity    float64
+	FinalDecision *string
+	MetricName    string
+	Context       string
+}
+
+// ProbeStaleness represents a probe's staleness ratio for a connection
+type ProbeStaleness struct {
+	ConnectionID       int
+	ConnectionName     string
+	ProbeName          string
+	CollectionInterval int     // seconds
+	StalenessRatio     float64 // elapsed / interval
 }
 
 // AnomalyEmbedding represents a stored embedding for an anomaly candidate

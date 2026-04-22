@@ -76,6 +76,10 @@ func (o *OllamaReasoning) Classify(ctx context.Context, prompt string) (string, 
 
 	req.Header.Set("Content-Type", "application/json")
 
+	// Ollama runs locally, so retry logic is intentionally omitted.
+	// Unlike cloud providers (OpenAI, Anthropic, Gemini), local
+	// inference servers do not experience rate limiting or transient
+	// cloud errors that benefit from exponential backoff.
 	resp, err := o.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

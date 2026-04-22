@@ -58,11 +58,11 @@ export const KPI_GRID_SX: SxProps<Theme> = {
 /** Metric chart container */
 export const CHART_SECTION_SX: SxProps<Theme> = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     gap: 2,
     mb: 2,
     '@media (max-width: 900px)': {
-        gridTemplateColumns: '1fr',
+        gridTemplateColumns: 'minmax(0, 1fr)',
     },
 };
 

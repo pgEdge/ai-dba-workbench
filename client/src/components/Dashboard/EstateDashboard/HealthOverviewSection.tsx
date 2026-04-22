@@ -35,10 +35,10 @@ interface AlertCounts {
 
 const RINGS_CONTAINER_SX = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     gap: 2,
     '@media (max-width: 600px)': {
-        gridTemplateColumns: '1fr',
+        gridTemplateColumns: 'minmax(0, 1fr)',
     },
 };
 

@@ -354,6 +354,10 @@ func TestHandleGroupConnectionPrivileges_GrantMethodNotAllowed(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
 	}
+	allow := rec.Header().Get("Allow")
+	if allow != "POST" {
+		t.Errorf("Allow header = %q, want 'POST'", allow)
+	}
 }
 
 // TestHandleGroupConnectionPrivileges_RevokeSuccess verifies DELETE with
@@ -413,6 +417,10 @@ func TestHandleGroupConnectionPrivileges_RevokeMethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
+	}
+	allow := rec.Header().Get("Allow")
+	if allow != "DELETE" {
+		t.Errorf("Allow header = %q, want 'DELETE'", allow)
 	}
 }
 
@@ -495,6 +503,10 @@ func TestHandleGroupPermissions_MethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
+	}
+	allow := rec.Header().Get("Allow")
+	if allow != "GET, POST" {
+		t.Errorf("Allow header = %q, want 'GET, POST'", allow)
 	}
 }
 

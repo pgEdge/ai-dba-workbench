@@ -374,7 +374,7 @@ func TestSearchKB_UnfilteredReturnsAllResults(t *testing.T) {
 		t.Fatalf("searchKB: %v", err)
 	}
 	if len(results) != 3 {
-		t.Errorf("expected 3 results, got %d", len(results))
+		t.Fatalf("expected 3 results, got %d", len(results))
 	}
 	// The highest similarity result should be the one with embedding
 	// {1, 0, 0}, i.e. the PostgreSQL 17 row.
@@ -412,7 +412,7 @@ func TestSearchKB_VersionFilter(t *testing.T) {
 		t.Fatalf("searchKB: %v", err)
 	}
 	if len(results) != 1 {
-		t.Errorf("expected 1 result, got %d", len(results))
+		t.Fatalf("expected 1 result, got %d", len(results))
 	}
 	if results[0].ProjectVersion != "17" {
 		t.Errorf("expected version 17, got %s", results[0].ProjectVersion)
@@ -459,7 +459,10 @@ func TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs(t *testing.T) {
 	createSearchKBChunksSchema(t, db)
 
 	// Row with no embeddings at all - should be skipped entirely.
-	_, err = db.Exec(`INSERT INTO chunks VALUES
+	_, err = db.Exec(`INSERT INTO chunks
+        (text, title, section, project_name, project_version, file_path,
+         openai_embedding, voyage_embedding, ollama_embedding)
+        VALUES
         ('missing embedding', '', '', 'X', '1', '/x', NULL, NULL, NULL)`)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
@@ -467,7 +470,10 @@ func TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs(t *testing.T) {
 
 	// Row with an invalid embedding blob (len % 4 != 0) - deserialize
 	// returns nil so the row is skipped after looking up the blob.
-	_, err = db.Exec(`INSERT INTO chunks VALUES
+	_, err = db.Exec(`INSERT INTO chunks
+        (text, title, section, project_name, project_version, file_path,
+         openai_embedding, voyage_embedding, ollama_embedding)
+        VALUES
         ('bad embedding', '', '', 'Y', '1', '/y', ?, NULL, NULL)`,
 		[]byte{1, 2, 3})
 	if err != nil {
@@ -479,14 +485,20 @@ func TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs(t *testing.T) {
 	binary.LittleEndian.PutUint32(vecBuf[0:], math.Float32bits(1))
 	binary.LittleEndian.PutUint32(vecBuf[4:], math.Float32bits(0))
 	binary.LittleEndian.PutUint32(vecBuf[8:], math.Float32bits(0))
-	_, err = db.Exec(`INSERT INTO chunks VALUES
+	_, err = db.Exec(`INSERT INTO chunks
+        (text, title, section, project_name, project_version, file_path,
+         openai_embedding, voyage_embedding, ollama_embedding)
+        VALUES
         ('voyage row', '', '', 'Z', '1', '/z', NULL, ?, NULL)`, vecBuf)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
 	// Row with an ollama embedding only — exercises the ollama case.
-	_, err = db.Exec(`INSERT INTO chunks VALUES
+	_, err = db.Exec(`INSERT INTO chunks
+        (text, title, section, project_name, project_version, file_path,
+         openai_embedding, voyage_embedding, ollama_embedding)
+        VALUES
         ('ollama row', '', '', 'W', '1', '/w', NULL, NULL, ?)`, vecBuf)
 	if err != nil {
 		t.Fatalf("insert: %v", err)

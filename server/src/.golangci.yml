@@ -7,10 +7,19 @@ version: "2"
 run:
   tests: true
 linters:
+  # In v2 `errcheck`, `govet`, `ineffassign`, `staticcheck`, and `unused`
+  # are default-enabled, but we list them explicitly so the
+  # `linters.settings.errcheck` and `linters.settings.govet` blocks below
+  # cannot silently become dead config if upstream defaults change.
   enable:
+    - errcheck
     - gocritic
     - gosec
+    - govet
+    - ineffassign
     - misspell
+    - staticcheck
+    - unused
   settings:
     dupl:
       threshold: 150

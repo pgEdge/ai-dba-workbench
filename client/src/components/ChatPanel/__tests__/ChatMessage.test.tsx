@@ -14,6 +14,24 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ChatMessage, { ChatMessageData } from '../ChatMessage';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 
+// ChatMessage's formatTimestamp helper calls `Date.toLocaleString(undefined,
+// {...})` so the rendered string depends on the test runner's locale. CI runs
+// on an en-US image and emits "Jan 15, 2024, 10:30 AM"; a contributor on a
+// machine set to en-GB (or any day-first locale) sees "15 Jan 2024, 10:30".
+// To keep the assertions locale-independent, compute the expected display
+// string here with the same ISO input and the same Intl options the
+// component uses, rather than hard-coding a locale-specific pattern.
+const TIMESTAMP_ISO = '2024-01-15T10:30:00Z';
+
+const expectedFormattedTimestamp = (iso: string): string =>
+    new Date(iso).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+
 // Mock toolDisplayNames
 vi.mock('../../../utils/toolDisplayNames', () => ({
     getToolDisplayName: (name: string) => name,
@@ -56,11 +74,13 @@ describe('ChatMessage', () => {
             const message: ChatMessageData = {
                 role: 'user',
                 content: 'Hello',
-                timestamp: '2024-01-15T10:30:00Z',
+                timestamp: TIMESTAMP_ISO,
             };
             renderWithTheme(<ChatMessage message={message} mode="dark" />);
 
-            expect(screen.getByText(/jan.*15.*2024/i)).toBeInTheDocument();
+            expect(
+                screen.getByText(expectedFormattedTimestamp(TIMESTAMP_ISO)),
+            ).toBeInTheDocument();
         });
     });
 
@@ -106,11 +126,13 @@ describe('ChatMessage', () => {
             const message: ChatMessageData = {
                 role: 'assistant',
                 content: 'Response',
-                timestamp: '2024-01-15T10:30:00Z',
+                timestamp: TIMESTAMP_ISO,
             };
             renderWithTheme(<ChatMessage message={message} mode="dark" />);
 
-            expect(screen.getByText(/jan.*15.*2024/i)).toBeInTheDocument();
+            expect(
+                screen.getByText(expectedFormattedTimestamp(TIMESTAMP_ISO)),
+            ).toBeInTheDocument();
         });
     });
 
@@ -131,11 +153,13 @@ describe('ChatMessage', () => {
             const message: ChatMessageData = {
                 role: 'system',
                 content: 'System message',
-                timestamp: '2024-01-15T10:30:00Z',
+                timestamp: TIMESTAMP_ISO,
             };
             renderWithTheme(<ChatMessage message={message} mode="dark" />);
 
-            expect(screen.queryByText(/jan.*15.*2024/i)).not.toBeInTheDocument();
+            // Year is the most stable anchor across locales for a rendered
+            // timestamp from this ISO input.
+            expect(screen.queryByText(/2024/)).not.toBeInTheDocument();
         });
     });
 
@@ -156,11 +180,13 @@ describe('ChatMessage', () => {
                 role: 'assistant',
                 content: 'Error message',
                 isError: true,
-                timestamp: '2024-01-15T10:30:00Z',
+                timestamp: TIMESTAMP_ISO,
             };
             renderWithTheme(<ChatMessage message={message} mode="dark" />);
 
-            expect(screen.getByText(/jan.*15.*2024/i)).toBeInTheDocument();
+            expect(
+                screen.getByText(expectedFormattedTimestamp(TIMESTAMP_ISO)),
+            ).toBeInTheDocument();
         });
     });
 

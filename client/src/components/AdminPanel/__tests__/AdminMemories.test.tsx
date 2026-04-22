@@ -348,8 +348,24 @@ describe('AdminMemories', () => {
 
         renderWithTheme(<AdminMemories />);
 
+        // AdminMemories formats dates with `toLocaleString(undefined, {...})`
+        // so the rendered string depends on the runner's locale. CI (en-US)
+        // shows "Jan 15, 2024, 10:30 AM" while en-GB shows
+        // "15 Jan 2024, 10:30". Compute the expected display string using
+        // the same ISO input and the same Intl options the component uses,
+        // rather than hard-coding a locale-specific pattern.
+        const expected = new Date(
+            MOCK_MEMORIES[0].created_at,
+        ).toLocaleString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+
         await waitFor(() => {
-            expect(screen.getByText(/Jan 15, 2024/)).toBeInTheDocument();
+            expect(screen.getByText(expected)).toBeInTheDocument();
         });
     });
 

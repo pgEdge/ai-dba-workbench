@@ -91,9 +91,6 @@ export interface DatabaseCacheHitData {
 export interface DatabaseSummariesResponse {
     databases: Array<{
         database_name: string;
-        cache_hit_ratio: {
-            current: number;
-            time_series: Array<{ time: string; value: number }>;
-        };
+        cache_hit_ratio: CacheHitRatio;
     }>;
 }

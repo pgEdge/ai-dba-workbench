@@ -43,7 +43,7 @@ describe('useDatabaseCacheHit', () => {
             isLoading: false,
         });
         mockUseClusterData.mockReturnValue({
-            lastRefresh: 0,
+            lastRefresh: null,
             triggerRefresh: vi.fn(),
             clearRefresh: vi.fn(),
         });
@@ -285,7 +285,7 @@ describe('useDatabaseCacheHit', () => {
 
         // Simulate refresh trigger
         mockUseClusterData.mockReturnValue({
-            lastRefresh: Date.now(),
+            lastRefresh: new Date(),
             triggerRefresh: vi.fn(),
             clearRefresh: vi.fn(),
         });
@@ -396,7 +396,7 @@ describe('useDatabaseCacheHit', () => {
 
         // Trigger refetch
         mockUseClusterData.mockReturnValue({
-            lastRefresh: Date.now(),
+            lastRefresh: new Date(),
             triggerRefresh: vi.fn(),
             clearRefresh: vi.fn(),
         });

@@ -8,13 +8,5 @@
  *-------------------------------------------------------------------------
  */
 
-// Re-export from the refactored chat module directory.
-// This stub maintains backward compatibility for existing imports.
-
-export { useChat, default } from './chat';
-export type {
-    ChatMessage,
-    ContentBlock,
-    ToolActivity,
-    UseChatReturn,
-} from './chat';
+export { default } from './ServerInfoDialog';
+export type { ServerInfoDialogProps } from './serverInfoTypes';

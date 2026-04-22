@@ -8,13 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-// Re-export from the refactored chat module directory.
-// This stub maintains backward compatibility for existing imports.
+// Barrel file re-exporting the public API from the chat hook module.
 
-export { useChat, default } from './chat';
+export { useChat, default } from './useChat';
 export type {
     ChatMessage,
     ContentBlock,
     ToolActivity,
     UseChatReturn,
-} from './chat';
+} from './useChat';

@@ -253,7 +253,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         // Extract the target group's numeric ID from the group ID string (e.g., "group-123")
         let numericGroupId: number | null = null;
         if (targetGroupId) {
-            const parsed = parseGroupNumericId(targetGroupId.toString());
+            const parsed = parseGroupNumericId(targetGroupId);
             if (parsed !== undefined) {
                 numericGroupId = parsed;
             }

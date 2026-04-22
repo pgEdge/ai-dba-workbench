@@ -12,52 +12,22 @@
  */
 
 import React, { useEffect, useRef } from 'react';
-import {
-    Box,
-    Typography,
-    Dialog,
-    AppBar,
-    Toolbar,
-    IconButton,
-    alpha,
-    Fade,
-    useTheme,
-} from '@mui/material';
-import {
-    Close as CloseIcon,
-    Download as DownloadIcon,
-    Psychology as PsychologyIcon,
-    Error as ErrorIcon,
-} from '@mui/icons-material';
+import { Box, Typography, useTheme } from '@mui/material';
+import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import {
     useQueryAnalysis,
     QueryAnalysisInput,
 } from '../hooks/useQueryAnalysis';
 import { formatTime } from '../utils/formatters';
 import { slugify } from '../utils/textHelpers';
-import {
-    MarkdownContent,
-    AnalysisSkeleton,
-} from './shared/MarkdownContent';
-import {
-    sxErrorFlexRow,
-    getIconBoxSx,
-    getIconColorSx,
-    getLoadingBannerSx,
-    getPulseDotSx,
-    getLoadingTextSx,
-    getErrorBoxSx,
-    getErrorTitleSx,
-    getAnalysisBoxSx,
-    getDownloadButtonSx,
-} from './shared/MarkdownExports';
+import { getIconColorSx } from './shared/MarkdownExports';
 import {
     getConnectionBadgeSx,
     getDatabaseBadgeSx,
     getDatabaseTextSx,
     sxMonoSmall,
 } from './analysisStyles';
-import SlideTransition from './shared/SlideTransition';
+import { BaseAnalysisDialog } from './shared/BaseAnalysisDialog';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
 
 const TOOL_LABELS = [
@@ -136,10 +106,6 @@ const QueryAnalysisDialog: React.FC<QueryAnalysisDialogProps> = ({
     }, [open, analysis, queryText, queryId, stats, connectionId,
         databaseName, analyze]);
 
-    const handleClose = () => {
-        onClose();
-    };
-
     // Download analysis as markdown file
     const handleDownload = () => {
         if (!analysis) { return; }
@@ -182,261 +148,56 @@ ${analysis}
         downloadAsMarkdown(content, filename);
     };
 
-    return (
-        <Dialog
-            fullScreen
-            open={open}
-            onClose={handleClose}
-            TransitionComponent={SlideTransition}
-        >
-            {/* AppBar Header */}
-            <AppBar
-                position="static"
-                elevation={0}
-                sx={{
-                    bgcolor: 'background.paper',
-                    borderBottom: '1px solid',
-                    borderColor: 'divider',
-                }}
-            >
-                <Toolbar
-                    sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1.5,
-                        flexWrap: 'wrap',
-                    }}
-                >
-                    {/* Close button */}
-                    <IconButton
-                        edge="start"
-                        onClick={handleClose}
-                        aria-label="close query analysis"
-                        sx={{ color: 'text.secondary' }}
-                    >
-                        <CloseIcon />
-                    </IconButton>
+    // Build icon
+    const iconElement = <PsychologyIcon sx={getIconColorSx(theme)} />;
 
-                    {/* Icon */}
-                    <Box sx={getIconBoxSx(theme)}>
-                        <PsychologyIcon sx={getIconColorSx(theme)} />
-                    </Box>
-
-                    {/* Title */}
-                    <Typography
-                        variant="h6"
-                        sx={{
-                            fontWeight: 600,
-                            fontSize: '1.125rem',
-                            color: 'text.primary',
-                            whiteSpace: 'nowrap',
-                        }}
-                    >
-                        Query analysis
+    // Build toolbar content
+    const toolbarContent = (
+        <>
+            {/* Connection pill */}
+            {connectionName && (
+                <Box sx={getConnectionBadgeSx(theme)}>
+                    <Typography sx={sxMonoSmall}>
+                        {connectionName}
                     </Typography>
+                </Box>
+            )}
 
-                    {/* Connection pill */}
-                    {connectionName && (
-                        <Box sx={getConnectionBadgeSx(theme)}>
-                            <Typography sx={sxMonoSmall}>
-                                {connectionName}
-                            </Typography>
-                        </Box>
-                    )}
+            {/* Database pill */}
+            {databaseName && (
+                <Box sx={getDatabaseBadgeSx(theme)}>
+                    <Typography sx={getDatabaseTextSx(theme)}>
+                        {databaseName}
+                    </Typography>
+                </Box>
+            )}
+        </>
+    );
 
-                    {/* Database pill */}
-                    {databaseName && (
-                        <Box sx={getDatabaseBadgeSx(theme)}>
-                            <Typography sx={getDatabaseTextSx(theme)}>
-                                {databaseName}
-                            </Typography>
-                        </Box>
-                    )}
-
-                    {/* Spacer */}
-                    <Box sx={{ flexGrow: 1 }} />
-
-                    {/* Download button */}
-                    <IconButton
-                        onClick={handleDownload}
-                        disabled={!analysis || loading}
-                        aria-label="download analysis"
-                        sx={getDownloadButtonSx(theme)}
-                    >
-                        <DownloadIcon />
-                    </IconButton>
-                </Toolbar>
-            </AppBar>
-
-            {/* Scrollable Content */}
-            <Box
-                sx={{
-                    flex: 1,
-                    overflow: 'auto',
-                    bgcolor: theme.palette.mode === 'dark'
-                        ? theme.palette.background.default
-                        : theme.palette.grey[50],
-                    px: 3,
-                    pt: 1.5,
-                    pb: 3,
-                    '&::-webkit-scrollbar': { width: 6 },
-                    '&::-webkit-scrollbar-thumb': {
-                        borderRadius: 3,
-                        backgroundColor: theme.palette.mode === 'dark'
-                            ? '#475569'
-                            : '#D1D5DB',
-                    },
-                    '&::-webkit-scrollbar-track': {
-                        backgroundColor: 'transparent',
-                    },
-                }}
-            >
-                <Fade in={true} timeout={300}>
-                    <Box sx={{ mt: 1.5, maxWidth: 900, mx: 'auto' }}>
-                        {loading && (
-                            <Box>
-                                <Box sx={getLoadingBannerSx(theme)}>
-                                    <Box sx={getPulseDotSx(theme)} />
-                                    <Box sx={{ flex: 1 }}>
-                                        <Typography
-                                            sx={getLoadingTextSx(theme)}
-                                        >
-                                            {progressMessage}
-                                        </Typography>
-                                        <Box sx={{
-                                            display: 'flex',
-                                            flexWrap: 'wrap',
-                                            gap: 0.5,
-                                            mt: 1,
-                                        }}>
-                                            {TOOL_LABELS.map(label => {
-                                                const isActive =
-                                                    activeTools.includes(label);
-                                                return (
-                                                    <Box
-                                                        key={label}
-                                                        sx={{
-                                                            px: 1,
-                                                            py: 0.25,
-                                                            borderRadius: 0.75,
-                                                            fontSize: '0.75rem',
-                                                            fontWeight: 500,
-                                                            fontFamily:
-                                                                '"JetBrains Mono", "SF Mono", monospace',
-                                                            border: '1px solid',
-                                                            ...(isActive
-                                                                ? {
-                                                                    transition:
-                                                                        'all 0.3s ease',
-                                                                    color:
-                                                                        theme.palette
-                                                                            .mode ===
-                                                                        'dark'
-                                                                            ? theme
-                                                                                .palette
-                                                                                .success
-                                                                                .light
-                                                                            : theme
-                                                                                .palette
-                                                                                .success
-                                                                                .main,
-                                                                    borderColor:
-                                                                        alpha(
-                                                                            theme
-                                                                                .palette
-                                                                                .success
-                                                                                .main,
-                                                                            0.4,
-                                                                        ),
-                                                                    bgcolor:
-                                                                        alpha(
-                                                                            theme
-                                                                                .palette
-                                                                                .success
-                                                                                .main,
-                                                                            theme
-                                                                                .palette
-                                                                                .mode ===
-                                                                            'dark'
-                                                                                ? 0.15
-                                                                                : 0.08,
-                                                                        ),
-                                                                }
-                                                                : {
-                                                                    transition:
-                                                                        'all 2.5s ease',
-                                                                    color:
-                                                                        theme
-                                                                            .palette
-                                                                            .text
-                                                                            .disabled,
-                                                                    borderColor:
-                                                                        alpha(
-                                                                            theme
-                                                                                .palette
-                                                                                .divider,
-                                                                            0.5,
-                                                                        ),
-                                                                    bgcolor:
-                                                                        'transparent',
-                                                                }),
-                                                        }}
-                                                    >
-                                                        {label}
-                                                    </Box>
-                                                );
-                                            })}
-                                        </Box>
-                                    </Box>
-                                </Box>
-                                <AnalysisSkeleton />
-                            </Box>
-                        )}
-
-                        {error && !loading && (
-                            <Box sx={getErrorBoxSx(theme)}>
-                                <Box sx={sxErrorFlexRow}>
-                                    <ErrorIcon sx={{
-                                        fontSize: 20,
-                                        color: theme.palette.error.main,
-                                        mt: 0.25,
-                                    }} />
-                                    <Box>
-                                        <Typography
-                                            sx={getErrorTitleSx(theme)}
-                                        >
-                                            Analysis Failed
-                                        </Typography>
-                                        <Typography
-                                            sx={{
-                                                color: 'text.secondary',
-                                                fontSize: '1rem',
-                                            }}
-                                        >
-                                            {error}
-                                        </Typography>
-                                    </Box>
-                                </Box>
-                            </Box>
-                        )}
-
-                        {analysis && !loading && (
-                            <Box sx={getAnalysisBoxSx(theme)}>
-                                <MarkdownContent
-                                    content={
-                                        `# Query Analysis\n\n${analysis}`
-                                    }
-                                    isDark={isDark}
-                                    connectionId={connectionId}
-                                    databaseName={databaseName}
-                                    serverName={connectionName}
-                                />
-                            </Box>
-                        )}
-                    </Box>
-                </Fade>
-            </Box>
-        </Dialog>
+    return (
+        <BaseAnalysisDialog
+            open={open}
+            onClose={onClose}
+            title="Query analysis"
+            icon={iconElement}
+            toolLabels={TOOL_LABELS}
+            analysis={analysis}
+            loading={loading}
+            error={error}
+            progressMessage={progressMessage}
+            activeTools={activeTools}
+            onDownload={handleDownload}
+            toolbarContent={toolbarContent}
+            markdownContent={
+                analysis ? `# Query Analysis\n\n${analysis}` : undefined
+            }
+            markdownContentProps={{
+                isDark,
+                connectionId,
+                databaseName,
+                serverName: connectionName,
+            }}
+        />
     );
 };
 

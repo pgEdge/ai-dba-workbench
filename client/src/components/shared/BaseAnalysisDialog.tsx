@@ -36,7 +36,6 @@ import {
 import {
     sxErrorFlexRow,
     getIconBoxSx,
-    getIconColorSx,
     getLoadingBannerSx,
     getPulseDotSx,
     getLoadingTextSx,

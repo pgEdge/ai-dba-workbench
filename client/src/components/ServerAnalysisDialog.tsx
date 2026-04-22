@@ -9,47 +9,19 @@
  */
 
 import React, { useEffect, useMemo } from 'react';
+import { Box, Typography, useTheme } from '@mui/material';
 import {
-    Box,
-    Typography,
-    Dialog,
-    AppBar,
-    Toolbar,
-    IconButton,
-    alpha,
-    Fade,
-    useTheme,
-} from '@mui/material';
-import {
-    Close as CloseIcon,
-    Download as DownloadIcon,
     Psychology as PsychologyIcon,
-    Error as ErrorIcon,
     Storage as ServerIcon,
     Dns as ClusterIcon,
 } from '@mui/icons-material';
-import { useServerAnalysis, ServerAnalysisInput } from '../hooks/useServerAnalysis';
 import {
-    MarkdownContent,
-    AnalysisSkeleton,
-} from './shared/MarkdownContent';
-import {
-    sxErrorFlexRow,
-    getIconBoxSx,
-    getIconColorSx,
-    getLoadingBannerSx,
-    getPulseDotSx,
-    getLoadingTextSx,
-    getErrorBoxSx,
-    getErrorTitleSx,
-    getAnalysisBoxSx,
-    getDownloadButtonSx,
-} from './shared/MarkdownExports';
-import {
-    getServerBadgeSx,
-    sxMonoSmall,
-} from './analysisStyles';
-import SlideTransition from './shared/SlideTransition';
+    useServerAnalysis,
+    ServerAnalysisInput,
+} from '../hooks/useServerAnalysis';
+import { getIconColorSx } from './shared/MarkdownExports';
+import { getServerBadgeSx, sxMonoSmall } from './analysisStyles';
+import { BaseAnalysisDialog } from './shared/BaseAnalysisDialog';
 import { downloadAsMarkdown } from '../utils/downloadMarkdown';
 
 const TOOL_LABELS = [
@@ -79,10 +51,22 @@ interface ServerAnalysisDialogProps {
     onClose: () => void;
 }
 
-const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selection, onClose }) => {
+const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({
+    open,
+    selection,
+    onClose,
+}) => {
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
-    const { analysis, loading, error, progressMessage, activeTools, analyze, reset } = useServerAnalysis();
+    const {
+        analysis,
+        loading,
+        error,
+        progressMessage,
+        activeTools,
+        analyze,
+        reset,
+    } = useServerAnalysis();
 
     // Trigger analysis when dialog opens with a selection
     useEffect(() => {
@@ -90,12 +74,6 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selec
             analyze(selection);
         }
     }, [open, selection, analyze]);
-
-    // Reset state when dialog closes
-    const handleClose = () => {
-        reset();
-        onClose();
-    };
 
     // Build connection map for cluster analysis
     const connectionMap = useMemo(() => {
@@ -111,7 +89,7 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selec
 
     // Download analysis as markdown file
     const handleDownload = () => {
-        if (!analysis || !selection) {return;}
+        if (!analysis || !selection) { return; }
 
         const timestamp = new Date().toISOString().split('T')[0];
         const typeLabel = selection.type === 'cluster' ? 'cluster' : 'server';
@@ -134,206 +112,60 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({ open, selec
     const isCluster = selection?.type === 'cluster';
     const TypeIcon = isCluster ? ClusterIcon : ServerIcon;
 
-    return (
-        <Dialog
-            fullScreen
-            open={open}
-            onClose={handleClose}
-            TransitionComponent={SlideTransition}
-        >
-            {/* AppBar Header */}
-            <AppBar
-                position="static"
-                elevation={0}
-                sx={{
-                    bgcolor: 'background.paper',
-                    borderBottom: '1px solid',
-                    borderColor: 'divider',
-                }}
-            >
-                <Toolbar
-                    sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1.5,
-                        flexWrap: 'wrap',
-                    }}
-                >
-                    {/* Close button */}
-                    <IconButton
-                        edge="start"
-                        onClick={handleClose}
-                        aria-label="close server analysis"
-                        sx={{ color: 'text.secondary' }}
-                    >
-                        <CloseIcon />
-                    </IconButton>
+    // Build icon
+    const iconElement = <PsychologyIcon sx={getIconColorSx(theme)} />;
 
-                    {/* Icon */}
-                    <Box sx={getIconBoxSx(theme)}>
-                        <PsychologyIcon sx={getIconColorSx(theme)} />
-                    </Box>
-
-                    {/* Title */}
-                    <Typography
-                        variant="h6"
-                        sx={{
-                            fontWeight: 600,
-                            fontSize: '1.125rem',
-                            color: 'text.primary',
-                            whiteSpace: 'nowrap',
-                        }}
-                    >
-                        {isCluster ? 'Cluster analysis' : 'Server analysis'}
-                    </Typography>
-
-                    {/* Name pill */}
-                    <Box sx={getServerBadgeSx(theme)}>
-                        <TypeIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                        <Typography sx={sxMonoSmall}>
-                            {selection?.name || 'Unknown'}
-                        </Typography>
-                    </Box>
-
-                    {/* Server count for clusters */}
-                    {isCluster && selection?.servers && (
-                        <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
-                            {selection.servers.length} server{selection.servers.length !== 1 ? 's' : ''}
-                        </Typography>
-                    )}
-
-                    {/* Spacer */}
-                    <Box sx={{ flexGrow: 1 }} />
-
-                    {/* Download button */}
-                    <IconButton
-                        onClick={handleDownload}
-                        disabled={!analysis || loading}
-                        aria-label="download analysis"
-                        sx={getDownloadButtonSx(theme)}
-                    >
-                        <DownloadIcon />
-                    </IconButton>
-                </Toolbar>
-            </AppBar>
-
-            {/* Scrollable Content */}
-            <Box
-                sx={{
-                    flex: 1,
-                    overflow: 'auto',
-                    bgcolor: theme.palette.mode === 'dark'
-                        ? theme.palette.background.default
-                        : theme.palette.grey[50],
-                    px: 3,
-                    pt: 1.5,
-                    pb: 3,
-                    '&::-webkit-scrollbar': { width: 6 },
-                    '&::-webkit-scrollbar-thumb': {
-                        borderRadius: 3,
-                        backgroundColor: theme.palette.mode === 'dark' ? '#475569' : '#D1D5DB',
-                    },
-                    '&::-webkit-scrollbar-track': {
-                        backgroundColor: 'transparent',
-                    },
-                }}
-            >
-                <Fade in={true} timeout={300}>
-                    <Box sx={{ mt: 1.5, maxWidth: 900, mx: 'auto' }}>
-                        {loading && (
-                            <Box>
-                                <Box sx={getLoadingBannerSx(theme)}>
-                                    <Box sx={getPulseDotSx(theme)} />
-                                    <Box sx={{ flex: 1 }}>
-                                        <Typography sx={getLoadingTextSx(theme)}>
-                                            {progressMessage}
-                                        </Typography>
-                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-                                            {TOOL_LABELS.map(label => {
-                                                const isActive = activeTools.includes(label);
-                                                return (
-                                                    <Box
-                                                        key={label}
-                                                        sx={{
-                                                            px: 1,
-                                                            py: 0.25,
-                                                            borderRadius: 0.75,
-                                                            fontSize: '0.75rem',
-                                                            fontWeight: 500,
-                                                            fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-                                                            border: '1px solid',
-                                                            ...(isActive
-                                                                ? {
-                                                                    transition: 'all 0.3s ease',
-                                                                    color: theme.palette.mode === 'dark'
-                                                                        ? theme.palette.success.light
-                                                                        : theme.palette.success.main,
-                                                                    borderColor: alpha(theme.palette.success.main, 0.4),
-                                                                    bgcolor: alpha(theme.palette.success.main, theme.palette.mode === 'dark' ? 0.15 : 0.08),
-                                                                }
-                                                                : {
-                                                                    transition: 'all 2.5s ease',
-                                                                    color: theme.palette.text.disabled,
-                                                                    borderColor: alpha(theme.palette.divider, 0.5),
-                                                                    bgcolor: 'transparent',
-                                                                }),
-                                                        }}
-                                                    >
-                                                        {label}
-                                                    </Box>
-                                                );
-                                            })}
-                                        </Box>
-                                    </Box>
-                                </Box>
-                                <AnalysisSkeleton />
-                            </Box>
-                        )}
-
-                        {error && !loading && (
-                            <Box sx={getErrorBoxSx(theme)}>
-                                <Box sx={sxErrorFlexRow}>
-                                    <ErrorIcon sx={{ fontSize: 20, color: theme.palette.error.main, mt: 0.25 }} />
-                                    <Box>
-                                        <Typography sx={getErrorTitleSx(theme)}>
-                                            Analysis Failed
-                                        </Typography>
-                                        <Typography
-                                            sx={{
-                                                color: 'text.secondary',
-                                                fontSize: '1rem',
-                                            }}
-                                        >
-                                            {error}
-                                        </Typography>
-                                    </Box>
-                                </Box>
-                            </Box>
-                        )}
-
-                        {analysis && !loading && (
-                            <Box sx={getAnalysisBoxSx(theme)}>
-                                <MarkdownContent
-                                    content={`# ${selection?.type === 'cluster' ? 'Cluster' : 'Server'} Analysis: ${selection?.name || 'Unknown'}\n\n${analysis}`}
-                                    isDark={isDark}
-                                    connectionId={
-                                        selection?.type === 'server'
-                                            ? (selection.id as number)
-                                            : undefined
-                                    }
-                                    serverName={
-                                        selection?.type === 'server'
-                                            ? selection.name
-                                            : undefined
-                                    }
-                                    connectionMap={connectionMap}
-                                />
-                            </Box>
-                        )}
-                    </Box>
-                </Fade>
+    // Build toolbar content
+    const toolbarContent = (
+        <>
+            {/* Name pill */}
+            <Box sx={getServerBadgeSx(theme)}>
+                <TypeIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                <Typography sx={sxMonoSmall}>
+                    {selection?.name || 'Unknown'}
+                </Typography>
             </Box>
-        </Dialog>
+
+            {/* Server count for clusters */}
+            {isCluster && selection?.servers && (
+                <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                    {selection.servers.length} server{selection.servers.length !== 1 ? 's' : ''}
+                </Typography>
+            )}
+        </>
+    );
+
+    return (
+        <BaseAnalysisDialog
+            open={open}
+            onClose={onClose}
+            title={isCluster ? 'Cluster analysis' : 'Server analysis'}
+            icon={iconElement}
+            toolLabels={TOOL_LABELS}
+            analysis={analysis}
+            loading={loading}
+            error={error}
+            progressMessage={progressMessage}
+            activeTools={activeTools}
+            onDownload={handleDownload}
+            onReset={reset}
+            toolbarContent={toolbarContent}
+            markdownContent={
+                analysis
+                    ? `# ${selection?.type === 'cluster' ? 'Cluster' : 'Server'} Analysis: ${selection?.name || 'Unknown'}\n\n${analysis}`
+                    : undefined
+            }
+            markdownContentProps={{
+                isDark,
+                connectionId:
+                    selection?.type === 'server'
+                        ? (selection.id as number)
+                        : undefined,
+                serverName:
+                    selection?.type === 'server' ? selection.name : undefined,
+                connectionMap,
+            }}
+        />
     );
 };
 

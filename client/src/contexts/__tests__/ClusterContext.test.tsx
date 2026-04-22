@@ -301,11 +301,27 @@ describe('ClusterContext', () => {
         it('can select a cluster', async () => {
             const { result } = renderHook(() => useClusterSelection(), { wrapper });
 
+            // Wait for the async cluster data fetch to complete before
+            // calling selectCluster. ClusterSelectionProvider runs a
+            // re-sync effect (keyed on clusterData changes) that rewrites
+            // selectedCluster to the fresh fixture reference whenever the
+            // selected cluster's id matches an id in the loaded data.
+            // Without this wait, the fetch may resolve mid-assertion and
+            // the effect could overwrite the hand-rolled stub, producing
+            // a flake. Re-sync behaviour itself is covered by dedicated
+            // tests in ClusterSelectionContext.test.tsx.
             await waitFor(() => {
                 expect(result.current.selectCluster).toBeDefined();
             });
+            await waitFor(() => {
+                expect(mockFetch).toHaveBeenCalled();
+            });
 
-            const testCluster = { id: 'cluster-1', name: 'Test Cluster' };
+            // Use an id that is not present in mockClusterData so the
+            // re-sync effect cannot find a match and cannot replace the
+            // stub. This isolates the pure-setter behaviour of
+            // selectCluster from the re-sync effect.
+            const testCluster = { id: 'cluster-nonexistent', name: 'Test Cluster' };
 
             act(() => {
                 result.current.selectCluster(testCluster);

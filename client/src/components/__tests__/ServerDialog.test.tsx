@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ServerDialog from '../ServerDialog';
@@ -290,14 +290,14 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockResolvedValue();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
-            await user.type(getNameField(), '  Test Server  ');
-            await user.type(getHostField(), '  localhost  ');
-            // Clear defaults and type new values
-            await user.clear(getDatabaseField());
-            await user.type(getDatabaseField(), '  mydb  ');
-            await user.clear(getUsernameField());
-            await user.type(getUsernameField(), '  admin  ');
-            await user.type(getPasswordField(), 'secret');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: '  Test Server  ' } });
+            fireEvent.change(getHostField(), { target: { value: '  localhost  ' } });
+            fireEvent.change(getDatabaseField(), { target: { value: '  mydb  ' } });
+            fireEvent.change(getUsernameField(), { target: { value: '  admin  ' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -458,19 +458,24 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockResolvedValue();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
-            // Fill required fields
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             // Expand and fill SSL fields
             await user.click(screen.getByText(/ssl settings/i));
             await waitFor(() => {
                 expect(screen.getByRole('textbox', { name: /ssl certificate path/i })).toBeVisible();
             });
-            await user.type(screen.getByRole('textbox', { name: /ssl certificate path/i }), '/path/to/cert.pem');
+            fireEvent.change(
+                screen.getByRole('textbox', { name: /ssl certificate path/i }),
+                { target: { value: '/path/to/cert.pem' } }
+            );
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 

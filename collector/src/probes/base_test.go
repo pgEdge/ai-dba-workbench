@@ -11,6 +11,7 @@ package probes
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -616,4 +617,205 @@ func TestCheckViewExistsSignature(t *testing.T) {
 
 	// Use the function reference to prevent "declared and not used" error.
 	_ = fn
+}
+
+// TestWrapQuery verifies that WrapQuery wraps a SQL query with a probe
+// marker column that allows the server to identify collector queries.
+func TestWrapQuery(t *testing.T) {
+	tests := []struct {
+		name      string
+		probeName string
+		query     string
+		want      string
+	}{
+		{
+			name:      "simple select",
+			probeName: "pg_stat_activity",
+			query:     "SELECT * FROM pg_stat_activity",
+			want:      "SELECT 'pg_stat_activity' AS ai_dba_wb_probe, subq.* FROM (SELECT * FROM pg_stat_activity) AS subq",
+		},
+		{
+			name:      "complex query with joins",
+			probeName: "replication_slots",
+			query:     "SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name",
+			want:      "SELECT 'replication_slots' AS ai_dba_wb_probe, subq.* FROM (SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name) AS subq",
+		},
+		{
+			name:      "empty query",
+			probeName: "test",
+			query:     "",
+			want:      "SELECT 'test' AS ai_dba_wb_probe, subq.* FROM () AS subq",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := WrapQuery(tc.probeName, tc.query)
+			if got != tc.want {
+				t.Errorf("WrapQuery(%q, %q) =\n  %q\nwant:\n  %q",
+					tc.probeName, tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCachedCheck verifies the cachedCheck function behavior for caching
+// feature detection results.
+func TestCachedCheck(t *testing.T) {
+	// Helper to clean up cache entries after each test.
+	cleanup := func(keys ...string) {
+		for _, k := range keys {
+			featureCache.Delete(k)
+		}
+	}
+
+	t.Run("cache miss calls checkFn and caches result", func(t *testing.T) {
+		key := "test_conn:view_exists"
+		defer cleanup(key)
+
+		callCount := 0
+		checkFn := func() (bool, error) {
+			callCount++
+			return true, nil
+		}
+
+		result, err := cachedCheck("test_conn", "view_exists", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected result to be true")
+		}
+		if callCount != 1 {
+			t.Errorf("checkFn should be called once, got %d", callCount)
+		}
+
+		// Verify the value was cached.
+		if val, ok := featureCache.Load(key); !ok {
+			t.Error("expected value to be cached")
+		} else if val != true {
+			t.Errorf("cached value: got %v, want true", val)
+		}
+	})
+
+	t.Run("cache hit returns cached value without calling checkFn", func(t *testing.T) {
+		key := "test_conn2:cached_view"
+		defer cleanup(key)
+
+		// Pre-populate the cache.
+		featureCache.Store(key, false)
+
+		callCount := 0
+		checkFn := func() (bool, error) {
+			callCount++
+			return true, nil
+		}
+
+		result, err := cachedCheck("test_conn2", "cached_view", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected result to be false (from cache)")
+		}
+		if callCount != 0 {
+			t.Errorf("checkFn should not be called on cache hit, got %d calls", callCount)
+		}
+	})
+
+	t.Run("error from checkFn returns error without caching", func(t *testing.T) {
+		key := "test_conn3:error_check"
+		defer cleanup(key)
+
+		expectedErr := fmt.Errorf("database connection failed")
+		checkFn := func() (bool, error) {
+			return false, expectedErr
+		}
+
+		result, err := cachedCheck("test_conn3", "error_check", checkFn)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if err != expectedErr {
+			t.Errorf("error: got %v, want %v", err, expectedErr)
+		}
+		if result {
+			t.Error("expected result to be false on error")
+		}
+
+		// Verify the value was NOT cached.
+		if _, ok := featureCache.Load(key); ok {
+			t.Error("error result should not be cached")
+		}
+	})
+
+	t.Run("type assertion failure returns error for invalid cached type", func(t *testing.T) {
+		key := "test_conn4:invalid_type"
+		defer cleanup(key)
+
+		// Pre-populate the cache with an invalid type (string instead of bool).
+		featureCache.Store(key, "not a bool")
+
+		checkFn := func() (bool, error) {
+			t.Error("checkFn should not be called when cache has invalid type")
+			return true, nil
+		}
+
+		result, err := cachedCheck("test_conn4", "invalid_type", checkFn)
+		if err == nil {
+			t.Fatal("expected error for invalid cached type, got nil")
+		}
+		if result {
+			t.Error("expected result to be false on type assertion failure")
+		}
+		// Verify the error message mentions the key.
+		if !stringContains(err.Error(), key) {
+			t.Errorf("error should mention the key %q: %v", key, err)
+		}
+	})
+
+	t.Run("caches false result", func(t *testing.T) {
+		key := "test_conn5:false_result"
+		defer cleanup(key)
+
+		callCount := 0
+		checkFn := func() (bool, error) {
+			callCount++
+			return false, nil
+		}
+
+		// First call should execute checkFn.
+		result, err := cachedCheck("test_conn5", "false_result", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected result to be false")
+		}
+		if callCount != 1 {
+			t.Errorf("checkFn should be called once, got %d", callCount)
+		}
+
+		// Second call should return cached false without calling checkFn.
+		result, err = cachedCheck("test_conn5", "false_result", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected cached result to be false")
+		}
+		if callCount != 1 {
+			t.Errorf("checkFn should not be called again, got %d calls", callCount)
+		}
+	})
+}
+
+// stringContains checks if substr is in s (helper for error message checks).
+func stringContains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

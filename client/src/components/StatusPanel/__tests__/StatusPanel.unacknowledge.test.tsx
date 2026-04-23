@@ -25,6 +25,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
+import type { Selection } from '../../../types/selection';
 
 // ---------------------------------------------------------------------------
 // Module mocks -- declare before importing the SUT so vi.mock is hoisted.
@@ -126,7 +127,7 @@ import { ApiError } from '../../../utils/apiClient';
 
 const testTheme = createPgedgeTheme('dark');
 
-const renderPanel = (selection: Record<string, unknown>) =>
+const renderPanel = (selection: Selection) =>
     render(
         <ThemeProvider theme={testTheme}>
             <StatusPanel selection={selection} />
@@ -153,12 +154,20 @@ const makeAckedAlertRecord = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
-const serverSelection = {
+const serverSelection: Selection = {
     type: 'server',
     id: 1,
     name: 'server-1',
     status: 'online',
-    active_alert_count: 0,
+    description: 'Test server',
+    host: 'localhost',
+    port: 5432,
+    role: 'primary',
+    version: '14.0',
+    database: 'testdb',
+    username: 'testuser',
+    os: 'Linux',
+    platform: 'x86_64',
 };
 
 /**

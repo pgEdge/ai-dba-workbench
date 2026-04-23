@@ -185,9 +185,16 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 		clusterOverrides = make(map[string]clusterOverride)
 	}
 
+	// Step 2b: Get dismissed auto-detected cluster keys so they are
+	// excluded from the topology. Issue #36.
+	dismissedKeys, err := d.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dismissed cluster keys: %w", err)
+	}
+
 	// Step 3: Build auto-detected topology from ALL connections
 	// This creates a map of auto_cluster_key -> TopologyCluster with servers
-	autoDetectedClusters := d.buildAutoDetectedClusters(allConnections, clusterOverrides)
+	autoDetectedClusters := d.buildAutoDetectedClusters(allConnections, clusterOverrides, dismissedKeys)
 
 	// Step 4: Get clusters that have been moved to non-default groups
 	// These have auto_cluster_key set AND group_id pointing to a non-default group
@@ -223,7 +230,7 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 	}
 
 	// Build topology hierarchy for the default group, excluding claimed auto_cluster_keys
-	defaultGroups := d.buildTopologyHierarchy(unclaimedConnections, clusterOverrides, claimedKeys, defaultGroup)
+	defaultGroups := d.buildTopologyHierarchy(unclaimedConnections, clusterOverrides, claimedKeys, dismissedKeys, defaultGroup)
 
 	// Step 6b: Add manual clusters (no auto_cluster_key) from the
 	// default group. These clusters were created by users and are not
@@ -436,8 +443,14 @@ func (d *Datastore) RefreshClusterAssignments(ctx context.Context) error {
 		clusterOverrides = make(map[string]clusterOverride)
 	}
 
+	// Get dismissed auto-detected cluster keys (issue #36)
+	dismissedKeys, err := d.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get dismissed cluster keys: %w", err)
+	}
+
 	// Build auto-detected clusters
-	autoDetectedClusters := d.buildAutoDetectedClusters(allConnections, clusterOverrides)
+	autoDetectedClusters := d.buildAutoDetectedClusters(allConnections, clusterOverrides, dismissedKeys)
 
 	// Sync assignments and get mapping of auto_cluster_key -> db cluster ID
 	clusterIDMap := d.syncAutoDetectedClusterAssignments(ctx, autoDetectedClusters, defaultGroup.ID)
@@ -451,8 +464,10 @@ func (d *Datastore) RefreshClusterAssignments(ctx context.Context) error {
 // buildTopologyHierarchy builds the topology hierarchy from connections.
 // The claimedKeys parameter contains auto_cluster_keys that have been moved to
 // manual groups - these clusters will be excluded from the default group.
+// The dismissedKeys parameter contains auto_cluster_keys for clusters that have
+// been soft-deleted - these are also excluded from the default group (issue #36).
 // The defaultGroup parameter provides the database-backed default group info.
-func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clusterOverrides map[string]clusterOverride, claimedKeys map[string]bool, defaultGroup *defaultGroupInfo) []TopologyGroup {
+func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clusterOverrides map[string]clusterOverride, claimedKeys map[string]bool, dismissedKeys map[string]bool, defaultGroup *defaultGroupInfo) []TopologyGroup {
 	// Create maps for lookups
 	connByID := make(map[int]*connectionWithRole)
 	connByHostPort := make(map[string]*connectionWithRole)
@@ -538,11 +553,11 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	// pg18-spock1, pg18-spock2 -> another cluster
 	spockClusters := d.groupSpockNodesByClusters(spockNodes, childrenMap, connByID, assignedConnections, clusterOverrides)
 
-	// Build clusters list, filtering out claimed clusters
+	// Build clusters list, filtering out claimed and dismissed clusters
 	var clusters []TopologyCluster
 	for _, cluster := range spockClusters {
-		// Skip clusters that have been moved to manual groups
-		if cluster.AutoClusterKey != "" && claimedKeys[cluster.AutoClusterKey] {
+		// Skip clusters that have been moved to manual groups or dismissed
+		if cluster.AutoClusterKey != "" && (claimedKeys[cluster.AutoClusterKey] || dismissedKeys[cluster.AutoClusterKey]) {
 			continue
 		}
 		clusters = append(clusters, cluster)
@@ -562,11 +577,11 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 		}
 		// Check if this is a primary with standbys (and not a Spock node)
 		if !conn.HasSpock && (conn.PrimaryRole == "binary_primary" && len(childrenMap[conn.ID]) > 0) {
-			// Compute auto_cluster_key first to check if claimed
+			// Compute auto_cluster_key first to check if claimed or dismissed
 			autoKey := fmt.Sprintf("binary:%d", conn.ID)
 
-			// Skip if this cluster has been moved to a manual group
-			if claimedKeys[autoKey] {
+			// Skip if this cluster has been moved to a manual group or dismissed
+			if claimedKeys[autoKey] || dismissedKeys[autoKey] {
 				continue
 			}
 
@@ -596,9 +611,9 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	// 2.5. Group logical replication publishers with their subscribers
 	// Match subscribers to publishers based on publisher_host:publisher_port
 	logicalClusters := d.groupLogicalReplicationByPublisher(connections, connByID, connByHostPort, connByNamePort, assignedConnections, clusterOverrides)
-	// Filter out claimed logical clusters
+	// Filter out claimed or dismissed logical clusters
 	for _, cluster := range logicalClusters {
-		if cluster.AutoClusterKey != "" && claimedKeys[cluster.AutoClusterKey] {
+		if cluster.AutoClusterKey != "" && (claimedKeys[cluster.AutoClusterKey] || dismissedKeys[cluster.AutoClusterKey]) {
 			continue
 		}
 		clusters = append(clusters, cluster)
@@ -621,8 +636,8 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 		// Compute auto_cluster_key for standalone servers
 		autoKey := fmt.Sprintf("standalone:%d", conn.ID)
 
-		// Skip if this standalone has been moved to a manual group
-		if claimedKeys[autoKey] {
+		// Skip if this standalone has been moved to a manual group or dismissed
+		if claimedKeys[autoKey] || dismissedKeys[autoKey] {
 			continue
 		}
 

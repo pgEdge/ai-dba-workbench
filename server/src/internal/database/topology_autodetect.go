@@ -210,8 +210,9 @@ func (d *Datastore) getDismissedAutoClusterKeys(ctx context.Context) (map[string
 
 // buildAutoDetectedClusters builds a map of auto_cluster_key -> TopologyCluster
 // This is used to get server information for auto-detected clusters that have been
-// moved to manual groups
-func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, clusterOverrides map[string]clusterOverride) map[string]TopologyCluster {
+// moved to manual groups. The dismissedKeys set contains auto_cluster_keys for
+// clusters that have been soft-deleted; these are excluded from the result.
+func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, clusterOverrides map[string]clusterOverride, dismissedKeys map[string]bool) map[string]TopologyCluster {
 	result := make(map[string]TopologyCluster)
 
 	// Create maps for lookups
@@ -293,7 +294,7 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 
 	spockClusters := d.groupSpockNodesByClusters(spockNodes, childrenMap, connByID, assignedConnections, clusterOverrides)
 	for _, cluster := range spockClusters {
-		if cluster.AutoClusterKey != "" {
+		if cluster.AutoClusterKey != "" && !dismissedKeys[cluster.AutoClusterKey] {
 			result[cluster.AutoClusterKey] = cluster
 		}
 	}
@@ -310,9 +311,12 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 			continue
 		}
 		if !conn.HasSpock && (conn.PrimaryRole == "binary_primary" && len(childrenMap[conn.ID]) > 0) {
+			autoKey := fmt.Sprintf("binary:%d", conn.ID)
+			if dismissedKeys[autoKey] {
+				continue
+			}
 			// Auto binary cluster: exclude manually pinned children.
 			server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections, false)
-			autoKey := fmt.Sprintf("binary:%d", conn.ID)
 			clusterName := conn.Name
 			clusterDescription := ""
 			if override, ok := clusterOverrides[autoKey]; ok {
@@ -334,7 +338,7 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 	// Process logical replication clusters
 	logicalClusters := d.groupLogicalReplicationByPublisher(connections, connByID, connByHostPort, connByNamePort, assignedConnections, clusterOverrides)
 	for _, cluster := range logicalClusters {
-		if cluster.AutoClusterKey != "" {
+		if cluster.AutoClusterKey != "" && !dismissedKeys[cluster.AutoClusterKey] {
 			result[cluster.AutoClusterKey] = cluster
 		}
 	}
@@ -345,10 +349,13 @@ func (d *Datastore) buildAutoDetectedClusters(connections []connectionWithRole, 
 		if assignedConnections[conn.ID] {
 			continue
 		}
+		autoKey := fmt.Sprintf("standalone:%d", conn.ID)
+		if dismissedKeys[autoKey] {
+			continue
+		}
 		// Build server info. Standalone is an auto-detected entry, so
 		// manually pinned children must not be pulled into it.
 		server := d.buildServerWithChildren(conn, childrenMap, connByID, assignedConnections, false)
-		autoKey := fmt.Sprintf("standalone:%d", conn.ID)
 		clusterName := conn.Name
 		clusterDescription := ""
 		if override, ok := clusterOverrides[autoKey]; ok {

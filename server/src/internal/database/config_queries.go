@@ -507,7 +507,12 @@ func (d *Datastore) resolveConnectionHierarchy(ctx context.Context, connectionID
 		return nil, nil, nil, nil, fmt.Errorf("failed to get connections with roles: %w", err)
 	}
 
-	autoClusters := d.buildAutoDetectedClusters(connections, clusterOverrides)
+	dismissedKeys, err := d.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to get dismissed cluster keys: %w", err)
+	}
+
+	autoClusters := d.buildAutoDetectedClusters(connections, clusterOverrides, dismissedKeys)
 
 	// Find which auto-detected cluster contains this connection
 	var foundKey string

@@ -271,3 +271,45 @@ func TestGetDismissedAutoClusterKeys(t *testing.T) {
 		t.Fatalf("expected spock:dismissed in set, got %v", dismissed)
 	}
 }
+
+func TestDismissedClusterExcludedFromBuildTopologyHierarchy(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	created, err := ds.UpsertAutoDetectedCluster(
+		ctx, "binary:999", "doomed-cluster", nil, &groupID,
+	)
+	if err != nil {
+		t.Fatalf("UpsertAutoDetectedCluster failed: %v", err)
+	}
+	if err := ds.DeleteCluster(ctx, created.ID); err != nil {
+		t.Fatalf("DeleteCluster failed: %v", err)
+	}
+
+	dismissedKeys, err := ds.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		t.Fatalf("getDismissedAutoClusterKeys failed: %v", err)
+	}
+	if !dismissedKeys["binary:999"] {
+		t.Fatalf("expected binary:999 in dismissed set")
+	}
+
+	defaultGroup := &defaultGroupInfo{ID: groupID, Name: "Servers/Clusters"}
+	groups := ds.buildTopologyHierarchy(
+		nil,
+		make(map[string]clusterOverride),
+		make(map[string]bool),
+		dismissedKeys,
+		defaultGroup,
+	)
+	for _, g := range groups {
+		for _, c := range g.Clusters {
+			if c.AutoClusterKey == "binary:999" {
+				t.Fatalf("dismissed cluster binary:999 appeared in topology")
+			}
+		}
+	}
+}

@@ -12,6 +12,7 @@ import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ChatProvider, useChatContext } from '../ChatContext';
+import { logger } from '../../utils/logger';
 
 vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
@@ -195,6 +196,11 @@ describe('ChatContext', () => {
             await waitFor(() => {
                 expect(mockApiGet).toHaveBeenCalled();
             });
+
+            expect(logger.error).toHaveBeenCalledWith(
+                'Failed to fetch conversations:',
+                expect.any(Error),
+            );
         });
 
         it('does not fetch when user is null', async () => {
@@ -269,11 +275,21 @@ describe('ChatContext', () => {
                 expect(result.current.conversations).toHaveLength(2);
             });
 
-            await expect(
-                act(async () => {
+            let errorThrown = false;
+            try {
+                await act(async () => {
                     await result.current.deleteConversation('c1');
-                }),
-            ).rejects.toThrow('forbidden');
+                });
+            } catch (err) {
+                errorThrown = true;
+                expect((err as Error).message).toBe('forbidden');
+            }
+
+            expect(errorThrown).toBe(true);
+            expect(logger.error).toHaveBeenCalledWith(
+                'Failed to delete conversation:',
+                expect.any(Error),
+            );
 
             // List should be unchanged since delete failed.
             expect(result.current.conversations).toHaveLength(2);
@@ -316,11 +332,21 @@ describe('ChatContext', () => {
                 (c) => c.id === 'c1',
             )?.title;
 
-            await expect(
-                act(async () => {
+            let errorThrown = false;
+            try {
+                await act(async () => {
                     await result.current.renameConversation('c1', 'X');
-                }),
-            ).rejects.toThrow('bad request');
+                });
+            } catch (err) {
+                errorThrown = true;
+                expect((err as Error).message).toBe('bad request');
+            }
+
+            expect(errorThrown).toBe(true);
+            expect(logger.error).toHaveBeenCalledWith(
+                'Failed to rename conversation:',
+                expect.any(Error),
+            );
 
             // Title should remain the original since the rename failed.
             expect(

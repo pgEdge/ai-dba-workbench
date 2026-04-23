@@ -12,6 +12,7 @@ import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AlertsProvider, useAlerts } from '../AlertsContext';
+import { logger } from '../../utils/logger';
 
 // Mock apiGet
 vi.mock('../../utils/apiClient', () => ({
@@ -134,6 +135,7 @@ describe('AlertsContext', () => {
 
             expect(result.current.alertCounts.total).toBe(0);
             expect(result.current.lastFetch).toBeNull();
+            expect(logger.error).toHaveBeenCalled();
         });
 
         it('fetchAlertCounts is a no-op when user is null', async () => {

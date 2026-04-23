@@ -527,67 +527,32 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 // createLLMClient builds the appropriate chat client based on the
 // configured LLM provider. Returns nil when no provider is configured.
 func (g *Generator) createLLMClient() chat.LLMClient {
-	switch g.llmConfig.Provider {
-	case "anthropic":
-		headers, err := g.getProviderHeaders("anthropic")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
-		}
-		return chat.NewAnthropicClient(
-			g.llmConfig.AnthropicAPIKey,
-			g.llmConfig.Model,
-			llmMaxTokens,
-			llmTemperature,
-			false,
-			g.llmConfig.AnthropicBaseURL,
-			g.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	case "openai":
-		headers, err := g.getProviderHeaders("openai")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
-		}
-		return chat.NewOpenAIClient(
-			g.llmConfig.OpenAIAPIKey,
-			g.llmConfig.Model,
-			llmMaxTokens,
-			llmTemperature,
-			false,
-			g.llmConfig.OpenAIBaseURL,
-			g.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	case "gemini":
-		headers, err := g.getProviderHeaders("gemini")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
-		}
-		return chat.NewGeminiClient(
-			g.llmConfig.GeminiAPIKey,
-			g.llmConfig.Model,
-			llmMaxTokens,
-			llmTemperature,
-			false,
-			g.llmConfig.GeminiBaseURL,
-			g.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	case "ollama":
-		headers, err := g.getProviderHeaders("ollama")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
-		}
-		return chat.NewOllamaClient(
-			g.llmConfig.OllamaURL,
-			g.llmConfig.Model,
-			false,
-			g.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	default:
+	headers, err := g.getProviderHeaders(g.llmConfig.Provider)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", g.llmConfig.Provider, err)
+	}
+
+	client, err := chat.NewClientFromConfig(chat.ClientConfig{
+		Provider:         g.llmConfig.Provider,
+		AnthropicAPIKey:  g.llmConfig.AnthropicAPIKey,
+		AnthropicBaseURL: g.llmConfig.AnthropicBaseURL,
+		OpenAIAPIKey:     g.llmConfig.OpenAIAPIKey,
+		OpenAIBaseURL:    g.llmConfig.OpenAIBaseURL,
+		GeminiAPIKey:     g.llmConfig.GeminiAPIKey,
+		GeminiBaseURL:    g.llmConfig.GeminiBaseURL,
+		OllamaURL:        g.llmConfig.OllamaURL,
+		Model:            g.llmConfig.Model,
+		MaxTokens:        llmMaxTokens,
+		Temperature:      llmTemperature,
+		Debug:            false,
+		UseCompactDescs:  g.llmConfig.UseCompactDescriptions,
+		Headers:          headers,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to create LLM client: %v\n", err)
 		return nil
 	}
+	return client
 }
 
 // getProviderHeaders retrieves custom headers for the given provider from the

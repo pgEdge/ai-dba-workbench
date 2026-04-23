@@ -10,8 +10,11 @@
 package probes
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // stringer is a test type that implements fmt.Stringer.
@@ -558,4 +561,58 @@ func TestBaseMetricsProbeEnsurePartition(t *testing.T) {
 		// This compiles only if EnsurePartition is inherited from BaseMetricsProbe.
 		_ = ep.EnsurePartition
 	})
+}
+
+// TestInvalidateFeatureCache verifies that InvalidateFeatureCache removes
+// all cached entries for a specific connection while leaving entries for
+// other connections untouched.
+func TestInvalidateFeatureCache(t *testing.T) {
+	// Seed the cache with entries for two connections.
+	featureCache.Store("conn1:view_x", true)
+	featureCache.Store("conn1:view_y", false)
+	featureCache.Store("conn2:view_x", true)
+
+	InvalidateFeatureCache("conn1")
+
+	// conn1 entries are gone.
+	if _, ok := featureCache.Load("conn1:view_x"); ok {
+		t.Error("expected conn1:view_x to be invalidated")
+	}
+	if _, ok := featureCache.Load("conn1:view_y"); ok {
+		t.Error("expected conn1:view_y to be invalidated")
+	}
+	// conn2 entry is untouched.
+	if _, ok := featureCache.Load("conn2:view_x"); !ok {
+		t.Error("expected conn2:view_x to survive")
+	}
+
+	// Clean up.
+	featureCache.Delete("conn2:view_x")
+}
+
+// TestInvalidateFeatureCache_NoEntries verifies that InvalidateFeatureCache
+// is a no-op when called for a connection with no cached entries. It should
+// not panic or cause any issues.
+func TestInvalidateFeatureCache_NoEntries(t *testing.T) {
+	// Should not panic
+	InvalidateFeatureCache("nonexistent")
+}
+
+// TestCheckViewExistsSignature verifies that the CheckViewExists function
+// has the expected signature and can be referenced. This is a structural
+// test since we cannot mock the database easily here.
+func TestCheckViewExistsSignature(t *testing.T) {
+	// Verify the function signature by assigning it to a typed variable.
+	// This compiles only if the signature matches.
+	var fn func(
+		context.Context,
+		*pgxpool.Conn,
+		string,
+	) (bool, error)
+	fn = CheckViewExists
+
+	// Ensure fn is not nil (prevents "declared and not used" error)
+	if fn == nil {
+		t.Error("CheckViewExists function should not be nil")
+	}
 }

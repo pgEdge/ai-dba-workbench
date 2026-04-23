@@ -13,6 +13,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,20 @@ func WrapQuery(probeName, query string) string {
 // change during the lifetime of a PostgreSQL connection, so caching
 // them avoids repeated catalog queries on every collection cycle.
 var featureCache sync.Map
+
+// InvalidateFeatureCache removes all cached feature-detection
+// results for the given connection name. Call this when a
+// monitored connection is recycled or its pool is refreshed
+// so that stale view/extension checks do not persist.
+func InvalidateFeatureCache(connectionName string) {
+	prefix := connectionName + ":"
+	featureCache.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			featureCache.Delete(key)
+		}
+		return true
+	})
+}
 
 // cachedCheck returns a cached boolean result for a feature-detection
 // check identified by connectionName and checkName. If no cached value
@@ -123,6 +138,28 @@ func (bp *BaseMetricsProbe) IsDatabaseScoped() bool {
 // GetConfig returns the probe configuration
 func (bp *BaseMetricsProbe) GetConfig() *ProbeConfig {
 	return bp.config
+}
+
+// CheckViewExists checks whether a view exists in pg_catalog.
+func CheckViewExists(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	viewName string,
+) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM pg_catalog.pg_views
+            WHERE schemaname = 'pg_catalog'
+              AND viewname = $1
+        )
+    `, viewName).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf(
+			"failed to check if view %s exists: %w",
+			viewName, err)
+	}
+	return exists, nil
 }
 
 // EnsurePartition creates the partition for the given timestamp

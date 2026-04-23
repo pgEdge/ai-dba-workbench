@@ -44,13 +44,11 @@ type customResource struct {
 
 // NewContextAwareRegistry creates a new context-aware resource registry
 func NewContextAwareRegistry(clientManager *database.ClientManager, cfg *config.Config, authStore *auth.AuthStore, datastore *database.Datastore) *ContextAwareRegistry {
-	rbacChecker := auth.NewRBACChecker(authStore)
+	var sharingLookup auth.ConnectionSharingLookupFunc
 	if datastore != nil {
-		ds := datastore
-		rbacChecker.SetConnectionSharingLookup(func(ctx context.Context, connectionID int) (bool, string, error) {
-			return ds.GetConnectionSharingInfo(ctx, connectionID)
-		})
+		sharingLookup = datastore.GetConnectionSharingInfo
 	}
+	rbacChecker := auth.NewRBACCheckerWithSharing(authStore, sharingLookup)
 	return &ContextAwareRegistry{
 		clientManager:   clientManager,
 		customResources: make(map[string]customResource),

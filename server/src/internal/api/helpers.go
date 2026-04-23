@@ -27,20 +27,6 @@ func HandleNotConfigured(service string) http.HandlerFunc {
 	}
 }
 
-// NewRBACCheckerWithSharing creates a new RBACChecker and configures the
-// connection sharing lookup using the provided datastore. This ensures
-// that CanAccessConnection respects the is_shared flag on connections.
-func NewRBACCheckerWithSharing(authStore *auth.AuthStore, datastore *database.Datastore) *auth.RBACChecker {
-	checker := auth.NewRBACChecker(authStore)
-	if datastore != nil {
-		ds := datastore
-		checker.SetConnectionSharingLookup(func(ctx context.Context, connectionID int) (bool, string, error) {
-			return ds.GetConnectionSharingInfo(ctx, connectionID)
-		})
-	}
-	return checker
-}
-
 // RequireAdminPermission returns a function that checks whether the caller
 // has the specified admin permission. If the check fails it sends a 403
 // response and returns false; otherwise it returns true.

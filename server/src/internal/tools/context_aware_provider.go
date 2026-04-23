@@ -174,13 +174,11 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 
 // NewContextAwareProvider creates a new context-aware tool provider
 func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
-	rbacChecker := auth.NewRBACChecker(authStore)
+	var sharingLookup auth.ConnectionSharingLookupFunc
 	if datastore != nil {
-		ds := datastore
-		rbacChecker.SetConnectionSharingLookup(func(ctx context.Context, connectionID int) (bool, string, error) {
-			return ds.GetConnectionSharingInfo(ctx, connectionID)
-		})
+		sharingLookup = datastore.GetConnectionSharingInfo
 	}
+	rbacChecker := auth.NewRBACCheckerWithSharing(authStore, sharingLookup)
 	var resolver *ConnectionResolver
 	if clientManager != nil && datastore != nil {
 		resolver = NewConnectionResolver(clientManager, datastore, rbacChecker)

@@ -69,6 +69,17 @@ func (rc *RBACChecker) SetConnectionSharingLookup(fn ConnectionSharingLookupFunc
 	rc.connSharingLookupFn = fn
 }
 
+// NewRBACCheckerWithSharing creates an RBACChecker and wires the
+// connection-sharing lookup in one step. If sharingLookup is nil the
+// checker behaves as if no sharing information is available.
+func NewRBACCheckerWithSharing(store *AuthStore, sharingLookup ConnectionSharingLookupFunc) *RBACChecker {
+	checker := NewRBACChecker(store)
+	if sharingLookup != nil {
+		checker.SetConnectionSharingLookup(sharingLookup)
+	}
+	return checker
+}
+
 // IsSuperuser checks if the current context has superuser privileges
 // Superusers bypass all privilege checks
 func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {

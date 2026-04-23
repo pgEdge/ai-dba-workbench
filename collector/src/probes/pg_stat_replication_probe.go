@@ -294,8 +294,8 @@ func (p *PgStatReplicationProbe) Store(ctx context.Context, datastoreConn *pgxpo
 		values = append(values, row)
 	}
 
-	// Use COPY protocol to store metrics
-	if err := StoreMetricsWithCopy(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
+	// Store metrics
+	if err := StoreMetrics(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 

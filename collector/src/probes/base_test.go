@@ -657,6 +657,18 @@ func TestWrapQuery(t *testing.T) {
 			query:     "SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name",
 			want:      "SELECT 'replication_slots' AS ai_dba_wb_probe, subq.* FROM (SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name) AS subq",
 		},
+		{
+			name:      "empty query returns empty string",
+			probeName: "test",
+			query:     "",
+			want:      "",
+		},
+		{
+			name:      "whitespace-only query returns empty string",
+			probeName: "test",
+			query:     "   ",
+			want:      "",
+		},
 	}
 
 	for _, tc := range tests {

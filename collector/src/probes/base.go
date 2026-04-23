@@ -22,7 +22,12 @@ import (
 
 // WrapQuery wraps a SQL query with a probe marker column so the server
 // can identify and filter collector queries from monitoring panels.
+// If the query is empty (after trimming whitespace), it returns an
+// empty string to prevent generating invalid SQL.
 func WrapQuery(probeName, query string) string {
+	if strings.TrimSpace(query) == "" {
+		return ""
+	}
 	return fmt.Sprintf(
 		"SELECT '%s' AS ai_dba_wb_probe, subq.* FROM (%s) AS subq",
 		probeName, query,

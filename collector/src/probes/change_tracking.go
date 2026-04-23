@@ -60,20 +60,20 @@ func HasDataChanged(
 			"failed to scan stored data: %w", err)
 	}
 
-	if len(storedMetrics) == 0 {
-		logger.Infof(
-			"No previous %s data found for connection %d",
-			probeName, connectionID)
-		return true, nil
-	}
-
 	storedHash, err := ComputeMetricsHash(storedMetrics)
 	if err != nil {
 		return false, fmt.Errorf(
 			"failed to compute stored metrics hash: %w", err)
 	}
 
-	return currentHash != storedHash, nil
+	changed := currentHash != storedHash
+	if changed && len(storedMetrics) == 0 {
+		logger.Infof(
+			"No previous %s data found for connection %d",
+			probeName, connectionID)
+	}
+
+	return changed, nil
 }
 
 // normalizeDatabaseName renames _database_name keys to

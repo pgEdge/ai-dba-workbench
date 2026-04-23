@@ -229,13 +229,14 @@ func TestHasDataChangedNormalization(t *testing.T) {
 // HasDataChanged for various scenarios. These serve as specification
 // tests even though we cannot run them without a database.
 func TestHasDataChangedScenarios(t *testing.T) {
-	t.Run("scenario: no stored data returns true", func(t *testing.T) {
-		// When storedMetrics is empty (no previous data), HasDataChanged
-		// should return (true, nil) to indicate data has changed (first collection).
+	t.Run("scenario: no stored data with current data returns true", func(t *testing.T) {
+		// When storedMetrics is empty but currentMetrics has data,
+		// HasDataChanged should return (true, nil) to indicate data has
+		// changed (first collection).
 		//
-		// This is verified by the implementation:
-		//   if len(storedMetrics) == 0 { return true, nil }
-		t.Log("Verified by code inspection: len(storedMetrics) == 0 returns (true, nil)")
+		// This is verified by the implementation: the empty stored slice
+		// hashes differently from a non-empty current slice.
+		t.Log("Verified by code inspection: empty stored vs non-empty current returns true")
 	})
 
 	t.Run("scenario: identical metrics returns false", func(t *testing.T) {
@@ -251,6 +252,29 @@ func TestHasDataChangedScenarios(t *testing.T) {
 		// When current and stored metrics produce different hashes,
 		// HasDataChanged returns (true, nil).
 		t.Log("Verified by code inspection: different hashes return true")
+	})
+
+	t.Run("scenario: both empty returns false (zero-row convergence)", func(t *testing.T) {
+		// When both storedMetrics and currentMetrics are empty slices,
+		// HasDataChanged should return (false, nil) because nothing changed.
+		// This is the "zero-row convergence" case for probes that legitimately
+		// return no rows (e.g., pg_ident_file_mappings on a server with no
+		// ident mappings).
+		//
+		// Verify via hash comparison: empty slices produce identical hashes.
+		emptyHash1, err := ComputeMetricsHash([]map[string]any{})
+		if err != nil {
+			t.Fatalf("hash error: %v", err)
+		}
+		emptyHash2, err := ComputeMetricsHash([]map[string]any{})
+		if err != nil {
+			t.Fatalf("hash error: %v", err)
+		}
+		if emptyHash1 != emptyHash2 {
+			t.Errorf("empty slices should produce identical hashes: %s vs %s",
+				emptyHash1, emptyHash2)
+		}
+		t.Log("Verified: empty current and empty stored produce matching hashes, so changed=false")
 	})
 }
 

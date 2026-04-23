@@ -16,10 +16,16 @@
  * `document.execCommand('copy')` approach with a temporary textarea.
  *
  * @param text - The string to place on the clipboard.
+ * @param container - Optional DOM element to append the temporary textarea
+ *                    to. Useful when calling from within a focus-trapped
+ *                    dialog; defaults to `document.body`.
  * @returns A promise that resolves on success.
  * @throws On failure so callers can report the error to the user.
  */
-export async function copyToClipboard(text: string): Promise<void> {
+export async function copyToClipboard(
+    text: string,
+    container?: HTMLElement
+): Promise<void> {
     // Prefer the modern Clipboard API when available.
     if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
@@ -28,6 +34,10 @@ export async function copyToClipboard(text: string): Promise<void> {
 
     // Fallback: create a temporary textarea, select its content, and
     // invoke the deprecated execCommand('copy').
+    // When a container is supplied (e.g. inside a dialog portal) the
+    // textarea is appended there so it remains within any active focus
+    // trap; otherwise it falls back to document.body.
+    const target = container ?? document.body;
     const textarea = document.createElement('textarea');
     textarea.value = text;
 
@@ -37,7 +47,7 @@ export async function copyToClipboard(text: string): Promise<void> {
     textarea.style.top = '-9999px';
     textarea.style.opacity = '0';
 
-    document.body.appendChild(textarea);
+    target.appendChild(textarea);
     try {
         textarea.select();
         const ok = document.execCommand('copy');
@@ -47,6 +57,6 @@ export async function copyToClipboard(text: string): Promise<void> {
             );
         }
     } finally {
-        document.body.removeChild(textarea);
+        target.removeChild(textarea);
     }
 }

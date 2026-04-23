@@ -103,8 +103,3 @@ func (p *PgStatioAllSequencesProbe) Store(ctx context.Context, datastoreConn *pg
 
 	return nil
 }
-
-// EnsurePartition ensures a partition exists for the given timestamp
-func (p *PgStatioAllSequencesProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
-}

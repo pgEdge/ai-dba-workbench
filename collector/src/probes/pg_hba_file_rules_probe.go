@@ -200,8 +200,3 @@ func (p *PgHbaFileRulesProbe) hasDataChanged(ctx context.Context, datastoreConn 
 func (p *PgHbaFileRulesProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
-
-// EnsurePartition ensures a partition exists for the given timestamp
-func (p *PgHbaFileRulesProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
-}

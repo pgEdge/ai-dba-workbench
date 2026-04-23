@@ -124,3 +124,13 @@ func (bp *BaseMetricsProbe) IsDatabaseScoped() bool {
 func (bp *BaseMetricsProbe) GetConfig() *ProbeConfig {
 	return bp.config
 }
+
+// EnsurePartition creates the partition for the given timestamp
+// if it does not already exist.
+func (bp *BaseMetricsProbe) EnsurePartition(
+	ctx context.Context,
+	datastoreConn *pgxpool.Conn,
+	timestamp time.Time,
+) error {
+	return EnsurePartition(ctx, datastoreConn, bp.GetTableName(), timestamp)
+}

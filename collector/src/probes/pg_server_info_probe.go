@@ -237,8 +237,3 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 func (p *PgServerInfoProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
 	return ComputeMetricsHash(metrics)
 }
-
-// EnsurePartition ensures a partition exists for the given timestamp
-func (p *PgServerInfoProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
-}

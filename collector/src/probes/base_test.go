@@ -523,3 +523,39 @@ func TestParsePartitionEnd(t *testing.T) {
 		})
 	}
 }
+
+// TestBaseMetricsProbeEnsurePartition verifies that BaseMetricsProbe
+// provides an EnsurePartition method that satisfies the MetricsProbe
+// interface. The method delegates to the package-level EnsurePartition
+// function with the probe's table name.
+func TestBaseMetricsProbeEnsurePartition(t *testing.T) {
+	config := &ProbeConfig{
+		Name: "test_probe",
+	}
+	bp := &BaseMetricsProbe{config: config}
+
+	// Verify that BaseMetricsProbe's EnsurePartition method is
+	// available. We cannot call it without a real database connection,
+	// but we verify the method exists with the expected signature.
+	// The actual functionality is tested via integration tests.
+	t.Run("method has correct signature", func(t *testing.T) {
+		// This compiles only if the signature matches the expected type.
+		// The blank identifier assignment ensures the compiler verifies
+		// the method signature without triggering unused variable warnings.
+		_ = bp.EnsurePartition
+	})
+
+	// Verify that a probe embedding BaseMetricsProbe inherits EnsurePartition.
+	t.Run("embedded probe inherits EnsurePartition", func(t *testing.T) {
+		type embeddingProbe struct {
+			BaseMetricsProbe
+		}
+
+		ep := &embeddingProbe{
+			BaseMetricsProbe: BaseMetricsProbe{config: config},
+		}
+
+		// This compiles only if EnsurePartition is inherited from BaseMetricsProbe.
+		_ = ep.EnsurePartition
+	})
+}

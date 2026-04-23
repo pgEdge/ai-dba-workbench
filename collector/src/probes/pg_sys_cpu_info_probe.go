@@ -136,8 +136,3 @@ func (p *PgSysCPUInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool.Co
 
 	return nil
 }
-
-// EnsurePartition ensures a partition exists for the given timestamp
-func (p *PgSysCPUInfoProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
-}

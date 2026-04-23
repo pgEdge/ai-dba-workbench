@@ -85,6 +85,10 @@ type ClientResolver struct {
 //  4. If no session but Sessions/ConnInfo are configured, return "no connection selected" error
 //  5. Fallback: use ClientManager.GetOrCreateClient for token-based default connection
 func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
+	if r.TokenExtractor == nil {
+		return nil, fmt.Errorf("no token extractor configured")
+	}
+
 	tokenHash := r.TokenExtractor(ctx)
 	if tokenHash == "" {
 		return nil, fmt.Errorf("no authentication token found in request context")

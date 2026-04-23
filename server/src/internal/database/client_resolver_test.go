@@ -69,6 +69,20 @@ func (m *mockConnInfoProvider) BuildConnectionString(conn *MonitoredConnection, 
 	return m.builtConnStr
 }
 
+func TestClientResolver_ResolveClient_NilTokenExtractor(t *testing.T) {
+	resolver := &ClientResolver{
+		TokenExtractor: nil,
+	}
+
+	_, err := resolver.ResolveClient(context.Background())
+	if err == nil {
+		t.Fatal("expected error for nil token extractor")
+	}
+	if !strings.Contains(err.Error(), "no token extractor configured") {
+		t.Errorf("expected 'no token extractor configured' error, got: %v", err)
+	}
+}
+
 func TestClientResolver_ResolveClient_EmptyToken(t *testing.T) {
 	resolver := &ClientResolver{
 		TokenExtractor: func(ctx context.Context) string { return "" },

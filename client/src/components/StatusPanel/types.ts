@@ -12,8 +12,10 @@
  * Shared types for StatusPanel sub-components
  */
 
+import type { Selection } from '../../types/selection';
+
 export interface StatusPanelProps {
-    selection: Record<string, unknown> | null;
+    selection: Selection | null;
 }
 
 export interface TransformedAlert {
@@ -107,7 +109,7 @@ export interface AlertsSectionProps {
 }
 
 export interface SelectionHeaderProps {
-    selection: Record<string, unknown>;
+    selection: Selection;
     alertCount?: number;
     alertSeverities?: Record<string, number>;
     onBlackoutClick: () => void;

@@ -12,6 +12,8 @@
  * TypeScript interfaces for the PerformanceTiles feature
  */
 
+import type { Selection } from '../../../types/selection';
+
 export interface XidAgeEntry {
     database_name: string;
     age: number;
@@ -72,7 +74,7 @@ export interface PerformanceSummaryData {
 }
 
 export interface PerformanceTilesProps {
-    selection: Record<string, unknown>;
+    selection: Selection;
 }
 
 /**

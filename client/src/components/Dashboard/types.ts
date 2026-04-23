@@ -12,6 +12,8 @@
  * TypeScript interfaces for the Dashboard monitoring system
  */
 
+import type { Selection } from '../../types/selection';
+
 /** Time range options for metric queries */
 export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
 
@@ -87,7 +89,7 @@ export interface SparklineProps {
 
 /** Props shared by all dashboard level components */
 export interface BaseDashboardProps {
-    selection: Record<string, unknown>;
+    selection: Selection;
 }
 
 /** Section in a collapsible dashboard */

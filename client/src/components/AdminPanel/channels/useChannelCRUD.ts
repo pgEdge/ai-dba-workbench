@@ -85,7 +85,10 @@ export interface ChannelCRUDResult<T extends BaseChannel> {
  * dialog state management.
  *
  * @param channelType - The type of channel ('email' or 'webhook')
- * @param mapChannel - Function to map raw API data to the channel type
+ * @param mapChannel - Function to map raw API data to the channel type.
+ *   **Warning:** This function must be stable (defined at module scope or
+ *   memoized with `useCallback`) to prevent infinite re-fetch loops, since
+ *   it is included in the `fetchChannels` dependency array.
  * @returns All state and handlers for channel CRUD operations
  */
 export function useChannelCRUD<T extends BaseChannel>(

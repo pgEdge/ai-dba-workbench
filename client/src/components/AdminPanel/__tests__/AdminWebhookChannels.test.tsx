@@ -644,6 +644,78 @@ describe('AdminWebhookChannels', () => {
             expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
             expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
         });
+
+        it('masks sensitive credentials with password input type', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
+            });
+
+            // Edit the first channel (bearer token auth)
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Bearer token should be masked with password type
+            const tokenField = screen.getByLabelText('Token');
+            expect(tokenField).toHaveAttribute('type', 'password');
+            expect(tokenField).toHaveAttribute('autocomplete', 'off');
+        });
+
+        it('masks API key value with password input type', async () => {
+            // Create a channel with api_key auth type
+            const channelWithApiKey = [{
+                id: 4,
+                channel_type: 'webhook',
+                name: 'API Key Webhook',
+                description: 'Test',
+                enabled: true,
+                is_estate_default: false,
+                endpoint_url: 'https://example.com/hook',
+                http_method: 'POST',
+                headers: {},
+                auth_type: 'api_key',
+                auth_credentials: 'X-Api-Key:secret123',
+                template_alert_fire: '',
+                template_alert_clear: '',
+                template_reminder: '',
+            }];
+            mockApiGet.mockResolvedValue({ notification_channels: channelWithApiKey });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('API Key Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: API Key Webhook')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // API Key Value should be masked with password type
+            const apiKeyField = screen.getByLabelText('API Key Value');
+            expect(apiKeyField).toHaveAttribute('type', 'password');
+            expect(apiKeyField).toHaveAttribute('autocomplete', 'off');
+
+            // Header Name should NOT be masked (not a secret)
+            const headerNameField = screen.getByLabelText('Header Name');
+            expect(headerNameField).not.toHaveAttribute('type', 'password');
+        });
     });
 
     describe('Templates tab', () => {

@@ -1239,5 +1239,109 @@ describe('AdminEmailChannels', () => {
                 );
             });
         });
+
+        it('shows warning when some recipients fail to add', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: [] });
+            // First call succeeds (channel creation), second call fails (recipient)
+            mockApiPost
+                .mockResolvedValueOnce({ id: 10 })
+                .mockRejectedValueOnce(new Error('Recipient error'));
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('No email channels configured.')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('button', { name: /Add Channel/i }));
+
+            const dialog = screen.getByRole('dialog');
+
+            // Fill in required fields
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'New Channel' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.new.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'new@example.com' } });
+
+            // Add a pending recipient
+            await user.click(within(dialog).getByRole('tab', { name: /Recipients/i }));
+            fireEvent.change(within(dialog).getByPlaceholderText('Email address'), { target: { value: 'fail@test.com' } });
+            await user.click(within(dialog).getByRole('button', { name: /^Add$/i }));
+
+            await waitFor(() => {
+                expect(within(dialog).getByText('fail@test.com')).toBeInTheDocument();
+            });
+
+            // Save the channel
+            await user.click(within(dialog).getByRole('button', { name: /Create/i }));
+
+            // Dialog should close immediately after channel creation
+            await waitFor(() => {
+                expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+            });
+
+            // Should show warning about failed recipients
+            await waitFor(() => {
+                expect(screen.getByText(/created successfully.*but failed to add recipients.*fail@test\.com/)).toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('Email validation', () => {
+        it('disables Add button when email has no @ sign', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: [] });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('No email channels configured.')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('button', { name: /Add Channel/i }));
+            await user.click(screen.getByRole('tab', { name: /Recipients/i }));
+
+            const emailInput = screen.getByPlaceholderText('Email address');
+            const addButton = screen.getByRole('button', { name: /^Add$/i });
+
+            // Enter email without @ sign
+            fireEvent.change(emailInput, { target: { value: 'invalidemail' } });
+
+            // Add button should be disabled
+            expect(addButton).toBeDisabled();
+
+            // Enter valid email with @ sign
+            fireEvent.change(emailInput, { target: { value: 'valid@email.com' } });
+
+            // Add button should be enabled
+            expect(addButton).not.toBeDisabled();
+        });
+
+        it('does not add pending recipient when email lacks @ sign', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: [] });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('No email channels configured.')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('button', { name: /Add Channel/i }));
+            await user.click(screen.getByRole('tab', { name: /Recipients/i }));
+
+            const emailInput = screen.getByPlaceholderText('Email address');
+
+            // Enter email without @ sign
+            fireEvent.change(emailInput, { target: { value: 'invalidemail' } });
+
+            // Force-enable the button by directly calling the handler via click
+            // The button is disabled, so clicking should do nothing
+            const addButton = screen.getByRole('button', { name: /^Add$/i });
+            expect(addButton).toBeDisabled();
+
+            // Verify no recipient was added
+            expect(screen.queryByText('invalidemail')).not.toBeInTheDocument();
+        });
     });
 });

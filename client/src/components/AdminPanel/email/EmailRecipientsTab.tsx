@@ -78,8 +78,9 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
     const tableContainerSx = getTableContainerSx(theme);
 
     const handleAddRecipient = () => {
-        if (!newRecipientEmail.trim()) { return; }
-        onAddRecipient(newRecipientEmail.trim(), newRecipientName.trim());
+        const email = newRecipientEmail.trim();
+        if (!email || !email.includes('@')) { return; }
+        onAddRecipient(email, newRecipientName.trim());
         setNewRecipientEmail('');
         setNewRecipientName('');
     };
@@ -200,7 +201,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
                                             : <AddIcon />
                                         }
                                         onClick={handleAddRecipient}
-                                        disabled={recipientSaving || !newRecipientEmail.trim()}
+                                        disabled={recipientSaving || !newRecipientEmail.trim() || !newRecipientEmail.includes('@')}
                                         sx={containedButtonSx}
                                     >
                                         Add

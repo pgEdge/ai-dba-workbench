@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Chip } from '@mui/material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
@@ -61,6 +61,15 @@ const AdminEmailChannels: React.FC = () => {
         Array<{ email: string; name: string }>
     >([]);
 
+    // Ref to track the currently-editing channel ID for staleness checks.
+    // This avoids race conditions when the user quickly switches channels.
+    const editingChannelIdRef = useRef<number | null>(null);
+
+    // Keep ref in sync with crud.editingChannel
+    useEffect(() => {
+        editingChannelIdRef.current = crud.editingChannel?.id ?? null;
+    }, [crud.editingChannel]);
+
     // --- Fetch recipients ---
 
     const fetchRecipients = useCallback(async (channelId: number) => {
@@ -69,6 +78,8 @@ const AdminEmailChannels: React.FC = () => {
             const data = await apiGet<Record<string, unknown>>(
                 `/api/v1/notification-channels/${channelId}/recipients`
             );
+            // Guard against stale responses: only update if still editing same channel
+            if (editingChannelIdRef.current !== channelId) { return; }
             const raw = (data.recipients || data || []) as Record<string, unknown>[];
             const mapped: EmailRecipient[] = raw.map(
                 (r: Record<string, unknown>) => ({
@@ -80,13 +91,18 @@ const AdminEmailChannels: React.FC = () => {
             );
             setRecipients(mapped);
         } catch (err: unknown) {
+            // Only show error if still editing the same channel
+            if (editingChannelIdRef.current !== channelId) { return; }
             if (err instanceof Error) {
                 crud.setDialogError(err.message);
             } else {
                 crud.setDialogError('Failed to load recipients');
             }
         } finally {
-            setRecipientsLoading(false);
+            // Only clear loading if still editing the same channel
+            if (editingChannelIdRef.current === channelId) {
+                setRecipientsLoading(false);
+            }
         }
     }, [crud]);
 
@@ -215,26 +231,50 @@ const AdminEmailChannels: React.FC = () => {
                     body
                 );
 
-                // Add any pending recipients to the newly created channel
-                if (pendingRecipients.length > 0) {
+                // Capture pending recipients before closing dialog
+                const recipientsToAdd = [...pendingRecipients];
+                const channelName = form.name.trim();
+
+                // Close dialog immediately to prevent duplicate creation attempts
+                crud.closeDialog();
+                setRecipients([]);
+                setPendingRecipients([]);
+                crud.setSaving(false);
+                crud.setSuccess(`Channel "${channelName}" created successfully.`);
+                crud.fetchChannels();
+
+                // Add pending recipients as best-effort follow-up
+                if (recipientsToAdd.length > 0) {
                     const newChannelId = createData.id ||
                         (createData.channel as Record<string, unknown>)?.id;
                     if (newChannelId) {
-                        for (const pending of pendingRecipients) {
-                            await apiPost(
-                                `/api/v1/notification-channels/${newChannelId}/recipients`,
-                                {
-                                    email_address: pending.email,
-                                    display_name: pending.name,
-                                    enabled: true,
-                                }
+                        const failedRecipients: string[] = [];
+                        for (const pending of recipientsToAdd) {
+                            try {
+                                await apiPost(
+                                    `/api/v1/notification-channels/${newChannelId}/recipients`,
+                                    {
+                                        email_address: pending.email,
+                                        display_name: pending.name,
+                                        enabled: true,
+                                    }
+                                );
+                            } catch {
+                                failedRecipients.push(pending.email);
+                            }
+                        }
+                        // Update success message if some recipients failed
+                        if (failedRecipients.length > 0) {
+                            crud.setSuccess(
+                                `Channel "${channelName}" created successfully, ` +
+                                `but failed to add recipients: ${failedRecipients.join(', ')}.`
                             );
                         }
+                        // Refresh to show updated recipient counts
+                        crud.fetchChannels();
                     }
-                    setPendingRecipients([]);
                 }
-
-                crud.setSuccess(`Channel "${form.name.trim()}" created successfully.`);
+                return; // Early return since we already handled cleanup
             }
 
             crud.closeDialog();
@@ -262,65 +302,92 @@ const AdminEmailChannels: React.FC = () => {
         }
 
         // In edit mode, persist via API
+        const channelId = crud.editingChannel.id;
         try {
             setRecipientSaving(true);
             crud.setDialogError(null);
             await apiPost(
-                `/api/v1/notification-channels/${crud.editingChannel.id}/recipients`,
+                `/api/v1/notification-channels/${channelId}/recipients`,
                 {
                     email_address: email,
                     display_name: name,
                     enabled: true,
                 }
             );
-            fetchRecipients(crud.editingChannel.id);
+            // Guard against stale responses
+            if (editingChannelIdRef.current === channelId) {
+                fetchRecipients(channelId);
+            }
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                crud.setDialogError(err.message);
-            } else {
-                crud.setDialogError('Failed to add recipient');
+            // Only show error if still editing the same channel
+            if (editingChannelIdRef.current === channelId) {
+                if (err instanceof Error) {
+                    crud.setDialogError(err.message);
+                } else {
+                    crud.setDialogError('Failed to add recipient');
+                }
             }
         } finally {
-            setRecipientSaving(false);
+            if (editingChannelIdRef.current === channelId) {
+                setRecipientSaving(false);
+            }
         }
     };
 
     const handleToggleRecipientEnabled = async (recipient: EmailRecipient) => {
         if (!crud.editingChannel) { return; }
+        const channelId = crud.editingChannel.id;
         try {
             setRecipientSaving(true);
             await apiPut(
-                `/api/v1/notification-channels/${crud.editingChannel.id}/recipients/${recipient.id}`,
+                `/api/v1/notification-channels/${channelId}/recipients/${recipient.id}`,
                 { enabled: !recipient.enabled }
             );
-            fetchRecipients(crud.editingChannel.id);
+            // Guard against stale responses
+            if (editingChannelIdRef.current === channelId) {
+                fetchRecipients(channelId);
+            }
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                crud.setDialogError(err.message);
-            } else {
-                crud.setDialogError('Failed to update recipient');
+            // Only show error if still editing the same channel
+            if (editingChannelIdRef.current === channelId) {
+                if (err instanceof Error) {
+                    crud.setDialogError(err.message);
+                } else {
+                    crud.setDialogError('Failed to update recipient');
+                }
             }
         } finally {
-            setRecipientSaving(false);
+            if (editingChannelIdRef.current === channelId) {
+                setRecipientSaving(false);
+            }
         }
     };
 
     const handleDeleteRecipient = async (recipient: EmailRecipient) => {
         if (!crud.editingChannel) { return; }
+        const channelId = crud.editingChannel.id;
         try {
             setRecipientSaving(true);
             await apiDelete(
-                `/api/v1/notification-channels/${crud.editingChannel.id}/recipients/${recipient.id}`
+                `/api/v1/notification-channels/${channelId}/recipients/${recipient.id}`
             );
-            fetchRecipients(crud.editingChannel.id);
+            // Guard against stale responses
+            if (editingChannelIdRef.current === channelId) {
+                fetchRecipients(channelId);
+            }
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                crud.setDialogError(err.message);
-            } else {
-                crud.setDialogError('Failed to delete recipient');
+            // Only show error if still editing the same channel
+            if (editingChannelIdRef.current === channelId) {
+                if (err instanceof Error) {
+                    crud.setDialogError(err.message);
+                } else {
+                    crud.setDialogError('Failed to delete recipient');
+                }
             }
         } finally {
-            setRecipientSaving(false);
+            if (editingChannelIdRef.current === channelId) {
+                setRecipientSaving(false);
+            }
         }
     };
 

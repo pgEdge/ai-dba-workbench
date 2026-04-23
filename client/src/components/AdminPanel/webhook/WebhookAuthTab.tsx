@@ -84,6 +84,8 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                 <TextField
                     fullWidth
                     label="Token"
+                    type="password"
+                    autoComplete="off"
                     value={authFields.token || ''}
                     onChange={(e) => onAuthFieldChange('token', e.target.value)}
                     disabled={saving}
@@ -107,6 +109,8 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                     <TextField
                         fullWidth
                         label="API Key Value"
+                        type="password"
+                        autoComplete="off"
                         value={authFields.apiKeyValue || ''}
                         onChange={(e) => onAuthFieldChange('apiKeyValue', e.target.value)}
                         disabled={saving}

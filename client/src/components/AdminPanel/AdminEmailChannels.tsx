@@ -115,6 +115,8 @@ const AdminEmailChannels: React.FC = () => {
     // --- Dialog open handlers ---
 
     const handleOpenCreate = () => {
+        editingChannelIdRef.current = null;
+        setRecipientsLoading(false);
         crud.openCreate();
         setForm(DEFAULT_EMAIL_FORM);
         setRecipients([]);
@@ -122,6 +124,7 @@ const AdminEmailChannels: React.FC = () => {
     };
 
     const handleOpenEdit = (e: React.MouseEvent, channel: EmailChannel) => {
+        editingChannelIdRef.current = channel.id;
         crud.openEdit(e, channel);
         setForm({
             name: channel.name,
@@ -141,6 +144,8 @@ const AdminEmailChannels: React.FC = () => {
 
     const handleCloseDialog = () => {
         if (crud.saving || recipientSaving) { return; }
+        editingChannelIdRef.current = null;
+        setRecipientsLoading(false);
         crud.closeDialog();
         setRecipients([]);
         setPendingRecipients([]);

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../../utils/apiClient';
 import { BaseChannel } from './channelTypes';
 
@@ -116,9 +116,13 @@ export function useChannelCRUD<T extends BaseChannel>(
     const [saving, setSaving] = useState(false);
     const [dialogError, setDialogError] = useState<string | null>(null);
 
+    // Request ID counter for stale response guard
+    const fetchRequestIdRef = useRef(0);
+
     // --- Data fetching ---
 
     const fetchChannels = useCallback(async () => {
+        const requestId = ++fetchRequestIdRef.current;
         try {
             setLoading(true);
             const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
@@ -126,15 +130,21 @@ export function useChannelCRUD<T extends BaseChannel>(
             const filtered: T[] = allChannels
                 .filter((ch: Record<string, unknown>) => ch.channel_type === channelType)
                 .map(mapChannel);
-            setChannels(filtered);
+            if (requestId === fetchRequestIdRef.current) {
+                setChannels(filtered);
+            }
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
+            if (requestId === fetchRequestIdRef.current) {
+                if (err instanceof Error) {
+                    setError(err.message);
+                } else {
+                    setError('An unexpected error occurred');
+                }
             }
         } finally {
-            setLoading(false);
+            if (requestId === fetchRequestIdRef.current) {
+                setLoading(false);
+            }
         }
     }, [channelType, mapChannel]);
 

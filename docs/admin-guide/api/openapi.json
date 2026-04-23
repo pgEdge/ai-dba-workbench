@@ -2967,7 +2967,7 @@
       },
       "delete": {
         "summary": "Delete a cluster",
-        "description": "Deletes a manually created cluster",
+        "description": "Deletes a cluster. For manually created clusters, the record is removed. For auto-detected clusters (server-{id} or cluster-spock-{prefix}), the cluster is soft-deleted by setting dismissed=true so it does not reappear in topology.",
         "operationId": "deleteCluster",
         "tags": [
           "Clusters"
@@ -2976,7 +2976,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Cluster ID",
+            "description": "Cluster ID (numeric, server-{id}, or cluster-spock-{prefix})",
             "required": true,
             "schema": {
               "type": "string"

@@ -1540,11 +1540,11 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster",
-				Description: "Deletes a manually created cluster",
+				Description: "Deletes a cluster. For manually created clusters, the record is removed. For auto-detected clusters (server-{id} or cluster-spock-{prefix}), the cluster is soft-deleted by setting dismissed=true so it does not reappear in topology.",
 				OperationID: "deleteCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
-				Parameters:  []OpenAPIParameter{pathParamString("id", "Cluster ID")},
+				Parameters:  []OpenAPIParameter{pathParamString("id", "Cluster ID (numeric, server-{id}, or cluster-spock-{prefix})")},
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Cluster deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),

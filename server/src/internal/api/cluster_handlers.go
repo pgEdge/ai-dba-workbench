@@ -914,8 +914,7 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 	defer cancel()
 
 	if err := h.datastore.DeleteAutoDetectedCluster(ctx, autoKey); err != nil {
-		log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v",
-			logging.SanitizeForLog(clusterID), err)
+		log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to delete auto-detected cluster")
 		return

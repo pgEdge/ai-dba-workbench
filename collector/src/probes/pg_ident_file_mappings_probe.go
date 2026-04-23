@@ -114,7 +114,18 @@ func (p *PgIdentFileMappingsProbe) Execute(ctx context.Context, connectionName s
 // Store stores the collected metrics in the datastore only if data has changed
 func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	// Check if data has changed
-	changed, err := p.hasDataChanged(ctx, datastoreConn, connectionID, metrics)
+	changed, err := HasDataChanged(ctx, datastoreConn, connectionID, "pg_ident_file_mappings", metrics,
+		`SELECT map_number, file_name, line_number, map_name,
+		        sys_name, pg_username, error
+		 FROM metrics.pg_ident_file_mappings
+		 WHERE connection_id = $1
+		   AND collected_at = (
+		       SELECT MAX(collected_at)
+		       FROM metrics.pg_ident_file_mappings
+		       WHERE connection_id = $1
+		   )
+		 ORDER BY map_number`,
+		nil)
 	if err != nil {
 		return fmt.Errorf("failed to check if data changed: %w", err)
 	}
@@ -161,59 +172,4 @@ func (p *PgIdentFileMappingsProbe) Store(ctx context.Context, datastoreConn *pgx
 	}
 
 	return nil
-}
-
-// hasDataChanged checks if the current ident mappings differ from the most recently stored data
-func (p *PgIdentFileMappingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
-	// Compute hash of current metrics
-	currentHash, err := p.computeMetricsHash(currentMetrics)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute current metrics hash: %w", err)
-	}
-
-	// Get the most recent stored data for this connection
-	// Uses a subquery to get the latest collected_at timestamp, then retrieves
-	// all rows from that snapshot ordered by map_number (matching the collection query)
-	query := `
-        SELECT map_number, file_name, line_number, map_name,
-               sys_name, pg_username, error
-        FROM metrics.pg_ident_file_mappings
-        WHERE connection_id = $1
-          AND collected_at = (
-              SELECT MAX(collected_at)
-              FROM metrics.pg_ident_file_mappings
-              WHERE connection_id = $1
-          )
-        ORDER BY map_number
-    `
-
-	rows, err := datastoreConn.Query(ctx, query, connectionID)
-	if err != nil {
-		return false, fmt.Errorf("failed to query most recent data: %w", err)
-	}
-	defer rows.Close()
-
-	previousMetrics, err := utils.ScanRowsToMaps(rows)
-	if err != nil {
-		return false, fmt.Errorf("failed to scan previous metrics: %w", err)
-	}
-
-	// If no previous data exists, this is a change
-	if len(previousMetrics) == 0 {
-		return true, nil
-	}
-
-	// Compute hash of previous metrics
-	previousHash, err := p.computeMetricsHash(previousMetrics)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute previous metrics hash: %w", err)
-	}
-
-	// Compare hashes
-	return currentHash != previousHash, nil
-}
-
-// computeMetricsHash computes a SHA256 hash of metrics for comparison
-func (p *PgIdentFileMappingsProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
-	return ComputeMetricsHash(metrics)
 }

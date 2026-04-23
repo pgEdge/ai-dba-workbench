@@ -160,7 +160,7 @@ func (p *PgServerInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool.Co
 // hasDataChanged checks if the current server info differs from the most recently stored data
 func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
 	// Compute hash of current metrics
-	currentHash, err := p.computeMetricsHash(currentMetrics)
+	currentHash, err := ComputeMetricsHash(currentMetrics)
 	if err != nil {
 		return false, fmt.Errorf("failed to compute current metrics hash: %w", err)
 	}
@@ -224,16 +224,11 @@ func (p *PgServerInfoProbe) hasDataChanged(ctx context.Context, datastoreConn *p
 	storedMetrics := []map[string]any{storedMetric}
 
 	// Compute hash of stored metrics
-	storedHash, err := p.computeMetricsHash(storedMetrics)
+	storedHash, err := ComputeMetricsHash(storedMetrics)
 	if err != nil {
 		return false, fmt.Errorf("failed to compute stored metrics hash: %w", err)
 	}
 
 	// Compare hashes
 	return currentHash != storedHash, nil
-}
-
-// computeMetricsHash computes a hash of the metrics for comparison
-func (p *PgServerInfoProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
-	return ComputeMetricsHash(metrics)
 }

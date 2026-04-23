@@ -67,7 +67,17 @@ func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Con
 	}
 
 	// Check if extensions have changed compared to the most recent stored data
-	hasChanged, err := p.hasDataChanged(ctx, datastoreConn, connectionID, metrics)
+	hasChanged, err := HasDataChanged(ctx, datastoreConn, connectionID, "pg_extension", metrics,
+		`SELECT database_name, extname, extversion, extrelocatable, schema_name
+		 FROM metrics.pg_extension
+		 WHERE connection_id = $1
+		   AND collected_at = (
+		       SELECT MAX(collected_at)
+		       FROM metrics.pg_extension
+		       WHERE connection_id = $1
+		   )
+		 ORDER BY database_name, extname`,
+		normalizeDatabaseName)
 	if err != nil {
 		return fmt.Errorf("failed to check for changes: %w", err)
 	}
@@ -111,77 +121,4 @@ func (p *PgExtensionProbe) Store(ctx context.Context, datastoreConn *pgxpool.Con
 	}
 
 	return nil
-}
-
-// hasDataChanged checks if the current extensions differ from the most
-// recently stored data
-func (p *PgExtensionProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
-	// Normalize current metrics to match stored format
-	// The scheduler adds _database_name but the DB stores it as database_name
-	normalizedMetrics := make([]map[string]any, len(currentMetrics))
-	for i, m := range currentMetrics {
-		normalized := make(map[string]any)
-		for k, v := range m {
-			if k == "_database_name" {
-				normalized["database_name"] = v
-			} else {
-				normalized[k] = v
-			}
-		}
-		normalizedMetrics[i] = normalized
-	}
-
-	// Compute hash of normalized current metrics
-	currentHash, err := p.computeMetricsHash(normalizedMetrics)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute current metrics hash: %w", err)
-	}
-
-	// Get the most recent stored data for this connection
-	// Uses a subquery to get the latest collected_at timestamp, then retrieves
-	// all rows from that snapshot ordered by database_name and extname
-	query := `
-		SELECT database_name, extname, extversion, extrelocatable, schema_name
-		FROM metrics.pg_extension
-		WHERE connection_id = $1
-		  AND collected_at = (
-		      SELECT MAX(collected_at)
-		      FROM metrics.pg_extension
-		      WHERE connection_id = $1
-		  )
-		ORDER BY database_name, extname
-	`
-
-	rows, err := datastoreConn.Query(ctx, query, connectionID)
-	if err != nil {
-		return false, fmt.Errorf("failed to query most recent data: %w", err)
-	}
-	defer rows.Close()
-
-	// Scan the most recent data
-	var storedMetrics []map[string]any
-	storedMetrics, err = utils.ScanRowsToMaps(rows)
-	if err != nil {
-		return false, fmt.Errorf("failed to scan stored data: %w", err)
-	}
-
-	// If there's no stored data, this is the first collection
-	if len(storedMetrics) == 0 {
-		logger.Infof("No previous pg_extension data found for connection %d", connectionID)
-		return true, nil
-	}
-
-	// Compute hash of stored metrics
-	storedHash, err := p.computeMetricsHash(storedMetrics)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute stored metrics hash: %w", err)
-	}
-
-	// Compare hashes
-	return currentHash != storedHash, nil
-}
-
-// computeMetricsHash computes a hash of the metrics for comparison
-func (p *PgExtensionProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
-	return ComputeMetricsHash(metrics)
 }

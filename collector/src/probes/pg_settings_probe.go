@@ -77,7 +77,19 @@ func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 	}
 
 	// Check if settings have changed compared to the most recent stored data
-	hasChanged, err := p.hasDataChanged(ctx, datastoreConn, connectionID, metrics)
+	hasChanged, err := HasDataChanged(ctx, datastoreConn, connectionID, "pg_settings", metrics,
+		`SELECT name, setting, unit, category, short_desc, extra_desc,
+		        context, vartype, source, min_val, max_val, enumvals,
+		        boot_val, reset_val, sourcefile, sourceline, pending_restart
+		 FROM metrics.pg_settings
+		 WHERE connection_id = $1
+		   AND collected_at = (
+		       SELECT MAX(collected_at)
+		       FROM metrics.pg_settings
+		       WHERE connection_id = $1
+		   )
+		 ORDER BY name`,
+		nil)
 	if err != nil {
 		return fmt.Errorf("failed to check for changes: %w", err)
 	}
@@ -135,63 +147,4 @@ func (p *PgSettingsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn
 	}
 
 	return nil
-}
-
-// hasDataChanged checks if the current settings differ from the most recently stored data
-func (p *PgSettingsProbe) hasDataChanged(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, currentMetrics []map[string]any) (bool, error) {
-	// Compute hash of current metrics
-	currentHash, err := p.computeMetricsHash(currentMetrics)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute current metrics hash: %w", err)
-	}
-
-	// Get the most recent stored data for this connection
-	// Uses a subquery to get the latest collected_at timestamp, then retrieves
-	// all rows from that snapshot ordered by name (matching the collection query)
-	query := `
-		SELECT name, setting, unit, category, short_desc, extra_desc,
-		       context, vartype, source, min_val, max_val, enumvals,
-		       boot_val, reset_val, sourcefile, sourceline, pending_restart
-		FROM metrics.pg_settings
-		WHERE connection_id = $1
-		  AND collected_at = (
-		      SELECT MAX(collected_at)
-		      FROM metrics.pg_settings
-		      WHERE connection_id = $1
-		  )
-		ORDER BY name
-	`
-
-	rows, err := datastoreConn.Query(ctx, query, connectionID)
-	if err != nil {
-		return false, fmt.Errorf("failed to query most recent data: %w", err)
-	}
-	defer rows.Close()
-
-	// Scan the most recent data
-	var storedMetrics []map[string]any
-	storedMetrics, err = utils.ScanRowsToMaps(rows)
-	if err != nil {
-		return false, fmt.Errorf("failed to scan stored data: %w", err)
-	}
-
-	// If there's no stored data, this is the first collection
-	if len(storedMetrics) == 0 {
-		logger.Infof("No previous pg_settings data found for connection %d", connectionID)
-		return true, nil
-	}
-
-	// Compute hash of stored metrics
-	storedHash, err := p.computeMetricsHash(storedMetrics)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute stored metrics hash: %w", err)
-	}
-
-	// Compare hashes
-	return currentHash != storedHash, nil
-}
-
-// computeMetricsHash computes a hash of the metrics for comparison
-func (p *PgSettingsProbe) computeMetricsHash(metrics []map[string]any) (string, error) {
-	return ComputeMetricsHash(metrics)
 }

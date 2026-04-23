@@ -142,7 +142,7 @@ describe('ClusterDashboard', () => {
         expect(replicationSection).toHaveAttribute('data-server-ids', '');
     });
 
-    it('handles undefined servers', () => {
+    it('handles empty servers array', () => {
         const selection = {
             type: 'cluster',
             id: 'cluster-no-servers',

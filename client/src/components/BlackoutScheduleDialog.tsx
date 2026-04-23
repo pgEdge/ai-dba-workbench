@@ -191,11 +191,16 @@ const scopeLabel = (
         if (selection.type === 'server') {
             return selection.clusterName || undefined;
         }
-        return selection.name || undefined;
+        if (selection.type === 'cluster') {
+            return selection.name || undefined;
+        }
+        return undefined;
     }
 
     if (scopeValue === 'server') {
-        return selection.name || undefined;
+        return selection.type === 'server'
+            ? selection.name || undefined
+            : undefined;
     }
 
     return undefined;

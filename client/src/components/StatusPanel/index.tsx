@@ -627,7 +627,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 {/* AI Overview */}
                 {aiEnabled && (
                     <Box sx={{ mb: 2 }}>
-                        <AIOverview selection={selection} onAnalyze={handleServerAnalyze} analysisCached={serverAnalysisCached} />
+                        <AIOverview
+                            selection={selection}
+                            onAnalyze={serverAnalysisSelection ? handleServerAnalyze : undefined}
+                            analysisCached={serverAnalysisCached}
+                        />
                     </Box>
                 )}
 

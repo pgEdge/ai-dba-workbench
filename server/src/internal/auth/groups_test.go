@@ -12,6 +12,8 @@ package auth
 import (
 	"os"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // createTestAuthStoreForGroups creates a temporary auth store for testing
@@ -28,6 +30,7 @@ func createTestAuthStoreForGroups(t *testing.T) (*AuthStore, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	cleanup := func() {
 		store.Close()

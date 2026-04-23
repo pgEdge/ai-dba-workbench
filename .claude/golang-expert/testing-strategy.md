@@ -434,6 +434,49 @@ auto-detected-group branch only uses context-based RBAC and no
 bearer), or pair `withBearer` and `withSuperuser`. Inspect the
 handler source to see which surfaces it touches.
 
+### Lowering bcrypt Cost in Tests
+
+`AuthStore` hashes every password at `DefaultBcryptCost` (12) in
+production. A full test suite creates hundreds of throwaway users, and
+the default cost is heavy enough to dominate wall-clock time — past CI
+runs have hit the 10-minute package timeout on `internal/api` because
+of this alone.
+
+Every test that constructs an `AuthStore` must immediately lower the
+cost:
+
+```go
+store, err := auth.NewAuthStore(tmpDir, 0, 0)
+if err != nil {
+    t.Fatalf("NewAuthStore: %v", err)
+}
+defer store.Close()
+store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+```
+
+`SetBcryptCostForTesting` is defined in
+`server/src/internal/auth/store.go` and takes a non-nil
+`*testing.T` as an intentional gate — production code cannot call it
+without panicking. It mutates the per-store `bcryptCost` field under
+`s.mu`, so the next `CreateUser`, `UpdateUser`, or `UpdateUserAtomic`
+call uses the override. Production behavior is unaffected; the default
+cost stays at `DefaultBcryptCost` unless a test explicitly lowers it.
+
+The matching `AuthStore.Close()` method stops the session cleanup
+goroutine as well as closing the database, so pairing
+`NewAuthStore`/`Close` also prevents goroutine leaks that would
+otherwise accumulate across tests.
+
+### RateLimiter Teardown
+
+`auth.NewRateLimiter` starts a background `cleanupLoop` goroutine that
+runs until `Stop()` is called. Every construction site needs a matched
+`Stop()` (or a container that owns the Stop, such as `AuthHandler.Close()`
+which stops the internally owned `totalRateLimiter`). Forgetting this
+leaks a goroutine per test and compounds across long runs. `Stop()` is
+idempotent (guarded by `sync.Once`), so it is safe to Stop the same
+limiter from multiple teardown paths.
+
 ### Datastore-Backed Handler Tests
 
 When a handler touches the datastore, construct a `*database.Datastore`

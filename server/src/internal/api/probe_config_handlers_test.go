@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestNewProbeConfigHandler(t *testing.T) {
@@ -128,6 +129,7 @@ func TestProbeConfigHandler_UpdateRequiresPermission(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	rbac := auth.NewRBACChecker(authStore)
 	handler := NewProbeConfigHandler(nil, nil, rbac)

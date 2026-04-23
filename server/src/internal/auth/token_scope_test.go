@@ -12,6 +12,8 @@ package auth
 import (
 	"os"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // createTestAuthStoreForTokenScope creates a temporary auth store for testing
@@ -28,6 +30,7 @@ func createTestAuthStoreForTokenScope(t *testing.T) (*AuthStore, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a default user for token tests
 	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {

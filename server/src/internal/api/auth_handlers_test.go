@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestAuthHandler_HandleLogin(t *testing.T) {
@@ -35,6 +36,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user
 	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
@@ -47,6 +49,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 
 	// Create handler (tlsEnabled=false for tests)
 	handler := NewAuthHandler(authStore, rateLimiter, nil, false)
+	defer handler.Close()
 
 	tests := []struct {
 		name           string
@@ -211,6 +214,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 func TestAuthHandler_NilAuthStore(t *testing.T) {
 	// Create handler with nil auth store (tlsEnabled=false for tests)
 	handler := NewAuthHandler(nil, nil, nil, false)
+	defer handler.Close()
 
 	body, _ := json.Marshal(LoginRequest{Username: "test", Password: "test"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
@@ -234,6 +238,7 @@ func TestAuthHandler_NilAuthStore(t *testing.T) {
 
 func TestAuthHandler_RegisterRoutes(t *testing.T) {
 	handler := NewAuthHandler(nil, nil, nil, false)
+	defer handler.Close()
 	mux := http.NewServeMux()
 
 	handler.RegisterRoutes(mux)
@@ -257,6 +262,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 
 	t.Run("without IPExtractor - uses RemoteAddr directly", func(t *testing.T) {
 		handler := NewAuthHandler(nil, nil, nil, false)
+		defer handler.Close()
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.1:12345"
@@ -273,6 +279,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 		// Create IPExtractor that trusts 10.0.0.0/8 range
 		extractor := auth.NewIPExtractor([]string{"10.0.0.0/8"})
 		handler := NewAuthHandler(nil, nil, extractor, false)
+		defer handler.Close()
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.1:12345" // From trusted proxy
@@ -289,6 +296,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 		// Create IPExtractor that trusts a different range
 		extractor := auth.NewIPExtractor([]string{"172.16.0.0/12"})
 		handler := NewAuthHandler(nil, nil, extractor, false)
+		defer handler.Close()
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.1:12345" // Not a trusted proxy
@@ -316,6 +324,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user
 	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
@@ -327,6 +336,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	defer rateLimiter.Stop()
 
 	handler := NewAuthHandler(authStore, rateLimiter, nil, false)
+	defer handler.Close()
 
 	// Make failed attempts to trigger rate limit
 	for i := 0; i < 3; i++ {
@@ -381,6 +391,7 @@ func TestAuthHandler_SecureCookieFlag(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user
 	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
@@ -407,6 +418,7 @@ func TestAuthHandler_SecureCookieFlag(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := NewAuthHandler(authStore, nil, nil, tt.tlsEnabled)
+			defer handler.Close()
 
 			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass123"})
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
@@ -454,6 +466,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
@@ -519,6 +532,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 			}
 
 			handler := NewAuthHandler(authStore, nil, ipExtractor, tt.tlsEnabled)
+			defer handler.Close()
 
 			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass123"})
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
@@ -576,6 +590,7 @@ func TestAuthHandler_SecureCookieLogout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := NewAuthHandler(nil, nil, nil, tt.tlsEnabled)
+			defer handler.Close()
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 			w := httptest.NewRecorder()

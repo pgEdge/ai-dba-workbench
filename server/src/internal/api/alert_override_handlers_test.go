@@ -19,6 +19,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestNewAlertOverrideHandler(t *testing.T) {
@@ -239,6 +240,7 @@ func createTestAuthStoreForAlertOverrides(t *testing.T) (*auth.AuthStore, func()
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 	return store, func() {
 		store.Close()
 		os.RemoveAll(tmpDir)

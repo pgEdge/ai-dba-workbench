@@ -13,6 +13,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // createTestAuthStoreForStore creates a temporary auth store for testing
@@ -29,6 +31,7 @@ func createTestAuthStoreForStore(t *testing.T) (*AuthStore, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	cleanup := func() {
 		store.Close()
@@ -78,6 +81,60 @@ func TestNewAuthStore(t *testing.T) {
 		if _, err := os.Stat(newDir); os.IsNotExist(err) {
 			t.Error("Expected directory to be created")
 		}
+	})
+}
+
+// TestSetBcryptCostForTesting exercises the test-only hook that lowers
+// the per-store bcrypt cost. The coverage target is the two observable
+// behaviors: (1) a non-nil testing.T updates bcryptCost so subsequent
+// hashing calls use the override, and (2) a nil testing.T panics with
+// the documented message so accidental production use is caught
+// immediately. Coverage of the happy path is also exercised indirectly
+// by every other test that calls createTestAuthStoreForStore, but an
+// explicit test pins the behavior so a future regression cannot silently
+// reintroduce the baseline-measure no-op.
+func TestSetBcryptCostForTesting(t *testing.T) {
+	t.Run("overrides the per-store cost", func(t *testing.T) {
+		store, cleanup := createTestAuthStoreForStore(t)
+		defer cleanup()
+
+		// createTestAuthStoreForStore already lowered the cost to
+		// bcrypt.MinCost, but assert it explicitly so the contract is
+		// part of the test output rather than implied.
+		store.mu.RLock()
+		got := store.bcryptCost
+		store.mu.RUnlock()
+		if got != bcrypt.MinCost {
+			t.Errorf("Expected bcryptCost=%d, got %d", bcrypt.MinCost, got)
+		}
+
+		// Override again to a different legal cost and verify it sticks.
+		store.SetBcryptCostForTesting(t, bcrypt.MinCost+1)
+		store.mu.RLock()
+		got = store.bcryptCost
+		store.mu.RUnlock()
+		if got != bcrypt.MinCost+1 {
+			t.Errorf("Expected bcryptCost=%d after override, got %d",
+				bcrypt.MinCost+1, got)
+		}
+	})
+
+	t.Run("panics when t is nil", func(t *testing.T) {
+		store, cleanup := createTestAuthStoreForStore(t)
+		defer cleanup()
+
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("Expected panic when SetBcryptCostForTesting " +
+					"is called with nil *testing.T")
+			}
+		}()
+
+		// The interface argument is typed, so we pass an explicit
+		// nil via the interface to trigger the gate. This simulates
+		// accidental production use.
+		store.SetBcryptCostForTesting(nil, bcrypt.MinCost)
 	})
 }
 
@@ -217,6 +274,105 @@ func TestUpdateUserEmailNotFound(t *testing.T) {
 	}
 }
 
+// TestUpdateUser exercises the legacy (non-atomic) UpdateUser method
+// end to end. The method hashes passwords through the per-store
+// bcryptCost, so this test guards the path that was previously a 0%
+// coverage hole and pins the behavior that SetBcryptCostForTesting now
+// controls. It also exercises the non-password update branch and the
+// password-change session invalidation.
+func TestUpdateUser(t *testing.T) {
+	t.Run("updates password and invalidates sessions", func(t *testing.T) {
+		store, cleanup := createTestAuthStoreForStore(t)
+		defer cleanup()
+
+		if err := store.CreateUser("alice", "Password1", "original",
+			"Alice", "alice@example.com"); err != nil {
+			t.Fatalf("Failed to create user: %v", err)
+		}
+
+		// Establish a session so InvalidateUserSessions has something
+		// to evict; this exercises the password-change branch end to
+		// end.
+		if _, _, err := store.AuthenticateUser("alice", "Password1"); err != nil {
+			t.Fatalf("Initial authentication failed: %v", err)
+		}
+
+		err := store.UpdateUser("alice", "NewPassword9",
+			"updated annotation", "Alice A", "alice.a@example.com")
+		if err != nil {
+			t.Fatalf("UpdateUser returned error: %v", err)
+		}
+
+		// The old password must no longer work; the new one must.
+		if _, _, err := store.AuthenticateUser("alice", "Password1"); err == nil {
+			t.Error("Old password still authenticates after UpdateUser")
+		}
+		if _, _, err := store.AuthenticateUser("alice", "NewPassword9"); err != nil {
+			t.Errorf("New password does not authenticate: %v", err)
+		}
+
+		user, err := store.GetUser("alice")
+		if err != nil {
+			t.Fatalf("GetUser: %v", err)
+		}
+		if user.Annotation != "updated annotation" {
+			t.Errorf("Annotation not updated: %q", user.Annotation)
+		}
+		if user.DisplayName != "Alice A" {
+			t.Errorf("Display name not updated: %q", user.DisplayName)
+		}
+		if user.Email != "alice.a@example.com" {
+			t.Errorf("Email not updated: %q", user.Email)
+		}
+	})
+
+	t.Run("updates metadata without touching password", func(t *testing.T) {
+		store, cleanup := createTestAuthStoreForStore(t)
+		defer cleanup()
+
+		if err := store.CreateUser("bob", "Password1", "",
+			"Bob", "bob@example.com"); err != nil {
+			t.Fatalf("Failed to create user: %v", err)
+		}
+
+		// Empty newPassword should leave the password alone.
+		if err := store.UpdateUser("bob", "", "new note",
+			"Bob B", "bob.b@example.com"); err != nil {
+			t.Fatalf("UpdateUser returned error: %v", err)
+		}
+
+		// Original password must still work.
+		if _, _, err := store.AuthenticateUser("bob", "Password1"); err != nil {
+			t.Errorf("Password was unexpectedly changed: %v", err)
+		}
+
+		user, err := store.GetUser("bob")
+		if err != nil {
+			t.Fatalf("GetUser: %v", err)
+		}
+		if user.Annotation != "new note" {
+			t.Errorf("Annotation not updated: %q", user.Annotation)
+		}
+	})
+
+	t.Run("rejects invalid password", func(t *testing.T) {
+		store, cleanup := createTestAuthStoreForStore(t)
+		defer cleanup()
+
+		if err := store.CreateUser("carol", "Password1", "",
+			"Carol", "carol@example.com"); err != nil {
+			t.Fatalf("Failed to create user: %v", err)
+		}
+
+		// "short" fails the complexity requirements (length, missing
+		// character classes), so ValidatePassword must reject it and
+		// UpdateUser must surface the error without mutating state.
+		if err := store.UpdateUser("carol", "short", "", "", ""); err == nil {
+			t.Error("Expected error for invalid password, got nil")
+		}
+	})
+}
+
 // =============================================================================
 // Authentication Tests
 // =============================================================================
@@ -257,6 +413,7 @@ func TestAuthenticateUserResetsFailedAttempts(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
@@ -295,6 +452,7 @@ func TestAuthenticateUserAccountLockout(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	if err := store.CreateUser("testuser", "Password123", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
@@ -546,6 +704,7 @@ func TestCreateTokenWithMaxDays(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
@@ -1055,6 +1214,7 @@ func TestResetFailedAttemptsStore(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)

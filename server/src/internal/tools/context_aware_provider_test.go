@@ -19,6 +19,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // TestNewContextAwareProvider tests provider creation
@@ -272,6 +273,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user and token
 	if err := authStore.CreateUser("testuser", "Password1", "", "", ""); err != nil {
@@ -371,6 +373,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
 	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
@@ -433,6 +436,7 @@ func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
 	if err := authStore.CreateUser("bob", "Password1", "", "", ""); err != nil {
@@ -495,6 +499,7 @@ func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Register query_database as a public privilege so the MCP tool RBAC check
 	// passes and we can reach the getClient() code path that we're testing
@@ -596,6 +601,7 @@ func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Register query_database as a public privilege so the MCP tool RBAC check
 	// passes and we can reach the getClient() code path
@@ -703,6 +709,7 @@ func TestExecute_GetClient_NoSession(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Register query_database as a public privilege so the MCP tool RBAC check
 	// passes and we can reach the getClient() code path
@@ -768,6 +775,7 @@ func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Register query_database as a public privilege so the MCP tool RBAC check
 	// passes and we can reach the getClient() code path
@@ -884,6 +892,7 @@ func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create superuser and token
 	if err := authStore.CreateUser("admin", "Password1", "", "", ""); err != nil {
@@ -988,6 +997,7 @@ func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Register query_metrics as a public privilege so RBAC check passes
 	if _, err := authStore.RegisterMCPPrivilege("query_metrics", auth.MCPPrivilegeTypeTool, "Query metrics", true); err != nil {
@@ -1077,6 +1087,7 @@ func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Register query_metrics as a public privilege
 	if _, err := authStore.RegisterMCPPrivilege("query_metrics", auth.MCPPrivilegeTypeTool, "Query metrics", true); err != nil {
@@ -1153,6 +1164,7 @@ func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create superuser and token
 	if err := authStore.CreateUser("admin", "Password1", "", "", ""); err != nil {

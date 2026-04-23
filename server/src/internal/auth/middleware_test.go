@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // createTestAuthStore creates a temporary auth store for testing
@@ -34,6 +36,7 @@ func createTestAuthStore(t *testing.T) (*AuthStore, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	cleanup := func() {
 		store.Close()
@@ -247,6 +250,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user and a token that expires immediately
 	store.CreateUser("tokenuser", "Password1", "", "", "")
@@ -320,6 +324,7 @@ func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user
 	err = store.CreateUser("testuser", "Testpass123", "Test user", "", "")
@@ -806,6 +811,7 @@ func TestAuthMiddleware_SessionCookie(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user and get session token
 	store.CreateUser("testuser", "Testpass123", "Test user", "", "")
@@ -881,6 +887,7 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user and a token
 	store.CreateUser("testuser", "Testpass123", "Test user", "", "")
@@ -929,6 +936,7 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a superuser and a token for them
 	store.CreateUser("superuser-svc", "Testpass123", "Superuser service", "", "")
@@ -973,6 +981,7 @@ func TestAuthMiddleware_SuperuserSessionUser(t *testing.T) {
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
 	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a superuser
 	store.CreateUser("superuser", "Testpass123", "Superuser", "", "")

@@ -20,9 +20,12 @@ import (
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// createTestRBACHandler creates an RBACHandler with a temp auth store for testing
+// createTestRBACHandler creates an RBACHandler with a temp auth store for testing.
+// The store uses bcrypt.MinCost so that tests which create many users do not
+// pay the full production hashing cost on every CreateUser call.
 func createTestRBACHandler(t *testing.T) (*RBACHandler, *auth.AuthStore, func()) {
 	t.Helper()
 
@@ -36,6 +39,7 @@ func createTestRBACHandler(t *testing.T) (*RBACHandler, *auth.AuthStore, func())
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create auth store: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	checker := auth.NewRBACChecker(store)
 	handler := NewRBACHandler(store, checker)

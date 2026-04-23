@@ -60,6 +60,18 @@ func (h *AuthHandler) SetTrustProxyHeaders(trust bool) {
 	h.trustProxyHeaders = trust
 }
 
+// Close releases background resources owned by the handler. In
+// particular it stops the internally owned totalRateLimiter goroutine
+// created in NewAuthHandler. The caller-supplied rateLimiter is NOT
+// stopped here because the caller retains ownership and may share it
+// with other handlers. Callers must invoke Close when the handler is
+// torn down (notably in tests) to avoid leaking the cleanup goroutine.
+func (h *AuthHandler) Close() {
+	if h.totalRateLimiter != nil {
+		h.totalRateLimiter.Stop()
+	}
+}
+
 // isSecureRequest determines if a request came over a secure (HTTPS) connection.
 // It checks multiple indicators:
 // 1. If the server has TLS enabled directly

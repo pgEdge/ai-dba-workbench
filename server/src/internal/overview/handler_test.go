@@ -23,6 +23,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // --- helpers ---------------------------------------------------------------
@@ -748,6 +749,7 @@ func newRBACTestStore(t *testing.T) (*auth.AuthStore, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("NewAuthStore: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 	return store, func() {
 		store.Close()
 		os.RemoveAll(tmpDir)

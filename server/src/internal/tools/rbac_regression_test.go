@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // stubVisibilityLister is a static implementation of
@@ -50,6 +51,7 @@ func newRBACRegressionTestStore(t *testing.T) (*auth.AuthStore, func()) {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("NewAuthStore: %v", err)
 	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 	return store, func() {
 		store.Close()
 		os.RemoveAll(tmpDir)

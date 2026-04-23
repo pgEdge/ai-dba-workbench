@@ -16,6 +16,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	conf "github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Helper to create bool pointer
@@ -291,6 +292,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user and token
 	if err := authStore.CreateUser("testuser", "Password1", "", "", ""); err != nil {
@@ -387,6 +389,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
 	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
@@ -444,6 +447,7 @@ func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
 	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
@@ -524,6 +528,7 @@ func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
 	if err := authStore.CreateUser("bob", "Password1", "", "", ""); err != nil {
@@ -609,6 +614,7 @@ func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 		t.Fatalf("NewAuthStore: %v", err)
 	}
 	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create superuser and token
 	if err := authStore.CreateUser("admin", "Password1", "", "", ""); err != nil {

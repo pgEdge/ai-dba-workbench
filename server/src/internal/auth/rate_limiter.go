@@ -23,6 +23,7 @@ type RateLimiter struct {
 	maxAttempts     int                    // Maximum attempts allowed per window
 	cleanupInterval time.Duration          // How often to clean up old entries
 	stopCleanup     chan bool              // Channel to signal cleanup goroutine to stop
+	stopOnce        sync.Once              // Ensures Stop closes stopCleanup at most once
 }
 
 // NewRateLimiter creates a new rate limiter with the specified parameters
@@ -133,10 +134,15 @@ func (rl *RateLimiter) cleanup() {
 	}
 }
 
-// Stop stops the cleanup goroutine
-// Should be called when shutting down the server
+// Stop stops the cleanup goroutine. Safe to call multiple times; only
+// the first invocation closes the stop channel. Callers that tear down
+// a RateLimiter from several paths (for example, an AuthHandler.Close
+// and a test cleanup) can rely on the idempotent behavior rather than
+// gating the call with their own flag.
 func (rl *RateLimiter) Stop() {
-	close(rl.stopCleanup)
+	rl.stopOnce.Do(func() {
+		close(rl.stopCleanup)
+	})
 }
 
 // GetRemainingAttempts returns the number of attempts remaining for an IP address

@@ -16,34 +16,21 @@ import {
     ContentBlock,
 } from '../../components/ChatPanel/ChatMessage';
 import { ToolActivity } from '../../components/ChatPanel/ToolStatus';
-import {
-    LLMContentBlock,
-    LLMResponse,
-    ToolCallResponse,
-    ToolResult,
-} from '../../types/llm';
 
+import { APIMessage, ToolDefinition } from './chatTypes';
+import { INPUT_HISTORY_MAX, SYSTEM_PROMPT, CHAT_TOOLS } from './chatConstants';
 import {
-    APIMessage,
-    ToolDefinition,
-    ConversationCreateResponse,
-    ConversationDetail,
-    CompactResponse,
-} from './chatTypes';
-import {
-    COMPACTION_TOKEN_THRESHOLD,
-    COMPACTION_MAX_TOKENS,
-    COMPACTION_RECENT_WINDOW,
-    INPUT_HISTORY_MAX,
-    SYSTEM_PROMPT,
-    CHAT_TOOLS,
-} from './chatConstants';
-import {
-    estimateTokenCount,
     toAPIMessages,
     loadInputHistory,
     saveInputHistory,
 } from './chatHelpers';
+import { maybeCompact } from './chatCompaction';
+import {
+    createConversation,
+    updateConversation,
+    fetchConversation,
+} from './chatConversation';
+import { runAgenticLoop } from './chatAgenticLoop';
 
 // Re-export types that consuming modules import from this hook.
 // These aliases ensure backward compatibility with modules that
@@ -164,52 +151,7 @@ export function useChat(): UseChatReturn {
     }, []);
 
     // ---------------------------------------------------------------
-    // Compaction
-    // ---------------------------------------------------------------
-
-    /**
-     * Compact the API message history when estimated tokens exceed
-     * the threshold.  The compacted messages replace the in-memory
-     * history; the visible UI messages are not affected.
-     */
-    const maybeCompact = useCallback(
-        async (msgs: APIMessage[]): Promise<APIMessage[]> => {
-            if (estimateTokenCount(msgs) < COMPACTION_TOKEN_THRESHOLD) {
-                return msgs;
-            }
-
-            try {
-                const response = await apiFetch('/api/v1/chat/compact', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        messages: msgs,
-                        max_tokens: COMPACTION_MAX_TOKENS,
-                        recent_window: COMPACTION_RECENT_WINDOW,
-                        keep_anchors: true,
-                        options: {
-                            preserve_tool_results: true,
-                            enable_summarization: true,
-                        },
-                    }),
-                });
-
-                if (!response.ok) {
-                    return msgs;
-                }
-
-                const data: CompactResponse = await response.json();
-                return data.messages ?? msgs;
-            } catch (err) {
-                console.error('Chat compaction failed:', err);
-                return msgs;
-            }
-        },
-        [],
-    );
-
-    // ---------------------------------------------------------------
-    // Agentic loop
+    // Send message (agentic loop orchestrator)
     // ---------------------------------------------------------------
 
     const sendMessage = useCallback(
@@ -266,284 +208,57 @@ export function useChat(): UseChatReturn {
                 userAPIMessage,
             ];
 
-            let iterations = 0;
-            let finalAssistantMessage: ChatMessageData | null = null;
-            const collectedActivity: ToolActivity[] = [];
-
             try {
-                while (iterations < maxIterations) {
-                    if (abortController.signal.aborted) {
-                        return;
-                    }
-                    iterations++;
-
-                    // Call the LLM with current message history and tools
-                    const response = await apiFetch('/api/v1/llm/chat', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            messages: apiMessagesRef.current,
-                            tools: availableTools,
-                            system: SYSTEM_PROMPT,
-                        }),
-                        signal: abortController.signal,
+                // Run the agentic loop
+                const { finalMessage, updatedApiMessages } =
+                    await runAgenticLoop({
+                        apiMessages: apiMessagesRef.current,
+                        availableTools,
+                        systemPrompt: SYSTEM_PROMPT,
+                        maxIterations,
+                        abortSignal: abortController.signal,
+                        fetchFn: apiFetch,
+                        onToolActivity: setActiveTools,
                     });
 
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(
-                            `LLM request failed: ${errorText}`,
-                        );
-                    }
+                apiMessagesRef.current = updatedApiMessages;
 
-                    const data: LLMResponse = await response.json();
-
-                    const toolUses =
-                        data.content?.filter(
-                            c => c.type === 'tool_use',
-                        ) || [];
-                    const textBlocks =
-                        data.content?.filter(
-                            c => c.type === 'text',
-                        ) || [];
-
-                    if (toolUses.length === 0) {
-                        // No tool calls - extract final text response
-                        const assistantText =
-                            textBlocks
-                                .map(c => c.text)
-                                .join('\n') || '';
-
-                        finalAssistantMessage = {
-                            role: 'assistant',
-                            content: assistantText,
-                            timestamp: new Date().toISOString(),
-                            activity:
-                                collectedActivity.length > 0
-                                    ? [...collectedActivity]
-                                    : undefined,
-                        };
-
-                        // Append to API history
-                        apiMessagesRef.current = [
-                            ...apiMessagesRef.current,
-                            {
-                                role: 'assistant',
-                                content: assistantText,
-                            },
-                        ];
-
-                        break;
-                    }
-
-                    // --- Tool execution phase ---
-
-                    // Append the assistant message (with tool_use blocks)
-                    // to the API message history
-                    apiMessagesRef.current = [
-                        ...apiMessagesRef.current,
-                        {
-                            role: 'assistant',
-                            content:
-                                data.content as LLMContentBlock[],
-                        },
-                    ];
-
-                    // Execute each tool call sequentially
-                    const toolResults: ToolResult[] = [];
-
-                    for (const toolUse of toolUses) {
-                        const toolName = toolUse.name ?? 'unknown';
-
-                        // Mark tool as running in the activity tracker
-                        const activity: ToolActivity = {
-                            name: toolName,
-                            status: 'running',
-                            startedAt: new Date().toISOString(),
-                        };
-                        collectedActivity.push(activity);
-                        setActiveTools([...collectedActivity]);
-
-                        try {
-                            const toolResponse = await apiFetch(
-                                '/api/v1/mcp/tools/call',
-                                {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type':
-                                            'application/json',
-                                    },
-                                    body: JSON.stringify({
-                                        name: toolUse.name,
-                                        arguments: toolUse.input,
-                                    }),
-                                    signal: abortController.signal,
-                                },
-                            );
-
-                            if (!toolResponse.ok) {
-                                const errorText =
-                                    await toolResponse.text();
-                                throw new Error(
-                                    errorText ||
-                                        `Tool call failed with status ${toolResponse.status}`,
-                                );
-                            }
-
-                            const toolData: ToolCallResponse =
-                                await toolResponse.json();
-                            const resultText =
-                                toolData.content?.[0]?.text ||
-                                (toolData.isError
-                                    ? 'Tool execution failed'
-                                    : 'No data returned');
-
-                            activity.status = toolData.isError
-                                ? 'error'
-                                : 'completed';
-                            setActiveTools([...collectedActivity]);
-
-                            toolResults.push({
-                                type: 'tool_result',
-                                tool_use_id: toolUse.id ?? '',
-                                content: resultText,
-                                is_error:
-                                    toolData.isError || undefined,
-                            });
-                        } catch (toolErr) {
-                            if (
-                                (toolErr as Error).name ===
-                                'AbortError'
-                            ) {
-                                throw toolErr;
-                            }
-
-                            const errMsg = `Tool execution error: ${(toolErr as Error).message}`;
-                            activity.status = 'error';
-                            setActiveTools([...collectedActivity]);
-
-                            toolResults.push({
-                                type: 'tool_result',
-                                tool_use_id: toolUse.id ?? '',
-                                content: errMsg,
-                                is_error: true,
-                            });
-                        }
-                    }
-
-                    // Append tool results to API history and loop
-                    apiMessagesRef.current = [
-                        ...apiMessagesRef.current,
-                        { role: 'user', content: toolResults },
-                    ];
-                }
-
-                // If the loop exhausted iterations without a final text
-                // response, surface an error to the user.
-                if (!finalAssistantMessage) {
-                    finalAssistantMessage = {
-                        role: 'assistant',
-                        content:
-                            'I was unable to complete the request within the ' +
-                            'allowed number of steps. Please try rephrasing ' +
-                            'your question.',
-                        timestamp: new Date().toISOString(),
-                        isError: true,
-                        activity:
-                            collectedActivity.length > 0
-                                ? [...collectedActivity]
-                                : undefined,
-                    };
-                    apiMessagesRef.current = [
-                        ...apiMessagesRef.current,
-                        {
-                            role: 'assistant',
-                            content:
-                                finalAssistantMessage.content as string,
-                        },
-                    ];
-                }
-
-                // Append the assistant reply to visible messages.
-                // Read the latest visible messages from the ref to
-                // avoid stale closure issues.
-                const finalVisibleMessages = [
-                    ...visibleMessagesRef.current,
-                    finalAssistantMessage,
-                ];
-                setMessages(finalVisibleMessages);
-                visibleMessagesRef.current = finalVisibleMessages;
+                // Append the assistant reply to visible messages using
+                // functional update to handle cases where the prior state
+                // update hasn't committed yet (e.g., in tests with sync mocks).
+                setMessages(prev => {
+                    const updated = [...prev, finalMessage];
+                    visibleMessagesRef.current = updated;
+                    return updated;
+                });
 
                 // --- Conversation persistence ---
-
+                // Use the ref which was updated in the setMessages callback
                 try {
                     if (!conversationIdRef.current) {
-                        // Create a new conversation on first response
-                        const createResponse = await apiFetch(
-                            '/api/v1/conversations',
-                            {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type':
-                                        'application/json',
-                                },
-                                body: JSON.stringify({
-                                    messages: finalVisibleMessages,
-                                    provider: '',
-                                    model: '',
-                                }),
-                            },
+                        const newId = await createConversation(
+                            visibleMessagesRef.current,
+                            apiFetch,
                         );
-
-                        if (createResponse.ok) {
-                            const createData: ConversationCreateResponse =
-                                await createResponse.json();
-                            syncConversationId(createData.id);
-                        } else {
-                            console.warn(
-                                'Failed to create conversation:',
-                                createResponse.status,
-                                await createResponse.text(),
-                            );
+                        if (newId) {
+                            syncConversationId(newId);
                         }
                     } else {
-                        // Update the existing conversation
-                        const updateResponse = await apiFetch(
-                            `/api/v1/conversations/${conversationIdRef.current}`,
-                            {
-                                method: 'PUT',
-                                headers: {
-                                    'Content-Type':
-                                        'application/json',
-                                },
-                                body: JSON.stringify({
-                                    messages: finalVisibleMessages,
-                                }),
-                            },
+                        await updateConversation(
+                            conversationIdRef.current,
+                            visibleMessagesRef.current,
+                            apiFetch,
                         );
-                        if (!updateResponse.ok) {
-                            console.warn(
-                                'Failed to update conversation:',
-                                updateResponse.status,
-                                await updateResponse.text(),
-                            );
-                        }
                     }
-                } catch (saveErr) {
-                    console.error(
-                        'Failed to persist conversation:',
-                        saveErr,
-                    );
+                } catch {
                     // Non-fatal: the user can still continue chatting
                 }
 
                 // --- Compaction ---
-
                 try {
                     apiMessagesRef.current = await maybeCompact(
                         apiMessagesRef.current,
+                        apiFetch,
                     );
                 } catch {
                     // Compaction failures are non-fatal
@@ -567,10 +282,6 @@ export function useChat(): UseChatReturn {
                     content: `Sorry, an error occurred: ${errMessage}`,
                     timestamp: new Date().toISOString(),
                     isError: true,
-                    activity:
-                        collectedActivity.length > 0
-                            ? [...collectedActivity]
-                            : undefined,
                 };
                 setMessages(prev => [...prev, errorAssistantMessage]);
             } finally {
@@ -581,7 +292,7 @@ export function useChat(): UseChatReturn {
                 }
             }
         },
-        [availableTools, maxIterations, syncConversationId, maybeCompact],
+        [availableTools, maxIterations, syncConversationId],
     );
 
     // ---------------------------------------------------------------
@@ -623,19 +334,7 @@ export function useChat(): UseChatReturn {
             setActiveTools([]);
 
             try {
-                const response = await apiFetch(
-                    `/api/v1/conversations/${id}`,
-                );
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(
-                        `Failed to load conversation: ${errorText}`,
-                    );
-                }
-
-                const data: ConversationDetail =
-                    await response.json();
+                const data = await fetchConversation(id, apiFetch);
 
                 setMessages(data.messages || []);
                 visibleMessagesRef.current = data.messages || [];

@@ -149,8 +149,8 @@ export function ChannelTable<T extends BaseChannel>({
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Description</TableCell>
-                            {extraColumns.map((col, index) => (
-                                <TableCell key={index} sx={tableHeaderCellSx}>
+                            {extraColumns.map((col) => (
+                                <TableCell key={col.label} sx={tableHeaderCellSx}>
                                     {col.label}
                                 </TableCell>
                             ))}
@@ -169,8 +169,8 @@ export function ChannelTable<T extends BaseChannel>({
                                     <TableCell>
                                         {truncateDescription(channel.description)}
                                     </TableCell>
-                                    {extraColumns.map((col, index) => (
-                                        <TableCell key={index}>
+                                    {extraColumns.map((col) => (
+                                        <TableCell key={col.label}>
                                             {col.render(channel)}
                                         </TableCell>
                                     ))}

@@ -26,6 +26,25 @@
 import React from 'react';
 import { TransitionProps } from '@mui/material/transitions';
 
+/**
+ * Creates a minimal mock HTMLElement for transition callbacks.
+ * MUI Menu's handleEntering calls adjustStyleForScrollbar which needs
+ * clientHeight and scrollHeight properties.
+ */
+const createMockElement = (): HTMLElement => {
+    const mock = {
+        clientHeight: 300,
+        scrollHeight: 300,
+        clientWidth: 200,
+        scrollWidth: 200,
+        style: {},
+        ownerDocument: {
+            defaultView: window,
+        },
+    };
+    return mock as unknown as HTMLElement;
+};
+
 const ImmediateTransition = React.forwardRef<
     HTMLElement,
     TransitionProps & { children: React.ReactElement }
@@ -71,14 +90,17 @@ const ImmediateTransition = React.forwardRef<
     // fire from these lifecycle callbacks stay inside the act boundary.
     // Only fire when `inProp` toggles, not on every render.
     React.useLayoutEffect(() => {
+        // Create a mock element with required properties for MUI components
+        // that access DOM properties in transition callbacks.
+        const mockElement = createMockElement();
         if (inProp) {
-            onEnterRef.current?.(null as unknown as HTMLElement, false);
-            onEnteringRef.current?.(null as unknown as HTMLElement, false);
-            onEnteredRef.current?.(null as unknown as HTMLElement, false);
+            onEnterRef.current?.(mockElement, false);
+            onEnteringRef.current?.(mockElement, false);
+            onEnteredRef.current?.(mockElement, false);
         } else {
-            onExitRef.current?.(null as unknown as HTMLElement);
-            onExitingRef.current?.(null as unknown as HTMLElement);
-            onExitedRef.current?.(null as unknown as HTMLElement);
+            onExitRef.current?.(mockElement);
+            onExitingRef.current?.(mockElement);
+            onExitedRef.current?.(mockElement);
         }
     }, [inProp]);
 

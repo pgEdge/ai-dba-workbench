@@ -12,29 +12,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box,
     Typography,
-    Button,
     CircularProgress,
     Alert,
-    Autocomplete,
-    TextField,
-    MenuItem,
-    IconButton,
-    Divider,
-    List,
-    ListItem,
-    ListItemText,
-    ListItemSecondaryAction,
-    Chip,
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogContentText,
-    DialogActions,
 } from '@mui/material';
-import {
-    Add as AddIcon,
-    Delete as DeleteIcon,
-} from '@mui/icons-material';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import TopologyDiagram from './Dashboard/ClusterDashboard/topology/TopologyDiagram';
 import { ClusterServer } from '../contexts/ClusterDataContext';
@@ -43,120 +23,15 @@ import type {
     RelationshipInput,
     ClusterServerInfo,
 } from './ServerDialog/ServerDialog.types';
-import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
-
-/**
- * Replication role options based on cluster replication type.
- */
-function getRolesForType(
-    replicationType: string | null | undefined,
-): { value: string; label: string }[] {
-    switch (replicationType) {
-        case 'binary':
-            return [
-                { value: 'binary_primary', label: 'Primary' },
-                { value: 'binary_standby', label: 'Standby' },
-            ];
-        case 'spock':
-            return [
-                { value: 'spock_node', label: 'Node' },
-                { value: 'binary_standby', label: 'Standby' },
-            ];
-        case 'logical':
-            return [
-                { value: 'logical_publisher', label: 'Publisher' },
-                { value: 'logical_subscriber', label: 'Subscriber' },
-            ];
-        case 'other':
-            return [
-                { value: 'primary', label: 'Primary' },
-                { value: 'replica', label: 'Replica' },
-                { value: 'node', label: 'Node' },
-            ];
-        default:
-            return [];
-    }
-}
-
-/**
- * Maps a replication type to the corresponding relationship type.
- */
-function getRelationshipTypeForReplication(
-    replicationType: string | null,
-): string {
-    switch (replicationType) {
-        case 'binary':
-            return 'streams_from';
-        case 'logical':
-            return 'subscribes_to';
-        case 'spock':
-            return 'replicates_with';
-        default:
-            return 'replicates_with';
-    }
-}
-
-/**
- * Returns a human-readable label for a relationship type.
- */
-function getRelationshipLabel(relationshipType: string): string {
-    switch (relationshipType) {
-        case 'streams_from':
-            return 'Streams from';
-        case 'subscribes_to':
-            return 'Subscribes to';
-        case 'replicates_with':
-            return 'Replicates with';
-        default:
-            return relationshipType;
-    }
-}
-
-/**
- * Unassigned connection available for adding to a cluster.
- */
-interface UnassignedConnection {
-    id: number;
-    name: string;
-    host: string;
-    port: number;
-}
-
-interface TopologyPanelProps {
-    clusterId: number;
-    clusterName: string;
-    replicationType: string | null;
-    autoClusterKey?: string | null;
-    onMembershipChange?: () => void;
-}
-
-/**
- * Derives the effective replication type from explicit value or
- * auto_cluster_key prefix.
- */
-function deriveReplicationType(
-    replicationType: string | null,
-    autoClusterKey?: string | null,
-): string | null {
-    if (replicationType) {
-        return replicationType;
-    }
-    if (autoClusterKey) {
-        if (
-            autoClusterKey.startsWith('sysid:') ||
-            autoClusterKey.startsWith('binary:')
-        ) {
-            return 'binary';
-        }
-        if (autoClusterKey.startsWith('spock:')) {
-            return 'spock';
-        }
-        if (autoClusterKey.startsWith('logical:')) {
-            return 'logical';
-        }
-    }
-    return null;
-}
+import {
+    getRolesForType,
+    getRelationshipTypeForReplication,
+    deriveReplicationType,
+    ServerManagementSection,
+    RelationshipSection,
+    RemoveServerDialog,
+} from './topology';
+import type { UnassignedConnection, TopologyPanelProps } from './topology';
 
 /**
  * TopologyPanel provides a complete cluster topology management
@@ -171,17 +46,13 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
     onMembershipChange,
 }) => {
     // Servers and relationships state
-    const [clusterServers, setClusterServers] = useState<
-        ClusterServerInfo[]
-    >([]);
-    const [relationships, setRelationships] = useState<NodeRelationship[]>(
+    const [clusterServers, setClusterServers] = useState<ClusterServerInfo[]>(
         [],
     );
+    const [relationships, setRelationships] = useState<NodeRelationship[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [successMessage, setSuccessMessage] = useState<string | null>(
-        null,
-    );
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     // Add server state
     const [unassignedConnections, setUnassignedConnections] = useState<
@@ -201,9 +72,9 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
     const [selectedSourceId, setSelectedSourceId] = useState<number | ''>('');
     const [selectedTargetId, setSelectedTargetId] = useState<number | ''>('');
     const [selectedRelType, setSelectedRelType] = useState<string>('');
-    const [relationshipError, setRelationshipError] = useState<
-        string | null
-    >(null);
+    const [relationshipError, setRelationshipError] = useState<string | null>(
+        null,
+    );
 
     const effectiveReplicationType = deriveReplicationType(
         replicationType,
@@ -327,8 +198,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                 port: cs.port,
                 status: cs.status,
                 role: cs.role ?? null,
-                relationships:
-                    relEntries.length > 0 ? relEntries : undefined,
+                relationships: relEntries.length > 0 ? relEntries : undefined,
             } as ClusterServer;
         });
     }, [clusterServers, relationships]);
@@ -516,6 +386,22 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
         }
     };
 
+    /**
+     * Handles source selection change, resetting target selection.
+     */
+    const handleSourceChange = (sourceId: number | '') => {
+        setSelectedSourceId(sourceId);
+        setSelectedTargetId('');
+    };
+
+    /**
+     * Handles relationship type change, resetting target selection.
+     */
+    const handleRelTypeChange = (relType: string) => {
+        setSelectedRelType(relType);
+        setSelectedTargetId('');
+    };
+
     if (loading) {
         return (
             <Box
@@ -564,9 +450,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                         bgcolor: 'background.paper',
                     }}
                 >
-                    <TopologyDiagram
-                        servers={topologyServers}
-                    />
+                    <TopologyDiagram servers={topologyServers} />
                 </Box>
             )}
 
@@ -581,500 +465,55 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                         textAlign: 'center',
                     }}
                 >
-                    <Typography
-                        variant="body2"
-                        sx={{ color: 'text.secondary' }}
-                    >
-                        No servers in this cluster. Add a server below
-                        to begin building the topology.
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                        No servers in this cluster. Add a server below to begin
+                        building the topology.
                     </Typography>
                 </Box>
             )}
 
             {/* Add server section */}
-            <Box sx={{ mb: 3 }}>
-                <Typography
-                    variant="subtitle2"
-                    sx={{
-                        color: 'text.secondary',
-                        textTransform: 'uppercase',
-                        fontSize: '0.875rem',
-                        letterSpacing: '0.05em',
-                        mb: 1.5,
-                    }}
-                >
-                    Add Server
-                </Typography>
-                <Box
-                    sx={{
-                        p: 2,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 1.5,
-                        bgcolor: 'background.paper',
-                    }}
-                >
-                    <Box
-                        sx={{
-                            display: 'flex',
-                            gap: 1.5,
-                            alignItems: 'center',
-                        }}
-                    >
-                        <Autocomplete
-                            options={unassignedConnections}
-                            getOptionLabel={(option) =>
-                                `${option.name} (${option.host}:${option.port})`
-                            }
-                            value={selectedConnection}
-                            onChange={(_, val) =>
-                                setSelectedConnection(val)
-                            }
-                            renderInput={(params) => (
-                                <TextField
-                                    {...params}
-                                    label="Server"
-                                    margin="dense"
-                                    placeholder="Search unassigned servers..."
-                                    InputLabelProps={{
-                                        ...params.InputLabelProps,
-                                        shrink: true,
-                                    }}
-                                    sx={SELECT_FIELD_DEFAULT_BG_SX}
-                                />
-                            )}
-                            sx={{ flex: 2 }}
-                            disabled={addingServer}
-                            isOptionEqualToValue={(a, b) =>
-                                a.id === b.id
-                            }
-                        />
-                        {roleOptions.length > 0 && (
-                            <TextField
-                                select
-                                margin="dense"
-                                sx={{ flex: 1, minWidth: 160, ...SELECT_FIELD_DEFAULT_BG_SX }}
-                                disabled={addingServer}
-                                label="Role"
-                                value={selectedRole}
-                                onChange={(e) =>
-                                    setSelectedRole(e.target.value)
-                                }
-                                InputLabelProps={{ shrink: true }}
-                            >
-                                {roleOptions.map((r) => (
-                                    <MenuItem
-                                        key={r.value}
-                                        value={r.value}
-                                    >
-                                        {r.label}
-                                    </MenuItem>
-                                ))}
-                            </TextField>
-                        )}
-                        <Button
-                            variant="outlined"
-                            startIcon={<AddIcon />}
-                            onClick={handleAddServer}
-                            disabled={
-                                !selectedConnection || addingServer
-                            }
-                            sx={{
-                                textTransform: 'none',
-                                whiteSpace: 'nowrap',
-                                height: 40,
-                            }}
-                        >
-                            {addingServer ? (
-                                <CircularProgress
-                                    size={18}
-                                    sx={{ color: 'inherit' }}
-                                />
-                            ) : (
-                                'Add'
-                            )}
-                        </Button>
-                    </Box>
-
-                    {/* Current servers list with remove buttons */}
-                    {clusterServers.length > 0 && (
-                        <Box sx={{ mt: 2 }}>
-                            <Divider sx={{ mb: 1 }} />
-                            <List dense disablePadding>
-                                {clusterServers.map((server) => (
-                                    <ListItem
-                                        key={server.id}
-                                        disableGutters
-                                        sx={{ pr: 6 }}
-                                    >
-                                        <ListItemText
-                                            primary={
-                                                <Box
-                                                    sx={{
-                                                        display: 'flex',
-                                                        alignItems:
-                                                            'center',
-                                                        gap: 1,
-                                                    }}
-                                                >
-                                                    <Typography
-                                                        variant="body2"
-                                                        sx={{
-                                                            fontWeight: 500,
-                                                        }}
-                                                    >
-                                                        {server.name}
-                                                    </Typography>
-                                                    {server.role && (
-                                                        <Chip
-                                                            label={
-                                                                server.role
-                                                                    .replace(
-                                                                        /_/g,
-                                                                        ' ',
-                                                                    )
-                                                                    .replace(
-                                                                        /\b\w/g,
-                                                                        (
-                                                                            c,
-                                                                        ) =>
-                                                                            c.toUpperCase(),
-                                                                    )
-                                                            }
-                                                            size="small"
-                                                            variant="outlined"
-                                                            sx={{
-                                                                height: 20,
-                                                                fontSize:
-                                                                    '0.7rem',
-                                                            }}
-                                                        />
-                                                    )}
-                                                </Box>
-                                            }
-                                            secondary={`${server.host}:${server.port}`}
-                                        />
-                                        <ListItemSecondaryAction>
-                                            <IconButton
-                                                edge="end"
-                                                size="small"
-                                                onClick={() =>
-                                                    setRemoveTarget(
-                                                        server,
-                                                    )
-                                                }
-                                                aria-label={`Remove ${server.name} from cluster`}
-                                                sx={{
-                                                    color: 'text.disabled',
-                                                    '&:hover': {
-                                                        color: 'error.main',
-                                                    },
-                                                }}
-                                            >
-                                                <DeleteIcon
-                                                    fontSize="small"
-                                                />
-                                            </IconButton>
-                                        </ListItemSecondaryAction>
-                                    </ListItem>
-                                ))}
-                            </List>
-                        </Box>
-                    )}
-                </Box>
-            </Box>
+            <ServerManagementSection
+                unassignedConnections={unassignedConnections}
+                selectedConnection={selectedConnection}
+                selectedRole={selectedRole}
+                roleOptions={roleOptions}
+                addingServer={addingServer}
+                clusterServers={clusterServers}
+                onConnectionChange={setSelectedConnection}
+                onRoleChange={setSelectedRole}
+                onAddServer={handleAddServer}
+                onRemoveTarget={setRemoveTarget}
+            />
 
             {/* Relationships section */}
             {clusterServers.length >= 2 && (
-                <Box>
-                    <Typography
-                        variant="subtitle2"
-                        sx={{
-                            color: 'text.secondary',
-                            textTransform: 'uppercase',
-                            fontSize: '0.875rem',
-                            letterSpacing: '0.05em',
-                            mb: 1.5,
-                        }}
-                    >
-                        Relationships
-                    </Typography>
-                    <Box
-                        sx={{
-                            p: 2,
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            borderRadius: 1.5,
-                            bgcolor: 'background.paper',
-                        }}
-                    >
-                        {relationshipError && (
-                            <Alert
-                                severity="error"
-                                sx={{ mb: 1.5, borderRadius: 1 }}
-                                onClose={() =>
-                                    setRelationshipError(null)
-                                }
-                            >
-                                {relationshipError}
-                            </Alert>
-                        )}
-
-                        {/* Existing relationships list */}
-                        {relationships.length > 0 ? (
-                            <List dense disablePadding>
-                                {relationships.map((rel) => (
-                                    <ListItem
-                                        key={rel.id}
-                                        disableGutters
-                                        sx={{ pr: 6 }}
-                                    >
-                                        <ListItemText
-                                            primary={
-                                                <Box
-                                                    sx={{
-                                                        display: 'flex',
-                                                        alignItems:
-                                                            'center',
-                                                        gap: 1,
-                                                    }}
-                                                >
-                                                    <Typography
-                                                        variant="body2"
-                                                        component="span"
-                                                    >
-                                                        <strong>
-                                                            {
-                                                                rel.source_name
-                                                            }
-                                                        </strong>
-                                                        {' '}
-                                                        {getRelationshipLabel(
-                                                            rel.relationship_type,
-                                                        ).toLowerCase()}
-                                                        {' '}
-                                                        <strong>
-                                                            {
-                                                                rel.target_name
-                                                            }
-                                                        </strong>
-                                                    </Typography>
-                                                    {rel.is_auto_detected && (
-                                                        <Chip
-                                                            label="Auto"
-                                                            size="small"
-                                                            variant="outlined"
-                                                            sx={{
-                                                                height: 20,
-                                                                fontSize:
-                                                                    '0.7rem',
-                                                            }}
-                                                        />
-                                                    )}
-                                                </Box>
-                                            }
-                                        />
-                                        <ListItemSecondaryAction>
-                                            <IconButton
-                                                edge="end"
-                                                size="small"
-                                                onClick={() =>
-                                                    handleDeleteRelationship(
-                                                        rel.id,
-                                                    )
-                                                }
-                                                aria-label={`Remove relationship between ${rel.source_name} and ${rel.target_name}`}
-                                                sx={{
-                                                    color: 'text.disabled',
-                                                    '&:hover': {
-                                                        color: 'error.main',
-                                                    },
-                                                }}
-                                            >
-                                                <DeleteIcon
-                                                    fontSize="small"
-                                                />
-                                            </IconButton>
-                                        </ListItemSecondaryAction>
-                                    </ListItem>
-                                ))}
-                            </List>
-                        ) : (
-                            <Typography
-                                variant="body2"
-                                sx={{
-                                    color: 'text.secondary',
-                                    mb: 1.5,
-                                }}
-                            >
-                                No relationships defined.
-                            </Typography>
-                        )}
-
-                        {/* Add relationship controls */}
-                        <Divider sx={{ my: 1.5 }} />
-                        {allRelationshipsExist ? (
-                            <Typography
-                                variant="body2"
-                                sx={{
-                                    fontStyle: 'italic',
-                                    color: 'text.secondary',
-                                }}
-                            >
-                                All members already have this relationship
-                                type.
-                            </Typography>
-                        ) : (
-                            <Box
-                                sx={{
-                                    display: 'flex',
-                                    gap: 1,
-                                    alignItems: 'center',
-                                }}
-                            >
-                                <TextField
-                                    select
-                                    margin="dense"
-                                    sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
-                                    label="Source"
-                                    value={selectedSourceId}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        setSelectedSourceId(
-                                            val === ''
-                                                ? ''
-                                                : Number(val),
-                                        );
-                                        setSelectedTargetId('');
-                                    }}
-                                    InputLabelProps={{ shrink: true }}
-                                >
-                                    {clusterServers.map((s) => (
-                                        <MenuItem
-                                            key={s.id}
-                                            value={s.id}
-                                        >
-                                            {s.name}
-                                        </MenuItem>
-                                    ))}
-                                </TextField>
-                                <TextField
-                                    select
-                                    margin="dense"
-                                    sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
-                                    label="Target"
-                                    value={selectedTargetId}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        setSelectedTargetId(
-                                            val === ''
-                                                ? ''
-                                                : Number(val),
-                                        );
-                                    }}
-                                    disabled={
-                                        selectedSourceId === '' ||
-                                        availableTargets.length === 0
-                                    }
-                                    InputLabelProps={{ shrink: true }}
-                                >
-                                    {availableTargets.map((s) => (
-                                        <MenuItem
-                                            key={s.id}
-                                            value={s.id}
-                                        >
-                                            {s.name}
-                                        </MenuItem>
-                                    ))}
-                                </TextField>
-                                <TextField
-                                    select
-                                    margin="dense"
-                                    sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
-                                    label="Type"
-                                    value={selectedRelType}
-                                    onChange={(e) => {
-                                        setSelectedRelType(
-                                            e.target.value,
-                                        );
-                                        setSelectedTargetId('');
-                                    }}
-                                    InputLabelProps={{ shrink: true }}
-                                >
-                                    <MenuItem value="streams_from">
-                                        Streams from (physical)
-                                    </MenuItem>
-                                    <MenuItem value="subscribes_to">
-                                        Subscribes to (logical)
-                                    </MenuItem>
-                                    <MenuItem value="replicates_with">
-                                        Replicates with (Spock)
-                                    </MenuItem>
-                                </TextField>
-                                <Button
-                                    variant="outlined"
-                                    startIcon={<AddIcon />}
-                                    onClick={handleAddRelationship}
-                                    disabled={
-                                        selectedSourceId === '' ||
-                                        selectedTargetId === '' ||
-                                        !selectedRelType
-                                    }
-                                    sx={{
-                                        textTransform: 'none',
-                                        whiteSpace: 'nowrap',
-                                        height: 40,
-                                    }}
-                                >
-                                    Add
-                                </Button>
-                            </Box>
-                        )}
-                    </Box>
-                </Box>
+                <RelationshipSection
+                    relationships={relationships}
+                    clusterServers={clusterServers}
+                    selectedSourceId={selectedSourceId}
+                    selectedTargetId={selectedTargetId}
+                    selectedRelType={selectedRelType}
+                    relationshipError={relationshipError}
+                    onSourceChange={handleSourceChange}
+                    onTargetChange={setSelectedTargetId}
+                    onRelTypeChange={handleRelTypeChange}
+                    onAddRelationship={handleAddRelationship}
+                    onDeleteRelationship={handleDeleteRelationship}
+                    onClearError={() => setRelationshipError(null)}
+                    availableTargets={availableTargets}
+                    allRelationshipsExist={allRelationshipsExist}
+                />
             )}
 
             {/* Remove confirmation dialog */}
-            <Dialog
-                open={removeTarget !== null}
-                onClose={() =>
-                    !removingServer && setRemoveTarget(null)
-                }
-            >
-                <DialogTitle>Remove server from cluster</DialogTitle>
-                <DialogContent>
-                    <DialogContentText>
-                        Remove <strong>{removeTarget?.name}</strong>{' '}
-                        from <strong>{clusterName}</strong>? The
-                        server will become standalone. All
-                        relationships involving this server within the
-                        cluster will be deleted.
-                    </DialogContentText>
-                </DialogContent>
-                <DialogActions>
-                    <Button
-                        onClick={() => setRemoveTarget(null)}
-                        disabled={removingServer}
-                    >
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleRemoveServer}
-                        variant="contained"
-                        color="error"
-                        disabled={removingServer}
-                    >
-                        {removingServer ? (
-                            <CircularProgress
-                                size={18}
-                                sx={{ color: 'inherit' }}
-                            />
-                        ) : (
-                            'Remove'
-                        )}
-                    </Button>
-                </DialogActions>
-            </Dialog>
+            <RemoveServerDialog
+                server={removeTarget}
+                clusterName={clusterName}
+                removing={removingServer}
+                onConfirm={handleRemoveServer}
+                onCancel={() => setRemoveTarget(null)}
+            />
         </Box>
     );
 };

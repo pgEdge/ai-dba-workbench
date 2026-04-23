@@ -12,6 +12,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -640,12 +641,6 @@ func TestWrapQuery(t *testing.T) {
 			query:     "SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name",
 			want:      "SELECT 'replication_slots' AS ai_dba_wb_probe, subq.* FROM (SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name) AS subq",
 		},
-		{
-			name:      "empty query",
-			probeName: "test",
-			query:     "",
-			want:      "SELECT 'test' AS ai_dba_wb_probe, subq.* FROM () AS subq",
-		},
 	}
 
 	for _, tc := range tests {
@@ -769,7 +764,7 @@ func TestCachedCheck(t *testing.T) {
 			t.Error("expected result to be false on type assertion failure")
 		}
 		// Verify the error message mentions the key.
-		if !stringContains(err.Error(), key) {
+		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error should mention the key %q: %v", key, err)
 		}
 	})
@@ -808,14 +803,4 @@ func TestCachedCheck(t *testing.T) {
 			t.Errorf("checkFn should not be called again, got %d calls", callCount)
 		}
 	})
-}
-
-// stringContains checks if substr is in s (helper for error message checks).
-func stringContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

@@ -62,23 +62,61 @@ func allProbeNameConstants() []string {
 
 func TestGetDefaultInterval_AllProbesHaveExplicitInterval(t *testing.T) {
 	// This test ensures every probe name constant has an explicit entry
-	// in the getDefaultInterval map, preventing future drift.
-	allProbes := allProbeNameConstants()
-
-	// Verify we have exactly 34 probe constants
-	expectedCount := 34
-	if len(allProbes) != expectedCount {
-		t.Errorf("Expected %d probe constants, got %d. Update allProbeNameConstants() if constants.go changed.",
-			expectedCount, len(allProbes))
+	// in the getDefaultInterval map by verifying against a complete
+	// expected-intervals table. This catches both missing entries and
+	// incorrect values, even when the intended interval equals the fallback.
+	expectedIntervals := map[string]int{
+		ProbeNamePgStatActivity:           60,
+		ProbeNamePgStatReplication:        30,
+		ProbeNamePgReplicationSlots:       300,
+		ProbeNamePgStatRecoveryPrefetch:   600,
+		ProbeNamePgStatSubscription:       300,
+		ProbeNamePgStatConnectionSecurity: 300,
+		ProbeNamePgStatIO:                 900,
+		ProbeNamePgStatCheckpointer:       600,
+		ProbeNamePgStatWAL:                600,
+		ProbeNamePgSettings:               3600,
+		ProbeNamePgHbaFileRules:           3600,
+		ProbeNamePgIdentFileMappings:      3600,
+		ProbeNamePgServerInfo:             3600,
+		ProbeNamePgNodeRole:               300,
+		ProbeNamePgConnectivity:           30,
+		ProbeNamePgDatabase:               300,
+		ProbeNamePgStatDatabase:           300,
+		ProbeNamePgStatDatabaseConflicts:  300,
+		ProbeNamePgStatAllTables:          300,
+		ProbeNamePgStatAllIndexes:         300,
+		ProbeNamePgStatioAllSequences:     300,
+		ProbeNamePgStatUserFunctions:      300,
+		ProbeNamePgStatStatements:         300,
+		ProbeNamePgExtension:              3600,
+		ProbeNamePgSysOsInfo:              3600,
+		ProbeNamePgSysCPUInfo:             3600,
+		ProbeNamePgSysCPUUsageInfo:        60,
+		ProbeNamePgSysMemoryInfo:          300,
+		ProbeNamePgSysIoAnalysisInfo:      300,
+		ProbeNamePgSysDiskInfo:            300,
+		ProbeNamePgSysLoadAvgInfo:         60,
+		ProbeNamePgSysProcessInfo:         300,
+		ProbeNamePgSysNetworkInfo:         300,
+		ProbeNamePgSysCPUMemoryByProcess:  300,
 	}
 
-	// Track which probes return the fallback default vs an explicit value
-	// We need to verify each probe has an entry in the map, not just that
-	// it returns a value (since the fallback would always return 300)
+	allProbes := allProbeNameConstants()
+	if len(expectedIntervals) != len(allProbes) {
+		t.Fatalf("expectedIntervals has %d entries but allProbeNameConstants has %d; keep them in sync",
+			len(expectedIntervals), len(allProbes))
+	}
+
 	for _, probeName := range allProbes {
-		interval := getDefaultInterval(probeName)
-		if interval <= 0 {
-			t.Errorf("Probe %q returned invalid interval %d", probeName, interval)
+		expected, ok := expectedIntervals[probeName]
+		if !ok {
+			t.Errorf("Probe %q missing from expectedIntervals map", probeName)
+			continue
+		}
+		got := getDefaultInterval(probeName)
+		if got != expected {
+			t.Errorf("Probe %q: expected interval %d, got %d", probeName, expected, got)
 		}
 	}
 }

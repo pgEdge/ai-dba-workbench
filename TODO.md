@@ -27,3 +27,8 @@ implemented.
 
 - Add support for distributing load over multiple collectors and alerters, 
     with HA.
+
+## General
+
+- Add an audit log to record potentially destructive and security related
+    actions etc.

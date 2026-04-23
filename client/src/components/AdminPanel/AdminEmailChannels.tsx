@@ -80,7 +80,11 @@ const AdminEmailChannels: React.FC = () => {
             );
             // Guard against stale responses: only update if still editing same channel
             if (editingChannelIdRef.current !== channelId) { return; }
-            const raw = (data.recipients || data || []) as Record<string, unknown>[];
+            const raw = Array.isArray(data.recipients)
+                ? (data.recipients as Record<string, unknown>[])
+                : Array.isArray(data)
+                    ? (data as Record<string, unknown>[])
+                    : [];
             const mapped: EmailRecipient[] = raw.map(
                 (r: Record<string, unknown>) => ({
                     id: r.id as number,
@@ -154,6 +158,7 @@ const AdminEmailChannels: React.FC = () => {
     // --- Save handler ---
 
     const handleSaveChannel = async () => {
+        if (crud.saving || recipientSaving) { return; }
         if (!form.name.trim()) {
             crud.setDialogError('Name is required.');
             return;
@@ -333,9 +338,7 @@ const AdminEmailChannels: React.FC = () => {
                 }
             }
         } finally {
-            if (editingChannelIdRef.current === channelId) {
-                setRecipientSaving(false);
-            }
+            setRecipientSaving(false);
         }
     };
 
@@ -362,9 +365,7 @@ const AdminEmailChannels: React.FC = () => {
                 }
             }
         } finally {
-            if (editingChannelIdRef.current === channelId) {
-                setRecipientSaving(false);
-            }
+            setRecipientSaving(false);
         }
     };
 
@@ -390,9 +391,7 @@ const AdminEmailChannels: React.FC = () => {
                 }
             }
         } finally {
-            if (editingChannelIdRef.current === channelId) {
-                setRecipientSaving(false);
-            }
+            setRecipientSaving(false);
         }
     };
 
@@ -446,7 +445,8 @@ const AdminEmailChannels: React.FC = () => {
                 saveDisabled={
                     !form.name.trim() ||
                     !form.smtp_host.trim() ||
-                    !form.from_address.trim()
+                    !form.from_address.trim() ||
+                    recipientSaving
                 }
                 saveLabel={crud.editingChannel ? 'Save' : 'Create'}
                 maxWidth="sm"

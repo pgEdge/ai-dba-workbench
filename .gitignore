@@ -1,6 +1,8 @@
 # Claude
 .claude/settings.local.json
-
+.claude/plans/
+.claude/specs/
+.claude/worktrees/
 .playwright-cli/
 
 # Git

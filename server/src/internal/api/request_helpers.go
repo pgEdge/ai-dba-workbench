@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
@@ -75,7 +76,7 @@ func getUserInfoCompat(r *http.Request, authStore *auth.AuthStore) (string, bool
 // If decoding fails, it sends an error response and returns false.
 // If decoding succeeds, it returns true and the caller should continue.
 func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dest any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+	r.Body = http.MaxBytesReader(w, r.Body, apiconst.MaxRequestBodySize)
 	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return false

@@ -18,9 +18,10 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { computeEstateServerCounts } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
+import type { EstateSelection } from '../../../types/selection';
 
 interface HealthOverviewSectionProps {
-    selection: Record<string, unknown>;
+    selection: EstateSelection;
 }
 
 interface AlertCounts {

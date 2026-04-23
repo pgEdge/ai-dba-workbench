@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ClusterDashboard from '../index';
+import type { ClusterSelection } from '../../../../types/selection';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -40,12 +40,17 @@ vi.mock('../ComparativeChartsSection', () => ({
 
 const theme = createTheme();
 
-const createSelection = (serverIds: number[] = [1, 2, 3]) => ({
+const createSelection = (serverIds: number[] = [1, 2, 3]): ClusterSelection => ({
+    type: 'cluster',
+    id: 'cluster-1',
     name: 'Test Cluster',
+    status: 'online',
+    description: '',
     servers: serverIds.map(id => ({ id, name: `Server ${id}` })),
+    serverIds,
 });
 
-const renderClusterDashboard = (selection: Record<string, unknown> = createSelection()) => {
+const renderClusterDashboard = (selection: ClusterSelection = createSelection()) => {
     return render(
         <ThemeProvider theme={theme}>
             <ClusterDashboard selection={selection} />
@@ -93,8 +98,12 @@ describe('ClusterDashboard', () => {
     });
 
     it('handles nested server children', () => {
-        const selection = {
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-nested',
             name: 'Cluster with nested servers',
+            status: 'online',
+            description: '',
             servers: [
                 {
                     id: 1,
@@ -109,6 +118,7 @@ describe('ClusterDashboard', () => {
                     ],
                 },
             ],
+            serverIds: [1, 2, 3, 4],
         };
         renderClusterDashboard(selection);
 
@@ -117,7 +127,15 @@ describe('ClusterDashboard', () => {
     });
 
     it('handles empty servers array', () => {
-        const selection = { name: 'Empty Cluster', servers: [] };
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-empty',
+            name: 'Empty Cluster',
+            status: 'online',
+            description: '',
+            servers: [],
+            serverIds: [],
+        };
         renderClusterDashboard(selection);
 
         const replicationSection = screen.getByTestId('replication-lag-section');
@@ -125,7 +143,15 @@ describe('ClusterDashboard', () => {
     });
 
     it('handles undefined servers', () => {
-        const selection = { name: 'Cluster without servers' };
+        const selection = {
+            type: 'cluster',
+            id: 'cluster-no-servers',
+            name: 'Cluster without servers',
+            status: 'online',
+            description: '',
+            servers: [],
+            serverIds: [],
+        } as ClusterSelection;
         renderClusterDashboard(selection);
 
         const replicationSection = screen.getByTestId('replication-lag-section');
@@ -134,13 +160,18 @@ describe('ClusterDashboard', () => {
 
     it('deduplicates server IDs', () => {
         // Although unlikely, verify that IDs are unique via Set
-        const selection = {
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-dedup',
             name: 'Cluster',
+            status: 'online',
+            description: '',
             servers: [
                 { id: 1, name: 'Server 1' },
                 { id: 2, name: 'Server 2' },
                 { id: 1, name: 'Duplicate' }, // duplicate ID
             ],
+            serverIds: [1, 2],
         };
         renderClusterDashboard(selection);
 

@@ -17,9 +17,10 @@ import { alpha, useTheme, Theme } from '@mui/material/styles';
 import { useClusterSelection } from '../../../contexts/ClusterSelectionContext';
 import { ClusterEntry } from '../../../contexts/ClusterDataContext';
 import { collectServers, ServerLike } from '../../../utils/clusterHelpers';
+import type { EstateSelection } from '../../../types/selection';
 
 interface ClusterCardsSectionProps {
-    selection: Record<string, unknown>;
+    selection: EstateSelection;
 }
 
 interface ClusterCardData {
@@ -121,15 +122,13 @@ const getCardSx = (theme: Theme) => ({
 /**
  * Extract cluster card data from the estate selection hierarchy.
  */
-const extractClusterCards = (selection: Record<string, unknown>): ClusterCardData[] => {
+const extractClusterCards = (selection: EstateSelection): ClusterCardData[] => {
     const cards: ClusterCardData[] = [];
-    const groups = selection.groups as Array<Record<string, unknown>> | undefined;
 
-    groups?.forEach(group => {
-        const clusters = group.clusters as Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(clusterObj => {
-            const rawServers = (clusterObj.servers || []) as Array<Record<string, unknown>>;
-            const allServers = collectServers(rawServers as ServerLike[]);
+    selection.groups?.forEach(group => {
+        group.clusters?.forEach(clusterObj => {
+            const rawServers = (clusterObj.servers || []) as ServerLike[];
+            const allServers = collectServers(rawServers);
 
             let online = 0;
             let warning = 0;
@@ -155,15 +154,15 @@ const extractClusterCards = (selection: Record<string, unknown>): ClusterCardDat
             });
 
             const cluster: ClusterEntry = {
-                id: clusterObj.id as string,
-                name: clusterObj.name as string,
-                servers: rawServers as unknown as ClusterEntry['servers'],
-                isStandalone: clusterObj.isStandalone as boolean | undefined,
+                id: clusterObj.id,
+                name: clusterObj.name,
+                servers: clusterObj.servers,
+                isStandalone: clusterObj.isStandalone,
             };
 
             cards.push({
                 cluster,
-                name: clusterObj.name as string,
+                name: clusterObj.name,
                 serverCount: allServers.length,
                 online,
                 warning,

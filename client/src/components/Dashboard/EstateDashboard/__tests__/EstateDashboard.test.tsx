@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import EstateDashboard from '../index';
+import type { EstateSelection } from '../../../../types/selection';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -40,12 +40,17 @@ vi.mock('../ClusterCardsSection', () => ({
 
 const theme = createTheme();
 
-const createSelection = (serverIds: number[] = [1, 2, 3]) => ({
+const createSelection = (serverIds: number[] = [1, 2, 3]): EstateSelection => ({
+    type: 'estate',
+    name: 'Estate',
+    status: 'online',
     groups: [
         {
+            id: 'group-1',
             name: 'Production',
             clusters: [
                 {
+                    id: 'cluster-1',
                     name: 'Cluster 1',
                     servers: serverIds.map(id => ({ id, name: `Server ${id}` })),
                 },
@@ -54,7 +59,7 @@ const createSelection = (serverIds: number[] = [1, 2, 3]) => ({
     ],
 });
 
-const renderEstateDashboard = (selection: Record<string, unknown> = createSelection()) => {
+const renderEstateDashboard = (selection: EstateSelection = createSelection()) => {
     return render(
         <ThemeProvider theme={theme}>
             <EstateDashboard selection={selection} />
@@ -106,12 +111,17 @@ describe('EstateDashboard', () => {
     });
 
     it('handles nested server children', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'Estate',
+            status: 'online',
             groups: [
                 {
+                    id: 'group-1',
                     name: 'Group 1',
                     clusters: [
                         {
+                            id: 'cluster-1',
                             name: 'Cluster 1',
                             servers: [
                                 {
@@ -135,7 +145,12 @@ describe('EstateDashboard', () => {
     });
 
     it('handles empty selection gracefully', () => {
-        const selection = { groups: [] };
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'Estate',
+            status: 'online',
+            groups: [],
+        };
         renderEstateDashboard(selection);
 
         const kpiSection = screen.getByTestId('kpi-tiles-section');
@@ -143,27 +158,35 @@ describe('EstateDashboard', () => {
     });
 
     it('handles multiple groups and clusters', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'Estate',
+            status: 'online',
             groups: [
                 {
+                    id: 'group-1',
                     name: 'Group 1',
                     clusters: [
                         {
+                            id: 'cluster-1',
                             name: 'Cluster 1',
-                            servers: [{ id: 1 }, { id: 2 }],
+                            servers: [{ id: 1, name: 'S1' }, { id: 2, name: 'S2' }],
                         },
                     ],
                 },
                 {
+                    id: 'group-2',
                     name: 'Group 2',
                     clusters: [
                         {
+                            id: 'cluster-2',
                             name: 'Cluster 2',
-                            servers: [{ id: 3 }],
+                            servers: [{ id: 3, name: 'S3' }],
                         },
                         {
+                            id: 'cluster-3',
                             name: 'Cluster 3',
-                            servers: [{ id: 4 }, { id: 5 }],
+                            servers: [{ id: 4, name: 'S4' }, { id: 5, name: 'S5' }],
                         },
                     ],
                 },

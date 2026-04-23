@@ -19,9 +19,10 @@ import { formatLag } from '../../../utils/formatters';
 import KpiTile from '../KpiTile';
 import { Chart } from '../../Chart';
 import { KPI_GRID_SX } from '../styles';
+import type { ClusterSelection } from '../../../types/selection';
 
 interface ReplicationLagSectionProps {
-    selection: Record<string, unknown>;
+    selection: ClusterSelection;
     serverIds: number[];
 }
 
@@ -46,27 +47,26 @@ const CHART_CONTAINER_SX = {
  * Find the primary server ID from the cluster selection.
  * Returns the first server that has a primary or master role.
  */
-const findPrimaryServerId = (selection: Record<string, unknown>): number | null => {
-    const servers = selection.servers as Array<Record<string, unknown>> | undefined;
+const findPrimaryServerId = (selection: ClusterSelection): number | null => {
+    const servers = selection.servers;
     if (!servers) { return null; }
     const visited = new Set<number>();
 
-    const findPrimary = (serverList: Array<Record<string, unknown>>): number | null => {
+    const findPrimary = (serverList: typeof servers): number | null => {
         for (const s of serverList) {
-            const id = s.id as number;
-            if (visited.has(id)) { continue; }
-            visited.add(id);
+            if (visited.has(s.id)) { continue; }
+            visited.add(s.id);
 
-            const role = (s.primary_role || s.role || '') as string;
+            const role = s.primary_role || s.role || '';
             if (
                 role === 'binary_primary' ||
                 role === 'logical_publisher' ||
                 role === 'spock_node'
             ) {
-                return id;
+                return s.id;
             }
             if (s.children) {
-                const found = findPrimary(s.children as Array<Record<string, unknown>>);
+                const found = findPrimary(s.children);
                 if (found !== null) { return found; }
             }
         }

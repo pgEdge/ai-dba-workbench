@@ -20,9 +20,10 @@ import { formatNumber } from '../../../utils/formatters';
 import { KPI_GRID_SX } from '../styles';
 import { countEstateServers } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
+import type { EstateSelection } from '../../../types/selection';
 
 interface KpiTilesSectionProps {
-    selection: Record<string, unknown>;
+    selection: EstateSelection;
     serverIds: number[];
 }
 

@@ -201,6 +201,7 @@ const AdminTokenScopes: React.FC = () => {
     const [createdDialogOpen, setCreatedDialogOpen] = useState(false);
     const [tokenCopied, setTokenCopied] = useState(false);
     const copyResetTimerRef = useRef<number | null>(null);
+    const createdDialogContentRef = useRef<HTMLDivElement>(null);
 
     // Create dialog - owner privilege filtering
     const [ownerConnections, setOwnerConnections] = useState<Connection[]>([]);
@@ -513,7 +514,10 @@ const AdminTokenScopes: React.FC = () => {
             return;
         }
         try {
-            await copyToClipboard(createdToken);
+            await copyToClipboard(
+                createdToken,
+                createdDialogContentRef.current ?? undefined
+            );
             setError(null);
             setTokenCopied(true);
             if (copyResetTimerRef.current !== null) {
@@ -1024,7 +1028,7 @@ curl -s -X POST -H "Authorization: Bearer <token>" \\
                 fullWidth
             >
                 <DialogTitle sx={dialogTitleSx}>Token created</DialogTitle>
-                <DialogContent>
+                <DialogContent ref={createdDialogContentRef}>
                     <Alert severity="warning" sx={{ mb: 2, borderRadius: 1 }}>
                         Save this token securely. It will not be shown again.
                     </Alert>

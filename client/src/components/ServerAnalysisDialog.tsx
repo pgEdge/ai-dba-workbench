@@ -17,8 +17,8 @@ import {
 } from '@mui/icons-material';
 import {
     useServerAnalysis,
-    ServerAnalysisInput,
 } from '../hooks/useServerAnalysis';
+import type { ServerSelection, ClusterSelection } from '../types/selection';
 import { getIconColorSx } from './shared/MarkdownExports';
 import { getServerBadgeSx, sxMonoSmall } from './analysisStyles';
 import { BaseAnalysisDialog } from './shared/BaseAnalysisDialog';
@@ -47,7 +47,7 @@ const TOOL_LABELS = [
  */
 interface ServerAnalysisDialogProps {
     open: boolean;
-    selection: ServerAnalysisInput | null;
+    selection: (ServerSelection | ClusterSelection) | null;
     onClose: () => void;
 }
 
@@ -159,7 +159,7 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({
                 isDark,
                 connectionId:
                     selection?.type === 'server'
-                        ? (selection.id as number)
+                        ? selection.id
                         : undefined,
                 serverName:
                     selection?.type === 'server' ? selection.name : undefined,

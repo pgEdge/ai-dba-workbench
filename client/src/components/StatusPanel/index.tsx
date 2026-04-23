@@ -40,7 +40,8 @@ import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
 import ServerAnalysisDialog from '../ServerAnalysisDialog';
-import { ServerAnalysisInput, hasCachedServerAnalysis } from '../../hooks/useServerAnalysis';
+import { hasCachedServerAnalysis } from '../../hooks/useServerAnalysis';
+import type { ServerSelection, ClusterSelection } from '../../types/selection';
 import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
 import AIOverview from '../AIOverview';
@@ -321,30 +322,17 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         setServerAnalysisOpen(true);
     }, []);
 
-    const serverAnalysisSelection = useMemo((): ServerAnalysisInput | null => {
-        if (!selection) {return null;}
-        if (selection.type === 'server' && typeof selection.id === 'number') {
-            return {
-                type: 'server',
-                id: selection.id,
-                name: selection.name || `Server ${selection.id}`,
-            };
-        }
-        if (selection.type === 'cluster' && selection.serverIds?.length) {
-            const servers = (selection.servers || []).map(s => ({
-                id: typeof s.id === 'number' ? s.id : parseInt(String(s.id), 10),
-                name: s.name || s.server_name || `Server ${s.id}`,
-            }));
-            return {
-                type: 'cluster',
-                id: selection.id || selection.name || 'cluster',
-                name: selection.name || 'Cluster',
-                serverIds: selection.serverIds,
-                servers,
-            };
-        }
-        return null;
-    }, [selection]);
+    const serverAnalysisSelection = useMemo(
+        (): (ServerSelection | ClusterSelection) | null => {
+            if (!selection) { return null; }
+            if (selection.type === 'server') { return selection; }
+            if (selection.type === 'cluster' && selection.serverIds.length > 0) {
+                return selection;
+            }
+            return null;
+        },
+        [selection],
+    );
 
     const serverAnalysisCached = serverAnalysisSelection
         ? hasCachedServerAnalysis(serverAnalysisSelection.type, serverAnalysisSelection.id)

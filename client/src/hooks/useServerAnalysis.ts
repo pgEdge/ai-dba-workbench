@@ -24,6 +24,7 @@ import { Message } from '../types/llm';
 import { ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';
+import type { ServerSelection, ClusterSelection } from '../types/selection';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
@@ -36,21 +37,13 @@ export function clearAnalysisCache(): void {
     analysisCache.clear();
 }
 
-export interface ServerAnalysisInput {
-    type: 'server' | 'cluster';
-    id: number | string;
-    name: string;
-    serverIds?: number[];
-    servers?: Array<{ id: number; name: string }>;
-}
-
 export interface UseServerAnalysisReturn {
     analysis: string | null;
     loading: boolean;
     error: string | null;
     progressMessage: string;
     activeTools: string[];
-    analyze: (input: ServerAnalysisInput) => Promise<void>;
+    analyze: (input: ServerSelection | ClusterSelection) => Promise<void>;
     reset: () => void;
 }
 
@@ -133,7 +126,7 @@ export const useServerAnalysis = (): UseServerAnalysisReturn => {
         reset,
     } = useAnalysisState('Gathering context...');
 
-    const analyze = useCallback(async (input: ServerAnalysisInput): Promise<void> => {
+    const analyze = useCallback(async (input: ServerSelection | ClusterSelection): Promise<void> => {
         setLoading(true);
         setError(null);
         setAnalysis(null);

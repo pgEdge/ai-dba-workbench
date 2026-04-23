@@ -74,10 +74,11 @@ func TestTopologyExcludesManualMembersFromAutoClusters(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
 	// buildAutoDetectedClusters must not produce a Spock cluster for the
 	// "pg17-" prefix when every candidate is pinned to a manual cluster.
-	autoClusters := ds.buildAutoDetectedClusters(manualSpockConns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(manualSpockConns, overrides, dismissed)
 	if cluster, ok := autoClusters["spock:pg17"]; ok {
 		t.Fatalf("manual Spock members were regrouped into auto cluster %q with %d servers (issue #74)",
 			cluster.AutoClusterKey, len(cluster.Servers))
@@ -98,7 +99,7 @@ func TestTopologyExcludesManualMembersFromAutoClusters(t *testing.T) {
 	// "spock_ha" should be returned.
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
 	claimed := map[string]bool{}
-	groups := ds.buildTopologyHierarchy(manualSpockConns, overrides, claimed, defaultGroup)
+	groups := ds.buildTopologyHierarchy(manualSpockConns, overrides, claimed, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -157,15 +158,16 @@ func TestTopologyExcludesManualBinaryPrimaryFromAutoClusters(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	if cluster, ok := autoClusters["binary:201"]; ok {
 		t.Fatalf("manual binary primary regrouped into auto cluster %q with %d servers (issue #74)",
 			cluster.AutoClusterKey, len(cluster.Servers))
 	}
 
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
-	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -213,15 +215,16 @@ func TestTopologyExcludesManualLogicalPublisherFromAutoClusters(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	if cluster, ok := autoClusters["logical:301"]; ok {
 		t.Fatalf("manual logical publisher regrouped into auto cluster %q with %d servers (issue #74)",
 			cluster.AutoClusterKey, len(cluster.Servers))
 	}
 
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
-	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -280,7 +283,8 @@ func TestTopologyIncludesAutoMembersInAutoClusters(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	dismissed := map[string]bool{}
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	cluster, ok := autoClusters["spock:pg17"]
 	if !ok {
 		t.Fatalf("expected auto Spock cluster %q for three auto Spock nodes; got keys %v",
@@ -332,12 +336,13 @@ func TestTopologyExcludesManualChildrenFromAutoBinaryCluster(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
 	// buildAutoDetectedClusters must produce the auto binary cluster for
 	// the primary (it still has the standby linked via childrenMap), but
 	// the Children list of that primary must not contain the manually
 	// pinned standby.
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	cluster, ok := autoClusters["binary:401"]
 	if !ok {
 		t.Fatalf("expected auto binary cluster %q for auto primary; got keys %v",
@@ -365,7 +370,7 @@ func TestTopologyExcludesManualChildrenFromAutoBinaryCluster(t *testing.T) {
 	// buildTopologyHierarchy must likewise keep the manual standby out of
 	// the auto binary cluster tree in the default group.
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
-	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -446,8 +451,9 @@ func TestTopologyExcludesManualSubscriberFromAutoLogicalCluster(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	cluster, ok := autoClusters["logical:501"]
 	if !ok {
 		t.Fatalf("expected auto logical cluster %q for auto publisher; got keys %v",
@@ -473,7 +479,7 @@ func TestTopologyExcludesManualSubscriberFromAutoLogicalCluster(t *testing.T) {
 	}
 
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
-	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -555,10 +561,11 @@ func TestTopologyAutoPrimaryWithManualStandby(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
 	// buildAutoDetectedClusters should form a binary cluster with the
 	// auto primary and auto standby, but NOT include the manual standby.
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	cluster, ok := autoClusters["binary:501"]
 	if !ok {
 		t.Fatalf("expected auto binary cluster binary:501; got keys %v",
@@ -590,7 +597,7 @@ func TestTopologyAutoPrimaryWithManualStandby(t *testing.T) {
 
 	// buildTopologyHierarchy should produce the same result.
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
-	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -651,10 +658,11 @@ func TestTopologyManualPrimaryWithAutoStandby(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
 	// buildAutoDetectedClusters: no binary cluster should form because
 	// the primary is manual.
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	if cluster, ok := autoClusters["binary:601"]; ok {
 		t.Fatalf("manual primary regrouped into auto binary cluster %q with %d servers",
 			cluster.AutoClusterKey, len(cluster.Servers))
@@ -664,7 +672,7 @@ func TestTopologyManualPrimaryWithAutoStandby(t *testing.T) {
 	// skipped from both binary-cluster and standalone processing. The
 	// auto standby should appear as a standalone server.
 	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
-	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, defaultGroup)
+	groups := ds.buildTopologyHierarchy(conns, overrides, map[string]bool{}, dismissed, defaultGroup)
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 topology group, got %d", len(groups))
 	}
@@ -726,9 +734,10 @@ func TestTopologyAutoPublisherWithManualSubscriber(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
 	// No logical cluster should form because the subscriber is manual.
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	if cluster, ok := autoClusters["logical:701"]; ok {
 		t.Fatalf("auto publisher + manual subscriber formed logical cluster %q with %d servers",
 			cluster.AutoClusterKey, len(cluster.Servers))
@@ -777,9 +786,10 @@ func TestTopologyManualPublisherWithAutoSubscriber(t *testing.T) {
 	}
 
 	overrides := map[string]clusterOverride{}
+	dismissed := map[string]bool{}
 
 	// No logical cluster should form because the publisher is manual.
-	autoClusters := ds.buildAutoDetectedClusters(conns, overrides)
+	autoClusters := ds.buildAutoDetectedClusters(conns, overrides, dismissed)
 	if cluster, ok := autoClusters["logical:801"]; ok {
 		t.Fatalf("manual publisher + auto subscriber formed logical cluster %q with %d servers",
 			cluster.AutoClusterKey, len(cluster.Servers))

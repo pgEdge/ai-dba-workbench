@@ -348,8 +348,10 @@ func (h *ClusterHandler) handleClusterSubpath(w http.ResponseWriter, r *http.Req
 		switch r.Method {
 		case http.MethodPut:
 			h.updateAutoDetectedCluster(w, r, parts[0])
+		case http.MethodDelete:
+			h.deleteAutoDetectedCluster(w, r, parts[0])
 		default:
-			w.Header().Set("Allow", "PUT")
+			w.Header().Set("Allow", "PUT, DELETE")
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 		return
@@ -890,6 +892,55 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 	}
 
 	RespondJSON(w, http.StatusOK, cluster)
+}
+
+// deleteAutoDetectedCluster handles DELETE requests for auto-detected
+// clusters. It resolves the auto_cluster_key from the topology ID and
+// soft-deletes the cluster.
+func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *http.Request, clusterID string) {
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: you do not have permission to delete auto-detected clusters")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// For Spock clusters, the key is unambiguous
+	if strings.HasPrefix(clusterID, "cluster-spock-") {
+		prefix := strings.TrimPrefix(clusterID, "cluster-spock-")
+		autoKey := "spock:" + prefix
+		if err := h.datastore.DeleteAutoDetectedCluster(ctx, autoKey); err != nil {
+			log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
+			RespondError(w, http.StatusInternalServerError, "Failed to delete auto-detected cluster")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// For server-{id}, multiple auto_cluster_key prefixes share the same ID.
+	// The topology builder may have created a binary, standalone, or logical
+	// cluster depending on the connection's replication role. Since we cannot
+	// know which type it was from the ID alone, we dismiss all candidate keys.
+	if strings.HasPrefix(clusterID, "server-") {
+		idStr := strings.TrimPrefix(clusterID, "server-")
+		candidates := []string{
+			"binary:" + idStr,
+			"standalone:" + idStr,
+			"logical:" + idStr,
+		}
+		if err := h.datastore.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+			log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
+			RespondError(w, http.StatusInternalServerError, "Failed to delete auto-detected cluster")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	RespondError(w, http.StatusBadRequest, "Invalid auto-detected cluster ID")
 }
 
 // computeAutoClusterKey computes the auto_cluster_key from a cluster ID

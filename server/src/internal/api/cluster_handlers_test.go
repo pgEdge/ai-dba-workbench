@@ -1652,3 +1652,412 @@ func TestFilterTopologyServers_IsExpandableReflectsVisibleChildren(t *testing.T)
 		t.Errorf("Expected single visible child ID=3, got %+v", got[1].Children)
 	}
 }
+
+// =============================================================================
+// DELETE /api/v1/clusters/{auto-detected-id} tests
+//
+// Coverage for issue #36: users can dismiss auto-detected clusters via
+// DELETE /api/v1/clusters/server-{id} or DELETE /api/v1/clusters/cluster-spock-{prefix}.
+// The handler resolves the auto_cluster_key and soft-deletes the cluster.
+// =============================================================================
+
+// TestClusterHandler_HandleClusterSubpath_AutoDetectedCluster_MethodNotAllowed
+// confirms that unsupported methods (like PATCH) return 405 with the correct
+// Allow header listing PUT and DELETE.
+func TestClusterHandler_HandleClusterSubpath_AutoDetectedCluster_MethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clusters/server-42", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "PUT, DELETE" {
+		t.Errorf("Expected Allow header 'PUT, DELETE', got %q", allowed)
+	}
+}
+
+// TestClusterHandler_HandleClusterSubpath_AutoDetectedCluster_SpockMethodNotAllowed
+// confirms Spock cluster IDs also return the correct Allow header for unsupported methods.
+func TestClusterHandler_HandleClusterSubpath_AutoDetectedCluster_SpockMethodNotAllowed(t *testing.T) {
+	handler := NewClusterHandler(nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/clusters/cluster-spock-pg17", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+
+	allowed := rec.Header().Get("Allow")
+	if allowed != "PUT, DELETE" {
+		t.Errorf("Expected Allow header 'PUT, DELETE', got %q", allowed)
+	}
+}
+
+// TestClusterHandler_DeleteAutoDetectedCluster_PermissionDenied confirms that
+// DELETE auto-detected cluster requires manage_connections permission and
+// returns 403 for users without it.
+func TestClusterHandler_DeleteAutoDetectedCluster_PermissionDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	// Create an unprivileged user.
+	if err := store.CreateUser("noperm", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	userID, err := store.GetUserID("noperm")
+	if err != nil {
+		t.Fatalf("Failed to get user id: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/server-42", nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Permission denied: you do not have permission to delete auto-detected clusters" {
+		t.Errorf("Expected permission denied error, got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_DeleteAutoDetectedCluster_SpockPermissionDenied confirms
+// that Spock cluster IDs also require manage_connections permission.
+func TestClusterHandler_DeleteAutoDetectedCluster_SpockPermissionDenied(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(nil, store, checker)
+
+	// Create an unprivileged user.
+	if err := store.CreateUser("noperm2", "Password1", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	userID, err := store.GetUserID("noperm2")
+	if err != nil {
+		t.Fatalf("Failed to get user id: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/cluster-spock-pg17", nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+// deleteAutoClusterTestSchema extends the cluster dismiss test schema used
+// in cluster_dismiss_integration_test.go for the handler-level integration
+// tests that require the clusters table.
+const deleteAutoClusterTestSchema = `
+DROP TABLE IF EXISTS connections CASCADE;
+DROP TABLE IF EXISTS clusters CASCADE;
+DROP TABLE IF EXISTS cluster_groups CASCADE;
+
+CREATE TABLE cluster_groups (
+    id SERIAL PRIMARY KEY,
+    owner_username VARCHAR(255),
+    owner_token VARCHAR(255),
+    is_shared BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_group_key VARCHAR(255) UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT cluster_groups_name_unique UNIQUE (name)
+);
+CREATE UNIQUE INDEX idx_cluster_groups_is_default
+    ON cluster_groups (is_default) WHERE is_default = TRUE;
+
+CREATE TABLE clusters (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+    auto_cluster_key VARCHAR(255) UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    replication_type VARCHAR(50),
+    dismissed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT clusters_group_name_unique UNIQUE (group_id, name)
+);
+
+CREATE TABLE connections (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
+    membership_source VARCHAR(16) NOT NULL DEFAULT 'auto',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+// newDeleteAutoClusterTestDatastore returns a *database.Datastore wired to
+// the Postgres instance named by TEST_AI_WORKBENCH_SERVER with the schema
+// needed for delete auto-detected cluster tests. The test is skipped if
+// the env var is missing or the connection cannot be established.
+func newDeleteAutoClusterTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func()) {
+	t.Helper()
+
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping delete auto cluster integration test")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Skipf("Test database ping failed: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, deleteAutoClusterTestSchema); err != nil {
+		pool.Close()
+		t.Fatalf("Failed to create test schema: %v", err)
+	}
+
+	ds := database.NewTestDatastore(pool)
+
+	cleanup := func() {
+		_, _ = pool.Exec(context.Background(),
+			"DROP TABLE IF EXISTS connections, clusters, cluster_groups CASCADE")
+		pool.Close()
+	}
+
+	return ds, pool, cleanup
+}
+
+// insertDeleteAutoClusterTestGroup inserts a default cluster_groups row and
+// returns its id.
+func insertDeleteAutoClusterTestGroup(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	var id int
+	err := pool.QueryRow(context.Background(), `
+        INSERT INTO cluster_groups (name, description, is_shared, is_default)
+        VALUES ('Servers/Clusters', 'default', TRUE, TRUE)
+        RETURNING id
+    `).Scan(&id)
+	if err != nil {
+		t.Fatalf("Failed to insert default cluster group: %v", err)
+	}
+	return id
+}
+
+// TestClusterHandler_DeleteAutoDetectedCluster_Integration_Standalone exercises
+// the full DELETE flow for a standalone server (server-{id} format). The
+// handler should resolve the auto_cluster_key and soft-delete the cluster.
+func TestClusterHandler_DeleteAutoDetectedCluster_Integration_Standalone(t *testing.T) {
+	ds, pool, cleanupDS := newDeleteAutoClusterTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	ctx := context.Background()
+	groupID := insertDeleteAutoClusterTestGroup(t, pool)
+
+	// Create a standalone server cluster via direct SQL to simulate
+	// auto-detection having found it previously.
+	_, err := pool.Exec(ctx, `
+        INSERT INTO clusters (name, auto_cluster_key, group_id, dismissed)
+        VALUES ('standalone-42', 'standalone:42', $1, FALSE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("Failed to seed standalone cluster: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/server-42", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusNoContent, rec.Code, rec.Body.String())
+	}
+
+	// Verify the cluster was soft-deleted.
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE auto_cluster_key = 'standalone:42'`,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("Failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("Cluster was not dismissed after DELETE request")
+	}
+}
+
+// TestClusterHandler_DeleteAutoDetectedCluster_Integration_Spock exercises
+// the full DELETE flow for a Spock cluster (cluster-spock-{prefix} format).
+func TestClusterHandler_DeleteAutoDetectedCluster_Integration_Spock(t *testing.T) {
+	ds, pool, cleanupDS := newDeleteAutoClusterTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	ctx := context.Background()
+	groupID := insertDeleteAutoClusterTestGroup(t, pool)
+
+	// Create a Spock cluster via direct SQL.
+	_, err := pool.Exec(ctx, `
+        INSERT INTO clusters (name, auto_cluster_key, group_id, dismissed)
+        VALUES ('pg17 Spock', 'spock:pg17', $1, FALSE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("Failed to seed Spock cluster: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/cluster-spock-pg17", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusNoContent, rec.Code, rec.Body.String())
+	}
+
+	// Verify the cluster was soft-deleted.
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE auto_cluster_key = 'spock:pg17'`,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("Failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("Spock cluster was not dismissed after DELETE request")
+	}
+}
+
+// TestClusterHandler_DeleteAutoDetectedCluster_Integration_NoExistingRow verifies
+// that DELETE still succeeds when the cluster row does not exist (it creates
+// a dismissed placeholder row, matching DeleteAutoDetectedCluster behavior).
+func TestClusterHandler_DeleteAutoDetectedCluster_Integration_NoExistingRow(t *testing.T) {
+	ds, pool, cleanupDS := newDeleteAutoClusterTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	// Ensure the default group exists for the upsert to succeed.
+	_ = insertDeleteAutoClusterTestGroup(t, pool)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/cluster-spock-nonexistent", nil)
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusNoContent, rec.Code, rec.Body.String())
+	}
+
+	// Verify a dismissed placeholder row was created.
+	var dismissed bool
+	var name string
+	err := pool.QueryRow(context.Background(), `
+        SELECT name, dismissed FROM clusters
+        WHERE auto_cluster_key = 'spock:nonexistent'
+    `).Scan(&name, &dismissed)
+	if err != nil {
+		t.Fatalf("Failed to read newly created cluster: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("Placeholder cluster is not dismissed")
+	}
+	if name != "nonexistent Spock" {
+		t.Fatalf("Derived name = %q, want %q", name, "nonexistent Spock")
+	}
+}
+
+// TestClusterHandler_DeleteAutoDetectedCluster_WithPermission verifies that a
+// user with manage_connections permission can successfully delete an
+// auto-detected cluster.
+func TestClusterHandler_DeleteAutoDetectedCluster_WithPermission(t *testing.T) {
+	ds, pool, cleanupDS := newDeleteAutoClusterTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	userID := setupUserWithPermission(t, store, "delete_tester", auth.PermManageConnections)
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	ctx := context.Background()
+	groupID := insertDeleteAutoClusterTestGroup(t, pool)
+
+	_, err := pool.Exec(ctx, `
+        INSERT INTO clusters (name, auto_cluster_key, group_id, dismissed)
+        VALUES ('test-cluster', 'standalone:99', $1, FALSE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("Failed to seed cluster: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/server-99", nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterSubpath(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusNoContent, rec.Code, rec.Body.String())
+	}
+
+	// Verify the cluster was soft-deleted.
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE auto_cluster_key = 'standalone:99'`,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("Failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("Cluster was not dismissed")
+	}
+}

@@ -234,3 +234,375 @@ func containsClusterID(summaries []ClusterSummary, id int) bool {
 	}
 	return false
 }
+
+func TestGetDismissedAutoClusterKeys(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	_, err := pool.Exec(ctx, `
+        INSERT INTO clusters (name, auto_cluster_key, group_id, dismissed)
+        VALUES ('active-cluster', 'spock:active', $1, FALSE),
+               ('dismissed-cluster', 'spock:dismissed', $1, TRUE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("failed to seed clusters: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `
+        INSERT INTO clusters (name, group_id, dismissed)
+        VALUES ('manual-cluster', $1, FALSE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("failed to seed manual cluster: %v", err)
+	}
+
+	dismissed, err := ds.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		t.Fatalf("getDismissedAutoClusterKeys failed: %v", err)
+	}
+
+	if len(dismissed) != 1 {
+		t.Fatalf("expected 1 dismissed key, got %d: %v", len(dismissed), dismissed)
+	}
+	if !dismissed["spock:dismissed"] {
+		t.Fatalf("expected spock:dismissed in set, got %v", dismissed)
+	}
+}
+
+func TestDismissedClusterExcludedFromBuildTopologyHierarchy(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	// Create and then dismiss a cluster
+	created, err := ds.UpsertAutoDetectedCluster(
+		ctx, "standalone:999", "doomed-cluster", nil, &groupID,
+	)
+	if err != nil {
+		t.Fatalf("UpsertAutoDetectedCluster failed: %v", err)
+	}
+	if err := ds.DeleteCluster(ctx, created.ID); err != nil {
+		t.Fatalf("DeleteCluster failed: %v", err)
+	}
+
+	dismissedKeys, err := ds.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		t.Fatalf("getDismissedAutoClusterKeys failed: %v", err)
+	}
+	if !dismissedKeys["standalone:999"] {
+		t.Fatalf("expected standalone:999 in dismissed set")
+	}
+
+	// Seed a connection that would produce a standalone cluster with ID 999.
+	// The buildTopologyHierarchy function creates a standalone cluster for
+	// connections that are not Spock nodes, not binary primaries with children,
+	// and have no cluster_id set.
+	conn := connectionWithRole{
+		ID:               999,
+		Name:             "test-server",
+		Host:             "localhost",
+		Port:             5432,
+		PrimaryRole:      "standalone",
+		HasSpock:         false,
+		MembershipSource: "auto",
+		Status:           "online",
+	}
+
+	defaultGroup := &defaultGroupInfo{ID: groupID, Name: "Servers/Clusters"}
+
+	// First verify that without the dismissed filter, the connection would
+	// produce a standalone cluster.
+	groupsWithoutFilter := ds.buildTopologyHierarchy(
+		[]connectionWithRole{conn},
+		make(map[string]clusterOverride),
+		make(map[string]bool),
+		make(map[string]bool), // empty dismissed set
+		defaultGroup,
+	)
+	foundWithoutFilter := false
+	for _, g := range groupsWithoutFilter {
+		for _, c := range g.Clusters {
+			if c.AutoClusterKey == "standalone:999" {
+				foundWithoutFilter = true
+				break
+			}
+		}
+	}
+	if !foundWithoutFilter {
+		t.Fatalf("expected standalone:999 cluster without dismissed filter")
+	}
+
+	// Now verify that WITH the dismissed filter, the cluster is excluded.
+	groupsWithFilter := ds.buildTopologyHierarchy(
+		[]connectionWithRole{conn},
+		make(map[string]clusterOverride),
+		make(map[string]bool),
+		dismissedKeys,
+		defaultGroup,
+	)
+	for _, g := range groupsWithFilter {
+		for _, c := range g.Clusters {
+			if c.AutoClusterKey == "standalone:999" {
+				t.Fatalf("dismissed cluster standalone:999 appeared in topology")
+			}
+		}
+	}
+}
+
+func TestDeleteAutoDetectedCluster_ExistingRow(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	cluster, err := ds.UpsertAutoDetectedCluster(
+		ctx, "binary:100", "test-cluster", nil, &groupID,
+	)
+	if err != nil {
+		t.Fatalf("UpsertAutoDetectedCluster failed: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+        INSERT INTO connections (name, cluster_id, membership_source)
+        VALUES ('conn-1', $1, 'auto')
+    `, cluster.ID)
+	if err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+
+	if err := ds.DeleteAutoDetectedCluster(ctx, "binary:100"); err != nil {
+		t.Fatalf("DeleteAutoDetectedCluster failed: %v", err)
+	}
+
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE id = $1`, cluster.ID,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("cluster was not dismissed")
+	}
+
+	var clusterID *int
+	err = pool.QueryRow(ctx,
+		`SELECT cluster_id FROM connections WHERE name = 'conn-1'`,
+	).Scan(&clusterID)
+	if err != nil {
+		t.Fatalf("failed to read connection cluster_id: %v", err)
+	}
+	if clusterID != nil {
+		t.Fatalf("connection still attached to cluster %d", *clusterID)
+	}
+}
+
+func TestDeleteAutoDetectedCluster_NoRow(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = insertClusterDismissTestGroup(t, pool)
+
+	if err := ds.DeleteAutoDetectedCluster(ctx, "spock:phantom"); err != nil {
+		t.Fatalf("DeleteAutoDetectedCluster (no row) failed: %v", err)
+	}
+
+	var dismissed bool
+	var name string
+	err := pool.QueryRow(ctx, `
+        SELECT name, dismissed FROM clusters
+        WHERE auto_cluster_key = 'spock:phantom'
+    `).Scan(&name, &dismissed)
+	if err != nil {
+		t.Fatalf("failed to read newly created cluster: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("newly created cluster is not dismissed")
+	}
+	if name != "phantom Spock" {
+		t.Fatalf("derived name = %q, want %q", name, "phantom Spock")
+	}
+}
+
+func TestDeriveClusterNameFromKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"spock:pg17", "pg17 Spock"},
+		{"binary:42", "binary-42"},
+		{"standalone:7", "standalone-7"},
+		{"logical:99", "logical-99"},
+		{"unknown", "unknown"},
+		{"custom:xyz", "custom:xyz"},
+	}
+	for _, tt := range tests {
+		got := deriveClusterNameFromKey(tt.key)
+		if got != tt.want {
+			t.Errorf("deriveClusterNameFromKey(%q) = %q, want %q",
+				tt.key, got, tt.want)
+		}
+	}
+}
+
+// TestDismissAutoDetectedClusterKeys_ExistingRow verifies that
+// DismissAutoDetectedClusterKeys correctly dismisses clusters that
+// already exist in the database and detaches their connections.
+func TestDismissAutoDetectedClusterKeys_ExistingRow(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	// Create a cluster with a connection
+	cluster, err := ds.UpsertAutoDetectedCluster(
+		ctx, "binary:200", "test-cluster", nil, &groupID,
+	)
+	if err != nil {
+		t.Fatalf("UpsertAutoDetectedCluster failed: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+        INSERT INTO connections (name, cluster_id, membership_source)
+        VALUES ('conn-1', $1, 'auto')
+    `, cluster.ID)
+	if err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+
+	// Dismiss with multiple candidate keys (only one matches)
+	candidates := []string{"binary:200", "standalone:200", "logical:200"}
+	if err := ds.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+		t.Fatalf("DismissAutoDetectedClusterKeys failed: %v", err)
+	}
+
+	// Verify the matching cluster was dismissed
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE id = $1`, cluster.ID,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("cluster was not dismissed")
+	}
+
+	// Verify the connection was detached
+	var clusterID *int
+	err = pool.QueryRow(ctx,
+		`SELECT cluster_id FROM connections WHERE name = 'conn-1'`,
+	).Scan(&clusterID)
+	if err != nil {
+		t.Fatalf("failed to read connection cluster_id: %v", err)
+	}
+	if clusterID != nil {
+		t.Fatalf("connection still attached to cluster %d", *clusterID)
+	}
+
+	// Verify placeholders were created for the other candidate keys
+	var count int
+	err = pool.QueryRow(ctx, `
+        SELECT COUNT(*) FROM clusters
+        WHERE auto_cluster_key IN ('standalone:200', 'logical:200')
+        AND dismissed = TRUE
+    `).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count placeholder clusters: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 dismissed placeholders, got %d", count)
+	}
+}
+
+// TestDismissAutoDetectedClusterKeys_NoExistingRows verifies that
+// DismissAutoDetectedClusterKeys creates dismissed placeholders for
+// all candidate keys when none of them exist in the database.
+func TestDismissAutoDetectedClusterKeys_NoExistingRows(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = insertClusterDismissTestGroup(t, pool)
+
+	candidates := []string{"binary:300", "standalone:300", "logical:300"}
+	if err := ds.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+		t.Fatalf("DismissAutoDetectedClusterKeys failed: %v", err)
+	}
+
+	// Verify all placeholders were created as dismissed
+	var count int
+	err := pool.QueryRow(ctx, `
+        SELECT COUNT(*) FROM clusters
+        WHERE auto_cluster_key IN ('binary:300', 'standalone:300', 'logical:300')
+        AND dismissed = TRUE
+    `).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count placeholder clusters: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected 3 dismissed placeholders, got %d", count)
+	}
+}
+
+// TestDismissAutoDetectedClusterKeys_EmptyList verifies that
+// DismissAutoDetectedClusterKeys handles an empty candidate list gracefully.
+func TestDismissAutoDetectedClusterKeys_EmptyList(t *testing.T) {
+	ds, _, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if err := ds.DismissAutoDetectedClusterKeys(ctx, []string{}); err != nil {
+		t.Fatalf("DismissAutoDetectedClusterKeys with empty list failed: %v", err)
+	}
+}
+
+// TestDismissAutoDetectedClusterKeys_Idempotent verifies that calling
+// DismissAutoDetectedClusterKeys multiple times with the same keys is
+// safe and leaves the clusters dismissed.
+func TestDismissAutoDetectedClusterKeys_Idempotent(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	// Create a cluster
+	cluster, err := ds.UpsertAutoDetectedCluster(
+		ctx, "standalone:400", "test-cluster", nil, &groupID,
+	)
+	if err != nil {
+		t.Fatalf("UpsertAutoDetectedCluster failed: %v", err)
+	}
+
+	candidates := []string{"binary:400", "standalone:400", "logical:400"}
+
+	// First dismiss
+	if err := ds.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+		t.Fatalf("first DismissAutoDetectedClusterKeys failed: %v", err)
+	}
+
+	// Second dismiss (should be idempotent)
+	if err := ds.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+		t.Fatalf("second DismissAutoDetectedClusterKeys failed: %v", err)
+	}
+
+	// Verify the cluster is still dismissed
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE id = $1`, cluster.ID,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("cluster should still be dismissed after idempotent call")
+	}
+}

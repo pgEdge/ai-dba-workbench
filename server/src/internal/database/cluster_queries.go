@@ -439,6 +439,150 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 	return nil
 }
 
+// deriveClusterNameFromKey produces a human-readable name from an
+// auto_cluster_key. The result is used when creating a dismissed
+// placeholder row for a cluster that has no existing database record.
+func deriveClusterNameFromKey(autoKey string) string {
+	parts := strings.SplitN(autoKey, ":", 2)
+	if len(parts) != 2 {
+		return autoKey
+	}
+	prefix, suffix := parts[0], parts[1]
+	switch prefix {
+	case "spock":
+		return suffix + " Spock"
+	case "binary":
+		return "binary-" + suffix
+	case "standalone":
+		return "standalone-" + suffix
+	case "logical":
+		return "logical-" + suffix
+	default:
+		return autoKey
+	}
+}
+
+// DeleteAutoDetectedCluster soft-deletes an auto-detected cluster by
+// its auto_cluster_key. If no database record exists for the key, a
+// dismissed placeholder is created so the topology builder skips the
+// cluster on subsequent refreshes. All operations run in a transaction
+// to prevent partial state if connection detach fails after dismiss.
+func (d *Datastore) DeleteAutoDetectedCluster(ctx context.Context, autoKey string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin cluster dismiss transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+
+	var clusterID int
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM clusters WHERE auto_cluster_key = $1`,
+		autoKey,
+	).Scan(&clusterID)
+
+	if err != nil {
+		// No existing record — create a dismissed placeholder
+		name := deriveClusterNameFromKey(autoKey)
+		_, insertErr := tx.Exec(ctx, `
+            INSERT INTO clusters (name, auto_cluster_key, dismissed)
+            VALUES ($1, $2, TRUE)
+        `, name, autoKey)
+		if insertErr != nil {
+			return fmt.Errorf("failed to create dismissed cluster record: %w", insertErr)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit cluster dismiss transaction: %w", err)
+		}
+		return nil
+	}
+
+	// Existing record — dismiss it and detach connections
+	_, err = tx.Exec(ctx,
+		`UPDATE clusters SET dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to dismiss cluster: %w", err)
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+		clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to detach connections from dismissed cluster: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit cluster dismiss transaction: %w", err)
+	}
+	return nil
+}
+
+// DismissAutoDetectedClusterKeys soft-deletes clusters matching any of
+// the provided auto_cluster_keys. For keys with existing database records,
+// it sets dismissed=TRUE and detaches connections. For keys without records,
+// it creates dismissed placeholder rows so the topology builder skips them.
+// All operations run in a single transaction for atomicity.
+func (d *Datastore) DismissAutoDetectedClusterKeys(ctx context.Context, autoKeys []string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin dismiss transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+
+	for _, autoKey := range autoKeys {
+		var clusterID int
+		err := tx.QueryRow(ctx,
+			`SELECT id FROM clusters WHERE auto_cluster_key = $1`,
+			autoKey,
+		).Scan(&clusterID)
+
+		if err != nil {
+			// No existing record — create a dismissed placeholder so the
+			// topology builder skips this key on subsequent refreshes.
+			name := deriveClusterNameFromKey(autoKey)
+			_, insertErr := tx.Exec(ctx, `
+                INSERT INTO clusters (name, auto_cluster_key, dismissed)
+                VALUES ($1, $2, TRUE)
+                ON CONFLICT (auto_cluster_key) DO UPDATE SET dismissed = TRUE, updated_at = CURRENT_TIMESTAMP
+            `, name, autoKey)
+			if insertErr != nil {
+				return fmt.Errorf("failed to create dismissed placeholder for %s: %w", autoKey, insertErr)
+			}
+			continue
+		}
+
+		// Existing record — dismiss it and detach connections
+		_, err = tx.Exec(ctx,
+			`UPDATE clusters SET dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+			clusterID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to dismiss cluster %d: %w", clusterID, err)
+		}
+
+		_, err = tx.Exec(ctx,
+			`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+			clusterID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to detach connections from cluster %d: %w", clusterID, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit dismiss transaction: %w", err)
+	}
+	return nil
+}
+
 // GetClusterOverrides returns a map of auto_cluster_key -> clusterOverride
 // for all clusters that have an auto_cluster_key set. This is used to
 // apply custom names and descriptions to auto-detected clusters in the

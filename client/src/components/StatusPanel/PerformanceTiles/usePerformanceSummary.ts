@@ -15,6 +15,7 @@ import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { PerformanceSummaryData } from './types';
 import { extractEstateServerIds } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
+import type { Selection } from '../../../types/selection';
 
 interface UsePerformanceSummaryReturn {
     data: PerformanceSummaryData | null;
@@ -28,7 +29,7 @@ interface UsePerformanceSummaryReturn {
  * to prevent flash on auto-refresh.
  */
 export const usePerformanceSummary = (
-    selection: Record<string, unknown> | null
+    selection: Selection | null
 ): UsePerformanceSummaryReturn => {
     const { user } = useAuth();
     const { lastRefresh } = useClusterData();
@@ -49,9 +50,8 @@ export const usePerformanceSummary = (
         }
 
         if (selection.type === 'cluster') {
-            const serverIds = selection.serverIds as number[] | undefined;
-            if (!serverIds?.length) {return null;}
-            return `${base}?connection_ids=${serverIds.join(',')}&time_range=24h`;
+            if (!selection.serverIds?.length) {return null;}
+            return `${base}?connection_ids=${selection.serverIds.join(',')}&time_range=24h`;
         }
 
         if (selection.type === 'estate') {
@@ -104,9 +104,10 @@ export const usePerformanceSummary = (
     }, [user, buildUrl]);
 
     // Reset initial load state when selection changes
+    const selectionId = selection && 'id' in selection ? selection.id : undefined;
     useEffect(() => {
         initialLoadDoneRef.current = false;
-    }, [selection?.type, selection?.id]);
+    }, [selection?.type, selectionId]);
 
     // Fetch when dependencies change
     useEffect(() => {

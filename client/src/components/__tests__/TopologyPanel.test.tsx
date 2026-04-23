@@ -885,11 +885,13 @@ describe('TopologyPanel', () => {
         );
 
         await waitFor(() => {
-            // Server names appear in both server list and relationship list
-            expect(screen.getAllByText('db-primary').length).toBeGreaterThanOrEqual(1);
-            expect(screen.getAllByText('db-standby').length).toBeGreaterThanOrEqual(1);
-            // "streams from" appears in relationship list and in Type dropdown
-            expect(screen.getAllByText(/streams from/i).length).toBeGreaterThanOrEqual(1);
+            // Scope assertion to the Relationships section by finding
+            // the relationship-specific delete button aria-label
+            expect(
+                screen.getByRole('button', {
+                    name: 'Remove relationship between db-primary and db-standby',
+                }),
+            ).toBeInTheDocument();
         });
     });
 

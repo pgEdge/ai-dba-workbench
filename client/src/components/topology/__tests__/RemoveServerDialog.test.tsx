@@ -155,7 +155,7 @@ describe('RemoveServerDialog', () => {
             />,
         );
 
-        const removeButton = screen.getByRole('button', { name: '' });
+        const removeButton = screen.getByRole('button', { name: 'Remove' });
         expect(removeButton).toBeDisabled();
     });
 

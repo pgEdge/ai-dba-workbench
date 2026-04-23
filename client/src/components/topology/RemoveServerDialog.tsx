@@ -65,6 +65,7 @@ const RemoveServerDialog: React.FC<RemoveServerDialogProps> = ({
                     variant="contained"
                     color="error"
                     disabled={removing}
+                    aria-label="Remove"
                 >
                     {removing ? (
                         <CircularProgress

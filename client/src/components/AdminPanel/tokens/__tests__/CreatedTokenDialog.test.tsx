@@ -102,6 +102,8 @@ describe('CreatedTokenDialog', () => {
         renderComponent({ token: null });
         // The dialog should still render, just without the token text
         expect(screen.getByText('Token created')).toBeInTheDocument();
+        // The token value should not appear
+        expect(screen.queryByText(TEST_TOKEN)).not.toBeInTheDocument();
     });
 
     it('accepts a ref for the content element', () => {

@@ -265,6 +265,7 @@ const RelationshipSection: React.FC<RelationshipSectionProps> = ({
                                 selectedTargetId === '' ||
                                 !selectedRelType
                             }
+                            aria-label="Add relationship"
                             sx={{
                                 textTransform: 'none',
                                 whiteSpace: 'nowrap',

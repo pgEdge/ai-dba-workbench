@@ -166,9 +166,8 @@ describe('ScopeMultiSelect', () => {
         expect(chip).toBeInTheDocument();
 
         const deleteButton = chip?.querySelector('[data-testid="CancelIcon"]');
-        if (deleteButton) {
-            fireEvent.click(deleteButton);
-            expect(onChange).toHaveBeenCalled();
-        }
+        expect(deleteButton).toBeTruthy();
+        fireEvent.click(deleteButton as Element);
+        expect(onChange).toHaveBeenCalled();
     });
 });

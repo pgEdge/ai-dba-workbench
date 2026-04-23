@@ -222,7 +222,7 @@ describe('RelationshipSection', () => {
         expect(screen.queryByLabelText('Source')).not.toBeInTheDocument();
         expect(screen.queryByLabelText('Target')).not.toBeInTheDocument();
         expect(
-            screen.queryByRole('button', { name: /Add/i }),
+            screen.queryByRole('button', { name: 'Add relationship' }),
         ).not.toBeInTheDocument();
     });
 
@@ -235,7 +235,7 @@ describe('RelationshipSection', () => {
         expect(screen.getByLabelText('Target')).toBeInTheDocument();
         expect(screen.getByLabelText('Type')).toBeInTheDocument();
         expect(
-            screen.getByRole('button', { name: /Add/i }),
+            screen.getByRole('button', { name: 'Add relationship' }),
         ).toBeInTheDocument();
     });
 
@@ -351,7 +351,7 @@ describe('RelationshipSection', () => {
 
         renderWithTheme(<RelationshipSection {...props} />);
 
-        expect(screen.getByRole('button', { name: /Add/i })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Add relationship' })).toBeDisabled();
     });
 
     it('disables Add button when target is not selected', () => {
@@ -363,7 +363,7 @@ describe('RelationshipSection', () => {
 
         renderWithTheme(<RelationshipSection {...props} />);
 
-        expect(screen.getByRole('button', { name: /Add/i })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Add relationship' })).toBeDisabled();
     });
 
     it('disables Add button when relationship type is not selected', () => {
@@ -375,7 +375,7 @@ describe('RelationshipSection', () => {
 
         renderWithTheme(<RelationshipSection {...props} />);
 
-        expect(screen.getByRole('button', { name: /Add/i })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Add relationship' })).toBeDisabled();
     });
 
     it('enables Add button when all fields are selected', () => {
@@ -389,7 +389,7 @@ describe('RelationshipSection', () => {
 
         renderWithTheme(<RelationshipSection {...props} />);
 
-        expect(screen.getByRole('button', { name: /Add/i })).not.toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Add relationship' })).not.toBeDisabled();
     });
 
     it('calls onAddRelationship when Add button is clicked', () => {
@@ -405,7 +405,7 @@ describe('RelationshipSection', () => {
 
         renderWithTheme(<RelationshipSection {...props} />);
 
-        fireEvent.click(screen.getByRole('button', { name: /Add/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Add relationship' }));
 
         expect(onAddRelationship).toHaveBeenCalledTimes(1);
     });

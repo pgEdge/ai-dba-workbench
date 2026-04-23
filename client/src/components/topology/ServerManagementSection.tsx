@@ -139,6 +139,7 @@ const ServerManagementSection: React.FC<ServerManagementSectionProps> = ({
                         startIcon={<AddIcon />}
                         onClick={onAddServer}
                         disabled={!selectedConnection || addingServer}
+                        aria-label="Add server"
                         sx={{
                             textTransform: 'none',
                             whiteSpace: 'nowrap',

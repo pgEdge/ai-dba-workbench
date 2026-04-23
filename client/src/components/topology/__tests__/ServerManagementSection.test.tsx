@@ -83,7 +83,7 @@ describe('ServerManagementSection', () => {
         renderWithTheme(<ServerManagementSection {...props} />);
 
         expect(
-            screen.getByRole('button', { name: /Add/i }),
+            screen.getByRole('button', { name: 'Add server' }),
         ).toBeInTheDocument();
     });
 
@@ -92,7 +92,7 @@ describe('ServerManagementSection', () => {
 
         renderWithTheme(<ServerManagementSection {...props} />);
 
-        expect(screen.getByRole('button', { name: /Add/i })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Add server' })).toBeDisabled();
     });
 
     it('enables Add button when connection is selected', () => {
@@ -101,7 +101,7 @@ describe('ServerManagementSection', () => {
 
         renderWithTheme(<ServerManagementSection {...props} />);
 
-        expect(screen.getByRole('button', { name: /Add/i })).not.toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Add server' })).not.toBeDisabled();
     });
 
     it('disables Add button when addingServer is true', () => {
@@ -113,7 +113,7 @@ describe('ServerManagementSection', () => {
 
         renderWithTheme(<ServerManagementSection {...props} />);
 
-        const addButton = screen.getByRole('button', { name: '' });
+        const addButton = screen.getByRole('button', { name: 'Add server' });
         expect(addButton).toBeDisabled();
     });
 
@@ -148,7 +148,7 @@ describe('ServerManagementSection', () => {
 
         renderWithTheme(<ServerManagementSection {...props} />);
 
-        fireEvent.click(screen.getByRole('button', { name: /Add/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
 
         expect(onAddServer).toHaveBeenCalledTimes(1);
     });

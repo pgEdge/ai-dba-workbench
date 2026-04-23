@@ -241,6 +241,14 @@ describe('CreateTokenDialog', () => {
         });
 
         fireEvent.click(screen.getByRole('option', { name: 'Primary DB' }));
-        expect(onScopedConnectionsChange).toHaveBeenCalled();
+        expect(onScopedConnectionsChange).toHaveBeenCalledWith(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: expect.any(Number),
+                    name: expect.any(String),
+                    access_level: expect.any(String),
+                }),
+            ]),
+        );
     });
 });

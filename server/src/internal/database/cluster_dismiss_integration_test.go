@@ -313,3 +313,100 @@ func TestDismissedClusterExcludedFromBuildTopologyHierarchy(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteAutoDetectedCluster_ExistingRow(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	cluster, err := ds.UpsertAutoDetectedCluster(
+		ctx, "binary:100", "test-cluster", nil, &groupID,
+	)
+	if err != nil {
+		t.Fatalf("UpsertAutoDetectedCluster failed: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+        INSERT INTO connections (name, cluster_id, membership_source)
+        VALUES ('conn-1', $1, 'auto')
+    `, cluster.ID)
+	if err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+
+	if err := ds.DeleteAutoDetectedCluster(ctx, "binary:100"); err != nil {
+		t.Fatalf("DeleteAutoDetectedCluster failed: %v", err)
+	}
+
+	var dismissed bool
+	err = pool.QueryRow(ctx,
+		`SELECT dismissed FROM clusters WHERE id = $1`, cluster.ID,
+	).Scan(&dismissed)
+	if err != nil {
+		t.Fatalf("failed to read dismissed flag: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("cluster was not dismissed")
+	}
+
+	var clusterID *int
+	err = pool.QueryRow(ctx,
+		`SELECT cluster_id FROM connections WHERE name = 'conn-1'`,
+	).Scan(&clusterID)
+	if err != nil {
+		t.Fatalf("failed to read connection cluster_id: %v", err)
+	}
+	if clusterID != nil {
+		t.Fatalf("connection still attached to cluster %d", *clusterID)
+	}
+}
+
+func TestDeleteAutoDetectedCluster_NoRow(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = insertClusterDismissTestGroup(t, pool)
+
+	if err := ds.DeleteAutoDetectedCluster(ctx, "spock:phantom"); err != nil {
+		t.Fatalf("DeleteAutoDetectedCluster (no row) failed: %v", err)
+	}
+
+	var dismissed bool
+	var name string
+	err := pool.QueryRow(ctx, `
+        SELECT name, dismissed FROM clusters
+        WHERE auto_cluster_key = 'spock:phantom'
+    `).Scan(&name, &dismissed)
+	if err != nil {
+		t.Fatalf("failed to read newly created cluster: %v", err)
+	}
+	if !dismissed {
+		t.Fatal("newly created cluster is not dismissed")
+	}
+	if name != "phantom Spock" {
+		t.Fatalf("derived name = %q, want %q", name, "phantom Spock")
+	}
+}
+
+func TestDeriveClusterNameFromKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"spock:pg17", "pg17 Spock"},
+		{"binary:42", "binary-42"},
+		{"standalone:7", "standalone-7"},
+		{"logical:99", "logical-99"},
+		{"unknown", "unknown"},
+		{"custom:xyz", "custom:xyz"},
+	}
+	for _, tt := range tests {
+		got := deriveClusterNameFromKey(tt.key)
+		if got != tt.want {
+			t.Errorf("deriveClusterNameFromKey(%q) = %q, want %q",
+				tt.key, got, tt.want)
+		}
+	}
+}

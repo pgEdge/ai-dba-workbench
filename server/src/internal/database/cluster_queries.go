@@ -439,6 +439,74 @@ func (d *Datastore) DeleteCluster(ctx context.Context, id int) error {
 	return nil
 }
 
+// deriveClusterNameFromKey produces a human-readable name from an
+// auto_cluster_key. The result is used when creating a dismissed
+// placeholder row for a cluster that has no existing database record.
+func deriveClusterNameFromKey(autoKey string) string {
+	parts := strings.SplitN(autoKey, ":", 2)
+	if len(parts) != 2 {
+		return autoKey
+	}
+	prefix, suffix := parts[0], parts[1]
+	switch prefix {
+	case "spock":
+		return suffix + " Spock"
+	case "binary":
+		return "binary-" + suffix
+	case "standalone":
+		return "standalone-" + suffix
+	case "logical":
+		return "logical-" + suffix
+	default:
+		return autoKey
+	}
+}
+
+// DeleteAutoDetectedCluster soft-deletes an auto-detected cluster by
+// its auto_cluster_key. If no database record exists for the key, a
+// dismissed placeholder is created so the topology builder skips the
+// cluster on subsequent refreshes.
+func (d *Datastore) DeleteAutoDetectedCluster(ctx context.Context, autoKey string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var clusterID int
+	err := d.pool.QueryRow(ctx,
+		`SELECT id FROM clusters WHERE auto_cluster_key = $1`,
+		autoKey,
+	).Scan(&clusterID)
+
+	if err != nil {
+		name := deriveClusterNameFromKey(autoKey)
+		_, insertErr := d.pool.Exec(ctx, `
+            INSERT INTO clusters (name, auto_cluster_key, dismissed)
+            VALUES ($1, $2, TRUE)
+        `, name, autoKey)
+		if insertErr != nil {
+			return fmt.Errorf("failed to create dismissed cluster record: %w", insertErr)
+		}
+		return nil
+	}
+
+	_, err = d.pool.Exec(ctx,
+		`UPDATE clusters SET dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to dismiss cluster: %w", err)
+	}
+
+	_, err = d.pool.Exec(ctx,
+		`UPDATE connections SET cluster_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE cluster_id = $1`,
+		clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to detach connections from dismissed cluster: %w", err)
+	}
+
+	return nil
+}
+
 // GetClusterOverrides returns a map of auto_cluster_key -> clusterOverride
 // for all clusters that have an auto_cluster_key set. This is used to
 // apply custom names and descriptions to auto-detected clusters in the

@@ -114,7 +114,7 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 	// returns allConnections=true for superusers and wildcard token
 	// scopes; otherwise it returns the explicit set of visible IDs.
 	if h.rbacChecker != nil {
-		lister := newConnectionVisibilityLister(h.datastore)
+		lister := database.NewVisibilityLister(h.datastore)
 		accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
 		if err != nil {
 			log.Printf("[ERROR] Failed to resolve visible connections for timeline: %v", err)

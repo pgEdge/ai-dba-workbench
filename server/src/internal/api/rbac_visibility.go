@@ -39,7 +39,7 @@ func resolveVisibleConnectionSet(ctx context.Context, rbac *auth.RBACChecker, ds
 	if rbac == nil {
 		return nil, true, nil
 	}
-	lister := newConnectionVisibilityLister(ds)
+	lister := database.NewVisibilityLister(ds)
 	ids, all, err := rbac.VisibleConnectionIDs(ctx, lister)
 	if err != nil {
 		return nil, false, err

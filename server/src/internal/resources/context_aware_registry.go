@@ -12,7 +12,6 @@ package resources
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -31,15 +30,37 @@ type ContextAwareRegistry struct {
 	clientManager   *database.ClientManager
 	customResources map[string]customResource
 	cfg             *config.Config
-	authStore       *auth.AuthStore     // Auth store for connection sessions
-	datastore       *database.Datastore // Datastore for monitored connection info
-	rbacChecker     *auth.RBACChecker   // RBAC checker for privilege-based access control
+	authStore       *auth.AuthStore          // Auth store for connection sessions
+	datastore       *database.Datastore      // Datastore for monitored connection info
+	rbacChecker     *auth.RBACChecker        // RBAC checker for privilege-based access control
+	clientResolver  *database.ClientResolver // Resolver for per-token database clients
 }
 
 // customResource represents a user-defined resource
 type customResource struct {
 	definition mcp.Resource
 	handler    ContextAwareHandler
+}
+
+// authSessionAdapter adapts auth.AuthStore to database.SessionProvider
+// This allows the database package to retrieve session data without importing auth
+type authSessionAdapter struct {
+	store *auth.AuthStore
+}
+
+func (a *authSessionAdapter) GetConnectionSession(tokenHash string) (*database.ConnectionSession, error) {
+	s, err := a.store.GetConnectionSession(tokenHash)
+	if err != nil || s == nil {
+		return nil, err
+	}
+	return &database.ConnectionSession{
+		ConnectionID: s.ConnectionID,
+		DatabaseName: s.DatabaseName,
+	}, nil
+}
+
+func (a *authSessionAdapter) ClearConnectionSession(tokenHash string) error {
+	return a.store.ClearConnectionSession(tokenHash)
 }
 
 // NewContextAwareRegistry creates a new context-aware resource registry
@@ -49,6 +70,22 @@ func NewContextAwareRegistry(clientManager *database.ClientManager, cfg *config.
 		sharingLookup = datastore.GetConnectionSharingInfo
 	}
 	rbacChecker := auth.NewRBACCheckerWithSharing(authStore, sharingLookup)
+
+	// Build the ClientResolver for per-token database client resolution
+	var clientResolver *database.ClientResolver
+	if clientManager != nil {
+		clientResolver = &database.ClientResolver{
+			TokenExtractor: auth.GetTokenHashFromContext,
+			ClientManager:  clientManager,
+		}
+		// Add session-based resolution if authStore and datastore are available
+		if authStore != nil && datastore != nil {
+			clientResolver.Sessions = &authSessionAdapter{store: authStore}
+			clientResolver.Access = rbacChecker
+			clientResolver.ConnInfo = datastore
+		}
+	}
+
 	return &ContextAwareRegistry{
 		clientManager:   clientManager,
 		customResources: make(map[string]customResource),
@@ -56,6 +93,7 @@ func NewContextAwareRegistry(clientManager *database.ClientManager, cfg *config.
 		authStore:       authStore,
 		datastore:       datastore,
 		rbacChecker:     rbacChecker,
+		clientResolver:  clientResolver,
 	}
 }
 
@@ -298,71 +336,8 @@ func (r *ContextAwareRegistry) readConnectionInfo(ctx context.Context) (mcp.Reso
 
 // getClient returns the appropriate database client based on authentication state
 func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client, error) {
-	// Get per-token client
-	tokenHash := auth.GetTokenHashFromContext(ctx)
-	if tokenHash == "" {
-		return nil, fmt.Errorf("no authentication token found in request context")
+	if r.clientResolver != nil {
+		return r.clientResolver.ResolveClient(ctx)
 	}
-
-	// Check if there's a selected connection in the session
-	if r.authStore != nil && r.datastore != nil {
-		session, err := r.authStore.GetConnectionSession(tokenHash)
-		if err != nil {
-			// Log warning but continue to fallback
-			fmt.Fprintf(os.Stderr, "WARNING: Failed to get connection session: %v\n", err)
-		}
-
-		if session != nil {
-			// Verify the token still has access to this connection.
-			// The session may have been established before token scope
-			// was restricted; enforce the scope at use-time.
-			if r.rbacChecker != nil {
-				canAccess, _ := r.rbacChecker.CanAccessConnection(ctx, session.ConnectionID)
-				if !canAccess {
-					// Clear the stale session so subsequent calls get
-					// a clean "no connection selected" error.
-					//nolint:errcheck // Best effort cleanup; we return the access denied error regardless
-					r.authStore.ClearConnectionSession(tokenHash)
-					return nil, fmt.Errorf("access denied: the selected connection is no longer accessible with this token's scope. Please select a permitted connection")
-				}
-			}
-
-			// Get connection info from datastore
-			conn, password, err := r.datastore.GetConnectionWithPassword(ctx, session.ConnectionID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get connection info: %w", err)
-			}
-
-			// Build connection string with optional database override
-			var databaseOverride string
-			if session.DatabaseName != nil {
-				databaseOverride = *session.DatabaseName
-			}
-			connStr := r.datastore.BuildConnectionString(conn, password, databaseOverride)
-
-			// Get or create client using the session helper
-			sessionInfo := &database.SessionInfo{
-				TokenHash:    tokenHash,
-				ConnectionID: session.ConnectionID,
-				DatabaseName: session.DatabaseName,
-			}
-			client, err := r.clientManager.GetClientForSession(sessionInfo, connStr)
-			if err != nil {
-				return nil, fmt.Errorf("failed to connect to selected database: %w", err)
-			}
-
-			return client, nil
-		}
-
-		// No connection selected - return helpful error
-		return nil, fmt.Errorf("no database connection selected. Please select a database connection using your client interface (CLI or web client)")
-	}
-
-	// Fallback: Get or create client for this token using default config
-	client, err := r.clientManager.GetOrCreateClient(tokenHash, true)
-	if err != nil {
-		return nil, fmt.Errorf("no database connection configured for this token: %w", err)
-	}
-
-	return client, nil
+	return nil, fmt.Errorf("no database connection configured")
 }

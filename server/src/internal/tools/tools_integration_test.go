@@ -109,13 +109,13 @@ func newToolsTestPool(t *testing.T) (*pgxpool.Pool, *database.Datastore, func())
 }
 
 // ---------------------------------------------------------------------------
-// newDatastoreVisibilityLister: non-nil datastore path
+// database.NewVisibilityLister: non-nil datastore path
 // ---------------------------------------------------------------------------
 
-// TestNewDatastoreVisibilityListerNonNil complements the nil-datastore unit
+// TestNewVisibilityListerNonNilIntegration complements the nil-datastore unit
 // test by verifying that a non-nil *database.Datastore produces a usable
 // lister whose GetAllConnections method queries the real datastore.
-func TestNewDatastoreVisibilityListerNonNil(t *testing.T) {
+func TestNewVisibilityListerNonNilIntegration(t *testing.T) {
 	pool, ds, cleanup := newToolsTestPool(t)
 	defer cleanup()
 
@@ -126,7 +126,7 @@ func TestNewDatastoreVisibilityListerNonNil(t *testing.T) {
 		t.Fatalf("failed to seed connections row: %v", err)
 	}
 
-	lister := newDatastoreVisibilityLister(ds)
+	lister := database.NewVisibilityLister(ds)
 	if lister == nil {
 		t.Fatal("expected non-nil lister for non-nil datastore")
 	}

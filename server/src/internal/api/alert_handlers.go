@@ -125,7 +125,7 @@ func (h *AlertHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	// RBAC: restrict to visible connections. VisibleConnectionIDs loads
 	// sharing info once and returns the full allow-list including owned
 	// connections and shared ones the caller may see.
-	lister := newConnectionVisibilityLister(h.datastore)
+	lister := database.NewVisibilityLister(h.datastore)
 	accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for alerts: %v", err)
@@ -195,7 +195,7 @@ func (h *AlertHandler) handleAlertCounts(w http.ResponseWriter, r *http.Request)
 	// datastore work so a zero-grant caller never hits the alerts table.
 	// Visibility includes owned and shared connections, not just
 	// group/token grants.
-	lister := newConnectionVisibilityLister(h.datastore)
+	lister := database.NewVisibilityLister(h.datastore)
 	accessibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(r.Context(), lister)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for alert counts: %v", err)

@@ -50,10 +50,11 @@ func (m *mockAccessChecker) CanAccessConnection(ctx context.Context, connectionI
 
 // mockConnInfoProvider implements ConnectionInfoProvider for testing
 type mockConnInfoProvider struct {
-	conn         *MonitoredConnection
-	password     string
-	getError     error
-	builtConnStr string
+	conn                     *MonitoredConnection
+	password                 string
+	getError                 error
+	builtConnStr             string
+	receivedDatabaseOverride string
 }
 
 func (m *mockConnInfoProvider) GetConnectionWithPassword(ctx context.Context, connectionID int) (*MonitoredConnection, string, error) {
@@ -64,6 +65,7 @@ func (m *mockConnInfoProvider) GetConnectionWithPassword(ctx context.Context, co
 }
 
 func (m *mockConnInfoProvider) BuildConnectionString(conn *MonitoredConnection, password string, databaseOverride string) string {
+	m.receivedDatabaseOverride = databaseOverride
 	return m.builtConnStr
 }
 
@@ -296,6 +298,11 @@ func TestClientResolver_ResolveClient_WithDatabaseOverride(t *testing.T) {
 		if err != nil {
 			t.Errorf("unexpected access denied error: %v", err)
 		}
+	}
+
+	// Verify databaseOverride was passed correctly to BuildConnectionString
+	if connInfo.receivedDatabaseOverride != dbName {
+		t.Errorf("expected databaseOverride %q, got %q", dbName, connInfo.receivedDatabaseOverride)
 	}
 }
 

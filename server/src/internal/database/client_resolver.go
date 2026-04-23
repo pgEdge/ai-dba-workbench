@@ -124,6 +124,9 @@ func (r *ClientResolver) ResolveClient(ctx context.Context) (*Client, error) {
 			connStr := r.ConnInfo.BuildConnectionString(conn, password, databaseOverride)
 
 			// Get or create client using the session helper
+			if r.ClientManager == nil {
+				return nil, fmt.Errorf("no client manager configured")
+			}
 			sessionInfo := &SessionInfo{
 				TokenHash:    tokenHash,
 				ConnectionID: session.ConnectionID,

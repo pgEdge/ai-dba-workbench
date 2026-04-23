@@ -60,10 +60,10 @@ func TestServerStatusCaseSQL(t *testing.T) {
 
 		trimmed := strings.TrimSpace(result)
 		if !strings.HasPrefix(trimmed, "CASE") {
-			t.Errorf("Expected output to start with CASE, got: %s", trimmed[:20])
+			t.Errorf("Expected output to start with CASE, got: %s", trimmed)
 		}
 		if !strings.HasSuffix(trimmed, "END") {
-			t.Errorf("Expected output to end with END, got: %s", trimmed[len(trimmed)-20:])
+			t.Errorf("Expected output to end with END, got: %s", trimmed)
 		}
 	})
 

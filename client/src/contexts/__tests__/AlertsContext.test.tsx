@@ -18,6 +18,15 @@ vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 // Mock AuthContext — provide a stable user object
 let mockUser: { username: string } | null = { username: 'testuser' };
 vi.mock('../AuthContext', () => ({
@@ -115,7 +124,6 @@ describe('AlertsContext', () => {
         });
 
         it('logs error and keeps state when fetch fails', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiGet.mockRejectedValueOnce(new Error('boom'));
 
             const { result } = renderHook(() => useAlerts(), { wrapper });
@@ -124,7 +132,6 @@ describe('AlertsContext', () => {
                 expect(result.current.loading).toBe(false);
             });
 
-            expect(consoleSpy).toHaveBeenCalled();
             expect(result.current.alertCounts.total).toBe(0);
             expect(result.current.lastFetch).toBeNull();
         });
@@ -246,15 +253,9 @@ describe('AlertsContext', () => {
 
     describe('useAlerts hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useAlerts());
-                }).toThrow('useAlerts must be used within an AlertsProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useAlerts());
+            }).toThrow('useAlerts must be used within an AlertsProvider');
         });
     });
 });

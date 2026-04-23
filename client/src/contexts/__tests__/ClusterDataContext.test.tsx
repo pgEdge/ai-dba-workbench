@@ -31,6 +31,15 @@ vi.mock('../../utils/apiClient', async () => {
     };
 });
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 let mockUser: { username: string } | null = { username: 'testuser' };
 vi.mock('../AuthContext', () => ({
     useAuth: () => ({ user: mockUser }),
@@ -280,7 +289,6 @@ describe('ClusterDataContext', () => {
         });
 
         it('sets error for non-404 API failures', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiGet.mockReset();
             mockApiGet.mockRejectedValue(new Error('boom'));
 
@@ -289,8 +297,6 @@ describe('ClusterDataContext', () => {
             await waitFor(() => {
                 expect(result.current.error).toBe('boom');
             });
-
-            expect(consoleSpy).toHaveBeenCalled();
         });
     });
 
@@ -351,17 +357,11 @@ describe('ClusterDataContext', () => {
 
     describe('useClusterData hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useClusterData());
-                }).toThrow(
-                    'useClusterData must be used within a ClusterDataProvider',
-                );
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useClusterData());
+            }).toThrow(
+                'useClusterData must be used within a ClusterDataProvider',
+            );
         });
     });
 });

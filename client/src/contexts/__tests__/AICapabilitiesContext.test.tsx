@@ -21,6 +21,15 @@ vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 import { apiGet } from '../../utils/apiClient';
 const mockApiGet = apiGet as unknown as ReturnType<typeof vi.fn>;
 
@@ -118,15 +127,9 @@ describe('AICapabilitiesContext', () => {
 
     describe('useAICapabilities hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useAICapabilities());
-                }).toThrow('useAICapabilities must be used within an AICapabilitiesProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useAICapabilities());
+            }).toThrow('useAICapabilities must be used within an AICapabilitiesProvider');
         });
     });
 });

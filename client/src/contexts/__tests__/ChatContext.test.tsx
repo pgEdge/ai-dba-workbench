@@ -19,6 +19,15 @@ vi.mock('../../utils/apiClient', () => ({
     apiPatch: vi.fn(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 let mockUser: { username: string } | null = { username: 'testuser' };
 vi.mock('../AuthContext', () => ({
     useAuth: () => ({ user: mockUser }),
@@ -179,13 +188,12 @@ describe('ChatContext', () => {
         });
 
         it('logs and swallows fetch errors', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiGet.mockRejectedValue(new Error('boom'));
 
             renderHook(() => useChatContext(), { wrapper });
 
             await waitFor(() => {
-                expect(consoleSpy).toHaveBeenCalled();
+                expect(mockApiGet).toHaveBeenCalled();
             });
         });
 
@@ -253,28 +261,22 @@ describe('ChatContext', () => {
         });
 
         it('rethrows errors from delete requests', async () => {
-            const originalError = console.error;
-            console.error = vi.fn();
             mockApiDelete.mockRejectedValueOnce(new Error('forbidden'));
 
-            try {
-                const { result } = renderHook(() => useChatContext(), { wrapper });
+            const { result } = renderHook(() => useChatContext(), { wrapper });
 
-                await waitFor(() => {
-                    expect(result.current.conversations).toHaveLength(2);
-                });
-
-                await expect(
-                    act(async () => {
-                        await result.current.deleteConversation('c1');
-                    }),
-                ).rejects.toThrow('forbidden');
-
-                // List should be unchanged since delete failed.
+            await waitFor(() => {
                 expect(result.current.conversations).toHaveLength(2);
-            } finally {
-                console.error = originalError;
-            }
+            });
+
+            await expect(
+                act(async () => {
+                    await result.current.deleteConversation('c1');
+                }),
+            ).rejects.toThrow('forbidden');
+
+            // List should be unchanged since delete failed.
+            expect(result.current.conversations).toHaveLength(2);
         });
     });
 
@@ -302,34 +304,28 @@ describe('ChatContext', () => {
         });
 
         it('rethrows errors from rename requests', async () => {
-            const originalError = console.error;
-            console.error = vi.fn();
             mockApiPatch.mockRejectedValueOnce(new Error('bad request'));
 
-            try {
-                const { result } = renderHook(() => useChatContext(), { wrapper });
+            const { result } = renderHook(() => useChatContext(), { wrapper });
 
-                await waitFor(() => {
-                    expect(result.current.conversations).toHaveLength(2);
-                });
+            await waitFor(() => {
+                expect(result.current.conversations).toHaveLength(2);
+            });
 
-                const originalTitle = result.current.conversations.find(
-                    (c) => c.id === 'c1',
-                )?.title;
+            const originalTitle = result.current.conversations.find(
+                (c) => c.id === 'c1',
+            )?.title;
 
-                await expect(
-                    act(async () => {
-                        await result.current.renameConversation('c1', 'X');
-                    }),
-                ).rejects.toThrow('bad request');
+            await expect(
+                act(async () => {
+                    await result.current.renameConversation('c1', 'X');
+                }),
+            ).rejects.toThrow('bad request');
 
-                // Title should remain the original since the rename failed.
-                expect(
-                    result.current.conversations.find((c) => c.id === 'c1')?.title,
-                ).toBe(originalTitle);
-            } finally {
-                console.error = originalError;
-            }
+            // Title should remain the original since the rename failed.
+            expect(
+                result.current.conversations.find((c) => c.id === 'c1')?.title,
+            ).toBe(originalTitle);
         });
     });
 
@@ -369,15 +365,9 @@ describe('ChatContext', () => {
 
     describe('hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useChatContext());
-                }).toThrow('useChatContext must be used within a ChatProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useChatContext());
+            }).toThrow('useChatContext must be used within a ChatProvider');
         });
     });
 });

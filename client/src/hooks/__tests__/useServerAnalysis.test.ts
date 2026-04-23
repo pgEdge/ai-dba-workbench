@@ -14,8 +14,8 @@ import {
     useServerAnalysis,
     clearAnalysisCache,
     hasCachedServerAnalysis,
-    ServerAnalysisInput,
 } from '../useServerAnalysis';
+import type { ServerSelection, ClusterSelection } from '../../types/selection';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -94,24 +94,36 @@ vi.mock('../../utils/textHelpers', () => ({
 
 let testCounter = 0;
 
-function makeServerInput(overrides: Partial<ServerAnalysisInput> = {}): ServerAnalysisInput {
+function makeServerInput(overrides: Partial<ServerSelection> = {}): ServerSelection {
     return {
         type: 'server',
         id: testCounter,
         name: `Test Server ${testCounter}`,
+        status: 'online',
+        description: '',
+        host: 'localhost',
+        port: 5432,
+        role: 'primary',
+        version: '16',
+        database: 'postgres',
+        username: 'postgres',
+        os: 'linux',
+        platform: 'x86_64',
         ...overrides,
     };
 }
 
-function makeClusterInput(overrides: Partial<ServerAnalysisInput> = {}): ServerAnalysisInput {
+function makeClusterInput(overrides: Partial<ClusterSelection> = {}): ClusterSelection {
     return {
         type: 'cluster',
         id: `cluster-${testCounter}`,
         name: `Test Cluster ${testCounter}`,
+        status: 'online',
+        description: '',
         servers: [
             { id: 1, name: 'Primary' },
             { id: 2, name: 'Replica' },
-        ],
+        ] as ClusterSelection['servers'],
         serverIds: [1, 2],
         ...overrides,
     };
@@ -405,12 +417,11 @@ describe('useServerAnalysis', () => {
     it('handles serverIds without servers array', async () => {
         const { result } = renderHook(() => useServerAnalysis());
 
-        const input: ServerAnalysisInput = {
-            type: 'cluster',
+        const input = makeClusterInput({
             id: 'cluster-test',
             name: 'Test Cluster',
             serverIds: [1, 2],
-        };
+        });
 
         await act(async () => {
             await result.current.analyze(input);
@@ -463,10 +474,10 @@ describe('useServerAnalysis', () => {
 
         // Analyze as cluster with same id
         await act(async () => {
-            await result.current.analyze(makeClusterInput({ type: 'cluster', id: 1 }));
+            await result.current.analyze(makeClusterInput({ id: '1' }));
         });
 
         expect(hasCachedServerAnalysis('server', 1)).toBe(true);
-        expect(hasCachedServerAnalysis('cluster', 1)).toBe(true);
+        expect(hasCachedServerAnalysis('cluster', '1')).toBe(true);
     });
 });

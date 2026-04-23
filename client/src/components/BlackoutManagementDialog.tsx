@@ -42,6 +42,7 @@ import {
     Add as AddIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/BlackoutContext';
+import type { Selection } from '../types/selection';
 import BlackoutDialog from './BlackoutDialog';
 import BlackoutScheduleDialog from './BlackoutScheduleDialog';
 import DeleteConfirmationDialog from './DeleteConfirmationDialog';
@@ -172,7 +173,7 @@ const formatTimeRange = (startTime: string, endTime: string): string => {
 interface BlackoutManagementDialogProps {
     open: boolean;
     onClose: () => void;
-    selection: Record<string, unknown> | null;
+    selection: Selection | null;
 }
 
 // ---- Main component ----

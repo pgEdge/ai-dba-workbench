@@ -125,7 +125,8 @@ describe('AlertsContext', () => {
         });
 
         it('logs error and keeps state when fetch fails', async () => {
-            mockApiGet.mockRejectedValueOnce(new Error('boom'));
+            const boom = new Error('boom');
+            mockApiGet.mockRejectedValueOnce(boom);
 
             const { result } = renderHook(() => useAlerts(), { wrapper });
 
@@ -135,7 +136,7 @@ describe('AlertsContext', () => {
 
             expect(result.current.alertCounts.total).toBe(0);
             expect(result.current.lastFetch).toBeNull();
-            expect(logger.error).toHaveBeenCalled();
+            expect(logger.error).toHaveBeenCalledWith('Error fetching alert counts:', boom);
         });
 
         it('fetchAlertCounts is a no-op when user is null', async () => {

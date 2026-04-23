@@ -197,10 +197,12 @@ describe('ChatContext', () => {
                 expect(mockApiGet).toHaveBeenCalled();
             });
 
-            expect(logger.error).toHaveBeenCalledWith(
-                'Failed to fetch conversations:',
-                expect.any(Error),
-            );
+            await waitFor(() => {
+                expect(logger.error).toHaveBeenCalledWith(
+                    'Failed to fetch conversations:',
+                    expect.any(Error),
+                );
+            });
         });
 
         it('does not fetch when user is null', async () => {

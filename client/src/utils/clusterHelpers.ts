@@ -8,6 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
+import type { EstateSelection, ClusterSelection } from '../types/selection';
+
 /**
  * Server-like object with optional nested children. This interface
  * is intentionally loose so the helper works with both the cluster
@@ -42,20 +44,14 @@ export function collectServers<T extends ServerLike>(servers: T[]): T[] {
  * groups → clusters → servers (including nested children).
  */
 export const extractEstateServerIds = (
-    selection: Record<string, unknown>
+    selection: EstateSelection
 ): number[] => {
     const ids = new Set<number>();
-    const groups = selection.groups as
-        Array<Record<string, unknown>> | undefined;
 
-    groups?.forEach(group => {
-        const clusters = group.clusters as
-            Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const servers = cluster.servers as
-                ServerLike[] | undefined;
-            if (servers) {
-                collectServers(servers).forEach(s => {
+    selection.groups.forEach(group => {
+        group.clusters?.forEach(cluster => {
+            if (cluster.servers) {
+                collectServers(cluster.servers as ServerLike[]).forEach(s => {
                     ids.add(s.id);
                 });
             }
@@ -70,12 +66,10 @@ export const extractEstateServerIds = (
  * servers and their nested children.
  */
 export const extractClusterServerIds = (
-    selection: Record<string, unknown>
+    selection: ClusterSelection
 ): number[] => {
-    const servers = selection.servers as
-        ServerLike[] | undefined;
-    if (!servers) { return []; }
-    return [...new Set(collectServers(servers).map(s => s.id))];
+    if (!selection.servers) { return []; }
+    return [...new Set(collectServers(selection.servers as ServerLike[]).map(s => s.id))];
 };
 
 /**
@@ -93,20 +87,14 @@ export interface ServerCounts {
  * if it has active alerts, and "online" otherwise.
  */
 export const computeEstateServerCounts = (
-    selection: Record<string, unknown>
+    selection: EstateSelection
 ): ServerCounts => {
     const counts: ServerCounts = { online: 0, warning: 0, offline: 0 };
-    const groups = selection.groups as
-        Array<Record<string, unknown>> | undefined;
 
-    groups?.forEach(group => {
-        const clusters = group.clusters as
-            Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const servers = cluster.servers as
-                ServerLike[] | undefined;
-            if (servers) {
-                collectServers(servers).forEach(s => {
+    selection.groups.forEach(group => {
+        group.clusters?.forEach(cluster => {
+            if (cluster.servers) {
+                collectServers(cluster.servers as ServerLike[]).forEach(s => {
                     const rec = s as Record<string, unknown>;
                     const status = rec.status as string;
                     const alertCount = rec.active_alert_count as
@@ -131,20 +119,14 @@ export const computeEstateServerCounts = (
  * children.
  */
 export const countEstateServers = (
-    selection: Record<string, unknown>
+    selection: EstateSelection
 ): number => {
-    const groups = selection.groups as
-        Array<Record<string, unknown>> | undefined;
     let count = 0;
 
-    groups?.forEach(group => {
-        const clusters = group.clusters as
-            Array<Record<string, unknown>> | undefined;
-        clusters?.forEach(cluster => {
-            const servers = cluster.servers as
-                ServerLike[] | undefined;
-            if (servers) {
-                count += collectServers(servers).length;
+    selection.groups.forEach(group => {
+        group.clusters?.forEach(cluster => {
+            if (cluster.servers) {
+                count += collectServers(cluster.servers as ServerLike[]).length;
             }
         });
     });

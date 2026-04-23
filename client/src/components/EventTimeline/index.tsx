@@ -44,17 +44,18 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
     }, [timeRange]);
 
     // Stable string key for serverIds to use in dependency arrays
-    const serverIdsKey = selection?.serverIds?.join(',');
+    const serverIdsKey = selection?.type === 'cluster' ? selection.serverIds?.join(',') : undefined;
 
     // Close detail panel when selection changes
+    const selectionId = selection && 'id' in selection ? selection.id : undefined;
     useEffect(() => {
         setSelectedEvents(null);
-    }, [selection?.type, selection?.id, serverIdsKey]);
+    }, [selection?.type, selectionId, serverIdsKey]);
 
     // Determine connection ID(s) based on selection - memoize to prevent unnecessary re-fetches
     const connectionId = selection?.type === 'server' ? selection.id : null;
     const connectionIds = useMemo(
-        () => (selection?.type !== 'server' ? selection?.serverIds : null),
+        () => (selection?.type === 'cluster' ? selection.serverIds : null),
         // Only recreate when serverIds actually changes (by value, not reference)
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [selection?.type, serverIdsKey]

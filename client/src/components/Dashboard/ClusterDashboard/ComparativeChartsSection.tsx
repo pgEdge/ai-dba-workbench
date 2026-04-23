@@ -17,6 +17,7 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
+import { logger } from '../../../utils/logger';
 
 interface ComparativeChartsSectionProps {
     serverIds: number[];
@@ -113,7 +114,7 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching comparative metrics:', err);
+            logger.error('Error fetching comparative metrics:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch metrics');
             }

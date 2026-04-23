@@ -35,6 +35,7 @@ import { useClusterData } from '../../contexts/ClusterDataContext';
 import { useDashboard } from '../../contexts/DashboardContext';
 import { apiPost, apiGet, apiDelete, ApiError } from '../../utils/apiClient';
 import { collectServers } from '../../utils/clusterHelpers';
+import { logger } from '../../utils/logger';
 import EventTimeline from '../EventTimeline';
 import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
@@ -362,7 +363,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             // Refresh alerts to show updated status
             fetchAlertsData();
         } catch (err) {
-            console.error('Error acknowledging alert:', err);
+            logger.error('Error acknowledging alert:', err);
         } finally {
             setAckDialogOpen(false);
             setSelectedAlertForAck(null);
@@ -384,7 +385,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             }
             fetchAlertsData();
         } catch (err) {
-            console.error('Error acknowledging alerts:', err);
+            logger.error('Error acknowledging alerts:', err);
         } finally {
             setAckDialogOpen(false);
             setSelectedAlertForAck(null);
@@ -402,7 +403,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
         // For server selections, require a valid ID
         if (selection.type === 'server' && (selection.id === undefined || selection.id === null)) {
-            console.warn('Server selection missing ID, skipping alert fetch');
+            logger.warn('Server selection missing ID, skipping alert fetch');
             setAlerts([]);
             setLoading(false);
             return;
@@ -445,7 +446,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             setAlerts(merged);
             initialLoadDoneRef.current = true;
         } catch (err) {
-            console.error('Error fetching alerts:', err);
+            logger.error('Error fetching alerts:', err);
             setAlerts([]);
         } finally {
             setLoading(false);
@@ -518,7 +519,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     ? `Failed to restore alert: ${err.message}`
                     : 'Failed to restore alert';
             setErrorMessage(message);
-            console.error('Error unacknowledging alert:', err);
+            logger.error('Error unacknowledging alert:', err);
         } finally {
             unacknowledgingRef.current.delete(alertId);
             setUnacknowledgingIds(prev => {

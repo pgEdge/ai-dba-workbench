@@ -28,6 +28,7 @@ import useTheme from '@mui/material/styles/useTheme';
 import { ChartProps, ChartData } from './types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
 import { CHART_CONTAINER_SX, CHART_PAPER_SX, CHART_TITLE_SX } from './styles';
+import { logger } from '../../utils/logger';
 import { useEChartsTheme } from './ChartThemeBridge';
 import { exportChartAsPng } from './utils/exportPng';
 import { getMarkerSymbol } from './utils/markers';
@@ -264,7 +265,7 @@ export function Chart(props: ChartProps) {
                 setLiveData(refreshed);
             })
             .catch((err: unknown) => {
-                console.error('Chart refresh failed:', err);
+                logger.error('Chart refresh failed:', err);
             });
     }, [onDataRefresh]);
 

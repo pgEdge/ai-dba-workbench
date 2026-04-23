@@ -28,6 +28,7 @@ import {
     Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
+import { logger } from '../../utils/logger';
 import { ApiError } from '../../utils/apiClient';
 import { clearAnalysisCache } from '../../hooks/useServerAnalysis';
 import { useOverviewSSE } from '../../hooks/useOverviewSSE';
@@ -184,7 +185,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                 // User is not authenticated; suppress the error silently
                 setError(null);
             } else {
-                console.error('Failed to fetch AI overview:', err);
+                logger.error('Failed to fetch AI overview:', err);
                 setError('Unable to load AI overview');
             }
         } finally {

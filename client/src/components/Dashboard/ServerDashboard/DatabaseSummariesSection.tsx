@@ -23,6 +23,7 @@ import Sparkline from '../Sparkline';
 import { getDashboardTileSx } from '../styles';
 import { MetricDataPoint } from '../types';
 import { formatNumber } from '../../../utils/formatters';
+import { logger } from '../../../utils/logger';
 import {
     ServerSectionProps,
     DatabaseSummary,
@@ -138,7 +139,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching database summaries:', err);
+            logger.error('Error fetching database summaries:', err);
             if (isMountedRef.current) {
                 setError(
                     (err as Error).message

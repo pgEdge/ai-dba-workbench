@@ -19,6 +19,7 @@ import KpiTile from '../KpiTile';
 import { formatNumber } from '../../../utils/formatters';
 import { KPI_GRID_SX } from '../styles';
 import { countEstateServers } from '../../../utils/clusterHelpers';
+import { logger } from '../../../utils/logger';
 
 interface KpiTilesSectionProps {
     selection: Record<string, unknown>;
@@ -114,7 +115,7 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
 
             initialLoadDoneRef.current = true;
         } catch (err) {
-            console.error('Error fetching estate KPI data:', err);
+            logger.error('Error fetching estate KPI data:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch KPI data');
             }

@@ -48,6 +48,7 @@ import ClusterConfigDialog from '../ClusterConfigDialog';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import AddMenu from '../AddMenu';
 import { apiFetch } from '../../utils/apiClient';
+import { logger } from '../../utils/logger';
 
 // Import sub-components
 import { STORAGE_KEYS } from './constants';
@@ -466,7 +467,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             setServerDialogMode('edit');
             setServerDialogOpen(true);
         } catch (err) {
-            console.error('Failed to get server details:', err);
+            logger.error('Failed to get server details:', err);
             // Fall back to using the limited data we have
             setEditingServer(server);
             setServerDialogMode('edit');
@@ -649,7 +650,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             setDeleteTarget(null);
         } catch (error) {
             // Error handling - could show a toast
-            console.error('Delete failed:', error);
+            logger.error('Delete failed:', error);
         } finally {
             setDeleteLoading(false);
         }
@@ -689,7 +690,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                 dragData.cluster.name
             );
         } catch (error) {
-            console.error('Failed to move cluster:', error);
+            logger.error('Failed to move cluster:', error);
         }
     };
 

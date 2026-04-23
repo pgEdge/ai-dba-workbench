@@ -28,6 +28,7 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/DashboardContext';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
+import { logger } from '../../../utils/logger';
 import { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX, spinKeyframes } from '../styles';
 import KpiTile from '../KpiTile';
@@ -201,7 +202,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching query detail:', err);
+            logger.error('Error fetching query detail:', err);
             if (isMountedRef.current) {
                 setError(
                     (err as Error).message

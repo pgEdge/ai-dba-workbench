@@ -12,6 +12,7 @@ import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { Box, Typography, Button, Paper, Container } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { logger } from '../utils/logger';
 
 interface ErrorBoundaryProps {
     children: ReactNode;
@@ -98,8 +99,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
     componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
         // Log the error to the console for debugging
-        console.error('ErrorBoundary caught an error:', error);
-        console.error('Error info:', errorInfo);
+        logger.error('ErrorBoundary caught an error:', error);
+        logger.error('Error info:', errorInfo);
 
         // Store error info for display
         this.setState({ errorInfo });

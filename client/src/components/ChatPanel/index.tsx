@@ -37,6 +37,7 @@ import ThinkingIndicator from './ThinkingIndicator';
 import ConversationHistory from './ConversationHistory';
 import { getDownloadButtonSx } from '../shared/MarkdownExports';
 import { downloadAsMarkdown } from '../../utils/downloadMarkdown';
+import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -407,7 +408,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         const ids = conversations.map(c => c.id);
         for (const id of ids) {
             deleteConversation(id).catch((err) => {
-                console.error('Failed to delete conversation:', id, err);
+                logger.error('Failed to delete conversation:', id, err);
             });
         }
     }, [conversations, deleteConversation]);

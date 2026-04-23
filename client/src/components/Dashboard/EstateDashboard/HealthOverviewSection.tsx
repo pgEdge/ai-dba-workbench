@@ -17,6 +17,7 @@ import { Chart } from '../../Chart';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { computeEstateServerCounts } from '../../../utils/clusterHelpers';
+import { logger } from '../../../utils/logger';
 
 interface HealthOverviewSectionProps {
     selection: Record<string, unknown>;
@@ -96,7 +97,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching alert counts:', err);
+            logger.error('Error fetching alert counts:', err);
         } finally {
             if (isMountedRef.current) {
                 setAlertsLoading(false);

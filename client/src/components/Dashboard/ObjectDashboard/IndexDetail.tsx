@@ -21,6 +21,7 @@ import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
+import { logger } from '../../../utils/logger';
 import {
     ObjectDetailProps,
     IndexDetailData,
@@ -106,7 +107,7 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching index detail:', err);
+            logger.error('Error fetching index detail:', err);
             if (isMountedRef.current) {
                 setError(
                     (err as Error).message

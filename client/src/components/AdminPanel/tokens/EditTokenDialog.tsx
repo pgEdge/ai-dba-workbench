@@ -171,7 +171,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
                     options={availableConnectionOptions}
                     getOptionLabel={(option) => option.name || ''}
                     value={null}
-                    onChange={(_e, value) => handleAddConnection(value)}
+                    onChange={(_e, value) => { handleAddConnection(value); }}
                     renderInput={(params) => (
                         <TextField
                             {...params}

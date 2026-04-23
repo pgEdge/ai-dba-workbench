@@ -167,7 +167,7 @@ describe('ScopeMultiSelect', () => {
 
         const deleteButton = chip?.querySelector('[data-testid="CancelIcon"]');
         expect(deleteButton).toBeTruthy();
-        fireEvent.click(deleteButton as Element);
+        fireEvent.click(deleteButton!);
         expect(onChange).toHaveBeenCalled();
     });
 });

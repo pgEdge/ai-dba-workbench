@@ -202,7 +202,11 @@ describe('EditTokenDialog', () => {
         });
 
         fireEvent.click(screen.getByRole('option', { name: 'Primary DB' }));
-        expect(onScopedConnectionsChange).toHaveBeenCalled();
+        expect(onScopedConnectionsChange).toHaveBeenCalledWith(
+            expect.arrayContaining([
+                expect.objectContaining({ id: 1, name: 'Primary DB' }),
+            ]),
+        );
     });
 
     it('filters out already selected connections from dropdown', async () => {

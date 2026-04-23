@@ -24,7 +24,7 @@ curl -s -H "Authorization: Bearer <token>" \\
 # Create a connection
 curl -s -X POST -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
-  -d '{"name": "mydb", "host": "localhost", "port": 5432, "database": "mydb", "username": "postgres", "password": "<your-password>"}' \\
+  -d '{"name": "mydb", "host": "localhost", "port": 5432, "database": "mydb", "username": "postgres", "password": "..."}' \\
   <server-url>/api/v1/connections
 
 # Delete a connection

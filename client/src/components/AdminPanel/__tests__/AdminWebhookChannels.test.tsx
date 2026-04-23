@@ -189,13 +189,13 @@ describe('AdminWebhookChannels', () => {
         expect(createButton).toBeDisabled();
 
         // Fill in name only
-        await user.type(screen.getByLabelText('Name *'), 'New Webhook');
+        fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'New Webhook' } });
 
         // Should still be disabled (missing endpoint_url)
         expect(createButton).toBeDisabled();
 
         // Fill in endpoint URL
-        await user.type(screen.getByLabelText('Endpoint URL *'), 'https://test.com/hook');
+        fireEvent.change(screen.getByLabelText('Endpoint URL *'), { target: { value: 'https://test.com/hook' } });
 
         // Now should be enabled
         expect(createButton).not.toBeDisabled();
@@ -218,8 +218,8 @@ describe('AdminWebhookChannels', () => {
             expect(screen.getByText('Create webhook channel')).toBeInTheDocument();
         });
 
-        await user.type(screen.getByLabelText('Name *'), 'New Webhook');
-        await user.type(screen.getByLabelText('Endpoint URL *'), 'https://test.com/hook');
+        fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'New Webhook' } });
+        fireEvent.change(screen.getByLabelText('Endpoint URL *'), { target: { value: 'https://test.com/hook' } });
 
         await user.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -255,8 +255,7 @@ describe('AdminWebhookChannels', () => {
 
         // Clear and change the name
         const nameField = screen.getByLabelText('Name *');
-        await user.clear(nameField);
-        await user.type(nameField, 'Updated Webhook Name');
+        fireEvent.change(nameField, { target: { value: 'Updated Webhook Name' } });
 
         await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -373,8 +372,8 @@ describe('AdminWebhookChannels', () => {
             expect(screen.getByText('Create webhook channel')).toBeInTheDocument();
         });
 
-        await user.type(screen.getByLabelText('Name *'), 'New Webhook');
-        await user.type(screen.getByLabelText('Endpoint URL *'), 'https://test.com/hook');
+        fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'New Webhook' } });
+        fireEvent.change(screen.getByLabelText('Endpoint URL *'), { target: { value: 'https://test.com/hook' } });
         await user.click(screen.getByRole('button', { name: 'Create' }));
 
         await waitFor(() => {
@@ -401,8 +400,8 @@ describe('AdminWebhookChannels', () => {
             });
 
             // Fill required fields first
-            await user.type(screen.getByLabelText('Name *'), 'Test');
-            await user.type(screen.getByLabelText('Endpoint URL *'), 'https://test.com');
+            fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'Test' } });
+            fireEvent.change(screen.getByLabelText('Endpoint URL *'), { target: { value: 'https://test.com' } });
 
             // Navigate to Headers tab
             await user.click(screen.getByRole('tab', { name: 'Headers' }));
@@ -415,8 +414,8 @@ describe('AdminWebhookChannels', () => {
             // Fill in header key and value
             const keyField = screen.getByLabelText('Key');
             const valueField = screen.getByLabelText('Value');
-            await user.type(keyField, 'X-Custom-Header');
-            await user.type(valueField, 'custom-value');
+            fireEvent.change(keyField, { target: { value: 'X-Custom-Header' } });
+            fireEvent.change(valueField, { target: { value: 'custom-value' } });
 
             // Verify the "No custom headers" message is gone
             expect(screen.queryByText('No custom headers configured.')).not.toBeInTheDocument();
@@ -473,8 +472,7 @@ describe('AdminWebhookChannels', () => {
             await user.click(screen.getByRole('tab', { name: 'Headers' }));
 
             const keyField = screen.getByDisplayValue('Content-Type');
-            await user.clear(keyField);
-            await user.type(keyField, 'X-New-Header');
+            fireEvent.change(keyField, { target: { value: 'X-New-Header' } });
 
             expect(screen.getByDisplayValue('X-New-Header')).toBeInTheDocument();
         });
@@ -750,8 +748,8 @@ describe('AdminWebhookChannels', () => {
                 expect(screen.getByText('Create webhook channel')).toBeInTheDocument();
             });
 
-            await user.type(screen.getByLabelText('Name *'), 'New Webhook');
-            await user.type(screen.getByLabelText('Endpoint URL *'), 'https://test.com/hook');
+            fireEvent.change(screen.getByLabelText('Name *'), { target: { value: 'New Webhook' } });
+            fireEvent.change(screen.getByLabelText('Endpoint URL *'), { target: { value: 'https://test.com/hook' } });
             await user.click(screen.getByRole('button', { name: 'Create' }));
 
             await waitFor(() => {

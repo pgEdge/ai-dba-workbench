@@ -228,9 +228,9 @@ describe('AdminEmailChannels', () => {
             const dialog = screen.getByRole('dialog');
 
             // Fill in required fields
-            await user.type(getFieldByLabel(dialog, 'Name'), 'New Email Channel');
-            await user.type(getFieldByLabel(dialog, 'SMTP Host'), 'smtp.new.com');
-            await user.type(getFieldByLabel(dialog, 'From Address'), 'new@example.com');
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'New Email Channel' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.new.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'new@example.com' } });
 
             // Create button should now be enabled
             const createButton = within(dialog).getByRole('button', { name: /Create/i });
@@ -270,14 +270,13 @@ describe('AdminEmailChannels', () => {
             const dialog = screen.getByRole('dialog');
 
             // Fill in required fields with invalid port
-            await user.type(getFieldByLabel(dialog, 'Name'), 'Test');
-            await user.type(getFieldByLabel(dialog, 'SMTP Host'), 'smtp.test.com');
-            await user.type(getFieldByLabel(dialog, 'From Address'), 'test@test.com');
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'Test' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.test.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'test@test.com' } });
 
             // Clear port and type invalid value
             const portField = getFieldByLabel(dialog, 'SMTP Port');
-            await user.clear(portField);
-            await user.type(portField, '99999');
+            fireEvent.change(portField, { target: { value: '99999' } });
 
             await user.click(within(dialog).getByRole('button', { name: /Create/i }));
 
@@ -353,8 +352,7 @@ describe('AdminEmailChannels', () => {
 
             // Change only the name
             const nameField = getFieldByLabel(dialog, 'Name');
-            await user.clear(nameField);
-            await user.type(nameField, 'Updated Email');
+            fireEvent.change(nameField, { target: { value: 'Updated Email' } });
 
             await user.click(within(dialog).getByRole('button', { name: /Save/i }));
 
@@ -529,9 +527,9 @@ describe('AdminEmailChannels', () => {
 
             const dialog = screen.getByRole('dialog');
 
-            await user.type(getFieldByLabel(dialog, 'Name'), 'Test');
-            await user.type(getFieldByLabel(dialog, 'SMTP Host'), 'smtp.test.com');
-            await user.type(getFieldByLabel(dialog, 'From Address'), 'test@test.com');
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'Test' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.test.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'test@test.com' } });
 
             await user.click(within(dialog).getByRole('button', { name: /Create/i }));
 
@@ -560,9 +558,9 @@ describe('AdminEmailChannels', () => {
 
             const dialog = screen.getByRole('dialog');
 
-            await user.type(getFieldByLabel(dialog, 'Name'), 'Test');
-            await user.type(getFieldByLabel(dialog, 'SMTP Host'), 'smtp.test.com');
-            await user.type(getFieldByLabel(dialog, 'From Address'), 'test@test.com');
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'Test' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.test.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'test@test.com' } });
 
             await user.click(within(dialog).getByRole('button', { name: /Create/i }));
 
@@ -657,8 +655,8 @@ describe('AdminEmailChannels', () => {
             const emailInput = screen.getByPlaceholderText('Email address');
             const nameInput = screen.getByPlaceholderText('Display name');
 
-            await user.type(emailInput, 'newrecipient@test.com');
-            await user.type(nameInput, 'New Recipient');
+            fireEvent.change(emailInput, { target: { value: 'newrecipient@test.com' } });
+            fireEvent.change(nameInput, { target: { value: 'New Recipient' } });
 
             await user.click(screen.getByRole('button', { name: /Add/i }));
 
@@ -687,7 +685,7 @@ describe('AdminEmailChannels', () => {
             await user.click(screen.getByRole('tab', { name: /Recipients/i }));
 
             const emailInput = screen.getByPlaceholderText('Email address');
-            await user.type(emailInput, 'temp@test.com');
+            fireEvent.change(emailInput, { target: { value: 'temp@test.com' } });
 
             await user.click(screen.getByRole('button', { name: /Add/i }));
 
@@ -732,7 +730,7 @@ describe('AdminEmailChannels', () => {
             await user.click(screen.getByRole('tab', { name: /Recipients/i }));
 
             const emailInput = screen.getByPlaceholderText('Email address');
-            await user.type(emailInput, 'newuser@example.com');
+            fireEvent.change(emailInput, { target: { value: 'newuser@example.com' } });
 
             await user.click(screen.getByRole('button', { name: /Add/i }));
 
@@ -776,7 +774,7 @@ describe('AdminEmailChannels', () => {
             await user.click(screen.getByRole('tab', { name: /Recipients/i }));
 
             const emailInput = screen.getByPlaceholderText('Email address');
-            await user.type(emailInput, 'newuser@example.com');
+            fireEvent.change(emailInput, { target: { value: 'newuser@example.com' } });
 
             await user.click(screen.getByRole('button', { name: /Add/i }));
 
@@ -815,7 +813,7 @@ describe('AdminEmailChannels', () => {
             await user.click(screen.getByRole('tab', { name: /Recipients/i }));
 
             const emailInput = screen.getByPlaceholderText('Email address');
-            await user.type(emailInput, 'newuser@example.com');
+            fireEvent.change(emailInput, { target: { value: 'newuser@example.com' } });
 
             await user.click(screen.getByRole('button', { name: /Add/i }));
 
@@ -1149,9 +1147,9 @@ describe('AdminEmailChannels', () => {
 
             const dialog = screen.getByRole('dialog');
 
-            await user.type(getFieldByLabel(dialog, 'Name'), 'New Channel');
-            await user.type(getFieldByLabel(dialog, 'SMTP Host'), 'smtp.new.com');
-            await user.type(getFieldByLabel(dialog, 'From Address'), 'new@example.com');
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'New Channel' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.new.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'new@example.com' } });
 
             await user.click(within(dialog).getByRole('button', { name: /Create/i }));
 
@@ -1205,13 +1203,13 @@ describe('AdminEmailChannels', () => {
             const dialog = screen.getByRole('dialog');
 
             // Fill in required fields
-            await user.type(getFieldByLabel(dialog, 'Name'), 'New Channel');
-            await user.type(getFieldByLabel(dialog, 'SMTP Host'), 'smtp.new.com');
-            await user.type(getFieldByLabel(dialog, 'From Address'), 'new@example.com');
+            fireEvent.change(getFieldByLabel(dialog, 'Name'), { target: { value: 'New Channel' } });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Host'), { target: { value: 'smtp.new.com' } });
+            fireEvent.change(getFieldByLabel(dialog, 'From Address'), { target: { value: 'new@example.com' } });
 
             // Add a pending recipient
             await user.click(within(dialog).getByRole('tab', { name: /Recipients/i }));
-            await user.type(within(dialog).getByPlaceholderText('Email address'), 'pending@test.com');
+            fireEvent.change(within(dialog).getByPlaceholderText('Email address'), { target: { value: 'pending@test.com' } });
             await user.click(within(dialog).getByRole('button', { name: /^Add$/i }));
 
             await waitFor(() => {

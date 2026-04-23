@@ -175,6 +175,39 @@ func (d *Datastore) getClaimedAutoClusterKeys(ctx context.Context, defaultGroupI
 	return claimed, nil
 }
 
+// getDismissedAutoClusterKeys returns auto_cluster_keys for clusters
+// that have been dismissed (soft-deleted). The topology builder uses
+// this set to suppress clusters the user has hidden.
+func (d *Datastore) getDismissedAutoClusterKeys(ctx context.Context) (map[string]bool, error) {
+	query := `
+        SELECT auto_cluster_key
+        FROM clusters
+        WHERE auto_cluster_key IS NOT NULL
+          AND dismissed = TRUE
+    `
+
+	rows, err := d.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query dismissed cluster keys: %w", err)
+	}
+	defer rows.Close()
+
+	dismissed := make(map[string]bool)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("failed to scan dismissed key: %w", err)
+		}
+		dismissed[key] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating dismissed keys: %w", err)
+	}
+
+	return dismissed, nil
+}
+
 // buildAutoDetectedClusters builds a map of auto_cluster_key -> TopologyCluster
 // This is used to get server information for auto-detected clusters that have been
 // moved to manual groups

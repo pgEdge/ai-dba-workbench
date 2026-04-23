@@ -234,3 +234,40 @@ func containsClusterID(summaries []ClusterSummary, id int) bool {
 	}
 	return false
 }
+
+func TestGetDismissedAutoClusterKeys(t *testing.T) {
+	ds, pool, cleanup := newClusterDismissTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	groupID := insertClusterDismissTestGroup(t, pool)
+
+	_, err := pool.Exec(ctx, `
+        INSERT INTO clusters (name, auto_cluster_key, group_id, dismissed)
+        VALUES ('active-cluster', 'spock:active', $1, FALSE),
+               ('dismissed-cluster', 'spock:dismissed', $1, TRUE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("failed to seed clusters: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `
+        INSERT INTO clusters (name, group_id, dismissed)
+        VALUES ('manual-cluster', $1, FALSE)
+    `, groupID)
+	if err != nil {
+		t.Fatalf("failed to seed manual cluster: %v", err)
+	}
+
+	dismissed, err := ds.getDismissedAutoClusterKeys(ctx)
+	if err != nil {
+		t.Fatalf("getDismissedAutoClusterKeys failed: %v", err)
+	}
+
+	if len(dismissed) != 1 {
+		t.Fatalf("expected 1 dismissed key, got %d: %v", len(dismissed), dismissed)
+	}
+	if !dismissed["spock:dismissed"] {
+		t.Fatalf("expected spock:dismissed in set, got %v", dismissed)
+	}
+}

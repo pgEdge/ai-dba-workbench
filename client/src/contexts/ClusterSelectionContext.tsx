@@ -12,6 +12,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { useAuth } from './AuthContext';
 import { useClusterData, ClusterServer, ClusterEntry } from './ClusterDataContext';
 import { apiPost, apiGet, apiDelete } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 export type SelectionType = 'server' | 'cluster' | 'estate' | null;
 
@@ -62,7 +63,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
             );
             setCurrentConnection(data);
         } catch (err) {
-            console.error('Error setting current connection:', err);
+            logger.error('Error setting current connection:', err);
         }
     }, [user]);
 
@@ -100,7 +101,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
             await apiDelete('/api/v1/connections/current');
             setCurrentConnection(null);
         } catch (err) {
-            console.error('Error clearing current connection:', err);
+            logger.error('Error clearing current connection:', err);
         }
     }, [user]);
 

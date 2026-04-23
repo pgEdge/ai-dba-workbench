@@ -14,6 +14,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { apiGet } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 export interface AlertCounts {
     total: number;
@@ -74,7 +75,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
                 setLastFetch(new Date());
             }
         } catch (err) {
-            console.error('Error fetching alert counts:', err);
+            logger.error('Error fetching alert counts:', err);
         } finally {
             if (isMountedRef.current) {
                 setLoading(false);

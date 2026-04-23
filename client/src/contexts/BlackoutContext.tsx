@@ -11,6 +11,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 export interface Blackout {
     id: number;
@@ -141,7 +142,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
             setBlackouts(blackoutsData.blackouts || []);
             setSchedules(schedulesData.schedules || []);
         } catch (err) {
-            console.error('Error fetching blackouts:', err);
+            logger.error('Error fetching blackouts:', err);
             setError((err as Error).message);
         } finally {
             if (isInitialLoadRef.current) {

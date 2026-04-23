@@ -14,6 +14,7 @@ import { apiGet, apiPost } from '../utils/apiClient';
 import { clearAlertAnalysisCache } from '../hooks/useAlertAnalysis';
 import { clearChartAnalysisCache } from '../hooks/useChartAnalysis';
 import { clearAnalysisCache as clearServerAnalysisCache } from '../hooks/useServerAnalysis';
+import { logger } from '../utils/logger';
 
 // Wildcard entry in admin_permissions that grants every admin permission.
 // Mirrors the server-side constant AdminPermissionWildcard in
@@ -86,7 +87,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                 setAdminPermissions([]);
             }
         } catch (error) {
-            console.error('Auth check failed:', error);
+            logger.error('Auth check failed:', error);
             // Invalid or expired session - clear it
             setUser(null);
             setAdminPermissions([]);
@@ -139,7 +140,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
             // Call logout endpoint to clear the httpOnly cookie on the server
             await apiPost('/api/v1/auth/logout');
         } catch (error) {
-            console.error('Logout request failed:', error);
+            logger.error('Logout request failed:', error);
             // Continue with local logout even if server request fails
         }
         clearAlertAnalysisCache();

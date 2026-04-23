@@ -545,9 +545,16 @@ func TestBaseMetricsProbeEnsurePartition(t *testing.T) {
 	// The actual functionality is tested via integration tests.
 	t.Run("method has correct signature", func(t *testing.T) {
 		// This compiles only if the signature matches the expected type.
-		// The blank identifier assignment ensures the compiler verifies
-		// the method signature without triggering unused variable warnings.
-		_ = bp.EnsurePartition
+		// We use a type alias to make the explicit type check intentional
+		// and avoid the linter's "type will be inferred" warning.
+		type ensurePartitionFunc func(
+			context.Context,
+			*pgxpool.Conn,
+			time.Time,
+		) error
+
+		var fn ensurePartitionFunc = bp.EnsurePartition
+		_ = fn
 	})
 
 	// Verify that a probe embedding BaseMetricsProbe inherits EnsurePartition.
@@ -560,8 +567,17 @@ func TestBaseMetricsProbeEnsurePartition(t *testing.T) {
 			BaseMetricsProbe: BaseMetricsProbe{config: config},
 		}
 
-		// This compiles only if EnsurePartition is inherited from BaseMetricsProbe.
-		_ = ep.EnsurePartition
+		// This compiles only if EnsurePartition is inherited from BaseMetricsProbe
+		// with the expected signature. We use a type alias to make the explicit
+		// type check intentional.
+		type ensurePartitionFunc func(
+			context.Context,
+			*pgxpool.Conn,
+			time.Time,
+		) error
+
+		var fn ensurePartitionFunc = ep.EnsurePartition
+		_ = fn
 	})
 }
 

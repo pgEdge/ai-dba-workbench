@@ -586,26 +586,26 @@ func TestBaseMetricsProbeEnsurePartition(t *testing.T) {
 // other connections untouched.
 func TestInvalidateFeatureCache(t *testing.T) {
 	// Seed the cache with entries for two connections.
-	featureCache.Store("conn1:view_x", true)
-	featureCache.Store("conn1:view_y", false)
-	featureCache.Store("conn2:view_x", true)
+	featureCache.Store(featureCacheKey{connectionName: "conn1", checkName: "view_x"}, true)
+	featureCache.Store(featureCacheKey{connectionName: "conn1", checkName: "view_y"}, false)
+	featureCache.Store(featureCacheKey{connectionName: "conn2", checkName: "view_x"}, true)
 
 	InvalidateFeatureCache("conn1")
 
 	// conn1 entries are gone.
-	if _, ok := featureCache.Load("conn1:view_x"); ok {
+	if _, ok := featureCache.Load(featureCacheKey{connectionName: "conn1", checkName: "view_x"}); ok {
 		t.Error("expected conn1:view_x to be invalidated")
 	}
-	if _, ok := featureCache.Load("conn1:view_y"); ok {
+	if _, ok := featureCache.Load(featureCacheKey{connectionName: "conn1", checkName: "view_y"}); ok {
 		t.Error("expected conn1:view_y to be invalidated")
 	}
 	// conn2 entry is untouched.
-	if _, ok := featureCache.Load("conn2:view_x"); !ok {
+	if _, ok := featureCache.Load(featureCacheKey{connectionName: "conn2", checkName: "view_x"}); !ok {
 		t.Error("expected conn2:view_x to survive")
 	}
 
 	// Clean up.
-	featureCache.Delete("conn2:view_x")
+	featureCache.Delete(featureCacheKey{connectionName: "conn2", checkName: "view_x"})
 }
 
 // TestInvalidateFeatureCache_NoEntries verifies that InvalidateFeatureCache
@@ -685,16 +685,9 @@ func TestWrapQuery(t *testing.T) {
 // TestCachedCheck verifies the cachedCheck function behavior for caching
 // feature detection results.
 func TestCachedCheck(t *testing.T) {
-	// Helper to clean up cache entries after each test.
-	cleanup := func(keys ...string) {
-		for _, k := range keys {
-			featureCache.Delete(k)
-		}
-	}
-
 	t.Run("cache miss calls checkFn and caches result", func(t *testing.T) {
-		key := "test_conn:view_exists"
-		defer cleanup(key)
+		key := featureCacheKey{connectionName: "test_conn", checkName: "view_exists"}
+		defer featureCache.Delete(key)
 
 		callCount := 0
 		checkFn := func() (bool, error) {
@@ -722,8 +715,8 @@ func TestCachedCheck(t *testing.T) {
 	})
 
 	t.Run("cache hit returns cached value without calling checkFn", func(t *testing.T) {
-		key := "test_conn2:cached_view"
-		defer cleanup(key)
+		key := featureCacheKey{connectionName: "test_conn2", checkName: "cached_view"}
+		defer featureCache.Delete(key)
 
 		// Pre-populate the cache.
 		featureCache.Store(key, false)
@@ -747,8 +740,8 @@ func TestCachedCheck(t *testing.T) {
 	})
 
 	t.Run("error from checkFn returns error without caching", func(t *testing.T) {
-		key := "test_conn3:error_check"
-		defer cleanup(key)
+		key := featureCacheKey{connectionName: "test_conn3", checkName: "error_check"}
+		defer featureCache.Delete(key)
 
 		expectedErr := fmt.Errorf("database connection failed")
 		checkFn := func() (bool, error) {
@@ -773,8 +766,8 @@ func TestCachedCheck(t *testing.T) {
 	})
 
 	t.Run("type assertion failure returns error for invalid cached type", func(t *testing.T) {
-		key := "test_conn4:invalid_type"
-		defer cleanup(key)
+		key := featureCacheKey{connectionName: "test_conn4", checkName: "invalid_type"}
+		defer featureCache.Delete(key)
 
 		// Pre-populate the cache with an invalid type (string instead of bool).
 		featureCache.Store(key, "not a bool")
@@ -791,15 +784,15 @@ func TestCachedCheck(t *testing.T) {
 		if result {
 			t.Error("expected result to be false on type assertion failure")
 		}
-		// Verify the error message mentions the key.
-		if !strings.Contains(err.Error(), key) {
-			t.Errorf("error should mention the key %q: %v", key, err)
+		// Verify the error message mentions the connection and check names.
+		if !strings.Contains(err.Error(), "test_conn4") || !strings.Contains(err.Error(), "invalid_type") {
+			t.Errorf("error should mention connection and check names: %v", err)
 		}
 	})
 
 	t.Run("caches false result", func(t *testing.T) {
-		key := "test_conn5:false_result"
-		defer cleanup(key)
+		key := featureCacheKey{connectionName: "test_conn5", checkName: "false_result"}
+		defer featureCache.Delete(key)
 
 		callCount := 0
 		checkFn := func() (bool, error) {

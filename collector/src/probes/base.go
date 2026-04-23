@@ -34,10 +34,17 @@ func WrapQuery(probeName, query string) string {
 	)
 }
 
+// featureCacheKey is a typed key for the feature cache that avoids
+// the ambiguity of string keys containing colons.
+type featureCacheKey struct {
+	connectionName string
+	checkName      string
+}
+
 // featureCache stores boolean feature-detection results keyed by
-// "connectionName:checkName". View and column existence checks never
-// change during the lifetime of a PostgreSQL connection, so caching
-// them avoids repeated catalog queries on every collection cycle.
+// featureCacheKey. View and column existence checks never change
+// during the lifetime of a PostgreSQL connection, so caching them
+// avoids repeated catalog queries on every collection cycle.
 var featureCache sync.Map
 
 // InvalidateFeatureCache removes all cached feature-detection
@@ -45,9 +52,8 @@ var featureCache sync.Map
 // monitored connection is recycled or its pool is refreshed
 // so that stale view/extension checks do not persist.
 func InvalidateFeatureCache(connectionName string) {
-	prefix := connectionName + ":"
 	featureCache.Range(func(key, _ any) bool {
-		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+		if k, ok := key.(featureCacheKey); ok && k.connectionName == connectionName {
 			featureCache.Delete(key)
 		}
 		return true
@@ -58,11 +64,11 @@ func InvalidateFeatureCache(connectionName string) {
 // check identified by connectionName and checkName. If no cached value
 // exists, it calls checkFn, caches the result, and returns it.
 func cachedCheck(connectionName, checkName string, checkFn func() (bool, error)) (bool, error) {
-	key := connectionName + ":" + checkName
+	key := featureCacheKey{connectionName: connectionName, checkName: checkName}
 	if val, ok := featureCache.Load(key); ok {
 		boolVal, ok2 := val.(bool)
 		if !ok2 {
-			return false, fmt.Errorf("cached value for %s is not a bool", key)
+			return false, fmt.Errorf("cached value for %+v is not a bool", key)
 		}
 		return boolVal, nil
 	}

@@ -183,22 +183,21 @@ func TestNormalizeDatabaseNameHashConsistency(t *testing.T) {
 // database connection. The function delegates to ComputeMetricsHash, which
 // is already tested. These tests verify the normalization integration.
 func TestHasDataChangedNormalization(t *testing.T) {
-	t.Run("normalization function is called when provided", func(t *testing.T) {
-		called := false
-		normalizer := func(m []map[string]any) []map[string]any {
-			called = true
-			return m
+	t.Run("normalization changes hash when key names differ", func(t *testing.T) {
+		raw := []map[string]any{{"_database_name": "mydb", "extname": "plpgsql"}}
+		normalized := normalizeDatabaseName(raw)
+
+		rawHash, err := ComputeMetricsHash(raw)
+		if err != nil {
+			t.Fatalf("raw hash error: %v", err)
+		}
+		normalizedHash, err := ComputeMetricsHash(normalized)
+		if err != nil {
+			t.Fatalf("normalized hash error: %v", err)
 		}
 
-		metrics := []map[string]any{{"key": "value"}}
-
-		// We cannot call HasDataChanged without a database connection,
-		// but we can verify normalization is applied by the normalizeDatabaseName
-		// function directly.
-		_ = normalizer(metrics)
-
-		if !called {
-			t.Error("normalizer function was not called")
+		if rawHash == normalizedHash {
+			t.Fatal("expected normalized metrics to produce a different hash from raw metrics")
 		}
 	})
 
@@ -230,28 +229,48 @@ func TestHasDataChangedNormalization(t *testing.T) {
 // tests even though we cannot run them without a database.
 func TestHasDataChangedScenarios(t *testing.T) {
 	t.Run("scenario: no stored data with current data returns true", func(t *testing.T) {
-		// When storedMetrics is empty but currentMetrics has data,
-		// HasDataChanged should return (true, nil) to indicate data has
-		// changed (first collection).
-		//
-		// This is verified by the implementation: the empty stored slice
-		// hashes differently from a non-empty current slice.
-		t.Log("Verified by code inspection: empty stored vs non-empty current returns true")
+		currentHash, err := ComputeMetricsHash([]map[string]any{{"k": "v"}})
+		if err != nil {
+			t.Fatalf("current hash error: %v", err)
+		}
+		storedHash, err := ComputeMetricsHash([]map[string]any{})
+		if err != nil {
+			t.Fatalf("stored hash error: %v", err)
+		}
+		if currentHash == storedHash {
+			t.Fatal("expected different hashes for non-empty current vs empty stored")
+		}
 	})
 
 	t.Run("scenario: identical metrics returns false", func(t *testing.T) {
-		// When current and stored metrics produce the same hash,
-		// HasDataChanged returns (false, nil).
-		//
-		// This is verified by the implementation:
-		//   return currentHash != storedHash, nil
-		t.Log("Verified by code inspection: identical hashes return false")
+		metrics := []map[string]any{{"key": "value"}}
+		hash1, err := ComputeMetricsHash(metrics)
+		if err != nil {
+			t.Fatalf("hash1 error: %v", err)
+		}
+		hash2, err := ComputeMetricsHash(metrics)
+		if err != nil {
+			t.Fatalf("hash2 error: %v", err)
+		}
+		if hash1 != hash2 {
+			t.Fatal("expected identical hashes for identical metrics")
+		}
 	})
 
 	t.Run("scenario: different metrics returns true", func(t *testing.T) {
-		// When current and stored metrics produce different hashes,
-		// HasDataChanged returns (true, nil).
-		t.Log("Verified by code inspection: different hashes return true")
+		metrics1 := []map[string]any{{"key": "value1"}}
+		metrics2 := []map[string]any{{"key": "value2"}}
+		hash1, err := ComputeMetricsHash(metrics1)
+		if err != nil {
+			t.Fatalf("hash1 error: %v", err)
+		}
+		hash2, err := ComputeMetricsHash(metrics2)
+		if err != nil {
+			t.Fatalf("hash2 error: %v", err)
+		}
+		if hash1 == hash2 {
+			t.Fatal("expected different hashes for different metrics")
+		}
 	})
 
 	t.Run("scenario: both empty returns false (zero-row convergence)", func(t *testing.T) {

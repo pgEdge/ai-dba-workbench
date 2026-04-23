@@ -904,23 +904,43 @@ func (h *ClusterHandler) deleteAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
-	autoKey := computeAutoClusterKey(clusterID)
-	if autoKey == "" {
-		RespondError(w, http.StatusBadRequest, "Invalid auto-detected cluster ID")
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if err := h.datastore.DeleteAutoDetectedCluster(ctx, autoKey); err != nil {
-		log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to delete auto-detected cluster")
+	// For Spock clusters, the key is unambiguous
+	if strings.HasPrefix(clusterID, "cluster-spock-") {
+		prefix := strings.TrimPrefix(clusterID, "cluster-spock-")
+		autoKey := "spock:" + prefix
+		if err := h.datastore.DeleteAutoDetectedCluster(ctx, autoKey); err != nil {
+			log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
+			RespondError(w, http.StatusInternalServerError, "Failed to delete auto-detected cluster")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	// For server-{id}, multiple auto_cluster_key prefixes share the same ID.
+	// The topology builder may have created a binary, standalone, or logical
+	// cluster depending on the connection's replication role. Since we cannot
+	// know which type it was from the ID alone, we dismiss all candidate keys.
+	if strings.HasPrefix(clusterID, "server-") {
+		idStr := strings.TrimPrefix(clusterID, "server-")
+		candidates := []string{
+			"binary:" + idStr,
+			"standalone:" + idStr,
+			"logical:" + idStr,
+		}
+		if err := h.datastore.DismissAutoDetectedClusterKeys(ctx, candidates); err != nil {
+			log.Printf("[ERROR] Failed to delete auto-detected cluster %s: %v", logging.SanitizeForLog(clusterID), err) //nolint:gosec // G706: clusterID passed through logging.SanitizeForLog
+			RespondError(w, http.StatusInternalServerError, "Failed to delete auto-detected cluster")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	RespondError(w, http.StatusBadRequest, "Invalid auto-detected cluster ID")
 }
 
 // computeAutoClusterKey computes the auto_cluster_key from a cluster ID

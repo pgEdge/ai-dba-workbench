@@ -105,7 +105,7 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/clusters/list` | List all clusters as a flat list. |
 | GET | `/api/v1/clusters/{id}` | Get a cluster by ID. |
 | PUT | `/api/v1/clusters/{id}` | Update a cluster. |
-| DELETE | `/api/v1/clusters/{id}` | Delete a cluster (soft-deletes auto-detected clusters). |
+| DELETE | `/api/v1/clusters/{id}` | Delete a cluster; accepts numeric, server-{id}, or cluster-spock-{prefix} IDs. |
 | GET | `/api/v1/clusters/{id}/servers` | List servers in a cluster. |
 | POST | `/api/v1/clusters/{id}/servers` | Add a server to a cluster. |
 | DELETE | `/api/v1/clusters/{id}/servers/{connectionId}` | Remove a server from a cluster. |

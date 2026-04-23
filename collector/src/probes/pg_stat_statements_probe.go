@@ -110,28 +110,12 @@ func (p *PgStatStatementsProbe) checkHasBlkReadTime(ctx context.Context, conn *p
 	return hasColumn, nil
 }
 
-// checkExtensionAvailable checks if pg_stat_statements extension is installed
-func (p *PgStatStatementsProbe) checkExtensionAvailable(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
-	var exists bool
-	err := conn.QueryRow(ctx, `
-        SELECT EXISTS(
-            SELECT 1
-            FROM pg_extension
-            WHERE extname = 'pg_stat_statements'
-        )
-    `).Scan(&exists)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check for pg_stat_statements extension: %w", err)
-	}
-
-	return exists, nil
-}
-
 // Execute runs the probe against a monitored connection
 func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
-	// Check if extension is available
-	available, err := p.checkExtensionAvailable(ctx, monitoredConn)
+	// Check if extension is available (cached)
+	available, err := cachedCheck(connectionName, "pg_stat_statements_ext", func() (bool, error) {
+		return CheckExtensionExists(ctx, connectionName, monitoredConn, "pg_stat_statements")
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -141,16 +125,20 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 		return []map[string]any{}, nil
 	}
 
-	// Check if we have the new shared_blk_read_time column (PG 17+)
-	hasSharedBlkTime, err := p.checkHasSharedBlkTime(ctx, monitoredConn)
+	// Check if we have the new shared_blk_read_time column (PG 17+) (cached)
+	hasSharedBlkTime, err := cachedCheck(connectionName, "pg_stat_statements_shared_blk_time", func() (bool, error) {
+		return p.checkHasSharedBlkTime(ctx, monitoredConn)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if we have the blk_read_time column (PG 13-16)
+	// Check if we have the blk_read_time column (PG 13-16) (cached)
 	hasBlkReadTime := false
 	if !hasSharedBlkTime {
-		hasBlkReadTime, err = p.checkHasBlkReadTime(ctx, monitoredConn)
+		hasBlkReadTime, err = cachedCheck(connectionName, "pg_stat_statements_blk_read_time", func() (bool, error) {
+			return p.checkHasBlkReadTime(ctx, monitoredConn)
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -391,15 +379,10 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		return nil
 	}
 
-	// Use standard COPY protocol to store metrics
-	if err := StoreMetricsWithCopy(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
+	// Store metrics
+	if err := StoreMetrics(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 
 	return nil
-}
-
-// EnsurePartition ensures a partition exists for the given timestamp
-func (p *PgStatStatementsProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
 }

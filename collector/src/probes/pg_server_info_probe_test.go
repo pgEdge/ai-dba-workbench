@@ -78,11 +78,6 @@ func TestPgServerInfoProbe_GetQuery(t *testing.T) {
 }
 
 func TestPgServerInfoProbe_ComputeMetricsHash(t *testing.T) {
-	config := &ProbeConfig{
-		Name: ProbeNamePgServerInfo,
-	}
-	probe := NewPgServerInfoProbe(config)
-
 	metrics := []map[string]any{
 		{
 			"server_version":        "17.0",
@@ -97,23 +92,23 @@ func TestPgServerInfoProbe_ComputeMetricsHash(t *testing.T) {
 		},
 	}
 
-	hash1, err := probe.computeMetricsHash(metrics)
+	hash1, err := ComputeMetricsHash(metrics)
 	if err != nil {
-		t.Fatalf("computeMetricsHash() returned error: %v", err)
+		t.Fatalf("ComputeMetricsHash() returned error: %v", err)
 	}
 
 	if hash1 == "" {
-		t.Error("computeMetricsHash() returned empty hash")
+		t.Error("ComputeMetricsHash() returned empty hash")
 	}
 
 	// Computing the hash again should return the same value
-	hash2, err := probe.computeMetricsHash(metrics)
+	hash2, err := ComputeMetricsHash(metrics)
 	if err != nil {
-		t.Fatalf("computeMetricsHash() returned error on second call: %v", err)
+		t.Fatalf("ComputeMetricsHash() returned error on second call: %v", err)
 	}
 
 	if hash1 != hash2 {
-		t.Errorf("computeMetricsHash() returned different hashes for same input: %s != %s", hash1, hash2)
+		t.Errorf("ComputeMetricsHash() returned different hashes for same input: %s != %s", hash1, hash2)
 	}
 
 	// Different metrics should produce different hash
@@ -131,31 +126,26 @@ func TestPgServerInfoProbe_ComputeMetricsHash(t *testing.T) {
 		},
 	}
 
-	hash3, err := probe.computeMetricsHash(metricsModified)
+	hash3, err := ComputeMetricsHash(metricsModified)
 	if err != nil {
-		t.Fatalf("computeMetricsHash() returned error for modified metrics: %v", err)
+		t.Fatalf("ComputeMetricsHash() returned error for modified metrics: %v", err)
 	}
 
 	if hash1 == hash3 {
-		t.Error("computeMetricsHash() returned same hash for different input")
+		t.Error("ComputeMetricsHash() returned same hash for different input")
 	}
 }
 
 func TestPgServerInfoProbe_ComputeMetricsHash_EmptyMetrics(t *testing.T) {
-	config := &ProbeConfig{
-		Name: ProbeNamePgServerInfo,
-	}
-	probe := NewPgServerInfoProbe(config)
-
 	metrics := []map[string]any{}
 
-	hash, err := probe.computeMetricsHash(metrics)
+	hash, err := ComputeMetricsHash(metrics)
 	if err != nil {
-		t.Fatalf("computeMetricsHash() returned error for empty metrics: %v", err)
+		t.Fatalf("ComputeMetricsHash() returned error for empty metrics: %v", err)
 	}
 
 	if hash == "" {
-		t.Error("computeMetricsHash() returned empty hash for empty metrics")
+		t.Error("ComputeMetricsHash() returned empty hash for empty metrics")
 	}
 }
 

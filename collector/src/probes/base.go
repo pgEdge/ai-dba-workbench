@@ -13,6 +13,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,28 +22,53 @@ import (
 
 // WrapQuery wraps a SQL query with a probe marker column so the server
 // can identify and filter collector queries from monitoring panels.
+// If the query is empty (after trimming whitespace), it returns an
+// empty string to prevent generating invalid SQL.
 func WrapQuery(probeName, query string) string {
+	if strings.TrimSpace(query) == "" {
+		return ""
+	}
 	return fmt.Sprintf(
 		"SELECT '%s' AS ai_dba_wb_probe, subq.* FROM (%s) AS subq",
 		probeName, query,
 	)
 }
 
+// featureCacheKey is a typed key for the feature cache that avoids
+// the ambiguity of string keys containing colons.
+type featureCacheKey struct {
+	connectionName string
+	checkName      string
+}
+
 // featureCache stores boolean feature-detection results keyed by
-// "connectionName:checkName". View and column existence checks never
-// change during the lifetime of a PostgreSQL connection, so caching
-// them avoids repeated catalog queries on every collection cycle.
+// featureCacheKey. View and column existence checks never change
+// during the lifetime of a PostgreSQL connection, so caching them
+// avoids repeated catalog queries on every collection cycle.
 var featureCache sync.Map
+
+// InvalidateFeatureCache removes all cached feature-detection
+// results for the given connection name. Call this when a
+// monitored connection is recycled or its pool is refreshed
+// so that stale view/extension checks do not persist.
+func InvalidateFeatureCache(connectionName string) {
+	featureCache.Range(func(key, _ any) bool {
+		if k, ok := key.(featureCacheKey); ok && k.connectionName == connectionName {
+			featureCache.Delete(key)
+		}
+		return true
+	})
+}
 
 // cachedCheck returns a cached boolean result for a feature-detection
 // check identified by connectionName and checkName. If no cached value
 // exists, it calls checkFn, caches the result, and returns it.
 func cachedCheck(connectionName, checkName string, checkFn func() (bool, error)) (bool, error) {
-	key := connectionName + ":" + checkName
+	key := featureCacheKey{connectionName: connectionName, checkName: checkName}
 	if val, ok := featureCache.Load(key); ok {
 		boolVal, ok2 := val.(bool)
 		if !ok2 {
-			return false, fmt.Errorf("cached value for %s is not a bool", key)
+			return false, fmt.Errorf("cached value for %+v is not a bool", key)
 		}
 		return boolVal, nil
 	}
@@ -123,4 +149,36 @@ func (bp *BaseMetricsProbe) IsDatabaseScoped() bool {
 // GetConfig returns the probe configuration
 func (bp *BaseMetricsProbe) GetConfig() *ProbeConfig {
 	return bp.config
+}
+
+// CheckViewExists checks whether a view exists in pg_catalog.
+func CheckViewExists(
+	ctx context.Context,
+	conn *pgxpool.Conn,
+	viewName string,
+) (bool, error) {
+	var exists bool
+	err := conn.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM pg_catalog.pg_views
+            WHERE schemaname = 'pg_catalog'
+              AND viewname = $1
+        )
+    `, viewName).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf(
+			"failed to check if view %s exists: %w",
+			viewName, err)
+	}
+	return exists, nil
+}
+
+// EnsurePartition creates the partition for the given timestamp
+// if it does not already exist.
+func (bp *BaseMetricsProbe) EnsurePartition(
+	ctx context.Context,
+	datastoreConn *pgxpool.Conn,
+	timestamp time.Time,
+) error {
+	return EnsurePartition(ctx, datastoreConn, bp.GetTableName(), timestamp)
 }

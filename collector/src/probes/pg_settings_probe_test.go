@@ -84,11 +84,6 @@ func TestPgSettingsProbe_GetQuery(t *testing.T) {
 }
 
 func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
-	config := &ProbeConfig{
-		Name: ProbeNamePgSettings,
-	}
-	probe := NewPgSettingsProbe(config)
-
 	// Test with identical metrics
 	metrics1 := []map[string]any{
 		{
@@ -116,14 +111,14 @@ func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
 		},
 	}
 
-	hash1, err := probe.computeMetricsHash(metrics1)
+	hash1, err := ComputeMetricsHash(metrics1)
 	if err != nil {
-		t.Fatalf("computeMetricsHash(metrics1) error = %v", err)
+		t.Fatalf("ComputeMetricsHash(metrics1) error = %v", err)
 	}
 
-	hash2, err := probe.computeMetricsHash(metrics2)
+	hash2, err := ComputeMetricsHash(metrics2)
 	if err != nil {
-		t.Fatalf("computeMetricsHash(metrics2) error = %v", err)
+		t.Fatalf("ComputeMetricsHash(metrics2) error = %v", err)
 	}
 
 	if hash1 != hash2 {
@@ -144,9 +139,9 @@ func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
 		},
 	}
 
-	hash3, err := probe.computeMetricsHash(metrics3)
+	hash3, err := ComputeMetricsHash(metrics3)
 	if err != nil {
-		t.Fatalf("computeMetricsHash(metrics3) error = %v", err)
+		t.Fatalf("ComputeMetricsHash(metrics3) error = %v", err)
 	}
 
 	if hash1 == hash3 {
@@ -155,20 +150,15 @@ func TestPgSettingsProbe_ComputeMetricsHash(t *testing.T) {
 }
 
 func TestPgSettingsProbe_ComputeMetricsHash_EmptyMetrics(t *testing.T) {
-	config := &ProbeConfig{
-		Name: ProbeNamePgSettings,
-	}
-	probe := NewPgSettingsProbe(config)
-
 	metrics := []map[string]any{}
 
-	hash, err := probe.computeMetricsHash(metrics)
+	hash, err := ComputeMetricsHash(metrics)
 	if err != nil {
-		t.Fatalf("computeMetricsHash(empty) error = %v", err)
+		t.Fatalf("ComputeMetricsHash(empty) error = %v", err)
 	}
 
 	if hash == "" {
-		t.Error("computeMetricsHash(empty) returned empty hash")
+		t.Error("ComputeMetricsHash(empty) returned empty hash")
 	}
 }
 

@@ -19,9 +19,8 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
-// StoreMetricsWithCopy stores metrics using batched INSERT statements
-// Note: Originally used COPY protocol, but pq.CopyIn() doesn't support partitioned tables
-func StoreMetricsWithCopy(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
+// StoreMetrics stores metrics using batched INSERT statements.
+func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
 	if len(values) == 0 {
 		return nil // Nothing to store
 	}

@@ -48,30 +48,12 @@ func (p *PgStatRecoveryPrefetchProbe) GetQuery() string {
     `
 }
 
-// checkViewAvailable checks if pg_stat_recovery_prefetch view exists
-// This view is only available in PostgreSQL 15+
-func (p *PgStatRecoveryPrefetchProbe) checkViewAvailable(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
-	var exists bool
-	err := conn.QueryRow(ctx, `
-        SELECT EXISTS(
-            SELECT 1
-            FROM pg_catalog.pg_views
-            WHERE schemaname = 'pg_catalog'
-            AND viewname = 'pg_stat_recovery_prefetch'
-        )
-    `).Scan(&exists)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check for pg_stat_recovery_prefetch view: %w", err)
-	}
-
-	return exists, nil
-}
-
 // Execute runs the probe against a monitored connection
 func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
-	// Check if view is available
-	available, err := p.checkViewAvailable(ctx, monitoredConn)
+	// Check if view is available (cached)
+	available, err := cachedCheck(connectionName, "pg_stat_recovery_prefetch_exists", func() (bool, error) {
+		return CheckViewExists(ctx, monitoredConn, "pg_stat_recovery_prefetch")
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -130,15 +112,10 @@ func (p *PgStatRecoveryPrefetchProbe) Store(ctx context.Context, datastoreConn *
 		values = append(values, row)
 	}
 
-	// Use COPY protocol to store metrics
-	if err := StoreMetricsWithCopy(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
+	// Store metrics
+	if err := StoreMetrics(ctx, datastoreConn, p.GetTableName(), columns, values); err != nil {
 		return fmt.Errorf("failed to store metrics: %w", err)
 	}
 
 	return nil
-}
-
-// EnsurePartition ensures a partition exists for the given timestamp
-func (p *PgStatRecoveryPrefetchProbe) EnsurePartition(ctx context.Context, datastoreConn *pgxpool.Conn, timestamp time.Time) error {
-	return EnsurePartition(ctx, datastoreConn, p.GetTableName(), timestamp)
 }

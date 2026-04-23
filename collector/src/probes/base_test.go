@@ -10,8 +10,13 @@
 package probes
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // stringer is a test type that implements fmt.Stringer.
@@ -522,4 +527,301 @@ func TestParsePartitionEnd(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBaseMetricsProbeEnsurePartition verifies that BaseMetricsProbe
+// provides an EnsurePartition method that satisfies the MetricsProbe
+// interface. The method delegates to the package-level EnsurePartition
+// function with the probe's table name.
+func TestBaseMetricsProbeEnsurePartition(t *testing.T) {
+	config := &ProbeConfig{
+		Name: "test_probe",
+	}
+	bp := &BaseMetricsProbe{config: config}
+
+	// Verify that BaseMetricsProbe's EnsurePartition method is
+	// available. We cannot call it without a real database connection,
+	// but we verify the method exists with the expected signature.
+	// The actual functionality is tested via integration tests.
+	t.Run("method has correct signature", func(t *testing.T) {
+		// This compiles only if the signature matches the expected type.
+		// We use a type alias to make the explicit type check intentional
+		// and avoid the linter's "type will be inferred" warning.
+		type ensurePartitionFunc func(
+			context.Context,
+			*pgxpool.Conn,
+			time.Time,
+		) error
+
+		var fn ensurePartitionFunc = bp.EnsurePartition
+		_ = fn
+	})
+
+	// Verify that a probe embedding BaseMetricsProbe inherits EnsurePartition.
+	t.Run("embedded probe inherits EnsurePartition", func(t *testing.T) {
+		type embeddingProbe struct {
+			BaseMetricsProbe
+		}
+
+		ep := &embeddingProbe{
+			BaseMetricsProbe: BaseMetricsProbe{config: config},
+		}
+
+		// This compiles only if EnsurePartition is inherited from BaseMetricsProbe
+		// with the expected signature. We use a type alias to make the explicit
+		// type check intentional.
+		type ensurePartitionFunc func(
+			context.Context,
+			*pgxpool.Conn,
+			time.Time,
+		) error
+
+		var fn ensurePartitionFunc = ep.EnsurePartition
+		_ = fn
+	})
+}
+
+// TestInvalidateFeatureCache verifies that InvalidateFeatureCache removes
+// all cached entries for a specific connection while leaving entries for
+// other connections untouched.
+func TestInvalidateFeatureCache(t *testing.T) {
+	// Seed the cache with entries for two connections.
+	featureCache.Store(featureCacheKey{connectionName: "conn1", checkName: "view_x"}, true)
+	featureCache.Store(featureCacheKey{connectionName: "conn1", checkName: "view_y"}, false)
+	featureCache.Store(featureCacheKey{connectionName: "conn2", checkName: "view_x"}, true)
+
+	InvalidateFeatureCache("conn1")
+
+	// conn1 entries are gone.
+	if _, ok := featureCache.Load(featureCacheKey{connectionName: "conn1", checkName: "view_x"}); ok {
+		t.Error("expected conn1:view_x to be invalidated")
+	}
+	if _, ok := featureCache.Load(featureCacheKey{connectionName: "conn1", checkName: "view_y"}); ok {
+		t.Error("expected conn1:view_y to be invalidated")
+	}
+	// conn2 entry is untouched.
+	if _, ok := featureCache.Load(featureCacheKey{connectionName: "conn2", checkName: "view_x"}); !ok {
+		t.Error("expected conn2:view_x to survive")
+	}
+
+	// Clean up.
+	featureCache.Delete(featureCacheKey{connectionName: "conn2", checkName: "view_x"})
+}
+
+// TestInvalidateFeatureCache_NoEntries verifies that InvalidateFeatureCache
+// is a no-op when called for a connection with no cached entries. It should
+// not panic or cause any issues.
+func TestInvalidateFeatureCache_NoEntries(t *testing.T) {
+	// Should not panic
+	InvalidateFeatureCache("nonexistent")
+}
+
+// TestCheckViewExistsSignature verifies that the CheckViewExists function
+// has the expected signature and can be referenced. This is a structural
+// test since we cannot mock the database easily here.
+func TestCheckViewExistsSignature(t *testing.T) {
+	// Verify the function signature by assigning it to a typed variable.
+	// This compiles only if the signature matches the expected type.
+	// We use a type alias to make the explicit type check intentional
+	// and avoid the linter's "type will be inferred" warning.
+	type viewExistsFunc func(
+		context.Context,
+		*pgxpool.Conn,
+		string,
+	) (bool, error)
+
+	var fn viewExistsFunc = CheckViewExists
+
+	// Use the function reference to prevent "declared and not used" error.
+	_ = fn
+}
+
+// TestWrapQuery verifies that WrapQuery wraps a SQL query with a probe
+// marker column that allows the server to identify collector queries.
+func TestWrapQuery(t *testing.T) {
+	tests := []struct {
+		name      string
+		probeName string
+		query     string
+		want      string
+	}{
+		{
+			name:      "simple select",
+			probeName: "pg_stat_activity",
+			query:     "SELECT * FROM pg_stat_activity",
+			want:      "SELECT 'pg_stat_activity' AS ai_dba_wb_probe, subq.* FROM (SELECT * FROM pg_stat_activity) AS subq",
+		},
+		{
+			name:      "complex query with joins",
+			probeName: "replication_slots",
+			query:     "SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name",
+			want:      "SELECT 'replication_slots' AS ai_dba_wb_probe, subq.* FROM (SELECT s.slot_name, s.active FROM pg_replication_slots s JOIN pg_stat_replication r ON s.slot_name = r.application_name) AS subq",
+		},
+		{
+			name:      "empty query returns empty string",
+			probeName: "test",
+			query:     "",
+			want:      "",
+		},
+		{
+			name:      "whitespace-only query returns empty string",
+			probeName: "test",
+			query:     "   ",
+			want:      "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := WrapQuery(tc.probeName, tc.query)
+			if got != tc.want {
+				t.Errorf("WrapQuery(%q, %q) =\n  %q\nwant:\n  %q",
+					tc.probeName, tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCachedCheck verifies the cachedCheck function behavior for caching
+// feature detection results.
+func TestCachedCheck(t *testing.T) {
+	t.Run("cache miss calls checkFn and caches result", func(t *testing.T) {
+		key := featureCacheKey{connectionName: "test_conn", checkName: "view_exists"}
+		defer featureCache.Delete(key)
+
+		callCount := 0
+		checkFn := func() (bool, error) {
+			callCount++
+			return true, nil
+		}
+
+		result, err := cachedCheck("test_conn", "view_exists", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected result to be true")
+		}
+		if callCount != 1 {
+			t.Errorf("checkFn should be called once, got %d", callCount)
+		}
+
+		// Verify the value was cached.
+		if val, ok := featureCache.Load(key); !ok {
+			t.Error("expected value to be cached")
+		} else if val != true {
+			t.Errorf("cached value: got %v, want true", val)
+		}
+	})
+
+	t.Run("cache hit returns cached value without calling checkFn", func(t *testing.T) {
+		key := featureCacheKey{connectionName: "test_conn2", checkName: "cached_view"}
+		defer featureCache.Delete(key)
+
+		// Pre-populate the cache.
+		featureCache.Store(key, false)
+
+		callCount := 0
+		checkFn := func() (bool, error) {
+			callCount++
+			return true, nil
+		}
+
+		result, err := cachedCheck("test_conn2", "cached_view", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected result to be false (from cache)")
+		}
+		if callCount != 0 {
+			t.Errorf("checkFn should not be called on cache hit, got %d calls", callCount)
+		}
+	})
+
+	t.Run("error from checkFn returns error without caching", func(t *testing.T) {
+		key := featureCacheKey{connectionName: "test_conn3", checkName: "error_check"}
+		defer featureCache.Delete(key)
+
+		expectedErr := fmt.Errorf("database connection failed")
+		checkFn := func() (bool, error) {
+			return false, expectedErr
+		}
+
+		result, err := cachedCheck("test_conn3", "error_check", checkFn)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if err != expectedErr {
+			t.Errorf("error: got %v, want %v", err, expectedErr)
+		}
+		if result {
+			t.Error("expected result to be false on error")
+		}
+
+		// Verify the value was NOT cached.
+		if _, ok := featureCache.Load(key); ok {
+			t.Error("error result should not be cached")
+		}
+	})
+
+	t.Run("type assertion failure returns error for invalid cached type", func(t *testing.T) {
+		key := featureCacheKey{connectionName: "test_conn4", checkName: "invalid_type"}
+		defer featureCache.Delete(key)
+
+		// Pre-populate the cache with an invalid type (string instead of bool).
+		featureCache.Store(key, "not a bool")
+
+		checkFn := func() (bool, error) {
+			t.Error("checkFn should not be called when cache has invalid type")
+			return true, nil
+		}
+
+		result, err := cachedCheck("test_conn4", "invalid_type", checkFn)
+		if err == nil {
+			t.Fatal("expected error for invalid cached type, got nil")
+		}
+		if result {
+			t.Error("expected result to be false on type assertion failure")
+		}
+		// Verify the error message mentions the connection and check names.
+		if !strings.Contains(err.Error(), "test_conn4") || !strings.Contains(err.Error(), "invalid_type") {
+			t.Errorf("error should mention connection and check names: %v", err)
+		}
+	})
+
+	t.Run("caches false result", func(t *testing.T) {
+		key := featureCacheKey{connectionName: "test_conn5", checkName: "false_result"}
+		defer featureCache.Delete(key)
+
+		callCount := 0
+		checkFn := func() (bool, error) {
+			callCount++
+			return false, nil
+		}
+
+		// First call should execute checkFn.
+		result, err := cachedCheck("test_conn5", "false_result", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected result to be false")
+		}
+		if callCount != 1 {
+			t.Errorf("checkFn should be called once, got %d", callCount)
+		}
+
+		// Second call should return cached false without calling checkFn.
+		result, err = cachedCheck("test_conn5", "false_result", checkFn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected cached result to be false")
+		}
+		if callCount != 1 {
+			t.Errorf("checkFn should not be called again, got %d calls", callCount)
+		}
+	})
 }

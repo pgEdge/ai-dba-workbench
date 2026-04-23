@@ -8,8 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-/* eslint-disable no-console */
-
 /**
  * Centralized logging utility.
  *

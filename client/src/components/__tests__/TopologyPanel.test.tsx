@@ -88,7 +88,7 @@ const createMockUnassigned = (
 
 describe('TopologyPanel', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
+        vi.resetAllMocks();
         // Default mock implementations
         mockApiGet.mockImplementation((url: string) => {
             if (url.includes('/servers')) {
@@ -105,7 +105,7 @@ describe('TopologyPanel', () => {
     });
 
     afterEach(() => {
-        vi.clearAllMocks();
+        vi.resetAllMocks();
     });
 
     it('displays loading spinner while fetching data', async () => {
@@ -126,7 +126,12 @@ describe('TopologyPanel', () => {
     });
 
     it('displays error alert and allows dismissal', async () => {
-        mockApiGet.mockRejectedValue(new Error('Failed to connect'));
+        mockApiGet.mockImplementation((url: string) => {
+            if (url === '/api/v1/connections') {
+                return Promise.resolve([]);
+            }
+            return Promise.reject(new Error('Failed to connect'));
+        });
 
         renderWithTheme(
             <TopologyPanel
@@ -152,7 +157,12 @@ describe('TopologyPanel', () => {
 
     it('displays fallback error message when non-Error is thrown', async () => {
         // Reject with a non-Error value to test the fallback message
-        mockApiGet.mockRejectedValue('Some string error');
+        mockApiGet.mockImplementation((url: string) => {
+            if (url === '/api/v1/connections') {
+                return Promise.resolve([]);
+            }
+            return Promise.reject('Some string error');
+        });
 
         renderWithTheme(
             <TopologyPanel
@@ -1610,11 +1620,9 @@ describe('TopologyPanel', () => {
         // by checking that the Target select still has no value selected
         // (the Add button in relationships section should be disabled)
         await waitFor(() => {
-            const addButtons = screen.getAllByRole('button', { name: /Add/i });
-            // There are 2 Add buttons; the relationship Add button (second one)
-            // should be disabled after source change resets the target
-            const relationshipAddBtn = addButtons[addButtons.length - 1];
-            expect(relationshipAddBtn).toBeDisabled();
+            expect(
+                screen.getByRole('button', { name: 'Add relationship' }),
+            ).toBeDisabled();
         });
     });
 });

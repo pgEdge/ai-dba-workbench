@@ -37,26 +37,12 @@ func (p *PgStatCheckpointerProbe) GetQuery() string {
 	return ""
 }
 
-// checkCheckpointerViewExists checks if pg_stat_checkpointer view exists (PG17+)
-func (p *PgStatCheckpointerProbe) checkCheckpointerViewExists(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
-	var exists bool
-	err := conn.QueryRow(ctx, `
-        SELECT EXISTS (
-            SELECT 1 FROM pg_views
-            WHERE schemaname = 'pg_catalog'
-            AND viewname = 'pg_stat_checkpointer'
-        )
-    `).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("failed to check if pg_stat_checkpointer exists: %w", err)
-	}
-	return exists, nil
-}
-
 // Execute runs the probe against a monitored connection
 func (p *PgStatCheckpointerProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
-	// Check if the pg_stat_checkpointer view exists (PG 17+)
-	checkpointerExists, err := p.checkCheckpointerViewExists(ctx, monitoredConn)
+	// Check if the pg_stat_checkpointer view exists (PG 17+) (cached)
+	checkpointerExists, err := cachedCheck(connectionName, "pg_stat_checkpointer_exists", func() (bool, error) {
+		return CheckViewExists(ctx, monitoredConn, "pg_stat_checkpointer")
+	})
 	if err != nil {
 		return nil, err
 	}

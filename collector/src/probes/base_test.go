@@ -603,16 +603,17 @@ func TestInvalidateFeatureCache_NoEntries(t *testing.T) {
 // test since we cannot mock the database easily here.
 func TestCheckViewExistsSignature(t *testing.T) {
 	// Verify the function signature by assigning it to a typed variable.
-	// This compiles only if the signature matches.
-	var fn func(
+	// This compiles only if the signature matches the expected type.
+	// We use a type alias to make the explicit type check intentional
+	// and avoid the linter's "type will be inferred" warning.
+	type viewExistsFunc func(
 		context.Context,
 		*pgxpool.Conn,
 		string,
 	) (bool, error)
-	fn = CheckViewExists
 
-	// Ensure fn is not nil (prevents "declared and not used" error)
-	if fn == nil {
-		t.Error("CheckViewExists function should not be nil")
-	}
+	var fn viewExistsFunc = CheckViewExists
+
+	// Use the function reference to prevent "declared and not used" error.
+	_ = fn
 }

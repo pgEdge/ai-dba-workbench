@@ -19,6 +19,7 @@ import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
 import { Message } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
+import { logger } from '../utils/logger';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<number, { analysis: string; metricValue: number }>();
@@ -219,7 +220,7 @@ Provide remediation recommendations and any threshold tuning suggestions.`;
                 }).catch(() => {});
             }
         } catch (err) {
-            console.error('Alert analysis error:', err);
+            logger.error('Alert analysis error:', err);
             setActiveTools([]);
             setError(err instanceof Error ? err.message : String(err));
         } finally {

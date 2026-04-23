@@ -22,6 +22,7 @@ import {
     COMPACTION_RECENT_WINDOW,
 } from './chatConstants';
 import { estimateTokenCount } from './chatHelpers';
+import { logger } from '../../utils/logger';
 
 /**
  * Type alias for the fetch function signature used by the compaction
@@ -72,7 +73,7 @@ export async function maybeCompact(
         const data: CompactResponse = await response.json();
         return data.messages ?? msgs;
     } catch (err) {
-        console.error('Chat compaction failed:', err);
+        logger.error('Chat compaction failed:', err);
         return msgs;
     }
 }

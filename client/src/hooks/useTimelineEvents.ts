@@ -12,6 +12,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useClusterData } from '../contexts/ClusterDataContext';
 import { apiGet } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 export interface TimelineEvent {
     id: number;
@@ -169,7 +170,7 @@ export const useTimelineEvents = ({
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching timeline events:', err);
+            logger.error('Error fetching timeline events:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch timeline events');
                 setEvents([]);

@@ -13,6 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useDashboard } from '../contexts/DashboardContext';
 import { MetricQueryParams, MetricSeries, MetricBaseline } from '../components/Dashboard/types';
 import { apiGet } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 export interface UseMetricsReturn {
     data: MetricSeries[] | null;
@@ -103,7 +104,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching metrics:', err);
+            logger.error('Error fetching metrics:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch metrics');
                 setData(null);
@@ -179,7 +180,7 @@ export const useBaselines = (
                 setBaselines(result);
             }
         } catch (err) {
-            console.error('Error fetching baselines:', err);
+            logger.error('Error fetching baselines:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch baselines');
                 setBaselines(null);

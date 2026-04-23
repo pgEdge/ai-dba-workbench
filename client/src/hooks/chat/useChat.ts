@@ -31,6 +31,7 @@ import {
     fetchConversation,
 } from './chatConversation';
 import { runAgenticLoop } from './chatAgenticLoop';
+import { logger } from '../../utils/logger';
 
 // Re-export types that consuming modules import from this hook.
 // These aliases ensure backward compatibility with modules that
@@ -273,7 +274,7 @@ export function useChat(): UseChatReturn {
                 const errMessage =
                     (err as Error).message ||
                     'An unexpected error occurred';
-                console.error('Chat error:', err);
+                logger.error('Chat error:', err);
                 setError(errMessage);
 
                 // Add an error message to the visible conversation
@@ -351,7 +352,7 @@ export function useChat(): UseChatReturn {
                 const errMessage =
                     (err as Error).message ||
                     'Failed to load conversation';
-                console.error('Failed to load conversation:', err);
+                logger.error('Failed to load conversation:', err);
                 setError(errMessage);
             } finally {
                 setIsLoading(false);

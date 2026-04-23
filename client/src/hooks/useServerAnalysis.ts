@@ -23,6 +23,7 @@ import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
 import { Message } from '../types/llm';
 import { ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
+import { logger } from '../utils/logger';
 
 // Module-level cache for analysis results (persists across dialog open/close)
 const analysisCache = new Map<string, { analysis: string; timestamp: number }>();
@@ -222,7 +223,7 @@ Analyze performance metrics, schema design, security configuration, and replicat
             setAnalysis(analysisText);
             analysisCache.set(cacheKey, { analysis: analysisText, timestamp: Date.now() });
         } catch (err) {
-            console.error('Server analysis error:', err);
+            logger.error('Server analysis error:', err);
             setActiveTools([]);
             setError(err instanceof Error ? err.message : String(err));
         } finally {

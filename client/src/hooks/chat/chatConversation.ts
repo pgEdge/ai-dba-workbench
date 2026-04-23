@@ -17,6 +17,7 @@
 
 import { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
 import { ConversationCreateResponse, ConversationDetail } from './chatTypes';
+import { logger } from '../../utils/logger';
 
 /**
  * Type alias for the fetch function signature used by the conversation
@@ -50,7 +51,7 @@ export async function createConversation(
         });
 
         if (!response.ok) {
-            console.warn(
+            logger.warn(
                 'Failed to create conversation:',
                 response.status,
                 await response.text(),
@@ -61,7 +62,7 @@ export async function createConversation(
         const data: ConversationCreateResponse = await response.json();
         return data.id;
     } catch (err) {
-        console.error('Failed to create conversation:', err);
+        logger.error('Failed to create conversation:', err);
         return null;
     }
 }
@@ -87,7 +88,7 @@ export async function updateConversation(
         });
 
         if (!response.ok) {
-            console.warn(
+            logger.warn(
                 'Failed to update conversation:',
                 response.status,
                 await response.text(),
@@ -97,7 +98,7 @@ export async function updateConversation(
 
         return true;
     } catch (err) {
-        console.error('Failed to update conversation:', err);
+        logger.error('Failed to update conversation:', err);
         return false;
     }
 }

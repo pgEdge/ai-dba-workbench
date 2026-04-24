@@ -33,24 +33,14 @@ import { ApiError } from '../../utils/apiClient';
 import { clearAnalysisCache } from '../../hooks/useServerAnalysis';
 import { useOverviewSSE } from '../../hooks/useOverviewSSE';
 import type { OverviewResponse } from '../../hooks/useOverviewSSE';
+import type { Selection } from '../../types/selection';
 import { spinKeyframes } from '../Dashboard/styles';
-
-/**
- * Selection object describing the current scope for the overview.
- */
-interface OverviewSelection {
-    type: 'server' | 'cluster' | 'estate' | 'group';
-    id?: number | string;
-    name?: string;
-    serverIds?: number[];
-    [key: string]: unknown;
-}
 
 /**
  * Props accepted by the AIOverview component.
  */
 interface AIOverviewProps {
-    selection?: OverviewSelection | null;
+    selection?: Selection | null;
     onAnalyze?: () => void;
     analysisCached?: boolean;
 }
@@ -132,15 +122,14 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         }
 
         // For servers with a numeric ID, use scope_type/scope_id directly
-        if (selection.type === 'server' && typeof selection.id === 'number') {
+        if (selection.type === 'server') {
             return `/api/v1/overview?scope_type=server&scope_id=${encodeURIComponent(String(selection.id))}`;
         }
 
-        // For clusters and groups, send the individual connection IDs
+        // For clusters, send the individual connection IDs
         // instead of the virtual string ID that the server cannot resolve
         if (
-            (selection.type === 'cluster' || selection.type === 'group') &&
-            selection.serverIds &&
+            selection.type === 'cluster' &&
             selection.serverIds.length > 0
         ) {
             const ids = selection.serverIds.join(',');

@@ -30,11 +30,12 @@ import {
     SPOCK_NODE_SX,
 } from './styles';
 import ServerInfoDialog from '../ServerInfoDialog';
+import type { ServerSelection } from '../../types/selection';
 
 /**
  * ServerInfoCard - Unified compact server information display
  */
-const ServerInfoCard = ({ selection }) => {
+const ServerInfoCard: React.FC<{ selection: ServerSelection }> = ({ selection }) => {
     const theme = useTheme();
     const [infoDialogOpen, setInfoDialogOpen] = useState(false);
 

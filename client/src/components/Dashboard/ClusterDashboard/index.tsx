@@ -10,11 +10,11 @@
 
 import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
-import { BaseDashboardProps } from '../types';
 import CollapsibleSection from '../CollapsibleSection';
 import ReplicationLagSection from './ReplicationLagSection';
 import ComparativeChartsSection from './ComparativeChartsSection';
 import { extractClusterServerIds } from '../../../utils/clusterHelpers';
+import type { ClusterSelection } from '../../../types/selection';
 
 /**
  * ClusterDashboard focuses on replication health and shows
@@ -22,7 +22,7 @@ import { extractClusterServerIds } from '../../../utils/clusterHelpers';
  * replication lag, and comparative charts for all servers in
  * the cluster.
  */
-const ClusterDashboard: React.FC<BaseDashboardProps> = ({ selection }) => {
+const ClusterDashboard: React.FC<{ selection: ClusterSelection }> = ({ selection }) => {
     const serverIds = useMemo(() => extractClusterServerIds(selection), [selection]);
 
     return (

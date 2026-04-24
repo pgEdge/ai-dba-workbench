@@ -12,6 +12,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { useAuth } from './AuthContext';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import type { Selection } from '../types/selection';
 
 export interface Blackout {
     id: number;
@@ -79,15 +80,6 @@ export interface UpdateScheduleRequest {
     enabled?: boolean;
 }
 
- 
-export interface BlackoutSelection {
-    type: string;
-    id?: string | number;
-    name?: string;
-    serverIds?: number[];
-    [key: string]: unknown;
-}
-
 export interface BlackoutContextValue {
     blackouts: Blackout[];
     schedules: BlackoutSchedule[];
@@ -104,7 +96,7 @@ export interface BlackoutContextValue {
 }
 
 interface BlackoutProviderProps {
-    selection: BlackoutSelection | null;
+    selection: Selection | null;
     children: React.ReactNode;
 }
 

@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ServerDashboard from '../index';
+import type { ServerSelection } from '../../../../types/selection';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -71,12 +71,23 @@ vi.mock('../TopQueriesSection', () => ({
 
 const theme = createTheme();
 
-const createSelection = (id: number = 1, name?: string) => ({
+const createSelection = (id: number = 1, name?: string): ServerSelection => ({
+    type: 'server',
     id,
-    name,
+    name: name || `Server ${id}`,
+    status: 'online',
+    description: '',
+    host: 'localhost',
+    port: 5432,
+    role: 'primary',
+    version: '16',
+    database: 'postgres',
+    username: 'postgres',
+    os: 'linux',
+    platform: 'x86_64',
 });
 
-const renderServerDashboard = (selection: Record<string, unknown> = createSelection()) => {
+const renderServerDashboard = (selection: ServerSelection = createSelection()) => {
     return render(
         <ThemeProvider theme={theme}>
             <ServerDashboard selection={selection} />
@@ -142,7 +153,7 @@ describe('ServerDashboard', () => {
     });
 
     it('shows "No server selected" when id is missing', () => {
-        const selection = { name: 'Server without ID' };
+        const selection = { name: 'Server without ID' } as unknown as ServerSelection;
         renderServerDashboard(selection);
 
         expect(screen.getByText('No server selected')).toBeInTheDocument();
@@ -150,14 +161,14 @@ describe('ServerDashboard', () => {
     });
 
     it('shows "No server selected" when id is undefined', () => {
-        const selection = { id: undefined, name: 'Test' };
+        const selection = { id: undefined, name: 'Test' } as unknown as ServerSelection;
         renderServerDashboard(selection);
 
         expect(screen.getByText('No server selected')).toBeInTheDocument();
     });
 
     it('renders with connectionId of 0 (falsy but valid)', () => {
-        const selection = { id: 0, name: 'Server Zero' };
+        const selection = createSelection(0, 'Server Zero');
         renderServerDashboard(selection);
 
         expect(screen.getByTestId('system-resources-section')).toBeInTheDocument();

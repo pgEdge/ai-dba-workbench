@@ -16,10 +16,7 @@ import PostgresOverviewSection from './PostgresOverviewSection';
 import WalReplicationSection from './WalReplicationSection';
 import DatabaseSummariesSection from './DatabaseSummariesSection';
 import TopQueriesSection from './TopQueriesSection';
-
-interface ServerDashboardProps {
-    selection: Record<string, unknown>;
-}
+import type { ServerSelection } from '../../../types/selection';
 
 /**
  * ServerDashboard provides comprehensive server health and
@@ -27,11 +24,11 @@ interface ServerDashboardProps {
  * It displays system resources, PostgreSQL metrics, WAL and
  * replication status, database summaries, and top queries.
  */
-const ServerDashboard: React.FC<ServerDashboardProps> = ({
+const ServerDashboard: React.FC<{ selection: ServerSelection }> = ({
     selection,
 }) => {
-    const connectionId = selection.id as number;
-    const connectionName = selection.name as string | undefined;
+    const connectionId = selection.id;
+    const connectionName = selection.name;
 
     if (!connectionId && connectionId !== 0) {
         return (

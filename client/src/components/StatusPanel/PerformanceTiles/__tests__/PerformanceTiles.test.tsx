@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import PerformanceTiles from '../index';
+import type { Selection, ServerSelection, ClusterSelection, EstateSelection } from '../../../../types/selection';
 
 // Mock usePerformanceSummary hook
 vi.mock('../usePerformanceSummary', () => ({
@@ -68,6 +68,39 @@ const renderWithTheme = (ui: React.ReactElement) => {
     );
 };
 
+const makeServerSelection = (id: number = 1): ServerSelection => ({
+    type: 'server',
+    id,
+    name: `Server ${id}`,
+    status: 'online',
+    description: '',
+    host: 'localhost',
+    port: 5432,
+    role: 'primary',
+    version: '16',
+    database: 'postgres',
+    username: 'postgres',
+    os: 'linux',
+    platform: 'x86_64',
+});
+
+const makeClusterSelection = (serverIds: number[] = [1, 2, 3]): ClusterSelection => ({
+    type: 'cluster',
+    id: 'cluster-1',
+    name: 'Test Cluster',
+    status: 'online',
+    description: '',
+    servers: serverIds.map(id => ({ id, name: `Server ${id}` })),
+    serverIds,
+});
+
+const makeEstateSelection = (): EstateSelection => ({
+    type: 'estate',
+    name: 'Estate',
+    status: 'online',
+    groups: [],
+});
+
 describe('PerformanceTiles', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -88,7 +121,7 @@ describe('PerformanceTiles', () => {
 
     it('renders all four tiles', () => {
         renderWithTheme(
-            <PerformanceTiles selection={{ type: 'server', id: 1 }} />
+            <PerformanceTiles selection={makeServerSelection(1)} />
         );
 
         expect(screen.getByTestId('database-age-tile')).toBeInTheDocument();
@@ -99,7 +132,7 @@ describe('PerformanceTiles', () => {
 
     it('calls useDatabaseCacheHit with connectionId for single-server view', () => {
         renderWithTheme(
-            <PerformanceTiles selection={{ type: 'server', id: 123 }} />
+            <PerformanceTiles selection={makeServerSelection(123)} />
         );
 
         expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(123);
@@ -108,7 +141,7 @@ describe('PerformanceTiles', () => {
     it('calls useDatabaseCacheHit with null for cluster view', () => {
         renderWithTheme(
             <PerformanceTiles
-                selection={{ type: 'cluster', serverIds: [1, 2, 3] }}
+                selection={makeClusterSelection([1, 2, 3])}
             />
         );
 
@@ -118,7 +151,7 @@ describe('PerformanceTiles', () => {
     it('calls useDatabaseCacheHit with null for estate view', () => {
         renderWithTheme(
             <PerformanceTiles
-                selection={{ type: 'estate', groups: [] }}
+                selection={makeEstateSelection()}
             />
         );
 
@@ -148,7 +181,7 @@ describe('PerformanceTiles', () => {
         });
 
         renderWithTheme(
-            <PerformanceTiles selection={{ type: 'server', id: 1 }} />
+            <PerformanceTiles selection={makeServerSelection(1)} />
         );
 
         expect(screen.getByTestId('has-database-data')).toBeInTheDocument();
@@ -172,7 +205,7 @@ describe('PerformanceTiles', () => {
 
         renderWithTheme(
             <PerformanceTiles
-                selection={{ type: 'cluster', serverIds: [1, 2] }}
+                selection={makeClusterSelection([1, 2])}
             />
         );
 
@@ -182,22 +215,22 @@ describe('PerformanceTiles', () => {
     it('handles selection with non-numeric id', () => {
         renderWithTheme(
             <PerformanceTiles
-                selection={{ type: 'server', id: 'invalid' }}
+                selection={{ type: 'server', id: 'invalid' } as unknown as Selection}
             />
         );
 
-        // Should call useDatabaseCacheHit with null since id is not a number
+        // Should call useDatabaseCacheHit with null when id is not a number
         expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
     });
 
     it('handles selection with undefined id', () => {
         renderWithTheme(
             <PerformanceTiles
-                selection={{ type: 'server' }}
+                selection={{ type: 'server' } as unknown as Selection}
             />
         );
 
-        // Should call useDatabaseCacheHit with null since id is undefined
+        // Should call useDatabaseCacheHit with null when id is missing
         expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
     });
 });

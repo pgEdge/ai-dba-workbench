@@ -38,6 +38,7 @@ import {
     Storage as ServerIcon,
 } from '@mui/icons-material';
 import { useBlackouts, CreateBlackoutRequest } from '../contexts/BlackoutContext';
+import type { Selection } from '../types/selection';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 
 // ---- Style constants ----
@@ -131,34 +132,34 @@ const DB_BACKED_CLUSTER = /^cluster-\d+$/;
 
 const isScopeAvailable = (
     scopeValue: string,
-    selection: Record<string, unknown> | null | undefined,
+    selection: Selection | null | undefined,
 ): boolean => {
     if (!selection) {return scopeValue === 'estate';}
-    const selType = selection.type as string;
 
     if (scopeValue === 'estate') {return true;}
 
     if (scopeValue === 'group') {
-        const gid = selection.groupId as string | undefined;
-        return (selType === 'server' || selType === 'cluster')
-            && !!gid && DB_BACKED_GROUP.test(gid);
+        if (selection.type === 'server' || selection.type === 'cluster') {
+            const gid = selection.groupId;
+            return !!gid && DB_BACKED_GROUP.test(gid);
+        }
+        return false;
     }
 
     if (scopeValue === 'cluster') {
-        if (selType === 'server') {
-            const cid = selection.clusterId as string | undefined;
+        if (selection.type === 'server') {
+            const cid = selection.clusterId;
             return !!cid && DB_BACKED_CLUSTER.test(cid)
                 && !selection.isStandalone;
         }
-        if (selType === 'cluster') {
-            const cid = selection.id as string | undefined;
-            return !!cid && DB_BACKED_CLUSTER.test(String(cid));
+        if (selection.type === 'cluster') {
+            return !!selection.id && DB_BACKED_CLUSTER.test(String(selection.id));
         }
         return false;
     }
 
     if (scopeValue === 'server') {
-        return selType === 'server';
+        return selection.type === 'server';
     }
 
     return false;
@@ -166,26 +167,33 @@ const isScopeAvailable = (
 
 const scopeLabel = (
     scopeValue: string,
-    selection: Record<string, unknown> | null | undefined,
+    selection: Selection | null | undefined,
 ): string | undefined => {
     if (!selection) {return undefined;}
-    const selType = selection.type as string;
 
     if (scopeValue === 'estate') {return 'All Servers';}
 
     if (scopeValue === 'group') {
-        return (selection.groupName as string) || undefined;
+        if (selection.type === 'server' || selection.type === 'cluster') {
+            return selection.groupName || undefined;
+        }
+        return undefined;
     }
 
     if (scopeValue === 'cluster') {
-        if (selType === 'server') {
-            return (selection.clusterName as string) || undefined;
+        if (selection.type === 'server') {
+            return selection.clusterName || undefined;
         }
-        return (selection.name as string) || undefined;
+        if (selection.type === 'cluster') {
+            return selection.name || undefined;
+        }
+        return undefined;
     }
 
     if (scopeValue === 'server') {
-        return (selection.name as string) || undefined;
+        return selection.type === 'server'
+            ? selection.name || undefined
+            : undefined;
     }
 
     return undefined;
@@ -193,22 +201,30 @@ const scopeLabel = (
 
 const resolveEntityId = (
     scopeValue: string,
-    selection: Record<string, unknown> | null | undefined,
+    selection: Selection | null | undefined,
 ): number | undefined => {
     if (!selection) {return undefined;}
-    const selType = selection.type as string;
 
     if (scopeValue === 'server') {
-        return extractNumericId(selection.id as string | number | undefined);
+        if (selection.type === 'server') {
+            return extractNumericId(selection.id);
+        }
+        return undefined;
     }
     if (scopeValue === 'cluster') {
-        if (selType === 'server') {
-            return extractNumericId(selection.clusterId as string | undefined);
+        if (selection.type === 'server') {
+            return extractNumericId(selection.clusterId);
         }
-        return extractNumericId(selection.id as string | number | undefined);
+        if (selection.type === 'cluster') {
+            return extractNumericId(selection.id);
+        }
+        return undefined;
     }
     if (scopeValue === 'group') {
-        return extractNumericId(selection.groupId as string | undefined);
+        if (selection.type === 'server' || selection.type === 'cluster') {
+            return extractNumericId(selection.groupId);
+        }
+        return undefined;
     }
     return undefined;
 };
@@ -219,7 +235,7 @@ interface BlackoutDialogProps {
     open: boolean;
     onClose: () => void;
     onSuccess?: () => void;
-    selection?: Record<string, unknown> | null;
+    selection?: Selection | null;
 }
 
 /**
@@ -249,7 +265,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     // Reset form only when dialog opens (false -> true transition)
     useEffect(() => {
         if (open && !prevOpenRef.current) {
-            const selType = (selection?.type as string) || 'server';
+            const selType = selection?.type || 'server';
             const preferred = isScopeAvailable(selType, selection)
                 ? selType
                 : ['server', 'cluster', 'group', 'estate']

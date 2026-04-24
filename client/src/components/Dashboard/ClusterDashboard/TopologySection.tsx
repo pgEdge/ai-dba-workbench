@@ -14,15 +14,15 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { blendColors } from '../../../utils/colors';
 import { useClusterSelection } from '../../../contexts/ClusterSelectionContext';
-import { ClusterServer } from '../../../contexts/ClusterDataContext';
 import { buildGraph } from './topology/graphBuilder';
 import { computeLayout, computeContainerHeight, NODE_WIDTH, NODE_HEIGHT } from './topology/layoutEngine';
 import TopologyEdges from './topology/TopologyEdges';
 import TopologyNode from './topology/TopologyNode';
 import { TopoNode } from './topology/types';
+import type { ClusterSelection } from '../../../types/selection';
 
 interface TopologySectionProps {
-    selection: Record<string, unknown>;
+    selection: ClusterSelection;
 }
 
 const EMPTY_SX = {
@@ -68,7 +68,7 @@ const TopologySection: React.FC<TopologySectionProps> = ({ selection }) => {
 
     // Extract servers from the selection object
     const servers = useMemo(
-        () => (selection.servers as ClusterServer[] | undefined) || [],
+        () => selection.servers || [],
         [selection.servers],
     );
 

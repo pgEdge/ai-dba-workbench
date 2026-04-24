@@ -32,11 +32,19 @@ import {
     HEADER_NAME_SX,
 } from './styles';
 import { useBlackouts } from '../../contexts/BlackoutContext';
+import type { Selection } from '../../types/selection';
+
+interface SelectionHeaderProps {
+    selection: Selection;
+    alertCount?: number;
+    alertSeverities?: Record<string, number>;
+    onBlackoutClick: () => void;
+}
 
 /**
  * SelectionHeader - Header showing what's currently selected
  */
-const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBlackoutClick }) => {
+const SelectionHeader: React.FC<SelectionHeaderProps> = ({ selection, alertCount = 0, alertSeverities = {}, onBlackoutClick }) => {
     const theme = useTheme();
     const { activeBlackoutsForSelection } = useBlackouts();
     const hasActiveBlackouts = activeBlackoutsForSelection.length > 0;
@@ -153,7 +161,7 @@ const SelectionHeader = ({ selection, alertCount = 0, alertSeverities = {}, onBl
                     <Typography variant="h5" sx={HEADER_NAME_SX}>
                         {selection.name}
                     </Typography>
-                    {selection.description && (
+                    {'description' in selection && selection.description && (
                         <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 400 }}>
                             {selection.description}
                         </Typography>

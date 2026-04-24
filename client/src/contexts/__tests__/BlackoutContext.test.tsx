@@ -16,8 +16,8 @@ import {
     useBlackouts,
     Blackout,
     BlackoutSchedule,
-    BlackoutSelection,
 } from '../BlackoutContext';
+import type { Selection } from '../../types/selection';
 
 vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
@@ -124,7 +124,7 @@ const mockBlackoutsResponse = {
 const mockSchedulesResponse = { schedules: [schedule] };
 
 describe('BlackoutContext', () => {
-    const buildWrapper = (selection: BlackoutSelection | null = null) => {
+    const buildWrapper = (selection: Selection | null = null) => {
         return ({ children }: { children: React.ReactNode }) => (
             <BlackoutProvider selection={selection}>{children}</BlackoutProvider>
         );
@@ -348,7 +348,7 @@ describe('BlackoutContext', () => {
 
         it('estate selection shows all active blackouts', async () => {
             const { result } = renderHook(() => useBlackouts(), {
-                wrapper: buildWrapper({ type: 'estate' }),
+                wrapper: buildWrapper({ type: 'estate', name: 'Estate', status: 'online', groups: [] }),
             });
 
             await waitFor(() => {
@@ -362,7 +362,11 @@ describe('BlackoutContext', () => {
             const { result } = renderHook(() => useBlackouts(), {
                 wrapper: buildWrapper({
                     type: 'cluster',
-                    id: 10,
+                    id: '10',
+                    name: 'Test Cluster',
+                    status: 'online',
+                    description: '',
+                    servers: [],
                     serverIds: [100],
                 }),
             });
@@ -381,7 +385,11 @@ describe('BlackoutContext', () => {
             const { result } = renderHook(() => useBlackouts(), {
                 wrapper: buildWrapper({
                     type: 'cluster',
-                    id: 999,
+                    id: '999',
+                    name: 'Other Cluster',
+                    status: 'online',
+                    description: '',
+                    servers: [],
                     serverIds: [999],
                 }),
             });
@@ -398,7 +406,21 @@ describe('BlackoutContext', () => {
 
         it('server selection shows estate and matching server blackouts but excludes cluster', async () => {
             const { result } = renderHook(() => useBlackouts(), {
-                wrapper: buildWrapper({ type: 'server', id: 100 }),
+                wrapper: buildWrapper({
+                    type: 'server',
+                    id: 100,
+                    name: 'Server 100',
+                    status: 'online',
+                    description: '',
+                    host: 'localhost',
+                    port: 5432,
+                    role: 'primary',
+                    version: '16',
+                    database: 'postgres',
+                    username: 'postgres',
+                    os: 'linux',
+                    platform: 'x86_64',
+                }),
             });
 
             await waitFor(() => {
@@ -413,7 +435,21 @@ describe('BlackoutContext', () => {
 
         it('server selection without match only shows estate blackouts', async () => {
             const { result } = renderHook(() => useBlackouts(), {
-                wrapper: buildWrapper({ type: 'server', id: 9999 }),
+                wrapper: buildWrapper({
+                    type: 'server',
+                    id: 9999,
+                    name: 'Server 9999',
+                    status: 'online',
+                    description: '',
+                    host: 'localhost',
+                    port: 5432,
+                    role: 'primary',
+                    version: '16',
+                    database: 'postgres',
+                    username: 'postgres',
+                    os: 'linux',
+                    platform: 'x86_64',
+                }),
             });
 
             await waitFor(() => {
@@ -426,7 +462,7 @@ describe('BlackoutContext', () => {
 
         it('unknown selection type only keeps estate blackouts', async () => {
             const { result } = renderHook(() => useBlackouts(), {
-                wrapper: buildWrapper({ type: 'unknown-type' }),
+                wrapper: buildWrapper({ type: 'unknown-type' } as unknown as Selection),
             });
 
             await waitFor(() => {

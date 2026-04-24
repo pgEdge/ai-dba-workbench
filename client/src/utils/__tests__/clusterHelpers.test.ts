@@ -15,9 +15,9 @@ import {
     extractEstateServerIds,
     extractClusterServerIds,
     computeEstateServerCounts,
-    ServerCounts,
     countEstateServers,
 } from '../clusterHelpers';
+import type { EstateSelection, ClusterSelection } from '../../types/selection';
 
 describe('collectServers', () => {
     describe('flat server lists', () => {
@@ -234,33 +234,76 @@ describe('collectServers', () => {
 
 describe('extractEstateServerIds', () => {
     it('returns empty array for empty selection', () => {
-        expect(extractEstateServerIds({})).toEqual([]);
+        const emptyEstate: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [],
+        };
+        expect(extractEstateServerIds(emptyEstate)).toEqual([]);
     });
 
     it('returns empty array when groups is undefined', () => {
-        expect(extractEstateServerIds({ groups: undefined })).toEqual([]);
+        const emptyEstate: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [],
+        };
+        expect(extractEstateServerIds(emptyEstate)).toEqual([]);
     });
 
     it('returns empty array when groups have no clusters', () => {
-        const selection = { groups: [{ name: 'g1' }] };
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [{ id: 'g1', name: 'g1', status: 'online', clusters: [] }],
+        };
         expect(extractEstateServerIds(selection)).toEqual([]);
     });
 
     it('returns empty array when clusters have no servers', () => {
-        const selection = {
-            groups: [{ clusters: [{ name: 'c1' }] }],
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
+                clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
+                    servers: [],
+                    serverIds: [],
+                }],
+            }],
         };
         expect(extractEstateServerIds(selection)).toEqual([]);
     });
 
     it('extracts server IDs from a single group and cluster', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
-                        { id: 1, name: 's1' },
-                        { id: 2, name: 's2' },
+                        { id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' },
+                        { id: 2, name: 's2', status: 'online', host: '', port: 5432, database: '' },
                     ],
+                    serverIds: [1, 2],
                 }],
             }],
         };
@@ -268,17 +311,47 @@ describe('extractEstateServerIds', () => {
     });
 
     it('extracts server IDs across multiple groups and clusters', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [
                 {
+                    id: 'g1',
+                    name: 'g1',
+                    status: 'online',
                     clusters: [
-                        { servers: [{ id: 1, name: 's1' }] },
-                        { servers: [{ id: 2, name: 's2' }] },
+                        {
+                            id: 'c1',
+                            name: 'c1',
+                            description: '',
+                            status: 'online',
+                            servers: [{ id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' }],
+                            serverIds: [1],
+                        },
+                        {
+                            id: 'c2',
+                            name: 'c2',
+                            description: '',
+                            status: 'online',
+                            servers: [{ id: 2, name: 's2', status: 'online', host: '', port: 5432, database: '' }],
+                            serverIds: [2],
+                        },
                     ],
                 },
                 {
+                    id: 'g2',
+                    name: 'g2',
+                    status: 'online',
                     clusters: [
-                        { servers: [{ id: 3, name: 's3' }] },
+                        {
+                            id: 'c3',
+                            name: 'c3',
+                            description: '',
+                            status: 'online',
+                            servers: [{ id: 3, name: 's3', status: 'online', host: '', port: 5432, database: '' }],
+                            serverIds: [3],
+                        },
                     ],
                 },
             ],
@@ -287,25 +360,44 @@ describe('extractEstateServerIds', () => {
     });
 
     it('includes nested children server IDs', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
                         {
                             id: 1,
                             name: 'parent',
+                            status: 'online',
+                            host: '',
+                            port: 5432,
+                            database: '',
                             children: [
-                                { id: 2, name: 'child1' },
+                                { id: 2, name: 'child1', status: 'online', host: '', port: 5432, database: '' },
                                 {
                                     id: 3,
                                     name: 'child2',
+                                    status: 'online',
+                                    host: '',
+                                    port: 5432,
+                                    database: '',
                                     children: [
-                                        { id: 4, name: 'grandchild' },
+                                        { id: 4, name: 'grandchild', status: 'online', host: '', port: 5432, database: '' },
                                     ],
                                 },
                             ],
                         },
                     ],
+                    serverIds: [1, 2, 3, 4],
                 }],
             }],
         };
@@ -313,19 +405,34 @@ describe('extractEstateServerIds', () => {
     });
 
     it('deduplicates server IDs when children share parent IDs', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
                         {
                             id: 1,
                             name: 'parent',
+                            status: 'online',
+                            host: '',
+                            port: 5432,
+                            database: '',
                             children: [
-                                { id: 1, name: 'same-id' },
-                                { id: 2, name: 'child' },
+                                { id: 1, name: 'same-id', status: 'online', host: '', port: 5432, database: '' },
+                                { id: 2, name: 'child', status: 'online', host: '', port: 5432, database: '' },
                             ],
                         },
                     ],
+                    serverIds: [1, 2],
                 }],
             }],
         };
@@ -335,68 +442,126 @@ describe('extractEstateServerIds', () => {
 
 describe('extractClusterServerIds', () => {
     it('returns empty array for empty selection', () => {
-        expect(extractClusterServerIds({})).toEqual([]);
+        const emptyCluster: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-1',
+            name: 'Test Cluster',
+            description: '',
+            status: 'online',
+            servers: [],
+            serverIds: [],
+        };
+        expect(extractClusterServerIds(emptyCluster)).toEqual([]);
     });
 
     it('returns empty array when servers is undefined', () => {
-        expect(extractClusterServerIds({ servers: undefined })).toEqual([]);
+        const emptyCluster: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-1',
+            name: 'Test Cluster',
+            description: '',
+            status: 'online',
+            servers: [],
+            serverIds: [],
+        };
+        expect(extractClusterServerIds(emptyCluster)).toEqual([]);
     });
 
     it('extracts server IDs from flat server list', () => {
-        const selection = {
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-1',
+            name: 'Test Cluster',
+            description: '',
+            status: 'online',
             servers: [
-                { id: 1, name: 's1' },
-                { id: 2, name: 's2' },
+                { id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' },
+                { id: 2, name: 's2', status: 'online', host: '', port: 5432, database: '' },
             ],
+            serverIds: [1, 2],
         };
         expect(extractClusterServerIds(selection)).toEqual([1, 2]);
     });
 
     it('includes nested children server IDs', () => {
-        const selection = {
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-1',
+            name: 'Test Cluster',
+            description: '',
+            status: 'online',
             servers: [
                 {
                     id: 1,
                     name: 'parent',
+                    status: 'online',
+                    host: '',
+                    port: 5432,
+                    database: '',
                     children: [
-                        { id: 2, name: 'child1' },
-                        { id: 3, name: 'child2' },
+                        { id: 2, name: 'child1', status: 'online', host: '', port: 5432, database: '' },
+                        { id: 3, name: 'child2', status: 'online', host: '', port: 5432, database: '' },
                     ],
                 },
             ],
+            serverIds: [1, 2, 3],
         };
         expect(extractClusterServerIds(selection)).toEqual([1, 2, 3]);
     });
 
     it('handles deeply nested children', () => {
-        const selection = {
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-1',
+            name: 'Test Cluster',
+            description: '',
+            status: 'online',
             servers: [
                 {
                     id: 1,
                     name: 'lvl1',
+                    status: 'online',
+                    host: '',
+                    port: 5432,
+                    database: '',
                     children: [{
                         id: 2,
                         name: 'lvl2',
-                        children: [{ id: 3, name: 'lvl3' }],
+                        status: 'online',
+                        host: '',
+                        port: 5432,
+                        database: '',
+                        children: [{ id: 3, name: 'lvl3', status: 'online', host: '', port: 5432, database: '' }],
                     }],
                 },
             ],
+            serverIds: [1, 2, 3],
         };
         expect(extractClusterServerIds(selection)).toEqual([1, 2, 3]);
     });
 
     it('deduplicates server IDs when children share parent IDs', () => {
-        const selection = {
+        const selection: ClusterSelection = {
+            type: 'cluster',
+            id: 'cluster-1',
+            name: 'Test Cluster',
+            description: '',
+            status: 'online',
             servers: [
                 {
                     id: 1,
                     name: 'parent',
+                    status: 'online',
+                    host: '',
+                    port: 5432,
+                    database: '',
                     children: [
-                        { id: 1, name: 'same-id-child' },
-                        { id: 2, name: 'child2' },
+                        { id: 1, name: 'same-id-child', status: 'online', host: '', port: 5432, database: '' },
+                        { id: 2, name: 'child2', status: 'online', host: '', port: 5432, database: '' },
                     ],
                 },
             ],
+            serverIds: [1, 2],
         };
         expect(extractClusterServerIds(selection)).toEqual([1, 2]);
     });
@@ -404,19 +569,36 @@ describe('extractClusterServerIds', () => {
 
 describe('computeEstateServerCounts', () => {
     it('returns all zeros for empty selection', () => {
-        expect(computeEstateServerCounts({})).toEqual({
+        const emptyEstate: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [],
+        };
+        expect(computeEstateServerCounts(emptyEstate)).toEqual({
             online: 0, warning: 0, offline: 0,
         });
     });
 
     it('counts online servers (no alerts, not offline)', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
-                        { id: 1, name: 's1', status: 'online' },
-                        { id: 2, name: 's2', status: 'online' },
+                        { id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' },
+                        { id: 2, name: 's2', status: 'online', host: '', port: 5432, database: '' },
                     ],
+                    serverIds: [1, 2],
                 }],
             }],
         };
@@ -426,12 +608,23 @@ describe('computeEstateServerCounts', () => {
     });
 
     it('counts offline servers', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
-                        { id: 1, name: 's1', status: 'offline' },
+                        { id: 1, name: 's1', status: 'offline', host: '', port: 5432, database: '' },
                     ],
+                    serverIds: [1],
                 }],
             }],
         };
@@ -441,17 +634,31 @@ describe('computeEstateServerCounts', () => {
     });
 
     it('counts warning servers (online with active alerts)', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
                         {
                             id: 1,
                             name: 's1',
                             status: 'online',
+                            host: '',
+                            port: 5432,
+                            database: '',
                             active_alert_count: 3,
                         },
                     ],
+                    serverIds: [1],
                 }],
             }],
         };
@@ -461,26 +668,48 @@ describe('computeEstateServerCounts', () => {
     });
 
     it('counts mixed statuses across groups and clusters', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [
                 {
+                    id: 'g1',
+                    name: 'g1',
+                    status: 'online',
                     clusters: [{
+                        id: 'c1',
+                        name: 'c1',
+                        description: '',
+                        status: 'online',
                         servers: [
-                            { id: 1, name: 's1', status: 'online' },
-                            { id: 2, name: 's2', status: 'offline' },
+                            { id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' },
+                            { id: 2, name: 's2', status: 'offline', host: '', port: 5432, database: '' },
                         ],
+                        serverIds: [1, 2],
                     }],
                 },
                 {
+                    id: 'g2',
+                    name: 'g2',
+                    status: 'online',
                     clusters: [{
+                        id: 'c2',
+                        name: 'c2',
+                        description: '',
+                        status: 'online',
                         servers: [
                             {
                                 id: 3,
                                 name: 's3',
                                 status: 'online',
+                                host: '',
+                                port: 5432,
+                                database: '',
                                 active_alert_count: 1,
                             },
                         ],
+                        serverIds: [3],
                     }],
                 },
             ],
@@ -491,19 +720,33 @@ describe('computeEstateServerCounts', () => {
     });
 
     it('includes nested children in counts', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
                         {
                             id: 1,
                             name: 'parent',
                             status: 'online',
+                            host: '',
+                            port: 5432,
+                            database: '',
                             children: [
-                                { id: 2, name: 'child', status: 'offline' },
+                                { id: 2, name: 'child', status: 'offline', host: '', port: 5432, database: '' },
                             ],
                         },
                     ],
+                    serverIds: [1, 2],
                 }],
             }],
         };
@@ -515,23 +758,50 @@ describe('computeEstateServerCounts', () => {
 
 describe('countEstateServers', () => {
     it('returns 0 for empty selection', () => {
-        expect(countEstateServers({})).toBe(0);
+        const emptyEstate: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [],
+        };
+        expect(countEstateServers(emptyEstate)).toBe(0);
     });
 
     it('returns 0 when groups have no clusters or servers', () => {
-        const selection = { groups: [{ name: 'g1' }] };
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
+            groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
+                clusters: [],
+            }],
+        };
         expect(countEstateServers(selection)).toBe(0);
     });
 
     it('counts flat servers', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
-                        { id: 1, name: 's1' },
-                        { id: 2, name: 's2' },
-                        { id: 3, name: 's3' },
+                        { id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' },
+                        { id: 2, name: 's2', status: 'online', host: '', port: 5432, database: '' },
+                        { id: 3, name: 's3', status: 'online', host: '', port: 5432, database: '' },
                     ],
+                    serverIds: [1, 2, 3],
                 }],
             }],
         };
@@ -539,21 +809,49 @@ describe('countEstateServers', () => {
     });
 
     it('counts across multiple groups and clusters', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [
                 {
+                    id: 'g1',
+                    name: 'g1',
+                    status: 'online',
                     clusters: [
-                        { servers: [{ id: 1, name: 's1' }] },
-                        { servers: [{ id: 2, name: 's2' }] },
+                        {
+                            id: 'c1',
+                            name: 'c1',
+                            description: '',
+                            status: 'online',
+                            servers: [{ id: 1, name: 's1', status: 'online', host: '', port: 5432, database: '' }],
+                            serverIds: [1],
+                        },
+                        {
+                            id: 'c2',
+                            name: 'c2',
+                            description: '',
+                            status: 'online',
+                            servers: [{ id: 2, name: 's2', status: 'online', host: '', port: 5432, database: '' }],
+                            serverIds: [2],
+                        },
                     ],
                 },
                 {
+                    id: 'g2',
+                    name: 'g2',
+                    status: 'online',
                     clusters: [
                         {
+                            id: 'c3',
+                            name: 'c3',
+                            description: '',
+                            status: 'online',
                             servers: [
-                                { id: 3, name: 's3' },
-                                { id: 4, name: 's4' },
+                                { id: 3, name: 's3', status: 'online', host: '', port: 5432, database: '' },
+                                { id: 4, name: 's4', status: 'online', host: '', port: 5432, database: '' },
                             ],
+                            serverIds: [3, 4],
                         },
                     ],
                 },
@@ -563,25 +861,44 @@ describe('countEstateServers', () => {
     });
 
     it('includes nested children in count', () => {
-        const selection = {
+        const selection: EstateSelection = {
+            type: 'estate',
+            name: 'All Servers',
+            status: 'online',
             groups: [{
+                id: 'g1',
+                name: 'g1',
+                status: 'online',
                 clusters: [{
+                    id: 'c1',
+                    name: 'c1',
+                    description: '',
+                    status: 'online',
                     servers: [
                         {
                             id: 1,
                             name: 'parent',
+                            status: 'online',
+                            host: '',
+                            port: 5432,
+                            database: '',
                             children: [
-                                { id: 2, name: 'child1' },
+                                { id: 2, name: 'child1', status: 'online', host: '', port: 5432, database: '' },
                                 {
                                     id: 3,
                                     name: 'child2',
+                                    status: 'online',
+                                    host: '',
+                                    port: 5432,
+                                    database: '',
                                     children: [
-                                        { id: 4, name: 'grandchild' },
+                                        { id: 4, name: 'grandchild', status: 'online', host: '', port: 5432, database: '' },
                                     ],
                                 },
                             ],
                         },
                     ],
+                    serverIds: [1, 2, 3, 4],
                 }],
             }],
         };

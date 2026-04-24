@@ -12,8 +12,10 @@
  * Shared types for EventTimeline sub-components
  */
 
+import type { Selection } from '../../types/selection';
+
 export interface EventTimelineProps {
-    selection: Record<string, unknown> | null;
+    selection: Selection | null;
 }
 
 export interface EventCluster {

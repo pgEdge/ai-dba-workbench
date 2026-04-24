@@ -28,6 +28,7 @@ import ChatPanel from './components/ChatPanel';
 import ChatFAB from './components/ChatPanel/ChatFAB';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
 import { collectServers } from './utils/clusterHelpers';
+import type { Selection } from './types/selection';
 
 // Style constants
 const styles = {
@@ -162,7 +163,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
 
     // Build selection object based on current selection type.
     // Parent IDs are resolved from clusterData for blackout scope. #33
-    const selection = useMemo(() => {
+    const selection = useMemo((): Selection | null => {
         if (selectionType === 'server' && selectedServer) {
             let clusterId: string | undefined;
             let clusterName: string | undefined;
@@ -191,14 +192,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
                 name: selectedServer.name,
                 description: selectedServer.description || '',
                 status: selectedServer.status || 'unknown',
-                host: selectedServer.host,
-                port: selectedServer.port,
-                role: selectedServer.role,
-                version: selectedServer.version,
-                database: selectedServer.database_name || selectedServer.database,
-                username: selectedServer.username,
-                os: selectedServer.os,
-                platform: selectedServer.platform,
+                host: selectedServer.host || '',
+                port: selectedServer.port || 0,
+                role: selectedServer.role || '',
+                version: selectedServer.version || '',
+                database: selectedServer.database_name || selectedServer.database || '',
+                username: selectedServer.username || '',
+                os: selectedServer.os || '',
+                platform: selectedServer.platform || '',
                 spockNodeName: selectedServer.spock_node_name,
                 spockVersion: selectedServer.spock_version,
                 clusterId,

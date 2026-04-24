@@ -8,12 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import BlackoutPanel from '../BlackoutPanel';
 import { renderWithTheme } from '../../test/renderWithTheme';
+import type { ServerSelection } from '../../types/selection';
 
 // Mock the BlackoutContext
 const mockStopBlackout = vi.fn();
@@ -32,10 +32,20 @@ vi.mock('../../contexts/BlackoutContext', () => ({
 }));
 
 describe('BlackoutPanel', () => {
-    const mockSelection = {
+    const mockSelection: ServerSelection = {
         type: 'server',
         id: 1,
         name: 'Test Server',
+        status: 'online',
+        description: '',
+        host: 'localhost',
+        port: 5432,
+        role: 'primary',
+        version: '16',
+        database: 'postgres',
+        username: 'postgres',
+        os: 'linux',
+        platform: 'x86_64',
     };
 
     beforeEach(() => {

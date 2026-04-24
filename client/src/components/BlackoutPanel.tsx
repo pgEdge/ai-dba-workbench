@@ -28,6 +28,7 @@ import {
     Storage as ServerIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/BlackoutContext';
+import type { Selection } from '../types/selection';
 
 // ---- Static style constants ----
 
@@ -186,7 +187,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
 // ---- Main component ----
 
 interface BlackoutPanelProps {
-    selection: Record<string, unknown> | null;
+    selection: Selection | null;
 }
 
 /**

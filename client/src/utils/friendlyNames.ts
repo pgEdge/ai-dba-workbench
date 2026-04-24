@@ -163,7 +163,7 @@ export const getFriendlyTitle = (title: string): string => {
 
     // Connection error alerts: preserve hostname as-is
     if (title.toLowerCase().startsWith('connection error:')) {
-        return 'Connection Error:' + title.substring('connection error:'.length);
+        return `Connection Error:${title.substring('connection error:'.length)}`;
     }
 
     // Check for exact match first

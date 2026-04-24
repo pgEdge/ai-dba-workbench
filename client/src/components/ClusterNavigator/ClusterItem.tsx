@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { memo, useMemo } from 'react';
+import type React from 'react';
+import { memo, useMemo } from 'react';
 import {
     Box,
     IconButton,
@@ -17,7 +18,7 @@ import {
     alpha,
     useTheme,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import type { Cluster, Server } from './utils';
 import {
     ExpandMore as ExpandIcon,
@@ -184,7 +185,7 @@ const ClusterItem = memo<ClusterItemProps>(({
     // - Database-backed clusters (cluster-{id} format)
     // - Auto-detected clusters that have auto_cluster_key (binary, logical, spock)
     const isDbBackedCluster = /^cluster-\d+$/.test(cluster.id);
-    const isAutoDetectedCluster = cluster.auto_cluster_key ? true : false;
+    const isAutoDetectedCluster = !!cluster.auto_cluster_key;
     const canEditCluster = user?.isSuperuser && (isDbBackedCluster || isAutoDetectedCluster);
     const totalCount = countServersRecursive(cluster.servers);
     const offlineCount = countServersRecursive(cluster.servers, s => s.status === 'offline');

@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     collectServers,
-    ServerLike,
+    type ServerLike,
     extractEstateServerIds,
     extractClusterServerIds,
     computeEstateServerCounts,

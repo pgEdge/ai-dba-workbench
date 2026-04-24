@@ -162,7 +162,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
             return;
         }
         const thresholdNum = parseFloat(editThreshold);
-        if (isNaN(thresholdNum)) {
+        if (Number.isNaN(thresholdNum)) {
             setError('Threshold must be a valid number.');
             return;
         }

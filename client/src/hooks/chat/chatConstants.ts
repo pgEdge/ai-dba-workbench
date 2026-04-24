@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ToolDefinition } from './chatTypes';
+import type { ToolDefinition } from './chatTypes';
 
 // ---------------------------------------------------------------
 // Compaction thresholds

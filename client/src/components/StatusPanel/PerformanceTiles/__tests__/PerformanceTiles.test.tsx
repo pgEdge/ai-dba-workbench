@@ -68,7 +68,7 @@ const renderWithTheme = (ui: React.ReactElement) => {
     );
 };
 
-const makeServerSelection = (id: number = 1): ServerSelection => ({
+const makeServerSelection = (id = 1): ServerSelection => ({
     type: 'server',
     id,
     name: `Server ${id}`,

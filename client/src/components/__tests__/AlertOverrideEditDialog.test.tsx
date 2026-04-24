@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';

@@ -12,7 +12,7 @@
  * Local types for the DatabaseDashboard components.
  */
 
-import { MetricDataPoint } from '../types';
+import type { MetricDataPoint } from '../types';
 import { formatBytes, formatValue, formatNumber, formatTime } from '../../../utils/formatters';
 
 /** Props shared by all database dashboard section components */

@@ -40,7 +40,7 @@ const getFieldByLabel = (container: HTMLElement, labelText: string): HTMLElement
             // Use getElementById to avoid CSS selector escaping issues with colons
             const input = document.getElementById(forAttr);
             if (input) {
-                return input as HTMLElement;
+                return input;
             }
         }
     }

@@ -12,7 +12,7 @@ import { useCallback } from 'react';
 import { useAICapabilities } from '../contexts/useAICapabilities';
 import { apiGet } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
-import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
+import { getKnowledgebaseTool, type AnalysisTool } from '../utils/mcpTools';
 import { SERVER_ANALYSIS_TOOLS } from '../utils/analysisTools';
 import {
     SQL_CODE_BLOCK_RULES,
@@ -20,7 +20,7 @@ import {
 } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsCentered } from '../utils/timelineEvents';
-import { Message } from '../types/llm';
+import type { Message } from '../types/llm';
 import { ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';

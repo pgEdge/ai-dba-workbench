@@ -8,9 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { TextField, Box, Typography } from '@mui/material';
-import { ServerFormData, FormErrors, FieldChangeHandler } from './ServerDialog.types';
+import type { ServerFormData, FormErrors, FieldChangeHandler } from './ServerDialog.types';
 import { sectionLabelSx } from './ServerDialog.styles';
 import { getSelectFieldSx } from '../shared/formStyles';
 

@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import {
     Box,
     Typography,
@@ -25,7 +26,7 @@ import {
     TextField,
     Button,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     MoreVert as MoreIcon,
     Delete as DeleteIcon,

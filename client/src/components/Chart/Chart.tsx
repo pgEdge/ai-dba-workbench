@@ -25,7 +25,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 
 import useTheme from '@mui/material/styles/useTheme';
-import { ChartProps, ChartData } from './types';
+import type { ChartProps, ChartData } from './types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
 import { CHART_CONTAINER_SX, CHART_PAPER_SX, CHART_TITLE_SX } from './styles';
 import { logger } from '../../utils/logger';

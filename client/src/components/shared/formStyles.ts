@@ -8,8 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import { SxProps } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { SxProps } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
 
 /**
  * Returns sx overrides for select and combo box components to bypass
@@ -21,7 +21,7 @@ import { Theme } from '@mui/material/styles';
  *                  defaults to 'background.paper'.
  */
 export const getSelectFieldSx = (
-    bgcolor: string = 'background.paper',
+    bgcolor = 'background.paper',
 ): SxProps<Theme> => ({
     '& .MuiOutlinedInput-notchedOutline legend': {
         width: 0,

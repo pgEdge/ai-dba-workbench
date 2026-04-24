@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, {
+import type React from 'react';
+import {
     createContext,
     useState,
     useCallback,
@@ -20,7 +21,7 @@ import { useAuth } from './useAuth';
 import {
     onDisconnect,
     resetConnectionHealth,
-    DisconnectReason,
+    type DisconnectReason,
 } from '../utils/apiClient';
 
 export interface ConnectionStatusValue {

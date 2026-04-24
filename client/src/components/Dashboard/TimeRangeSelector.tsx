@@ -8,16 +8,17 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useCallback } from 'react';
+import type React from 'react';
+import { useCallback } from 'react';
 import Box from '@mui/material/Box';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import { useDashboard } from '../../contexts/useDashboard';
-import { TimeRange } from './types';
+import type { TimeRange } from './types';
 import { TIME_RANGE_CONTAINER_SX } from './styles';
 
 /** Available time range options with display labels */
-const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
+const TIME_RANGE_OPTIONS: Array<{ value: TimeRange; label: string }> = [
     { value: '1h', label: '1h' },
     { value: '6h', label: '6h' },
     { value: '24h', label: '24h' },

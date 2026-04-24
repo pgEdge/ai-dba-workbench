@@ -45,7 +45,7 @@ export interface AnalysisStateControls {
  * @param initialProgress - The initial progress message (varies by hook).
  */
 export function useAnalysisState(
-    initialProgress: string = 'Gathering context...',
+    initialProgress = 'Gathering context...',
 ): AnalysisStateControls {
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(false);

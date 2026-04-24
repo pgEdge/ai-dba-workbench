@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect } from 'react';
+import type React from 'react';
+import { useState, useEffect } from 'react';
 import {
     Box,
     Card,
@@ -23,7 +24,7 @@ import {
     keyframes,
     alpha,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import { useAuth } from '../contexts/useAuth';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 import logoLight from '../assets/images/logo-light.png';

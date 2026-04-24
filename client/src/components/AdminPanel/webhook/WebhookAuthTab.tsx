@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, TextField, MenuItem } from '@mui/material';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
 import { AUTH_TYPES } from './webhookHelpers';

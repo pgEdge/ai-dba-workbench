@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { BaseChannel } from '../channels/channelTypes';
+import type { BaseChannel } from '../channels/channelTypes';
 
 /** Webhook notification channel returned by the API. */
 export interface WebhookChannel extends BaseChannel {

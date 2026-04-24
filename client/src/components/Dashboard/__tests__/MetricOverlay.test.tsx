@@ -8,12 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import MetricOverlay from '../MetricOverlay';
-import { OverlayEntry } from '../types';
+import type { OverlayEntry } from '../types';
 
 // ---------------------------------------------------------------------------
 // Mocks

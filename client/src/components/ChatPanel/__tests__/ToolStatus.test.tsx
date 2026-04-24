@@ -11,7 +11,7 @@
 import React from 'react';
 import { screen } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import ToolStatus, { ToolActivity } from '../ToolStatus';
+import ToolStatus, { type ToolActivity } from '../ToolStatus';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 
 // Mock toolDisplayNames to have predictable output

@@ -8,13 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import { MetricQueryParams } from '../types';
+import type { MetricQueryParams } from '../types';
 import { formatLag } from '../../../utils/formatters';
 import KpiTile from '../KpiTile';
 import { Chart } from '../../Chart';
@@ -197,7 +198,7 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                             key={item.metric}
                             label={item.label}
                             value={formatLag(item.value)}
-                            status={status as 'good' | 'warning' | 'critical'}
+                            status={status}
                         />
                     );
                 })}

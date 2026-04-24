@@ -50,7 +50,7 @@ Object.defineProperty(window, 'localStorage', {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeTextResponse(text: string = 'Hello!') {
+function makeTextResponse(text = 'Hello!') {
     return {
         ok: true,
         text: vi.fn().mockResolvedValue(''),
@@ -61,7 +61,7 @@ function makeTextResponse(text: string = 'Hello!') {
     };
 }
 
-function makeToolUseResponse(toolName: string = 'list_connections', toolId: string = 'tool_1') {
+function makeToolUseResponse(toolName = 'list_connections', toolId = 'tool_1') {
     return {
         ok: true,
         text: vi.fn().mockResolvedValue(''),
@@ -74,7 +74,7 @@ function makeToolUseResponse(toolName: string = 'list_connections', toolId: stri
     };
 }
 
-function makeToolCallResponse(text: string = 'Tool result', isError: boolean = false) {
+function makeToolCallResponse(text = 'Tool result', isError = false) {
     return {
         ok: true,
         text: vi.fn().mockResolvedValue(''),
@@ -85,7 +85,7 @@ function makeToolCallResponse(text: string = 'Tool result', isError: boolean = f
     };
 }
 
-function makeErrorResponse(errorText: string = 'Error occurred') {
+function makeErrorResponse(errorText = 'Error occurred') {
     return {
         ok: false,
         text: vi.fn().mockResolvedValue(errorText),
@@ -109,7 +109,7 @@ function makeToolsResponse() {
     };
 }
 
-function makeConversationCreateResponse(id: string = 'conv-1') {
+function makeConversationCreateResponse(id = 'conv-1') {
     return {
         ok: true,
         text: vi.fn().mockResolvedValue(''),

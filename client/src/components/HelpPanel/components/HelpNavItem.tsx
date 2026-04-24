@@ -8,14 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import {
     ListItemButton,
     ListItemIcon,
     ListItemText,
 } from '@mui/material';
 import { ChevronRight as ChevronIcon } from '@mui/icons-material';
-import { SvgIconComponent } from '@mui/icons-material';
+import type { SvgIconComponent } from '@mui/icons-material';
 import {
     styles,
     getNavItemSx,

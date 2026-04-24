@@ -28,7 +28,7 @@ export const truncateDescription = (desc: string, maxLength = 60): string => {
     if (!desc) {return '';}
     const firstLine = desc.split('\n')[0];
     if (firstLine.length <= maxLength) {return firstLine;}
-    return firstLine.substring(0, maxLength) + '...';
+    return `${firstLine.substring(0, maxLength)}...`;
 };
 
 /**

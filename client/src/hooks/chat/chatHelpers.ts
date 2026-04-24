@@ -8,9 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
-import { LLMContentBlock, ToolResult } from '../../types/llm';
-import { APIMessage } from './chatTypes';
+import type { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
+import type { LLMContentBlock, ToolResult } from '../../types/llm';
+import type { APIMessage } from './chatTypes';
 import { INPUT_HISTORY_KEY, INPUT_HISTORY_MAX } from './chatConstants';
 
 // ---------------------------------------------------------------

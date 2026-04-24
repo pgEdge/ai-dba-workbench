@@ -21,7 +21,7 @@ import {
     DoNotDisturb as DoNotDisturbIcon,
     DoNotDisturbOff as DoNotDisturbOffIcon,
 } from '@mui/icons-material';
-import { FilterChipEntry } from './types';
+import type { FilterChipEntry } from './types';
 
 /**
  * Event type configuration with icons and theme-based color keys

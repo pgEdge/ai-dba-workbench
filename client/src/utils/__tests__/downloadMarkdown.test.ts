@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { downloadAsMarkdown } from '../downloadMarkdown';
 
 describe('downloadAsMarkdown', () => {
@@ -160,7 +160,7 @@ describe('downloadAsMarkdown', () => {
         });
 
         it('handles large content', () => {
-            const largeContent = '# Large File\n' + 'Lorem ipsum '.repeat(10000);
+            const largeContent = `# Large File\n${'Lorem ipsum '.repeat(10000)}`;
             downloadAsMarkdown(largeContent, 'large.md');
 
             const blobArg = mockCreateObjectURL.mock.calls[0][0] as Blob;

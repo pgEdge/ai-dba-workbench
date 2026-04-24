@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import type React from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -28,11 +29,11 @@ import {
 import { Close as CloseIcon } from '@mui/icons-material';
 
 import {
-    ServerFormData,
-    ServerDialogProps,
+    type ServerFormData,
+    type ServerDialogProps,
     getDefaultFormData,
-    FormErrors,
-    ClusterFieldsValue,
+    type FormErrors,
+    type ClusterFieldsValue,
 } from './ServerDialog.types';
 import {
     dialogPaperSx,

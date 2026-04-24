@@ -8,14 +8,15 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
+import type React from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { Box, Typography, useTheme, IconButton, Tooltip } from '@mui/material';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import { Chart } from '../../Chart/Chart';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
-import { ChartAnalysisContext } from '../../Chart/types';
+import type { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
-import { ConnectionPerformance, DatabaseCacheHitData } from './types';
+import type { ConnectionPerformance, DatabaseCacheHitData } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';

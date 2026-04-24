@@ -8,15 +8,16 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import { Box, Typography, Chip, alpha, useTheme } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ThemeMode } from '../../types/theme';
-import { ToolActivity } from './ToolStatus';
+import type { ThemeMode } from '../../types/theme';
+import type { ToolActivity } from './ToolStatus';
 import { getToolDisplayName } from '../../utils/toolDisplayNames';
 import { createCleanTheme, extractLanguage } from '../shared/MarkdownExports';
 import CopyCodeButton from '../shared/CopyCodeButton';
@@ -441,7 +442,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                         {children}
                     </Box>
                 ) : (
-                    <>{children}</>
+                    children
                 );
             },
             blockquote: ({ children }: { children?: React.ReactNode }) => (

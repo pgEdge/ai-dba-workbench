@@ -132,7 +132,7 @@ const AdminAlertRules: React.FC = () => {
     const handleSaveRule = async () => {
         if (!editRule) {return;}
         const thresholdNum = parseFloat(editThreshold);
-        if (isNaN(thresholdNum)) {
+        if (Number.isNaN(thresholdNum)) {
             setError('Threshold must be a valid number.');
             return;
         }

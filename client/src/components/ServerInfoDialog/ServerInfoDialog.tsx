@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import type React from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -98,7 +99,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
     }, [open, fetchInfo]);
 
     useEffect(() => {
-        if (!open || !data || data.connection_id !== connectionId || !connectionId) {
+        if (!open || data?.connection_id !== connectionId || !connectionId) {
             return;
         }
         // Fetch AI analysis asynchronously

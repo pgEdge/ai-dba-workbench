@@ -12,7 +12,7 @@
  * Shared style constants for StatusPanel sub-components
  */
 
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import { alpha } from '@mui/material';
 import { getFriendlyTitle } from '../../utils/friendlyNames';
 
@@ -32,7 +32,7 @@ export const hasDistinctLastUpdated = (alert) => {
     }
     const triggered = new Date(alert.triggeredAt).getTime();
     const updated = new Date(alert.lastUpdated).getTime();
-    if (isNaN(triggered) || isNaN(updated)) {
+    if (Number.isNaN(triggered) || Number.isNaN(updated)) {
         return false;
     }
     // Treat timestamps within one second of each other as "the same"

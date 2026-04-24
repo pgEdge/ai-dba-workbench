@@ -11,9 +11,9 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ThemeProvider, createTheme, PaletteOptions } from '@mui/material/styles';
+import { ThemeProvider, createTheme, type PaletteOptions } from '@mui/material/styles';
 import { Chart } from '../Chart';
-import { ChartData } from '../types';
+import type { ChartData } from '../types';
 
 vi.mock('echarts-for-react/lib/core', () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

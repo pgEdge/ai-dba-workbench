@@ -8,9 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import { useTheme } from '@mui/material/styles';
-import { TopoEdge, TopoNode, ClusterTopologyType } from './types';
+import type { TopoEdge, TopoNode, ClusterTopologyType } from './types';
 
 interface TopologyEdgesProps {
     edges: TopoEdge[];

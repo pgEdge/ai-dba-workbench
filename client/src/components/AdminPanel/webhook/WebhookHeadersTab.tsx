@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, TextField, IconButton, Button, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { HeaderEntry } from './webhookTypes';
+import type { HeaderEntry } from './webhookTypes';
 import { getContainedButtonSx, getDeleteIconSx } from '../styles';
 
 export interface WebhookHeadersTabProps {

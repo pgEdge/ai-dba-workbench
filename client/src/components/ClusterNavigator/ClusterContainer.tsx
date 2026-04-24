@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { getClusterTypeColors } from './constants';

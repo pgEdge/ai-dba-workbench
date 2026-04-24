@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -30,7 +31,7 @@ import {
     ToggleButton,
     ToggleButtonGroup,
 } from '@mui/material';
-import { useTheme, Theme } from '@mui/material/styles';
+import { useTheme, type Theme } from '@mui/material/styles';
 import {
     Language as EstateIcon,
     FolderSpecial as GroupIcon,

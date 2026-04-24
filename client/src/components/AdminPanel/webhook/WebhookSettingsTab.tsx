@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import {
     Box,
     TextField,
@@ -18,7 +18,7 @@ import {
     Typography,
 } from '@mui/material';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
-import { WebhookFormState } from './webhookTypes';
+import type { WebhookFormState } from './webhookTypes';
 import { HTTP_METHODS } from './webhookHelpers';
 
 export interface WebhookSettingsTabProps {

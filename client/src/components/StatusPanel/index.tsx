@@ -70,7 +70,7 @@ import {
     PANEL_ROOT_SX,
     METRICS_GRID_SX,
 } from './styles';
-import { StatusPanelProps } from './types';
+import type { StatusPanelProps } from './types';
 
 /**
  * DashboardOverlayContent - Renders the appropriate dashboard

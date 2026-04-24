@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ClusterType } from './constants';
+import type { ClusterType } from './constants';
 
 export interface Server {
     id: number;
@@ -174,7 +174,7 @@ export const saveToStorage = (key: string, value: unknown): void => {
  */
 export const formatRelativeTime = (date: Date | null | undefined): string => {
     if (!date) {return '';}
-    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+    const seconds = Math.floor((Date.now()- date.getTime()) / 1000);
     if (seconds < 60) {return 'just now';}
     const minutes = Math.floor(seconds / 60);
     return `${minutes}m ago`;

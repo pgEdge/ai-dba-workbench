@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import {
     Box,
     Typography,
@@ -44,12 +44,12 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from '../styles';
-import { BaseChannel, ChannelColumnDef } from './channelTypes';
+import type { BaseChannel, ChannelColumnDef } from './channelTypes';
 
 export interface ChannelTableProps<T extends BaseChannel> {
     channels: T[];
     loading: boolean;
-    extraColumns?: ChannelColumnDef<T>[];
+    extraColumns?: Array<ChannelColumnDef<T>>;
     testingChannelId: number | null;
     onEdit: (e: React.MouseEvent, channel: T) => void;
     onDelete: (e: React.MouseEvent, channel: T) => void;

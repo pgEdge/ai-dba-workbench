@@ -8,11 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import type React from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import { useTheme } from '@mui/material/styles';
 import { blendColors } from '../../../../utils/colors';
-import { ClusterServer } from '../../../../contexts/ClusterDataContext';
+import type { ClusterServer } from '../../../../contexts/ClusterDataContext';
 import { buildGraph } from './graphBuilder';
 import {
     computeLayout,
@@ -22,7 +23,7 @@ import {
 } from './layoutEngine';
 import TopologyEdges from './TopologyEdges';
 import TopologyNode from './TopologyNode';
-import { TopoNode } from './types';
+import type { TopoNode } from './types';
 
 interface TopologyDiagramProps {
     /** Servers to display in the topology diagram. */

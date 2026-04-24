@@ -8,15 +8,16 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, useCallback } from 'react';
+import type React from 'react';
+import { useMemo, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
-import { alpha, useTheme, Theme } from '@mui/material/styles';
+import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import { useClusterSelection } from '../../../contexts/useClusterSelection';
-import { ClusterEntry } from '../../../contexts/ClusterDataContext';
-import { collectServers, ServerLike } from '../../../utils/clusterHelpers';
+import type { ClusterEntry } from '../../../contexts/ClusterDataContext';
+import { collectServers, type ServerLike } from '../../../utils/clusterHelpers';
 import type { EstateSelection } from '../../../types/selection';
 
 interface ClusterCardsSectionProps {

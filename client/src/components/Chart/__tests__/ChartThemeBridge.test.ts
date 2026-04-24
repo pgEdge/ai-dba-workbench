@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { renderHook } from '@testing-library/react';
-import { ThemeProvider, createTheme, PaletteOptions } from '@mui/material/styles';
+import { ThemeProvider, createTheme, type PaletteOptions } from '@mui/material/styles';
 import { describe, it, expect } from 'vitest';
 import { useEChartsTheme, getDefaultColorPalette } from '../ChartThemeBridge';
 

@@ -12,7 +12,8 @@
  *
  *-------------------------------------------------------------------------
  */
-import React, { createContext } from 'react';
+import type React from 'react';
+import { createContext } from 'react';
 import { ClusterDataProvider } from './ClusterDataContext';
 import type { ClusterDataContextValue } from './ClusterDataContext';
 import { useClusterData } from './useClusterData';

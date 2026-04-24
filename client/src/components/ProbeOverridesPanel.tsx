@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPut, apiDelete } from '../utils/apiClient';
 import {
     Box,
@@ -122,12 +123,12 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
             return;
         }
         const intervalNum = parseInt(editInterval, 10);
-        if (isNaN(intervalNum) || intervalNum < 1) {
+        if (Number.isNaN(intervalNum) || intervalNum < 1) {
             setError('Collection interval must be a positive integer.');
             return;
         }
         const retentionNum = parseInt(editRetention, 10);
-        if (isNaN(retentionNum) || retentionNum < 1) {
+        if (Number.isNaN(retentionNum) || retentionNum < 1) {
             setError('Retention days must be a positive integer.');
             return;
         }

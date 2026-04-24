@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import type React from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Chip } from '@mui/material';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
@@ -16,12 +17,12 @@ import {
     useChannelCRUD,
     ChannelTable,
     ChannelDialogShell,
-    ChannelColumnDef,
+    type ChannelColumnDef,
 } from './channels';
 import {
-    EmailChannel,
-    EmailRecipient,
-    EmailFormState,
+    type EmailChannel,
+    type EmailRecipient,
+    type EmailFormState,
     DEFAULT_EMAIL_FORM,
     EmailSettingsTab,
     EmailRecipientsTab,
@@ -81,9 +82,9 @@ const AdminEmailChannels: React.FC = () => {
             // Guard against stale responses: only update if still editing same channel
             if (editingChannelIdRef.current !== channelId) { return; }
             const raw = Array.isArray(data.recipients)
-                ? (data.recipients as Record<string, unknown>[])
+                ? (data.recipients as Array<Record<string, unknown>>)
                 : Array.isArray(data)
-                    ? (data as Record<string, unknown>[])
+                    ? (data as Array<Record<string, unknown>>)
                     : [];
             const mapped: EmailRecipient[] = raw.map(
                 (r: Record<string, unknown>) => ({
@@ -172,7 +173,7 @@ const AdminEmailChannels: React.FC = () => {
             return;
         }
         const portNum = parseInt(form.smtp_port, 10);
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
             crud.setDialogError('SMTP port must be a valid port number (1-65535).');
             return;
         }

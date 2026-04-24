@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, {
+import type React from 'react';
+import {
     useState,
     useRef,
     useEffect,
@@ -22,7 +23,7 @@ import {
     Tooltip,
     alpha,
 } from '@mui/material';
-import { Theme, useTheme } from '@mui/material/styles';
+import { type Theme, useTheme } from '@mui/material/styles';
 import {
     Close as CloseIcon,
     Add as NewChatIcon,
@@ -30,9 +31,9 @@ import {
     Download as DownloadIcon,
 } from '@mui/icons-material';
 import { useChatContext } from '../../contexts/useChatContext';
-import ChatMessage, { ChatMessageData, ContentBlock } from './ChatMessage';
+import ChatMessage, { type ChatMessageData, type ContentBlock } from './ChatMessage';
 import ChatInput from './ChatInput';
-import ToolStatus, { ToolActivity } from './ToolStatus';
+import ToolStatus, { type ToolActivity } from './ToolStatus';
 import ThinkingIndicator from './ThinkingIndicator';
 import ConversationHistory from './ConversationHistory';
 import { getDownloadButtonSx } from '../shared/MarkdownExports';
@@ -250,7 +251,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
             const parsed = parseInt(saved, 10);
-            if (!isNaN(parsed) && parsed >= MIN_WIDTH && parsed <= MAX_WIDTH) {
+            if (!Number.isNaN(parsed) && parsed >= MIN_WIDTH && parsed <= MAX_WIDTH) {
                 return parsed;
             }
         }
@@ -292,7 +293,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                 unknown as HookToolActivity[] | undefined;
             return {
                 role: msg.role,
-                content: msg.content as ChatMessageData['content'],
+                content: msg.content,
                 timestamp: msg.timestamp,
                 isError: msg.isError,
                 activity: hookActivity?.map(mapToolActivity),

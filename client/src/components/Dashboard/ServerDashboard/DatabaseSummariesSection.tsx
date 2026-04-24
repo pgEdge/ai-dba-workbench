@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
@@ -21,10 +22,10 @@ import { useDashboard } from '../../../contexts/useDashboard';
 import CollapsibleSection from '../CollapsibleSection';
 import Sparkline from '../Sparkline';
 import { getDashboardTileSx } from '../styles';
-import { MetricDataPoint } from '../types';
+import type { MetricDataPoint } from '../types';
 import { formatNumber } from '../../../utils/formatters';
 import { logger } from '../../../utils/logger';
-import {
+import type {
     ServerSectionProps,
     DatabaseSummary,
     ServerPerformanceSummary,

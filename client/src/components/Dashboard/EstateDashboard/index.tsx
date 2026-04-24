@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import CollapsibleSection from '../CollapsibleSection';
 import HealthOverviewSection from './HealthOverviewSection';

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ChartData } from '../types';
+import type { ChartData } from '../types';
 
 export const normalizeChartData = (data: ChartData): ChartData => {
     const series = Array.isArray(data.series) ? data.series : [];

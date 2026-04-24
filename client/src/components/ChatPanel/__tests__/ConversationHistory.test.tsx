@@ -12,7 +12,7 @@ import React from 'react';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import ConversationHistory, { ConversationSummary } from '../ConversationHistory';
+import ConversationHistory, { type ConversationSummary } from '../ConversationHistory';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 
 describe('ConversationHistory', () => {

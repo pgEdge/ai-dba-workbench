@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useChannelCRUD, BaseChannel } from '../index';
+import { useChannelCRUD, type BaseChannel } from '../index';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -45,7 +45,7 @@ const mapTestChannel = (raw: Record<string, unknown>): TestChannel => ({
     extra_field: (raw.extra_field as string) || '',
 });
 
-function makeRawChannels(type: 'email' | 'webhook' = 'email'): Record<string, unknown>[] {
+function makeRawChannels(type: 'email' | 'webhook' = 'email'): Array<Record<string, unknown>> {
     return [
         {
             id: 1,
@@ -68,7 +68,7 @@ function makeRawChannels(type: 'email' | 'webhook' = 'email'): Record<string, un
     ];
 }
 
-function makeApiResponse(channels: Record<string, unknown>[]): Record<string, unknown> {
+function makeApiResponse(channels: Array<Record<string, unknown>>): Record<string, unknown> {
     return { notification_channels: channels };
 }
 

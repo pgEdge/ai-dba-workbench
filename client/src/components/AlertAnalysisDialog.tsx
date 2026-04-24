@@ -11,9 +11,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect } from 'react';
+import type React from 'react';
+import { useEffect } from 'react';
 import { Box, Typography, alpha, useTheme } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     Psychology as PsychologyIcon,
     Error as ErrorIcon,

@@ -10,9 +10,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Typography, TextField, CircularProgress, Box, TypographyProps, TextFieldProps } from '@mui/material';
-import { SxProps, Theme } from '@mui/material/styles';
+import type React from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { Typography, TextField, CircularProgress, Box, type TypographyProps, type TextFieldProps } from '@mui/material';
+import type { SxProps, Theme } from '@mui/material/styles';
 
 interface InlineEditTextProps {
     value: string;

@@ -52,8 +52,8 @@
  * or similar transition-wrapped component.
  */
 
-import React from 'react';
-import { render, RenderOptions, RenderResult } from '@testing-library/react';
+import type React from 'react';
+import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ImmediateTransition from './ImmediateTransition';
 

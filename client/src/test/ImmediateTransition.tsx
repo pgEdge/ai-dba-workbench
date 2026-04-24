@@ -24,7 +24,7 @@
  */
 
 import React from 'react';
-import { TransitionProps } from '@mui/material/transitions';
+import type { TransitionProps } from '@mui/material/transitions';
 
 /**
  * Creates a minimal mock HTMLElement for transition callbacks.

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import {
     Accordion,
     AccordionSummary,
@@ -19,8 +19,8 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
-    ServerFormData,
-    FieldChangeHandler,
+    type ServerFormData,
+    type FieldChangeHandler,
     SSL_MODES,
 } from './ServerDialog.types';
 import {

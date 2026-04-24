@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useQueryOverview, QueryOverviewInput } from '../useQueryOverview';
+import { useQueryOverview, type QueryOverviewInput } from '../useQueryOverview';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -74,7 +74,7 @@ function makeInput(overrides: Partial<QueryOverviewInput> = {}): QueryOverviewIn
     };
 }
 
-function makeSuccessResponse(text: string = 'Query appears healthy.') {
+function makeSuccessResponse(text = 'Query appears healthy.') {
     return {
         ok: true,
         text: vi.fn().mockResolvedValue(''),
@@ -84,7 +84,7 @@ function makeSuccessResponse(text: string = 'Query appears healthy.') {
     };
 }
 
-function makeErrorResponse(errorText: string = 'Internal Server Error') {
+function makeErrorResponse(errorText = 'Internal Server Error') {
     return {
         ok: false,
         text: vi.fn().mockResolvedValue(errorText),
@@ -312,7 +312,7 @@ describe('useQueryOverview', () => {
     });
 
     it('truncates long query text in user message', async () => {
-        const longQuery = 'SELECT ' + 'a'.repeat(300) + ' FROM t';
+        const longQuery = `SELECT ${'a'.repeat(300)} FROM t`;
         const input = makeInput({ queryText: longQuery });
 
         renderHook(() => useQueryOverview(input));

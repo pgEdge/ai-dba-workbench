@@ -112,7 +112,7 @@ export function formatCompactNumber(num: number | null | undefined): string {
  */
 export function formatValue(
     value: number | null | undefined,
-    decimals: number = 1
+    decimals = 1
 ): string {
     if (value === null || value === undefined) {
         return '--';
@@ -168,22 +168,22 @@ export function formatPgSetting(
 
     const numValue = parseFloat(setting);
 
-    if (unit === '8kB' && !isNaN(numValue)) {
+    if (unit === '8kB' && !Number.isNaN(numValue)) {
         return formatBytes(numValue * 8192);
     }
-    if (unit === 'kB' && !isNaN(numValue)) {
+    if (unit === 'kB' && !Number.isNaN(numValue)) {
         return formatBytes(numValue * 1024);
     }
-    if (unit === 'MB' && !isNaN(numValue)) {
+    if (unit === 'MB' && !Number.isNaN(numValue)) {
         return formatBytes(numValue * 1048576);
     }
-    if (unit === 'ms' && !isNaN(numValue)) {
+    if (unit === 'ms' && !Number.isNaN(numValue)) {
         return formatTime(numValue);
     }
-    if (unit === 's' && !isNaN(numValue)) {
+    if (unit === 's' && !Number.isNaN(numValue)) {
         return formatTime(numValue * 1000);
     }
-    if (unit === 'min' && !isNaN(numValue)) {
+    if (unit === 'min' && !Number.isNaN(numValue)) {
         return formatTime(numValue * 60000);
     }
 

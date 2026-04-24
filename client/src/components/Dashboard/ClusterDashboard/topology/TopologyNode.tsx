@@ -8,14 +8,15 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useCallback } from 'react';
+import type React from 'react';
+import { useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import { alpha, useTheme, Theme } from '@mui/material/styles';
+import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import RolePill from '../../../ClusterNavigator/RolePill';
-import { ServerRole } from '../../../ClusterNavigator/constants';
-import { TopoNode } from './types';
+import type { ServerRole } from '../../../ClusterNavigator/constants';
+import type { TopoNode } from './types';
 
 interface TopologyNodeProps {
     node: TopoNode;

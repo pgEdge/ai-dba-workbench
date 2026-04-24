@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ClusterServer } from '../../../../contexts/ClusterDataContext';
+import type { ClusterServer } from '../../../../contexts/ClusterDataContext';
 
 export interface TopoNode {
     id: number;

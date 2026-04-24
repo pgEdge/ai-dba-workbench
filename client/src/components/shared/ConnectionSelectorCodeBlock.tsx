@@ -10,14 +10,15 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback } from 'react';
+import type React from 'react';
+import { useState, useCallback } from 'react';
 import {
     Box,
     Select,
     MenuItem,
     FormControl,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import type { SelectChangeEvent } from '@mui/material';
 import RunnableCodeBlock from './RunnableCodeBlock';
 import { sxMonoFont } from './markdownStyles';

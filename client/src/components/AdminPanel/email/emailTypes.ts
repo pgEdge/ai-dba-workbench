@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { BaseChannel } from '../channels/channelTypes';
+import type { BaseChannel } from '../channels/channelTypes';
 
 /** Email channel with SMTP configuration and recipient count. */
 export interface EmailChannel extends BaseChannel {

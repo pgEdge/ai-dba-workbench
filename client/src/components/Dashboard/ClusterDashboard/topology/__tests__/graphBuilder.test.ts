@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildGraph } from '../graphBuilder';
-import { ClusterServer } from '../../../../../contexts/ClusterDataContext';
+import type { ClusterServer } from '../../../../../contexts/ClusterDataContext';
 
 /**
  * Helper to create a minimal ClusterServer for testing.

@@ -8,13 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback } from 'react';
+import type React from 'react';
+import { useState, useCallback } from 'react';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiPost, apiPut } from '../../utils/apiClient';
 import { useChannelCRUD, ChannelTable, ChannelDialogShell } from './channels';
 import {
-    WebhookChannel,
-    WebhookFormState,
+    type WebhookChannel,
+    type WebhookFormState,
     DEFAULT_WEBHOOK_FORM,
     parseAuthCredentials,
     buildAuthCredentials,

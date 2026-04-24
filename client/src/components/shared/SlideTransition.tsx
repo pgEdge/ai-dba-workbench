@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { Slide } from '@mui/material';
-import { TransitionProps } from '@mui/material/transitions';
+import type { TransitionProps } from '@mui/material/transitions';
 
 /**
  * Shared slide-up transition used by full-screen dialogs throughout

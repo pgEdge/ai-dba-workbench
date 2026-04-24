@@ -11,13 +11,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiFetch } from '../../utils/apiClient';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
-import {
+import type {
     ChatMessageData,
     ContentBlock,
 } from '../../components/ChatPanel/ChatMessage';
-import { ToolActivity } from '../../components/ChatPanel/ToolStatus';
+import type { ToolActivity } from '../../components/ChatPanel/ToolStatus';
 
-import { APIMessage, ToolDefinition } from './chatTypes';
+import type { APIMessage, ToolDefinition } from './chatTypes';
 import { INPUT_HISTORY_MAX, SYSTEM_PROMPT, CHAT_TOOLS } from './chatConstants';
 import {
     toAPIMessages,

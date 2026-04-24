@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box } from '@mui/material';
 import { usePerformanceSummary } from './usePerformanceSummary';
 import { useDatabaseCacheHit } from './useDatabaseCacheHit';
-import { PerformanceTilesProps } from './types';
+import type { PerformanceTilesProps } from './types';
 import { TILE_GRID_SX } from './styles';
 import DatabaseAgeTile from './DatabaseAgeTile';
 import CacheHitTile from './CacheHitTile';

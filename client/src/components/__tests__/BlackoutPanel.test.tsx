@@ -17,12 +17,12 @@ import type { ServerSelection } from '../../types/selection';
 
 // Mock the BlackoutContext
 const mockStopBlackout = vi.fn();
-const mockActiveBlackoutsForSelection: {
+const mockActiveBlackoutsForSelection: Array<{
     id: number;
     scope: string;
     reason: string;
     end_time: string;
-}[] = [];
+}> = [];
 
 vi.mock('../../contexts/useBlackouts', () => ({
     useBlackouts: () => ({

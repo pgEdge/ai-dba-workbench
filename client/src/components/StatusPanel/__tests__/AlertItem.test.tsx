@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { render, screen } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material';
 import { describe, it, expect } from 'vitest';
@@ -95,7 +95,7 @@ describe('AlertItem last updated display', () => {
 });
 
 describe('GroupedAlertItem last updated display', () => {
-    const makeGroupedAlerts = (overrides: Record<string, unknown>[]) =>
+    const makeGroupedAlerts = (overrides: Array<Record<string, unknown>>) =>
         overrides.map((o, idx) => ({
             ...baseAlert,
             id: idx + 1,

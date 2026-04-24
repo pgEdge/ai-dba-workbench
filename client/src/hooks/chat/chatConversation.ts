@@ -15,8 +15,8 @@
  * from the backend API.
  */
 
-import { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
-import { ConversationCreateResponse, ConversationDetail } from './chatTypes';
+import type { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
+import type { ConversationCreateResponse, ConversationDetail } from './chatTypes';
 import { logger } from '../../utils/logger';
 
 /**

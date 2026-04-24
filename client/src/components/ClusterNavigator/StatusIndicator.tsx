@@ -8,9 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, Tooltip, useTheme } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     CheckCircle as HealthyIcon,
     Warning as WarningIcon,
@@ -18,7 +18,7 @@ import {
     HourglassEmpty,
     PauseCircle as PauseCircleIcon,
 } from '@mui/icons-material';
-import { SxProps } from '@mui/material/styles';
+import type { SxProps } from '@mui/material/styles';
 
 // -- Static sx constants --------------------------------------------------
 

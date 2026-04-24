@@ -8,8 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import { ClusterServer } from '../../../../contexts/ClusterDataContext';
-import {
+import type { ClusterServer } from '../../../../contexts/ClusterDataContext';
+import type {
     TopoNode,
     TopoEdge,
     TopologyGraph,

@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import type React from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
@@ -23,7 +24,7 @@ import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
-import { ChartAnalysisContext, ChartData } from '../../Chart/types';
+import type { ChartAnalysisContext, ChartData } from '../../Chart/types';
 import { logger } from '../../../utils/logger';
 import {
     LEADERBOARD_ROW_SX,
@@ -31,20 +32,20 @@ import {
     LEADERBOARD_VALUE_SX,
 } from '../styles';
 import {
-    DatabaseSectionProps,
-    IndexLeaderboardRow,
-    IndexSortCriteria,
-    LeaderboardResponse,
+    type DatabaseSectionProps,
+    type IndexLeaderboardRow,
+    type IndexSortCriteria,
+    type LeaderboardResponse,
     formatNumber,
 } from './types';
 
 /** Sort criteria options for indexes */
-const SORT_OPTIONS: {
+const SORT_OPTIONS: Array<{
     value: IndexSortCriteria;
     label: string;
     orderBy: string;
     order: string;
-}[] = [
+}> = [
     {
         value: 'size',
         label: 'Reads',

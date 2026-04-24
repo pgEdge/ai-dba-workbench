@@ -8,12 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
     ClusterDataProvider,
-    ClusterGroup,
+    type ClusterGroup,
 } from '../ClusterDataContext';
 import {
     generateDataFingerprint,
@@ -277,7 +277,7 @@ describe('ClusterDataContext', () => {
                 if (url === '/api/v1/connections') {
                     return Promise.resolve(connectionRecords);
                 }
-                return Promise.reject(new Error('unexpected ' + url));
+                return Promise.reject(new Error(`unexpected ${url}`));
             });
 
             const { result } = renderHook(() => useClusterData(), { wrapper });

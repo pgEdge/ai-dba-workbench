@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback } from 'react';
+import type React from 'react';
+import { useState, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -20,7 +21,7 @@ import {
     CircularProgress,
     Tooltip,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     Close as CloseIcon,
     Error as ErrorIcon,
@@ -321,7 +322,7 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
             )}
 
             {/* Query results - multiple statement results */}
-            {queryState.response && queryState.response.results && (
+            {queryState.response?.results && (
                 <Box sx={getQueryResultWrapperSx(theme)}>
                     <Box sx={getQueryResultHeaderSx(theme)}>
                         <Typography sx={{

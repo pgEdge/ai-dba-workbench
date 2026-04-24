@@ -11,7 +11,7 @@
 import React from 'react';
 import { screen } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import ChatMessage, { ChatMessageData } from '../ChatMessage';
+import ChatMessage, { type ChatMessageData } from '../ChatMessage';
 import { renderWithTheme } from '../../../test/renderWithTheme';
 
 // ChatMessage's formatTimestamp helper calls `Date.toLocaleString(undefined,

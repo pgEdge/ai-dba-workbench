@@ -11,14 +11,15 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect, useRef } from 'react';
+import type React from 'react';
+import { useEffect, useRef } from 'react';
 import { Box, Typography, useTheme } from '@mui/material';
 import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import {
     useChartAnalysis,
-    ChartAnalysisInput,
+    type ChartAnalysisInput,
 } from '../hooks/useChartAnalysis';
-import { ChartData, ChartAnalysisContext } from './Chart/types';
+import type { ChartData, ChartAnalysisContext } from './Chart/types';
 import { getIconColorSx } from './shared/MarkdownExports';
 import {
     getConnectionBadgeSx,

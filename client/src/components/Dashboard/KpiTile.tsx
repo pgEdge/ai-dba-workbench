@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import type React from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
@@ -17,10 +18,10 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
-import { Theme, useTheme } from '@mui/material/styles';
-import { ChartAnalysisContext, ChartData } from '../Chart/types';
+import { type Theme, useTheme } from '@mui/material/styles';
+import type { ChartAnalysisContext, ChartData } from '../Chart/types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
-import { KpiTileData, MetricDataPoint } from './types';
+import type { KpiTileData, MetricDataPoint } from './types';
 import Sparkline from './Sparkline';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
@@ -92,7 +93,6 @@ const getTrendColor = (
             return theme.palette.success.main;
         case 'down':
             return theme.palette.error.main;
-        case 'flat':
         default:
             return theme.palette.text.secondary;
     }
@@ -178,7 +178,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
             onKeyDown={handleKeyDown}
             tabIndex={onClick ? 0 : undefined}
             role={onClick ? 'button' : undefined}
-            aria-label={`${label}: ${value}${unit ? ' ' + unit : ''}`}
+            aria-label={`${label}: ${value}${unit ? ` ${unit}` : ''}`}
         >
             <Typography sx={KPI_LABEL_SX}>
                 {label}

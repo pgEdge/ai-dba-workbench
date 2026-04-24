@@ -12,7 +12,7 @@
  * Local types for the ServerDashboard components.
  */
 
-import { MetricDataPoint } from '../types';
+import type { MetricDataPoint } from '../types';
 
 /** Props shared by all server dashboard section components */
 export interface ServerSectionProps {

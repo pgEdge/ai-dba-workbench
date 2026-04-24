@@ -8,19 +8,20 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import { MetricQueryParams, MetricSeries, MetricDataPoint } from '../types';
+import type { MetricQueryParams, MetricSeries, MetricDataPoint } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import {
-    DatabaseSectionProps,
+    type DatabaseSectionProps,
     extractSparklineData,
     extractLatestValue,
     formatValue,

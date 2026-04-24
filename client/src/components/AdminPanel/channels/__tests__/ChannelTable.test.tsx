@@ -12,8 +12,8 @@ import { screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Chip } from '@mui/material';
 import renderWithTheme from '../../../../test/renderWithTheme';
-import { ChannelTable, ChannelTableProps } from '../ChannelTable';
-import { BaseChannel, ChannelColumnDef } from '../channelTypes';
+import { ChannelTable, type ChannelTableProps } from '../ChannelTable';
+import type { BaseChannel, ChannelColumnDef } from '../channelTypes';
 
 interface TestChannel extends BaseChannel {
     extra_field: string;
@@ -203,7 +203,7 @@ describe('ChannelTable', () => {
     });
 
     it('renders extra columns when provided', () => {
-        const extraColumns: ChannelColumnDef<TestChannel>[] = [
+        const extraColumns: Array<ChannelColumnDef<TestChannel>> = [
             {
                 label: 'Recipients',
                 render: (channel) => (
@@ -345,7 +345,7 @@ describe('ChannelTable', () => {
     });
 
     it('renders multiple extra columns in correct order', () => {
-        const extraColumns: ChannelColumnDef<TestChannel>[] = [
+        const extraColumns: Array<ChannelColumnDef<TestChannel>> = [
             { label: 'Column A', render: () => 'Value A' },
             { label: 'Column B', render: () => 'Value B' },
         ];

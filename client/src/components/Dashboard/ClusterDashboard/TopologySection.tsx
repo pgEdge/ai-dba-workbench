@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, useCallback, useRef, useState, useEffect } from 'react';
+import type React from 'react';
+import { useMemo, useCallback, useRef, useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -18,7 +19,7 @@ import { buildGraph } from './topology/graphBuilder';
 import { computeLayout, computeContainerHeight, NODE_WIDTH, NODE_HEIGHT } from './topology/layoutEngine';
 import TopologyEdges from './topology/TopologyEdges';
 import TopologyNode from './topology/TopologyNode';
-import { TopoNode } from './topology/types';
+import type { TopoNode } from './topology/types';
 import type { ClusterSelection } from '../../../types/selection';
 
 interface TopologySectionProps {

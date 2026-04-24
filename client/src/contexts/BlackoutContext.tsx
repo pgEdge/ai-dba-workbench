@@ -7,7 +7,8 @@
  *
  *-------------------------------------------------------------------------
  */
-import React, { createContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { createContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import { logger } from '../utils/logger';

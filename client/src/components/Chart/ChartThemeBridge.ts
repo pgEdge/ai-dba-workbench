@@ -9,7 +9,7 @@
  */
 
 import { useMemo } from 'react';
-import { useTheme, alpha, Theme } from '@mui/material/styles';
+import { useTheme, alpha, type Theme } from '@mui/material/styles';
 
 /**
  * Returns the default color palette for chart series, derived from the

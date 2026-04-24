@@ -20,7 +20,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -43,7 +43,7 @@ vi.mock('../../../utils/apiClient', () => ({
     ApiError: class ApiError extends Error {
         public readonly statusCode: number;
         public readonly errorBody: string;
-        constructor(message: string, statusCode: number, errorBody: string = '') {
+        constructor(message: string, statusCode: number, errorBody = '') {
             super(message);
             this.name = 'ApiError';
             this.statusCode = statusCode;
@@ -181,7 +181,7 @@ const getRestoreButton = (): HTMLButtonElement => {
     for (const icon of icons) {
         const btn = icon.closest('button');
         if (btn) {
-            return btn as HTMLButtonElement;
+            return btn;
         }
     }
     throw new Error('Restore button not found');

@@ -16,8 +16,8 @@ import {
     saveInputHistory,
 } from '../chatHelpers';
 import { INPUT_HISTORY_KEY, INPUT_HISTORY_MAX } from '../chatConstants';
-import { APIMessage } from '../chatTypes';
-import { ChatMessageData } from '../../../components/ChatPanel/ChatMessage';
+import type { APIMessage } from '../chatTypes';
+import type { ChatMessageData } from '../../../components/ChatPanel/ChatMessage';
 
 // ---------------------------------------------------------------------------
 // localStorage mock
@@ -388,7 +388,7 @@ describe('chatHelpers', () => {
             saveInputHistory(largeHistory);
 
             const savedValue = localStorageMock.setItem.mock.calls[0][1];
-            const parsedSaved = JSON.parse(savedValue as string);
+            const parsedSaved = JSON.parse(savedValue);
 
             expect(parsedSaved).toHaveLength(INPUT_HISTORY_MAX);
             expect(parsedSaved[0]).toBe('query0');
@@ -421,7 +421,7 @@ describe('chatHelpers', () => {
             saveInputHistory(history);
 
             const savedValue = localStorageMock.setItem.mock.calls[0][1];
-            const parsedSaved = JSON.parse(savedValue as string);
+            const parsedSaved = JSON.parse(savedValue);
 
             expect(parsedSaved).toEqual(history);
         });
@@ -435,7 +435,7 @@ describe('chatHelpers', () => {
             saveInputHistory(exactHistory);
 
             const savedValue = localStorageMock.setItem.mock.calls[0][1];
-            const parsedSaved = JSON.parse(savedValue as string);
+            const parsedSaved = JSON.parse(savedValue);
 
             expect(parsedSaved).toHaveLength(INPUT_HISTORY_MAX);
         });

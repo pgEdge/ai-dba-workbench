@@ -93,7 +93,7 @@ export interface AcknowledgeDialogProps {
     alerts?: TransformedAlert[];
     onClose: () => void;
     onConfirm: (alertId: number | string, message: string, falsePositive: boolean) => void;
-    onConfirmMultiple?: (alertIds: (number | string)[], message: string, falsePositive: boolean) => void;
+    onConfirmMultiple?: (alertIds: Array<number | string>, message: string, falsePositive: boolean) => void;
 }
 
 export interface AlertsSectionProps {

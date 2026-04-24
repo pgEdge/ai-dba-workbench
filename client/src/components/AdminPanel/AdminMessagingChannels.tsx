@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -127,7 +128,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
         try {
             setLoading(true);
             const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
-            const allChannels = (data.notification_channels || data || []) as Record<string, unknown>[];
+            const allChannels = (data.notification_channels || data || []) as Array<Record<string, unknown>>;
             const filtered: MessagingChannel[] = allChannels
                 .filter((ch: Record<string, unknown>) => ch.channel_type === channelType)
                 .map((ch: Record<string, unknown>) => ({

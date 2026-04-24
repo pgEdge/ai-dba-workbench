@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ChartData } from '../types';
+import type { ChartData } from '../types';
 import { buildLegend } from './common';
 
 export function buildPieOptions(

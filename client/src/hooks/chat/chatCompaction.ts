@@ -15,7 +15,7 @@
  * summarizing older messages while preserving recent context.
  */
 
-import { APIMessage, CompactResponse } from './chatTypes';
+import type { APIMessage, CompactResponse } from './chatTypes';
 import {
     COMPACTION_TOKEN_THRESHOLD,
     COMPACTION_MAX_TOKENS,

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { alpha, Theme } from '@mui/material/styles';
+import { alpha, type Theme } from '@mui/material/styles';
 
 /**
  * Static style constants (Issue 23)

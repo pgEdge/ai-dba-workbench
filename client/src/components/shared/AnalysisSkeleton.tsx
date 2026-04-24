@@ -9,7 +9,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, Skeleton, useTheme } from '@mui/material';
 import { getSkeletonBgSx, sxSkeletonContainer, sxSkeletonRow } from './markdownStyles';
 

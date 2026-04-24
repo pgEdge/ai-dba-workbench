@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -29,7 +30,7 @@ import {
     Switch,
     alpha,
 } from '@mui/material';
-import { useTheme, Theme } from '@mui/material/styles';
+import { useTheme, type Theme } from '@mui/material/styles';
 import {
     Language as EstateIcon,
     FolderSpecial as GroupIcon,
@@ -250,7 +251,7 @@ const buildCron = (template: string, hour: string, minute: string): string => {
  * Describe a cron expression in human-readable form.
  */
 const describeCron = (cron: string): string => {
-    if (!cron || !cron.trim()) {return '';}
+    if (!cron?.trim()) {return '';}
     const parts = cron.trim().split(/\s+/);
     if (parts.length !== 5) {return 'Invalid cron expression';}
 
@@ -259,7 +260,7 @@ const describeCron = (cron: string): string => {
     let timeStr = '';
     const h = parseInt(hour, 10);
     const m = parseInt(min, 10);
-    if (!isNaN(h) && !isNaN(m)) {
+    if (!Number.isNaN(h) && !Number.isNaN(m)) {
         const ampm = h >= 12 ? 'PM' : 'AM';
         const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
         timeStr = `at ${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
@@ -402,7 +403,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
     const effectiveDuration = useMemo(() => {
         if (customDuration) {
             const val = parseInt(customDuration, 10);
-            return isNaN(val) || val <= 0 ? 0 : val;
+            return Number.isNaN(val) || val <= 0 ? 0 : val;
         }
         return durationMinutes;
     }, [durationMinutes, customDuration]);

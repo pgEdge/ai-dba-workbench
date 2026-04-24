@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { useState, MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 
 export interface UseMenuReturn {
     anchorEl: HTMLElement | null;

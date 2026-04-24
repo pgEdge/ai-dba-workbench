@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import type React from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
     Box,
     TextField,
@@ -16,7 +17,7 @@ import {
     Typography,
     alpha,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import { Send as SendIcon } from '@mui/icons-material';
 
 // ---------------------------------------------------------------------------

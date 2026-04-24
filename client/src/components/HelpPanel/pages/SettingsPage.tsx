@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, Typography } from '@mui/material';
 import { Palette as ThemeIcon } from '@mui/icons-material';
 import { SectionTitle, HelpTip } from '../components';

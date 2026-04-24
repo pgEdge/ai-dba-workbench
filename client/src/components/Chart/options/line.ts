@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ChartData } from '../types';
+import type { ChartData } from '../types';
 import {
     buildTooltip,
     buildLegend,

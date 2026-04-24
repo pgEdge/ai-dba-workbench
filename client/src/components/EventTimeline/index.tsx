@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, useCallback, useEffect, memo } from 'react';
+import type React from 'react';
+import { useState, useMemo, useCallback, useEffect, memo } from 'react';
 import {
     Box,
     Collapse,
@@ -20,7 +21,7 @@ import { TimelineHeader, LoadingSkeleton, EmptyState } from './TimelineHeader';
 import TimelineCanvas from './TimelineCanvas';
 import EventDetailPanel from './EventDetailPanel';
 import { getOuterContainerSx } from './styles';
-import { EventTimelineProps } from './types';
+import type { EventTimelineProps } from './types';
 
 /**
  * EventTimeline - Main component for displaying server events on a timeline

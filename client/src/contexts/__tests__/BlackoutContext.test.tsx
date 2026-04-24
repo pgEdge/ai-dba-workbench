@@ -8,13 +8,13 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
     BlackoutProvider,
-    Blackout,
-    BlackoutSchedule,
+    type Blackout,
+    type BlackoutSchedule,
 } from '../BlackoutContext';
 import { useBlackouts } from '../useBlackouts';
 import type { Selection } from '../../types/selection';
@@ -140,7 +140,7 @@ describe('BlackoutContext', () => {
             if (url === '/api/v1/blackout-schedules') {
                 return Promise.resolve(mockSchedulesResponse);
             }
-            return Promise.reject(new Error('unknown url ' + url));
+            return Promise.reject(new Error(`unknown url ${url}`));
         });
         mockApiPost.mockResolvedValue({});
         mockApiPut.mockResolvedValue({});

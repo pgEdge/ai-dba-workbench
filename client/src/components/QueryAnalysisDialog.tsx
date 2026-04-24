@@ -11,12 +11,13 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect, useRef } from 'react';
+import type React from 'react';
+import { useEffect, useRef } from 'react';
 import { Box, Typography, useTheme } from '@mui/material';
 import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import {
     useQueryAnalysis,
-    QueryAnalysisInput,
+    type QueryAnalysisInput,
 } from '../hooks/useQueryAnalysis';
 import { formatTime } from '../utils/formatters';
 import { slugify } from '../utils/textHelpers';

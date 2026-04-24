@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 /** Fields common to every notification channel. */
 export interface BaseChannel {

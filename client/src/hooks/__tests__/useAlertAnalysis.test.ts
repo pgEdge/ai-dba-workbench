@@ -13,7 +13,7 @@ import { renderHook, act } from '@testing-library/react';
 import {
     useAlertAnalysis,
     clearAlertAnalysisCache,
-    AlertInput,
+    type AlertInput,
 } from '../useAlertAnalysis';
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@
  * Local types for the ObjectDashboard components.
  */
 
-import { MetricDataPoint, MetricSeries } from '../types';
+import type { MetricDataPoint, MetricSeries } from '../types';
 import { formatBytes, formatValue, formatNumber, formatTime } from '../../../utils/formatters';
 
 /** Props shared by all object detail components */

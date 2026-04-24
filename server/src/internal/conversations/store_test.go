@@ -11,10 +11,20 @@ package conversations
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
+
+// failingReader is an io.Reader that always returns an error. It drives
+// the crypto/rand failure branch of generateIDFrom without mocking the
+// global rand.Reader, keeping the test hermetic.
+type failingReader struct{}
+
+func (failingReader) Read(_ []byte) (int, error) {
+	return 0, errors.New("simulated randomness failure")
+}
 
 func TestNewStore(t *testing.T) {
 	// NewStore should accept a nil pool without panicking
@@ -26,8 +36,7 @@ func TestNewStore(t *testing.T) {
 
 func TestGenerateID(t *testing.T) {
 	// Validate that generateID returns a non-empty, properly-prefixed
-	// identifier. Uniqueness between back-to-back calls depends on clock
-	// resolution and is therefore covered separately in
+	// identifier. Back-to-back uniqueness is covered separately in
 	// TestGenerateID_Uniqueness.
 	id := generateID()
 
@@ -349,18 +358,93 @@ func TestGenerateID_Format(t *testing.T) {
 	if len(id) <= 5 {
 		t.Errorf("ID should be longer than just prefix, got %q", id)
 	}
+
+	// Verify the full shape: conv_<unix-nanos>_<16 hex chars>. The
+	// random suffix is what guarantees uniqueness across calls that
+	// fall inside a single nanosecond tick, so we assert its presence
+	// and length explicitly. A fallback path that omits the suffix
+	// exists for the (practically unreachable) case where crypto/rand
+	// returns an error; this test exercises the normal path.
+	parts := strings.Split(id, "_")
+	if len(parts) != 3 {
+		t.Fatalf("ID should have 3 underscore-separated parts, got %q", id)
+	}
+	if parts[0] != "conv" {
+		t.Errorf("First part should be 'conv', got %q", parts[0])
+	}
+	if len(parts[1]) == 0 {
+		t.Errorf("Timestamp part should be non-empty, got %q", id)
+	}
+	for _, r := range parts[1] {
+		if r < '0' || r > '9' {
+			t.Errorf("Timestamp part should be all digits, got %q", parts[1])
+			break
+		}
+	}
+	if len(parts[2]) != 16 {
+		t.Errorf("Random suffix should be 16 hex chars (8 bytes), "+
+			"got %q (length %d)", parts[2], len(parts[2]))
+	}
+	for _, r := range parts[2] {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+		if !isHex {
+			t.Errorf("Random suffix should be lowercase hex, got %q",
+				parts[2])
+			break
+		}
+	}
+}
+
+func TestGenerateIDFrom_RandomFailureFallsBackToTimestamp(t *testing.T) {
+	// When the randomness source returns an error, generateIDFrom must
+	// still produce a well-formed, non-empty ID. The fallback path drops
+	// the random suffix and returns conv_<unix-nanos>; we assert the
+	// shape here so future refactors cannot silently break the fallback.
+	id := generateIDFrom(failingReader{})
+
+	if !strings.HasPrefix(id, "conv_") {
+		t.Errorf("Fallback ID should start with 'conv_', got %q", id)
+	}
+	parts := strings.Split(id, "_")
+	if len(parts) != 2 {
+		t.Fatalf("Fallback ID should have exactly 2 underscore-separated "+
+			"parts (conv_<nanos>), got %q", id)
+	}
+	if parts[0] != "conv" {
+		t.Errorf("First part should be 'conv', got %q", parts[0])
+	}
+	if len(parts[1]) == 0 {
+		t.Errorf("Timestamp part should be non-empty, got %q", id)
+	}
+	for _, r := range parts[1] {
+		if r < '0' || r > '9' {
+			t.Errorf("Timestamp part should be all digits, got %q", parts[1])
+			break
+		}
+	}
+}
+
+func TestGenerateIDFrom_UsesProvidedRandomness(t *testing.T) {
+	// When the reader supplies known bytes, generateIDFrom must emit
+	// them verbatim as the hex suffix. This locks down the encoding and
+	// ensures the random source is actually consulted (rather than, say,
+	// a hard-coded constant or the global rand.Reader).
+	fixed := strings.NewReader("\x00\x11\x22\x33\x44\x55\x66\x77")
+	id := generateIDFrom(fixed)
+
+	if !strings.HasSuffix(id, "_0011223344556677") {
+		t.Errorf("Expected ID to end with the hex of the supplied bytes, "+
+			"got %q", id)
+	}
 }
 
 func TestGenerateID_Uniqueness(t *testing.T) {
-	// generateID derives its suffix from time.Now().UnixNano(), so
-	// collisions between calls that land in the same nanosecond tick are
-	// theoretically possible on platforms with coarse clocks. Rather than
-	// depend on clock granularity (which has caused flakes in CI), we
-	// generate a batch of IDs, verify every one is well-formed, and
-	// tolerate a small number of duplicates while still catching a
-	// generator that is fundamentally broken.
+	// generateID combines a nanosecond timestamp with a 64-bit
+	// cryptographically random suffix, so collisions in a tight loop
+	// are astronomically unlikely (roughly 1 in 2^64 per pair). We
+	// therefore require zero duplicates across a 200-iteration batch;
+	// any collision here indicates a regression in the generator.
 	const iterations = 200
-	const maxDuplicates = iterations / 20 // 5 percent tolerance
 
 	ids := make(map[string]int, iterations)
 	for i := 0; i < iterations; i++ {
@@ -377,8 +461,8 @@ func TestGenerateID_Uniqueness(t *testing.T) {
 			duplicates += count - 1
 		}
 	}
-	if duplicates > maxDuplicates {
-		t.Errorf("Too many duplicate IDs: %d of %d (max tolerated: %d)",
-			duplicates, iterations, maxDuplicates)
+	if duplicates != 0 {
+		t.Errorf("Unexpected duplicate IDs: %d of %d (expected 0)",
+			duplicates, iterations)
 	}
 }

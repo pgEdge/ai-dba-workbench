@@ -11,9 +11,12 @@ package conversations
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -73,9 +76,36 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// generateID creates a unique conversation ID
+// generateID creates a unique conversation ID.
+//
+// The ID combines a nanosecond timestamp with an 8-byte cryptographically
+// random suffix. The timestamp keeps IDs roughly sortable by creation time
+// (useful for debugging and log correlation), while the random suffix
+// guarantees uniqueness even when multiple IDs are generated inside the
+// same nanosecond tick. That scenario is common on platforms with coarse
+// monotonic clocks (notably macOS, where UnixNano is effectively
+// microsecond-resolution) and on any platform under a tight loop, so a
+// pure timestamp-based ID is not collision-safe.
 func generateID() string {
-	return fmt.Sprintf("conv_%d", time.Now().UnixNano())
+	return generateIDFrom(rand.Reader)
+}
+
+// generateIDFrom builds a conversation ID using the supplied randomness
+// source. It exists primarily so tests can drive the crypto/rand failure
+// branch deterministically by passing an io.Reader that returns an error.
+//
+// If the reader fails to produce randomness (which should not happen for
+// the production crypto/rand source on any supported platform), we fall
+// back to a timestamp-only ID rather than panicking. The caller still
+// receives a syntactically valid ID, and any collision that results will
+// surface at the database's unique-index layer rather than here.
+func generateIDFrom(r io.Reader) string {
+	var randomBytes [8]byte
+	if _, err := io.ReadFull(r, randomBytes[:]); err != nil {
+		return fmt.Sprintf("conv_%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("conv_%d_%s",
+		time.Now().UnixNano(), hex.EncodeToString(randomBytes[:]))
 }
 
 // generateTitle creates a title from the first user message

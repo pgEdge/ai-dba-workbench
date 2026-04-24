@@ -49,6 +49,12 @@ go mod tidy
 go build -o ai-dba-alerter ./cmd/ai-dba-alerter
 ```
 
+> **Note:** The source build paths above apply to local development only.
+> Production deployments place binaries in different locations depending on
+> the installation method. See the
+> [Installation Guide](../docs/getting-started/installation.md) for
+> production paths.
+
 ## Configuration
 
 The alerter supports configuration through YAML files and

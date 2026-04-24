@@ -51,6 +51,12 @@ go build -o ai-dba-collector
 The build process creates the `ai-dba-collector` binary in the `src`
 directory.
 
+> **Note:** The source build paths above apply to local development only.
+> Production deployments place binaries in different locations depending on
+> the installation method. See the
+> [Installation Guide](../docs/getting-started/installation.md) for
+> production paths.
+
 ## Configuration
 
 The Collector uses a YAML configuration file. You can also specify settings

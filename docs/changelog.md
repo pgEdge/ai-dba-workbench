@@ -12,6 +12,13 @@ project adheres to
 
 ### Changed
 
+- Document installation paths for each deployment
+  method (GitHub release, Docker, RPM/DEB) in the
+  installation guide with a reference table. Add
+  cross-reference notes to the quick start, Docker,
+  and sub-project README files. Align manual-install
+  systemd service names to `pgedge-ai-dba-*` to
+  match RPM/DEB package conventions. (#173)
 - Reject `cors_origin: "*"` at server startup when
   authentication is enabled. Browsers discard
   credentialed responses that combine

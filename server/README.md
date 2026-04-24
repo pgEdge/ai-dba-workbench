@@ -80,6 +80,12 @@ make lint
    ./bin/ai-dba-server
    ```
 
+> **Note:** The `./bin/` paths above apply to source builds only.
+> Production deployments place binaries in different locations depending
+> on the installation method. See the
+> [Installation Guide](../docs/getting-started/installation.md) for
+> production paths.
+
 ## Configuration
 
 The server is configured via YAML configuration file and/or command line flags.

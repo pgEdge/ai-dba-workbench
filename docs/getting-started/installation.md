@@ -5,6 +5,31 @@ Workbench for production environments. The system
 consists of four components: a collector, a server,
 an alerter, and a web client.
 
+## Installation Paths by Method
+
+The workbench supports three deployment methods. Each
+method places files in different locations. The
+following table summarizes the paths for each method.
+
+| Resource | GitHub Release | Docker | RPM/DEB Package |
+|----------|---------------|--------|-----------------|
+| Binaries | `/opt/ai-workbench/` | `/usr/local/bin/` | `/usr/bin/` |
+| Config | `/etc/pgedge/` | `/etc/pgedge/` (mounted) | `/etc/pgedge/` |
+| Data | user-chosen | `/data/` | `/var/lib/pgedge/<service>/` |
+| Logs | `stderr` | `stderr` | `/var/log/pgedge/<service>/` |
+| Client files | `/opt/ai-workbench/client/` | container-served | `/usr/share/pgedge/ai-dba-client/` |
+| systemd units | `pgedge-ai-dba-*.service` | N/A | `pgedge-ai-dba-*.service` |
+| Run-as user | user-chosen | container user | `pgedge` |
+
+!!! note
+    RPM and DEB packages are available from the pgEdge
+    enterprise repository. Contact pgEdge for access
+    details.
+
+The installation steps below use the GitHub release
+method with example paths. Adjust the paths to match
+your deployment method.
+
 ## System Requirements
 
 The following minimum requirements apply to all
@@ -95,7 +120,7 @@ a background service.
 ### Collector Service
 
 Create the service file at
-`/etc/systemd/system/ai-workbench-collector.service`:
+`/etc/systemd/system/pgedge-ai-dba-collector.service`:
 
 ```ini
 [Unit]
@@ -104,7 +129,7 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-User=ai-workbench
+User=pgedge
 WorkingDirectory=/opt/ai-workbench
 ExecStart=/opt/ai-workbench/ai-dba-collector \
     -config /etc/pgedge/ai-dba-collector.yaml
@@ -118,7 +143,7 @@ WantedBy=multi-user.target
 ### Server Service
 
 Create the service file at
-`/etc/systemd/system/ai-workbench-server.service`:
+`/etc/systemd/system/pgedge-ai-dba-server.service`:
 
 ```ini
 [Unit]
@@ -127,7 +152,7 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-User=ai-workbench
+User=pgedge
 WorkingDirectory=/opt/ai-workbench
 ExecStart=/opt/ai-workbench/ai-dba-server \
     -config /etc/pgedge/ai-dba-server.yaml
@@ -141,7 +166,7 @@ WantedBy=multi-user.target
 ### Alerter Service
 
 Create the service file at
-`/etc/systemd/system/ai-workbench-alerter.service`:
+`/etc/systemd/system/pgedge-ai-dba-alerter.service`:
 
 ```ini
 [Unit]
@@ -150,7 +175,7 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-User=ai-workbench
+User=pgedge
 WorkingDirectory=/opt/ai-workbench
 ExecStart=/opt/ai-workbench/ai-dba-alerter \
     -config /etc/pgedge/ai-dba-alerter.yaml
@@ -167,20 +192,20 @@ Reload the systemd daemon and enable each service:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable ai-workbench-collector
-sudo systemctl enable ai-workbench-server
-sudo systemctl enable ai-workbench-alerter
-sudo systemctl start ai-workbench-collector
-sudo systemctl start ai-workbench-server
-sudo systemctl start ai-workbench-alerter
+sudo systemctl enable pgedge-ai-dba-collector
+sudo systemctl enable pgedge-ai-dba-server
+sudo systemctl enable pgedge-ai-dba-alerter
+sudo systemctl start pgedge-ai-dba-collector
+sudo systemctl start pgedge-ai-dba-server
+sudo systemctl start pgedge-ai-dba-alerter
 ```
 
 Check the status of each service:
 
 ```bash
-sudo systemctl status ai-workbench-collector
-sudo systemctl status ai-workbench-server
-sudo systemctl status ai-workbench-alerter
+sudo systemctl status pgedge-ai-dba-collector
+sudo systemctl status pgedge-ai-dba-server
+sudo systemctl status pgedge-ai-dba-alerter
 ```
 
 ## Verifying the Installation
@@ -195,7 +220,7 @@ the following command to verify the collector is
 running:
 
 ```bash
-sudo systemctl status ai-workbench-collector
+sudo systemctl status pgedge-ai-dba-collector
 ```
 
 ### Check the Server
@@ -217,7 +242,7 @@ the following command to verify the alerter is
 running:
 
 ```bash
-sudo systemctl status ai-workbench-alerter
+sudo systemctl status pgedge-ai-dba-alerter
 ```
 
 ### Check Metrics Collection

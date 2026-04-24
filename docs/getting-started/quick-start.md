@@ -39,6 +39,13 @@ sudo tar xzf ai-dba-client.tar.gz \
 ```
 
 !!! note
+    The paths above apply to manual installs from
+    GitHub releases. Docker and RPM/DEB packages use
+    different locations. See the
+    [installation paths table](installation.md#installation-paths-by-method)
+    for a complete comparison.
+
+!!! note
     To build the components from source instead,
     see the
     [Developer Guide](../developer-guide/index.md).

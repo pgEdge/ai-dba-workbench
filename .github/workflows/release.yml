@@ -171,9 +171,21 @@ jobs:
 
             - name: Create archives
               run: |
-                  tar czf ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ai-dba-server
-                  tar czf ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ai-dba-collector
-                  tar czf ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ai-dba-alerter
+                  mkdir -p staging/examples
+
+                  cp examples/ai-dba-server.yaml staging/examples/
+                  tar czf ai-dba-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+                      ai-dba-server -C staging examples
+
+                  rm staging/examples/*
+                  cp examples/ai-dba-collector.yaml staging/examples/
+                  tar czf ai-dba-collector-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+                      ai-dba-collector -C staging examples
+
+                  rm staging/examples/*
+                  cp examples/ai-dba-alerter.yaml staging/examples/
+                  tar czf ai-dba-alerter-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+                      ai-dba-alerter -C staging examples
 
             - name: Upload server archive
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

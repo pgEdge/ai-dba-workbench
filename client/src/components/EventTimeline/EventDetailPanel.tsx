@@ -160,7 +160,7 @@ const CollapsibleEventCard = memo(({ event, defaultExpanded = true }) => {
         <Box sx={cardSx}>
             {/* Collapsible header */}
             <Box
-                onClick={() => setExpanded(!expanded)}
+                onClick={() => { setExpanded(!expanded); }}
                 sx={headerSx}
             >
                 <Box sx={iconBoxSx}>

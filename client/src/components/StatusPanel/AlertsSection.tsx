@@ -189,7 +189,7 @@ const AlertsSection = ({
     return (
         <Box sx={panelSx}>
             {/* Active Alerts Header */}
-            <Box onClick={() => setExpanded(!expanded)} sx={ALERTS_HEADER_SX}>
+            <Box onClick={() => { setExpanded(!expanded); }} sx={ALERTS_HEADER_SX}>
                 <AlertIcon sx={{ fontSize: 16, color: 'primary.main' }} />
                 <Typography sx={ALERTS_TITLE_SX}>
                     Active Alerts
@@ -231,7 +231,7 @@ const AlertsSection = ({
             {/* Acknowledged Alerts Section */}
             {acknowledgedAlerts.length > 0 && (
                 <>
-                    <Box onClick={() => setAckExpanded(!ackExpanded)} sx={ACK_HEADER_BASE_SX}>
+                    <Box onClick={() => { setAckExpanded(!ackExpanded); }} sx={ACK_HEADER_BASE_SX}>
                         <AckIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
                         <Typography sx={ACK_TITLE_SX}>
                             Acknowledged

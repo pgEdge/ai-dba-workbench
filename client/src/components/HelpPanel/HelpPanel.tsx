@@ -89,7 +89,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
                     setCurrentPage(HELP_PAGES.overview);
                 }
             }, 300);
-            return () => clearTimeout(timer);
+            return () => { clearTimeout(timer); };
         }
     }, [open, helpContext]);
 
@@ -167,7 +167,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
                     {currentPage !== HELP_PAGES.overview && (
                         <IconButton
                             aria-label="back to help overview"
-                            onClick={() => setCurrentPage(HELP_PAGES.overview)}
+                            onClick={() => { setCurrentPage(HELP_PAGES.overview); }}
                             size="small"
                             sx={styles.backButton}
                         >
@@ -182,7 +182,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ open, onClose, helpContext }) => 
                             {currentPage !== HELP_PAGES.overview && (
                                 <Link
                                     component="button"
-                                    onClick={() => setCurrentPage(HELP_PAGES.overview)}
+                                    onClick={() => { setCurrentPage(HELP_PAGES.overview); }}
                                     sx={styles.breadcrumbLink}
                                 >
                                     Help

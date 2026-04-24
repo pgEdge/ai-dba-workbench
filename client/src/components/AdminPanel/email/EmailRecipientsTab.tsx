@@ -118,7 +118,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
                                         <Switch
                                             checked={recipient.enabled}
                                             size="small"
-                                            onChange={() => onToggleRecipientEnabled(recipient)}
+                                            onChange={() => { onToggleRecipientEnabled(recipient); }}
                                             disabled={recipientSaving}
                                             inputProps={{ 'aria-label': 'Toggle recipient enabled' }}
                                         />
@@ -126,7 +126,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
                                     <TableCell align="right">
                                         <IconButton
                                             size="small"
-                                            onClick={() => onDeleteRecipient(recipient)}
+                                            onClick={() => { onDeleteRecipient(recipient); }}
                                             aria-label="delete recipient"
                                             sx={deleteIconSx}
                                             disabled={recipientSaving}
@@ -143,7 +143,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
                                     <TableCell align="right">
                                         <IconButton
                                             size="small"
-                                            onClick={() => onRemovePending(index)}
+                                            onClick={() => { onRemovePending(index); }}
                                             aria-label="remove pending recipient"
                                             sx={deleteIconSx}
                                         >
@@ -173,7 +173,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
                                         size="small"
                                         placeholder="Email address"
                                         value={newRecipientEmail}
-                                        onChange={(e) => setNewRecipientEmail(e.target.value)}
+                                        onChange={(e) => { setNewRecipientEmail(e.target.value); }}
                                         disabled={recipientSaving}
                                         fullWidth
                                         variant="standard"
@@ -184,7 +184,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
                                         size="small"
                                         placeholder="Display name"
                                         value={newRecipientName}
-                                        onChange={(e) => setNewRecipientName(e.target.value)}
+                                        onChange={(e) => { setNewRecipientName(e.target.value); }}
                                         disabled={recipientSaving}
                                         fullWidth
                                         variant="standard"

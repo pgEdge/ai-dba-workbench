@@ -260,7 +260,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                 </AppBar>
                 <Tabs
                     value={activeTab}
-                    onChange={(_, v) => setActiveTab(v)}
+                    onChange={(_, v) => { setActiveTab(v); }}
                     sx={{
                         px: 3,
                         borderBottom: 1,
@@ -281,7 +281,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                     <Alert
                                         severity="error"
                                         sx={{ mb: 0.5, borderRadius: 1 }}
-                                        onClose={() => setSubmitError(null)}
+                                        onClose={() => { setSubmitError(null); }}
                                     >
                                         {submitError}
                                     </Alert>
@@ -290,7 +290,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                                     <Alert
                                         severity="success"
                                         sx={{ mb: 0.5, borderRadius: 1 }}
-                                        onClose={() => setSaveSuccess(false)}
+                                        onClose={() => { setSaveSuccess(false); }}
                                     >
                                         Server settings saved successfully.
                                     </Alert>
@@ -403,7 +403,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         <Alert
                             severity="error"
                             sx={{ mb: 2, borderRadius: 1 }}
-                            onClose={() => setSubmitError(null)}
+                            onClose={() => { setSubmitError(null); }}
                         >
                             {submitError}
                         </Alert>
@@ -412,7 +412,7 @@ const ServerDialog: React.FC<ServerDialogProps> = ({
                         <Alert
                             severity="success"
                             sx={{ mb: 2, borderRadius: 1 }}
-                            onClose={() => setSaveSuccess(false)}
+                            onClose={() => { setSaveSuccess(false); }}
                         >
                             Server settings saved successfully.
                         </Alert>

@@ -291,7 +291,7 @@ const GroupItem = memo<GroupItemProps>(({
                                             cluster={cluster}
                                             groupId={group.id}
                                             isExpanded={expandedClusters.has(cluster.id)}
-                                            onToggle={() => onToggleCluster(cluster.id)}
+                                            onToggle={() => { onToggleCluster(cluster.id); }}
                                             selectedServerId={selectedServerId}
                                             selectedClusterId={selectedClusterId}
                                             onSelectServer={onSelectServer}
@@ -403,7 +403,7 @@ const GroupItem = memo<GroupItemProps>(({
                                     cluster={cluster}
                                     groupId={group.id}
                                     isExpanded={expandedClusters.has(cluster.id)}
-                                    onToggle={() => onToggleCluster(cluster.id)}
+                                    onToggle={() => { onToggleCluster(cluster.id); }}
                                     selectedServerId={selectedServerId}
                                     selectedClusterId={selectedClusterId}
                                     onSelectServer={onSelectServer}

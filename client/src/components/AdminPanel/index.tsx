@@ -220,7 +220,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
                                         <ListItemButton
                                             key={item.id}
                                             selected={isSelected}
-                                            onClick={() => setActiveId(item.id)}
+                                            onClick={() => { setActiveId(item.id); }}
                                             sx={{
                                                 borderRadius: 1,
                                                 mx: 1,

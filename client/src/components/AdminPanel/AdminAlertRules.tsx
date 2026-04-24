@@ -180,12 +180,12 @@ const AdminAlertRules: React.FC = () => {
             </Typography>
 
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}
             {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setSuccess(null)}>
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
                     {success}
                 </Alert>
             )}
@@ -256,7 +256,7 @@ const AdminAlertRules: React.FC = () => {
                                                 <TableCell align="right">
                                                     <IconButton
                                                         size="small"
-                                                        onClick={(e) => handleEditRule(rule, e)}
+                                                        onClick={(e) => { handleEditRule(rule, e); }}
                                                         aria-label="edit alert rule"
                                                     >
                                                         <EditIcon fontSize="small" />
@@ -282,7 +282,7 @@ const AdminAlertRules: React.FC = () => {
             {/* Edit Rule Dialog */}
             <Dialog
                 open={editOpen}
-                onClose={() => !saving && setEditOpen(false)}
+                onClose={() => void (!saving && setEditOpen(false))}
                 maxWidth="xs"
                 fullWidth
             >
@@ -294,7 +294,7 @@ const AdminAlertRules: React.FC = () => {
                         <Typography sx={{ flex: 1 }}>Enabled</Typography>
                         <Switch
                             checked={editEnabled}
-                            onChange={(e) => setEditEnabled(e.target.checked)}
+                            onChange={(e) => { setEditEnabled(e.target.checked); }}
                             disabled={saving}
                             inputProps={{ 'aria-label': 'Enabled' }}
                         />
@@ -304,7 +304,7 @@ const AdminAlertRules: React.FC = () => {
                         fullWidth
                         label="Operator"
                         value={editOperator}
-                        onChange={(e) => setEditOperator(e.target.value)}
+                        onChange={(e) => { setEditOperator(e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -320,7 +320,7 @@ const AdminAlertRules: React.FC = () => {
                         fullWidth
                         margin="dense"
                         value={editThreshold}
-                        onChange={(e) => setEditThreshold(e.target.value)}
+                        onChange={(e) => { setEditThreshold(e.target.value); }}
                         disabled={saving}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
@@ -330,7 +330,7 @@ const AdminAlertRules: React.FC = () => {
                         fullWidth
                         label="Severity"
                         value={editSeverity}
-                        onChange={(e) => setEditSeverity(e.target.value)}
+                        onChange={(e) => { setEditSeverity(e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -342,7 +342,7 @@ const AdminAlertRules: React.FC = () => {
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setEditOpen(false)} disabled={saving}>
+                    <Button onClick={() => { setEditOpen(false); }} disabled={saving}>
                         Cancel
                     </Button>
                     <Button

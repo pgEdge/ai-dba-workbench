@@ -41,7 +41,9 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                 select
                 label="Auth Type"
                 value={authType}
-                onChange={(e) => onAuthTypeChange(e.target.value)}
+                onChange={(e) => {
+                    onAuthTypeChange(e.target.value);
+                }}
                 disabled={saving}
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
@@ -61,7 +63,9 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         fullWidth
                         label="Username"
                         value={authFields.username || ''}
-                        onChange={(e) => onAuthFieldChange('username', e.target.value)}
+                        onChange={(e) => {
+                            onAuthFieldChange('username', e.target.value);
+                        }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -71,7 +75,9 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         label="Password"
                         type="password"
                         value={authFields.password || ''}
-                        onChange={(e) => onAuthFieldChange('password', e.target.value)}
+                        onChange={(e) => {
+                            onAuthFieldChange('password', e.target.value);
+                        }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -87,7 +93,9 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                     type="password"
                     autoComplete="off"
                     value={authFields.token || ''}
-                    onChange={(e) => onAuthFieldChange('token', e.target.value)}
+                    onChange={(e) => {
+                        onAuthFieldChange('token', e.target.value);
+                    }}
                     disabled={saving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
@@ -101,7 +109,9 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         fullWidth
                         label="Header Name"
                         value={authFields.headerName || ''}
-                        onChange={(e) => onAuthFieldChange('headerName', e.target.value)}
+                        onChange={(e) => {
+                            onAuthFieldChange('headerName', e.target.value);
+                        }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -112,7 +122,9 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         type="password"
                         autoComplete="off"
                         value={authFields.apiKeyValue || ''}
-                        onChange={(e) => onAuthFieldChange('apiKeyValue', e.target.value)}
+                        onChange={(e) => {
+                            onAuthFieldChange('apiKeyValue', e.target.value);
+                        }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}

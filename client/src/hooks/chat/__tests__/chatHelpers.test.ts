@@ -403,7 +403,7 @@ describe('chatHelpers', () => {
             });
 
             // Should not throw
-            expect(() => saveInputHistory(['query'])).not.toThrow();
+            expect(() => { saveInputHistory(['query']); }).not.toThrow();
         });
 
         it('handles localStorage access denied error gracefully', () => {
@@ -412,7 +412,7 @@ describe('chatHelpers', () => {
             });
 
             // Should not throw
-            expect(() => saveInputHistory(['query'])).not.toThrow();
+            expect(() => { saveInputHistory(['query']); }).not.toThrow();
         });
 
         it('preserves order when saving', () => {

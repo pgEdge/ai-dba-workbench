@@ -64,7 +64,7 @@ configureDom({
         try {
             const result = await cb();
             await new Promise<void>((resolve) => {
-                nativeSetTimeout(() => resolve(), 0);
+                nativeSetTimeout(() => { resolve(); }, 0);
             });
             return result;
         } finally {

@@ -422,7 +422,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             <IconButton
                                 size="small"
                                 onClick={() =>
-                                    setAnalysisDialogOpen(true)
+                                    { setAnalysisDialogOpen(true); }
                                 }
                                 aria-label="Open full analysis"
                                 sx={{
@@ -445,9 +445,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                         <IconButton
                             size="small"
                             onClick={() =>
-                                setInsightsCollapsed(
+                                { setInsightsCollapsed(
                                     prev => !prev
-                                )
+                                ); }
                             }
                             aria-label={
                                 insightsCollapsed
@@ -579,7 +579,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 <QueryAnalysisDialog
                     open={analysisDialogOpen}
                     onClose={() =>
-                        setAnalysisDialogOpen(false)
+                        { setAnalysisDialogOpen(false); }
                     }
                     isDark={isDark}
                     queryText={queryData.query}

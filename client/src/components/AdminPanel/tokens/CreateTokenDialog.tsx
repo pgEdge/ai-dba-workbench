@@ -158,7 +158,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
     return (
         <Dialog
             open={open}
-            onClose={() => !loading && onClose()}
+            onClose={() => void (!loading && onClose())}
             maxWidth="xs"
             fullWidth
         >
@@ -173,7 +173,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     fullWidth
                     label="Name"
                     value={annotation}
-                    onChange={(e) => onAnnotationChange(e.target.value)}
+                    onChange={(e) => { onAnnotationChange(e.target.value); }}
                     disabled={loading}
                     margin="dense"
                     required
@@ -187,7 +187,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                         option.id === value.id
                     }
                     value={owner}
-                    onChange={(_e, value) => onOwnerChange(value)}
+                    onChange={(_e, value) => { onOwnerChange(value); }}
                     renderInput={(params) => (
                         <TextField
                             {...params}
@@ -208,7 +208,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     select
                     label="Expiry"
                     value={expiry}
-                    onChange={(e) => onExpiryChange(e.target.value)}
+                    onChange={(e) => { onExpiryChange(e.target.value); }}
                     disabled={loading}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
@@ -232,7 +232,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     options={availableConnectionOptions}
                     getOptionLabel={(option) => option.name || ''}
                     value={null}
-                    onChange={(_e, value) => handleAddConnection(value)}
+                    onChange={(_e, value) => { handleAddConnection(value); }}
                     renderInput={(params) => (
                         <TextField
                             {...params}

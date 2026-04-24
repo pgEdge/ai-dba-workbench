@@ -43,7 +43,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 fullWidth
                 label="Name"
                 value={formData.name}
-                onChange={(e) => onFieldChange('name', e.target.value)}
+                onChange={(e) => { onFieldChange('name', e.target.value); }}
                 error={!!errors.name}
                 helperText={errors.name}
                 required
@@ -60,7 +60,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 minRows={2}
                 label="Description"
                 value={formData.description}
-                onChange={(e) => onFieldChange('description', e.target.value)}
+                onChange={(e) => { onFieldChange('description', e.target.value); }}
                 disabled={isSaving}
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
@@ -78,7 +78,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     fullWidth
                     label="Host"
                     value={formData.host}
-                    onChange={(e) => onFieldChange('host', e.target.value)}
+                    onChange={(e) => { onFieldChange('host', e.target.value); }}
                     error={!!errors.host}
                     helperText={errors.host}
                     required
@@ -92,7 +92,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     label="Port"
                     type="number"
                     value={formData.port}
-                    onChange={(e) => onFieldChange('port', e.target.value)}
+                    onChange={(e) => { onFieldChange('port', e.target.value); }}
                     error={!!errors.port}
                     helperText={errors.port}
                     required
@@ -109,7 +109,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 fullWidth
                 label="Maintenance Database"
                 value={formData.database}
-                onChange={(e) => onFieldChange('database', e.target.value)}
+                onChange={(e) => { onFieldChange('database', e.target.value); }}
                 error={!!errors.database}
                 helperText={errors.database}
                 required
@@ -125,7 +125,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     fullWidth
                     label="Username"
                     value={formData.username}
-                    onChange={(e) => onFieldChange('username', e.target.value)}
+                    onChange={(e) => { onFieldChange('username', e.target.value); }}
                     error={!!errors.username}
                     helperText={errors.username}
                     required
@@ -140,7 +140,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     label="Password"
                     type="password"
                     value={formData.password}
-                    onChange={(e) => onFieldChange('password', e.target.value)}
+                    onChange={(e) => { onFieldChange('password', e.target.value); }}
                     error={!!errors.password}
                     helperText={
                         errors.password ||

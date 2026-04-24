@@ -355,7 +355,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             <Alert
                                 severity="error"
                                 sx={{ mt: 1, mb: 1 }}
-                                onClose={() => setError(null)}
+                                onClose={() => { setError(null); }}
                             >
                                 {error}
                             </Alert>
@@ -375,7 +375,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             fullWidth
                             label="Scope"
                             value={selectedScope}
-                            onChange={(e) => handleScopeChange(e.target.value)}
+                            onChange={(e) => { handleScopeChange(e.target.value); }}
                             disabled={saving}
                             margin="dense"
                             InputLabelProps={{ shrink: true }}
@@ -434,7 +434,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             <Typography sx={{ flex: 1 }}>Enabled</Typography>
                             <Switch
                                 checked={editEnabled}
-                                onChange={(e) => setEditEnabled(e.target.checked)}
+                                onChange={(e) => { setEditEnabled(e.target.checked); }}
                                 disabled={saving}
                             />
                         </Box>
@@ -465,7 +465,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             fullWidth
                             margin="dense"
                             value={editThreshold}
-                            onChange={(e) => setEditThreshold(e.target.value)}
+                            onChange={(e) => { setEditThreshold(e.target.value); }}
                             disabled={saving}
                             InputLabelProps={{ shrink: true }}
                             sx={SELECT_FIELD_SX}
@@ -477,7 +477,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                             fullWidth
                             label="Severity"
                             value={editSeverity}
-                            onChange={(e) => setEditSeverity(e.target.value)}
+                            onChange={(e) => { setEditSeverity(e.target.value); }}
                             disabled={saving}
                             margin="dense"
                             InputLabelProps={{ shrink: true }}

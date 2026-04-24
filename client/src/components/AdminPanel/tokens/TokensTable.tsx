@@ -108,7 +108,7 @@ const TokensTable: React.FC<TokensTableProps> = ({
                                 <React.Fragment key={token.id}>
                                     <TableRow
                                         hover
-                                        onClick={() => onRowClick(token)}
+                                        onClick={() => { onRowClick(token); }}
                                         sx={{ cursor: 'pointer' }}
                                     >
                                         <TableCell sx={{ px: 1 }}>

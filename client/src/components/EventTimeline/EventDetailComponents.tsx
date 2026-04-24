@@ -70,7 +70,7 @@ export const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText
             {displayItems.map((item, i) => renderItem(item, i, displayItems.length))}
             {hasMore && (
                 <Box
-                    onClick={() => setShowAll(!showAll)}
+                    onClick={() => { setShowAll(!showAll); }}
                     sx={expandableShowMoreBaseSx}
                 >
                     {showAll ? (

@@ -61,7 +61,7 @@ const WebhookTemplatesTab: React.FC<WebhookTemplatesTabProps> = ({
                 fullWidth
                 label="Alert Fire Template"
                 value={form.template_alert_fire}
-                onChange={(e) => onChange('template_alert_fire', e.target.value)}
+                onChange={(e) => { onChange('template_alert_fire', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 multiline
@@ -74,7 +74,7 @@ const WebhookTemplatesTab: React.FC<WebhookTemplatesTabProps> = ({
                 fullWidth
                 label="Alert Clear Template"
                 value={form.template_alert_clear}
-                onChange={(e) => onChange('template_alert_clear', e.target.value)}
+                onChange={(e) => { onChange('template_alert_clear', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 multiline
@@ -87,7 +87,7 @@ const WebhookTemplatesTab: React.FC<WebhookTemplatesTabProps> = ({
                 fullWidth
                 label="Alert Reminder Template"
                 value={form.template_reminder}
-                onChange={(e) => onChange('template_reminder', e.target.value)}
+                onChange={(e) => { onChange('template_reminder', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 multiline

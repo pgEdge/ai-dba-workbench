@@ -51,7 +51,7 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
                         <TextField
                             label="Key"
                             value={header.key}
-                            onChange={(e) => onChangeHeader(header.id, 'key', e.target.value)}
+                            onChange={(e) => { onChangeHeader(header.id, 'key', e.target.value); }}
                             disabled={saving}
                             size="small"
                             sx={{ flex: 1 }}
@@ -60,7 +60,7 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
                         <TextField
                             label="Value"
                             value={header.value}
-                            onChange={(e) => onChangeHeader(header.id, 'value', e.target.value)}
+                            onChange={(e) => { onChangeHeader(header.id, 'value', e.target.value); }}
                             disabled={saving}
                             size="small"
                             sx={{ flex: 1 }}
@@ -68,7 +68,7 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
                         />
                         <IconButton
                             size="small"
-                            onClick={() => onRemoveHeader(header.id)}
+                            onClick={() => { onRemoveHeader(header.id); }}
                             aria-label="remove header"
                             sx={deleteIconSx}
                             disabled={saving}

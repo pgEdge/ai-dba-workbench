@@ -386,7 +386,7 @@ const Login = () => {
                             <Alert
                                 severity="warning"
                                 sx={alertSx}
-                                onClose={() => setWarning('')}
+                                onClose={() => { setWarning(''); }}
                             >
                                 {warning}
                             </Alert>
@@ -409,7 +409,7 @@ const Login = () => {
                                 name="username"
                                 id="username"
                                 value={username}
-                                onChange={(e) => setUsername(e.target.value)}
+                                onChange={(e) => { setUsername(e.target.value); }}
                                 margin="normal"
                                 required
                                 autoFocus
@@ -427,7 +427,7 @@ const Login = () => {
                                 type="password"
                                 name="password"
                                 value={password}
-                                onChange={(e) => setPassword(e.target.value)}
+                                onChange={(e) => { setPassword(e.target.value); }}
                                 margin="normal"
                                 required
                                 disabled={loading}

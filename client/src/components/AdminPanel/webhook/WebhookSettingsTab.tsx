@@ -45,7 +45,7 @@ const WebhookSettingsTab: React.FC<WebhookSettingsTabProps> = ({
                 fullWidth
                 label="Name"
                 value={form.name}
-                onChange={(e) => onChange('name', e.target.value)}
+                onChange={(e) => { onChange('name', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 required
@@ -55,7 +55,7 @@ const WebhookSettingsTab: React.FC<WebhookSettingsTabProps> = ({
                 fullWidth
                 label="Description"
                 value={form.description}
-                onChange={(e) => onChange('description', e.target.value)}
+                onChange={(e) => { onChange('description', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 multiline
@@ -66,7 +66,7 @@ const WebhookSettingsTab: React.FC<WebhookSettingsTabProps> = ({
                 fullWidth
                 label="Endpoint URL"
                 value={form.endpoint_url}
-                onChange={(e) => onChange('endpoint_url', e.target.value)}
+                onChange={(e) => { onChange('endpoint_url', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 required
@@ -77,7 +77,7 @@ const WebhookSettingsTab: React.FC<WebhookSettingsTabProps> = ({
                 select
                 label="HTTP Method"
                 value={form.http_method}
-                onChange={(e) => onChange('http_method', e.target.value)}
+                onChange={(e) => { onChange('http_method', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
@@ -95,7 +95,7 @@ const WebhookSettingsTab: React.FC<WebhookSettingsTabProps> = ({
                     control={
                         <Switch
                             checked={form.enabled}
-                            onChange={(e) => onChange('enabled', e.target.checked)}
+                            onChange={(e) => { onChange('enabled', e.target.checked); }}
                             disabled={saving}
                             inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                         />
@@ -107,7 +107,7 @@ const WebhookSettingsTab: React.FC<WebhookSettingsTabProps> = ({
                     control={
                         <Switch
                             checked={form.is_estate_default}
-                            onChange={(e) => onChange('is_estate_default', e.target.checked)}
+                            onChange={(e) => { onChange('is_estate_default', e.target.checked); }}
                             disabled={saving}
                             inputProps={{ 'aria-label': 'Toggle estate default' }}
                         />

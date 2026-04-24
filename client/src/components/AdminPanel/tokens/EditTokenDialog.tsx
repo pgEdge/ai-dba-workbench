@@ -136,7 +136,7 @@ const EditTokenDialog: React.FC<EditTokenDialogProps> = ({
     return (
         <Dialog
             open={open}
-            onClose={() => !loading && onClose()}
+            onClose={() => void (!loading && onClose())}
             maxWidth="sm"
             fullWidth
         >

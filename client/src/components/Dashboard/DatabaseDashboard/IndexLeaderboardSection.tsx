@@ -377,9 +377,9 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                 ? TAB_BUTTON_ACTIVE_SX
                                 : TAB_BUTTON_SX}
                             onClick={
-                                () => handleSortChange(
+                                () => { handleSortChange(
                                     option.value
-                                )
+                                ); }
                             }
                             role="tab"
                             tabIndex={0}
@@ -415,7 +415,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                 isCached ? 'warning' : 'secondary'
                             }
                             onClick={
-                                () => setAnalysisOpen(true)
+                                () => { setAnalysisOpen(true); }
                             }
                         >
                             <PsychologyIcon
@@ -480,7 +480,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                     },
                                 }}
                                 onClick={
-                                    () => handleIndexClick(row)
+                                    () => { handleIndexClick(row); }
                                 }
                                 tabIndex={0}
                                 role="button"
@@ -583,7 +583,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
             )}
             <ChartAnalysisDialog
                 open={analysisOpen}
-                onClose={() => setAnalysisOpen(false)}
+                onClose={() => { setAnalysisOpen(false); }}
                 isDark={theme.palette.mode === 'dark'}
                 analysisContext={
                     analysisContext ?? { metricDescription: '' }

@@ -44,7 +44,7 @@ const OptionsSection: React.FC<OptionsSectionProps> = ({
                 control={
                     <Checkbox
                         checked={formData.is_monitored}
-                        onChange={(e) => onFieldChange('is_monitored', e.target.checked)}
+                        onChange={(e) => { onFieldChange('is_monitored', e.target.checked); }}
                         disabled={isSaving}
                         sx={checkboxSx}
                     />
@@ -58,7 +58,7 @@ const OptionsSection: React.FC<OptionsSectionProps> = ({
                     control={
                         <Checkbox
                             checked={formData.is_shared}
-                            onChange={(e) => onFieldChange('is_shared', e.target.checked)}
+                            onChange={(e) => { onFieldChange('is_shared', e.target.checked); }}
                             disabled={isSaving}
                             sx={checkboxSx}
                         />

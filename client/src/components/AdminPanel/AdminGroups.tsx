@@ -421,7 +421,7 @@ const AdminGroups: React.FC = () => {
                             <React.Fragment key={group.id}>
                                 <TableRow
                                     hover
-                                    onClick={() => handleRowClick(group)}
+                                    onClick={() => { handleRowClick(group); }}
                                     sx={{ cursor: 'pointer' }}
                                 >
                                     <TableCell sx={{ px: 1 }}>
@@ -436,14 +436,14 @@ const AdminGroups: React.FC = () => {
                                     <TableCell align="right">
                                         <IconButton
                                             size="small"
-                                            onClick={(e) => handleOpenEdit(e, group)}
+                                            onClick={(e) => { handleOpenEdit(e, group); }}
                                             aria-label="edit group"
                                         >
                                             <EditIcon fontSize="small" />
                                         </IconButton>
                                         <IconButton
                                             size="small"
-                                            onClick={(e) => handleOpenDelete(e, group)}
+                                            onClick={(e) => { handleOpenDelete(e, group); }}
                                             aria-label="delete group"
                                             sx={deleteIconSx}
                                         >
@@ -569,7 +569,7 @@ const AdminGroups: React.FC = () => {
             </TableContainer>
 
             {/* Create Group Dialog */}
-            <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={createOpen} onClose={() => void (!createLoading && setCreateOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Create group</DialogTitle>
                 <DialogContent>
                     {createError && (
@@ -580,7 +580,7 @@ const AdminGroups: React.FC = () => {
                         fullWidth
                         label="Name"
                         value={createName}
-                        onChange={(e) => setCreateName(e.target.value)}
+                        onChange={(e) => { setCreateName(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
                         required
@@ -591,7 +591,7 @@ const AdminGroups: React.FC = () => {
                         fullWidth
                         label="Description"
                         value={createDesc}
-                        onChange={(e) => setCreateDesc(e.target.value)}
+                        onChange={(e) => { setCreateDesc(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
                         multiline
@@ -601,7 +601,7 @@ const AdminGroups: React.FC = () => {
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setCreateOpen(false)} disabled={createLoading}>
+                    <Button onClick={() => { setCreateOpen(false); }} disabled={createLoading}>
                         Cancel
                     </Button>
                     <Button
@@ -616,7 +616,7 @@ const AdminGroups: React.FC = () => {
             </Dialog>
 
             {/* Edit Group Dialog */}
-            <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={editOpen} onClose={() => void (!editLoading && setEditOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Edit group</DialogTitle>
                 <DialogContent>
                     {editError && (
@@ -627,7 +627,7 @@ const AdminGroups: React.FC = () => {
                         fullWidth
                         label="Name"
                         value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
+                        onChange={(e) => { setEditName(e.target.value); }}
                         disabled={editLoading}
                         margin="dense"
                         required
@@ -638,7 +638,7 @@ const AdminGroups: React.FC = () => {
                         fullWidth
                         label="Description"
                         value={editDesc}
-                        onChange={(e) => setEditDesc(e.target.value)}
+                        onChange={(e) => { setEditDesc(e.target.value); }}
                         disabled={editLoading}
                         margin="dense"
                         multiline
@@ -648,7 +648,7 @@ const AdminGroups: React.FC = () => {
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setEditOpen(false)} disabled={editLoading}>
+                    <Button onClick={() => { setEditOpen(false); }} disabled={editLoading}>
                         Cancel
                     </Button>
                     <Button
@@ -674,7 +674,7 @@ const AdminGroups: React.FC = () => {
             />
 
             {/* Add Member Dialog */}
-            <Dialog open={addMemberOpen} onClose={() => !addMemberLoading && setAddMemberOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={addMemberOpen} onClose={() => void (!addMemberLoading && setAddMemberOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Add member</DialogTitle>
                 <DialogContent>
                     {addMemberError && (
@@ -694,7 +694,7 @@ const AdminGroups: React.FC = () => {
                         fullWidth
                         label={memberType === 'user' ? 'Select User' : 'Select Group'}
                         value={selectedMemberId}
-                        onChange={(e) => setSelectedMemberId(e.target.value)}
+                        onChange={(e) => { setSelectedMemberId(e.target.value); }}
                         disabled={addMemberLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -711,7 +711,7 @@ const AdminGroups: React.FC = () => {
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setAddMemberOpen(false)} disabled={addMemberLoading}>
+                    <Button onClick={() => { setAddMemberOpen(false); }} disabled={addMemberLoading}>
                         Cancel
                     </Button>
                     <Button

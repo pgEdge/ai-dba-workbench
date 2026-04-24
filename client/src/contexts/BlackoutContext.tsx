@@ -210,7 +210,7 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
             fetchBlackouts();
         }, autoRefreshInterval);
 
-        return () => clearInterval(intervalId);
+        return () => { clearInterval(intervalId); };
     }, [user, fetchBlackouts]);
 
     /**

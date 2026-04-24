@@ -237,7 +237,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                             display: 'flex',
                             flexDirection: 'column',
                         }}
-                        onClick={() => handleDatabaseClick(db)}
+                        onClick={() => { handleDatabaseClick(db); }}
                         tabIndex={0}
                         role="button"
                         aria-label={`View details for database ${db.database_name}`}

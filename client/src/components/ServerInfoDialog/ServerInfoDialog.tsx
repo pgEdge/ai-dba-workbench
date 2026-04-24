@@ -94,7 +94,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
         if (open) {
             const controller = new AbortController();
             fetchInfo(controller.signal);
-            return () => controller.abort();
+            return () => { controller.abort(); };
         }
     }, [open, fetchInfo]);
 

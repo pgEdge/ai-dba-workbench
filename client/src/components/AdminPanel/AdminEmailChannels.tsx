@@ -428,8 +428,8 @@ const AdminEmailChannels: React.FC = () => {
                 title="Email channels"
                 error={crud.error}
                 success={crud.success}
-                onClearError={() => crud.setError(null)}
-                onClearSuccess={() => crud.setSuccess(null)}
+                onClearError={() => { crud.setError(null); }}
+                onClearSuccess={() => { crud.setSuccess(null); }}
             />
             <ChannelDialogShell
                 open={crud.dialogOpen}
@@ -470,7 +470,7 @@ const AdminEmailChannels: React.FC = () => {
                     onAddRecipient={handleAddRecipient}
                     pendingRecipients={pendingRecipients}
                     onRemovePending={(index) =>
-                        setPendingRecipients((prev) => prev.filter((_, i) => i !== index))
+                        { setPendingRecipients((prev) => prev.filter((_, i) => i !== index)); }
                     }
                 />
             </ChannelDialogShell>

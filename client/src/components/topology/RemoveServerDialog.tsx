@@ -41,7 +41,7 @@ const RemoveServerDialog: React.FC<RemoveServerDialogProps> = ({
     return (
         <Dialog
             open={server !== null}
-            onClose={() => !removing && onCancel()}
+            onClose={() => void (!removing && onCancel())}
         >
             <DialogTitle>Remove server from cluster</DialogTitle>
             <DialogContent>

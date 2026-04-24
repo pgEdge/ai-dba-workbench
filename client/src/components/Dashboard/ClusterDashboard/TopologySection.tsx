@@ -64,7 +64,7 @@ const TopologySection: React.FC<TopologySectionProps> = ({ selection }) => {
         });
 
         observer.observe(el);
-        return () => observer.disconnect();
+        return () => { observer.disconnect(); };
     }, []);
 
     // Extract servers from the selection object

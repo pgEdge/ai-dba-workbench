@@ -388,7 +388,7 @@ const AdminPermissions: React.FC = () => {
             </Typography>
 
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}
@@ -399,7 +399,7 @@ const AdminPermissions: React.FC = () => {
                 fullWidth
                 label="Select Group"
                 value={selectedGroupId}
-                onChange={(e) => setSelectedGroupId(e.target.value)}
+                onChange={(e) => { setSelectedGroupId(e.target.value); }}
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
                 sx={{ mb: 3, ...SELECT_FIELD_DEFAULT_BG_SX }}
@@ -627,7 +627,7 @@ const AdminPermissions: React.FC = () => {
             )}
 
             {/* Grant MCP Permission Dialog */}
-            <Dialog open={grantMcpOpen} onClose={() => !grantMcpLoading && setGrantMcpOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={grantMcpOpen} onClose={() => void (!grantMcpLoading && setGrantMcpOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Grant MCP permission</DialogTitle>
                 <DialogContent>
                     {grantMcpError && (
@@ -637,7 +637,7 @@ const AdminPermissions: React.FC = () => {
                         options={availableMcpPermissions}
                         getOptionLabel={(option: McpPermission | string) => typeof option === 'string' ? option : formatMcpName(option)}
                         value={selectedMcpPermission}
-                        onChange={(_e: React.SyntheticEvent, value: McpPermission | null) => setSelectedMcpPermission(value)}
+                        onChange={(_e: React.SyntheticEvent, value: McpPermission | null) => { setSelectedMcpPermission(value); }}
                         renderInput={(params) => (
                             <TextField
                                 {...params}
@@ -655,7 +655,7 @@ const AdminPermissions: React.FC = () => {
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setGrantMcpOpen(false)} disabled={grantMcpLoading}>
+                    <Button onClick={() => { setGrantMcpOpen(false); }} disabled={grantMcpLoading}>
                         Cancel
                     </Button>
                     <Button
@@ -670,7 +670,7 @@ const AdminPermissions: React.FC = () => {
             </Dialog>
 
             {/* Grant Connection Permission Dialog */}
-            <Dialog open={grantConnOpen} onClose={() => !grantConnLoading && setGrantConnOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={grantConnOpen} onClose={() => void (!grantConnLoading && setGrantConnOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Grant connection permission</DialogTitle>
                 <DialogContent>
                     {grantConnError && (
@@ -681,7 +681,7 @@ const AdminPermissions: React.FC = () => {
                         fullWidth
                         label="Connection"
                         value={selectedConnectionId}
-                        onChange={(e) => setSelectedConnectionId(e.target.value)}
+                        onChange={(e) => { setSelectedConnectionId(e.target.value); }}
                         disabled={grantConnLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -703,7 +703,7 @@ const AdminPermissions: React.FC = () => {
                         fullWidth
                         label="Access Level"
                         value={selectedAccessLevel}
-                        onChange={(e) => setSelectedAccessLevel(e.target.value)}
+                        onChange={(e) => { setSelectedAccessLevel(e.target.value); }}
                         disabled={grantConnLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -714,7 +714,7 @@ const AdminPermissions: React.FC = () => {
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setGrantConnOpen(false)} disabled={grantConnLoading}>
+                    <Button onClick={() => { setGrantConnOpen(false); }} disabled={grantConnLoading}>
                         Cancel
                     </Button>
                     <Button
@@ -729,7 +729,7 @@ const AdminPermissions: React.FC = () => {
             </Dialog>
 
             {/* Grant Admin Permission Dialog */}
-            <Dialog open={grantAdminOpen} onClose={() => !grantAdminLoading && setGrantAdminOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={grantAdminOpen} onClose={() => void (!grantAdminLoading && setGrantAdminOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Grant admin permission</DialogTitle>
                 <DialogContent>
                     {grantAdminError && (
@@ -740,7 +740,7 @@ const AdminPermissions: React.FC = () => {
                         fullWidth
                         label="Permission"
                         value={selectedAdminPermission}
-                        onChange={(e) => setSelectedAdminPermission(e.target.value)}
+                        onChange={(e) => { setSelectedAdminPermission(e.target.value); }}
                         disabled={grantAdminLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -759,7 +759,7 @@ const AdminPermissions: React.FC = () => {
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setGrantAdminOpen(false)} disabled={grantAdminLoading}>
+                    <Button onClick={() => { setGrantAdminOpen(false); }} disabled={grantAdminLoading}>
                         Cancel
                     </Button>
                     <Button

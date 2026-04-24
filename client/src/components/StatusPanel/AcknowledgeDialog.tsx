@@ -121,7 +121,7 @@ const AcknowledgeDialog = ({ open, alert, alerts, onClose, onConfirm, onConfirmM
                     multiline
                     rows={2}
                     value={message}
-                    onChange={(e) => setMessage(e.target.value)}
+                    onChange={(e) => { setMessage(e.target.value); }}
                     variant="outlined"
                     size="small"
                     InputLabelProps={{ shrink: true }}
@@ -129,7 +129,7 @@ const AcknowledgeDialog = ({ open, alert, alerts, onClose, onConfirm, onConfirmM
                 />
                 <Box
                     sx={falsePositiveBoxSx}
-                    onClick={() => setFalsePositive(!falsePositive)}
+                    onClick={() => { setFalsePositive(!falsePositive); }}
                 >
                     <Box sx={checkboxSx}>
                         {falsePositive && (

@@ -178,7 +178,7 @@ export function ChannelTable<T extends BaseChannel>({
                                         <Switch
                                             checked={channel.enabled}
                                             size="small"
-                                            onChange={() => onToggleEnabled(channel)}
+                                            onChange={() => { onToggleEnabled(channel); }}
                                             inputProps={{
                                                 'aria-label': 'Toggle channel enabled',
                                             }}
@@ -199,7 +199,7 @@ export function ChannelTable<T extends BaseChannel>({
                                             <span>
                                                 <IconButton
                                                     size="small"
-                                                    onClick={(e) => onTest(e, channel)}
+                                                    onClick={(e) => { onTest(e, channel); }}
                                                     aria-label={testAriaLabel}
                                                     disabled={
                                                         testingChannelId === channel.id
@@ -219,7 +219,7 @@ export function ChannelTable<T extends BaseChannel>({
                                         <Tooltip title="Edit channel">
                                             <IconButton
                                                 size="small"
-                                                onClick={(e) => onEdit(e, channel)}
+                                                onClick={(e) => { onEdit(e, channel); }}
                                                 aria-label="edit channel"
                                             >
                                                 <EditIcon fontSize="small" />
@@ -228,7 +228,7 @@ export function ChannelTable<T extends BaseChannel>({
                                         <Tooltip title="Delete channel">
                                             <IconButton
                                                 size="small"
-                                                onClick={(e) => onDelete(e, channel)}
+                                                onClick={(e) => { onDelete(e, channel); }}
                                                 aria-label="delete channel"
                                                 sx={deleteIconSx}
                                             >

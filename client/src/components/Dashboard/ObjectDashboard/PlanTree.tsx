@@ -605,7 +605,7 @@ const PlanTree: React.FC<PlanTreeProps> = ({ plan }) => {
                             key={`tile-${ln.id}`}
                             elevation={0}
                             onClick={(e) =>
-                                handleTileClick(e, ln.node)
+                                { handleTileClick(e, ln.node); }
                             }
                             sx={{
                                 position: 'absolute',

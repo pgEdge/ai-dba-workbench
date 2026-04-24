@@ -33,7 +33,7 @@ const CopyCodeButton: React.FC<CopyCodeButtonProps> = ({ code, theme }) => {
         try {
             await copyToClipboard(code);
             setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            setTimeout(() => { setCopied(false); }, 2000);
         } catch (err) {
             logger.error('Failed to copy code:', err);
         }

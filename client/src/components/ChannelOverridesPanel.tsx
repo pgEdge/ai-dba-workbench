@@ -147,12 +147,12 @@ const ChannelOverridesPanel: React.FC<ChannelOverridesPanelProps> = ({ scope, sc
     return (
         <Box>
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}
             {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setSuccess(null)}>
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
                     {success}
                 </Alert>
             )}

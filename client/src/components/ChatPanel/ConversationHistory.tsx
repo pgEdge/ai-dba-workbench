@@ -338,9 +338,9 @@ const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                                                 size="small"
                                                 value={renameValue}
                                                 onChange={(e) =>
-                                                    setRenameValue(
+                                                    { setRenameValue(
                                                         e.target.value,
-                                                    )
+                                                    ); }
                                                 }
                                                 onKeyDown={(e) => {
                                                     if (e.key === 'Enter') {
@@ -351,7 +351,7 @@ const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                                                     }
                                                 }}
                                                 onClick={(e) =>
-                                                    e.stopPropagation()
+                                                    { e.stopPropagation(); }
                                                 }
                                                 autoFocus
                                                 fullWidth
@@ -399,10 +399,10 @@ const ConversationHistory: React.FC<ConversationHistoryProps> = ({
                                             <IconButton
                                                 size="small"
                                                 onClick={(e) =>
-                                                    handleMenuOpen(
+                                                    { handleMenuOpen(
                                                         e,
                                                         conv.id,
-                                                    )
+                                                    ); }
                                                 }
                                                 sx={{
                                                     ...smallIconButtonSx,

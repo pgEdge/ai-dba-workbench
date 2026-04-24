@@ -150,7 +150,7 @@ const RelationshipSection: React.FC<RelationshipSectionProps> = ({
                                     <IconButton
                                         edge="end"
                                         size="small"
-                                        onClick={() => onDeleteRelationship(rel.id)}
+                                        onClick={() => { onDeleteRelationship(rel.id); }}
                                         aria-label={`Remove relationship between ${rel.source_name} and ${rel.target_name}`}
                                         sx={{
                                             color: 'text.disabled',
@@ -243,7 +243,7 @@ const RelationshipSection: React.FC<RelationshipSectionProps> = ({
                             sx={{ flex: 1, ...SELECT_FIELD_DEFAULT_BG_SX }}
                             label="Type"
                             value={selectedRelType}
-                            onChange={(e) => onRelTypeChange(e.target.value)}
+                            onChange={(e) => { onRelTypeChange(e.target.value); }}
                             InputLabelProps={{ shrink: true }}
                         >
                             <MenuItem value="streams_from">

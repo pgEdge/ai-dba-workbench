@@ -423,7 +423,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                 <Alert
                     severity="error"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setError(null)}
+                    onClose={() => { setError(null); }}
                 >
                     {error}
                 </Alert>
@@ -433,7 +433,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                 <Alert
                     severity="success"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setSuccessMessage(null)}
+                    onClose={() => { setSuccessMessage(null); }}
                 >
                     {successMessage}
                 </Alert>
@@ -501,7 +501,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                     onRelTypeChange={handleRelTypeChange}
                     onAddRelationship={handleAddRelationship}
                     onDeleteRelationship={handleDeleteRelationship}
-                    onClearError={() => setRelationshipError(null)}
+                    onClearError={() => { setRelationshipError(null); }}
                     availableTargets={availableTargets}
                     allRelationshipsExist={allRelationshipsExist}
                 />
@@ -513,7 +513,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                 clusterName={clusterName}
                 removing={removingServer}
                 onConfirm={handleRemoveServer}
-                onCancel={() => setRemoveTarget(null)}
+                onCancel={() => { setRemoveTarget(null); }}
             />
         </Box>
     );

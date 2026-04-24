@@ -448,7 +448,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                     <Tooltip title="Delete blackout" placement="left">
                                                         <IconButton
                                                             size="small"
-                                                            onClick={() => setPendingDelete({ id: blackout.id, type: 'blackout', isActive: false })}
+                                                            onClick={() => { setPendingDelete({ id: blackout.id, type: 'blackout', isActive: false }); }}
                                                             sx={deleteButtonSx}
                                                         >
                                                             <DeleteIcon sx={ICON_16_SX} />
@@ -501,7 +501,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                     <Tooltip title="Delete schedule" placement="left">
                                                         <IconButton
                                                             size="small"
-                                                            onClick={() => setPendingDelete({ id: schedule.id, type: 'schedule' })}
+                                                            onClick={() => { setPendingDelete({ id: schedule.id, type: 'schedule' }); }}
                                                             sx={deleteButtonSx}
                                                         >
                                                             <DeleteIcon sx={ICON_16_SX} />
@@ -533,7 +533,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                             variant="contained"
                             size="small"
                             startIcon={<AddIcon sx={ICON_14_SX} />}
-                            onClick={() => setScheduleDialogOpen(true)}
+                            onClick={() => { setScheduleDialogOpen(true); }}
                             sx={splitButtonSx}
                         >
                             New Scheduled Blackout
@@ -545,17 +545,17 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
             {/* Sub-dialogs */}
             <BlackoutDialog
                 open={blackoutDialogOpen}
-                onClose={() => setBlackoutDialogOpen(false)}
+                onClose={() => { setBlackoutDialogOpen(false); }}
                 selection={selection}
             />
             <BlackoutScheduleDialog
                 open={scheduleDialogOpen}
-                onClose={() => setScheduleDialogOpen(false)}
+                onClose={() => { setScheduleDialogOpen(false); }}
                 selection={selection}
             />
             <DeleteConfirmationDialog
                 open={pendingDelete !== null}
-                onClose={() => setPendingDelete(null)}
+                onClose={() => { setPendingDelete(null); }}
                 onConfirm={handleDeleteConfirm}
                 title={pendingDelete?.type === 'schedule' ? 'Delete schedule' : 'Delete blackout'}
                 message={deleteDialogMessage}

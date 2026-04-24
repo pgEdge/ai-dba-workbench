@@ -346,12 +346,12 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             </Box>
 
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}
             {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setSuccess(null)}>
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
                     {success}
                 </Alert>
             )}
@@ -417,7 +417,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                         <Tooltip title="Edit channel">
                                             <IconButton
                                                 size="small"
-                                                onClick={(e) => handleOpenEdit(e, channel)}
+                                                onClick={(e) => { handleOpenEdit(e, channel); }}
                                                 aria-label="edit channel"
                                             >
                                                 <EditIcon fontSize="small" />
@@ -426,7 +426,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                         <Tooltip title="Delete channel">
                                             <IconButton
                                                 size="small"
-                                                onClick={(e) => handleOpenDelete(e, channel)}
+                                                onClick={(e) => { handleOpenDelete(e, channel); }}
                                                 aria-label="delete channel"
                                                 sx={deleteIconSx}
                                             >
@@ -470,7 +470,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         fullWidth
                         label="Name"
                         value={form.name}
-                        onChange={(e) => handleFormChange('name', e.target.value)}
+                        onChange={(e) => { handleFormChange('name', e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         required
@@ -480,7 +480,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         fullWidth
                         label="Description"
                         value={form.description}
-                        onChange={(e) => handleFormChange('description', e.target.value)}
+                        onChange={(e) => { handleFormChange('description', e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         multiline
@@ -491,7 +491,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         fullWidth
                         label={webhookUrlLabel}
                         value={form.webhook_url}
-                        onChange={(e) => handleFormChange('webhook_url', e.target.value)}
+                        onChange={(e) => { handleFormChange('webhook_url', e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         required
@@ -503,7 +503,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                             control={
                                 <Switch
                                     checked={form.enabled}
-                                    onChange={(e) => handleFormChange('enabled', e.target.checked)}
+                                    onChange={(e) => { handleFormChange('enabled', e.target.checked); }}
                                     disabled={saving}
                                     inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                 />
@@ -515,7 +515,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                             control={
                                 <Switch
                                     checked={form.is_estate_default}
-                                    onChange={(e) => handleFormChange('is_estate_default', e.target.checked)}
+                                    onChange={(e) => { handleFormChange('is_estate_default', e.target.checked); }}
                                     disabled={saving}
                                     inputProps={{ 'aria-label': 'Toggle estate default' }}
                                 />

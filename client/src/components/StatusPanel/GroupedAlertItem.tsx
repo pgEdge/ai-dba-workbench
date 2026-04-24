@@ -360,7 +360,7 @@ const GroupedAlertItem = ({
     return (
         <Box sx={containerSx}>
             {/* Group header */}
-            <Box onClick={() => setExpanded(!expanded)} sx={headerSx}>
+            <Box onClick={() => { setExpanded(!expanded); }} sx={headerSx}>
                 <SeverityIcon sx={{ fontSize: 16, color: baseColor, flexShrink: 0 }} />
                 <Typography sx={GROUP_TITLE_SX}>
                     {friendlyTitle}

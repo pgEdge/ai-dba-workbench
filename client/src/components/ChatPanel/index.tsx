@@ -474,7 +474,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                 <Box sx={getHeaderSx}>
                     <Tooltip title="Conversation history">
                         <IconButton
-                            onClick={() => setShowHistory((prev) => !prev)}
+                            onClick={() => { setShowHistory((prev) => !prev); }}
                             size="small"
                             sx={showHistory
                                 ? getActiveHistoryButtonSx
@@ -538,7 +538,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                             onRename={handleRenameConversation}
                             onClear={handleClearConversations}
                             onRefresh={handleRefreshConversations}
-                            onClose={() => setShowHistory(false)}
+                            onClose={() => { setShowHistory(false); }}
                         />
                     )}
 

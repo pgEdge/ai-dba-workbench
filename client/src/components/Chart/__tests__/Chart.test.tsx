@@ -19,10 +19,10 @@ vi.mock('echarts-for-react/lib/core', () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     default: vi.fn(({ style, onChartReady }: { style: React.CSSProperties; onChartReady?: (instance: any) => void }) => {
         if (onChartReady) {
-            setTimeout(() => onChartReady({
+            setTimeout(() => { onChartReady({
                 getDataURL: vi.fn(() => 'data:image/png;base64,test'),
                 dispose: vi.fn(),
-            }), 0);
+            }); }, 0);
         }
         return React.createElement('div', {
             'data-testid': 'echarts-mock',

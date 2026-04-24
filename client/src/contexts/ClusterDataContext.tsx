@@ -173,7 +173,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             fetchRef.current();
         }, autoRefreshInterval);
 
-        return () => clearInterval(intervalId);
+        return () => { clearInterval(intervalId); };
     }, [autoRefreshEnabled, user]);
 
     const value: ClusterDataContextValue = useMemo(() => ({

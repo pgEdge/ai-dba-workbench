@@ -225,7 +225,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                         <Switch
                             size="small"
                             checked={hideCollectorQueries}
-                            onChange={(e) => setHideCollectorQueries(e.target.checked)}
+                            onChange={(e) => { setHideCollectorQueries(e.target.checked); }}
                         />
                     }
                     label="Hide monitoring queries"
@@ -307,7 +307,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                         <Box
                             key={query.queryid || index}
                             sx={TABLE_ROW_SX}
-                            onClick={() => handleQueryClick(query)}
+                            onClick={() => { handleQueryClick(query); }}
                             tabIndex={0}
                             role="button"
                             aria-label={`View details for query: ${truncateQuery(query.query, 40)}`}

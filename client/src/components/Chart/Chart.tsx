@@ -276,7 +276,7 @@ export function Chart(props: ChartProps) {
 
         const id = setInterval(refreshData, updateInterval);
 
-        return () => clearInterval(id);
+        return () => { clearInterval(id); };
     }, [liveUpdate, onDataRefresh, updateInterval, refreshData]);
 
     const handleChartReady = useCallback(
@@ -293,8 +293,8 @@ export function Chart(props: ChartProps) {
         }
     }, [exportFilename]);
 
-    const handleAnalyze = useCallback(() => setAnalysisOpen(true), []);
-    const handleAnalysisClose = useCallback(() => setAnalysisOpen(false), []);
+    const handleAnalyze = useCallback(() => { setAnalysisOpen(true); }, []);
+    const handleAnalysisClose = useCallback(() => { setAnalysisOpen(false); }, []);
 
     const chartEvents = useMemo((): Record<string, (...args: unknown[]) => void> => {
         if (!onChartClick) {

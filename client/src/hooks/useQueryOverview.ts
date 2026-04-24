@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../utils/apiClient';
 import { formatTime } from '../utils/formatters';
-import { LLMResponse } from '../types/llm';
+import type { LLMResponse } from '../types/llm';
 import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';
@@ -121,7 +121,7 @@ export function useQueryOverview(
 
                 const queryPreview =
                     data.queryText.length > 200
-                        ? data.queryText.substring(0, 200) + '...'
+                        ? `${data.queryText.substring(0, 200)}...`
                         : data.queryText;
 
                 const userMessage =

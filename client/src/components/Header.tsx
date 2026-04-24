@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import {
     AppBar,
     Toolbar,
@@ -27,7 +28,7 @@ import {
     alpha,
     useTheme,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     DarkMode as DarkModeIcon,
     LightMode as LightModeIcon,

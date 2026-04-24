@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import { Box, Typography, Collapse } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {

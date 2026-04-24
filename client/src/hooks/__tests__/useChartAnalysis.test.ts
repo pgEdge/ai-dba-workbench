@@ -14,7 +14,7 @@ import {
     useChartAnalysis,
     clearChartAnalysisCache,
     hasCachedAnalysis,
-    ChartAnalysisInput,
+    type ChartAnalysisInput,
 } from '../useChartAnalysis';
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ function makeChartInput(overrides: Partial<ChartAnalysisInput> = {}): ChartAnaly
     };
 }
 
-function makeSuccessResponse(text: string = 'Chart analysis complete.') {
+function makeSuccessResponse(text = 'Chart analysis complete.') {
     return {
         ok: true,
         text: vi.fn().mockResolvedValue(''),
@@ -114,7 +114,7 @@ function makeSuccessResponse(text: string = 'Chart analysis complete.') {
     };
 }
 
-function makeErrorResponse(errorText: string = 'Internal Server Error') {
+function makeErrorResponse(errorText = 'Internal Server Error') {
     return {
         ok: false,
         text: vi.fn().mockResolvedValue(errorText),

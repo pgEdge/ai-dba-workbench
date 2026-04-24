@@ -12,7 +12,7 @@
  * Shared style constants for PerformanceTiles
  */
 
-import { SxProps, Theme } from '@mui/material/styles';
+import type { SxProps, Theme } from '@mui/material/styles';
 import { alpha } from '@mui/material';
 
 export const TILE_GRID_SX: SxProps<Theme> = {

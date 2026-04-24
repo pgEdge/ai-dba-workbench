@@ -16,15 +16,15 @@
  * response is produced or the iteration limit is reached.
  */
 
-import { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
-import { ToolActivity } from '../../components/ChatPanel/ToolStatus';
-import {
+import type { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
+import type { ToolActivity } from '../../components/ChatPanel/ToolStatus';
+import type {
     LLMContentBlock,
     LLMResponse,
     ToolCallResponse,
     ToolResult,
 } from '../../types/llm';
-import { APIMessage, ToolDefinition } from './chatTypes';
+import type { APIMessage, ToolDefinition } from './chatTypes';
 
 /**
  * Type alias for the fetch function signature used by the agentic

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, Typography, Chip } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import type { SvgIconComponent } from '@mui/icons-material';

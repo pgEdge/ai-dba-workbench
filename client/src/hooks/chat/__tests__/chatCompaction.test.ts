@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { maybeCompact, FetchFunction } from '../chatCompaction';
-import { APIMessage } from '../chatTypes';
+import { maybeCompact, type FetchFunction } from '../chatCompaction';
+import type { APIMessage } from '../chatTypes';
 import {
     COMPACTION_MAX_TOKENS,
     COMPACTION_RECENT_WINDOW,

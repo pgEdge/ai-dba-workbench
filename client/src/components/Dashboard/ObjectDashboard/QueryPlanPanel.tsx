@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import type React from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';

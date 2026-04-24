@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ChatProvider } from '../ChatContext';

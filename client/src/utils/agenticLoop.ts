@@ -9,10 +9,10 @@
  */
 
 import { apiFetch } from './apiClient';
-import { AnalysisTool } from './mcpTools';
+import type { AnalysisTool } from './mcpTools';
 import { getToolDisplayName } from './toolDisplayNames';
 import { stripPreamble } from './textHelpers';
-import {
+import type {
     LLMContentBlock,
     LLMResponse,
     Message,
@@ -104,7 +104,7 @@ export async function runAgenticLoop(
         onActiveTools?.(uniqueNames);
         onProgress?.(
             uniqueNames.length === 1
-                ? uniqueNames[0] + '...'
+                ? `${uniqueNames[0]}...`
                 : `Running ${uniqueNames.length} tools...`,
         );
 

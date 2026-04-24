@@ -8,10 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { Box, Typography, Chip, alpha, useTheme } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import type { Cluster } from './utils';
 import {
     DragIndicator as DragIcon,

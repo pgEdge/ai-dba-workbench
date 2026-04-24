@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { createContext, useState, useEffect, useCallback, useMemo } from 'react';
+import type React from 'react';
+import { createContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { apiGet, apiPost } from '../utils/apiClient';
 import { clearAlertAnalysisCache } from '../hooks/useAlertAnalysis';
 import { clearChartAnalysisCache } from '../hooks/useChartAnalysis';

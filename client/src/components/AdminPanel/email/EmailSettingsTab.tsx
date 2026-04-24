@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import {
     Box,
     TextField,
@@ -16,7 +16,7 @@ import {
     Typography,
     FormControlLabel,
 } from '@mui/material';
-import { EmailFormState } from './emailTypes';
+import type { EmailFormState } from './emailTypes';
 
 export interface EmailSettingsTabProps {
     form: EmailFormState;

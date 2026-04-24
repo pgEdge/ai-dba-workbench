@@ -9,7 +9,7 @@
  */
 
 import { alpha } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 
 // ---- Tooltip styles ----
 export const tooltipPaddingSx = { p: 0.5 };

@@ -43,7 +43,7 @@ export function formatConnectionContext(ctx: Record<string, unknown>): string {
         }
 
         const mem = sys.memory as Record<string, unknown> | undefined;
-        if (mem && mem.total_bytes) {
+        if (mem?.total_bytes) {
             const totalGB = ((mem.total_bytes as number) / (1024 * 1024 * 1024)).toFixed(1);
             lines.push(`Total Memory: ${totalGB} GB`);
         }
@@ -58,5 +58,5 @@ export function formatConnectionContext(ctx: Record<string, unknown>): string {
         }
     }
 
-    return lines.length > 0 ? '\nServer Context:\n' + lines.join('\n') : '';
+    return lines.length > 0 ? `\nServer Context:\n${lines.join('\n')}` : '';
 }

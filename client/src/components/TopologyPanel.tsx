@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -17,7 +18,7 @@ import {
 } from '@mui/material';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import TopologyDiagram from './Dashboard/ClusterDashboard/topology/TopologyDiagram';
-import { ClusterServer } from '../contexts/ClusterDataContext';
+import type { ClusterServer } from '../contexts/ClusterDataContext';
 import type {
     NodeRelationship,
     RelationshipInput,
@@ -345,7 +346,7 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
                 }));
 
             const newRel: RelationshipInput = {
-                target_connection_id: selectedTargetId as number,
+                target_connection_id: selectedTargetId,
                 relationship_type: selectedRelType,
             };
             sourceRels.push(newRel);

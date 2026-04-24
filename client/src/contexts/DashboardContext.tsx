@@ -8,8 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { createContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import {
+import type React from 'react';
+import { createContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import type {
     TimeRange,
     TimeRangeState,
     AutoRefreshConfig,

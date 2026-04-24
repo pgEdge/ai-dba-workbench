@@ -12,7 +12,7 @@
  * Shared style constants for Dashboard components
  */
 
-import { SxProps, Theme } from '@mui/material/styles';
+import type { SxProps, Theme } from '@mui/material/styles';
 import { alpha, keyframes } from '@mui/material';
 
 /** Shared spin animation for refresh icons. */

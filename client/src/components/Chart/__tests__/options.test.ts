@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { buildLineOptions } from '../options/line';
 import { buildBarOptions } from '../options/bar';
 import { buildPieOptions } from '../options/pie';
-import { ChartData } from '../types';
+import type { ChartData } from '../types';
 
 const sampleData: ChartData = {
     categories: ['Jan', 'Feb', 'Mar'],

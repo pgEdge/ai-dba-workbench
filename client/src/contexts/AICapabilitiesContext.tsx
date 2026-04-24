@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { createContext, useState, useEffect, useMemo } from 'react';
+import type React from 'react';
+import { createContext, useState, useEffect, useMemo } from 'react';
 import { apiGet } from '../utils/apiClient';
 
 export interface AICapabilitiesValue {

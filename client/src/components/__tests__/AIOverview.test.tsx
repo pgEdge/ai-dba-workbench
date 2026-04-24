@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -21,7 +21,7 @@ vi.mock('../../utils/apiClient', () => ({
     ApiError: class ApiError extends Error {
         public readonly statusCode: number;
         public readonly errorBody: string;
-        constructor(message: string, statusCode: number, errorBody: string = '') {
+        constructor(message: string, statusCode: number, errorBody = '') {
             super(message);
             this.name = 'ApiError';
             this.statusCode = statusCode;

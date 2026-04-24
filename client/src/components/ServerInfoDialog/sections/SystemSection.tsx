@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, Typography, LinearProgress } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { Computer as ComputerIcon } from '@mui/icons-material';

@@ -8,12 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CacheHitTile from '../CacheHitTile';
-import { ConnectionPerformance, DatabaseCacheHitData } from '../types';
+import type { ConnectionPerformance, DatabaseCacheHitData } from '../types';
 
 // Mock the Chart component to avoid ECharts complexity in tests
 vi.mock('../../../Chart/Chart', () => ({

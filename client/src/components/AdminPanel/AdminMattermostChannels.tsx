@@ -8,8 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
-import AdminMessagingChannels, { MessagingChannelConfig } from './AdminMessagingChannels';
+import type React from 'react';
+import AdminMessagingChannels, { type MessagingChannelConfig } from './AdminMessagingChannels';
 
 const MATTERMOST_CONFIG: MessagingChannelConfig = {
     channelType: 'mattermost',

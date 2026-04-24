@@ -13,10 +13,10 @@ import {
     createConversation,
     updateConversation,
     fetchConversation,
-    FetchFunction,
+    type FetchFunction,
 } from '../chatConversation';
-import { ChatMessageData } from '../../../components/ChatPanel/ChatMessage';
-import { ConversationDetail } from '../chatTypes';
+import type { ChatMessageData } from '../../../components/ChatPanel/ChatMessage';
+import type { ConversationDetail } from '../chatTypes';
 
 // ---------------------------------------------------------------------------
 // Test helpers

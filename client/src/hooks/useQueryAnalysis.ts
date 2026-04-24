@@ -13,7 +13,7 @@ import { useAICapabilities } from '../contexts/useAICapabilities';
 import { apiGet } from '../utils/apiClient';
 import { formatTime } from '../utils/formatters';
 import { formatConnectionContext } from '../utils/connectionContext';
-import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';
+import { getKnowledgebaseTool, type AnalysisTool } from '../utils/mcpTools';
 import { QUERY_ANALYSIS_TOOLS } from '../utils/analysisTools';
 import {
     SQL_CODE_BLOCK_RULES,
@@ -21,7 +21,7 @@ import {
 } from '../utils/analysisPrompts';
 import { runAgenticLoop } from '../utils/agenticLoop';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
-import { Message } from '../types/llm';
+import type { Message } from '../types/llm';
 import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';

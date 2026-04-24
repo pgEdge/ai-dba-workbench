@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { ServerFormData, FormErrors } from './ServerDialog.types';
+import type { ServerFormData, FormErrors } from './ServerDialog.types';
 
 /**
  * Validates all form fields and returns an object containing error messages.
@@ -37,7 +37,7 @@ export const validateServerForm = (
 
     // Port validation
     const port = parseInt(String(formData.port), 10);
-    if (isNaN(port) || port < 1 || port > 65535) {
+    if (Number.isNaN(port) || port < 1 || port > 65535) {
         errors.port = 'Port must be between 1 and 65535';
     }
 

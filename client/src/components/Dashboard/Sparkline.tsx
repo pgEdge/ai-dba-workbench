@@ -8,9 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import { Chart } from '../Chart';
-import { SparklineProps } from './types';
+import type { SparklineProps } from './types';
 
 /**
  * A small inline chart for embedding in KPI tiles and summary rows.

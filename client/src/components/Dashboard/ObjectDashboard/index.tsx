@@ -8,10 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { ObjectType } from '../types';
+import type { ObjectType } from '../types';
 import { useDashboard } from '../../../contexts/useDashboard';
 import TableDetail from './TableDetail';
 import IndexDetail from './IndexDetail';

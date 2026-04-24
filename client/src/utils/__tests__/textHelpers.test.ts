@@ -145,7 +145,7 @@ describe('truncateDescription', () => {
         it('handles text one character over max length', () => {
             const overLength = 'a'.repeat(61);
             const result = truncateDescription(overLength);
-            expect(result).toBe('a'.repeat(60) + '...');
+            expect(result).toBe(`${'a'.repeat(60)}...`);
         });
 
         it('handles newline at beginning', () => {

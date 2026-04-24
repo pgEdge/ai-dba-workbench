@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { HeaderEntry } from './webhookTypes';
+import type { HeaderEntry } from './webhookTypes';
 
 /** Supported HTTP methods for webhook channels. */
 export const HTTP_METHODS = ['POST', 'GET', 'PUT', 'PATCH'];

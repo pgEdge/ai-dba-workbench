@@ -111,7 +111,7 @@ describe('fetchTimelineEventsCentered', () => {
             expect(callArg).toContain('end_time=');
 
             // Parse the start and end times from the URL
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             const endTimeParam = url.searchParams.get('end_time');
             expect(startTimeParam).not.toBeNull();
@@ -133,7 +133,7 @@ describe('fetchTimelineEventsCentered', () => {
             await fetchTimelineEventsCentered(1, '2024-03-15T06:00:00Z');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             const endTimeParam = url.searchParams.get('end_time');
             expect(startTimeParam).not.toBeNull();
@@ -153,7 +153,7 @@ describe('fetchTimelineEventsCentered', () => {
             await fetchTimelineEventsCentered(1, refTime);
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -234,7 +234,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, '1h');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -248,7 +248,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, '6h');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -262,7 +262,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, '24h');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -276,7 +276,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, '7d');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -290,7 +290,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, '30d');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -304,7 +304,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, undefined);
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -318,7 +318,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, 'unknown');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const startTimeParam = url.searchParams.get('start_time');
             expect(startTimeParam).not.toBeNull();
             const startTime = new Date(startTimeParam as string);
@@ -395,7 +395,7 @@ describe('fetchTimelineEventsForRange', () => {
             await fetchTimelineEventsForRange(1, '1h');
 
             const callArg = mockApiGet.mock.calls[0][0] as string;
-            const url = new URL('http://test.com' + callArg);
+            const url = new URL(`http://test.com${callArg}`);
             const endTimeParam = url.searchParams.get('end_time');
             expect(endTimeParam).not.toBeNull();
             const endTime = new Date(endTimeParam as string);

@@ -90,14 +90,14 @@ function computeCacheKey(
  * Response shape from the query execution endpoint.
  */
 interface QueryResponse {
-    results: {
+    results: Array<{
         columns: string[];
         rows: string[][];
         row_count: number;
         truncated: boolean;
         query: string;
         error?: string;
-    }[];
+    }>;
     total_statements: number;
 }
 

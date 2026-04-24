@@ -174,7 +174,7 @@ describe('ServerInfoDialog components', () => {
                 (call) => call[0] === SECTION_STATE_KEY
             );
             expect(lastCall).toBeTruthy();
-            const state = JSON.parse(lastCall![1] as string);
+            const state = JSON.parse(lastCall![1]);
             expect(state['persist-test']).toBe(false);
         });
 

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { TopologyGraph, TopoNode } from './types';
+import type { TopologyGraph, TopoNode } from './types';
 
 export const NODE_WIDTH = 160;
 export const NODE_HEIGHT = 60;
@@ -448,7 +448,6 @@ export const computeLayout = (
         case 'logical_flow':
             result = layoutBinaryTree(graph, containerWidth);
             break;
-        case 'standalone':
         default:
             result = layoutStandalone(graph, containerWidth);
             break;

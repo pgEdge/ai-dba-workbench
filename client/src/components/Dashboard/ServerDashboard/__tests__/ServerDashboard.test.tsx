@@ -71,7 +71,7 @@ vi.mock('../TopQueriesSection', () => ({
 
 const theme = createTheme();
 
-const createSelection = (id: number = 1, name?: string): ServerSelection => ({
+const createSelection = (id = 1, name?: string): ServerSelection => ({
     type: 'server',
     id,
     name: name || `Server ${id}`,

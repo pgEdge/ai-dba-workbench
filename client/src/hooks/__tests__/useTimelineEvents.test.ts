@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useTimelineEvents, TimelineEvent, TimeRangePreset } from '../useTimelineEvents';
+import { useTimelineEvents, type TimelineEvent, type TimeRangePreset } from '../useTimelineEvents';
 
 // ---------------------------------------------------------------------------
 // Mocks

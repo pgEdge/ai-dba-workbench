@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import type React from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -31,7 +32,7 @@ import {
     IconButton,
     alpha,
 } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';

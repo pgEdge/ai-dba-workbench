@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -21,7 +22,7 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/useDashboard';
 import CollapsibleSection from '../CollapsibleSection';
 import { formatTime, formatNumber } from '../../../utils/formatters';
-import { ServerSectionProps, TopQueryRow } from './types';
+import type { ServerSectionProps, TopQueryRow } from './types';
 import { logger } from '../../../utils/logger';
 
 /** Maximum characters to display before truncating a query */
@@ -98,7 +99,7 @@ const truncateQuery = (query: string, maxLen: number): string => {
     if (!query) { return ''; }
     const cleaned = query.replace(/\s+/g, ' ').trim();
     if (cleaned.length <= maxLen) { return cleaned; }
-    return cleaned.substring(0, maxLen) + '...';
+    return `${cleaned.substring(0, maxLen)}...`;
 };
 
 /**

@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -99,7 +100,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
 
     const [context, setContext] = useState<OverrideContextResponse | null>(null);
     const [scopeOptions, setScopeOptions] = useState<
-        { value: string; label: string; disabled: boolean }[]
+        Array<{ value: string; label: string; disabled: boolean }>
     >([]);
     const [selectedScope, setSelectedScope] = useState<string>('server');
 
@@ -169,7 +170,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                 setContext(data);
 
                 // Build scope options
-                const options: { value: string; label: string; disabled: boolean }[] = [];
+                const options: Array<{ value: string; label: string; disabled: boolean }> = [];
 
                 // Determine highest existing override scope
                 // Hierarchy from highest to lowest: group > cluster > server
@@ -260,7 +261,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
         if (!context) {return;}
 
         const thresholdNum = parseFloat(editThreshold);
-        if (isNaN(thresholdNum)) {
+        if (Number.isNaN(thresholdNum)) {
             setError('Threshold must be a valid number.');
             return;
         }

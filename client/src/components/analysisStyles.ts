@@ -16,7 +16,7 @@
  */
 
 import { alpha } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import { sxMonoFont } from './shared/MarkdownExports';
 
 /** Grey badge for connection or server pills. */

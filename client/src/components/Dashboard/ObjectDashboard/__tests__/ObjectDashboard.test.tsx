@@ -13,7 +13,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ObjectDashboard from '../index';
-import { ObjectType, OverlayEntry } from '../../types';
+import type { ObjectType, OverlayEntry } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks

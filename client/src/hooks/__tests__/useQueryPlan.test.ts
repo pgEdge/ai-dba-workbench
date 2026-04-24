@@ -35,7 +35,7 @@ let testCounter = 0;
  */
 function makeQueryResponse(
     rows: string[][],
-    query: string = 'EXPLAIN SELECT 1',
+    query = 'EXPLAIN SELECT 1',
 ) {
     return {
         ok: true,
@@ -56,7 +56,7 @@ function makeQueryResponse(
 }
 
 function makeErrorResponse(
-    errorText: string = 'Internal Server Error',
+    errorText = 'Internal Server Error',
 ) {
     return {
         ok: false,

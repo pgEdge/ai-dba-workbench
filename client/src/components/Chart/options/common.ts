@@ -16,14 +16,14 @@ const MONTHS_SHORT = [
 const MS_PER_DAY = 86_400_000;
 
 function pad2(n: number): string {
-    return n < 10 ? '0' + n : String(n);
+    return n < 10 ? `0${n}` : String(n);
 }
 
 /**
  * Formats a Date as a short time string "HH:mm".
  */
 function formatTime(d: Date): string {
-    return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 /**
@@ -38,7 +38,7 @@ function formatDateTimeShort(d: Date): string {
  * Formats a Date as "MMM d" (e.g. "Jan 5").
  */
 function formatDateOnly(d: Date): string {
-    return MONTHS_SHORT[d.getMonth()] + ' ' + d.getDate();
+    return `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`;
 }
 
 /**
@@ -64,14 +64,14 @@ function buildTimeLabelFormatter(
     if (categories.length >= 2) {
         const first = new Date(categories[0]).getTime();
         const last = new Date(categories[categories.length - 1]).getTime();
-        if (!isNaN(first) && !isNaN(last)) {
+        if (!Number.isNaN(first) && !Number.isNaN(last)) {
             spanMs = Math.abs(last - first);
         }
     }
 
     return (value: string) => {
         const d = new Date(value);
-        if (isNaN(d.getTime())) {return value;}
+        if (Number.isNaN(d.getTime())) {return value;}
 
         if (spanMs < MS_PER_DAY) {
             return formatTime(d);
@@ -89,9 +89,9 @@ function buildTimeLabelFormatter(
  */
 function formatNumericValue(value: number): string {
     const abs = Math.abs(value);
-    if (abs >= 1e9) {return (value / 1e9).toFixed(1) + 'B';}
-    if (abs >= 1e6) {return (value / 1e6).toFixed(1) + 'M';}
-    if (abs >= 1e3) {return (value / 1e3).toFixed(1) + 'K';}
+    if (abs >= 1e9) {return `${(value / 1e9).toFixed(1)}B`;}
+    if (abs >= 1e6) {return `${(value / 1e6).toFixed(1)}M`;}
+    if (abs >= 1e3) {return `${(value / 1e3).toFixed(1)}K`;}
     if (Number.isInteger(value)) {return value.toString();}
     return value.toFixed(1);
 }
@@ -114,7 +114,7 @@ export function buildTooltip(show: boolean): object {
             if (list.length === 0) {return '';}
 
             const d = new Date(list[0].axisValue);
-            const header = isNaN(d.getTime())
+            const header = Number.isNaN(d.getTime())
                 ? list[0].axisValue
                 : formatDateTimeFull(d);
 
@@ -122,7 +122,7 @@ export function buildTooltip(show: boolean): object {
                 const val = typeof p.value === 'number'
                     ? formatNumericValue(p.value)
                     : String(p.value);
-                return p.marker + ' ' + p.seriesName + ': ' + val;
+                return `${p.marker} ${p.seriesName}: ${val}`;
             });
 
             return '<strong>' + header + '</strong><br/>'

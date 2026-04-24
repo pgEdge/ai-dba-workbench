@@ -26,6 +26,11 @@ project adheres to
   `golangci-lint/v2`; `make test-all` now works again on
   developer machines that have golangci-lint v2
   installed locally. (#66)
+- Apply a Biome and ESLint auto-fix pass across
+  `client/src/`, clearing roughly 600 Codacy findings
+  across 294 files; the change is a mechanical refactor
+  with no behavior changes, and existing lint and test
+  baselines remain unchanged.
 
 ### Security
 

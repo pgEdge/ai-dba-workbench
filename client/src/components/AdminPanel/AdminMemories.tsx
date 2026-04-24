@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -61,7 +62,7 @@ function truncateContent(text: string, maxLength: number): string {
     if (text.length <= maxLength) {
         return text;
     }
-    return text.slice(0, maxLength) + '\u2026';
+    return `${text.slice(0, maxLength)}\u2026`;
 }
 
 /**

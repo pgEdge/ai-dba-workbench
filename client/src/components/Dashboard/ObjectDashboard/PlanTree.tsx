@@ -8,13 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import type React from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Popover from '@mui/material/Popover';
 import Typography from '@mui/material/Typography';
 import { alpha, useTheme } from '@mui/material/styles';
-import { PlanNode } from '../../../hooks/useQueryPlan';
+import type { PlanNode } from '../../../hooks/useQueryPlan';
 import { formatNumber } from '../../../utils/formatters';
 
 /** Monospace font stack for conditions and filters. */
@@ -208,7 +209,7 @@ function nodeTypeLabel(node: PlanNode): string {
 function secondaryLabel(node: PlanNode): string {
     if (node['Relation Name']) {
         if (node.Schema) {
-            return `${node['Schema']}.${node['Relation Name']}`;
+            return `${node.Schema}.${node['Relation Name']}`;
         }
         return node['Relation Name'];
     }
@@ -233,9 +234,9 @@ interface PopoverContentProps {
  * Renders the detail popover content for a plan node.
  */
 const PopoverContent: React.FC<PopoverContentProps> = ({ node }) => {
-    const conditions: { label: string; value: string }[] = [];
-    if (node['Filter']) {
-        conditions.push({ label: 'Filter', value: node['Filter'] });
+    const conditions: Array<{ label: string; value: string }> = [];
+    if (node.Filter) {
+        conditions.push({ label: 'Filter', value: node.Filter });
     }
     if (node['Index Cond']) {
         conditions.push({
@@ -281,8 +282,8 @@ const PopoverContent: React.FC<PopoverContentProps> = ({ node }) => {
     }
 
     const relationLabel = node['Relation Name']
-        ? (node['Schema']
-            ? `${node['Schema']}.${node['Relation Name']}`
+        ? (node.Schema
+            ? `${node.Schema}.${node['Relation Name']}`
             : node['Relation Name'])
         : node['Index Name'] ?? null;
 
@@ -328,14 +329,14 @@ const PopoverContent: React.FC<PopoverContentProps> = ({ node }) => {
                     mt: 0.5,
                 }}>
                     Relation: {relationLabel}
-                    {node['Alias']
-                        && node['Alias'] !== node['Relation Name']
-                        ? ` (${node['Alias']})`
+                    {node.Alias
+                        && node.Alias !== node['Relation Name']
+                        ? ` (${node.Alias})`
                         : ''}
                 </Typography>
             )}
 
-            {node['Output'] && node['Output'].length > 0 && (
+            {node.Output && node.Output.length > 0 && (
                 <Typography sx={{
                     fontSize: '0.875rem',
                     fontFamily: MONO_FONT,
@@ -343,19 +344,19 @@ const PopoverContent: React.FC<PopoverContentProps> = ({ node }) => {
                     mt: 0.5,
                     wordBreak: 'break-word',
                 }}>
-                    Output: {node['Output'].length > 5
-                        ? node['Output'].slice(0, 5).join(', ')
+                    Output: {node.Output.length > 5
+                        ? node.Output.slice(0, 5).join(', ')
                             + ', ...'
-                        : node['Output'].join(', ')}
+                        : node.Output.join(', ')}
                 </Typography>
             )}
-            {node['Strategy'] && (
+            {node.Strategy && (
                 <Typography sx={{
                     fontSize: '0.875rem',
                     color: 'text.secondary',
                     mt: 0.5,
                 }}>
-                    Strategy: {node['Strategy']}
+                    Strategy: {node.Strategy}
                 </Typography>
             )}
             {node['Scan Direction'] && (
@@ -508,7 +509,7 @@ const PlanTree: React.FC<PlanTreeProps> = ({ plan }) => {
     const layoutMap = new Map(layout.map(n => [n.id, n]));
 
     // Collect edges: each child points to its parent.
-    const edges: { child: LayoutNode; parent: LayoutNode }[] = [];
+    const edges: Array<{ child: LayoutNode; parent: LayoutNode }> = [];
     for (const ln of layout) {
         if (ln.parentId !== null) {
             const parent = layoutMap.get(ln.parentId);

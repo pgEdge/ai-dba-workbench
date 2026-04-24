@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useOverviewSSE, OverviewResponse } from '../useOverviewSSE';
+import { useOverviewSSE, type OverviewResponse } from '../useOverviewSSE';
 
 // ---------------------------------------------------------------------------
 // Mock EventSource

@@ -8,9 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type React from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, CircularProgress, Typography, alpha } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 
 // ---------------------------------------------------------------------------
 // Phrases

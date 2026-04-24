@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { runAgenticLoop, AgenticLoopOptions } from '../agenticLoop';
+import { runAgenticLoop, type AgenticLoopOptions } from '../agenticLoop';
 
 // Mock dependencies
 vi.mock('../apiClient', () => ({

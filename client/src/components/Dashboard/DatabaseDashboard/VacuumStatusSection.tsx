@@ -8,14 +8,15 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import PsychologyIcon from '@mui/icons-material/Psychology';
-import { useTheme, Theme } from '@mui/material/styles';
+import { useTheme, type Theme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/useDashboard';
@@ -23,12 +24,12 @@ import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
-import { ChartAnalysisContext, ChartData } from '../../Chart/types';
+import type { ChartAnalysisContext, ChartData } from '../../Chart/types';
 import { logger } from '../../../utils/logger';
 import {
-    DatabaseSectionProps,
-    TableLeaderboardRow,
-    LeaderboardResponse,
+    type DatabaseSectionProps,
+    type TableLeaderboardRow,
+    type LeaderboardResponse,
     formatNumber,
     formatTimestamp,
     getVacuumStatus,

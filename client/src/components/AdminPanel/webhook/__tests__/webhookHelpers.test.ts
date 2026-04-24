@@ -20,7 +20,7 @@ import {
     DEFAULT_ALERT_CLEAR_TEMPLATE,
     DEFAULT_REMINDER_TEMPLATE,
 } from '../webhookHelpers';
-import { HeaderEntry } from '../webhookTypes';
+import type { HeaderEntry } from '../webhookTypes';
 
 describe('webhookHelpers', () => {
     describe('constants', () => {

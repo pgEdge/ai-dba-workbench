@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useEffect, useMemo } from 'react';
+import type React from 'react';
+import { useEffect, useMemo } from 'react';
 import { Box, Typography, useTheme } from '@mui/material';
 import {
     Psychology as PsychologyIcon,
@@ -77,7 +78,7 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({
 
     // Build connection map for cluster analysis
     const connectionMap = useMemo(() => {
-        if (!selection || selection.type !== 'cluster' || !selection.servers) {
+        if (selection?.type !== 'cluster' || !selection.servers) {
             return undefined;
         }
         const map = new Map<number, string>();

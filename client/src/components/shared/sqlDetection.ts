@@ -50,7 +50,7 @@ export const extractExecutableSQL = (code: string): string => {
         }
     }
 
-    return sqlParts.map((p) => p + ';').join('\n\n');
+    return sqlParts.map((p) => `${p};`).join('\n\n');
 };
 
 /**

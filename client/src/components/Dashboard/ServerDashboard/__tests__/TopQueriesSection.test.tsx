@@ -12,7 +12,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import TopQueriesSection from '../TopQueriesSection';
-import { TopQueryRow } from '../types';
+import type { TopQueryRow } from '../types';
 
 // ---------------------------------------------------------------------------
 // Mocks

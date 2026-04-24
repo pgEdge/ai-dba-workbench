@@ -8,8 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import { Theme } from '@mui/material/styles';
-import { SxProps } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
+import type { SxProps } from '@mui/material';
 
 /**
  * Common text field styling with hover and focus states.

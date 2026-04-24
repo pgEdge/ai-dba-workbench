@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState } from 'react';
+import type React from 'react';
+import { useState } from 'react';
 import {
     Box,
     Typography,
@@ -38,7 +39,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from '../styles';
-import { EmailRecipient } from './emailTypes';
+import type { EmailRecipient } from './emailTypes';
 
 export interface EmailRecipientsTabProps {
     visible: boolean;
@@ -79,7 +80,7 @@ export const EmailRecipientsTab: React.FC<EmailRecipientsTabProps> = ({
 
     const handleAddRecipient = () => {
         const email = newRecipientEmail.trim();
-        if (!email || !email.includes('@')) { return; }
+        if (!email?.includes('@')) { return; }
         onAddRecipient(email, newRecipientName.trim());
         setNewRecipientEmail('');
         setNewRecipientName('');

@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Autocomplete,
     TextField,
@@ -24,7 +25,7 @@ import {
     Settings as SettingsIcon,
 } from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
-import {
+import type {
     ClusterSummary,
     ConnectionClusterInfo,
     NewClusterFormData,
@@ -61,7 +62,7 @@ const REPLICATION_TYPES = [
  */
 function getRolesForType(
     replicationType: string | null | undefined,
-): { value: string; label: string }[] {
+): Array<{ value: string; label: string }> {
     switch (replicationType) {
         case 'binary':
             return [
@@ -355,7 +356,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
         }
 
         onChange?.({
-            clusterId: option.id as number,
+            clusterId: option.id,
             role: null,
             membershipSource: 'manual',
         });

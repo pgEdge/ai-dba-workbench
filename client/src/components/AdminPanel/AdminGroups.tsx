@@ -344,7 +344,7 @@ const AdminGroups: React.FC = () => {
             let memberId: number | undefined;
             if (mType === 'user') {
                 try {
-                    const data = await apiGet<{ users?: { id: number; username: string }[] }>('/api/v1/rbac/users');
+                    const data = await apiGet<{ users?: Array<{ id: number; username: string }> }>('/api/v1/rbac/users');
                     const foundUser = (data.users || []).find(u => u.username === name);
                     if (foundUser) {memberId = foundUser.id;}
                 } catch { /* ignore */ }

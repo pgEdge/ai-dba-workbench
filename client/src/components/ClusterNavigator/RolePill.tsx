@@ -8,10 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Chip, alpha } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { getRoleConfigs, ROLE_ICONS, ServerRole } from './constants';
+import { getRoleConfigs, ROLE_ICONS, type ServerRole } from './constants';
 
 // -- Static sx constants --------------------------------------------------
 

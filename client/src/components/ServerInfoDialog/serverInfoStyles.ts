@@ -9,7 +9,7 @@
  */
 
 import { alpha } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 
 /** Monospace font family for technical values. */
 export const MONO_FONT = '"JetBrains Mono", "SF Mono", monospace';

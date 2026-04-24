@@ -13,7 +13,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import PlanTree from '../PlanTree';
 import { layoutPlanTree } from '../PlanTree';
-import { PlanNode } from '../../../../hooks/useQueryPlan';
+import type { PlanNode } from '../../../../hooks/useQueryPlan';
 
 // ---------------------------------------------------------------------------
 // Helpers

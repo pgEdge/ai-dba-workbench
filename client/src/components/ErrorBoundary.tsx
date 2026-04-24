@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Box, Typography, Button, Paper, Container } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';

@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import type React from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useAuth } from '../../contexts/useAuth';
 import { useCluster } from '../../contexts/useCluster';
 import { useAlerts } from '../../contexts/useAlerts';
@@ -19,10 +20,10 @@ import {
     DndContext,
     DragOverlay,
     pointerWithin,
-    DragStartEvent,
-    DragEndEvent,
+    type DragStartEvent,
+    type DragEndEvent,
 } from '@dnd-kit/core';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import type { Cluster, Server } from './utils';
 import {
     Box,
@@ -370,7 +371,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const getClusterBlackoutStatus = useCallback((clusterId: string): { active: boolean; inherited: boolean } => {
         // Parse numeric ID from cluster-{id} format
         const numericId = parseInt(clusterId.replace('cluster-', ''), 10);
-        const directBlackout = !isNaN(numericId) && activeBlackouts.some(
+        const directBlackout = !Number.isNaN(numericId) && activeBlackouts.some(
             b => b.scope === 'cluster' && b.cluster_id === numericId,
         );
         if (directBlackout) {return { active: true, inherited: false };}
@@ -1047,7 +1048,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         if (found) {
                             description = found.description;
                             autoClusterKey = found.auto_cluster_key;
-                            replicationType = found.replication_type as string | null | undefined;
+                            replicationType = found.replication_type;
                             break;
                         }
                     }

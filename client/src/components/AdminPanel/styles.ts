@@ -14,7 +14,7 @@
  * with light and dark modes.
  */
 
-import { SxProps, Theme } from '@mui/material/styles';
+import type { SxProps, Theme } from '@mui/material/styles';
 
 const FONT_WEIGHT_SEMIBOLD = 600;
 

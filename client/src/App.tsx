@@ -7,9 +7,10 @@
  *
  *-------------------------------------------------------------------------
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import type React from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
-import { Box, CircularProgress, CssBaseline, PaletteMode } from '@mui/material';
+import { Box, CircularProgress, CssBaseline, type PaletteMode } from '@mui/material';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/useAuth';
 import { ClusterProvider } from './contexts/ClusterContext';

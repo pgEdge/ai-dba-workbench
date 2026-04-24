@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { AnalysisTool } from './mcpTools';
+import type { AnalysisTool } from './mcpTools';
 
 /**
  * Tool definitions shared across analysis hooks. Each constant is a

@@ -9,7 +9,7 @@
  */
 
 import { screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import renderWithTheme from '../../test/renderWithTheme';
 import TopologyPanel from '../TopologyPanel';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';

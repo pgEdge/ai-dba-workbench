@@ -9,9 +9,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback } from 'react';
+import type React from 'react';
+import { useState, useCallback } from 'react';
 import { IconButton, Tooltip } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     ContentCopy as ContentCopyIcon,
     Check as CheckIcon,

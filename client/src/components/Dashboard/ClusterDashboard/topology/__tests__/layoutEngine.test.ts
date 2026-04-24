@@ -15,8 +15,8 @@ import {
     NODE_WIDTH,
     NODE_HEIGHT,
 } from '../layoutEngine';
-import { TopologyGraph, TopoNode } from '../types';
-import { ClusterServer } from '../../../../../contexts/ClusterDataContext';
+import type { TopologyGraph, TopoNode } from '../types';
+import type { ClusterServer } from '../../../../../contexts/ClusterDataContext';
 
 /**
  * Helper to create a minimal TopoNode for testing layout.

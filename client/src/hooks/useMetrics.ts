@@ -11,7 +11,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { useDashboard } from '../contexts/useDashboard';
-import { MetricQueryParams, MetricSeries, MetricBaseline } from '../components/Dashboard/types';
+import type { MetricQueryParams, MetricSeries, MetricBaseline } from '../components/Dashboard/types';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 

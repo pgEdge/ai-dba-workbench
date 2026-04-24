@@ -8,14 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import {
     Box,
     Typography,
     FormControlLabel,
     Checkbox,
 } from '@mui/material';
-import { ServerFormData, FieldChangeHandler } from './ServerDialog.types';
+import type { ServerFormData, FieldChangeHandler } from './ServerDialog.types';
 import {
     optionsSectionLabelSx,
     checkboxSx,

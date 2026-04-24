@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import type React from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Typography, Button, CircularProgress, Alert } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { Add as AddIcon } from '@mui/icons-material';
@@ -174,7 +175,7 @@ const AdminTokenScopes: React.FC = () => {
                 const connPrivs = data.connection_privileges || {};
                 const allowedConnIds = Object.keys(connPrivs).map(Number);
                 setOwnerConnectionLevels(
-                    Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v as string]))
+                    Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v]))
                 );
                 if (allowedConnIds.includes(0)) {
                     setOwnerConnections(connections);
@@ -307,7 +308,7 @@ const AdminTokenScopes: React.FC = () => {
                     const connPrivs = data.connection_privileges || {};
                     const allowedConnIds = Object.keys(connPrivs).map(Number);
                     setEditOwnerConnectionLevels(
-                        Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v as string]))
+                        Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v]))
                     );
                     if (allowedConnIds.includes(0)) {
                         setEditAvailableConnections(connections);

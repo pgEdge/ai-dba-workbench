@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { memo } from 'react';
+import type React from 'react';
+import { memo } from 'react';
 import {
     Box,
     IconButton,
@@ -25,7 +26,7 @@ import {
     Delete as DeleteIcon,
     PanTool as ManualIcon,
 } from '@mui/icons-material';
-import { useTheme, Theme } from '@mui/material/styles';
+import { useTheme, type Theme } from '@mui/material/styles';
 import InlineEditText from '../InlineEditText';
 import { getRoleConfigs } from './constants';
 import type { ClusterType } from './constants';

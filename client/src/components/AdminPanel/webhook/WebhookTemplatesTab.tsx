@@ -8,9 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, TextField, Typography } from '@mui/material';
-import { WebhookFormState } from './webhookTypes';
+import type { WebhookFormState } from './webhookTypes';
 import {
     DEFAULT_ALERT_FIRE_TEMPLATE,
     DEFAULT_ALERT_CLEAR_TEMPLATE,

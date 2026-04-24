@@ -9,7 +9,7 @@
  */
 
 import { apiGet } from './apiClient';
-import { TimelineEvent } from '../components/EventTimeline/types';
+import type { TimelineEvent } from '../components/EventTimeline/types';
 
 /**
  * Format an array of timeline events into a human-readable text block
@@ -24,7 +24,7 @@ function formatEvents(
         const summary = e.summary ? `: ${e.summary}` : '';
         return `  [${time}] ${e.event_type} - ${e.title}${summary}`;
     });
-    return `\nTimeline Events (${label}):\n` + lines.join('\n');
+    return `\nTimeline Events (${label}):\n${lines.join('\n')}`;
 }
 
 /**

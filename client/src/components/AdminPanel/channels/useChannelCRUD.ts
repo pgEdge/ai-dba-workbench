@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../../utils/apiClient';
-import { BaseChannel } from './channelTypes';
+import type { BaseChannel } from './channelTypes';
 
 /**
  * Result type for the useChannelCRUD hook.
@@ -126,7 +126,7 @@ export function useChannelCRUD<T extends BaseChannel>(
         try {
             setLoading(true);
             const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
-            const allChannels = (data.notification_channels || data || []) as Record<string, unknown>[];
+            const allChannels = (data.notification_channels || data || []) as Array<Record<string, unknown>>;
             const filtered: T[] = allChannels
                 .filter((ch: Record<string, unknown>) => ch.channel_type === channelType)
                 .map(mapChannel);

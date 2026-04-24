@@ -7,7 +7,8 @@
  *
  *-------------------------------------------------------------------------
  */
-import React, { createContext, useCallback, useMemo } from 'react';
+import type React from 'react';
+import { createContext, useCallback, useMemo } from 'react';
 import { useAuth } from './useAuth';
 import { useClusterData } from './useClusterData';
 import { useClusterSelection } from './useClusterSelection';

@@ -8,9 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Box, Chip, CircularProgress, alpha } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     CheckCircle as CheckIcon,
     Warning as WarningIcon,
@@ -105,7 +105,6 @@ const getStatusIcon = (status: ToolActivity['status']) => {
             return <CheckIcon sx={{ fontSize: 16 }} />;
         case 'error':
             return <WarningIcon sx={{ fontSize: 16 }} />;
-        case 'running':
         default:
             return <CircularProgress size={12} sx={spinnerSx} aria-label="Running" />;
     }

@@ -9,13 +9,13 @@
  */
 
 import { useCallback } from 'react';
-import { ChartData } from '../components/Chart/types';
+import type { ChartData } from '../components/Chart/types';
 import { apiGet, apiFetch } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
 import { stripPreamble, djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
-import { LLMResponse } from '../types/llm';
+import type { LLMResponse } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';
 
@@ -160,7 +160,7 @@ function serializeChartData(data: ChartData): string {
                 ? i
                 : Math.round(i * step);
             const row: string[] = [String(idx)];
-            if (data.categories && data.categories[idx] !== undefined) {
+            if (data.categories?.[idx] !== undefined) {
                 row.push(data.categories[idx]);
             }
             for (const series of data.series) {

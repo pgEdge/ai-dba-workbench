@@ -8,13 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import ComputerIcon from '@mui/icons-material/Computer';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import { MetricQueryParams, MetricSeries } from '../types';
+import type { MetricQueryParams, MetricSeries } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -22,7 +23,7 @@ import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
 import { formatBytes, formatValue } from '../../../utils/formatters';
 import {
-    ServerSectionProps, extractSparklineData, extractLatestValue, hasNonZeroData,
+    type ServerSectionProps, extractSparklineData, extractLatestValue, hasNonZeroData,
 } from './types';
 
 /** Number of data buckets for KPI sparklines */

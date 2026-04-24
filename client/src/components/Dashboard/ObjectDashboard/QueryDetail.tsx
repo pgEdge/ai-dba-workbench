@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import type React from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -29,7 +30,7 @@ import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
 import { logger } from '../../../utils/logger';
-import { MetricQueryParams } from '../types';
+import type { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX, spinKeyframes } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -38,8 +39,8 @@ import { Chart } from '../../Chart';
 import { QueryAnalysisDialog } from '../../QueryAnalysisDialog';
 import QueryPlanPanel from './QueryPlanPanel';
 import {
-    ObjectDetailProps,
-    QueryDetailData,
+    type ObjectDetailProps,
+    type QueryDetailData,
     buildChartData,
     formatNumber,
     formatTime,
@@ -308,7 +309,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const isLong = cleanedQuery.length > COLLAPSED_QUERY_LENGTH;
     const displayQuery = expanded || !isLong
         ? queryText
-        : cleanedQuery.substring(0, COLLAPSED_QUERY_LENGTH) + '...';
+        : `${cleanedQuery.substring(0, COLLAPSED_QUERY_LENGTH)}...`;
 
     // Compute rows per call
     const rowsPerCall = useMemo(() => {

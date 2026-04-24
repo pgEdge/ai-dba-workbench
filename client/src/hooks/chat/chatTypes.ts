@@ -8,8 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import { LLMContentBlock, ToolResult, ToolInputSchema } from '../../types/llm';
-import { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
+import type { LLMContentBlock, ToolResult, ToolInputSchema } from '../../types/llm';
+import type { ChatMessageData } from '../../components/ChatPanel/ChatMessage';
 
 // ---------------------------------------------------------------
 // Internal types (API wire format - not exported from hook)

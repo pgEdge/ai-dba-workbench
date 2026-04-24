@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import { Box, Paper, Typography, Skeleton } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { getTilePaperSx, TILE_TITLE_SX, TILE_CONTENT_SX, NO_DATA_SX } from './styles';

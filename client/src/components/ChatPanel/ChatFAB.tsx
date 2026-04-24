@@ -8,9 +8,9 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
+import type React from 'react';
 import { Fab, Tooltip, keyframes } from '@mui/material';
-import { Theme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
     SmartToyOutlined as ChatIcon,
     Close as CloseIcon,

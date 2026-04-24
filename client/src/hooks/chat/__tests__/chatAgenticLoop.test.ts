@@ -11,12 +11,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     runAgenticLoop,
-    AgenticLoopParams,
-    FetchFunction,
+    type AgenticLoopParams,
+    type FetchFunction,
     ITERATION_LIMIT_MESSAGE,
 } from '../chatAgenticLoop';
-import { APIMessage, ToolDefinition } from '../chatTypes';
-import { LLMResponse, ToolCallResponse } from '../../../types/llm';
+import type { APIMessage, ToolDefinition } from '../chatTypes';
+import type { LLMResponse, ToolCallResponse } from '../../../types/llm';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -116,7 +116,7 @@ function createToolCallResponse(
  */
 function createMockFetch(
     llmResponses: LLMResponse[],
-    toolResponses: Map<string, ToolCallResponse> = new Map(),
+    toolResponses = new Map<string, ToolCallResponse>(),
 ): FetchFunction {
     let llmCallIndex = 0;
 

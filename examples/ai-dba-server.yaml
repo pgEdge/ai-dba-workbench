@@ -388,11 +388,11 @@ knowledgebase:
   # embedding_openai_api_key_file: "~/.openai-api-key"
 
 #=========================================================================
-# BUILT-IN TOOLS, RESOURCES, AND PROMPTS
+# BUILT-IN TOOLS AND RESOURCES
 #=========================================================================
 #
 # Control which built-in MCP features are enabled. All are enabled by
-# default. Set to false to disable specific tools, resources, or prompts.
+# default. Set to false to disable specific tools or resources.
 #
 builtins:
   tools:

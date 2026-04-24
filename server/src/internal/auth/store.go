@@ -77,6 +77,10 @@ type AuthStore struct {
 	// SetBcryptCostForTesting to avoid dominating suite runtime with
 	// hashing work. Reads of this field are guarded by s.mu.
 	bcryptCost int
+	// Created indicates whether this AuthStore instance created a new
+	// auth.db file (true) or opened an existing one (false). Callers
+	// can use this to provide appropriate startup messages.
+	Created bool
 }
 
 // SessionInfo holds session information (in-memory only)
@@ -127,6 +131,10 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	}
 
 	dbPath := filepath.Join(dataDir, "auth.db")
+
+	// Check if the database file already exists before opening it
+	_, statErr := os.Stat(dbPath)
+	dbExisted := statErr == nil
 	// Enable foreign key enforcement via DSN pragma. SQLite ships with
 	// foreign keys disabled by default for historical compatibility
 	// reasons, so every ON DELETE CASCADE declared in the schema is a
@@ -169,6 +177,7 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 		maxUserTokenDays:  maxUserTokenDays,
 		maxFailedAttempts: maxFailedAttempts,
 		bcryptCost:        DefaultBcryptCost,
+		Created:           !dbExisted,
 	}
 
 	// Initialize schema
@@ -525,6 +534,11 @@ func (s *AuthStore) initSchema() error {
 func (s *AuthStore) Close() error {
 	s.StopSessionCleanup()
 	return s.db.Close()
+}
+
+// Path returns the filesystem path to the auth.db file.
+func (s *AuthStore) Path() string {
+	return s.path
 }
 
 // SetBcryptCostForTesting overrides the bcrypt cost used by this

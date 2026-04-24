@@ -198,11 +198,16 @@ func (s *Server) initAuthStore() error {
 		return fmt.Errorf("failed to initialize auth store: %w", err)
 	}
 
-	// Get counts for logging
-	userCount, tokenCount := s.authStore.GetCounts()
-	fmt.Fprintf(os.Stderr, "Auth store: %s/auth.db (%d user(s), %d token(s))\n",
-		s.dataDir, userCount, tokenCount)
+	// Log auth store status with creation indicator
+	if s.authStore.Created {
+		fmt.Fprintf(os.Stderr, "Auth store: %s (new database created)\n", s.authStore.Path())
+	} else {
+		userCount, tokenCount := s.authStore.GetCounts()
+		fmt.Fprintf(os.Stderr, "Auth store: %s (%d user(s), %d token(s))\n",
+			s.authStore.Path(), userCount, tokenCount)
+	}
 
+	userCount, tokenCount := s.authStore.GetCounts()
 	if tokenCount == 0 && userCount == 0 {
 		fmt.Fprintf(os.Stderr, "Note: No users or tokens configured. Create with:\n")
 		fmt.Fprintf(os.Stderr, "  %s -add-user -username <name>\n", os.Args[0])

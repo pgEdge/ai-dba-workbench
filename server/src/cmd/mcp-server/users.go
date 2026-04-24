@@ -16,15 +16,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/pgedge/ai-workbench/server/internal/auth"
-
 	"golang.org/x/term"
 )
 
 // addUserCommand handles the add-user command
 func addUserCommand(dataDir, username, password, annotation, fullName, email string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -122,7 +120,7 @@ func addUserCommand(dataDir, username, password, annotation, fullName, email str
 // updateUserCommand handles the update-user command
 func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullName, newEmail string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -253,7 +251,7 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullNam
 // deleteUserCommand handles the delete-user command
 func deleteUserCommand(dataDir, username string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -294,7 +292,7 @@ func deleteUserCommand(dataDir, username string) error {
 // listUsersCommand handles the list-users command
 func listUsersCommand(dataDir string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -351,7 +349,7 @@ func listUsersCommand(dataDir string) error {
 // enableUserCommand handles the enable-user command
 func enableUserCommand(dataDir, username string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -386,7 +384,7 @@ func enableUserCommand(dataDir, username string) error {
 // addServiceAccountCommand handles the add-service-account command
 func addServiceAccountCommand(dataDir, username, annotation, fullName, email string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -460,7 +458,7 @@ func addServiceAccountCommand(dataDir, username, annotation, fullName, email str
 // disableUserCommand handles the disable-user command
 func disableUserCommand(dataDir, username string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}

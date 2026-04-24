@@ -15,14 +15,12 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // addTokenCommand handles the add-token command
 func addTokenCommand(dataDir, username, annotation string, expiresIn time.Duration) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -105,7 +103,7 @@ func addTokenCommand(dataDir, username, annotation string, expiresIn time.Durati
 // removeTokenCommand handles the remove-token command
 func removeTokenCommand(dataDir, identifier string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -123,7 +121,7 @@ func removeTokenCommand(dataDir, identifier string) error {
 // listTokensCommand handles the list-tokens command
 func listTokensCommand(dataDir string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}

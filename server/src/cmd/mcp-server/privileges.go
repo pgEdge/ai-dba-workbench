@@ -28,7 +28,7 @@ func grantMCPPrivilegeCommand(dataDir, groupName, identifier string) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -71,7 +71,7 @@ func revokeMCPPrivilegeCommand(dataDir, groupName, identifier string) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -120,7 +120,7 @@ func grantConnectionPrivilegeCommand(dataDir, groupName string, connectionID int
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -154,7 +154,7 @@ func revokeConnectionPrivilegeCommand(dataDir, groupName string, connectionID in
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -181,7 +181,7 @@ func revokeConnectionPrivilegeCommand(dataDir, groupName string, connectionID in
 // listPrivilegesCommand lists all registered MCP privileges
 func listPrivilegesCommand(dataDir string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -226,7 +226,7 @@ func showGroupPrivilegesCommand(dataDir, groupName string) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -284,7 +284,7 @@ func registerPrivilegeCommand(dataDir, identifier, itemType, description string,
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}

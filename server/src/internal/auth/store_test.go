@@ -82,6 +82,71 @@ func TestNewAuthStore(t *testing.T) {
 			t.Error("Expected directory to be created")
 		}
 	})
+
+	t.Run("sets Created to true for new database", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "auth-store-created-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		store, err := NewAuthStore(tmpDir, 0, 0)
+		if err != nil {
+			t.Fatalf("Failed to create auth store: %v", err)
+		}
+		defer store.Close()
+
+		if !store.Created {
+			t.Error("Expected Created to be true for new database")
+		}
+	})
+
+	t.Run("sets Created to false for existing database", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "auth-store-existing-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		// Create and close the first store to establish the database
+		store1, err := NewAuthStore(tmpDir, 0, 0)
+		if err != nil {
+			t.Fatalf("Failed to create initial auth store: %v", err)
+		}
+		store1.Close()
+
+		// Open the existing database
+		store2, err := NewAuthStore(tmpDir, 0, 0)
+		if err != nil {
+			t.Fatalf("Failed to open existing auth store: %v", err)
+		}
+		defer store2.Close()
+
+		if store2.Created {
+			t.Error("Expected Created to be false for existing database")
+		}
+	})
+}
+
+func TestAuthStorePath(t *testing.T) {
+	t.Run("returns correct database path", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "auth-store-path-*")
+		if err != nil {
+			t.Fatalf("Failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		store, err := NewAuthStore(tmpDir, 0, 0)
+		if err != nil {
+			t.Fatalf("Failed to create auth store: %v", err)
+		}
+		defer store.Close()
+
+		expectedPath := tmpDir + "/auth.db"
+		if store.Path() != expectedPath {
+			t.Errorf("Expected path %q, got %q", expectedPath, store.Path())
+		}
+	})
 }
 
 // TestSetBcryptCostForTesting exercises the test-only hook that lowers

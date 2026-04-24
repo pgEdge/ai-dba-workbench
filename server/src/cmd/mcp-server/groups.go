@@ -12,8 +12,6 @@ package main
 import (
 	"fmt"
 	"strings"
-
-	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // addGroupCommand handles the add-group command
@@ -23,7 +21,7 @@ func addGroupCommand(dataDir, name, description string) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -46,7 +44,7 @@ func deleteGroupCommand(dataDir, name string) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -73,7 +71,7 @@ func deleteGroupCommand(dataDir, name string) error {
 // listGroupsCommand handles the list-groups command
 func listGroupsCommand(dataDir string) error {
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -124,7 +122,7 @@ func addMemberCommand(dataDir, groupName, memberUsername, memberGroupName string
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -187,7 +185,7 @@ func removeMemberCommand(dataDir, groupName, memberUsername, memberGroupName str
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -244,7 +242,7 @@ func setSuperuserCommand(dataDir, username string, isSuperuser bool) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}

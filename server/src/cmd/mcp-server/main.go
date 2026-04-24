@@ -73,7 +73,11 @@ func main() {
 	configPathForLoad := ""
 	if config.ConfigFileExists(configPath) {
 		configPathForLoad = configPath
+		fmt.Fprintf(os.Stderr, "Config: %s\n", configPath)
+	} else {
+		fmt.Fprintf(os.Stderr, "Config: no config file found\n")
 	}
+	fmt.Fprintf(os.Stderr, "Data directory: %s\n", dataDir)
 
 	cfg, err := config.LoadConfig(configPathForLoad, cliFlags)
 	if err != nil {

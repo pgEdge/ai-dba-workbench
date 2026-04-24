@@ -13,7 +13,21 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
+
+// openAuthStoreCLI opens the auth store and prints its path to stderr.
+// This helps users diagnose issues where CLI commands and the server
+// use different auth.db paths.
+func openAuthStoreCLI(dataDir string) (*auth.AuthStore, error) {
+	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "Auth store: %s\n", store.Path())
+	return store, nil
+}
 
 // RunCLICommands executes any CLI commands specified in flags.
 // Returns true if a command was executed and the program should exit.

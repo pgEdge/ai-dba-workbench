@@ -23,7 +23,7 @@ func scopeTokenConnectionsCommand(dataDir string, tokenID int64, connectionIDs s
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -65,7 +65,7 @@ func scopeTokenToolsCommand(dataDir string, tokenID int64, tools string) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -103,7 +103,7 @@ func clearTokenScopeCommand(dataDir string, tokenID int64) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}
@@ -125,7 +125,7 @@ func showTokenScopeCommand(dataDir string, tokenID int64) error {
 	}
 
 	// Open auth store
-	store, err := auth.NewAuthStore(dataDir, 0, 0)
+	store, err := openAuthStoreCLI(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to open auth store: %w", err)
 	}

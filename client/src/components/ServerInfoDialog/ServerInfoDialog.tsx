@@ -23,6 +23,7 @@ import { useTheme } from '@mui/material/styles';
 import { Close as CloseIcon } from '@mui/icons-material';
 import { apiGet } from '../../utils/apiClient';
 import SlideTransition from '../shared/SlideTransition';
+import { logger } from '../../utils/logger';
 import { LoadingSkeleton } from './components';
 import {
     SystemSection,
@@ -77,7 +78,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
             }
         } catch (err) {
             if (signal?.aborted) return;
-            console.error('Failed to fetch server info:', err);
+            logger.error('Failed to fetch server info:', err);
             setError(
                 err instanceof Error ? err.message : 'Failed to load server information'
             );
@@ -113,7 +114,7 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
             })
             .catch((err) => {
                 if (!cancelled) {
-                    console.error('Failed to fetch AI analysis:', err);
+                    logger.error('Failed to fetch AI analysis:', err);
                 }
             })
             .finally(() => {

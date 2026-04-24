@@ -24,6 +24,7 @@ import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext, ChartData } from '../../Chart/types';
+import { logger } from '../../../utils/logger';
 import {
     LEADERBOARD_ROW_SX,
     LEADERBOARD_NAME_SX,
@@ -286,7 +287,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                 setTables(result.rows ?? []);
             }
         } catch (err) {
-            console.error('Error fetching table leaderboard:', err);
+            logger.error('Error fetching table leaderboard:', err);
             setError(
                 (err as Error).message
                 || 'Failed to fetch table data'

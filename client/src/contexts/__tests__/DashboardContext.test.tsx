@@ -14,6 +14,15 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DashboardProvider, useDashboard } from '../DashboardContext';
 import type { OverlayEntry } from '../../components/Dashboard/types';
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 describe('DashboardContext', () => {
     const wrapper = ({ children }: { children: React.ReactNode }) => (
         <DashboardProvider>{children}</DashboardProvider>
@@ -266,15 +275,9 @@ describe('DashboardContext', () => {
 
     describe('useDashboard hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useDashboard());
-                }).toThrow('useDashboard must be used within a DashboardProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useDashboard());
+            }).toThrow('useDashboard must be used within a DashboardProvider');
         });
     });
 });

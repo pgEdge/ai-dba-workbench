@@ -14,6 +14,7 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { PerformanceSummaryData } from './types';
 import { extractEstateServerIds } from '../../../utils/clusterHelpers';
+import { logger } from '../../../utils/logger';
 
 interface UsePerformanceSummaryReturn {
     data: PerformanceSummaryData | null;
@@ -90,7 +91,7 @@ export const usePerformanceSummary = (
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching performance summary:', err);
+            logger.error('Error fetching performance summary:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch performance data');
                 setData(null);

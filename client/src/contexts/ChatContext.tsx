@@ -22,6 +22,7 @@ import { useAuth } from './AuthContext';
 import { apiGet, apiDelete, apiPatch } from '../utils/apiClient';
 import useChat from '../hooks/useChat';
 import type { ChatMessage, ToolActivity } from '../hooks/useChat';
+import { logger } from '../utils/logger';
 
 // Re-export hook types for convenience
 export type { ChatMessage, ContentBlock, ToolActivity } from '../hooks/useChat';
@@ -148,7 +149,7 @@ export const ChatProvider = ({ children }: ChatProviderProps): React.ReactElemen
                 setConversations(list);
             }
         } catch (err) {
-            console.error('Failed to fetch conversations:', err);
+            logger.error('Failed to fetch conversations:', err);
             // Non-fatal: the sidebar list simply stays as-is
         }
     }, [user]);
@@ -172,7 +173,7 @@ export const ChatProvider = ({ children }: ChatProviderProps): React.ReactElemen
                 clearChatHook();
             }
         } catch (err) {
-            console.error('Failed to delete conversation:', err);
+            logger.error('Failed to delete conversation:', err);
             throw err;
         }
     }, [conversationId, clearChatHook]);
@@ -190,7 +191,7 @@ export const ChatProvider = ({ children }: ChatProviderProps): React.ReactElemen
                 );
             }
         } catch (err) {
-            console.error('Failed to rename conversation:', err);
+            logger.error('Failed to rename conversation:', err);
             throw err;
         }
     }, []);

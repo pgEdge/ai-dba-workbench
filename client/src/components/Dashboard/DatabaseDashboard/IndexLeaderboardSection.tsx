@@ -24,6 +24,7 @@ import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext, ChartData } from '../../Chart/types';
+import { logger } from '../../../utils/logger';
 import {
     LEADERBOARD_ROW_SX,
     LEADERBOARD_NAME_SX,
@@ -265,7 +266,7 @@ const IndexLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                 setIndexes(result.rows ?? []);
             }
         } catch (err) {
-            console.error('Error fetching index leaderboard:', err);
+            logger.error('Error fetching index leaderboard:', err);
             setError(
                 (err as Error).message
                 || 'Failed to fetch index data'

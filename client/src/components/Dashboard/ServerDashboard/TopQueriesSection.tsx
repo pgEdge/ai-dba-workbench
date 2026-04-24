@@ -22,6 +22,7 @@ import { useDashboard } from '../../../contexts/DashboardContext';
 import CollapsibleSection from '../CollapsibleSection';
 import { formatTime, formatNumber } from '../../../utils/formatters';
 import { ServerSectionProps, TopQueryRow } from './types';
+import { logger } from '../../../utils/logger';
 
 /** Maximum characters to display before truncating a query */
 const MAX_QUERY_LENGTH = 80;
@@ -162,7 +163,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching top queries:', err);
+            logger.error('Error fetching top queries:', err);
             if (isMountedRef.current) {
                 setError(
                     (err as Error).message

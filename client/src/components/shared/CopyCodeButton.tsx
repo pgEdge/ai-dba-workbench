@@ -18,6 +18,7 @@ import {
 } from '@mui/icons-material';
 import { getCopyButtonSx } from './markdownStyles';
 import { copyToClipboard } from '../../utils/clipboard';
+import { logger } from '../../utils/logger';
 
 interface CopyCodeButtonProps {
     code: string;
@@ -33,7 +34,7 @@ const CopyCodeButton: React.FC<CopyCodeButtonProps> = ({ code, theme }) => {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch (err) {
-            console.error('Failed to copy code:', err);
+            logger.error('Failed to copy code:', err);
         }
     }, [code]);
 

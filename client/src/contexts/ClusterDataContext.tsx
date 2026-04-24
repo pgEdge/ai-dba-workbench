@@ -11,6 +11,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { apiGet, ApiError } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 export interface ClusterServer {
     id: number;
@@ -260,7 +261,7 @@ export const ClusterDataProvider = ({ children }: ClusterDataProviderProps): Rea
             // Always update last refresh time
             setLastRefresh(new Date());
         } catch (err) {
-            console.error('Error fetching cluster data:', err);
+            logger.error('Error fetching cluster data:', err);
             setError((err as Error).message);
         } finally {
             if (isInitialLoadRef.current) {

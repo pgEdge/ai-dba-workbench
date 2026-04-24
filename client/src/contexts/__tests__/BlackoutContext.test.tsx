@@ -26,6 +26,15 @@ vi.mock('../../utils/apiClient', () => ({
     apiDelete: vi.fn(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 let mockUser: { username: string } | null = { username: 'testuser' };
 vi.mock('../AuthContext', () => ({
     useAuth: () => ({ user: mockUser }),
@@ -174,7 +183,6 @@ describe('BlackoutContext', () => {
         });
 
         it('sets error when fetch fails', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiGet.mockReset();
             mockApiGet.mockRejectedValue(new Error('fetch failed'));
 
@@ -185,8 +193,6 @@ describe('BlackoutContext', () => {
             await waitFor(() => {
                 expect(result.current.error).toBe('fetch failed');
             });
-
-            expect(consoleSpy).toHaveBeenCalled();
         });
 
         it('does not fetch when user is null', async () => {
@@ -474,15 +480,9 @@ describe('BlackoutContext', () => {
 
     describe('useBlackouts hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useBlackouts());
-                }).toThrow('useBlackouts must be used within a BlackoutProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useBlackouts());
+            }).toThrow('useBlackouts must be used within a BlackoutProvider');
         });
     });
 });

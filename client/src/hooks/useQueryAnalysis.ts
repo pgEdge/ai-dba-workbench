@@ -24,6 +24,7 @@ import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import { Message } from '../types/llm';
 import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
+import { logger } from '../utils/logger';
 
 export interface QueryAnalysisInput {
     queryText: string;
@@ -226,7 +227,7 @@ Analyze performance, check schema context, validate any SQL suggestions, and pro
                 timestamp: Date.now(),
             });
         } catch (err) {
-            console.error('Query analysis error:', err);
+            logger.error('Query analysis error:', err);
             setActiveTools([]);
             setError(err instanceof Error ? err.message : String(err));
         } finally {

@@ -12,11 +12,21 @@ import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ChatProvider, useChatContext } from '../ChatContext';
+import { logger } from '../../utils/logger';
 
 vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
     apiDelete: vi.fn(),
     apiPatch: vi.fn(),
+}));
+
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
 }));
 
 let mockUser: { username: string } | null = { username: 'testuser' };
@@ -179,13 +189,19 @@ describe('ChatContext', () => {
         });
 
         it('logs and swallows fetch errors', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiGet.mockRejectedValue(new Error('boom'));
 
             renderHook(() => useChatContext(), { wrapper });
 
             await waitFor(() => {
-                expect(consoleSpy).toHaveBeenCalled();
+                expect(mockApiGet).toHaveBeenCalled();
+            });
+
+            await waitFor(() => {
+                expect(logger.error).toHaveBeenCalledWith(
+                    'Failed to fetch conversations:',
+                    expect.any(Error),
+                );
             });
         });
 
@@ -253,28 +269,32 @@ describe('ChatContext', () => {
         });
 
         it('rethrows errors from delete requests', async () => {
-            const originalError = console.error;
-            console.error = vi.fn();
             mockApiDelete.mockRejectedValueOnce(new Error('forbidden'));
 
-            try {
-                const { result } = renderHook(() => useChatContext(), { wrapper });
+            const { result } = renderHook(() => useChatContext(), { wrapper });
 
-                await waitFor(() => {
-                    expect(result.current.conversations).toHaveLength(2);
-                });
-
-                await expect(
-                    act(async () => {
-                        await result.current.deleteConversation('c1');
-                    }),
-                ).rejects.toThrow('forbidden');
-
-                // List should be unchanged since delete failed.
+            await waitFor(() => {
                 expect(result.current.conversations).toHaveLength(2);
-            } finally {
-                console.error = originalError;
+            });
+
+            let errorThrown = false;
+            try {
+                await act(async () => {
+                    await result.current.deleteConversation('c1');
+                });
+            } catch (err) {
+                errorThrown = true;
+                expect((err as Error).message).toBe('forbidden');
             }
+
+            expect(errorThrown).toBe(true);
+            expect(logger.error).toHaveBeenCalledWith(
+                'Failed to delete conversation:',
+                expect.any(Error),
+            );
+
+            // List should be unchanged since delete failed.
+            expect(result.current.conversations).toHaveLength(2);
         });
     });
 
@@ -302,34 +322,38 @@ describe('ChatContext', () => {
         });
 
         it('rethrows errors from rename requests', async () => {
-            const originalError = console.error;
-            console.error = vi.fn();
             mockApiPatch.mockRejectedValueOnce(new Error('bad request'));
 
+            const { result } = renderHook(() => useChatContext(), { wrapper });
+
+            await waitFor(() => {
+                expect(result.current.conversations).toHaveLength(2);
+            });
+
+            const originalTitle = result.current.conversations.find(
+                (c) => c.id === 'c1',
+            )?.title;
+
+            let errorThrown = false;
             try {
-                const { result } = renderHook(() => useChatContext(), { wrapper });
-
-                await waitFor(() => {
-                    expect(result.current.conversations).toHaveLength(2);
+                await act(async () => {
+                    await result.current.renameConversation('c1', 'X');
                 });
-
-                const originalTitle = result.current.conversations.find(
-                    (c) => c.id === 'c1',
-                )?.title;
-
-                await expect(
-                    act(async () => {
-                        await result.current.renameConversation('c1', 'X');
-                    }),
-                ).rejects.toThrow('bad request');
-
-                // Title should remain the original since the rename failed.
-                expect(
-                    result.current.conversations.find((c) => c.id === 'c1')?.title,
-                ).toBe(originalTitle);
-            } finally {
-                console.error = originalError;
+            } catch (err) {
+                errorThrown = true;
+                expect((err as Error).message).toBe('bad request');
             }
+
+            expect(errorThrown).toBe(true);
+            expect(logger.error).toHaveBeenCalledWith(
+                'Failed to rename conversation:',
+                expect.any(Error),
+            );
+
+            // Title should remain the original since the rename failed.
+            expect(
+                result.current.conversations.find((c) => c.id === 'c1')?.title,
+            ).toBe(originalTitle);
         });
     });
 
@@ -369,15 +393,9 @@ describe('ChatContext', () => {
 
     describe('hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useChatContext());
-                }).toThrow('useChatContext must be used within a ChatProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useChatContext());
+            }).toThrow('useChatContext must be used within a ChatProvider');
         });
     });
 });

@@ -24,6 +24,7 @@ import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 import CollapsibleSection from '../CollapsibleSection';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext, ChartData } from '../../Chart/types';
+import { logger } from '../../../utils/logger';
 import {
     DatabaseSectionProps,
     TableLeaderboardRow,
@@ -227,7 +228,7 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                 setTables(rows);
             }
         } catch (err) {
-            console.error('Error fetching vacuum status:', err);
+            logger.error('Error fetching vacuum status:', err);
             if (isMountedRef.current) {
                 setError(
                     (err as Error).message

@@ -17,6 +17,7 @@ import { SQL_CODE_BLOCK_RULES } from '../utils/analysisPrompts';
 import { fetchTimelineEventsForRange } from '../utils/timelineEvents';
 import { LLMResponse } from '../types/llm';
 import { useAnalysisState } from './useAnalysisState';
+import { logger } from '../utils/logger';
 
 export interface ChartAnalysisInput {
     metricDescription: string;
@@ -296,7 +297,7 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
                 timestamp: Date.now(),
             });
         } catch (err) {
-            console.error('Chart analysis error:', err);
+            logger.error('Chart analysis error:', err);
             setError(err instanceof Error ? err.message : String(err));
             setActiveTools([]);
         } finally {

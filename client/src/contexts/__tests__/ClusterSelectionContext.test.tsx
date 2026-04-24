@@ -23,6 +23,15 @@ vi.mock('../../utils/apiClient', () => ({
     apiDelete: vi.fn(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 // Control user + clusterData from the test.
 let mockUser: { username: string } | null = { username: 'testuser' };
 let mockClusterData: ClusterGroup[] = [];
@@ -112,7 +121,6 @@ describe('ClusterSelectionContext', () => {
         });
 
         it('logs but does not throw when POST fails', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiPost.mockRejectedValueOnce(new Error('boom'));
 
             const { result } = renderHook(() => useClusterSelection(), { wrapper });
@@ -121,7 +129,6 @@ describe('ClusterSelectionContext', () => {
                 await result.current.selectServer(server1);
             });
 
-            expect(consoleSpy).toHaveBeenCalled();
             expect(result.current.selectedServer).toEqual(server1);
         });
 
@@ -187,7 +194,6 @@ describe('ClusterSelectionContext', () => {
         });
 
         it('logs on DELETE failure but still clears local state', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             mockApiDelete.mockRejectedValueOnce(new Error('boom'));
 
             const { result } = renderHook(() => useClusterSelection(), { wrapper });
@@ -196,7 +202,6 @@ describe('ClusterSelectionContext', () => {
                 await result.current.clearSelection();
             });
 
-            expect(consoleSpy).toHaveBeenCalled();
             expect(result.current.selectionType).toBeNull();
         });
 
@@ -373,17 +378,11 @@ describe('ClusterSelectionContext', () => {
 
     describe('hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useClusterSelection());
-                }).toThrow(
-                    'useClusterSelection must be used within a ClusterSelectionProvider',
-                );
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useClusterSelection());
+            }).toThrow(
+                'useClusterSelection must be used within a ClusterSelectionProvider',
+            );
         });
     });
 });

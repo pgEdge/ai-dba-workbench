@@ -13,6 +13,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { apiFetch } from '../../../utils/apiClient';
 import { useClusterData } from '../../../contexts/ClusterDataContext';
 import { DatabaseCacheHitData, DatabaseSummariesResponse } from './types';
+import { logger } from '../../../utils/logger';
 
 interface UseDatabaseCacheHitReturn {
     databases: DatabaseCacheHitData[];
@@ -81,7 +82,7 @@ export const useDatabaseCacheHit = (
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
-            console.error('Error fetching database cache hit data:', err);
+            logger.error('Error fetching database cache hit data:', err);
             if (isMountedRef.current) {
                 setError(
                     (err as Error).message

@@ -17,18 +17,22 @@ import { ADMIN_PERMISSION_WILDCARD, AuthProvider, useAuth } from '../AuthContext
 const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
-// Suppress console.error output during tests that expect errors
-const originalConsoleError = console.error;
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
 
 describe('AuthContext', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        console.error = vi.fn();
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
-        console.error = originalConsoleError;
     });
 
     const wrapper = ({ children }: { children: React.ReactNode }) => (

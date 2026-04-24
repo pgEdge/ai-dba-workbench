@@ -12,10 +12,20 @@ import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AlertsProvider, useAlerts } from '../AlertsContext';
+import { logger } from '../../utils/logger';
 
 // Mock apiGet
 vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
+}));
+
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
 }));
 
 // Mock AuthContext — provide a stable user object
@@ -115,8 +125,8 @@ describe('AlertsContext', () => {
         });
 
         it('logs error and keeps state when fetch fails', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-            mockApiGet.mockRejectedValueOnce(new Error('boom'));
+            const boom = new Error('boom');
+            mockApiGet.mockRejectedValueOnce(boom);
 
             const { result } = renderHook(() => useAlerts(), { wrapper });
 
@@ -124,9 +134,9 @@ describe('AlertsContext', () => {
                 expect(result.current.loading).toBe(false);
             });
 
-            expect(consoleSpy).toHaveBeenCalled();
             expect(result.current.alertCounts.total).toBe(0);
             expect(result.current.lastFetch).toBeNull();
+            expect(logger.error).toHaveBeenCalledWith('Error fetching alert counts:', boom);
         });
 
         it('fetchAlertCounts is a no-op when user is null', async () => {
@@ -246,15 +256,9 @@ describe('AlertsContext', () => {
 
     describe('useAlerts hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useAlerts());
-                }).toThrow('useAlerts must be used within an AlertsProvider');
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useAlerts());
+            }).toThrow('useAlerts must be used within an AlertsProvider');
         });
     });
 });

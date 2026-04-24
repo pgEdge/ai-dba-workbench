@@ -48,12 +48,18 @@ export default tseslint.config(
             '@typescript-eslint/explicit-module-boundary-types': 'off',
             '@typescript-eslint/no-non-null-assertion': 'warn',
             // General rules
-            'no-console': ['warn', { allow: ['warn', 'error'] }],
+            'no-console': 'error',
             'prefer-const': 'error',
             'no-var': 'error',
             eqeqeq: ['error', 'always', { null: 'ignore' }],
             // curly is set to warn to allow gradual adoption
             curly: ['warn', 'all'],
+        },
+    },
+    {
+        files: ['src/utils/logger.ts'],
+        rules: {
+            'no-console': 'off',
         },
     }
 );

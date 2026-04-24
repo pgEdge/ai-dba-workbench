@@ -32,6 +32,15 @@ vi.mock('../../utils/apiClient', () => ({
     resetConnectionHealth: () => resetConnectionHealthSpy(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 // Mock AuthContext so ConnectionStatusProvider can pull forceLogout.
 const forceLogoutMock = vi.fn();
 vi.mock('../AuthContext', () => ({
@@ -139,17 +148,11 @@ describe('ConnectionStatusContext', () => {
 
     describe('hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useConnectionStatus());
-                }).toThrow(
-                    'useConnectionStatus must be used within a ConnectionStatusProvider',
-                );
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useConnectionStatus());
+            }).toThrow(
+                'useConnectionStatus must be used within a ConnectionStatusProvider',
+            );
         });
     });
 });

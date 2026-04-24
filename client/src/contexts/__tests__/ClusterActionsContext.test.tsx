@@ -23,6 +23,15 @@ vi.mock('../../utils/apiClient', () => ({
     apiDelete: vi.fn(),
 }));
 
+vi.mock('../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 let mockUser: { username: string } | null = { username: 'testuser' };
 const mockFetchClusterData = vi.fn(async () => {});
 const mockClearSelection = vi.fn(async () => {});
@@ -552,17 +561,11 @@ describe('ClusterActionsContext', () => {
 
     describe('hook outside provider', () => {
         it('throws when used outside provider', () => {
-            const originalError = console.error;
-            console.error = vi.fn();
-            try {
-                expect(() => {
-                    renderHook(() => useClusterActions());
-                }).toThrow(
-                    'useClusterActions must be used within a ClusterActionsProvider',
-                );
-            } finally {
-                console.error = originalError;
-            }
+            expect(() => {
+                renderHook(() => useClusterActions());
+            }).toThrow(
+                'useClusterActions must be used within a ClusterActionsProvider',
+            );
         });
     });
 });

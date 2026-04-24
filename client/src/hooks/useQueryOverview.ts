@@ -14,6 +14,7 @@ import { formatTime } from '../utils/formatters';
 import { LLMResponse } from '../types/llm';
 import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
+import { logger } from '../utils/logger';
 
 export interface QueryOverviewInput {
     queryText: string;
@@ -165,7 +166,7 @@ export function useQueryOverview(
                     timestamp: Date.now(),
                 });
             } catch (err) {
-                console.error('Query overview error:', err);
+                logger.error('Query overview error:', err);
                 setError((err as Error).message);
             } finally {
                 setLoading(false);

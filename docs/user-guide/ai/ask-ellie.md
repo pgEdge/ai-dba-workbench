@@ -101,15 +101,21 @@ table describes the available tools:
 |------|-------------|
 | `list_connections` | Lists all monitored database connections with IDs, names, and status. |
 | `query_database` | Executes a read-only SQL query on a monitored database. |
+| `count_rows` | Counts rows in a specified table with optional filtering. |
+| `test_query` | Validates SQL query syntax without executing the query. |
 | `query_metrics` | Queries historical metrics with time-based aggregation. |
 | `query_datastore` | Executes read-only SQL against the monitoring datastore. |
 | `search_knowledgebase` | Searches the pgEdge documentation knowledge base. |
+| `read_resource` | Reads MCP resources for backward compatibility with older clients. |
+| `generate_embedding` | Generates text embeddings from input text. |
 | `get_schema_info` | Retrieves schema information from a monitored database. |
+| `similarity_search` | Performs vector similarity search using pgvector extensions. |
 | `execute_explain` | Runs EXPLAIN ANALYZE on a query for performance analysis. |
 | `list_probes` | Lists available monitoring probes. |
 | `describe_probe` | Provides details about a specific monitoring probe. |
 | `get_alert_history` | Retrieves historical alerts for a connection. |
 | `get_alert_rules` | Retrieves current alert rules and thresholds. |
+| `get_metric_baselines` | Retrieves statistical baselines used for anomaly detection. |
 | `store_memory` | Stores a persistent memory for future recall. |
 | `recall_memories` | Searches stored memories by semantic similarity. |
 | `delete_memory` | Removes a stored memory by its ID. |

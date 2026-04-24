@@ -13,14 +13,12 @@ JSON-RPC 2.0 over HTTP/HTTPS. All MCP requests arrive at
 the `/mcp/v1` endpoint and follow the standard JSON-RPC
 request/response cycle.
 
-The MCP layer registers three categories of capabilities:
+The MCP layer registers two categories of capabilities:
 
 - Tools expose actions such as query execution, schema
   introspection, and metrics retrieval.
 - Resources provide read-only data like server information
   and connection details.
-- Prompts offer reusable templates that guide AI assistants
-  through common database tasks.
 
 ## HTTP Server and Routing
 
@@ -59,8 +57,6 @@ their relationships.
 | |    Tools    | |     |      | - OpenAI    |     |
 | +-------------+ |     |      | - Ollama    |     |
 | |  Resources  | |     |      +-------------+     |
-| +-------------+ |     |                          |
-| |   Prompts   | |     |                          |
 | +-------------+ |     |                          |
 +-----------------+     |                          |
         |               |                          |
@@ -131,10 +127,10 @@ The server applies the following security protections:
 - Each token receives its own database connection pool for
   session isolation.
 
-## Tool, Resource, and Prompt Registration
+## Tool and Resource Registration
 
-Developers extend the server by registering new tools,
-resources, or prompts with the MCP server instance.
+Developers extend the server by registering new tools or
+resources with the MCP server instance.
 
 ### Tool Registration
 
@@ -160,12 +156,6 @@ Tools fall into four categories:
 Resources expose read-only data through URI-based
 identifiers. The configuration file controls which
 resources the server enables at startup.
-
-### Prompt Registration
-
-Prompts define reusable templates with optional parameters.
-AI assistants use prompts to follow structured workflows
-for tasks like schema exploration or query diagnosis.
 
 ## LLM Proxy Architecture
 

@@ -1,10 +1,9 @@
-# MCP Tools, Resources, and Prompts
+# MCP Tools and Resources
 
 The MCP server implements the Model Context Protocol,
 providing AI assistants with standardized access to
 PostgreSQL systems. Compatible MCP clients can use these
-tools, resources, and prompts to interact with monitored
-databases.
+tools and resources to interact with monitored databases.
 
 ## Connecting an MCP Client
 
@@ -73,6 +72,7 @@ These tools provide general-purpose capabilities.
 |------|-------------|
 | `generate_embedding` | Generates text embeddings from input text. |
 | `search_knowledgebase` | Searches the pgEdge documentation knowledge base. |
+| `read_resource` | Reads MCP resources via the tool interface for backward compatibility with older clients. |
 
 ## Available Resources
 
@@ -87,19 +87,6 @@ are available:
 
 Administrators can disable resources in the server
 configuration.
-
-## Available Prompts
-
-Prompts provide pre-built templates that guide an MCP
-client through common database tasks. The following
-prompts are available:
-
-| Prompt | Description |
-|--------|-------------|
-| `explore-database` | Guides exploration of a database schema. |
-| `setup-semantic-search` | Configures vector similarity search. |
-| `diagnose-query-issue` | Analyzes query performance problems. |
-| `design-schema` | Assists with database schema design. |
 
 ## Authentication
 

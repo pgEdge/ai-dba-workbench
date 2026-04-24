@@ -17,8 +17,8 @@ The User Guide is organized into the following sections:
 - [AI Features](ai/overview.md) covers AI-powered
   summaries, analysis, and the Ask Ellie assistant.
 - [MCP Tools](mcp-tools.md) lists the Model Context
-  Protocol tools, resources, and prompts available to
-  compatible AI clients.
+  Protocol tools and resources available to compatible
+  AI clients.
 - [Blackouts](blackouts.md) describes how maintenance
   windows suppress alerts for servers, clusters, and
   groups.

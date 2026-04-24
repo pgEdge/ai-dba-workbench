@@ -533,7 +533,7 @@ details.
 ### Built-in Features (`builtins`)
 
 The builtins section enables or disables individual
-tools, resources, and prompts.
+tools and resources.
 
 ```yaml
 builtins:

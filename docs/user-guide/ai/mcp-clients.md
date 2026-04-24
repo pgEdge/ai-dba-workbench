@@ -2,8 +2,8 @@
 
 Any MCP-compatible AI tool can connect to the
 Workbench's MCP server endpoint. External clients
-gain access to the same tools, resources, and prompts
-that power the built-in Ask Ellie assistant. The MCP
+gain access to the same tools and resources that
+power the built-in Ask Ellie assistant. The MCP
 server uses HTTP transport with Bearer token
 authentication.
 
@@ -196,9 +196,8 @@ the token is valid.
 
 ## Available Tools
 
-The full list of tools, resources, and prompts is
-documented on the
-[MCP Tools](../mcp-tools.md) page.
+The full list of tools and resources is documented on
+the [MCP Tools](../mcp-tools.md) page.
 
 ## Related Documentation
 

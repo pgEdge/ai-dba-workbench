@@ -188,3 +188,104 @@ least 90% line coverage.
 
 If `vitest.config.js` does not yet configure coverage gates, add
 them as a follow-up task with an owner and due date.
+
+## Codacy Auto-Fix Passes
+
+Codacy runs Biome and type-aware ESLint rules that are not
+configured in the local `client/eslint.config.js`. When closing
+a batch of auto-fixable Codacy findings at scale, follow this
+approach:
+
+- Run Biome via `npx @biomejs/biome check --write --unsafe src`
+  with a temporary `client/biome.json` that sets
+  `formatter.enabled = false`, `assist.enabled = false`, and
+  `linter.rules.recommended = false`; only enable the specific
+  rules being closed. This avoids re-formatting the whole tree
+  (Prettier owns formatting here).
+- Run type-aware ESLint via a temporary
+  `client/eslint.autofix.config.js` that extends
+  `tseslint.configs.recommendedTypeChecked`, disables every
+  rule except the targeted ones, and enables `projectService`.
+- Delete both temporary configs after the pass. Neither file
+  belongs in commits.
+
+### Rules to avoid in auto-fix passes
+
+- `@typescript-eslint/non-nullable-type-assertion-style` rewrites
+  `(x as T)` to `x!`, which trips the project's
+  `@typescript-eslint/no-non-null-assertion` rule. Leave these
+  sites alone; they need per-case judgement.
+- `@typescript-eslint/prefer-nullish-coalescing` emits
+  **suggestions**, not fixes, in typescript-eslint v8, so
+  `eslint --fix` does nothing with it. Do not attempt to
+  bulk-apply the suggestions — each `||` → `??` swap needs a
+  review of the left-hand type (swapping on `string | ""` or
+  `number | 0` changes semantics).
+- `@typescript-eslint/no-confusing-void-expression` has a mix of
+  safe rewrites (wrapping `() => foo()` in a block) and risky
+  ones (adding `void` prefix); the latter are suggestion-only,
+  and the fix count is small enough to handle manually.
+- Biome's `useImportType` is safe but can remove adjacent
+  `eslint-disable-next-line` comments when the import it tags
+  lives next to disabled code. Re-check
+  `@typescript-eslint/no-non-null-assertion` warning counts
+  after the pass and restore any comments that vanished.
+- `@typescript-eslint/no-confusing-void-expression --fix` also
+  strips adjacent `eslint-disable-next-line` comments when it
+  rewrites lines that sit directly above them (for example
+  `// eslint-disable-next-line @typescript-eslint/no-explicit-any`
+  on the line before a `MockInstance<any[], any>` declaration
+  inside a `describe` block). The block-level
+  `/* eslint-disable @typescript-eslint/no-explicit-any */`
+  pragma at the top of test files is also at risk. After every
+  pass, diff for `eslint-disable` removals and restore them by
+  hand; a spike in `no-explicit-any` or `no-non-null-assertion`
+  warnings in test files is the tell-tale sign.
+- Remaining manual sites after `--fix` almost always follow the
+  pattern `() => cond && sideEffectReturningVoid()`. The short-
+  circuit form returns `false | void`, which is why the auto-
+  fixer refuses to wrap it in a block (the block body would
+  still return `void` and the original `false` branch is
+  discarded silently, but the rule's heuristic is conservative
+  here). Prefer the `void` operator form:
+  `() => void (cond && sideEffect())`. It keeps the original
+  one-line shape and, crucially, does **not** add a statement or
+  `if` branch to the enclosing component body — important when
+  the enclosing function is already near the Codacy/Lizard
+  CCN-8 or nloc-medium threshold. Only fall back to
+  `() => { if (cond) { sideEffect(); } }` when the extra branch
+  demonstrably does not push any surrounding function over
+  threshold. Never wrap an expression that already returns a
+  non-void value in `void (...)` — that would silently discard a
+  real return, which is a semantic change rather than a
+  stylistic one.
+- If the rule fires on an inner call like
+  `prev.find(a => a.id === id)` where the flagged position is
+  the outer `find` call (not the callback), the root cause is
+  usually `useState([])` without an explicit type argument — TS
+  infers `never[]`, `.find()` on `never[]` resolves to `never`,
+  and the rule treats `never` the same as `void`. The minimal
+  semantic-preserving fix is to widen the array through a local
+  cast (for example
+  `const list = prev as unknown as { id: unknown }[]`), then
+  call `.find()` on the widened reference. Avoid
+  `eslint-disable-next-line` for this rule: the local ESLint
+  config does not enable `no-confusing-void-expression`, so the
+  disable comment itself becomes an "unused directive" warning.
+- After a `no-confusing-void-expression` auto-fix pass, run
+  `npm run format:check` and compare the file count against the
+  baseline. ESLint rewrites single-line arrow handlers like
+  `onChange={(e) => onChange(e.target.value)}` into a one-line
+  block that exceeds Prettier's print width; Prettier will then
+  flag the file as newly unformatted. Apply
+  `npx prettier --write <file>` only to the affected file(s)
+  after the ESLint pass so Prettier's diff stays scoped to the
+  lines the rule already touched.
+
+### Verify before and after
+
+Always measure the project ESLint warning count with
+`npm run lint` before and after the pass. The post-pass warning
+count must match the baseline; an increase means an auto-fix
+introduced a pattern flagged by another rule, and that specific
+rule should be disabled and the change reverted.

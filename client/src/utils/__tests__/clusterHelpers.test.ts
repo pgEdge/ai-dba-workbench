@@ -15,7 +15,6 @@ import {
     extractEstateServerIds,
     extractClusterServerIds,
     computeEstateServerCounts,
-    ServerCounts,
     countEstateServers,
 } from '../clusterHelpers';
 import type { EstateSelection, ClusterSelection } from '../../types/selection';
@@ -259,7 +258,7 @@ describe('extractEstateServerIds', () => {
             type: 'estate',
             name: 'All Servers',
             status: 'online',
-            groups: [{ id: 'g1', name: 'g1', status: 'online' }],
+            groups: [{ id: 'g1', name: 'g1', status: 'online', clusters: [] }],
         };
         expect(extractEstateServerIds(selection)).toEqual([]);
     });
@@ -777,6 +776,7 @@ describe('countEstateServers', () => {
                 id: 'g1',
                 name: 'g1',
                 status: 'online',
+                clusters: [],
             }],
         };
         expect(countEstateServers(selection)).toBe(0);

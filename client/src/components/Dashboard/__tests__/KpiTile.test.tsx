@@ -20,7 +20,7 @@ vi.mock('../Sparkline', () => ({
 }));
 
 // Mock AICapabilitiesContext so KpiTile can render without the provider
-vi.mock('../../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: true, loading: false }),
 }));
 

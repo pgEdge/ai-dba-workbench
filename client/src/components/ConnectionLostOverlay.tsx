@@ -19,7 +19,7 @@ import {
     Box,
 } from '@mui/material';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
-import { useConnectionStatus } from '../contexts/ConnectionStatusContext';
+import { useConnectionStatus } from '../contexts/useConnectionStatus';
 
 const reasonMessages: Record<string, string> = {
     auth: 'Your session has expired.',

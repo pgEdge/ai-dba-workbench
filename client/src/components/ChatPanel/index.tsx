@@ -29,7 +29,7 @@ import {
     History as HistoryIcon,
     Download as DownloadIcon,
 } from '@mui/icons-material';
-import { useChatContext } from '../../contexts/ChatContext';
+import { useChatContext } from '../../contexts/useChatContext';
 import ChatMessage, { ChatMessageData, ContentBlock } from './ChatMessage';
 import ChatInput from './ChatInput';
 import ToolStatus, { ToolActivity } from './ToolStatus';

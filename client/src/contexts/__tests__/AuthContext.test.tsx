@@ -11,7 +11,8 @@
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ADMIN_PERMISSION_WILDCARD, AuthProvider, useAuth } from '../AuthContext';
+import { ADMIN_PERMISSION_WILDCARD, AuthProvider } from '../AuthContext';
+import { useAuth } from '../useAuth';
 
 // Mock fetch
 const mockFetch = vi.fn();

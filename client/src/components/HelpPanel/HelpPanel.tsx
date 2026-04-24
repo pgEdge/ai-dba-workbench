@@ -33,7 +33,7 @@ import {
     SmartToyOutlined as ChatBotIcon,
     MonitorHeart as MonitoringIcon,
 } from '@mui/icons-material';
-import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { CLIENT_VERSION } from '../../lib/version';
 import { HELP_PAGES, contextToPage } from './helpPanelConstants';
 import { styles, getDrawerPaperSx } from './helpPanelStyles';

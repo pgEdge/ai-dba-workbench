@@ -11,10 +11,10 @@
  */
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
-import { useCluster } from '../../contexts/ClusterContext';
-import { useAlerts } from '../../contexts/AlertsContext';
-import { useBlackouts } from '../../contexts/BlackoutContext';
+import { useAuth } from '../../contexts/useAuth';
+import { useCluster } from '../../contexts/useCluster';
+import { useAlerts } from '../../contexts/useAlerts';
+import { useBlackouts } from '../../contexts/useBlackouts';
 import {
     DndContext,
     DragOverlay,

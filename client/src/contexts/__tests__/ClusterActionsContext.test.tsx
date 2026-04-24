@@ -11,10 +11,8 @@
 import React from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-    ClusterActionsProvider,
-    useClusterActions,
-} from '../ClusterActionsContext';
+import { ClusterActionsProvider } from '../ClusterActionsContext';
+import { useClusterActions } from '../useClusterActions';
 
 vi.mock('../../utils/apiClient', () => ({
     apiGet: vi.fn(),
@@ -37,13 +35,13 @@ const mockFetchClusterData = vi.fn(async () => {});
 const mockClearSelection = vi.fn(async () => {});
 let mockSelectedServer: { id: number } | null = null;
 
-vi.mock('../AuthContext', () => ({
+vi.mock('../useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
-vi.mock('../ClusterDataContext', () => ({
+vi.mock('../useClusterData', () => ({
     useClusterData: () => ({ fetchClusterData: mockFetchClusterData }),
 }));
-vi.mock('../ClusterSelectionContext', () => ({
+vi.mock('../useClusterSelection', () => ({
     useClusterSelection: () => ({
         selectedServer: mockSelectedServer,
         clearSelection: mockClearSelection,

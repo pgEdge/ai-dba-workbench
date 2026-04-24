@@ -22,7 +22,7 @@ import { ChartAnalysisContext, ChartData } from '../Chart/types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
 import { KpiTileData, MetricDataPoint } from './types';
 import Sparkline from './Sparkline';
-import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
 import {
     getDashboardTileSx,

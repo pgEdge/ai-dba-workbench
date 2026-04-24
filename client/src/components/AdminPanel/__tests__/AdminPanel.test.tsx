@@ -58,14 +58,14 @@ const mockUser = {
 
 const mockHasPermission = vi.fn(() => true);
 
-vi.mock('../../../contexts/AuthContext', () => ({
+vi.mock('../../../contexts/useAuth', () => ({
     useAuth: () => ({
         user: mockUser,
         hasPermission: mockHasPermission,
     }),
 }));
 
-vi.mock('../../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({
         aiEnabled: true,
         maxIterations: 50,

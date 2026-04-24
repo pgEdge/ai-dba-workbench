@@ -11,10 +11,8 @@
 import React from 'react';
 import { renderHook, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-    AICapabilitiesProvider,
-    useAICapabilities,
-} from '../AICapabilitiesContext';
+import { AICapabilitiesProvider } from '../AICapabilitiesContext';
+import { useAICapabilities } from '../useAICapabilities';
 
 // Mock apiClient.apiGet
 vi.mock('../../utils/apiClient', () => ({

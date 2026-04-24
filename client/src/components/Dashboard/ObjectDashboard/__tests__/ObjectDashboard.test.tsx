@@ -21,7 +21,7 @@ import { ObjectType, OverlayEntry } from '../../types';
 
 let mockCurrentOverlay: OverlayEntry | null = null;
 
-vi.mock('../../../../contexts/DashboardContext', () => ({
+vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         currentOverlay: mockCurrentOverlay,
     }),

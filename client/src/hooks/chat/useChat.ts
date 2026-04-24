@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiFetch } from '../../utils/apiClient';
-import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../contexts/useAICapabilities';
 import {
     ChatMessageData,
     ContentBlock,

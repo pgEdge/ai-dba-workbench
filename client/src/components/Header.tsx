@@ -37,8 +37,8 @@ import {
 } from '@mui/icons-material';
 import logoLight from '../assets/images/logo-light.png';
 import logoDark from '../assets/images/logo-dark.png';
-import { useAuth } from '../contexts/AuthContext';
-import { useAICapabilities } from '../contexts/AICapabilitiesContext';
+import { useAuth } from '../contexts/useAuth';
+import { useAICapabilities } from '../contexts/useAICapabilities';
 import { useMenu } from '../hooks/useMenu';
 import HelpPanel from './HelpPanel';
 import AdminPanel from './AdminPanel';

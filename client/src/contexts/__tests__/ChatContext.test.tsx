@@ -11,7 +11,8 @@
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ChatProvider, useChatContext } from '../ChatContext';
+import { ChatProvider } from '../ChatContext';
+import { useChatContext } from '../useChatContext';
 import { logger } from '../../utils/logger';
 
 vi.mock('../../utils/apiClient', () => ({
@@ -30,7 +31,7 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 let mockUser: { username: string } | null = { username: 'testuser' };
-vi.mock('../AuthContext', () => ({
+vi.mock('../useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 

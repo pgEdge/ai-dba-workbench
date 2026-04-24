@@ -24,7 +24,7 @@ const mockActiveBlackoutsForSelection: {
     end_time: string;
 }[] = [];
 
-vi.mock('../../contexts/BlackoutContext', () => ({
+vi.mock('../../contexts/useBlackouts', () => ({
     useBlackouts: () => ({
         activeBlackoutsForSelection: mockActiveBlackoutsForSelection,
         stopBlackout: mockStopBlackout,

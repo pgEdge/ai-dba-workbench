@@ -29,10 +29,10 @@ import {
     MonitorHeart as MonitorHeartIcon,
     AccountTree as AccountTreeIcon,
 } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
-import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
-import { useClusterData } from '../../contexts/ClusterDataContext';
-import { useDashboard } from '../../contexts/DashboardContext';
+import { useAuth } from '../../contexts/useAuth';
+import { useAICapabilities } from '../../contexts/useAICapabilities';
+import { useClusterData } from '../../contexts/useClusterData';
+import { useDashboard } from '../../contexts/useDashboard';
 import { apiPost, apiGet, apiDelete, ApiError } from '../../utils/apiClient';
 import { collectServers } from '../../utils/clusterHelpers';
 import { logger } from '../../utils/logger';

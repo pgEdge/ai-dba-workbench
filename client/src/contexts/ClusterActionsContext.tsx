@@ -7,12 +7,10 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-
-import React, { createContext, useContext, useCallback, useMemo } from 'react';
-import { useAuth } from './AuthContext';
-import { useClusterData } from './ClusterDataContext';
-import { useClusterSelection } from './ClusterSelectionContext';
+import React, { createContext, useCallback, useMemo } from 'react';
+import { useAuth } from './useAuth';
+import { useClusterData } from './useClusterData';
+import { useClusterSelection } from './useClusterSelection';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import { parseGroupNumericId, isAutoGroupId } from '../components/ClusterNavigator/utils';
 
@@ -313,14 +311,6 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
             {children}
         </ClusterActionsContext.Provider>
     );
-};
-
-export const useClusterActions = (): ClusterActionsContextValue => {
-    const context = useContext(ClusterActionsContext);
-    if (!context) {
-        throw new Error('useClusterActions must be used within a ClusterActionsProvider');
-    }
-    return context;
 };
 
 export default ClusterActionsContext;

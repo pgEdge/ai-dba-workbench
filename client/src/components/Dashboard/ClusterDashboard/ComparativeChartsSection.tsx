@@ -12,9 +12,9 @@ import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
-import { useAuth } from '../../../contexts/AuthContext';
+import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
-import { useClusterData } from '../../../contexts/ClusterDataContext';
+import { useClusterData } from '../../../contexts/useClusterData';
 import { Chart } from '../../Chart';
 import { CHART_SECTION_SX } from '../styles';
 import { logger } from '../../../utils/logger';

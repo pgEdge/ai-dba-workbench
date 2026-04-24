@@ -17,7 +17,7 @@ import Slide from '@mui/material/Slide';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
 import { alpha, useTheme } from '@mui/material/styles';
-import { useDashboard } from '../../contexts/DashboardContext';
+import { useDashboard } from '../../contexts/useDashboard';
 import {
     OVERLAY_CONTAINER_SX,
     OVERLAY_HEADER_SX,

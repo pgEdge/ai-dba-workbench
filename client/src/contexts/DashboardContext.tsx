@@ -7,8 +7,8 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
+
+import React, { createContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
     TimeRange,
     TimeRangeState,
@@ -161,14 +161,6 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
             {children}
         </DashboardContext.Provider>
     );
-};
-
-export const useDashboard = (): DashboardContextValue => {
-    const context = useContext(DashboardContext);
-    if (!context) {
-        throw new Error('useDashboard must be used within a DashboardProvider');
-    }
-    return context;
 };
 
 export default DashboardContext;

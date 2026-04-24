@@ -37,7 +37,8 @@ import {
     Dns as ClusterIcon,
     Storage as ServerIcon,
 } from '@mui/icons-material';
-import { useBlackouts, CreateBlackoutRequest } from '../contexts/BlackoutContext';
+import { useBlackouts } from '../contexts/useBlackouts';
+import type { CreateBlackoutRequest } from '../contexts/BlackoutContext';
 import type { Selection } from '../types/selection';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 

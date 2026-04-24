@@ -36,7 +36,7 @@ import {
     Add as AddIcon,
     Delete as DeleteIcon,
 } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { apiGet, apiPost, apiDelete } from '../../utils/apiClient';
 import { SELECT_FIELD_SX, SELECT_FIELD_DEFAULT_BG_SX } from '../shared/formStyles';
 import {

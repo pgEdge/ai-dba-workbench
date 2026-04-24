@@ -32,7 +32,7 @@ vi.mock('../../../ChartAnalysisDialog', () => ({
 }));
 
 // Mock AI capabilities context
-vi.mock('../../../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: false }),
 }));
 

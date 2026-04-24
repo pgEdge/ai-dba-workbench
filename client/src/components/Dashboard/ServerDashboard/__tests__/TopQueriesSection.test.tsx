@@ -24,14 +24,14 @@ vi.mock('../../../../utils/apiClient', () => ({
 }));
 
 const mockPushOverlay = vi.fn();
-vi.mock('../../../../contexts/DashboardContext', () => ({
+vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         refreshTrigger: 0,
         pushOverlay: mockPushOverlay,
     }),
 }));
 
-vi.mock('../../../../contexts/AuthContext', () => ({
+vi.mock('../../../../contexts/useAuth', () => ({
     useAuth: () => ({
         user: { id: 1, username: 'testuser' },
     }),

@@ -22,10 +22,10 @@ import {
     Psychology as PsychologyIcon,
     Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { useAuth } from '../../../contexts/AuthContext';
-import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { useAuth } from '../../../contexts/useAuth';
+import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { apiFetch } from '../../../utils/apiClient';
-import { useDashboard } from '../../../contexts/DashboardContext';
+import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
 import { logger } from '../../../utils/logger';

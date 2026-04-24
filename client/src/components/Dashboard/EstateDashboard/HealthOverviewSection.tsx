@@ -14,7 +14,7 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useTheme } from '@mui/material/styles';
 import { Chart } from '../../Chart';
-import { useAuth } from '../../../contexts/AuthContext';
+import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
 import { computeEstateServerCounts } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';

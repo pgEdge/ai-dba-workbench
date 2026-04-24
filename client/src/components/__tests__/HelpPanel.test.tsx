@@ -13,8 +13,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import HelpPanel from '../HelpPanel';
 
-// Mock AICapabilitiesContext so HelpPanel can render without the provider
-vi.mock('../../contexts/AICapabilitiesContext', () => ({
+// Mock useAICapabilities so HelpPanel can render without the provider
+vi.mock('../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: true, loading: false }),
 }));
 

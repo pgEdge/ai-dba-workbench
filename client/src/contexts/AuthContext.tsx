@@ -7,9 +7,8 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
 
-import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { apiGet, apiPost } from '../utils/apiClient';
 import { clearAlertAnalysisCache } from '../hooks/useAlertAnalysis';
 import { clearChartAnalysisCache } from '../hooks/useChartAnalysis';
@@ -194,10 +193,4 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
     );
 };
 
-export const useAuth = (): AuthContextValue => {
-    const context = useContext(AuthContext);
-    if (!context) {
-        throw new Error('useAuth must be used within an AuthProvider');
-    }
-    return context;
-};
+export default AuthContext;

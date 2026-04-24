@@ -268,6 +268,29 @@ variable is set before starting the services. The
 PostgreSQL container requires this variable on first
 initialization.
 
+### Port Already in Use
+
+The PostgreSQL container binds to port 5432 on the host
+by default. The container will fail to start if another
+PostgreSQL instance or other service already occupies
+that port. The error message includes the text
+"port is already allocated."
+
+Set the `POSTGRES_PORT` environment variable to use a
+different host port. In the following example, the
+datastore binds to port 5433 instead of 5432.
+
+```bash
+export POSTGRES_PORT=5433
+docker compose \
+  -f examples/docker-compose.production.yml up -d
+```
+
+The container port inside Docker remains 5432; only the
+host-side mapping changes. The collector, server, and
+alerter services connect to the container by service
+name, so they are unaffected by this change.
+
 ### Server Cannot Connect to the Database
 
 The server may fail to connect if the database has

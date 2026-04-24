@@ -2428,3 +2428,83 @@ func TestHasAdminPermissionTokenScopeDatabaseError(t *testing.T) {
 		t.Error("Expected false when database is closed")
 	}
 }
+
+// =============================================================================
+// NewRBACCheckerWithSharing Tests
+// =============================================================================
+
+func TestNewRBACCheckerWithSharing_NilLookup(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	// Create checker with nil sharing lookup
+	checker := NewRBACCheckerWithSharing(store, nil)
+
+	if checker == nil {
+		t.Fatal("Expected non-nil checker")
+	}
+	if checker.authStore != store {
+		t.Error("Expected authStore to be set")
+	}
+	if checker.connSharingLookupFn != nil {
+		t.Error("Expected connSharingLookupFn to be nil when passed nil")
+	}
+}
+
+func TestNewRBACCheckerWithSharing_WithLookup(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	// Track if the lookup was called
+	lookupCalled := false
+	testLookup := func(ctx context.Context, connectionID int) (bool, string, error) {
+		lookupCalled = true
+		return true, "owner", nil
+	}
+
+	// Create checker with sharing lookup
+	checker := NewRBACCheckerWithSharing(store, testLookup)
+
+	if checker == nil {
+		t.Fatal("Expected non-nil checker")
+	}
+	if checker.authStore != store {
+		t.Error("Expected authStore to be set")
+	}
+	if checker.connSharingLookupFn == nil {
+		t.Error("Expected connSharingLookupFn to be set")
+	}
+
+	// Verify the lookup is wired correctly by calling it
+	isShared, owner, err := checker.connSharingLookupFn(context.Background(), 1)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !lookupCalled {
+		t.Error("Expected lookup to be called")
+	}
+	if !isShared {
+		t.Error("Expected isShared to be true")
+	}
+	if owner != "owner" {
+		t.Errorf("Expected owner to be 'owner', got %q", owner)
+	}
+}
+
+func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
+	// Create checker with nil store (should still work, just returns full access)
+	checker := NewRBACCheckerWithSharing(nil, nil)
+
+	if checker == nil {
+		t.Fatal("Expected non-nil checker")
+	}
+	if checker.authStore != nil {
+		t.Error("Expected authStore to be nil")
+	}
+
+	// Nil store means superuser mode (full access)
+	ctx := context.Background()
+	if !checker.IsSuperuser(ctx) {
+		t.Error("Expected IsSuperuser to return true with nil store")
+	}
+}

@@ -114,7 +114,7 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 	// datastore work so a zero-grant caller never triggers a refresh or
 	// a topology build. VisibleConnectionIDs loads sharing metadata once
 	// so this check does not issue per-server lookups.
-	lister := newConnectionVisibilityLister(h.datastore)
+	lister := database.NewVisibilityLister(h.datastore)
 	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
 	if err != nil {
 		log.Printf("[ERROR] Failed to resolve visible connections for topology: %v", err)

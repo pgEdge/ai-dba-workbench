@@ -994,23 +994,14 @@ func (d *Datastore) GetClusterHierarchy(ctx context.Context) ([]ClusterGroupWith
 
 // getUngroupedServersInternal returns connections not assigned to any cluster
 func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerInfo, error) {
-	query := `
+	query := fmt.Sprintf(`
         SELECT
             c.id,
             c.name,
             c.host,
             c.port,
             COALESCE(c.role, 'primary') as role,
-            CASE
-                WHEN c.is_monitored AND c.connection_error IS NOT NULL
-                THEN 'offline'
-                WHEN c.is_monitored AND m.collected_at IS NULL
-                THEN 'initialising'
-                WHEN m.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
-                WHEN m.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
-                WHEN m.collected_at IS NOT NULL THEN 'offline'
-                ELSE 'unknown'
-            END as status,
+            %s as status,
             c.connection_error
         FROM connections c
         LEFT JOIN LATERAL (
@@ -1022,7 +1013,7 @@ func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerIn
         ) m ON true
         WHERE c.cluster_id IS NULL
         ORDER BY c.name
-    `
+    `, serverStatusCaseSQL("m.collected_at", "m.collected_at IS NULL"))
 
 	rows, err := d.pool.Query(ctx, query)
 	if err != nil {
@@ -1113,7 +1104,7 @@ func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int)
 }
 
 func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID int) ([]ServerInfo, error) {
-	query := `
+	query := fmt.Sprintf(`
         SELECT
             c.id,
             c.name,
@@ -1121,16 +1112,7 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
             c.port,
             c.role,
             c.database_name,
-            CASE
-                WHEN c.is_monitored AND c.connection_error IS NOT NULL
-                THEN 'offline'
-                WHEN c.is_monitored AND m.collected_at IS NULL
-                THEN 'initialising'
-                WHEN m.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
-                WHEN m.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
-                WHEN m.collected_at IS NOT NULL THEN 'offline'
-                ELSE 'unknown'
-            END as status,
+            %s as status,
             c.connection_error
         FROM connections c
         LEFT JOIN LATERAL (
@@ -1144,7 +1126,7 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
         ORDER BY
             CASE WHEN c.role = 'primary' THEN 0 ELSE 1 END,
             c.name
-    `
+    `, serverStatusCaseSQL("m.collected_at", "m.collected_at IS NULL"))
 
 	rows, err := d.pool.Query(ctx, query, clusterID)
 	if err != nil {

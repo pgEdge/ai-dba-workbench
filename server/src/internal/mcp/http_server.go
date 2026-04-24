@@ -22,13 +22,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
-
-// MaxRequestBodySize is the maximum allowed size for HTTP request bodies (1MB).
-// This prevents denial-of-service attacks via memory exhaustion from large payloads.
-const MaxRequestBodySize = 1 << 20 // 1MB
 
 // contextKey is a type for context keys to avoid collisions
 type contextKey string
@@ -99,7 +96,7 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 	handler = auth.AuthMiddleware(config.AuthStore, true)(handler)
 
 	// Apply request body size limit middleware to prevent memory exhaustion attacks
-	handler = MaxBytesMiddleware(MaxRequestBodySize)(handler)
+	handler = MaxBytesMiddleware(apiconst.MaxRequestBodySize)(handler)
 
 	// Apply CORS middleware if an origin is configured (skip for same-origin deployments)
 	if config.CORSOrigin != "" {

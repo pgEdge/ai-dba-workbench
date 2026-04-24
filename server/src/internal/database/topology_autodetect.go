@@ -21,7 +21,7 @@ import (
 
 // getAllConnectionsWithRoles queries all connections with their role data
 func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectionWithRole, error) {
-	query := `
+	query := fmt.Sprintf(`
         WITH latest_connectivity AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, collected_at
@@ -80,16 +80,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
                COALESCE(lr.is_streaming_standby, false) as is_streaming_standby,
                lr.publisher_host, lr.publisher_port,
                c.membership_source,
-               CASE
-                   WHEN c.is_monitored AND c.connection_error IS NOT NULL
-                   THEN 'offline'
-                   WHEN c.is_monitored AND lc.connection_id IS NULL
-                   THEN 'initialising'
-                   WHEN lc.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
-                   WHEN lc.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
-                   WHEN lc.collected_at IS NOT NULL THEN 'offline'
-                   ELSE 'unknown'
-               END as status,
+               %s as status,
                c.connection_error,
                COALESCE(aa.alert_count, 0) as active_alert_count,
                c.cluster_id
@@ -101,7 +92,7 @@ func (d *Datastore) getAllConnectionsWithRoles(ctx context.Context) ([]connectio
         LEFT JOIN latest_spock_version lsv ON c.id = lsv.connection_id
         LEFT JOIN active_alerts aa ON c.id = aa.connection_id
         ORDER BY c.name
-    `
+    `, serverStatusCaseSQL("lc.collected_at", "lc.connection_id IS NULL"))
 
 	rows, err := d.pool.Query(ctx, query)
 	if err != nil {
@@ -497,7 +488,7 @@ func (d *Datastore) syncAutoDetectedClusterAssignments(ctx context.Context, auto
 // their cluster's auto_cluster_key so they can be merged into the
 // topology response.
 func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetectedIDs map[int]bool) (map[string][]TopologyServerInfo, error) {
-	query := `
+	query := fmt.Sprintf(`
         WITH latest_connectivity AS (
             SELECT DISTINCT ON (connection_id)
                 connection_id, collected_at
@@ -539,16 +530,7 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
                loi.os_name,
                lr.spock_node_name,
                COALESCE(NULLIF(lr.primary_role, 'standalone'), c.role, lr.primary_role, 'unknown') as primary_role,
-               CASE
-                   WHEN c.is_monitored AND c.connection_error IS NOT NULL
-                   THEN 'offline'
-                   WHEN c.is_monitored AND lc.connection_id IS NULL
-                   THEN 'initialising'
-                   WHEN lc.collected_at > NOW() - INTERVAL '60 seconds' THEN 'online'
-                   WHEN lc.collected_at > NOW() - INTERVAL '150 seconds' THEN 'warning'
-                   WHEN lc.collected_at IS NOT NULL THEN 'offline'
-                   ELSE 'unknown'
-               END as status,
+               %s as status,
                c.connection_error,
                COALESCE(aa.alert_count, 0) as active_alert_count,
                c.membership_source,
@@ -564,7 +546,7 @@ func (d *Datastore) getPersistedClusterMembers(ctx context.Context, autoDetected
           AND cl.auto_cluster_key IS NOT NULL
           AND cl.dismissed = FALSE
         ORDER BY c.name
-    `
+    `, serverStatusCaseSQL("lc.collected_at", "lc.connection_id IS NULL"))
 
 	rows, err := d.pool.Query(ctx, query)
 	if err != nil {

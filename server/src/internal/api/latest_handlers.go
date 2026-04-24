@@ -119,7 +119,7 @@ func (h *LatestSnapshotHandler) handleLatestSnapshot(
 	}
 
 	// RBAC check
-	rbacChecker := NewRBACCheckerWithSharing(h.authStore, h.datastore)
+	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connectionID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

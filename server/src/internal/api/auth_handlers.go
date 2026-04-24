@@ -16,9 +16,6 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// MaxRequestBodySize is the maximum size for request bodies (1MB)
-const MaxRequestBodySize = 1 << 20
-
 // SessionCookieName is the name of the httpOnly cookie used for session tokens.
 // Using httpOnly cookies prevents XSS attacks from accessing the token.
 const SessionCookieName = "session_token"

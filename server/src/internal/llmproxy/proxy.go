@@ -189,56 +189,32 @@ func HandleModels(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	}
 
 	// Create LLM client for the provider (debug mode always false for models listing)
-	var client chat.LLMClient
-	switch provider {
-	case "anthropic":
-		if cfg.AnthropicAPIKey == "" {
-			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "anthropic")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewAnthropicClient(cfg.AnthropicAPIKey, cfg.Model, cfg.MaxTokens, cfg.Temperature, false, cfg.AnthropicBaseURL, cfg.UseCompactDescriptions, headers)
-	case "openai":
-		if cfg.OpenAIAPIKey == "" && cfg.OpenAIBaseURL == "" {
-			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "openai")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewOpenAIClient(cfg.OpenAIAPIKey, cfg.Model, cfg.MaxTokens, cfg.Temperature, false, cfg.OpenAIBaseURL, cfg.UseCompactDescriptions, headers)
-	case "gemini":
-		if cfg.GeminiAPIKey == "" {
-			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "gemini")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewGeminiClient(cfg.GeminiAPIKey, cfg.Model, cfg.MaxTokens, cfg.Temperature, false, cfg.GeminiBaseURL, cfg.UseCompactDescriptions, headers)
-	case "ollama":
-		if cfg.OllamaURL == "" {
-			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "ollama")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewOllamaClient(cfg.OllamaURL, cfg.Model, false, cfg.UseCompactDescriptions, headers)
+	headers, err := getProviderHeaders(cfg.LLMConfig, provider)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", provider, err)
+		http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
+		return
+	}
+
+	client, err := chat.NewClientFromConfig(chat.ClientConfig{
+		Provider:         provider,
+		AnthropicAPIKey:  cfg.AnthropicAPIKey,
+		AnthropicBaseURL: cfg.AnthropicBaseURL,
+		OpenAIAPIKey:     cfg.OpenAIAPIKey,
+		OpenAIBaseURL:    cfg.OpenAIBaseURL,
+		GeminiAPIKey:     cfg.GeminiAPIKey,
+		GeminiBaseURL:    cfg.GeminiBaseURL,
+		OllamaURL:        cfg.OllamaURL,
+		Model:            cfg.Model,
+		MaxTokens:        cfg.MaxTokens,
+		Temperature:      cfg.Temperature,
+		Debug:            false,
+		UseCompactDescs:  cfg.UseCompactDescriptions,
+		Headers:          headers,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// List models
@@ -337,56 +313,32 @@ func HandleChat(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	}
 
 	// Create LLM client with debug mode from request
-	var client chat.LLMClient
-	switch provider {
-	case "anthropic":
-		if cfg.AnthropicAPIKey == "" {
-			http.Error(w, "Anthropic API key not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "anthropic")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Anthropic provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewAnthropicClient(cfg.AnthropicAPIKey, model, cfg.MaxTokens, cfg.Temperature, req.Debug, cfg.AnthropicBaseURL, cfg.UseCompactDescriptions, headers)
-	case "openai":
-		if cfg.OpenAIAPIKey == "" && cfg.OpenAIBaseURL == "" {
-			http.Error(w, "OpenAI API key not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "openai")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get OpenAI provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewOpenAIClient(cfg.OpenAIAPIKey, model, cfg.MaxTokens, cfg.Temperature, req.Debug, cfg.OpenAIBaseURL, cfg.UseCompactDescriptions, headers)
-	case "gemini":
-		if cfg.GeminiAPIKey == "" {
-			http.Error(w, "Gemini API key not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "gemini")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Gemini provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewGeminiClient(cfg.GeminiAPIKey, model, cfg.MaxTokens, cfg.Temperature, req.Debug, cfg.GeminiBaseURL, cfg.UseCompactDescriptions, headers)
-	case "ollama":
-		if cfg.OllamaURL == "" {
-			http.Error(w, "Ollama URL not configured", http.StatusBadRequest)
-			return
-		}
-		headers, err := getProviderHeaders(cfg.LLMConfig, "ollama")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Failed to get Ollama provider headers: %v\n", err)
-			http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-			return
-		}
-		client = chat.NewOllamaClient(cfg.OllamaURL, model, req.Debug, cfg.UseCompactDescriptions, headers)
+	headers, err := getProviderHeaders(cfg.LLMConfig, provider)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", provider, err)
+		http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
+		return
+	}
+
+	client, err := chat.NewClientFromConfig(chat.ClientConfig{
+		Provider:         provider,
+		AnthropicAPIKey:  cfg.AnthropicAPIKey,
+		AnthropicBaseURL: cfg.AnthropicBaseURL,
+		OpenAIAPIKey:     cfg.OpenAIAPIKey,
+		OpenAIBaseURL:    cfg.OpenAIBaseURL,
+		GeminiAPIKey:     cfg.GeminiAPIKey,
+		GeminiBaseURL:    cfg.GeminiBaseURL,
+		OllamaURL:        cfg.OllamaURL,
+		Model:            model,
+		MaxTokens:        cfg.MaxTokens,
+		Temperature:      cfg.Temperature,
+		Debug:            req.Debug,
+		UseCompactDescs:  cfg.UseCompactDescriptions,
+		Headers:          headers,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Convert proxy messages to chat messages

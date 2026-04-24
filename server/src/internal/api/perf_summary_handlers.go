@@ -199,7 +199,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	}
 
 	// Check RBAC access for each connection
-	rbacChecker := NewRBACCheckerWithSharing(h.authStore, h.datastore)
+	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
 	for _, connID := range connectionIDs {
 		canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 		if !canAccess {
@@ -687,7 +687,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 	}
 	connID := connectionIDs[0]
 
-	rbacChecker := NewRBACCheckerWithSharing(h.authStore, h.datastore)
+	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,
@@ -1061,7 +1061,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	connID := connectionIDs[0]
 
-	rbacChecker := NewRBACCheckerWithSharing(h.authStore, h.datastore)
+	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
 	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
 	if !canAccess {
 		RespondError(w, http.StatusForbidden,

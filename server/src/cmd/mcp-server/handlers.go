@@ -113,16 +113,11 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		}
 
 		// Create RBAC checker for permission-based access control in REST handlers
-		rbacChecker := auth.NewRBACChecker(deps.AuthStore)
-
-		// Wire up connection sharing lookup so the RBAC checker can enforce
-		// is_shared visibility rules on individual connection access checks.
+		var sharingLookup auth.ConnectionSharingLookupFunc
 		if deps.Datastore != nil {
-			ds := deps.Datastore
-			rbacChecker.SetConnectionSharingLookup(func(ctx context.Context, connectionID int) (bool, string, error) {
-				return ds.GetConnectionSharingInfo(ctx, connectionID)
-			})
+			sharingLookup = deps.Datastore.GetConnectionSharingInfo
 		}
+		rbacChecker := auth.NewRBACCheckerWithSharing(deps.AuthStore, sharingLookup)
 
 		// Connection management endpoints (for selecting monitored database connections)
 		// Uses security configuration to prevent SSRF attacks

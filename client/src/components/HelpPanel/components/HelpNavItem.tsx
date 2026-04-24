@@ -47,7 +47,7 @@ const HelpNavItem: React.FC<HelpNavItemProps> = ({
         <ListItemButton
             selected={isActive}
             aria-current={isActive ? 'page' : undefined}
-            onClick={() => onClick(pageId)}
+            onClick={() => { onClick(pageId); }}
             sx={getNavItemSx(isActive)}
         >
             <ListItemIcon sx={styles.navItemIcon}>

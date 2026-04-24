@@ -315,7 +315,7 @@ const AdminMemories: React.FC = () => {
                                     <IconButton
                                         size="small"
                                         onClick={() =>
-                                            handleOpenDelete(mem)
+                                            { handleOpenDelete(mem); }
                                         }
                                         aria-label="delete memory"
                                         sx={deleteIconSx}

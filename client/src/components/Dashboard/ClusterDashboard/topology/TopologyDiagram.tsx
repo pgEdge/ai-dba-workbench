@@ -85,7 +85,7 @@ const TopologyDiagram: React.FC<TopologyDiagramProps> = ({
         });
 
         observer.observe(el);
-        return () => observer.disconnect();
+        return () => { observer.disconnect(); };
     }, []);
 
     const graph = useMemo(() => buildGraph(servers), [servers]);

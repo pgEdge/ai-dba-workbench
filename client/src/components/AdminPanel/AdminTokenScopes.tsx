@@ -463,7 +463,7 @@ const AdminTokenScopes: React.FC = () => {
                 <Alert
                     severity="error"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setError(null)}
+                    onClose={() => { setError(null); }}
                 >
                     {error}
                 </Alert>
@@ -483,7 +483,7 @@ const AdminTokenScopes: React.FC = () => {
 
             <CreateTokenDialog
                 open={createOpen}
-                onClose={() => setCreateOpen(false)}
+                onClose={() => { setCreateOpen(false); }}
                 onSubmit={handleCreateToken}
                 loading={createLoading}
                 error={createError}
@@ -518,7 +518,7 @@ const AdminTokenScopes: React.FC = () => {
 
             <EditTokenDialog
                 open={editOpen}
-                onClose={() => setEditOpen(false)}
+                onClose={() => { setEditOpen(false); }}
                 onSubmit={handleSaveScope}
                 loading={editLoading}
                 error={editError}

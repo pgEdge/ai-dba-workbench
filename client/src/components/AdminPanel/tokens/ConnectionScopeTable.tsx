@@ -90,7 +90,7 @@ const ConnectionScopeTable: React.FC<ConnectionScopeTableProps> = ({
                                     size="small"
                                     value={sc.access_level}
                                     onChange={(e) =>
-                                        onAccessLevelChange(sc.id, e.target.value)
+                                        { onAccessLevelChange(sc.id, e.target.value); }
                                     }
                                     disabled={disabled}
                                     InputLabelProps={{ shrink: true }}
@@ -107,7 +107,7 @@ const ConnectionScopeTable: React.FC<ConnectionScopeTableProps> = ({
                             <TableCell align="right" sx={{ py: 0.5 }}>
                                 <IconButton
                                     size="small"
-                                    onClick={() => onRemove(sc.id)}
+                                    onClick={() => { onRemove(sc.id); }}
                                     disabled={disabled}
                                     sx={deleteIconSx}
                                     aria-label={`remove ${sc.name}`}

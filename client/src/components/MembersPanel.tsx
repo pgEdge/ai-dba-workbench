@@ -288,7 +288,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                 <Alert
                     severity="error"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setError(null)}
+                    onClose={() => { setError(null); }}
                 >
                     {error}
                 </Alert>
@@ -298,7 +298,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                 <Alert
                     severity="success"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setSuccessMessage(null)}
+                    onClose={() => { setSuccessMessage(null); }}
                 >
                     {successMessage}
                 </Alert>
@@ -365,7 +365,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                                 `${option.name} (${option.host}:${option.port})`
                             }
                             value={selectedConnection}
-                            onChange={(_, val) => setSelectedConnection(val)}
+                            onChange={(_, val) => { setSelectedConnection(val); }}
                             renderInput={(params) => (
                                 <TextField
                                     {...params}
@@ -388,7 +388,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                             label="Role"
                             value={selectedRole}
                             onChange={(e) =>
-                                setSelectedRole(e.target.value)
+                                { setSelectedRole(e.target.value); }
                             }
                             disabled={addingServer}
                             margin="dense"
@@ -533,7 +533,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                                         <IconButton
                                             size="small"
                                             onClick={() =>
-                                                setRemoveTarget(member)
+                                                { setRemoveTarget(member); }
                                             }
                                             aria-label={`Remove ${member.name} from cluster`}
                                             sx={{
@@ -558,7 +558,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
             {/* Remove confirmation dialog */}
             <Dialog
                 open={removeTarget !== null}
-                onClose={() => !removingServer && setRemoveTarget(null)}
+                onClose={() => void (!removingServer && setRemoveTarget(null))}
             >
                 <DialogTitle>Remove server from cluster</DialogTitle>
                 <DialogContent>
@@ -571,7 +571,7 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                 </DialogContent>
                 <DialogActions>
                     <Button
-                        onClick={() => setRemoveTarget(null)}
+                        onClick={() => { setRemoveTarget(null); }}
                         disabled={removingServer}
                     >
                         Cancel

@@ -401,7 +401,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                 ? TAB_BUTTON_ACTIVE_SX
                                 : TAB_BUTTON_SX}
                             onClick={
-                                () => handleSortChange(option.value)
+                                () => { handleSortChange(option.value); }
                             }
                             role="tab"
                             tabIndex={0}
@@ -500,7 +500,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
                                         bgcolor: 'action.hover',
                                     },
                                 }}
-                                onClick={() => handleTableClick(row)}
+                                onClick={() => { handleTableClick(row); }}
                                 tabIndex={0}
                                 role="button"
                                 aria-label={
@@ -587,7 +587,7 @@ const TableLeaderboardSection: React.FC<DatabaseSectionProps> = ({
             )}
             <ChartAnalysisDialog
                 open={analysisOpen}
-                onClose={() => setAnalysisOpen(false)}
+                onClose={() => { setAnalysisOpen(false); }}
                 isDark={theme.palette.mode === 'dark'}
                 analysisContext={
                     analysisContext ?? { metricDescription: '' }

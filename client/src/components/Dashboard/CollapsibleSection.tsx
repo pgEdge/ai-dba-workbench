@@ -116,8 +116,8 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
                 <Box sx={{ flex: 1 }} />
                 {headerRight && (
                     <Box
-                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                        onKeyDown={(e: React.KeyboardEvent) => e.stopPropagation()}
+                        onClick={(e: React.MouseEvent) => { e.stopPropagation(); }}
+                        onKeyDown={(e: React.KeyboardEvent) => { e.stopPropagation(); }}
                         sx={{ display: 'flex', alignItems: 'center' }}
                     >
                         {headerRight}

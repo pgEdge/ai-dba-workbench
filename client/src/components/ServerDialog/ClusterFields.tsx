@@ -423,7 +423,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     <Alert
                         severity="error"
                         sx={{ mb: 2, borderRadius: 1 }}
-                        onClose={() => setErrorMessage(null)}
+                        onClose={() => { setErrorMessage(null); }}
                     >
                         {errorMessage}
                     </Alert>
@@ -560,7 +560,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                 <Alert
                     severity="error"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setErrorMessage(null)}
+                    onClose={() => { setErrorMessage(null); }}
                 >
                     {errorMessage}
                 </Alert>
@@ -570,7 +570,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                 <Alert
                     severity="success"
                     sx={{ mb: 2, borderRadius: 1 }}
-                    onClose={() => setSaveSuccess(false)}
+                    onClose={() => { setSaveSuccess(false); }}
                 >
                     Cluster assignment saved successfully.
                 </Alert>
@@ -652,10 +652,10 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                         label="Cluster Name"
                         value={displayNewCluster.name}
                         onChange={(e) =>
-                            handleNewClusterFieldChange(
+                            { handleNewClusterFieldChange(
                                 'name',
                                 e.target.value,
-                            )
+                            ); }
                         }
                         required
                         disabled={saving}
@@ -670,10 +670,10 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                         label="Replication Type"
                         value={displayNewCluster.replication_type}
                         onChange={(e) =>
-                            handleNewClusterFieldChange(
+                            { handleNewClusterFieldChange(
                                 'replication_type',
                                 e.target.value,
-                            )
+                            ); }
                         }
                         disabled={saving}
                         margin="dense"
@@ -697,7 +697,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
                     fullWidth
                     label="Role"
                     value={currentRole ?? ''}
-                    onChange={(e) => handleRoleChange(e.target.value)}
+                    onChange={(e) => { handleRoleChange(e.target.value); }}
                     disabled={saving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}

@@ -31,6 +31,12 @@ project adheres to
   across 294 files; the change is a mechanical refactor
   with no behavior changes, and existing lint and test
   baselines remain unchanged.
+- Clear all `@typescript-eslint/no-confusing-void-expression`
+  findings in `client/src/` across 80 files; ESLint's
+  auto-fixer resolved 279 sites and 19 remaining cases were
+  rewritten manually by expanding
+  `() => cond && voidFn()` into explicit `if` blocks. No
+  behavior changes, and all 2,604 Vitest tests pass.
 
 ### Security
 

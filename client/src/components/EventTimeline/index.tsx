@@ -102,7 +102,7 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
         <Box sx={outerSx}>
             <TimelineHeader
                 expanded={expanded}
-                onExpandToggle={() => setExpanded(!expanded)}
+                onExpandToggle={() => { setExpanded(!expanded); }}
                 eventCount={totalCount}
                 timeRange={timeRange}
                 onTimeRangeChange={setTimeRange}

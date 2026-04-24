@@ -98,7 +98,7 @@ const ServerManagementSection: React.FC<ServerManagementSectionProps> = ({
                             `${option.name} (${option.host}:${option.port})`
                         }
                         value={selectedConnection}
-                        onChange={(_, val) => onConnectionChange(val)}
+                        onChange={(_, val) => { onConnectionChange(val); }}
                         renderInput={(params) => (
                             <TextField
                                 {...params}
@@ -124,7 +124,7 @@ const ServerManagementSection: React.FC<ServerManagementSectionProps> = ({
                             disabled={addingServer}
                             label="Role"
                             value={selectedRole}
-                            onChange={(e) => onRoleChange(e.target.value)}
+                            onChange={(e) => { onRoleChange(e.target.value); }}
                             InputLabelProps={{ shrink: true }}
                         >
                             {roleOptions.map((r) => (
@@ -207,7 +207,7 @@ const ServerManagementSection: React.FC<ServerManagementSectionProps> = ({
                                         <IconButton
                                             edge="end"
                                             size="small"
-                                            onClick={() => onRemoveTarget(server)}
+                                            onClick={() => { onRemoveTarget(server); }}
                                             aria-label={`Remove ${server.name} from cluster`}
                                             sx={{
                                                 color: 'text.disabled',

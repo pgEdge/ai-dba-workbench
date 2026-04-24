@@ -443,7 +443,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                     <Alert
                         severity="error"
                         sx={{ mb: 2, borderRadius: 1 }}
-                        onClose={() => setError('')}
+                        onClose={() => { setError(''); }}
                     >
                         {error}
                     </Alert>
@@ -455,7 +455,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 </Typography>
                 <RadioGroup
                     value={scope}
-                    onChange={(e) => setScope(e.target.value)}
+                    onChange={(e) => { setScope(e.target.value); }}
                 >
                     {SCOPE_OPTIONS.map((opt) => {
                         const Icon = opt.icon;
@@ -491,7 +491,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                 <ToggleButtonGroup
                     value={mode}
                     exclusive
-                    onChange={(_, val) => val && setMode(val)}
+                    onChange={(_, val) => void (val && setMode(val))}
                     size="small"
                     sx={modeToggleSx}
                 >
@@ -515,7 +515,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                     key={preset.minutes}
                                     label={preset.label}
                                     size="small"
-                                    onClick={() => handlePresetClick(preset.minutes)}
+                                    onClick={() => { handlePresetClick(preset.minutes); }}
                                     sx={presetChipSx(selectedPreset === preset.minutes)}
                                 />
                             ))}
@@ -526,7 +526,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                 type="number"
                                 size="small"
                                 value={customHours}
-                                onChange={(e) => handleCustomChange('hours', e.target.value)}
+                                onChange={(e) => { handleCustomChange('hours', e.target.value); }}
                                 disabled={isSaving}
                                 inputProps={{ min: 0, max: 72 }}
                                 InputLabelProps={{ shrink: true }}
@@ -541,7 +541,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                 type="number"
                                 size="small"
                                 value={customMinutes}
-                                onChange={(e) => handleCustomChange('minutes', e.target.value)}
+                                onChange={(e) => { handleCustomChange('minutes', e.target.value); }}
                                 disabled={isSaving}
                                 inputProps={{ min: 0, max: 59 }}
                                 InputLabelProps={{ shrink: true }}
@@ -569,7 +569,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                             size="small"
                             fullWidth
                             value={startDateTime}
-                            onChange={(e) => setStartDateTime(e.target.value)}
+                            onChange={(e) => { setStartDateTime(e.target.value); }}
                             disabled={isSaving}
                             InputLabelProps={{ shrink: true }}
                             sx={textFieldSx}
@@ -580,7 +580,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                             size="small"
                             fullWidth
                             value={endDateTime}
-                            onChange={(e) => setEndDateTime(e.target.value)}
+                            onChange={(e) => { setEndDateTime(e.target.value); }}
                             disabled={isSaving}
                             InputLabelProps={{ shrink: true }}
                             sx={textFieldSx}
@@ -599,7 +599,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                     multiline
                     rows={2}
                     value={reason}
-                    onChange={(e) => setReason(e.target.value)}
+                    onChange={(e) => { setReason(e.target.value); }}
                     disabled={isSaving}
                     size="small"
                     InputLabelProps={{ shrink: true }}

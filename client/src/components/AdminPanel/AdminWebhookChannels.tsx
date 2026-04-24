@@ -285,8 +285,8 @@ const AdminWebhookChannels: React.FC = () => {
                 title="Webhook channels"
                 error={crud.error}
                 success={crud.success}
-                onClearError={() => crud.setError(null)}
-                onClearSuccess={() => crud.setSuccess(null)}
+                onClearError={() => { crud.setError(null); }}
+                onClearSuccess={() => { crud.setSuccess(null); }}
             />
 
             <ChannelDialogShell

@@ -463,7 +463,12 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         // snapshot so `previousAlert` stays consistent either way.
         let previousAlert = null;
         setAlerts(prev => {
-            const found = prev.find(a => a.id === alertId);
+            // Local cast narrows `never[]` (from untyped useState([]))
+            // to a shape with an `id` field so .find() returns a usable
+            // result instead of `never`, which would otherwise trip
+            // @typescript-eslint/no-confusing-void-expression.
+            const list = prev as unknown as { id: unknown }[];
+            const found = list.find(a => a.id === alertId);
             if (!found) {
                 // Nothing to optimistically update; leave state alone.
                 return prev;
@@ -619,7 +624,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             {/* Content Container */}
             <Box>
                 {/* Selection Header */}
-                <SelectionHeader selection={selection} alertCount={activeAlertCount} alertSeverities={activeAlertSeverities} onBlackoutClick={() => setBlackoutMgmtOpen(true)} />
+                <SelectionHeader selection={selection} alertCount={activeAlertCount} alertSeverities={activeAlertSeverities} onBlackoutClick={() => { setBlackoutMgmtOpen(true); }} />
 
                 {/* Divider with gradient */}
                 <Box sx={dividerSx} />
@@ -770,7 +775,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             {/* Blackout Management Dialog */}
             <BlackoutManagementDialog
                 open={blackoutMgmtOpen}
-                onClose={() => setBlackoutMgmtOpen(false)}
+                onClose={() => { setBlackoutMgmtOpen(false); }}
                 selection={selection}
             />
 
@@ -779,7 +784,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 <ServerAnalysisDialog
                     open={serverAnalysisOpen}
                     selection={serverAnalysisSelection}
-                    onClose={() => setServerAnalysisOpen(false)}
+                    onClose={() => { setServerAnalysisOpen(false); }}
                 />
             )}
 
@@ -787,13 +792,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             <Snackbar
                 open={!!errorMessage}
                 autoHideDuration={6000}
-                onClose={() => setErrorMessage(null)}
+                onClose={() => { setErrorMessage(null); }}
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             >
                 <Alert
                     severity="error"
                     variant="filled"
-                    onClose={() => setErrorMessage(null)}
+                    onClose={() => { setErrorMessage(null); }}
                     sx={{ width: '100%' }}
                 >
                     {errorMessage}

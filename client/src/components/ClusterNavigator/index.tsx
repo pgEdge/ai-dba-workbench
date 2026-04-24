@@ -847,7 +847,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         <Tooltip title="Add server or group">
                             <IconButton
                                 size="small"
-                                onClick={(e) => setAddMenuAnchor(e.currentTarget)}
+                                onClick={(e) => { setAddMenuAnchor(e.currentTarget); }}
                                 sx={getAddButtonSx(theme)}
                             >
                                 <AddIcon sx={icon18Sx} />
@@ -856,7 +856,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                         <Tooltip title={autoRefreshEnabled ? 'Auto-refresh enabled' : 'Auto-refresh disabled'}>
                             <IconButton
                                 size="small"
-                                onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                                onClick={() => { setAutoRefreshEnabled(!autoRefreshEnabled); }}
                                 sx={getAutoRefreshSx(theme, autoRefreshEnabled)}
                             >
                                 <AutorenewIcon sx={icon18Sx} />
@@ -901,7 +901,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                     size="small"
                     placeholder="Search servers..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => { setSearchQuery(e.target.value); }}
                     fullWidth
                     InputProps={{
                         startAdornment: (
@@ -968,7 +968,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
                             key={group.id}
                             group={group}
                             isExpanded={expandedGroups.has(group.id)}
-                            onToggle={() => toggleGroup(group.id)}
+                            onToggle={() => { toggleGroup(group.id); }}
                             expandedClusters={expandedClusters}
                             onToggleCluster={toggleCluster}
                             selectedServerId={selectedServerId}
@@ -1020,7 +1020,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             <AddMenu
                 anchorEl={addMenuAnchor}
                 open={Boolean(addMenuAnchor)}
-                onClose={() => setAddMenuAnchor(null)}
+                onClose={() => { setAddMenuAnchor(null); }}
                 onAddServer={handleAddServer}
                 onAddCluster={handleAddCluster}
                 onAddGroup={handleAddGroup}
@@ -1029,7 +1029,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             {/* Server Dialog */}
             <ServerDialog
                 open={serverDialogOpen}
-                onClose={() => setServerDialogOpen(false)}
+                onClose={() => { setServerDialogOpen(false); }}
                 onSave={handleSaveServer}
                 mode={serverDialogMode}
                 server={editingServer}
@@ -1069,7 +1069,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             {/* Group Dialog */}
             <GroupDialog
                 open={groupDialogOpen}
-                onClose={() => setGroupDialogOpen(false)}
+                onClose={() => { setGroupDialogOpen(false); }}
                 onSave={handleSaveGroup}
                 mode={groupDialogMode}
                 group={editingGroup}

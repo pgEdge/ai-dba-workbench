@@ -223,7 +223,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
             </AppBar>
             <Tabs
                 value={activeTab}
-                onChange={(_, v) => setActiveTab(v)}
+                onChange={(_, v) => { setActiveTab(v); }}
                 sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
             >
                 <Tab label="Details" />
@@ -265,7 +265,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                         {saveError && (
                             <Alert
                                 severity="error"
-                                onClose={() => setSaveError('')}
+                                onClose={() => { setSaveError(''); }}
                                 sx={{ borderRadius: 1 }}
                             >
                                 {saveError}
@@ -274,7 +274,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                         {saveSuccess && (
                             <Alert
                                 severity="success"
-                                onClose={() => setSaveSuccess(false)}
+                                onClose={() => { setSaveSuccess(false); }}
                                 sx={{ borderRadius: 1 }}
                             >
                                 {isCreateMode

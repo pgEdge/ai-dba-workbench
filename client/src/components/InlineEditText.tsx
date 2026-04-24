@@ -155,12 +155,12 @@ const InlineEditText: React.FC<InlineEditTextProps> = ({
                     ...editContainerBaseSx,
                     ...sx,
                 }}
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); }}
             >
                 <TextField
                     inputRef={inputRef}
                     value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
+                    onChange={(e) => { setEditValue(e.target.value); }}
                     onKeyDown={handleKeyDown}
                     onBlur={handleBlur}
                     disabled={isSaving}

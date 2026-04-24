@@ -243,7 +243,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
                         {(hasAnyAdminAccess || aiEnabled) && (
                             <Tooltip title="Settings">
                                 <IconButton
-                                    onClick={() => setAdminOpen(true)}
+                                    onClick={() => { setAdminOpen(true); }}
                                     aria-label="open administration"
                                     sx={getIconButtonSx}
                                 >

@@ -534,7 +534,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     <Alert
                         severity="error"
                         sx={{ mb: 2, borderRadius: 1 }}
-                        onClose={() => setError('')}
+                        onClose={() => { setError(''); }}
                     >
                         {error}
                     </Alert>
@@ -546,7 +546,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 </Typography>
                 <RadioGroup
                     value={scope}
-                    onChange={(e) => setScope(e.target.value)}
+                    onChange={(e) => { setScope(e.target.value); }}
                 >
                     {SCOPE_OPTIONS.map((opt) => {
                         const Icon = opt.icon;
@@ -607,7 +607,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                             key={preset.label}
                             label={preset.label}
                             size="small"
-                            onClick={() => handlePresetClick(preset.label)}
+                            onClick={() => { handlePresetClick(preset.label); }}
                             sx={presetChipSx(!isCustom && selectedPreset === preset.label)}
                         />
                     ))}
@@ -627,7 +627,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                             type="number"
                             size="small"
                             value={hour}
-                            onChange={(e) => setHour(e.target.value)}
+                            onChange={(e) => { setHour(e.target.value); }}
                             disabled={isSaving}
                             inputProps={{ min: 0, max: 23 }}
                             InputLabelProps={{ shrink: true }}
@@ -642,7 +642,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                             type="number"
                             size="small"
                             value={minute}
-                            onChange={(e) => setMinute(e.target.value)}
+                            onChange={(e) => { setMinute(e.target.value); }}
                             disabled={isSaving}
                             inputProps={{ min: 0, max: 59 }}
                             InputLabelProps={{ shrink: true }}
@@ -660,7 +660,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     fullWidth
                     label="Cron Expression"
                     value={isCustom ? customCron : cronExpression}
-                    onChange={(e) => isCustom && setCustomCron(e.target.value)}
+                    onChange={(e) => void (isCustom && setCustomCron(e.target.value))}
                     InputProps={{ readOnly: !isCustom }}
                     disabled={isSaving}
                     size="small"
@@ -683,7 +683,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                             key={preset.minutes}
                             label={preset.label}
                             size="small"
-                            onClick={() => handleDurationPresetClick(preset.minutes)}
+                            onClick={() => { handleDurationPresetClick(preset.minutes); }}
                             sx={presetChipSx(!customDuration && durationMinutes === preset.minutes)}
                         />
                     ))}
@@ -693,7 +693,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     type="number"
                     size="small"
                     value={customDuration}
-                    onChange={(e) => setCustomDuration(e.target.value)}
+                    onChange={(e) => { setCustomDuration(e.target.value); }}
                     disabled={isSaving}
                     placeholder="e.g., 90"
                     InputLabelProps={{ shrink: true }}
@@ -713,7 +713,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     fullWidth
                     label="Timezone"
                     value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
+                    onChange={(e) => { setTimezone(e.target.value); }}
                     disabled={isSaving}
                     size="small"
                     placeholder="e.g., America/New_York, UTC, Europe/London"
@@ -732,7 +732,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     multiline
                     rows={2}
                     value={reason}
-                    onChange={(e) => setReason(e.target.value)}
+                    onChange={(e) => { setReason(e.target.value); }}
                     disabled={isSaving}
                     size="small"
                     InputLabelProps={{ shrink: true }}
@@ -743,7 +743,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
                     <Switch
                         checked={enabled}
-                        onChange={(e) => setEnabled(e.target.checked)}
+                        onChange={(e) => { setEnabled(e.target.checked); }}
                         disabled={isSaving}
                         size="small"
                     />

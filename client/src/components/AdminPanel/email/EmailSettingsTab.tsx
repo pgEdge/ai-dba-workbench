@@ -44,7 +44,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 fullWidth
                 label="Name"
                 value={form.name}
-                onChange={(e) => onChange('name', e.target.value)}
+                onChange={(e) => { onChange('name', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 required
@@ -54,7 +54,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 fullWidth
                 label="Description"
                 value={form.description}
-                onChange={(e) => onChange('description', e.target.value)}
+                onChange={(e) => { onChange('description', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 multiline
@@ -65,7 +65,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 fullWidth
                 label="SMTP Host"
                 value={form.smtp_host}
-                onChange={(e) => onChange('smtp_host', e.target.value)}
+                onChange={(e) => { onChange('smtp_host', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 required
@@ -76,7 +76,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 label="SMTP Port"
                 type="number"
                 value={form.smtp_port}
-                onChange={(e) => onChange('smtp_port', e.target.value)}
+                onChange={(e) => { onChange('smtp_port', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 inputProps={{ min: 1, max: 65535 }}
@@ -86,7 +86,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 fullWidth
                 label="SMTP Username"
                 value={form.smtp_username}
-                onChange={(e) => onChange('smtp_username', e.target.value)}
+                onChange={(e) => { onChange('smtp_username', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
@@ -96,7 +96,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 label="SMTP Password"
                 type="password"
                 value={form.smtp_password}
-                onChange={(e) => onChange('smtp_password', e.target.value)}
+                onChange={(e) => { onChange('smtp_password', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 placeholder={isEditing ? '(unchanged)' : ''}
@@ -106,7 +106,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 fullWidth
                 label="From Address"
                 value={form.from_address}
-                onChange={(e) => onChange('from_address', e.target.value)}
+                onChange={(e) => { onChange('from_address', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 required
@@ -116,7 +116,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 fullWidth
                 label="From Name"
                 value={form.from_name}
-                onChange={(e) => onChange('from_name', e.target.value)}
+                onChange={(e) => { onChange('from_name', e.target.value); }}
                 disabled={saving}
                 margin="dense"
                 InputLabelProps={{ shrink: true }}
@@ -127,7 +127,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                     control={
                         <Switch
                             checked={form.use_tls}
-                            onChange={(e) => onChange('use_tls', e.target.checked)}
+                            onChange={(e) => { onChange('use_tls', e.target.checked); }}
                             disabled={saving}
                             inputProps={{ 'aria-label': 'Toggle use TLS' }}
                         />
@@ -139,7 +139,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                     control={
                         <Switch
                             checked={form.enabled}
-                            onChange={(e) => onChange('enabled', e.target.checked)}
+                            onChange={(e) => { onChange('enabled', e.target.checked); }}
                             disabled={saving}
                             inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                         />
@@ -151,7 +151,7 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                     control={
                         <Switch
                             checked={form.is_estate_default}
-                            onChange={(e) => onChange('is_estate_default', e.target.checked)}
+                            onChange={(e) => { onChange('is_estate_default', e.target.checked); }}
                             disabled={saving}
                             inputProps={{ 'aria-label': 'Toggle estate default' }}
                         />

@@ -136,7 +136,7 @@ const ServerInfoCard: React.FC<{ selection: ServerSelection }> = ({ selection })
                         <Tooltip title="Server details" placement="top">
                             <IconButton
                                 size="small"
-                                onClick={() => setInfoDialogOpen(true)}
+                                onClick={() => { setInfoDialogOpen(true); }}
                                 sx={{
                                     p: 0.5,
                                     color: theme.palette.grey[500],
@@ -178,7 +178,7 @@ const ServerInfoCard: React.FC<{ selection: ServerSelection }> = ({ selection })
             {/* Server Info Dialog */}
             <ServerInfoDialog
                 open={infoDialogOpen}
-                onClose={() => setInfoDialogOpen(false)}
+                onClose={() => { setInfoDialogOpen(false); }}
                 connectionId={selection.id}
                 serverName={selection.name || selection.host || 'Server'}
             />

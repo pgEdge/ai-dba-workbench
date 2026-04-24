@@ -77,7 +77,7 @@ export function ChannelDialogShell({
                 )}
                 <Tabs
                     value={activeTab}
-                    onChange={(_e, newValue: number) => onTabChange(newValue)}
+                    onChange={(_e, newValue: number) => { onTabChange(newValue); }}
                     sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
                 >
                     {tabs.map((label) => (

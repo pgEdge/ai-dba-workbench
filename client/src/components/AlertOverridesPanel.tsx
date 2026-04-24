@@ -251,12 +251,12 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
     return (
         <Box>
             {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setError(null)}>
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
                     {error}
                 </Alert>
             )}
             {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setSuccess(null)}>
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
                     {success}
                 </Alert>
             )}
@@ -338,7 +338,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                                                         <Tooltip title="Edit override">
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={(e) => handleEditOverride(item, e)}
+                                                                onClick={(e) => { handleEditOverride(item, e); }}
                                                                 aria-label="edit override"
                                                             >
                                                                 <EditIcon fontSize="small" />
@@ -377,7 +377,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
             {/* Edit Override Dialog */}
             <Dialog
                 open={editOpen}
-                onClose={() => !saving && setEditOpen(false)}
+                onClose={() => void (!saving && setEditOpen(false))}
                 maxWidth="xs"
                 fullWidth
             >
@@ -389,7 +389,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         <Typography sx={{ flex: 1 }}>Enabled</Typography>
                         <Switch
                             checked={editEnabled}
-                            onChange={(e) => setEditEnabled(e.target.checked)}
+                            onChange={(e) => { setEditEnabled(e.target.checked); }}
                             disabled={saving}
                         />
                     </Box>
@@ -398,7 +398,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         label="Operator"
                         value={editOperator}
-                        onChange={(e) => setEditOperator(e.target.value)}
+                        onChange={(e) => { setEditOperator(e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -414,7 +414,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         margin="dense"
                         value={editThreshold}
-                        onChange={(e) => setEditThreshold(e.target.value)}
+                        onChange={(e) => { setEditThreshold(e.target.value); }}
                         disabled={saving}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
@@ -424,7 +424,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         label="Severity"
                         value={editSeverity}
-                        onChange={(e) => setEditSeverity(e.target.value)}
+                        onChange={(e) => { setEditSeverity(e.target.value); }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -436,7 +436,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setEditOpen(false)} disabled={saving}>
+                    <Button onClick={() => { setEditOpen(false); }} disabled={saving}>
                         Cancel
                     </Button>
                     <Button

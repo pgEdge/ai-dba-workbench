@@ -266,7 +266,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                 fullWidth
                 label="Description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => { setDescription(e.target.value); }}
                 disabled={isSaving}
                 margin="dense"
                 multiline
@@ -280,7 +280,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                         control={
                             <Checkbox
                                 checked={isShared}
-                                onChange={(e) => setIsShared(e.target.checked)}
+                                onChange={(e) => { setIsShared(e.target.checked); }}
                                 disabled={isSaving}
                                 sx={checkboxSx}
                             />
@@ -339,7 +339,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                 </AppBar>
                 <Tabs
                     value={activeTab}
-                    onChange={(_, v) => setActiveTab(v)}
+                    onChange={(_, v) => { setActiveTab(v); }}
                     sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
                 >
                     <Tab label="Details" />

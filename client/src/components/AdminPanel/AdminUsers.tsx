@@ -467,14 +467,14 @@ const AdminUsers: React.FC = () => {
                                     <TableCell align="right">
                                         <IconButton
                                             size="small"
-                                            onClick={(e) => handleOpenEdit(e, rowUser)}
+                                            onClick={(e) => { handleOpenEdit(e, rowUser); }}
                                             aria-label="edit user"
                                         >
                                             <EditIcon fontSize="small" />
                                         </IconButton>
                                         <IconButton
                                             size="small"
-                                            onClick={(e) => handleOpenDelete(e, rowUser)}
+                                            onClick={(e) => { handleOpenDelete(e, rowUser); }}
                                             aria-label="delete user"
                                             sx={deleteIconSx}
                                         >
@@ -531,7 +531,7 @@ const AdminUsers: React.FC = () => {
             </TableContainer>
 
             {/* Create User Dialog */}
-            <Dialog open={createOpen} onClose={() => !createLoading && setCreateOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={createOpen} onClose={() => void (!createLoading && setCreateOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Create user</DialogTitle>
                 <DialogContent>
                     {createError && (
@@ -542,7 +542,7 @@ const AdminUsers: React.FC = () => {
                         fullWidth
                         label="Username"
                         value={createUsername}
-                        onChange={(e) => setCreateUsername(e.target.value)}
+                        onChange={(e) => { setCreateUsername(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
                         required
@@ -555,7 +555,7 @@ const AdminUsers: React.FC = () => {
                             label="Password"
                             type="password"
                             value={createPassword}
-                            onChange={(e) => setCreatePassword(e.target.value)}
+                            onChange={(e) => { setCreatePassword(e.target.value); }}
                             disabled={createLoading}
                             margin="dense"
                             required
@@ -567,7 +567,7 @@ const AdminUsers: React.FC = () => {
                         fullWidth
                         label="Display Name"
                         value={createDisplayName}
-                        onChange={(e) => setCreateDisplayName(e.target.value)}
+                        onChange={(e) => { setCreateDisplayName(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -577,7 +577,7 @@ const AdminUsers: React.FC = () => {
                         label="Email"
                         type="email"
                         value={createEmail}
-                        onChange={(e) => setCreateEmail(e.target.value)}
+                        onChange={(e) => { setCreateEmail(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -586,7 +586,7 @@ const AdminUsers: React.FC = () => {
                         fullWidth
                         label="Notes"
                         value={createAnnotation}
-                        onChange={(e) => setCreateAnnotation(e.target.value)}
+                        onChange={(e) => { setCreateAnnotation(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
                         multiline
@@ -598,7 +598,7 @@ const AdminUsers: React.FC = () => {
                             control={
                                 <Switch
                                     checked={createServiceAccount}
-                                    onChange={(e) => setCreateServiceAccount(e.target.checked)}
+                                    onChange={(e) => { setCreateServiceAccount(e.target.checked); }}
                                     disabled={createLoading}
                                 />
                             }
@@ -609,7 +609,7 @@ const AdminUsers: React.FC = () => {
                             control={
                                 <Switch
                                     checked={createEnabled}
-                                    onChange={(e) => setCreateEnabled(e.target.checked)}
+                                    onChange={(e) => { setCreateEnabled(e.target.checked); }}
                                     disabled={createLoading}
                                 />
                             }
@@ -620,7 +620,7 @@ const AdminUsers: React.FC = () => {
                             control={
                                 <Switch
                                     checked={createSuperuser}
-                                    onChange={(e) => setCreateSuperuser(e.target.checked)}
+                                    onChange={(e) => { setCreateSuperuser(e.target.checked); }}
                                     disabled={createLoading}
                                 />
                             }
@@ -630,7 +630,7 @@ const AdminUsers: React.FC = () => {
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setCreateOpen(false)} disabled={createLoading}>
+                    <Button onClick={() => { setCreateOpen(false); }} disabled={createLoading}>
                         Cancel
                     </Button>
                     <Button
@@ -645,7 +645,7 @@ const AdminUsers: React.FC = () => {
             </Dialog>
 
             {/* Edit User Dialog */}
-            <Dialog open={editOpen} onClose={() => !editLoading && setEditOpen(false)} maxWidth="xs" fullWidth>
+            <Dialog open={editOpen} onClose={() => void (!editLoading && setEditOpen(false))} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Edit user: {editUser?.username}</DialogTitle>
                 <DialogContent>
                     {editError && (
@@ -657,7 +657,7 @@ const AdminUsers: React.FC = () => {
                             label="Password"
                             type="password"
                             value={editPassword}
-                            onChange={(e) => setEditPassword(e.target.value)}
+                            onChange={(e) => { setEditPassword(e.target.value); }}
                             disabled={editLoading}
                             margin="dense"
                             placeholder="Leave blank to keep current"
@@ -668,7 +668,7 @@ const AdminUsers: React.FC = () => {
                         fullWidth
                         label="Display Name"
                         value={editDisplayName}
-                        onChange={(e) => setEditDisplayName(e.target.value)}
+                        onChange={(e) => { setEditDisplayName(e.target.value); }}
                         disabled={editLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -678,7 +678,7 @@ const AdminUsers: React.FC = () => {
                         label="Email"
                         type="email"
                         value={editEmail}
-                        onChange={(e) => setEditEmail(e.target.value)}
+                        onChange={(e) => { setEditEmail(e.target.value); }}
                         disabled={editLoading}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
@@ -687,7 +687,7 @@ const AdminUsers: React.FC = () => {
                         fullWidth
                         label="Notes"
                         value={editAnnotation}
-                        onChange={(e) => setEditAnnotation(e.target.value)}
+                        onChange={(e) => { setEditAnnotation(e.target.value); }}
                         disabled={editLoading}
                         margin="dense"
                         multiline
@@ -699,7 +699,7 @@ const AdminUsers: React.FC = () => {
                             control={
                                 <Switch
                                     checked={editEnabled}
-                                    onChange={(e) => setEditEnabled(e.target.checked)}
+                                    onChange={(e) => { setEditEnabled(e.target.checked); }}
                                     disabled={editLoading}
                                 />
                             }
@@ -710,7 +710,7 @@ const AdminUsers: React.FC = () => {
                             control={
                                 <Switch
                                     checked={editSuperuser}
-                                    onChange={(e) => setEditSuperuser(e.target.checked)}
+                                    onChange={(e) => { setEditSuperuser(e.target.checked); }}
                                     disabled={editLoading}
                                 />
                             }
@@ -720,7 +720,7 @@ const AdminUsers: React.FC = () => {
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setEditOpen(false)} disabled={editLoading}>
+                    <Button onClick={() => { setEditOpen(false); }} disabled={editLoading}>
                         Cancel
                     </Button>
                     <Button

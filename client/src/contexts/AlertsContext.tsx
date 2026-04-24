@@ -120,7 +120,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
         if (!user) {return;}
 
         const intervalId = setInterval(fetchAlertCounts, refreshInterval);
-        return () => clearInterval(intervalId);
+        return () => { clearInterval(intervalId); };
     }, [user, fetchAlertCounts]);
 
     const value: AlertsContextValue = useMemo(() => ({

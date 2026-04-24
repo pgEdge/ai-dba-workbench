@@ -56,7 +56,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
     return (
         <Accordion
             expanded={expanded}
-            onChange={(_, isExpanded) => onExpandedChange(isExpanded)}
+            onChange={(_, isExpanded) => { onExpandedChange(isExpanded); }}
             elevation={0}
             sx={sslAccordionSx}
         >
@@ -75,7 +75,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     fullWidth
                     label="SSL Mode"
                     value={formData.ssl_mode}
-                    onChange={(e) => onFieldChange('ssl_mode', e.target.value)}
+                    onChange={(e) => { onFieldChange('ssl_mode', e.target.value); }}
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
@@ -93,7 +93,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     fullWidth
                     label="SSL Certificate Path"
                     value={formData.ssl_cert_path}
-                    onChange={(e) => onFieldChange('ssl_cert_path', e.target.value)}
+                    onChange={(e) => { onFieldChange('ssl_cert_path', e.target.value); }}
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
@@ -105,7 +105,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     fullWidth
                     label="SSL Key Path"
                     value={formData.ssl_key_path}
-                    onChange={(e) => onFieldChange('ssl_key_path', e.target.value)}
+                    onChange={(e) => { onFieldChange('ssl_key_path', e.target.value); }}
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}
@@ -117,7 +117,7 @@ const SSLSettings: React.FC<SSLSettingsProps> = ({
                     fullWidth
                     label="SSL Root Certificate Path"
                     value={formData.ssl_root_cert_path}
-                    onChange={(e) => onFieldChange('ssl_root_cert_path', e.target.value)}
+                    onChange={(e) => { onFieldChange('ssl_root_cert_path', e.target.value); }}
                     disabled={isSaving}
                     margin="dense"
                     InputLabelProps={{ shrink: true }}

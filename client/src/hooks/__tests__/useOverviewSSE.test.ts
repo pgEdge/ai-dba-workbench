@@ -54,7 +54,7 @@ class MockEventSource {
     /** Simulate the server sending a named event. */
     simulateEvent(type: string, data: string): void {
         const event = new MessageEvent(type, { data });
-        (this.listeners[type] ?? []).forEach((l) => l(event));
+        (this.listeners[type] ?? []).forEach((l) => { l(event); });
     }
 
     /** Simulate the connection opening. */

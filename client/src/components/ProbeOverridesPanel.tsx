@@ -216,7 +216,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                 </Alert>
             )}
             {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => setSuccess(null)}>
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
                     {success}
                 </Alert>
             )}
@@ -272,7 +272,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                                             <Tooltip title="Edit override">
                                                 <IconButton
                                                     size="small"
-                                                    onClick={(e) => handleEditOverride(item, e)}
+                                                    onClick={(e) => { handleEditOverride(item, e); }}
                                                     aria-label="edit override"
                                                 >
                                                     <EditIcon fontSize="small" />
@@ -309,7 +309,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
             {/* Edit Override Dialog */}
             <Dialog
                 open={editOpen}
-                onClose={() => !saving && setEditOpen(false)}
+                onClose={() => void (!saving && setEditOpen(false))}
                 maxWidth="xs"
                 fullWidth
             >
@@ -321,7 +321,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         <Typography sx={{ flex: 1 }}>Enabled</Typography>
                         <Switch
                             checked={editEnabled}
-                            onChange={(e) => setEditEnabled(e.target.checked)}
+                            onChange={(e) => { setEditEnabled(e.target.checked); }}
                             disabled={saving}
                         />
                     </Box>
@@ -351,7 +351,7 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => setEditOpen(false)} disabled={saving}>
+                    <Button onClick={() => { setEditOpen(false); }} disabled={saving}>
                         Cancel
                     </Button>
                     <Button

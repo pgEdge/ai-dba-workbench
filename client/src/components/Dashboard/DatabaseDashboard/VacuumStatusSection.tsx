@@ -357,7 +357,7 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
                                 isCached ? 'warning' : 'secondary'
                             }
                             onClick={
-                                () => setAnalysisOpen(true)
+                                () => { setAnalysisOpen(true); }
                             }
                         >
                             <PsychologyIcon
@@ -470,7 +470,7 @@ const VacuumStatusSection: React.FC<DatabaseSectionProps> = ({
             )}
             <ChartAnalysisDialog
                 open={analysisOpen}
-                onClose={() => setAnalysisOpen(false)}
+                onClose={() => { setAnalysisOpen(false); }}
                 isDark={theme.palette.mode === 'dark'}
                 analysisContext={
                     analysisContext ?? { metricDescription: '' }

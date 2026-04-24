@@ -148,7 +148,7 @@ export function useChat(): UseChatReturn {
                 // initial state)
             }
         };
-        fetchTools();
+        void fetchTools();
     }, []);
 
     // ---------------------------------------------------------------

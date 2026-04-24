@@ -32,7 +32,7 @@ export interface LLMResponse {
  * Response from executing a single MCP tool call.
  */
 export interface ToolCallResponse {
-    content?: Array<{ text?: string }>;
+    content?: { text?: string }[];
     isError?: boolean;
 }
 

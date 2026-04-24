@@ -131,7 +131,7 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
         isMountedRef.current = true;
 
         if (user) {
-            fetchIndexData();
+            void fetchIndexData();
         }
 
         return () => {

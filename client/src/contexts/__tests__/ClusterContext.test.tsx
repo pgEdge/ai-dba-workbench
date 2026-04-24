@@ -160,7 +160,7 @@ describe('ClusterContext', () => {
 
             // Trigger refresh - should NOT show loading
             act(() => {
-                result.current.fetchClusterData();
+                void result.current.fetchClusterData();
             });
 
             // Loading should still be false (not initial load)

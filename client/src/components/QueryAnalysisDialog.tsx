@@ -98,7 +98,7 @@ const QueryAnalysisDialog: React.FC<QueryAnalysisDialogProps> = ({
                     connectionId,
                     databaseName,
                 };
-                analyze(input);
+                void analyze(input);
             }
         }
         if (!open) {

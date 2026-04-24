@@ -109,7 +109,7 @@ const HealthOverviewSection: React.FC<HealthOverviewSectionProps> = ({ selection
 
     useEffect(() => {
         isMountedRef.current = true;
-        fetchAlertCounts();
+        void fetchAlertCounts();
 
         return () => {
             isMountedRef.current = false;

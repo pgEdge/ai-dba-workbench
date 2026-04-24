@@ -95,7 +95,7 @@ describe('AlertItem last updated display', () => {
 });
 
 describe('GroupedAlertItem last updated display', () => {
-    const makeGroupedAlerts = (overrides: Array<Record<string, unknown>>) =>
+    const makeGroupedAlerts = (overrides: Record<string, unknown>[]) =>
         overrides.map((o, idx) => ({
             ...baseAlert,
             id: idx + 1,

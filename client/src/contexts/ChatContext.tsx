@@ -223,7 +223,7 @@ export const ChatProvider = ({ children }: ChatProviderProps): React.ReactElemen
     useEffect(() => {
         isMountedRef.current = true;
         if (user) {
-            refreshConversations();
+            void refreshConversations();
         }
         return () => {
             isMountedRef.current = false;

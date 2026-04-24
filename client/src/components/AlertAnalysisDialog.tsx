@@ -128,7 +128,7 @@ const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({
     // Trigger analysis when dialog opens with an alert
     useEffect(() => {
         if (open && alert) {
-            analyze(alert);
+            void analyze(alert);
         }
     }, [open, alert, analyze]);
 

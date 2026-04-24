@@ -55,7 +55,7 @@ export const ConnectionStatusProvider = ({
         resetConnectionHealth();
         setDisconnected(false);
         setReason('');
-        forceLogout();
+        void forceLogout();
     }, [forceLogout]);
 
     const value = useMemo(

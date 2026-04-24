@@ -72,7 +72,7 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({
     // Trigger analysis when dialog opens with a selection
     useEffect(() => {
         if (open && selection) {
-            analyze(selection);
+            void analyze(selection);
         }
     }, [open, selection, analyze]);
 

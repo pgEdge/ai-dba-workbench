@@ -1,0 +1,4 @@
+exclude_paths:
+  - '.claude/**'
+  - 'CLAUDE.md'
+  - 'examples/**'

@@ -77,7 +77,7 @@ const ChartAnalysisDialog: React.FC<ChartAnalysisDialogProps> = ({
                     timeRange: analysisContext.timeRange,
                     data: chartData,
                 };
-                analyze(input);
+                void analyze(input);
             }
         }
         if (!open) {

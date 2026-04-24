@@ -65,7 +65,7 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
     const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
 
     useEffect(() => {
-        checkAuth();
+        void checkAuth();
     }, []);
 
     const checkAuth = async (): Promise<void> => {

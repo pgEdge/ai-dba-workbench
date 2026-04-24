@@ -123,7 +123,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
         if (usePerDatabaseView && databaseData && databaseData.length > 0) {
             // Per-database series for single-server view
             let categories: string[] = [];
-            const series: Array<{ name: string; data: number[] }> = [];
+            const series: { name: string; data: number[] }[] = [];
 
             databaseData.forEach(db => {
                 const ts = db.cache_hit_ratio?.time_series;
@@ -160,7 +160,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
 
         // For multi-server, create one series per connection
         let categories: string[] = [];
-        const series: Array<{ name: string; data: number[] }> = [];
+        const series: { name: string; data: number[] }[] = [];
 
         connections.forEach(conn => {
             const ts = conn.cache_hit_ratio?.time_series;

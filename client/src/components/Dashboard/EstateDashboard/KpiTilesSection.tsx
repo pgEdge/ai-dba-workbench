@@ -136,7 +136,7 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         isMountedRef.current = true;
 
         if (user && serverIds.length > 0) {
-            fetchAggregateData();
+            void fetchAggregateData();
         }
 
         return () => {

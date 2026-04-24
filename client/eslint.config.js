@@ -47,6 +47,16 @@ export default tseslint.config(
             '@typescript-eslint/explicit-function-return-type': 'off',
             '@typescript-eslint/explicit-module-boundary-types': 'off',
             '@typescript-eslint/no-non-null-assertion': 'warn',
+            // Keep || (logical OR) for booleans and strings so falsy
+            // values like '' and false continue to trigger the
+            // fallback. We cannot enable this rule locally because
+            // it requires typed linting (parserOptions.project),
+            // but we record the option here so Codacy / any future
+            // typed-lint configuration does not propose unsafe
+            // `||` -> `??` swaps on boolean or string primitives.
+            '@typescript-eslint/prefer-nullish-coalescing': ['off', {
+                ignorePrimitives: { boolean: true, string: true },
+            }],
             // General rules
             'no-console': 'error',
             'prefer-const': 'error',

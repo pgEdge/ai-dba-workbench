@@ -170,7 +170,7 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
         isMountedRef.current = true;
 
         if (user) {
-            fetchTableData();
+            void fetchTableData();
         }
 
         return () => {

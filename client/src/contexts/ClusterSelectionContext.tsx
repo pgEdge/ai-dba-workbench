@@ -144,7 +144,7 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
     // Fetch current connection after cluster data is loaded
     useEffect(() => {
         if (clusterData.length > 0) {
-            fetchCurrentConnection();
+            void fetchCurrentConnection();
         }
     }, [clusterData, fetchCurrentConnection]);
 

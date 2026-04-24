@@ -27,7 +27,7 @@ export interface DatabaseSummary {
     size_pretty: string;
     cache_hit_ratio: {
         current: number;
-        time_series: Array<{ time: string; value: number }>;
+        time_series: { time: string; value: number }[];
     };
     transaction_rate: number;
     dead_tuple_ratio: number;
@@ -57,7 +57,7 @@ export interface TopQueryRow {
  * MetricSeries array returned by useMetrics.
  */
 export const extractSparklineData = (
-    data: Array<{ name: string; metric: string; data: MetricDataPoint[] }> | null,
+    data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): MetricDataPoint[] => {
     if (!data) { return []; }
@@ -71,7 +71,7 @@ export const extractSparklineData = (
  * the underlying extension is not installed.
  */
 export const hasNonZeroData = (
-    data: Array<{ name: string; metric: string; data: MetricDataPoint[] }> | null,
+    data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): boolean => {
     const points = extractSparklineData(data, metricName);
@@ -82,7 +82,7 @@ export const hasNonZeroData = (
  * Extract the latest value from a metric series.
  */
 export const extractLatestValue = (
-    data: Array<{ name: string; metric: string; data: MetricDataPoint[] }> | null,
+    data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): number | null => {
     const points = extractSparklineData(data, metricName);

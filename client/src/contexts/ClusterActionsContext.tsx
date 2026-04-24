@@ -181,7 +181,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
 
         // Clear selection if deleted server was selected
         if (selectedServer?.id === serverId) {
-            clearSelection();
+            void clearSelection();
         }
 
         await fetchClusterData();

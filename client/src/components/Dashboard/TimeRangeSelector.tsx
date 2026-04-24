@@ -18,7 +18,7 @@ import type { TimeRange } from './types';
 import { TIME_RANGE_CONTAINER_SX } from './styles';
 
 /** Available time range options with display labels */
-const TIME_RANGE_OPTIONS: Array<{ value: TimeRange; label: string }> = [
+const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
     { value: '1h', label: '1h' },
     { value: '6h', label: '6h' },
     { value: '24h', label: '24h' },

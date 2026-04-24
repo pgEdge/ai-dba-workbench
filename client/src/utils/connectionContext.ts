@@ -48,7 +48,7 @@ export function formatConnectionContext(ctx: Record<string, unknown>): string {
             lines.push(`Total Memory: ${totalGB} GB`);
         }
 
-        const disks = sys.disks as Array<Record<string, unknown>> | undefined;
+        const disks = sys.disks as Record<string, unknown>[] | undefined;
         if (disks && disks.length > 0) {
             for (const disk of disks) {
                 const totalGB = ((disk.total_bytes as number) / (1024 * 1024 * 1024)).toFixed(1);

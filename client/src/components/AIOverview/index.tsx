@@ -224,7 +224,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         const fallbackTimeout = setTimeout(() => {
             if (!sseConnected) {
                 fallbackInterval = setInterval(() => {
-                    fetchOverview(false);
+                    void fetchOverview(false);
                 }, 10_000);
             }
         }, 5000);

@@ -62,11 +62,11 @@ const EmptyState = () => (
 interface EffectivePermissionsPanelProps {
     connectionPrivileges?:
         | Record<string, string[]>
-        | Array<{ connection_id: string | number; access_level: string }>;
+        | { connection_id: string | number; access_level: string }[];
     adminPermissions?: string[];
-    mcpPrivileges?: Array<string | { privilege?: string; name?: string }>;
+    mcpPrivileges?: (string | { privilege?: string; name?: string })[];
     isSuperuser?: boolean;
-    connections?: Array<{ id: number; name: string }>;
+    connections?: { id: number; name: string }[];
     isDark?: boolean;
     groups?: string[];
 }

@@ -203,7 +203,7 @@ describe('ChannelTable', () => {
     });
 
     it('renders extra columns when provided', () => {
-        const extraColumns: Array<ChannelColumnDef<TestChannel>> = [
+        const extraColumns: ChannelColumnDef<TestChannel>[] = [
             {
                 label: 'Recipients',
                 render: (channel) => (
@@ -345,7 +345,7 @@ describe('ChannelTable', () => {
     });
 
     it('renders multiple extra columns in correct order', () => {
-        const extraColumns: Array<ChannelColumnDef<TestChannel>> = [
+        const extraColumns: ChannelColumnDef<TestChannel>[] = [
             { label: 'Column A', render: () => 'Value A' },
             { label: 'Column B', render: () => 'Value B' },
         ];

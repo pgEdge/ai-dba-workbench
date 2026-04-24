@@ -47,7 +47,7 @@ export const AICapabilitiesProvider = ({
             }
         };
 
-        fetchCapabilities();
+        void fetchCapabilities();
     }, []);
 
     const value = useMemo(

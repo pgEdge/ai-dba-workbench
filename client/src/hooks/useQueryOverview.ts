@@ -191,7 +191,7 @@ export function useQueryOverview(
 
         if (!triggeredRef.current) {
             triggeredRef.current = true;
-            generateSummary(input);
+            void generateSummary(input);
         }
     }, [input, generateSummary]);
 

@@ -275,7 +275,7 @@ export function useQueryPlan(
                     });
                 }
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
                 setError((err as Error).message);
             })
             .finally(() => {

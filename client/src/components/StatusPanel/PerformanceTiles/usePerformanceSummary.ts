@@ -114,7 +114,7 @@ export const usePerformanceSummary = (
         isMountedRef.current = true;
 
         if (user && selection) {
-            fetchData();
+            void fetchData();
         }
 
         return () => {

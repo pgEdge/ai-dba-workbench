@@ -82,7 +82,7 @@ function createTextResponse(text: string): LLMResponse {
  * Create an LLM response with tool use requests.
  */
 function createToolUseResponse(
-    tools: Array<{ id: string; name: string; input: Record<string, unknown> }>,
+    tools: { id: string; name: string; input: Record<string, unknown> }[],
     text?: string,
 ): LLMResponse {
     const content = tools.map(t => ({
@@ -801,7 +801,7 @@ describe('chatAgenticLoop', () => {
                     ],
                     new Map([['list_connections', createToolCallResponse('Result')]]),
                 );
-                const activityHistory: Array<Array<{ status: string }>> = [];
+                const activityHistory: Array<{ status: string }>[] = [];
                 const onToolActivity = vi.fn().mockImplementation(activities => {
                     // Capture a copy of each activity state
                     activityHistory.push(activities.map((a: { status: string }) => ({ ...a })));

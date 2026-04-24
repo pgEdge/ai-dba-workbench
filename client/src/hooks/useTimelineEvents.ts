@@ -202,7 +202,7 @@ export const useTimelineEvents = ({
         isMountedRef.current = true;
 
         if (enabled && user) {
-            fetchEvents();
+            void fetchEvents();
         }
 
         return () => {

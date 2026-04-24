@@ -117,7 +117,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
     }, [user, params]);
 
     const refetch = useCallback((): void => {
-        fetchData();
+        void fetchData();
     }, [fetchData]);
 
     // Reset initial load state when params change
@@ -130,7 +130,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         isMountedRef.current = true;
 
         if (user && params) {
-            fetchData();
+            void fetchData();
         }
 
         return () => {
@@ -196,7 +196,7 @@ export const useBaselines = (
         isMountedRef.current = true;
 
         if (user && probeName && connectionId !== null) {
-            fetchBaselines();
+            void fetchBaselines();
         }
 
         return () => {

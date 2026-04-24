@@ -134,7 +134,7 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
         isMountedRef.current = true;
 
         if (user && serverIds.length > 0) {
-            fetchMetrics();
+            void fetchMetrics();
         }
 
         return () => {

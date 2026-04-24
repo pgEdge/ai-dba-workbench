@@ -49,7 +49,7 @@ import type { BaseChannel, ChannelColumnDef } from './channelTypes';
 export interface ChannelTableProps<T extends BaseChannel> {
     channels: T[];
     loading: boolean;
-    extraColumns?: Array<ChannelColumnDef<T>>;
+    extraColumns?: ChannelColumnDef<T>[];
     testingChannelId: number | null;
     onEdit: (e: React.MouseEvent, channel: T) => void;
     onDelete: (e: React.MouseEvent, channel: T) => void;

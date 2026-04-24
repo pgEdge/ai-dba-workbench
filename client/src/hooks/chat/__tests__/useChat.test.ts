@@ -93,7 +93,7 @@ describe('useChat', () => {
         mockLoadInputHistory.mockReturnValue([]);
         mockSaveInputHistory.mockImplementation(() => {});
         mockToAPIMessages.mockImplementation(
-            (msgs: Array<{ role: string; content: string }>) =>
+            (msgs: { role: string; content: string }[]) =>
                 msgs.map(m => ({ role: m.role, content: m.content })),
         );
 

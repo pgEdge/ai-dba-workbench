@@ -50,7 +50,7 @@ export interface EmailRecipientsTabProps {
     onToggleRecipientEnabled: (recipient: EmailRecipient) => void;
     onDeleteRecipient: (recipient: EmailRecipient) => void;
     onAddRecipient: (email: string, name: string) => void;
-    pendingRecipients: Array<{ email: string; name: string }>;
+    pendingRecipients: { email: string; name: string }[];
     onRemovePending: (index: number) => void;
 }
 

@@ -27,6 +27,7 @@ services:
             POSTGRES_USER: postgres
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
             POSTGRES_DB: ai_workbench
+        command: ["postgres", "-c", "listen_addresses=*"]
         volumes:
             - pgdata:/var/lib/pgsql/18/data
         ports:

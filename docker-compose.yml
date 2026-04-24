@@ -5,6 +5,7 @@
 #   mkdir -p docker/secret
 #   openssl rand -base64 32 > docker/secret/ai-dba.secret
 #   echo "postgres" > docker/secret/pg-password
+#   export POSTGRES_PASSWORD=postgres
 #
 # Then start all services:
 #

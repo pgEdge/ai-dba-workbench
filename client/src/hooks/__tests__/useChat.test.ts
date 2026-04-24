@@ -24,7 +24,7 @@ vi.mock('../../utils/apiClient', () => ({
 
 const mockMaxIterations = 10;
 
-vi.mock('../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ maxIterations: mockMaxIterations }),
 }));
 

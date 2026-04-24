@@ -24,7 +24,7 @@ import {
     alpha,
 } from '@mui/material';
 import { Theme } from '@mui/material/styles';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 import logoLight from '../assets/images/logo-light.png';
 

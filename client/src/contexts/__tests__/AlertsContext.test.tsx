@@ -11,7 +11,8 @@
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { AlertsProvider, useAlerts } from '../AlertsContext';
+import { AlertsProvider } from '../AlertsContext';
+import { useAlerts } from '../useAlerts';
 import { logger } from '../../utils/logger';
 
 // Mock apiGet
@@ -28,9 +29,9 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
-// Mock AuthContext — provide a stable user object
+// Mock useAuth - provide a stable user object
 let mockUser: { username: string } | null = { username: 'testuser' };
-vi.mock('../AuthContext', () => ({
+vi.mock('../useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 

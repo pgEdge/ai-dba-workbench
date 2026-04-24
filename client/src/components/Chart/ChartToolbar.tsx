@@ -14,7 +14,7 @@ import Tooltip from '@mui/material/Tooltip';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import SaveAltIcon from '@mui/icons-material/SaveAlt';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { CHART_TOOLBAR_SX } from './styles';
 
 interface ChartToolbarProps {

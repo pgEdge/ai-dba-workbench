@@ -12,7 +12,7 @@ import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { ObjectType } from '../types';
-import { useDashboard } from '../../../contexts/DashboardContext';
+import { useDashboard } from '../../../contexts/useDashboard';
 import TableDetail from './TableDetail';
 import IndexDetail from './IndexDetail';
 import QueryDetail from './QueryDetail';

@@ -7,9 +7,8 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useAuth } from './AuthContext';
+import React, { createContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useAuth } from './useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 import type { Selection } from '../types/selection';
@@ -279,14 +278,6 @@ export const BlackoutProvider = ({ selection, children }: BlackoutProviderProps)
             {children}
         </BlackoutContext.Provider>
     );
-};
-
-export const useBlackouts = (): BlackoutContextValue => {
-    const context = useContext(BlackoutContext);
-    if (!context) {
-        throw new Error('useBlackouts must be used within a BlackoutProvider');
-    }
-    return context;
 };
 
 export default BlackoutContext;

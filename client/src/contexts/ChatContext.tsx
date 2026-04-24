@@ -7,18 +7,15 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-
 import React, {
     createContext,
-    useContext,
     useState,
     useCallback,
     useEffect,
     useRef,
     useMemo,
 } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import { apiGet, apiDelete, apiPatch } from '../utils/apiClient';
 import useChat from '../hooks/useChat';
 import type { ChatMessage, ToolActivity } from '../hooks/useChat';
@@ -292,18 +289,6 @@ export const ChatProvider = ({ children }: ChatProviderProps): React.ReactElemen
             {children}
         </ChatContext.Provider>
     );
-};
-
-// ---------------------------------------------------------------
-// Consumer hook
-// ---------------------------------------------------------------
-
-export const useChatContext = (): ChatContextType => {
-    const context = useContext(ChatContext);
-    if (!context) {
-        throw new Error('useChatContext must be used within a ChatProvider');
-    }
-    return context;
 };
 
 export default ChatContext;

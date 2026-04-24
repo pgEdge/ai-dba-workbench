@@ -17,7 +17,7 @@ import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance, DatabaseCacheHitData } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
-import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface CacheHitTileProps {

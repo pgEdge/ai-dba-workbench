@@ -13,12 +13,14 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
     ClusterDataProvider,
-    useClusterData,
     ClusterGroup,
+} from '../ClusterDataContext';
+import {
     generateDataFingerprint,
     collectServerFingerprints,
     transformConnectionsToHierarchy,
-} from '../ClusterDataContext';
+} from '../clusterDataHelpers';
+import { useClusterData } from '../useClusterData';
 
 // Mock apiClient — keep ApiError real for instanceof checks.
 vi.mock('../../utils/apiClient', async () => {
@@ -41,7 +43,7 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 let mockUser: { username: string } | null = { username: 'testuser' };
-vi.mock('../AuthContext', () => ({
+vi.mock('../useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 

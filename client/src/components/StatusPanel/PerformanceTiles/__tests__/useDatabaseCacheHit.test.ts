@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useDatabaseCacheHit } from '../useDatabaseCacheHit';
 
 // Mock modules
-vi.mock('../../../../contexts/AuthContext', () => ({
+vi.mock('../../../../contexts/useAuth', () => ({
     useAuth: vi.fn(),
 }));
 
@@ -21,13 +21,13 @@ vi.mock('../../../../utils/apiClient', () => ({
     apiFetch: vi.fn(),
 }));
 
-vi.mock('../../../../contexts/ClusterDataContext', () => ({
+vi.mock('../../../../contexts/useClusterData', () => ({
     useClusterData: vi.fn(),
 }));
 
-import { useAuth } from '../../../../contexts/AuthContext';
+import { useAuth } from '../../../../contexts/useAuth';
 import { apiFetch } from '../../../../utils/apiClient';
-import { useClusterData } from '../../../../contexts/ClusterDataContext';
+import { useClusterData } from '../../../../contexts/useClusterData';
 
 const mockUseAuth = vi.mocked(useAuth);
 const mockApiFetch = vi.mocked(apiFetch);

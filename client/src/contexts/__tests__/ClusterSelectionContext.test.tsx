@@ -11,10 +11,8 @@
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-    ClusterSelectionProvider,
-    useClusterSelection,
-} from '../ClusterSelectionContext';
+import { ClusterSelectionProvider } from '../ClusterSelectionContext';
+import { useClusterSelection } from '../useClusterSelection';
 import type { ClusterGroup, ClusterServer, ClusterEntry } from '../ClusterDataContext';
 
 vi.mock('../../utils/apiClient', () => ({
@@ -35,10 +33,10 @@ vi.mock('../../utils/logger', () => ({
 // Control user + clusterData from the test.
 let mockUser: { username: string } | null = { username: 'testuser' };
 let mockClusterData: ClusterGroup[] = [];
-vi.mock('../AuthContext', () => ({
+vi.mock('../useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
-vi.mock('../ClusterDataContext', () => ({
+vi.mock('../useClusterData', () => ({
     useClusterData: () => ({ clusterData: mockClusterData }),
 }));
 

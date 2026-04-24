@@ -25,11 +25,11 @@ vi.mock('../../utils/apiClient', () => ({
 const mockUser = { id: 1, username: 'testuser' };
 let mockRefreshTrigger = 0;
 
-vi.mock('../../contexts/AuthContext', () => ({
+vi.mock('../../contexts/useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 
-vi.mock('../../contexts/DashboardContext', () => ({
+vi.mock('../../contexts/useDashboard', () => ({
     useDashboard: () => ({ refreshTrigger: mockRefreshTrigger }),
 }));
 

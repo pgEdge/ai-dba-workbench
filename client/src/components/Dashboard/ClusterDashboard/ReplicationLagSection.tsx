@@ -12,7 +12,7 @@ import React, { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
-import { useDashboard } from '../../../contexts/DashboardContext';
+import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams } from '../types';
 import { formatLag } from '../../../utils/formatters';

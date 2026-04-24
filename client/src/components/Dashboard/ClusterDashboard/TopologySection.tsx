@@ -13,7 +13,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { blendColors } from '../../../utils/colors';
-import { useClusterSelection } from '../../../contexts/ClusterSelectionContext';
+import { useClusterSelection } from '../../../contexts/useClusterSelection';
 import { buildGraph } from './topology/graphBuilder';
 import { computeLayout, computeContainerHeight, NODE_WIDTH, NODE_HEIGHT } from './topology/layoutEngine';
 import TopologyEdges from './topology/TopologyEdges';

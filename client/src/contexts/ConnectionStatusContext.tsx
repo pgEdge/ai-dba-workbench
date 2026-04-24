@@ -10,21 +10,20 @@
 
 import React, {
     createContext,
-    useContext,
     useState,
     useCallback,
     useEffect,
     useMemo,
 } from 'react';
 
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import {
     onDisconnect,
     resetConnectionHealth,
     DisconnectReason,
 } from '../utils/apiClient';
 
-interface ConnectionStatusValue {
+export interface ConnectionStatusValue {
     disconnected: boolean;
     reason: DisconnectReason | '';
     reconnect: () => void;
@@ -70,12 +69,4 @@ export const ConnectionStatusProvider = ({
     );
 };
 
-export const useConnectionStatus = (): ConnectionStatusValue => {
-    const context = useContext(ConnectionStatusContext);
-    if (!context) {
-        throw new Error(
-            'useConnectionStatus must be used within a ConnectionStatusProvider',
-        );
-    }
-    return context;
-};
+export default ConnectionStatusContext;

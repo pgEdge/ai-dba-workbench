@@ -41,7 +41,7 @@ import {
     Close as CloseIcon,
     Add as AddIcon,
 } from '@mui/icons-material';
-import { useBlackouts } from '../contexts/BlackoutContext';
+import { useBlackouts } from '../contexts/useBlackouts';
 import type { Selection } from '../types/selection';
 import BlackoutDialog from './BlackoutDialog';
 import BlackoutScheduleDialog from './BlackoutScheduleDialog';

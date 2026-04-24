@@ -13,10 +13,8 @@ import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { AuthProvider } from '../AuthContext';
-import {
-    ConnectionStatusProvider,
-    useConnectionStatus,
-} from '../ConnectionStatusContext';
+import { ConnectionStatusProvider } from '../ConnectionStatusContext';
+import { useConnectionStatus } from '../useConnectionStatus';
 
 // Capture the disconnect listener registered by the provider so tests
 // can invoke it directly.
@@ -41,12 +39,14 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
-// Mock AuthContext so ConnectionStatusProvider can pull forceLogout.
+// Mock useAuth so ConnectionStatusProvider can pull forceLogout.
 const forceLogoutMock = vi.fn();
 vi.mock('../AuthContext', () => ({
     AuthProvider: ({ children }: { children: React.ReactNode }) => (
         <>{children}</>
     ),
+}));
+vi.mock('../useAuth', () => ({
     useAuth: () => ({
         forceLogout: forceLogoutMock,
     }),

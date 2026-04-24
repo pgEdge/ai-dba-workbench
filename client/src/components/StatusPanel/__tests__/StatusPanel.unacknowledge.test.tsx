@@ -68,19 +68,19 @@ const stableDashboardValue = {
     refreshTrigger: 0,
 };
 
-vi.mock('../../../contexts/AuthContext', () => ({
+vi.mock('../../../contexts/useAuth', () => ({
     useAuth: () => stableAuthValue,
 }));
 
-vi.mock('../../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => stableAIValue,
 }));
 
-vi.mock('../../../contexts/ClusterDataContext', () => ({
+vi.mock('../../../contexts/useClusterData', () => ({
     useClusterData: () => stableClusterValue,
 }));
 
-vi.mock('../../../contexts/DashboardContext', () => ({
+vi.mock('../../../contexts/useDashboard', () => ({
     useDashboard: () => stableDashboardValue,
 }));
 

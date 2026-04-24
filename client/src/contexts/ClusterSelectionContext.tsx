@@ -7,10 +7,10 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useAuth } from './AuthContext';
-import { useClusterData, ClusterServer, ClusterEntry } from './ClusterDataContext';
+import React, { createContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useAuth } from './useAuth';
+import { useClusterData } from './useClusterData';
+import type { ClusterServer, ClusterEntry } from './ClusterDataContext';
 import { apiPost, apiGet, apiDelete } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 
@@ -229,14 +229,6 @@ export const ClusterSelectionProvider = ({ children }: ClusterSelectionProviderP
             {children}
         </ClusterSelectionContext.Provider>
     );
-};
-
-export const useClusterSelection = (): ClusterSelectionContextValue => {
-    const context = useContext(ClusterSelectionContext);
-    if (!context) {
-        throw new Error('useClusterSelection must be used within a ClusterSelectionProvider');
-    }
-    return context;
 };
 
 export default ClusterSelectionContext;

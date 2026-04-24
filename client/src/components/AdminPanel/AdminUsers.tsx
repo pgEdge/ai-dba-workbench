@@ -44,7 +44,7 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
     tableHeaderCellSx,

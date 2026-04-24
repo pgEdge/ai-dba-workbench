@@ -12,7 +12,7 @@ import React, { useCallback } from 'react';
 import Box from '@mui/material/Box';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import { useDashboard } from '../../contexts/DashboardContext';
+import { useDashboard } from '../../contexts/useDashboard';
 import { TimeRange } from './types';
 import { TIME_RANGE_CONTAINER_SX } from './styles';
 

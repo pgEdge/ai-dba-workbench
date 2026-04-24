@@ -12,9 +12,9 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
-import { useAuth } from '../../../contexts/AuthContext';
+import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';
-import { useDashboard } from '../../../contexts/DashboardContext';
+import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';

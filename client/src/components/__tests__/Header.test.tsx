@@ -14,8 +14,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Header from '../Header';
 import { AuthProvider } from '../../contexts/AuthContext';
 
-// Mock AICapabilitiesContext so HelpPanel can render without the provider
-vi.mock('../../contexts/AICapabilitiesContext', () => ({
+// Mock useAICapabilities so HelpPanel can render without the provider
+vi.mock('../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: true, loading: false }),
 }));
 

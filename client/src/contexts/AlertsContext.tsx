@@ -9,10 +9,8 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useAuth } from './AuthContext';
+import React, { createContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useAuth } from './useAuth';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 
@@ -139,14 +137,6 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
             {children}
         </AlertsContext.Provider>
     );
-};
-
-export const useAlerts = (): AlertsContextValue => {
-    const context = useContext(AlertsContext);
-    if (!context) {
-        throw new Error('useAlerts must be used within an AlertsProvider');
-    }
-    return context;
 };
 
 export default AlertsContext;

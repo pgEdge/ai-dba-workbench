@@ -68,7 +68,7 @@ vi.mock('../../utils/mcpTools', () => ({
     AnalysisTool: undefined,
 }));
 
-vi.mock('../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({
         aiEnabled: true,
         maxIterations: 10,

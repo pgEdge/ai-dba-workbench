@@ -23,8 +23,8 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { Close as CloseIcon } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
-import { useAICapabilities } from '../../contexts/AICapabilitiesContext';
+import { useAuth } from '../../contexts/useAuth';
+import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { subsectionLabelSx } from './styles';
 import AdminUsers from './AdminUsers';
 import AdminGroups from './AdminGroups';

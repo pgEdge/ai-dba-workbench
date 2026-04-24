@@ -31,7 +31,7 @@ import {
     HEADER_LABEL_SX,
     HEADER_NAME_SX,
 } from './styles';
-import { useBlackouts } from '../../contexts/BlackoutContext';
+import { useBlackouts } from '../../contexts/useBlackouts';
 import type { Selection } from '../../types/selection';
 
 interface SelectionHeaderProps {

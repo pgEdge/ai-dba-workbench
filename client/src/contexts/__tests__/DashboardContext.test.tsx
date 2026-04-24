@@ -11,7 +11,8 @@
 import React from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { DashboardProvider, useDashboard } from '../DashboardContext';
+import { DashboardProvider } from '../DashboardContext';
+import { useDashboard } from '../useDashboard';
 import type { OverlayEntry } from '../../components/Dashboard/types';
 
 vi.mock('../../utils/logger', () => ({

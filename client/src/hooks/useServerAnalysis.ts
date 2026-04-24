@@ -9,7 +9,7 @@
  */
 
 import { useCallback } from 'react';
-import { useAICapabilities } from '../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../contexts/useAICapabilities';
 import { apiGet } from '../utils/apiClient';
 import { formatConnectionContext } from '../utils/connectionContext';
 import { getKnowledgebaseTool, AnalysisTool } from '../utils/mcpTools';

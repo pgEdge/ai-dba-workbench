@@ -68,7 +68,7 @@ vi.mock('../../../ChartAnalysisDialog', () => ({
 
 // Mock AI capabilities context
 const mockAIEnabled = vi.fn(() => true);
-vi.mock('../../../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: mockAIEnabled() }),
 }));
 

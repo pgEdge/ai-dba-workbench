@@ -24,7 +24,7 @@ const mockClearOverlays = vi.fn();
 let mockCurrentOverlay: OverlayEntry | null = null;
 let mockOverlayStack: OverlayEntry[] = [];
 
-vi.mock('../../../contexts/DashboardContext', () => ({
+vi.mock('../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         currentOverlay: mockCurrentOverlay,
         overlayStack: mockOverlayStack,

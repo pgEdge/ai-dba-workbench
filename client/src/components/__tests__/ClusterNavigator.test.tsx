@@ -43,12 +43,12 @@ const {
 }));
 
 // Mock the AuthContext
-vi.mock('../../contexts/AuthContext', () => ({
+vi.mock('../../contexts/useAuth', () => ({
     useAuth: () => mockUseAuth(),
 }));
 
 // Mock the ClusterContext
-vi.mock('../../contexts/ClusterContext', () => ({
+vi.mock('../../contexts/useCluster', () => ({
     useCluster: () => ({
         updateGroupName: mockUpdateGroupName,
         updateClusterName: mockUpdateClusterName,
@@ -69,7 +69,7 @@ vi.mock('../../contexts/ClusterContext', () => ({
 }));
 
 // Mock the AlertsContext
-vi.mock('../../contexts/AlertsContext', () => ({
+vi.mock('../../contexts/useAlerts', () => ({
     useAlerts: () => ({
         alerts: [],
         activeAlerts: [],
@@ -82,7 +82,7 @@ vi.mock('../../contexts/AlertsContext', () => ({
 }));
 
 // Mock the BlackoutContext
-vi.mock('../../contexts/BlackoutContext', () => ({
+vi.mock('../../contexts/useBlackouts', () => ({
     useBlackouts: () => ({
         blackouts: [],
         loading: false,

@@ -9,8 +9,8 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { useClusterData } from '../contexts/ClusterDataContext';
+import { useAuth } from '../contexts/useAuth';
+import { useClusterData } from '../contexts/useClusterData';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 

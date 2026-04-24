@@ -45,7 +45,7 @@ vi.mock('../../../utils/apiClient', () => ({
     apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
-vi.mock('../../../contexts/AICapabilitiesContext', () => ({
+vi.mock('../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ maxIterations: 10 }),
 }));
 

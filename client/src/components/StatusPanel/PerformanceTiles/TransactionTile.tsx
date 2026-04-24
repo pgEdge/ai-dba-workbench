@@ -17,7 +17,7 @@ import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartAnalysisContext } from '../../Chart/types';
 import TileContainer from './TileContainer';
 import { ConnectionPerformance, TransactionTimeSeries } from './types';
-import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface TransactionTileProps {

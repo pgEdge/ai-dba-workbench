@@ -12,24 +12,16 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
-
-import React, { createContext, useContext } from 'react';
-import { ClusterDataProvider, useClusterData, ClusterDataContextValue } from './ClusterDataContext';
-import { ClusterSelectionProvider, useClusterSelection, ClusterSelectionContextValue } from './ClusterSelectionContext';
-import { ClusterActionsProvider, useClusterActions, ClusterActionsContextValue } from './ClusterActionsContext';
-
-// Re-export the helper functions for external use
-export {
-    generateDataFingerprint,
-    collectServerFingerprints,
-    transformConnectionsToHierarchy,
-} from './ClusterDataContext';
-
-// Re-export the individual hooks for focused usage
-export { useClusterData } from './ClusterDataContext';
-export { useClusterSelection } from './ClusterSelectionContext';
-export { useClusterActions } from './ClusterActionsContext';
+import React, { createContext } from 'react';
+import { ClusterDataProvider } from './ClusterDataContext';
+import type { ClusterDataContextValue } from './ClusterDataContext';
+import { useClusterData } from './useClusterData';
+import { ClusterSelectionProvider } from './ClusterSelectionContext';
+import type { ClusterSelectionContextValue } from './ClusterSelectionContext';
+import { useClusterSelection } from './useClusterSelection';
+import { ClusterActionsProvider } from './ClusterActionsContext';
+import type { ClusterActionsContextValue } from './ClusterActionsContext';
+import { useClusterActions } from './useClusterActions';
 
 export type ClusterCombinedContextValue =
     ClusterDataContextValue &
@@ -118,25 +110,6 @@ export const ClusterProvider = ({ children }: ClusterProviderProps): React.React
             </ClusterSelectionProvider>
         </ClusterDataProvider>
     );
-};
-
-/**
- * useCluster - Combined hook for backward compatibility.
- *
- * Returns all values from ClusterDataContext, ClusterSelectionContext,
- * and ClusterActionsContext combined into a single object.
- *
- * For new code, prefer using the focused hooks:
- * - useClusterData() - for data and refresh state
- * - useClusterSelection() - for selection state
- * - useClusterActions() - for CRUD operations
- */
-export const useCluster = (): ClusterCombinedContextValue => {
-    const context = useContext(ClusterCombinedContext);
-    if (!context) {
-        throw new Error('useCluster must be used within a ClusterProvider');
-    }
-    return context;
 };
 
 export default ClusterCombinedContext;

@@ -13,10 +13,10 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
     BlackoutProvider,
-    useBlackouts,
     Blackout,
     BlackoutSchedule,
 } from '../BlackoutContext';
+import { useBlackouts } from '../useBlackouts';
 import type { Selection } from '../../types/selection';
 
 vi.mock('../../utils/apiClient', () => ({
@@ -36,7 +36,7 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 let mockUser: { username: string } | null = { username: 'testuser' };
-vi.mock('../AuthContext', () => ({
+vi.mock('../useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 

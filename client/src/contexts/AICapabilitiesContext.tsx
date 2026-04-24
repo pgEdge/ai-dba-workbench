@@ -7,12 +7,11 @@
  *
  *-------------------------------------------------------------------------
  */
-/* eslint-disable react-refresh/only-export-components */
 
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useState, useEffect, useMemo } from 'react';
 import { apiGet } from '../utils/apiClient';
 
-interface AICapabilitiesValue {
+export interface AICapabilitiesValue {
     aiEnabled: boolean;
     maxIterations: number;
     loading: boolean;
@@ -62,12 +61,4 @@ export const AICapabilitiesProvider = ({
     );
 };
 
-export const useAICapabilities = (): AICapabilitiesValue => {
-    const context = useContext(AICapabilitiesContext);
-    if (!context) {
-        throw new Error(
-            'useAICapabilities must be used within an AICapabilitiesProvider',
-        );
-    }
-    return context;
-};
+export default AICapabilitiesContext;

@@ -17,7 +17,7 @@ import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import { ChartData, ChartAnalysisContext } from '../../Chart/types';
 import { ConnectionPerformance, XidAgeEntry } from './types';
 import { getXidColor } from './styles';
-import { useAICapabilities } from '../../../contexts/AICapabilitiesContext';
+import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
 
 interface DatabaseAgeTileProps {

@@ -30,7 +30,11 @@ const PerformanceTiles: React.FC<PerformanceTilesProps> = ({ selection }) => {
     const isMultiServer = selection.type !== 'server';
 
     // For single-server view, fetch per-database cache hit data
-    const connectionId = selection.type === 'server' ? selection.id : null;
+    // Defensively ensure the id is a valid number
+    const connectionId =
+        selection.type === 'server' && typeof selection.id === 'number'
+            ? selection.id
+            : null;
     const { databases: databaseData } = useDatabaseCacheHit(connectionId);
 
     return (

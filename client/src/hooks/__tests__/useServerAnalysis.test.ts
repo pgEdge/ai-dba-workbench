@@ -420,6 +420,7 @@ describe('useServerAnalysis', () => {
         const input = makeClusterInput({
             id: 'cluster-test',
             name: 'Test Cluster',
+            servers: [],
             serverIds: [1, 2],
         });
 

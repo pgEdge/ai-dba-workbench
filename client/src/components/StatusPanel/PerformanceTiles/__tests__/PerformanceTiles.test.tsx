@@ -219,9 +219,8 @@ describe('PerformanceTiles', () => {
             />
         );
 
-        // Should call useDatabaseCacheHit with the id (type narrowing
-        // makes it always a number for 'server', but runtime data may differ)
-        expect(mockUseDatabaseCacheHit).toHaveBeenCalled();
+        // Should call useDatabaseCacheHit with null when id is not a number
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
     });
 
     it('handles selection with undefined id', () => {
@@ -231,7 +230,7 @@ describe('PerformanceTiles', () => {
             />
         );
 
-        // Should call useDatabaseCacheHit with undefined since id is missing
-        expect(mockUseDatabaseCacheHit).toHaveBeenCalled();
+        // Should call useDatabaseCacheHit with null when id is missing
+        expect(mockUseDatabaseCacheHit).toHaveBeenCalledWith(null);
     });
 });

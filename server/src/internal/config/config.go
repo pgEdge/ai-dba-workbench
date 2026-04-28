@@ -970,6 +970,40 @@ func GetDefaultConfigPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.yaml")
 }
 
+// configDataDir is a minimal struct for extracting just the data_dir from config
+type configDataDir struct {
+	DataDir string `yaml:"data_dir"`
+}
+
+// LoadConfigDataDir extracts just the data_dir field from a config file.
+// This function is used during early startup to resolve the data directory
+// before the full config is loaded. It returns an empty string if the file
+// does not exist, is empty, or does not specify data_dir.
+func LoadConfigDataDir(configPath string) (string, error) {
+	if configPath == "" {
+		return "", nil
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if len(data) == 0 {
+		return "", nil
+	}
+
+	var cfg configDataDir
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return cfg.DataDir, nil
+}
+
 // GetDefaultSecretPath returns the default secret file path
 // Searches /etc/pgedge/ first, then binary directory
 func GetDefaultSecretPath(binaryPath string) string {

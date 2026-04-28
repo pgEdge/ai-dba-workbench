@@ -552,3 +552,126 @@ func TestApplyCLIFlags(t *testing.T) {
 		t.Errorf("expected user 'cliuser', got %q", cfg.Database.User)
 	}
 }
+
+func TestLoadConfigDataDir(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		setupFile   func() string // returns file path
+		expected    string
+		expectError bool
+	}{
+		{
+			name: "config with data_dir",
+			setupFile: func() string {
+				path := filepath.Join(tmpDir, "with_data_dir.yaml")
+				content := `
+http:
+    address: ":8080"
+data_dir: /custom/data/path
+`
+				if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
+				return path
+			},
+			expected:    "/custom/data/path",
+			expectError: false,
+		},
+		{
+			name: "config without data_dir",
+			setupFile: func() string {
+				path := filepath.Join(tmpDir, "without_data_dir.yaml")
+				content := `
+http:
+    address: ":8080"
+`
+				if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
+				return path
+			},
+			expected:    "",
+			expectError: false,
+		},
+		{
+			name: "non-existent file",
+			setupFile: func() string {
+				return filepath.Join(tmpDir, "nonexistent.yaml")
+			},
+			expected:    "",
+			expectError: false,
+		},
+		{
+			name: "empty path",
+			setupFile: func() string {
+				return ""
+			},
+			expected:    "",
+			expectError: false,
+		},
+		{
+			name: "empty file",
+			setupFile: func() string {
+				path := filepath.Join(tmpDir, "empty.yaml")
+				if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
+				return path
+			},
+			expected:    "",
+			expectError: false,
+		},
+		{
+			name: "invalid YAML",
+			setupFile: func() string {
+				path := filepath.Join(tmpDir, "invalid.yaml")
+				content := `
+this: is: not: valid: yaml: {{{{
+`
+				if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
+				return path
+			},
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name: "data_dir with relative path",
+			setupFile: func() string {
+				path := filepath.Join(tmpDir, "relative_data_dir.yaml")
+				content := `
+data_dir: ./relative/path
+`
+				if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
+				return path
+			},
+			expected:    "./relative/path",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.setupFile()
+			result, err := LoadConfigDataDir(path)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if result != tt.expected {
+					t.Errorf("expected %q, got %q", tt.expected, result)
+				}
+			}
+		})
+	}
+}

@@ -52,14 +52,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Resolve data directory
-	dataDir := flags.ResolveDataDir(execPath)
-
-	// Handle CLI commands (token, user, group, privilege management)
-	if RunCLICommands(flags, dataDir) {
-		return
-	}
-
 	// Build CLIFlags for config loading
 	cliFlags := flags.ToCLIFlags()
 
@@ -67,6 +59,28 @@ func main() {
 	configPath := flags.ConfigFile
 	if !cliFlags.ConfigFileSet {
 		configPath = defaultConfigPath
+	}
+
+	// Load data_dir from config file early (before resolving data directory)
+	// This allows the config file's data_dir to be used if no CLI flag is set
+	var configDataDir string
+	if config.ConfigFileExists(configPath) {
+		var err error
+		configDataDir, err = config.LoadConfigDataDir(configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: failed to read data_dir from config: %v\n", err)
+		}
+	}
+
+	// Resolve data directory with proper precedence:
+	// 1. CLI --data-dir flag (highest)
+	// 2. Config file data_dir setting
+	// 3. Default relative to executable (lowest)
+	dataDir := flags.ResolveDataDir(execPath, configDataDir)
+
+	// Handle CLI commands (token, user, group, privilege management)
+	if RunCLICommands(flags, dataDir) {
+		return
 	}
 
 	// Load configuration

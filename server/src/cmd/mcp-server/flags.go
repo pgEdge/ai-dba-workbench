@@ -252,11 +252,21 @@ func (f *Flags) ToReloadCLIFlags() config.CLIFlags {
 	}
 }
 
-// ResolveDataDir returns the resolved data directory path
-func (f *Flags) ResolveDataDir(execPath string) string {
+// ResolveDataDir returns the resolved data directory path with the following
+// priority:
+//  1. Command-line --data-dir flag (highest priority)
+//  2. Config file data_dir setting
+//  3. Default fallback relative to executable (lowest priority)
+func (f *Flags) ResolveDataDir(execPath string, configDataDir string) string {
+	// CLI flag takes highest priority
 	if f.DataDir != "" {
 		return f.DataDir
 	}
+	// Config file setting takes second priority
+	if configDataDir != "" {
+		return configDataDir
+	}
+	// Fall back to executable-relative path
 	return filepath.Join(filepath.Dir(execPath), "data")
 }
 

@@ -325,7 +325,7 @@ func TestResolveProbeConfigDefaults_InheritsEnabledParent(t *testing.T) {
 
 // TestResolveProbeConfigDefaults_NoParentUsesHardcodedDefaults
 // covers the fallback branch: when no parent config is found, the
-// helper must synthesise sensible defaults including isEnabled=true,
+// helper must synthesize sensible defaults including isEnabled=true,
 // the per-probe default interval, 28 days of retention, and a
 // generated description. found=false is the discriminator.
 func TestResolveProbeConfigDefaults_NoParentUsesHardcodedDefaults(t *testing.T) {
@@ -344,7 +344,7 @@ func TestResolveProbeConfigDefaults_NoParentUsesHardcodedDefaults(t *testing.T) 
 		t.Errorf("description: got %q, want %q", description, wantDescription)
 	}
 	if !isEnabled {
-		t.Errorf("isEnabled: got false, want true (default for synthesised configs)")
+		t.Errorf("isEnabled: got false, want true (default for synthesized configs)")
 	}
 }
 
@@ -392,7 +392,7 @@ func TestResolveProbeConfigDefaults_FoundFalseIgnoresParent(t *testing.T) {
 		t.Errorf("retention should be 28 (default), not parent's zero; got %d", retention)
 	}
 	if description == "" {
-		t.Errorf("description should be the synthesised default, not the parent's empty string")
+		t.Errorf("description should be the synthesized default, not the parent's empty string")
 	}
 	if !isEnabled {
 		t.Errorf("isEnabled should default to true when no parent is matched")

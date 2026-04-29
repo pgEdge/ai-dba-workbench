@@ -518,10 +518,10 @@ func TestSyncAutoDetectedRelationships_DeleteFailure(t *testing.T) {
 	}
 }
 
-// TestSyncAutoDetectedRelationships_CancelledContext verifies that a
-// cancelled context produces an error rather than a silent success or
+// TestSyncAutoDetectedRelationships_CanceledContext verifies that a
+// canceled context produces an error rather than a silent success or
 // a partial commit.
-func TestSyncAutoDetectedRelationships_CancelledContext(t *testing.T) {
+func TestSyncAutoDetectedRelationships_CanceledContext(t *testing.T) {
 	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
 	defer cleanup()
 
@@ -539,13 +539,13 @@ func TestSyncAutoDetectedRelationships_CancelledContext(t *testing.T) {
 			{SourceConnectionID: connB, TargetConnectionID: connA, RelationshipType: "streams_from"},
 		})
 	if err == nil {
-		t.Fatalf("expected error from cancelled context, got nil")
+		t.Fatalf("expected error from canceled context, got nil")
 	}
 
 	if got := countRelationships(t, pool, clusterID, true); got != 1 {
-		t.Fatalf("cancelled sync left %d auto rows; expected the original 1", got)
+		t.Fatalf("canceled sync left %d auto rows; expected the original 1", got)
 	}
 	if !hasRelationship(t, pool, clusterID, connA, connB, "streams_from", true) {
-		t.Fatalf("original auto edge was lost despite cancelled context")
+		t.Fatalf("original auto edge was lost despite canceled context")
 	}
 }

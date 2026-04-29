@@ -294,7 +294,7 @@ func TestNormalizeForDictionary(t *testing.T) {
 // TestFoldFullwidth covers the explicit fullwidth-to-ASCII fallback. NFKC
 // normalization handles fullwidth forms in normal lookup paths, so the
 // helper itself is rarely exercised end-to-end. This unit test pins the
-// behaviour to guard against future divergence between NFKC and the
+// behavior to guard against future divergence between NFKC and the
 // fallback table.
 func TestFoldFullwidth(t *testing.T) {
 	tests := []struct {

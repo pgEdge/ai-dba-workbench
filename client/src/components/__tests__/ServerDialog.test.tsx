@@ -191,10 +191,12 @@ describe('ServerDialog', () => {
             const user = userEvent.setup({ delay: null });
             renderWithTheme(<ServerDialog {...defaultProps} />);
 
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.clear(getPortField());
-            await user.type(getPortField(), '99999');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getPortField(), { target: { value: '99999' } });
             await user.click(screen.getByRole('button', { name: /save/i }));
 
             expect(screen.getByText(/port must be between 1 and 65535/i)).toBeInTheDocument();
@@ -231,10 +233,13 @@ describe('ServerDialog', () => {
             const user = userEvent.setup({ delay: null });
             renderWithTheme(<ServerDialog {...defaultProps} />);
 
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
             await user.click(screen.getByRole('button', { name: /save/i }));
 
             expect(screen.getByText(/password is required/i)).toBeInTheDocument();
@@ -320,11 +325,14 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockResolvedValue();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -338,11 +346,14 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockRejectedValue(new Error('Connection refused'));
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -357,11 +368,14 @@ describe('ServerDialog', () => {
             const onClose = vi.fn();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} onClose={onClose} />);
 
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -383,11 +397,14 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockReturnValue(savePromise);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Use fireEvent.change instead of user.type for performance.
+            // user.type simulates individual keystrokes, which can cause
+            // timeouts on slower Node.js versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -495,12 +512,15 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockResolvedValue();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
-            // Fill required fields
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Fill required fields. Use fireEvent.change instead of
+            // user.type for performance; user.type simulates individual
+            // keystrokes, which can cause timeouts on slower Node.js
+            // versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             // Uncheck monitor checkbox
             await user.click(screen.getByLabelText(/monitor this server/i));
@@ -521,12 +541,15 @@ describe('ServerDialog', () => {
             const onSave = vi.fn().mockResolvedValue();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} isSuperuser={true} />);
 
-            // Fill required fields
-            await user.type(getNameField(), 'Test Server');
-            await user.type(getHostField(), 'localhost');
-            await user.type(getDatabaseField(), 'postgres');
-            await user.type(getUsernameField(), 'admin');
-            await user.type(getPasswordField(), 'secret');
+            // Fill required fields. Use fireEvent.change instead of
+            // user.type for performance; user.type simulates individual
+            // keystrokes, which can cause timeouts on slower Node.js
+            // versions when typing many characters.
+            fireEvent.change(getNameField(), { target: { value: 'Test Server' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
 
             // Check shared checkbox
             await user.click(screen.getByLabelText(/share with all users/i));

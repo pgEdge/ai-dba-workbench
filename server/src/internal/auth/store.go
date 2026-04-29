@@ -585,7 +585,7 @@ const MinPasswordLength = 12
 
 // MaxPasswordLength is the maximum number of bytes allowed for a password.
 // The limit is dictated by bcrypt, which silently truncates inputs beyond
-// 72 bytes; allowing longer passwords would create surprising behaviour.
+// 72 bytes; allowing longer passwords would create surprising behavior.
 const MaxPasswordLength = 72
 
 // ValidatePassword enforces a NIST SP 800-63B-aligned password policy. The

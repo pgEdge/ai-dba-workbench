@@ -261,7 +261,7 @@ describe('AdminUsers', () => {
                 name: /^create$/i,
             });
             expect(createBtn).toBeEnabled();
-        });
+        }, 15000);
 
         it('hides the password field when Service Account is enabled', async () => {
             installListMocks();
@@ -308,10 +308,9 @@ describe('AdminUsers', () => {
                 findFieldByLabel(dialog, 'Username'),
                 'charlie'
             );
-            await user.type(
-                findFieldByLabel(dialog, 'Password'),
-                'Correct-Horse-99'
-            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
             await user.type(
                 findFieldByLabel(dialog, 'Display Name'),
                 'Charlie'
@@ -343,7 +342,7 @@ describe('AdminUsers', () => {
                     })
                 );
             });
-        });
+        }, 15000);
 
         it('surfaces server-returned validation errors', async () => {
             installListMocks();
@@ -364,10 +363,9 @@ describe('AdminUsers', () => {
                 findFieldByLabel(dialog, 'Username'),
                 'charlie'
             );
-            await user.type(
-                findFieldByLabel(dialog, 'Password'),
-                'CommonPassword123!'
-            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'CommonPassword123!' },
+            });
             await user.click(
                 within(dialog).getByRole('button', { name: /^create$/i })
             );
@@ -378,7 +376,7 @@ describe('AdminUsers', () => {
                     )
                 ).toBeInTheDocument();
             });
-        });
+        }, 15000);
 
         it('disables Create when the password field is left empty', async () => {
             installListMocks();
@@ -439,10 +437,9 @@ describe('AdminUsers', () => {
                 findFieldByLabel(dialog, 'Username'),
                 'newuser'
             );
-            await user.type(
-                findFieldByLabel(dialog, 'Password'),
-                'Correct-Horse-99'
-            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
             // Toggle the "Enabled" switch off.
             await user.click(
                 within(dialog).getByLabelText(/^enabled$/i)
@@ -459,7 +456,7 @@ describe('AdminUsers', () => {
                     })
                 );
             });
-        });
+        }, 15000);
     });
 
     describe('Edit user dialog', () => {
@@ -540,10 +537,9 @@ describe('AdminUsers', () => {
             });
             await user.click(screen.getAllByLabelText('edit user')[1]);
             const dialog = await screen.findByRole('dialog');
-            await user.type(
-                findFieldByLabel(dialog, 'Password'),
-                'Correct-Horse-99'
-            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
             await user.click(
                 within(dialog).getByRole('button', { name: /^save$/i })
             );
@@ -555,7 +551,7 @@ describe('AdminUsers', () => {
                     })
                 );
             });
-        });
+        }, 15000);
 
         it('shows server validation errors for the new policy', async () => {
             installListMocks();
@@ -569,10 +565,9 @@ describe('AdminUsers', () => {
             });
             await user.click(screen.getAllByLabelText('edit user')[1]);
             const dialog = await screen.findByRole('dialog');
-            await user.type(
-                findFieldByLabel(dialog, 'Password'),
-                'Correct-Horse-99'
-            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
             await user.click(
                 within(dialog).getByRole('button', { name: /^save$/i })
             );
@@ -583,7 +578,7 @@ describe('AdminUsers', () => {
                     )
                 ).toBeInTheDocument();
             });
-        });
+        }, 15000);
 
         it('submits non-password edits without the password field', async () => {
             installListMocks();

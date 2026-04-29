@@ -121,6 +121,21 @@ project adheres to
 
 ### Fixed
 
+- Fix the collector probe config loader ignoring scope
+  and silently re-enabling disabled parent overrides;
+  `LoadProbeConfigs` now restricts its query to
+  `scope IN ('global', 'server')` so cluster- and
+  group-scoped rows no longer collapse into the
+  `connection_id = 0` bucket and get misapplied as
+  global defaults, and `EnsureProbeConfig` now inherits
+  the parent config's `is_enabled` value when
+  materializing a server-level row instead of
+  hard-coding it to true. The SQL is extracted into a
+  `loadProbeConfigsQuery` constant and the value
+  resolution moves into a pure
+  `resolveProbeConfigDefaults` helper, both covered by
+  new unit tests. (#151)
+
 - Fix MCP and admin scope privileges granted through a
   wildcard group grant (`"*"`) being silently dropped
   during token scope intersection; the intersection

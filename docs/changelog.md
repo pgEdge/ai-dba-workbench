@@ -121,6 +121,19 @@ project adheres to
 
 ### Fixed
 
+- Fix the web client rendering a blank screen on every
+  navigation when the LLM proxy was enabled with a
+  reasoning model that returns a structured `summary`
+  object; `AIOverview` now coerces non-string summaries
+  to text before rendering, removing the React error
+  that triggered the blank screen. The top-level
+  `<ErrorBoundary>` has also been rewritten to always
+  show the error message and component stack in a
+  collapsible details block and to expose a "Reload"
+  button, so users can recover from a crash and file
+  actionable bug reports without rebuilding the
+  container. (#182)
+
 - Fix MCP and admin scope privileges granted through a
   wildcard group grant (`"*"`) being silently dropped
   during token scope intersection; the intersection

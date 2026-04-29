@@ -250,6 +250,24 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
         overview !== null && overview.summary === null
     );
 
+    // Coerce the summary to a renderable string.  The server contract
+    // declares `summary` as `string | null`, but a misconfigured LLM
+    // proxy (notably reasoning models like deepseek-r1 returning a
+    // structured `{thinking, answer}` object) can produce an object
+    // here.  Rendering an object as a React child throws minified
+    // error #130 and bricks the whole UI (issue #182), so coerce once
+    // at the boundary instead of trusting the type.
+    const summaryText: string = (() => {
+        const raw: unknown = overview?.summary;
+        if (typeof raw === 'string') {return raw;}
+        if (raw == null) {return '';}
+        try {
+            return JSON.stringify(raw);
+        } catch {
+            return String(raw);
+        }
+    })();
+
     // Computed styles that depend on the theme
     const paperSx = useMemo(() => ({
         p: 1.5,
@@ -389,7 +407,7 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
                         whiteSpace: 'pre-wrap',
                     }}
                 >
-                    {overview.summary}
+                    {summaryText}
                 </Typography>
                 {overview.generated_at && (
                     <Box sx={{

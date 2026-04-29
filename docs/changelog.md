@@ -45,21 +45,22 @@ project adheres to
   `() => cond && voidFn()` into explicit `if` blocks. No
   behavior changes, and all 2,604 Vitest tests pass.
 - Raise line coverage of `server/internal/crypto` from
-  86.8% to 100% by adding tests for the four previously
-  uncovered error branches; the new cases exercise random
-  source failure, `ReadFile` failure, `WriteFile` failure,
-  and the GCM encrypt failure path. (#78)
+  86.8% to 100%. New tests cover four previously uncovered
+  error branches. The branches are random source failure,
+  `ReadFile` failure, `WriteFile` failure, and the GCM
+  encrypt failure path. (#78)
 - Add integration tests for `server/internal/memory.Store`
-  covering all nine public methods (`NewStore`, `Store`,
-  `Search`, `GetPinned`, `ListByUser`, `GetByID`, `Delete`,
-  `DeleteByID`, and `UpdatePinned`) against PostgreSQL,
-  including pgvector similarity ordering, scope visibility,
-  and ownership checks; package line coverage now reaches
+  against PostgreSQL. The tests cover all nine public
+  methods: `NewStore`, `Store`, `Search`, `GetPinned`,
+  `ListByUser`, `GetByID`, `Delete`, `DeleteByID`, and
+  `UpdatePinned`. They also exercise pgvector similarity
+  ordering, scope visibility, and ownership checks.
+  Package line coverage for the memory store now reaches
   92.5%. (#78)
 - Add the `-race` flag to the `test` and `coverage`
   Makefile targets in the `server`, `collector`, and
-  `alerter` sub-projects so the race detector runs in CI
-  and on developer machines. (#78)
+  `alerter` sub-projects. The race detector now runs in
+  CI and on developer machines. (#78)
 
 ### Security
 

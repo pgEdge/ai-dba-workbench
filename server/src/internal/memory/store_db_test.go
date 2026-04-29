@@ -431,7 +431,8 @@ func TestStore_ListByUser(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	seed := func() {
+	seed := func(t *testing.T) {
+		t.Helper()
 		truncateMemories(t, pool)
 		// Alice rows in two categories.
 		if _, err := store.Store(ctx, "alice", "user", "fact",
@@ -459,7 +460,7 @@ func TestStore_ListByUser(t *testing.T) {
 	}
 
 	t.Run("no category returns own + system", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.ListByUser(ctx, "alice", "", 0)
 		if err != nil {
 			t.Fatalf("ListByUser: %v", err)
@@ -476,7 +477,7 @@ func TestStore_ListByUser(t *testing.T) {
 	})
 
 	t.Run("category filter applies", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.ListByUser(ctx, "alice", "fact", 0)
 		if err != nil {
 			t.Fatalf("ListByUser fact: %v", err)
@@ -493,7 +494,7 @@ func TestStore_ListByUser(t *testing.T) {
 	})
 
 	t.Run("limit caps result size", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.ListByUser(ctx, "alice", "", 2)
 		if err != nil {
 			t.Fatalf("ListByUser limit: %v", err)
@@ -504,7 +505,7 @@ func TestStore_ListByUser(t *testing.T) {
 	})
 
 	t.Run("limit clamps above 100", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.ListByUser(ctx, "alice", "", 9999)
 		if err != nil {
 			t.Fatalf("ListByUser big limit: %v", err)
@@ -516,7 +517,7 @@ func TestStore_ListByUser(t *testing.T) {
 	})
 
 	t.Run("category filter with limit", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.ListByUser(ctx, "alice", "fact", 1)
 		if err != nil {
 			t.Fatalf("ListByUser fact+limit: %v", err)
@@ -532,7 +533,8 @@ func TestStore_Search(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	seed := func() {
+	seed := func(t *testing.T) {
+		t.Helper()
 		truncateMemories(t, pool)
 		// Vectors aligned with x, y, z axes. Cosine distance to [1,0,0]
 		// is smallest for the x-axis row, so it should appear first
@@ -571,7 +573,7 @@ func TestStore_Search(t *testing.T) {
 	}
 
 	t.Run("vector search orders by cosine distance", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "", "", 0,
 			[]float32{1, 0, 0})
 		if err != nil {
@@ -597,7 +599,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("vector search with category filter", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "fact", "", 0,
 			[]float32{1, 0, 0})
 		if err != nil {
@@ -611,7 +613,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("vector search with scope filter", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "", "system", 0,
 			[]float32{1, 0, 0})
 		if err != nil {
@@ -623,7 +625,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("text search by content ILIKE", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "axis", "", "", 0, nil)
 		if err != nil {
 			t.Fatalf("Search text: %v", err)
@@ -642,7 +644,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("text search empty query returns visible rows", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "", "", 0, nil)
 		if err != nil {
 			t.Fatalf("Search empty text: %v", err)
@@ -654,7 +656,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("text search with category and scope filters", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "fact", "user", 0, nil)
 		if err != nil {
 			t.Fatalf("Search text+filters: %v", err)
@@ -670,7 +672,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("limit clamp lower bound", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "", "", -5, nil)
 		if err != nil {
 			t.Fatalf("Search neg limit: %v", err)
@@ -683,7 +685,7 @@ func TestStore_Search(t *testing.T) {
 	})
 
 	t.Run("limit clamp upper bound", func(t *testing.T) {
-		seed()
+		seed(t)
 		got, err := store.Search(ctx, "alice", "", "", "", 9999, nil)
 		if err != nil {
 			t.Fatalf("Search huge limit: %v", err)

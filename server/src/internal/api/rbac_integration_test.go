@@ -47,7 +47,7 @@ func setupUserWithPermission(t *testing.T, store *auth.AuthStore, username strin
 func setupUserWithPermissions(t *testing.T, store *auth.AuthStore, username string, permissions []string) int64 {
 	t.Helper()
 
-	if err := store.CreateUser(username, "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser(username, "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user %s: %v", username, err)
 	}
 	userID, err := store.GetUserID(username)
@@ -371,7 +371,7 @@ func TestRBACEnforcement_AdminPermissions(t *testing.T) {
 				checker := auth.NewRBACChecker(store)
 				handlerFn := ep.handler(store, checker)
 
-				if err := store.CreateUser("noperm", "Password1", "", "", ""); err != nil {
+				if err := store.CreateUser("noperm", "Password1234", "", "", ""); err != nil {
 					t.Fatalf("Failed to create user: %v", err)
 				}
 				userID, _ := store.GetUserID("noperm")
@@ -564,7 +564,7 @@ func TestRBACEnforcement_MCPToolAccess(t *testing.T) {
 	}
 
 	// Create user in the group.
-	if err := store.CreateUser("mcpuser", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("mcpuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	mcpUserID, _ := store.GetUserID("mcpuser")
@@ -573,13 +573,13 @@ func TestRBACEnforcement_MCPToolAccess(t *testing.T) {
 	}
 
 	// Create a user NOT in the group.
-	if err := store.CreateUser("outsider", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("outsider", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create outsider user: %v", err)
 	}
 	outsiderID, _ := store.GetUserID("outsider")
 
 	// Create a superuser.
-	if err := store.CreateUser("superadmin", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("superadmin", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create superadmin: %v", err)
 	}
 	if err := store.SetUserSuperuser("superadmin", true); err != nil {
@@ -684,7 +684,7 @@ func TestRBACEnforcement_ConnectionAccess(t *testing.T) {
 	}
 
 	// Create user in the group.
-	if err := store.CreateUser("connuser", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("connuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	connUserID, _ := store.GetUserID("connuser")
@@ -693,13 +693,13 @@ func TestRBACEnforcement_ConnectionAccess(t *testing.T) {
 	}
 
 	// Create user without any connection grants.
-	if err := store.CreateUser("noconn", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("noconn", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create no-conn user: %v", err)
 	}
 	noConnUserID, _ := store.GetUserID("noconn")
 
 	// Create a superuser.
-	if err := store.CreateUser("superconn", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("superconn", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create superconn user: %v", err)
 	}
 	if err := store.SetUserSuperuser("superconn", true); err != nil {
@@ -863,7 +863,7 @@ func TestRBACEnforcement_GetUserPrivileges(t *testing.T) {
 	defer cleanup()
 
 	// Create a superuser target.
-	if err := store.CreateUser("superpriv", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("superpriv", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create superpriv: %v", err)
 	}
 	if err := store.SetUserSuperuser("superpriv", true); err != nil {
@@ -872,7 +872,7 @@ func TestRBACEnforcement_GetUserPrivileges(t *testing.T) {
 	superUserID, _ := store.GetUserID("superpriv")
 
 	// Create a regular user with specific grants.
-	if err := store.CreateUser("regular", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("regular", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create regular user: %v", err)
 	}
 	regularUserID, _ := store.GetUserID("regular")
@@ -903,7 +903,7 @@ func TestRBACEnforcement_GetUserPrivileges(t *testing.T) {
 	callerID := setupUserWithPermission(t, store, "caller", auth.PermManageUsers)
 
 	// Create a user without manage_users for the 403 test.
-	if err := store.CreateUser("nocall", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("nocall", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create nocall user: %v", err)
 	}
 	noCallUserID, _ := store.GetUserID("nocall")
@@ -1064,7 +1064,7 @@ func TestConnectionHandler_GetConnection_NonOwnerUnshared_403(t *testing.T) {
 	defer cleanup()
 
 	// Non-owner user: bob; resource owned by alice and NOT shared.
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
 	bobID, _ := store.GetUserID("bob")
@@ -1109,7 +1109,7 @@ func TestConnectionHandler_GetConnection_Owner_NotDenied(t *testing.T) {
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser alice: %v", err)
 	}
 	aliceID, _ := store.GetUserID("alice")
@@ -1136,7 +1136,7 @@ func TestConnectionHandler_GetConnection_SharedNonOwner_NotDenied(t *testing.T) 
 	_, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
 	bobID, _ := store.GetUserID("bob")
@@ -1166,7 +1166,7 @@ func TestConnectionHandler_GetConnection_GroupGrantedUser_NotDenied(t *testing.T
 	defer cleanup()
 
 	// Create user bob with a group that grants access to connection 42.
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
 	bobID, _ := store.GetUserID("bob")
@@ -1207,7 +1207,7 @@ func TestTimelineHandler_NoVisibleConnections_EmptyResult(t *testing.T) {
 	// Bob has no grants and owns nothing; VisibleConnectionIDs will
 	// return an empty set, and the handler must short-circuit to an
 	// empty result without ever hitting the (nil) datastore.
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
 	bobID, _ := store.GetUserID("bob")

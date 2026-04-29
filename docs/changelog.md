@@ -12,6 +12,17 @@ project adheres to
 
 ### Changed
 
+- Replace the composition-rule password validator
+  with a policy aligned to NIST SP 800-63B; the
+  server now requires a minimum of 12 characters,
+  enforces the 72-byte bcrypt upper bound, drops
+  uppercase, lowercase, digit, and special-character
+  requirements, and rejects passwords found in a
+  built-in dictionary of approximately 10,000 common
+  and breached entries. The web client shows live
+  password-strength feedback as the user types, and
+  the server remains the authoritative validator.
+  (#177)
 - Document installation paths for each deployment
   method (GitHub release, Docker, RPM/DEB) in the
   installation guide with a reference table. Add

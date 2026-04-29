@@ -810,7 +810,7 @@ func TestHandleOverview_EstateWideRBAC_RestrictedCaller(t *testing.T) {
 	store, cleanup := newRBACTestStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("restricted", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("restricted", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := store.GetUserID("restricted")

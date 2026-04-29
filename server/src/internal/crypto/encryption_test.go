@@ -55,7 +55,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		name      string
 		plaintext string
 	}{
-		{"simple password", "mypassword123"},
+		{"simple password", "mypassword1234"},
 		{"complex password", "P@ssw0rd!@#$%^&*()"},
 		{"unicode password", "пароль密码"},
 		{"empty string", ""},

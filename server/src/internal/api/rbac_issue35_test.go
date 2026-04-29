@@ -68,7 +68,7 @@ func (s *stubVisibilityLister) GetAllConnections(_ context.Context) ([]auth.Conn
 // newTestUser creates a user and returns its ID.
 func newTestUser(t *testing.T, store *auth.AuthStore, username string) int64 {
 	t.Helper()
-	if err := store.CreateUser(username, "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser(username, "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser %s: %v", username, err)
 	}
 	userID, err := store.GetUserID(username)
@@ -388,7 +388,7 @@ func TestConnectionHandler_SetCurrentConnection_NonOwnerUnshared_403(t *testing.
 	defer cleanup()
 
 	bobID := newTestUser(t, store, "bob")
-	rawToken, _, err := store.AuthenticateUser("bob", "Password1")
+	rawToken, _, err := store.AuthenticateUser("bob", "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestConnectionHandler_SetCurrentConnection_Owner_NotDenied(t *testing.T) {
 	defer cleanup()
 
 	aliceID := newTestUser(t, store, "alice")
-	rawToken, _, err := store.AuthenticateUser("alice", "Password1")
+	rawToken, _, err := store.AuthenticateUser("alice", "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestConnectionHandler_SetCurrentConnection_SharedNonOwner_NotDenied(t *test
 	defer cleanup()
 
 	bobID := newTestUser(t, store, "bob")
-	rawToken, _, err := store.AuthenticateUser("bob", "Password1")
+	rawToken, _, err := store.AuthenticateUser("bob", "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestConnectionHandler_GetCurrentConnection_NonOwnerUnshared_403(t *testing.
 	defer cleanup()
 
 	bobID := newTestUser(t, store, "bob")
-	rawToken, _, err := store.AuthenticateUser("bob", "Password1")
+	rawToken, _, err := store.AuthenticateUser("bob", "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestConnectionHandler_GetCurrentConnection_Owner_NotDenied(t *testing.T) {
 	defer cleanup()
 
 	aliceID := newTestUser(t, store, "alice")
-	rawToken, _, err := store.AuthenticateUser("alice", "Password1")
+	rawToken, _, err := store.AuthenticateUser("alice", "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestConnectionHandler_GetCurrentConnection_SharedNonOwner_NotDenied(t *test
 	defer cleanup()
 
 	bobID := newTestUser(t, store, "bob")
-	rawToken, _, err := store.AuthenticateUser("bob", "Password1")
+	rawToken, _, err := store.AuthenticateUser("bob", "Password1234")
 	if err != nil {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}

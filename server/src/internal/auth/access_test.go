@@ -124,7 +124,7 @@ func TestRBACCheckerRestrictedAccess(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user, group, and privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test group")
 	store.AddUserToGroup(groupID, userID)
@@ -160,7 +160,7 @@ func TestRBACCheckerDeniedAccess(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user without any group membership
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 
 	// Create restricted privilege (assigned to a different group)
@@ -192,7 +192,7 @@ func TestRBACCheckerInheritedPrivileges(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user and hierarchical groups
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	parentGroupID, _ := store.CreateGroup("parent-group", "Parent")
 	childGroupID, _ := store.CreateGroup("child-group", "Child")
@@ -249,7 +249,7 @@ func TestRBACCheckerTokenScoping(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -323,7 +323,7 @@ func TestHasAdminPermissionGranted(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user in group with permission
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("admin-group", "Admin group")
 	store.AddUserToGroup(groupID, userID)
@@ -344,7 +344,7 @@ func TestHasAdminPermissionNotGranted(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user in group without the required permission
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("limited-group", "Limited group")
 	store.AddUserToGroup(groupID, userID)
@@ -384,7 +384,7 @@ func TestGetEffectivePrivileges(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -457,7 +457,7 @@ func TestHasWriteAccess(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with mixed access levels
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -565,7 +565,7 @@ func TestRBACCheckerAllConnectionsGrant(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with "all connections" privilege
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -593,7 +593,7 @@ func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with mixed privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -629,7 +629,7 @@ func TestGetEffectivePrivilegesWithTokenScope(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -678,7 +678,7 @@ func TestRBACCheckerTokenScopingMCPWildcard(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -713,7 +713,7 @@ func TestRBACCheckerTokenScopingAdminWildcard(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with admin permissions
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -744,7 +744,7 @@ func TestRBACCheckerTokenScopingConnectionWildcard(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with connection privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -780,7 +780,7 @@ func TestGetEffectivePrivilegesWithMCPWildcard(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -859,7 +859,7 @@ func TestHasAdminPermissionInheritedFromNestedGroup(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user and group hierarchy
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	parentID, _ := store.CreateGroup("parent-group", "Parent")
 	childID, _ := store.CreateGroup("child-group", "Child")
@@ -896,14 +896,14 @@ func TestRBACCheckerPublicToolWithWildcardGrant(t *testing.T) {
 	store.RegisterMCPPrivilege("store_memory", MCPPrivilegeTypeTool, "Store memory", true)
 
 	// Create a group with wildcard MCP privilege (All MCP Privileges)
-	store.CreateUser("wildcarduser", "Password1", "Wildcard user", "", "")
+	store.CreateUser("wildcarduser", "Password1234", "Wildcard user", "", "")
 	wildcardUserID, _ := store.GetUserID("wildcarduser")
 	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
 	store.AddUserToGroup(groupID, wildcardUserID)
 	store.GrantMCPPrivilegeByName(groupID, "*")
 
 	// Create a user NOT in any group
-	store.CreateUser("nogroup", "Password1", "No group user", "", "")
+	store.CreateUser("nogroup", "Password1234", "No group user", "", "")
 	noGroupUserID, _ := store.GetUserID("nogroup")
 
 	// User in wildcarded group should access the public tool
@@ -935,7 +935,7 @@ func TestRBACCheckerUnregisteredToolDeniedByDefault(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create a user (no groups have any MCP grants at all)
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 
 	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
@@ -964,7 +964,7 @@ func TestRBACCheckerRegisteredToolWithWildcardGrant(t *testing.T) {
 	store.RegisterMCPPrivilege("query_database", MCPPrivilegeTypeTool, "Execute queries", false)
 
 	// Create a group with wildcard MCP privilege
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
 	store.AddUserToGroup(groupID, userID)
@@ -984,7 +984,7 @@ func TestGetUserMCPPrivilegesIncludesWildcard(t *testing.T) {
 	defer cleanup()
 
 	// Create user with wildcard MCP access via a group
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("wildcard-group", "Wildcard group")
 	store.AddUserToGroup(groupID, userID)
@@ -1181,7 +1181,7 @@ func TestVisibleConnectionIDs_WildcardTokenScope_AllConnections(t *testing.T) {
 	defer cleanup()
 
 	// Create a user and a group with a wildcard connection grant.
-	if err := store.CreateUser("wc", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("wc", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, _ := store.GetUserID("wc")
@@ -1218,7 +1218,7 @@ func TestVisibleConnectionIDs_OwnerSeesOwnUnshared(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	if err := store.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, _ := store.GetUserID("alice")
@@ -1256,7 +1256,7 @@ func TestVisibleConnectionIDs_NonOwnerDeniedUnshared(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, _ := store.GetUserID("bob")
@@ -1292,7 +1292,7 @@ func TestVisibleConnectionIDs_SharedVisibleWithoutGrant(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, _ := store.GetUserID("bob")
@@ -1332,7 +1332,7 @@ func TestVisibleConnectionIDs_ExplicitGrantIntersectsSharedVisibility(t *testing
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	if err := store.CreateUser("carol", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("carol", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, _ := store.GetUserID("carol")
@@ -1400,7 +1400,7 @@ func TestVisibleConnectionIDs_ListerError_Propagates(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAccess(t)
 	defer cleanup()
 
-	if err := store.CreateUser("dave", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("dave", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, _ := store.GetUserID("dave")
@@ -1443,7 +1443,7 @@ func TestGetEffectivePrivilegesScopedTokenWithUserWildcard(t *testing.T) {
 	// named a specific connection would be intersected against the
 	// ConnectionPrivileges map and the scoped entry would be dropped
 	// because only ConnectionIDAll (0) was present.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1489,7 +1489,7 @@ func TestGetEffectivePrivilegesScopedTokenIntersectsSpecificGrant(t *testing.T) 
 	// User has access ONLY to connection 11 (no wildcard). A token
 	// scoped to {11, 12} must keep 11 and drop 12 because 12 is not in
 	// the user's grant map.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1534,7 +1534,7 @@ func TestGetEffectivePrivilegesScopedTokenWildcardUserReadOnly(t *testing.T) {
 	// User's wildcard grant is read-only. A token scope that requests
 	// read_write for connection 11 must be capped to read; the user's
 	// access is the ceiling, not the token's scope.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1585,7 +1585,7 @@ func TestGetEffectivePrivilegesScopedTokenWithUserMCPWildcard(t *testing.T) {
 	// Prior to the fix, a scoped token that named specific MCP privileges
 	// would be intersected against the MCPPrivileges map and the scoped
 	// entries would be dropped because only "*" was present.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1634,7 +1634,7 @@ func TestGetEffectivePrivilegesScopedTokenWithUserAdminWildcard(t *testing.T) {
 	// Prior to the fix, a scoped token that named specific admin permissions
 	// would be intersected against the AdminPermissions map and the scoped
 	// entries would be dropped because only "*" was present.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1679,7 +1679,7 @@ func TestGetEffectivePrivilegesMCPWildcardUserMultipleScopedPrivileges(t *testin
 
 	// User has wildcard MCP access only. Token scopes to multiple privileges.
 	// All scoped privileges should resolve successfully.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1725,7 +1725,7 @@ func TestGetEffectivePrivilegesAdminWildcardUserMultipleScopedPermissions(t *tes
 
 	// User has wildcard admin access only. Token scopes to multiple permissions.
 	// All scoped permissions should resolve successfully.
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1786,7 +1786,7 @@ func TestCanAccessConnectionReturnsAccessLevelNone(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user without any group membership
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 
 	// Create restricted connection (assigned to another group)
@@ -1888,7 +1888,7 @@ func TestHasAdminPermissionTokenScopeDenied(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with both manage_users and manage_connections
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("admin-group", "Admin group")
 	store.AddUserToGroup(groupID, userID)
@@ -1926,7 +1926,7 @@ func TestCanAccessMCPItemTokenScopeDenied(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -1967,7 +1967,7 @@ func TestGetEffectivePrivilegesMCPScopeWithNonexistentPrivilegeID(t *testing.T) 
 	checker := NewRBACChecker(store)
 
 	// Create user with MCP privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -2016,7 +2016,7 @@ func TestCanAccessConnectionTokenScopeNotInScope(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with connection privileges
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -2065,7 +2065,7 @@ func TestGetEffectivePrivilegesConnectionWildcardReadCeiling(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// User has read_write to multiple connections
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -2238,7 +2238,7 @@ func TestHasAdminPermissionTokenScopeReturnsFalse(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with admin permissions
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("admin-group", "Admin group")
 	store.AddUserToGroup(groupID, userID)
@@ -2277,7 +2277,7 @@ func TestGetEffectivePrivilegesAdminScopeFiltering(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with admin permissions
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("admin-group", "Admin group")
 	store.AddUserToGroup(groupID, userID)
@@ -2326,7 +2326,7 @@ func TestCanAccessMCPItemDatabaseError(t *testing.T) {
 	store.RegisterMCPPrivilege("test_tool", MCPPrivilegeTypeTool, "Test Tool", false)
 
 	// Create user and give them access
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -2350,7 +2350,7 @@ func TestHasAdminPermissionDatabaseError(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user and give them admin permission
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("admin-group", "Admin")
 	store.AddUserToGroup(groupID, userID)
@@ -2374,7 +2374,7 @@ func TestCanAccessConnectionDatabaseError(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user and give them connection access
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("test-group", "Test")
 	store.AddUserToGroup(groupID, userID)
@@ -2402,7 +2402,7 @@ func TestHasAdminPermissionTokenScopeDatabaseError(t *testing.T) {
 	checker := NewRBACChecker(store)
 
 	// Create user with admin permission and token
-	store.CreateUser("testuser", "Password1", "Test user", "", "")
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
 	userID, _ := store.GetUserID("testuser")
 	groupID, _ := store.CreateGroup("admin-group", "Admin")
 	store.AddUserToGroup(groupID, userID)

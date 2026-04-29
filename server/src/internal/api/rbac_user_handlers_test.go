@@ -29,15 +29,15 @@ func TestRBACHandler_ListUsers_WithAdmin(t *testing.T) {
 	defer cleanup()
 
 	// Create admin with manage_users permission
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
 	// Create additional users
-	store.CreateUser("user2", "Password1", "User Two", "user2@example.com", "")
-	store.CreateUser("user3", "Password1", "User Three", "", "")
+	store.CreateUser("user2", "Password1234", "User Two", "user2@example.com", "")
+	store.CreateUser("user3", "Password1234", "User Three", "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
 	req = withUser(req, adminID)
@@ -83,7 +83,7 @@ func TestRBACHandler_ListUsers_Superuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("user1", "Password1", "User One", "", "")
+	store.CreateUser("user1", "Password1234", "User One", "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
 	req = withSuperuser(req)
@@ -102,7 +102,7 @@ func TestRBACHandler_ListUsers_NormalUser_PermissionDenied(t *testing.T) {
 	defer cleanup()
 
 	// Create user without manage_users permission
-	store.CreateUser("normie", "Password1", "Normal", "", "")
+	store.CreateUser("normie", "Password1234", "Normal", "", "")
 	userID, _ := store.GetUserID("normie")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
@@ -125,7 +125,7 @@ func TestRBACHandler_CreateUser_Valid(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -173,13 +173,13 @@ func TestRBACHandler_CreateUser_MissingUsername_Handler(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	body := `{"password": "Secret123"}`
+	body := `{"password": "Secret123456"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -207,7 +207,7 @@ func TestRBACHandler_CreateUser_MissingPassword_Handler(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -241,7 +241,7 @@ func TestRBACHandler_CreateUser_ShortPassword(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -269,7 +269,7 @@ func TestRBACHandler_CreateUser_ShortPassword(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedPrefix := "Password does not meet complexity requirements:"
+	expectedPrefix := "Password does not meet length requirements:"
 	if !strings.Contains(response.Error, expectedPrefix) {
 		t.Errorf("Expected error containing %q, got %q", expectedPrefix, response.Error)
 	}
@@ -279,14 +279,14 @@ func TestRBACHandler_CreateUser_DuplicateUsername(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
 	// Create a user first
-	store.CreateUser("existing", "Password1", "Existing User", "", "")
+	store.CreateUser("existing", "Password1234", "Existing User", "", "")
 
 	// Try to create a user with the same username
 	body, _ := json.Marshal(map[string]string{
@@ -312,7 +312,7 @@ func TestRBACHandler_CreateUser_PermissionDenied(t *testing.T) {
 	defer cleanup()
 
 	// Create user without manage_users permission
-	store.CreateUser("normie", "Password1", "Normal", "", "")
+	store.CreateUser("normie", "Password1234", "Normal", "", "")
 	userID, _ := store.GetUserID("normie")
 
 	body, _ := json.Marshal(map[string]string{
@@ -337,7 +337,7 @@ func TestRBACHandler_CreateUser_InvalidBody(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -361,7 +361,7 @@ func TestRBACHandler_CreateUser_WithDisabledFlag(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -405,7 +405,7 @@ func TestRBACHandler_CreateServiceAccount(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -448,7 +448,7 @@ func TestRBACHandler_CreateServiceAccount_NoPasswordRequired(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -482,7 +482,7 @@ func TestRBACHandler_UpdateUser_PasswordChange(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -523,13 +523,13 @@ func TestRBACHandler_UpdateUser_ShortPassword(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Target user", "", "")
+	store.CreateUser("target", "Password1234", "Target user", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	shortPw := "short"
@@ -555,7 +555,7 @@ func TestRBACHandler_UpdateUser_ShortPassword(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	expectedPrefix := "Password does not meet complexity requirements:"
+	expectedPrefix := "Password does not meet length requirements:"
 	if !strings.Contains(response.Error, expectedPrefix) {
 		t.Errorf("Expected error containing %q, got %q", expectedPrefix, response.Error)
 	}
@@ -565,13 +565,13 @@ func TestRBACHandler_UpdateUser_EnableDisable(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Target user", "", "")
+	store.CreateUser("target", "Password1234", "Target user", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	// Disable the user
@@ -629,13 +629,13 @@ func TestRBACHandler_UpdateUser_DisplayNameAndEmail(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Old Name", "old@example.com", "")
+	store.CreateUser("target", "Password1234", "Old Name", "old@example.com", "")
 	targetID, _ := store.GetUserID("target")
 
 	newName := "New Name"
@@ -672,7 +672,7 @@ func TestRBACHandler_UpdateUser_NotFound(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -710,10 +710,10 @@ func TestRBACHandler_UpdateUser_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("normie", "Password1", "Normal", "", "")
+	store.CreateUser("normie", "Password1234", "Normal", "", "")
 	userID, _ := store.GetUserID("normie")
 
-	store.CreateUser("target", "Password1", "Target", "", "")
+	store.CreateUser("target", "Password1234", "Target", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	newName := "Hacked Name"
@@ -739,13 +739,13 @@ func TestRBACHandler_UpdateUser_InvalidBody(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Target", "", "")
+	store.CreateUser("target", "Password1234", "Target", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	req := httptest.NewRequest(http.MethodPut,
@@ -771,13 +771,13 @@ func TestRBACHandler_DeleteUser_Valid(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Target user", "", "")
+	store.CreateUser("target", "Password1234", "Target user", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -803,7 +803,7 @@ func TestRBACHandler_DeleteUser_SelfDeletion(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -829,7 +829,7 @@ func TestRBACHandler_DeleteUser_NonExistent(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -861,10 +861,10 @@ func TestRBACHandler_DeleteUser_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("normie", "Password1", "Normal", "", "")
+	store.CreateUser("normie", "Password1234", "Normal", "", "")
 	userID, _ := store.GetUserID("normie")
 
-	store.CreateUser("target", "Password1", "Target", "", "")
+	store.CreateUser("target", "Password1234", "Target", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -888,13 +888,13 @@ func TestRBACHandler_UserSubpath_PutRoutesToUpdate(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Target", "", "")
+	store.CreateUser("target", "Password1234", "Target", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	newName := "Updated Name"
@@ -920,13 +920,13 @@ func TestRBACHandler_UserSubpath_DeleteRoutesToDelete(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	store.CreateUser("target", "Password1", "Target", "", "")
+	store.CreateUser("target", "Password1234", "Target", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	req := httptest.NewRequest(http.MethodDelete,
@@ -950,7 +950,7 @@ func TestRBACHandler_GetUserPrivileges(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -991,7 +991,7 @@ func TestRBACHandler_GetUserPrivileges_NotFound(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -1014,10 +1014,10 @@ func TestRBACHandler_GetUserPrivileges_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("normie", "Password1", "Normal", "", "")
+	store.CreateUser("normie", "Password1234", "Normal", "", "")
 	userID, _ := store.GetUserID("normie")
 
-	store.CreateUser("target", "Password1", "Target", "", "")
+	store.CreateUser("target", "Password1234", "Target", "", "")
 	targetID, _ := store.GetUserID("target")
 
 	req := httptest.NewRequest(http.MethodGet,

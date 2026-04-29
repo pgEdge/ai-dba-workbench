@@ -39,7 +39,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user
-	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
+	if err := authStore.CreateUser("testuser", "Testpass1234", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 		{
 			name:           "successful login",
 			method:         http.MethodPost,
-			body:           LoginRequest{Username: "testuser", Password: "Testpass123"},
+			body:           LoginRequest{Username: "testuser", Password: "Testpass1234"},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp LoginResponse
@@ -116,7 +116,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 		{
 			name:           "nonexistent user",
 			method:         http.MethodPost,
-			body:           LoginRequest{Username: "nouser", Password: "Testpass123"},
+			body:           LoginRequest{Username: "nouser", Password: "Testpass1234"},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp ErrorResponse
@@ -131,7 +131,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 		{
 			name:           "missing username",
 			method:         http.MethodPost,
-			body:           LoginRequest{Username: "", Password: "Testpass123"},
+			body:           LoginRequest{Username: "", Password: "Testpass1234"},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp ErrorResponse
@@ -327,7 +327,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user
-	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
+	if err := authStore.CreateUser("testuser", "Testpass1234", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
@@ -364,7 +364,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	// Reset rate limit and verify successful login works
 	rateLimiter.Reset("192.168.1.100:12345")
 
-	body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass123"})
+	body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass1234"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "192.168.1.100:12345"
@@ -394,7 +394,7 @@ func TestAuthHandler_SecureCookieFlag(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user
-	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
+	if err := authStore.CreateUser("testuser", "Testpass1234", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
@@ -420,7 +420,7 @@ func TestAuthHandler_SecureCookieFlag(t *testing.T) {
 			handler := NewAuthHandler(authStore, nil, nil, tt.tlsEnabled)
 			defer handler.Close()
 
-			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass123"})
+			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass1234"})
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -468,7 +468,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 	defer authStore.Close()
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
-	if err := authStore.CreateUser("testuser", "Testpass123", "Test user", "", ""); err != nil {
+	if err := authStore.CreateUser("testuser", "Testpass1234", "Test user", "", ""); err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
@@ -534,7 +534,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 			handler := NewAuthHandler(authStore, nil, ipExtractor, tt.tlsEnabled)
 			defer handler.Close()
 
-			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass123"})
+			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass1234"})
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			if tt.forwardedProto != "" {

@@ -44,6 +44,8 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import PasswordStrengthField from './PasswordStrengthField';
+import { PASSWORD_MIN_LENGTH } from './passwordStrength';
 import { useAuth } from '../../contexts/useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
@@ -550,12 +552,11 @@ const AdminUsers: React.FC = () => {
                         sx={SELECT_FIELD_SX}
                     />
                     {!createServiceAccount && (
-                        <TextField
+                        <PasswordStrengthField
                             fullWidth
                             label="Password"
-                            type="password"
                             value={createPassword}
-                            onChange={(e) => { setCreatePassword(e.target.value); }}
+                            onChange={setCreatePassword}
                             disabled={createLoading}
                             margin="dense"
                             required
@@ -636,7 +637,14 @@ const AdminUsers: React.FC = () => {
                     <Button
                         onClick={handleCreateUser}
                         variant="contained"
-                        disabled={createLoading || !createUsername.trim() || (!createServiceAccount && !createPassword)}
+                        disabled={
+                            createLoading
+                            || !createUsername.trim()
+                            || (!createServiceAccount && !createPassword)
+                            || (!createServiceAccount
+                                && createPassword.length > 0
+                                && createPassword.length < PASSWORD_MIN_LENGTH)
+                        }
                         sx={containedButtonSx}
                     >
                         {createLoading ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
@@ -652,16 +660,16 @@ const AdminUsers: React.FC = () => {
                         <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
                     )}
                     {!editUser?.is_service_account && (
-                        <TextField
+                        <PasswordStrengthField
                             fullWidth
                             label="Password"
-                            type="password"
                             value={editPassword}
-                            onChange={(e) => { setEditPassword(e.target.value); }}
+                            onChange={setEditPassword}
                             disabled={editLoading}
                             margin="dense"
                             placeholder="Leave blank to keep current"
                             InputLabelProps={{ shrink: true }}
+                            hideFeedbackWhenEmpty
                         />
                     )}
                     <TextField
@@ -726,7 +734,11 @@ const AdminUsers: React.FC = () => {
                     <Button
                         onClick={handleEditUser}
                         variant="contained"
-                        disabled={editLoading}
+                        disabled={
+                            editLoading
+                            || (editPassword.length > 0
+                                && editPassword.length < PASSWORD_MIN_LENGTH)
+                        }
                         sx={containedButtonSx}
                     >
                         {editLoading ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}

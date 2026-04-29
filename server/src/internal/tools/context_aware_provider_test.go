@@ -276,7 +276,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user and token
-	if err := authStore.CreateUser("testuser", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("testuser")
@@ -376,7 +376,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
-	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
@@ -439,7 +439,7 @@ func TestGetClient_NilRBACCheckerInSession(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
-	if err := authStore.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	_, token, err := authStore.CreateToken("bob", "bob-token", nil)
@@ -508,7 +508,7 @@ func TestExecute_GetClient_RBACDenialClearsSession(t *testing.T) {
 	}
 
 	// Create user and token
-	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("alice")
@@ -610,7 +610,7 @@ func TestExecute_GetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	}
 
 	// Create user and token
-	if err := authStore.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("bob")
@@ -718,7 +718,7 @@ func TestExecute_GetClient_NoSession(t *testing.T) {
 	}
 
 	// Create user and token but don't set a connection session
-	if err := authStore.CreateUser("carol", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("carol", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("carol")
@@ -784,7 +784,7 @@ func TestExecute_GetClient_SessionWithDatabaseOverride(t *testing.T) {
 	}
 
 	// Create user and token
-	if err := authStore.CreateUser("dave", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("dave", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("dave")
@@ -895,7 +895,7 @@ func TestExecute_GetClient_SuperuserBypassesRBAC(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create superuser and token
-	if err := authStore.CreateUser("admin", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("admin", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	if err := authStore.SetUserSuperuser("admin", true); err != nil {
@@ -1005,7 +1005,7 @@ func TestExecute_QueryMetrics_RBACChecksConnectionIDInjection(t *testing.T) {
 	}
 
 	// Create user and token
-	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("alice")
@@ -1095,7 +1095,7 @@ func TestExecute_QueryMetrics_RBACAllowsConnectionIDInjection(t *testing.T) {
 	}
 
 	// Create user and token
-	if err := authStore.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("bob")
@@ -1167,7 +1167,7 @@ func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create superuser and token
-	if err := authStore.CreateUser("admin", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("admin", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	if err := authStore.SetUserSuperuser("admin", true); err != nil {

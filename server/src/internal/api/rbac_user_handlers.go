@@ -173,7 +173,7 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	// Validate password complexity if being updated
+	// Validate password against the length and dictionary policy when set
 	if req.Password != nil && *req.Password != "" {
 		if err := auth.ValidatePassword(*req.Password); err != nil {
 			RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))

@@ -256,7 +256,7 @@ func TestPgSysProbes_ExecuteWithoutExtension(t *testing.T) {
 		t.Fatalf("delete extension stub: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = conn.Exec(ctx, `
+		if _, cleanupErr := conn.Exec(ctx, `
 			INSERT INTO pg_extension (oid, extname, extowner,
 				extnamespace, extrelocatable, extversion,
 				extconfig, extcondition)
@@ -266,7 +266,9 @@ func TestPgSysProbes_ExecuteWithoutExtension(t *testing.T) {
 					WHERE nspname='public'),
 				TRUE, '1.0', NULL, NULL
 			WHERE NOT EXISTS (SELECT 1 FROM pg_extension
-				WHERE extname='system_stats')`)
+				WHERE extname='system_stats')`); cleanupErr != nil {
+			t.Logf("restore system_stats stub: %v", cleanupErr)
+		}
 	})
 
 	for _, c := range newSysCases() {

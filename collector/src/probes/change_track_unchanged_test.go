@@ -13,7 +13,7 @@
 // most recent row, computes a hash of the input metrics, and skips the
 // write when the hashes match. We drive that path explicitly with
 // hand-crafted metric maps that round-trip through the datastore
-// without coercion artefacts.
+// without coercion artifacts.
 package probes
 
 import (

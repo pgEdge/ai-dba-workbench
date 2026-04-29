@@ -25,7 +25,6 @@ import (
 type integrationState struct {
 	pool   *pgxpool.Pool
 	dbName string
-	once   sync.Once
 	err    error
 }
 
@@ -74,8 +73,15 @@ func teardownIntegrationPool() {
 		return
 	}
 	defer adminPool.Close()
-	_, _ = adminPool.Exec(ctx, fmt.Sprintf(
-		"DROP DATABASE IF EXISTS %s WITH (FORCE)", integration.dbName))
+	if _, dropErr := adminPool.Exec(ctx, fmt.Sprintf(
+		"DROP DATABASE IF EXISTS %s WITH (FORCE)",
+		integration.dbName)); dropErr != nil {
+		// Best-effort teardown; surface the failure to stderr so a
+		// stale test database is visible without aborting the run.
+		fmt.Fprintf(os.Stderr,
+			"warning: drop probe test database %q: %v\n",
+			integration.dbName, dropErr)
+	}
 }
 
 // integrationConnString returns the base connection string for tests.

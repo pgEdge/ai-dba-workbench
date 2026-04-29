@@ -69,7 +69,7 @@ func TestPgStatStatementsProbe_ExecuteExtensionMissing(t *testing.T) {
 		t.Fatalf("drop extension: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = conn.Exec(ctx, `
+		if _, cleanupErr := conn.Exec(ctx, `
 			DO $$
 			BEGIN
 				BEGIN
@@ -78,7 +78,9 @@ func TestPgStatStatementsProbe_ExecuteExtensionMissing(t *testing.T) {
 				EXCEPTION WHEN OTHERS THEN
 					NULL;
 				END;
-			END$$`)
+			END$$`); cleanupErr != nil {
+			t.Logf("restore pg_stat_statements: %v", cleanupErr)
+		}
 	})
 
 	metrics, err := p.Execute(ctx, "stmts-noext", conn, pgVersion)

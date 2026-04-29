@@ -87,9 +87,11 @@ func TestPgNodeRoleProbe_GetLogicalReplicationStatus_WithSubscription(t *testing
 		t.Skipf("cannot synthesize pg_subscription row: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = conn.Exec(ctx,
+		if _, cleanupErr := conn.Exec(ctx,
 			"DELETE FROM pg_subscription "+
-				"WHERE subname='test_node_role_sub'")
+				"WHERE subname='test_node_role_sub'"); cleanupErr != nil {
+			t.Logf("cleanup pg_subscription: %v", cleanupErr)
+		}
 	})
 
 	p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})
@@ -169,9 +171,15 @@ func TestPgNodeRoleProbe_GetSpockStatus_FakeExtension(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = conn.Exec(ctx,
-			"DELETE FROM pg_extension WHERE extname='spock'")
-		_, _ = conn.Exec(ctx, "DROP SCHEMA spock CASCADE")
+		if _, cleanupErr := conn.Exec(ctx,
+			"DELETE FROM pg_extension "+
+				"WHERE extname='spock'"); cleanupErr != nil {
+			t.Logf("cleanup pg_extension spock row: %v", cleanupErr)
+		}
+		if _, cleanupErr := conn.Exec(ctx,
+			"DROP SCHEMA spock CASCADE"); cleanupErr != nil {
+			t.Logf("cleanup spock schema: %v", cleanupErr)
+		}
 	})
 
 	p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})
@@ -225,9 +233,15 @@ func TestPgNodeRoleProbe_GetSpockStatus_NoLocalNode(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = conn.Exec(ctx,
-			"DELETE FROM pg_extension WHERE extname='spock'")
-		_, _ = conn.Exec(ctx, "DROP SCHEMA spock CASCADE")
+		if _, cleanupErr := conn.Exec(ctx,
+			"DELETE FROM pg_extension "+
+				"WHERE extname='spock'"); cleanupErr != nil {
+			t.Logf("cleanup pg_extension spock row: %v", cleanupErr)
+		}
+		if _, cleanupErr := conn.Exec(ctx,
+			"DROP SCHEMA spock CASCADE"); cleanupErr != nil {
+			t.Logf("cleanup spock schema: %v", cleanupErr)
+		}
 	})
 
 	p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})

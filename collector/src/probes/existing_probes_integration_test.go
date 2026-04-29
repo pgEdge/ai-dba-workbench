@@ -39,7 +39,11 @@ func TestPgConnectivityProbe_ExecuteAndStore(t *testing.T) {
 	if len(metrics) != 1 {
 		t.Fatalf("expected one row, got %d", len(metrics))
 	}
-	rt, _ := metrics[0]["response_time_ms"].(float64)
+	rt, ok := metrics[0]["response_time_ms"].(float64)
+	if !ok {
+		t.Fatalf("response_time_ms is not float64: %T",
+			metrics[0]["response_time_ms"])
+	}
 	if rt < 0 {
 		t.Errorf("response_time_ms negative: %v", rt)
 	}
@@ -223,7 +227,11 @@ func TestPgNodeRoleProbe_ExecuteAndStore(t *testing.T) {
 	if len(metrics) != 1 {
 		t.Fatalf("expected one role row, got %d", len(metrics))
 	}
-	role, _ := metrics[0]["primary_role"].(string)
+	role, ok := metrics[0]["primary_role"].(string)
+	if !ok {
+		t.Fatalf("primary_role is not string: %T",
+			metrics[0]["primary_role"])
+	}
 	if role == "" {
 		t.Error("primary_role should be set")
 	}

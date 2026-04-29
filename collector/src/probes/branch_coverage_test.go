@@ -21,32 +21,19 @@ import (
 	"time"
 )
 
-// TestPgStatWalProbe_NoStatWalView exercises the legacy branch in
-// PgStatWalProbe.Execute where pg_stat_wal does not exist. We hide the
-// view from the probe by renaming it for the duration of the test, then
-// restore it via cleanup so other tests still see it.
+// TestPgStatWalProbe_NoStatWalView documents that the legacy
+// "pg_stat_wal does not exist" branch in PgStatWalProbe.Execute is
+// unreachable from an integration test (the view lives in pg_catalog
+// and cannot be hidden from a normal session) and records the
+// alternate coverage source.
 func TestPgStatWalProbe_NoStatWalView(t *testing.T) {
-	pool := requireIntegrationPool(t)
-	conn := acquireConn(t, pool)
-	ctx := context.Background()
-	pgVersion := detectPgVersion(t, conn)
-
-	// pg_stat_wal is a system view in pg_catalog. We cannot rename or
-	// drop it directly. Instead, we override it locally by creating a
-	// shadow view in a search-path-earlier schema that the EXISTS
-	// check looks at. The check queries pg_views which only lists
-	// concrete views, so we simulate "missing" by setting the
-	// search_path so pg_catalog is no longer first... actually pg_views
-	// always reports the catalog view. So we instead temporarily
-	// change pg_catalog.pg_views via a workaround: we cannot. Skip.
+	// pg_stat_wal is a system view in pg_catalog that cannot be renamed
+	// or dropped from a regular session, so the "view does not exist"
+	// branch is unreachable from an integration test. The branch is
+	// instead covered by the version-gated GetQuery tests, which
+	// exercise the same fallback statically.
 	t.Skip("pg_stat_wal cannot be hidden in PG16; covered via " +
 		"version branch by GetQuery test")
-
-	// Force the no-view branch via direct catalog query.
-	_ = pgVersion
-	_ = pool
-	_ = ctx
-	_ = conn
 }
 
 // TestEnsurePartition_ErrorPath confirms that EnsurePartition surfaces

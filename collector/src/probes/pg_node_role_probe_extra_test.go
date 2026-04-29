@@ -28,7 +28,11 @@ func TestPgNodeRoleProbe_InfoToMap_LogicalAndSpock(t *testing.T) {
 			RoleDetails:       map[string]any{},
 		}
 		out := p.infoToMap(info)
-		details, _ := out["role_details"].(string)
+		details, ok := out["role_details"].(string)
+		if !ok {
+			t.Fatalf("role_details is not string: %T",
+				out["role_details"])
+		}
 		if !strings.Contains(details, `"logical"`) {
 			t.Errorf("expected logical key, got %q", details)
 		}
@@ -47,7 +51,11 @@ func TestPgNodeRoleProbe_InfoToMap_LogicalAndSpock(t *testing.T) {
 			RoleDetails:            map[string]any{},
 		}
 		out := p.infoToMap(info)
-		details, _ := out["role_details"].(string)
+		details, ok := out["role_details"].(string)
+		if !ok {
+			t.Fatalf("role_details is not string: %T",
+				out["role_details"])
+		}
 		if !strings.Contains(details, `"spock"`) {
 			t.Errorf("expected spock key, got %q", details)
 		}
@@ -65,7 +73,11 @@ func TestPgNodeRoleProbe_InfoToMap_LogicalAndSpock(t *testing.T) {
 			RoleDetails: map[string]any{},
 		}
 		out := p.infoToMap(info)
-		details, _ := out["role_details"].(string)
+		details, ok := out["role_details"].(string)
+		if !ok {
+			t.Fatalf("role_details is not string: %T",
+				out["role_details"])
+		}
 		if !strings.Contains(details, `"logical"`) ||
 			!strings.Contains(details, `"spock"`) {
 			t.Errorf("expected both logical and spock, got %q",

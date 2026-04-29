@@ -10,7 +10,10 @@
 package crypto
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,5 +330,170 @@ func TestDecryptInvalidCiphertext(t *testing.T) {
 				t.Error("Expected error for invalid ciphertext, got nil")
 			}
 		})
+	}
+}
+
+// TestGenerateKeyRandFailure verifies that GenerateKey wraps and
+// returns an error when the underlying random reader fails. This
+// exercises the io.ReadFull error branch by swapping the package-level
+// randRead hook.
+func TestGenerateKeyRandFailure(t *testing.T) {
+	original := randRead
+	t.Cleanup(func() { randRead = original })
+
+	wantErr := errors.New("simulated rand failure")
+	randRead = func(_ io.Reader, _ []byte) (int, error) {
+		return 0, wantErr
+	}
+
+	key, err := GenerateKey()
+	if err == nil {
+		t.Fatal("Expected error from GenerateKey, got nil")
+	}
+	if key != nil {
+		t.Errorf("Expected nil key on failure, got %v", key)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("Expected wrapped %q, got %v", wantErr, err)
+	}
+	if !strings.Contains(err.Error(), "failed to generate random key") {
+		t.Errorf("Expected wrap prefix in error, got %v", err)
+	}
+}
+
+// TestLoadKeyFromFileInvalidSize verifies that LoadKeyFromFile rejects
+// a base64 payload that decodes to a byte count other than KeySize.
+// The existing "wrong size" subtest in TestLoadKeyFromInvalidFile
+// covers a 6-byte payload; this test uses a 16-byte payload to make
+// the intent explicit and to keep the assertion specific to the
+// invalid-size branch.
+func TestLoadKeyFromFileInvalidSize(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pgedge-crypto-invalid-size-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	keyPath := filepath.Join(tmpDir, "short.key")
+	short := make([]byte, 16) // half the expected key size
+	encoded := base64.StdEncoding.EncodeToString(short)
+	if err := os.WriteFile(keyPath, []byte(encoded), 0600); err != nil {
+		t.Fatalf("Failed to write key file: %v", err)
+	}
+
+	_, err = LoadKeyFromFile(keyPath)
+	if err == nil {
+		t.Fatal("Expected invalid key size error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid key size") {
+		t.Errorf("Expected 'invalid key size' in error, got %v", err)
+	}
+}
+
+// TestLoadKeyFromFileReadFailure verifies that LoadKeyFromFile
+// surfaces an os.ReadFile error after a successful stat. We achieve a
+// passing-stat / failing-read combination by creating a directory at
+// the target path with mode 0600 — Stat reports the right permissions
+// for a regular-file check, but ReadFile rejects directories.
+func TestLoadKeyFromFileReadFailure(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pgedge-crypto-read-fail-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	dirAsKey := filepath.Join(tmpDir, "dir.key")
+	if err := os.Mkdir(dirAsKey, 0600); err != nil {
+		t.Fatalf("Failed to create directory: %v", err)
+	}
+
+	_, err = LoadKeyFromFile(dirAsKey)
+	if err == nil {
+		t.Fatal("Expected read error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read key file") {
+		t.Errorf("Expected 'failed to read key file' in error, got %v", err)
+	}
+}
+
+// TestSaveToFileWriteFailure verifies that SaveToFile wraps and
+// returns errors from os.WriteFile. Writing into a path whose parent
+// is a regular file (not a directory) reliably fails with ENOTDIR on
+// Linux without requiring privileged operations.
+func TestSaveToFileWriteFailure(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pgedge-crypto-write-fail-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	parentFile := filepath.Join(tmpDir, "parent")
+	if err := os.WriteFile(parentFile, []byte("not a directory"), 0600); err != nil {
+		t.Fatalf("Failed to create parent file: %v", err)
+	}
+
+	// Using parentFile as a directory component yields ENOTDIR.
+	target := filepath.Join(parentFile, "key")
+
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	err = key.SaveToFile(target)
+	if err == nil {
+		t.Fatal("Expected write error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to write key file") {
+		t.Errorf("Expected 'failed to write key file' in error, got %v", err)
+	}
+}
+
+// TestDecryptEmptyCiphertext verifies the empty-input fast path for
+// Decrypt: an empty ciphertext returns an empty plaintext without
+// invoking base64 decoding or AES-GCM. This mirrors the matching
+// short-circuit in Encrypt.
+func TestDecryptEmptyCiphertext(t *testing.T) {
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	plaintext, err := key.Decrypt("")
+	if err != nil {
+		t.Fatalf("Decrypt(\"\") returned error: %v", err)
+	}
+	if plaintext != "" {
+		t.Errorf("Expected empty plaintext, got %q", plaintext)
+	}
+}
+
+// TestEncryptGCMFailure verifies that Encrypt surfaces errors from
+// the underlying GCM helper. We swap the package-level encryptGCM
+// hook to inject a deterministic failure; the production code path
+// continues to use pkgcrypto.EncryptGCM.
+func TestEncryptGCMFailure(t *testing.T) {
+	original := encryptGCM
+	t.Cleanup(func() { encryptGCM = original })
+
+	wantErr := errors.New("simulated GCM failure")
+	encryptGCM = func(_ []byte, _ []byte) ([]byte, error) {
+		return nil, wantErr
+	}
+
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	ciphertext, err := key.Encrypt("plaintext")
+	if err == nil {
+		t.Fatal("Expected error from Encrypt, got nil")
+	}
+	if ciphertext != "" {
+		t.Errorf("Expected empty ciphertext on failure, got %q", ciphertext)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("Expected error to wrap %q, got %v", wantErr, err)
 	}
 }

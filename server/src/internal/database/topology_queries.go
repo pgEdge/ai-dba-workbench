@@ -934,23 +934,48 @@ func (d *Datastore) buildManualClusterHierarchy(ctx context.Context, clusterID i
 		serverByID[servers[i].ID] = &servers[i]
 	}
 
-	// Track which servers are children
+	// First pass: link children to parents by ID only. Building the
+	// graph as ID lists (rather than appending *child structs) avoids
+	// the shallow-copy bug where a grandchild added to its parent
+	// after the parent had already been embedded into its grandparent
+	// would be silently dropped. Because this loop iterates a Go map,
+	// the previous implementation was also nondeterministic: which
+	// grandchildren survived depended on map iteration order. See
+	// issue #153.
+	childrenByParent := make(map[int][]int)
 	childIDs := make(map[int]bool)
 	for childID, parentID := range parentMap {
-		parent, parentExists := serverByID[parentID]
-		child, childExists := serverByID[childID]
+		_, parentExists := serverByID[parentID]
+		_, childExists := serverByID[childID]
 		if parentExists && childExists {
-			parent.IsExpandable = true
-			parent.Children = append(parent.Children, *child)
+			childrenByParent[parentID] = append(childrenByParent[parentID], childID)
 			childIDs[childID] = true
 		}
+	}
+
+	for parentID := range childrenByParent {
+		serverByID[parentID].IsExpandable = true
+	}
+
+	// Second pass: materialize the tree by deep-copying from the
+	// roots down. The recursive call returns a fully-attached subtree,
+	// so each append captures every descendant.
+	var materialize func(id int) TopologyServerInfo
+	materialize = func(id int) TopologyServerInfo {
+		node := *serverByID[id]
+		children := childrenByParent[id]
+		node.Children = make([]TopologyServerInfo, 0, len(children))
+		for _, childID := range children {
+			node.Children = append(node.Children, materialize(childID))
+		}
+		return node
 	}
 
 	// Return only top-level servers (those that are not children)
 	var result []TopologyServerInfo
 	for i := range servers {
 		if !childIDs[servers[i].ID] {
-			result = append(result, *serverByID[servers[i].ID])
+			result = append(result, materialize(servers[i].ID))
 		}
 	}
 
@@ -1060,7 +1085,6 @@ func (d *Datastore) buildServerWithChildren(
 		Status:           conn.Status,
 		Role:             d.mapPrimaryRoleToDisplayRole(conn.PrimaryRole),
 		PrimaryRole:      conn.PrimaryRole,
-		IsExpandable:     len(childrenMap[conn.ID]) > 0,
 		MembershipSource: conn.MembershipSource,
 		OwnerUsername:    ownerUsername,
 		Version:          version,
@@ -1092,6 +1116,13 @@ func (d *Datastore) buildServerWithChildren(
 		childServer := d.buildServerWithChildren(child, childrenMap, connByID, assignedConnections, allowManual)
 		server.Children = append(server.Children, childServer)
 	}
+
+	// Compute IsExpandable from the visible Children slice rather than
+	// the unfiltered childrenMap. When allowManual is false every child
+	// can be filtered out, so deriving IsExpandable from childrenMap
+	// would mark auto-detected nodes expandable even though they have
+	// no visible children. See issue #153.
+	server.IsExpandable = len(server.Children) > 0
 
 	return server
 }

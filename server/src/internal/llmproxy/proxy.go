@@ -44,6 +44,26 @@ type Config struct {
 	LLMConfig              *config.LLMConfig // LLMConfig for accessing custom headers (may be nil)
 }
 
+// chatLLMConfig projects the proxy Config into the data struct that
+// chat.NewClientFromLLMConfig consumes. The chat package does not
+// depend on llmproxy, so this projection lives here.
+func (c *Config) chatLLMConfig() chat.LLMConfig {
+	return chat.LLMConfig{
+		Provider:               c.Provider,
+		Model:                  c.Model,
+		AnthropicAPIKey:        c.AnthropicAPIKey,
+		AnthropicBaseURL:       c.AnthropicBaseURL,
+		OpenAIAPIKey:           c.OpenAIAPIKey,
+		OpenAIBaseURL:          c.OpenAIBaseURL,
+		GeminiAPIKey:           c.GeminiAPIKey,
+		GeminiBaseURL:          c.GeminiBaseURL,
+		OllamaURL:              c.OllamaURL,
+		MaxTokens:              c.MaxTokens,
+		Temperature:            c.Temperature,
+		UseCompactDescriptions: c.UseCompactDescriptions,
+	}
+}
+
 // Message represents a message in the chat conversation
 type Message struct {
 	Role         string         `json:"role"`
@@ -196,21 +216,9 @@ func HandleModels(w http.ResponseWriter, r *http.Request, cfg *Config) {
 		return
 	}
 
-	client, err := chat.NewClientFromConfig(chat.ClientConfig{
-		Provider:         provider,
-		AnthropicAPIKey:  cfg.AnthropicAPIKey,
-		AnthropicBaseURL: cfg.AnthropicBaseURL,
-		OpenAIAPIKey:     cfg.OpenAIAPIKey,
-		OpenAIBaseURL:    cfg.OpenAIBaseURL,
-		GeminiAPIKey:     cfg.GeminiAPIKey,
-		GeminiBaseURL:    cfg.GeminiBaseURL,
-		OllamaURL:        cfg.OllamaURL,
-		Model:            cfg.Model,
-		MaxTokens:        cfg.MaxTokens,
-		Temperature:      cfg.Temperature,
-		Debug:            false,
-		UseCompactDescs:  cfg.UseCompactDescriptions,
-		Headers:          headers,
+	client, err := chat.NewClientFromLLMConfig(cfg.chatLLMConfig(), chat.LLMOptions{
+		Provider: provider,
+		Headers:  headers,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -320,21 +328,11 @@ func HandleChat(w http.ResponseWriter, r *http.Request, cfg *Config) {
 		return
 	}
 
-	client, err := chat.NewClientFromConfig(chat.ClientConfig{
-		Provider:         provider,
-		AnthropicAPIKey:  cfg.AnthropicAPIKey,
-		AnthropicBaseURL: cfg.AnthropicBaseURL,
-		OpenAIAPIKey:     cfg.OpenAIAPIKey,
-		OpenAIBaseURL:    cfg.OpenAIBaseURL,
-		GeminiAPIKey:     cfg.GeminiAPIKey,
-		GeminiBaseURL:    cfg.GeminiBaseURL,
-		OllamaURL:        cfg.OllamaURL,
-		Model:            model,
-		MaxTokens:        cfg.MaxTokens,
-		Temperature:      cfg.Temperature,
-		Debug:            req.Debug,
-		UseCompactDescs:  cfg.UseCompactDescriptions,
-		Headers:          headers,
+	client, err := chat.NewClientFromLLMConfig(cfg.chatLLMConfig(), chat.LLMOptions{
+		Provider: provider,
+		Model:    model,
+		Debug:    req.Debug,
+		Headers:  headers,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

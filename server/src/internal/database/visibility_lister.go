@@ -21,6 +21,23 @@ type connectionLister interface {
 	GetAllConnections(ctx context.Context) ([]ConnectionListItem, error)
 }
 
+// ConnectionsToVisibilityInfo projects a slice of ConnectionListItem into
+// the minimal auth.ConnectionVisibilityInfo values that the auth package
+// uses for visibility resolution. Both the datastore-backed and slice-
+// backed visibility listers share this helper to guarantee a single,
+// canonical mapping.
+func ConnectionsToVisibilityInfo(conns []ConnectionListItem) []auth.ConnectionVisibilityInfo {
+	result := make([]auth.ConnectionVisibilityInfo, 0, len(conns))
+	for i := range conns {
+		result = append(result, auth.ConnectionVisibilityInfo{
+			ID:            conns[i].ID,
+			IsShared:      conns[i].IsShared,
+			OwnerUsername: conns[i].OwnerUsername,
+		})
+	}
+	return result
+}
+
 // visibilityLister adapts *Datastore.GetAllConnections to the
 // auth.ConnectionVisibilityLister interface. A single call loads sharing
 // metadata for every connection; this lets auth.RBACChecker.VisibleConnectionIDs
@@ -53,13 +70,27 @@ func (l *visibilityLister) GetAllConnections(ctx context.Context) ([]auth.Connec
 	if err != nil {
 		return nil, err
 	}
-	result := make([]auth.ConnectionVisibilityInfo, 0, len(conns))
-	for i := range conns {
-		result = append(result, auth.ConnectionVisibilityInfo{
-			ID:            conns[i].ID,
-			IsShared:      conns[i].IsShared,
-			OwnerUsername: conns[i].OwnerUsername,
-		})
-	}
-	return result, nil
+	return ConnectionsToVisibilityInfo(conns), nil
+}
+
+// sliceVisibilityLister adapts an already-loaded slice of ConnectionListItem
+// to auth.ConnectionVisibilityLister. Callers that have the full list in
+// hand can reuse it instead of issuing a second datastore read.
+type sliceVisibilityLister struct {
+	connections []ConnectionListItem
+}
+
+// NewSliceVisibilityLister returns a visibility lister backed by the
+// supplied slice. The caller retains ownership of the slice; the lister
+// does not modify it. The returned lister never errors because no I/O
+// is performed; the context argument is accepted only to satisfy the
+// auth.ConnectionVisibilityLister interface.
+func NewSliceVisibilityLister(conns []ConnectionListItem) auth.ConnectionVisibilityLister {
+	return sliceVisibilityLister{connections: conns}
+}
+
+// GetAllConnections implements auth.ConnectionVisibilityLister over the
+// pre-loaded slice.
+func (l sliceVisibilityLister) GetAllConnections(_ context.Context) ([]auth.ConnectionVisibilityInfo, error) {
+	return ConnectionsToVisibilityInfo(l.connections), nil
 }

@@ -229,3 +229,107 @@ func TestGetAllConnectionsPreservesOrder(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ConnectionsToVisibilityInfo tests
+// ---------------------------------------------------------------------------
+
+func TestConnectionsToVisibilityInfo(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []ConnectionListItem
+		want []auth.ConnectionVisibilityInfo
+	}{
+		{
+			name: "preserves all sharing fields",
+			in: []ConnectionListItem{
+				{ID: 1, Name: "owned", IsShared: false, OwnerUsername: "alice"},
+				{ID: 2, Name: "shared", IsShared: true, OwnerUsername: "bob"},
+			},
+			want: []auth.ConnectionVisibilityInfo{
+				{ID: 1, IsShared: false, OwnerUsername: "alice"},
+				{ID: 2, IsShared: true, OwnerUsername: "bob"},
+			},
+		},
+		{
+			name: "empty slice",
+			in:   []ConnectionListItem{},
+			want: []auth.ConnectionVisibilityInfo{},
+		},
+		{
+			name: "nil slice yields zero-length non-nil slice",
+			in:   nil,
+			want: []auth.ConnectionVisibilityInfo{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ConnectionsToVisibilityInfo(tc.in)
+			if got == nil {
+				t.Fatal("expected non-nil slice")
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("expected %d entries, got %d", len(tc.want), len(got))
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("index %d: got %+v want %+v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewSliceVisibilityLister tests
+// ---------------------------------------------------------------------------
+
+func TestNewSliceVisibilityLister_ProjectsAllFields(t *testing.T) {
+	input := []ConnectionListItem{
+		{ID: 1, Name: "owned", IsShared: false, OwnerUsername: "alice"},
+		{ID: 2, Name: "shared", IsShared: true, OwnerUsername: "bob"},
+		{ID: 3, Name: "other", IsShared: false, OwnerUsername: "carol"},
+	}
+
+	lister := NewSliceVisibilityLister(input)
+	if lister == nil {
+		t.Fatal("expected non-nil lister")
+	}
+	got, err := lister.GetAllConnections(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != len(input) {
+		t.Fatalf("expected %d entries, got %d", len(input), len(got))
+	}
+	for i := range input {
+		if got[i].ID != input[i].ID || got[i].IsShared != input[i].IsShared || got[i].OwnerUsername != input[i].OwnerUsername {
+			t.Errorf("index %d: projection mismatch: got %+v from %+v", i, got[i], input[i])
+		}
+	}
+}
+
+func TestNewSliceVisibilityLister_EmptyAndNil(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []ConnectionListItem
+	}{
+		{name: "empty", in: []ConnectionListItem{}},
+		{name: "nil", in: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lister := NewSliceVisibilityLister(tc.in)
+			got, err := lister.GetAllConnections(context.Background())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got == nil {
+				t.Fatal("expected non-nil slice, got nil")
+			}
+			if len(got) != 0 {
+				t.Fatalf("expected zero-length slice, got %d", len(got))
+			}
+		})
+	}
+}

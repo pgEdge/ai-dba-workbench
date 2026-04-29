@@ -196,11 +196,7 @@ func (p *ContextAwareProvider) registerDatabaseTools(registry *Registry, client 
 
 // NewContextAwareProvider creates a new context-aware tool provider
 func NewContextAwareProvider(clientManager *database.ClientManager, resourceReg *resources.ContextAwareRegistry, fallbackClient *database.Client, cfg *config.Config, authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, datastore *database.Datastore) *ContextAwareProvider {
-	var sharingLookup auth.ConnectionSharingLookupFunc
-	if datastore != nil {
-		sharingLookup = datastore.GetConnectionSharingInfo
-	}
-	rbacChecker := auth.NewRBACCheckerWithSharing(authStore, sharingLookup)
+	rbacChecker := auth.NewRBACCheckerForDatastore(authStore, datastore)
 	var resolver *ConnectionResolver
 	if clientManager != nil && datastore != nil {
 		resolver = NewConnectionResolver(clientManager, datastore, rbacChecker)
@@ -545,8 +541,5 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 
 // getClient returns the appropriate database client based on authentication state
 func (p *ContextAwareProvider) getClient(ctx context.Context) (*database.Client, error) {
-	if p.clientResolver != nil {
-		return p.clientResolver.ResolveClient(ctx)
-	}
-	return nil, fmt.Errorf("no database connection configured")
+	return p.clientResolver.ResolveOrError(ctx)
 }

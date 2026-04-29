@@ -532,21 +532,21 @@ func (g *Generator) createLLMClient() chat.LLMClient {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", g.llmConfig.Provider, err)
 	}
 
-	client, err := chat.NewClientFromConfig(chat.ClientConfig{
-		Provider:         g.llmConfig.Provider,
-		AnthropicAPIKey:  g.llmConfig.AnthropicAPIKey,
-		AnthropicBaseURL: g.llmConfig.AnthropicBaseURL,
-		OpenAIAPIKey:     g.llmConfig.OpenAIAPIKey,
-		OpenAIBaseURL:    g.llmConfig.OpenAIBaseURL,
-		GeminiAPIKey:     g.llmConfig.GeminiAPIKey,
-		GeminiBaseURL:    g.llmConfig.GeminiBaseURL,
-		OllamaURL:        g.llmConfig.OllamaURL,
-		Model:            g.llmConfig.Model,
-		MaxTokens:        llmMaxTokens,
-		Temperature:      llmTemperature,
-		Debug:            false,
-		UseCompactDescs:  g.llmConfig.UseCompactDescriptions,
-		Headers:          headers,
+	client, err := chat.NewClientFromLLMConfig(chat.LLMConfig{
+		Provider:               g.llmConfig.Provider,
+		Model:                  g.llmConfig.Model,
+		AnthropicAPIKey:        g.llmConfig.AnthropicAPIKey,
+		AnthropicBaseURL:       g.llmConfig.AnthropicBaseURL,
+		OpenAIAPIKey:           g.llmConfig.OpenAIAPIKey,
+		OpenAIBaseURL:          g.llmConfig.OpenAIBaseURL,
+		GeminiAPIKey:           g.llmConfig.GeminiAPIKey,
+		GeminiBaseURL:          g.llmConfig.GeminiBaseURL,
+		OllamaURL:              g.llmConfig.OllamaURL,
+		UseCompactDescriptions: g.llmConfig.UseCompactDescriptions,
+	}, chat.LLMOptions{
+		MaxTokens:   llmMaxTokens,
+		Temperature: llmTemperature,
+		Headers:     headers,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to create LLM client: %v\n", err)

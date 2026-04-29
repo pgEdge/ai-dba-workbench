@@ -11,6 +11,7 @@
 package probes
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -201,5 +202,224 @@ func TestAllProbeNameConstants_NoEmptyStrings(t *testing.T) {
 		if probeName == "" {
 			t.Errorf("Empty probe name at index %d in allProbeNameConstants", i)
 		}
+	}
+}
+
+// intPtr returns a pointer to the given int. It is a small helper used
+// by the resolveProbeConfigDefaults tests below to populate the
+// parent ProbeConfig's ConnectionID field, which is *int.
+func intPtr(v int) *int {
+	return &v
+}
+
+// TestLoadProbeConfigsQuery_FiltersByScope is a regression test for
+// issue #151. Cluster- and group-scoped probe_configs rows have
+// connection_id IS NULL just like global rows; without an explicit
+// scope filter they collapse into the connection_id = 0 bucket and
+// get applied as if they were global defaults. The query must
+// restrict the result set to scope IN ('global', 'server').
+//
+// This test pins the SQL string. Removing the scope filter (the
+// pre-fix behavior) makes the test fail.
+func TestLoadProbeConfigsQuery_FiltersByScope(t *testing.T) {
+	if !strings.Contains(loadProbeConfigsQuery, "scope IN ('global', 'server')") {
+		t.Errorf("loadProbeConfigsQuery must restrict scope to global/server\n"+
+			"to prevent cluster- and group-scoped rows (which also have\n"+
+			"connection_id IS NULL) from collapsing into the global bucket.\n"+
+			"Got query:\n%s", loadProbeConfigsQuery)
+	}
+
+	// Sanity: the query must still require the row to be enabled and
+	// must select from probe_configs. These are not the bug fix but
+	// they pin the contract the test is asserting.
+	if !strings.Contains(loadProbeConfigsQuery, "is_enabled = TRUE") {
+		t.Errorf("loadProbeConfigsQuery must filter on is_enabled = TRUE; got:\n%s",
+			loadProbeConfigsQuery)
+	}
+	if !strings.Contains(loadProbeConfigsQuery, "FROM probe_configs") {
+		t.Errorf("loadProbeConfigsQuery must select FROM probe_configs; got:\n%s",
+			loadProbeConfigsQuery)
+	}
+}
+
+// TestLoadProbeConfigsQuery_OrdersByConnectionThenName pins the
+// ORDER BY clause that callers depend on: rows are grouped per
+// connection_id (with NULL coalesced to 0 so global defaults sort
+// first) and then alphabetised by probe name. Changing the ordering
+// would silently reshuffle the per-connection slices in
+// LoadProbeConfigs's returned map.
+func TestLoadProbeConfigsQuery_OrdersByConnectionThenName(t *testing.T) {
+	if !strings.Contains(loadProbeConfigsQuery, "ORDER BY COALESCE(connection_id, 0), name") {
+		t.Errorf("loadProbeConfigsQuery must order by COALESCE(connection_id, 0), name; got:\n%s",
+			loadProbeConfigsQuery)
+	}
+}
+
+// TestResolveProbeConfigDefaults_InheritsDisabledParent is the core
+// regression test for the second half of issue #151. When a parent
+// (cluster, group, or global) probe_config has is_enabled = FALSE,
+// the materialized server-level row must inherit that disabled flag
+// rather than being silently re-enabled. The pre-fix INSERT
+// hard-coded VALUES (..., TRUE, ...), which is exactly what this
+// test guards against.
+func TestResolveProbeConfigDefaults_InheritsDisabledParent(t *testing.T) {
+	parent := &ProbeConfig{
+		ID:                        42,
+		Name:                      ProbeNamePgStatActivity,
+		Description:               "cluster override - paused for maintenance",
+		CollectionIntervalSeconds: 120,
+		RetentionDays:             7,
+		IsEnabled:                 false, // parent explicitly disabled
+		ConnectionID:              nil,   // cluster/group/global rows have NULL
+	}
+
+	interval, retention, description, isEnabled := resolveProbeConfigDefaults(
+		ProbeNamePgStatActivity, parent, true)
+
+	if interval != 120 {
+		t.Errorf("interval: got %d, want 120 (inherited from parent)", interval)
+	}
+	if retention != 7 {
+		t.Errorf("retention: got %d, want 7 (inherited from parent)", retention)
+	}
+	if description != "cluster override - paused for maintenance" {
+		t.Errorf("description: got %q, want parent's description", description)
+	}
+	if isEnabled {
+		t.Errorf("isEnabled: got true, want false (must inherit parent's disabled flag)")
+	}
+}
+
+// TestResolveProbeConfigDefaults_InheritsEnabledParent verifies that
+// when a parent config is enabled, the helper inherits all four
+// fields including IsEnabled = true. This complements the disabled
+// case to confirm the helper truly forwards the parent's flag rather
+// than always returning a fixed value.
+func TestResolveProbeConfigDefaults_InheritsEnabledParent(t *testing.T) {
+	parent := &ProbeConfig{
+		ID:                        7,
+		Name:                      ProbeNamePgStatReplication,
+		Description:               "global default for replication probe",
+		CollectionIntervalSeconds: 45,
+		RetentionDays:             30,
+		IsEnabled:                 true,
+		ConnectionID:              intPtr(99), // server-scoped parent
+	}
+
+	interval, retention, description, isEnabled := resolveProbeConfigDefaults(
+		ProbeNamePgStatReplication, parent, true)
+
+	if interval != 45 {
+		t.Errorf("interval: got %d, want 45", interval)
+	}
+	if retention != 30 {
+		t.Errorf("retention: got %d, want 30", retention)
+	}
+	if description != "global default for replication probe" {
+		t.Errorf("description: got %q, want parent's description", description)
+	}
+	if !isEnabled {
+		t.Errorf("isEnabled: got false, want true (parent was enabled)")
+	}
+}
+
+// TestResolveProbeConfigDefaults_NoParentUsesHardcodedDefaults
+// covers the fallback branch: when no parent config is found, the
+// helper must synthesise sensible defaults including isEnabled=true,
+// the per-probe default interval, 28 days of retention, and a
+// generated description. found=false is the discriminator.
+func TestResolveProbeConfigDefaults_NoParentUsesHardcodedDefaults(t *testing.T) {
+	interval, retention, description, isEnabled := resolveProbeConfigDefaults(
+		ProbeNamePgStatActivity, nil, false)
+
+	wantInterval := getDefaultInterval(ProbeNamePgStatActivity)
+	if interval != wantInterval {
+		t.Errorf("interval: got %d, want %d (probe default)", interval, wantInterval)
+	}
+	if retention != 28 {
+		t.Errorf("retention: got %d, want 28 (hardcoded default)", retention)
+	}
+	wantDescription := "Configuration for " + ProbeNamePgStatActivity + " probe"
+	if description != wantDescription {
+		t.Errorf("description: got %q, want %q", description, wantDescription)
+	}
+	if !isEnabled {
+		t.Errorf("isEnabled: got false, want true (default for synthesised configs)")
+	}
+}
+
+// TestResolveProbeConfigDefaults_NoParentUnknownProbe covers the
+// fallback branch for a probe name that has no entry in
+// getDefaultInterval. The fallback interval is 300 seconds (5
+// minutes) and retention/isEnabled remain at their hardcoded
+// defaults.
+func TestResolveProbeConfigDefaults_NoParentUnknownProbe(t *testing.T) {
+	interval, retention, description, isEnabled := resolveProbeConfigDefaults(
+		"some_brand_new_probe_name", nil, false)
+
+	if interval != 300 {
+		t.Errorf("interval: got %d, want 300 (fallback default for unknown probes)",
+			interval)
+	}
+	if retention != 28 {
+		t.Errorf("retention: got %d, want 28", retention)
+	}
+	if description != "Configuration for some_brand_new_probe_name probe" {
+		t.Errorf("description: got %q", description)
+	}
+	if !isEnabled {
+		t.Errorf("isEnabled: got false, want true")
+	}
+}
+
+// TestResolveProbeConfigDefaults_FoundFalseIgnoresParent guards the
+// helper's contract: when found is false the parentConfig argument
+// is ignored, even if non-nil. Without this guarantee callers in
+// EnsureProbeConfig that pass &parentConfig (the zero value) when
+// no parent matched would accidentally inherit zero-valued fields.
+func TestResolveProbeConfigDefaults_FoundFalseIgnoresParent(t *testing.T) {
+	// A non-nil but zero-valued parent must NOT leak into the result.
+	zeroParent := &ProbeConfig{}
+
+	interval, retention, description, isEnabled := resolveProbeConfigDefaults(
+		ProbeNamePgStatActivity, zeroParent, false)
+
+	if interval != getDefaultInterval(ProbeNamePgStatActivity) {
+		t.Errorf("interval should come from getDefaultInterval, not the zero parent; got %d",
+			interval)
+	}
+	if retention != 28 {
+		t.Errorf("retention should be 28 (default), not parent's zero; got %d", retention)
+	}
+	if description == "" {
+		t.Errorf("description should be the synthesised default, not the parent's empty string")
+	}
+	if !isEnabled {
+		t.Errorf("isEnabled should default to true when no parent is matched")
+	}
+}
+
+// TestResolveProbeConfigDefaults_FoundTrueButNilParent guards the
+// nil-pointer branch in the conditional: if a caller incorrectly
+// passes (true, nil) the helper must fall through to the defaults
+// rather than dereferencing nil and panicking.
+func TestResolveProbeConfigDefaults_FoundTrueButNilParent(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("resolveProbeConfigDefaults panicked on nil parent: %v", r)
+		}
+	}()
+
+	interval, retention, _, isEnabled := resolveProbeConfigDefaults(
+		ProbeNamePgStatActivity, nil, true)
+
+	if interval != getDefaultInterval(ProbeNamePgStatActivity) {
+		t.Errorf("interval: got %d, want probe default", interval)
+	}
+	if retention != 28 {
+		t.Errorf("retention: got %d, want 28", retention)
+	}
+	if !isEnabled {
+		t.Errorf("isEnabled: got false, want true (default fallback)")
 	}
 }

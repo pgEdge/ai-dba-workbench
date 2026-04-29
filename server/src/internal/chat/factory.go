@@ -55,14 +55,27 @@ type LLMConfig struct {
 // client construction. Zero values fall back to the LLMConfig values;
 // non-zero values win. Headers are passed through unchanged because
 // header maps are looked up per-provider by the caller.
+//
+// A zero value for MaxTokens or Temperature means "use the value from
+// LLMConfig"; explicit zero cannot be requested through LLMOptions. No
+// current caller needs an explicit zero (llmproxy always forwards the
+// configured Temperature, and the overview generator hard-codes a
+// positive constant), and the surrounding ClientConfig and llmproxy
+// types use plain numeric fields, so pointer fields here would be
+// inconsistent. Add a separate LLMOptions field with a different
+// sentinel if explicit zero ever becomes required.
 type LLMOptions struct {
 	// Model overrides LLMConfig.Model when non-empty.
 	Model string
 	// Provider overrides LLMConfig.Provider when non-empty.
 	Provider string
-	// MaxTokens overrides LLMConfig.MaxTokens when non-zero.
+	// MaxTokens overrides LLMConfig.MaxTokens when non-zero. A zero
+	// value means use LLMConfig.MaxTokens; explicit zero cannot be
+	// requested through this field.
 	MaxTokens int
-	// Temperature overrides LLMConfig.Temperature when non-zero.
+	// Temperature overrides LLMConfig.Temperature when non-zero. A
+	// zero value means use LLMConfig.Temperature; explicit zero
+	// cannot be requested through this field.
 	Temperature float64
 	// Debug enables provider debug logging. Always honored as supplied.
 	Debug bool

@@ -12,6 +12,8 @@ package overview
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -856,21 +858,64 @@ func TestCreateLLMClient_AnthropicMissingKeyReturnsNil(t *testing.T) {
 func TestCreateLLMClient_HeaderLoadErrorIsLogged(t *testing.T) {
 	// A header file that does not exist makes getProviderHeaders return
 	// an error. createLLMClient must log it and proceed; with a valid
-	// provider it still returns a non-nil client.
+	// provider it still returns a non-nil client. Capture os.Stderr to
+	// confirm the error message was emitted, since the production code
+	// writes the diagnostic with fmt.Fprintf(os.Stderr, ...).
+	const headerPath = "/path/to/nonexistent/header/file"
 	g := NewGenerator(nil, &llmproxy.Config{
 		Provider:  "ollama",
 		Model:     "llama3",
 		OllamaURL: "http://localhost:11434",
 		LLMConfig: &config.LLMConfig{
 			CustomHeadersFiles: map[string]string{
-				"X-Header": "/path/to/nonexistent/header/file",
+				"X-Header": headerPath,
 			},
 		},
 	})
 
+	originalStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	// Read the captured output asynchronously so a full pipe buffer
+	// cannot deadlock the goroutine writing to stderr.
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		data, readErr := io.ReadAll(r)
+		done <- readResult{data: data, err: readErr}
+	}()
+
 	client := g.createLLMClient()
+
+	// Restore stderr before any further test output and close the
+	// writer so io.ReadAll returns.
+	if closeErr := w.Close(); closeErr != nil {
+		os.Stderr = originalStderr
+		t.Fatalf("failed to close pipe writer: %v", closeErr)
+	}
+	os.Stderr = originalStderr
+
 	if client == nil {
 		t.Fatal("expected non-nil client; header error must not abort construction")
+	}
+
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("failed to read captured stderr: %v", result.err)
+	}
+	output := string(result.data)
+	if !strings.Contains(output, "Failed to get ollama provider headers") {
+		t.Errorf("expected stderr to mention the header-load failure, got: %q", output)
+	}
+	if !strings.Contains(output, headerPath) {
+		t.Errorf("expected stderr to mention header file path %q, got: %q", headerPath, output)
 	}
 }
 

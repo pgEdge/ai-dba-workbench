@@ -61,6 +61,42 @@ project adheres to
   Makefile targets in the `server`, `collector`, and
   `alerter` sub-projects. The race detector now runs in
   CI and on developer machines. (#78)
+- Consolidate four duplicated patterns in `server/src` as
+  part of the codebase cleanup tracked in #77. The
+  copy-pasted `getClient()` helper in
+  `internal/tools/context_aware_provider.go` and
+  `internal/resources/context_aware_registry.go` now
+  delegates to a new
+  `(*database.ClientResolver).ResolveOrError` method that
+  returns the canonical "no database connection
+  configured" error. The 14-field
+  `chat.NewClientFromConfig` invocation repeated in
+  `internal/llmproxy/proxy.go` (`HandleModels` and
+  `HandleChat`) and `internal/overview/generator.go`
+  (`createLLMClient`) collapses into a new
+  `chat.NewClientFromLLMConfig` factory that takes an
+  `LLMOptions` parameter for per-call overrides such as
+  `Model`, `MaxTokens`, `Temperature`, `Debug`, and
+  `Headers`, removing roughly 40 lines of boilerplate per
+  call site. The two `auth.ConnectionVisibilityLister`
+  adapters in `internal/api/helpers.go` and
+  `internal/database/visibility_lister.go` share a single
+  projection; the slice-based adapter moves into the
+  `database` package as `database.NewSliceVisibilityLister`
+  and the projection is exported as
+  `database.ConnectionsToVisibilityInfo`. The five-line
+  closure that wired
+  `(*database.Datastore).GetConnectionSharingInfo` into an
+  `auth.RBACChecker` from
+  `internal/tools/context_aware_provider.go`,
+  `internal/resources/context_aware_registry.go`, and
+  `cmd/mcp-server/handlers.go` now flows through a new
+  `auth.NewRBACCheckerForDatastore` constructor that
+  accepts the datastore through a small
+  `DatastoreSharingLookup` interface and handles nil and
+  typed-nil cases internally. The change is internal-only
+  and behavior-preserving; no public HTTP API, MCP tool,
+  or configuration surface changes. (#77)
 
 ### Security
 

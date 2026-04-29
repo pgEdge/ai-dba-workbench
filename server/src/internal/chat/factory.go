@@ -31,6 +31,99 @@ type ClientConfig struct {
 	Headers          map[string]string
 }
 
+// LLMConfig carries the per-provider credentials and default tuning
+// parameters that callers pull from server configuration. It is a plain
+// data struct so the chat package does not have to depend on the config
+// package; callers populate the fields they care about and pass the
+// value to NewClientFromLLMConfig.
+type LLMConfig struct {
+	Provider               string
+	Model                  string
+	AnthropicAPIKey        string
+	AnthropicBaseURL       string
+	OpenAIAPIKey           string
+	OpenAIBaseURL          string
+	GeminiAPIKey           string
+	GeminiBaseURL          string
+	OllamaURL              string
+	MaxTokens              int
+	Temperature            float64
+	UseCompactDescriptions bool
+}
+
+// LLMOptions overrides selected fields from an LLMConfig for a single
+// client construction. Zero values fall back to the LLMConfig values;
+// non-zero values win. Headers are passed through unchanged because
+// header maps are looked up per-provider by the caller.
+//
+// A zero value for MaxTokens or Temperature means "use the value from
+// LLMConfig"; explicit zero cannot be requested through LLMOptions. No
+// current caller needs an explicit zero (llmproxy always forwards the
+// configured Temperature, and the overview generator hard-codes a
+// positive constant), and the surrounding ClientConfig and llmproxy
+// types use plain numeric fields, so pointer fields here would be
+// inconsistent. Add a separate LLMOptions field with a different
+// sentinel if explicit zero ever becomes required.
+type LLMOptions struct {
+	// Model overrides LLMConfig.Model when non-empty.
+	Model string
+	// Provider overrides LLMConfig.Provider when non-empty.
+	Provider string
+	// MaxTokens overrides LLMConfig.MaxTokens when non-zero. A zero
+	// value means use LLMConfig.MaxTokens; explicit zero cannot be
+	// requested through this field.
+	MaxTokens int
+	// Temperature overrides LLMConfig.Temperature when non-zero. A
+	// zero value means use LLMConfig.Temperature; explicit zero
+	// cannot be requested through this field.
+	Temperature float64
+	// Debug enables provider debug logging. Always honored as supplied.
+	Debug bool
+	// Headers passes provider-specific custom headers through to the
+	// underlying transport. Always honored as supplied.
+	Headers map[string]string
+}
+
+// NewClientFromLLMConfig builds an LLMClient by merging LLMConfig with
+// per-call LLMOptions and delegating to NewClientFromConfig. It is the
+// shared factory used by the LLM proxy and the overview generator so
+// that the 14-field translation from server config to ClientConfig is
+// expressed in exactly one place.
+func NewClientFromLLMConfig(cfg LLMConfig, opts LLMOptions) (LLMClient, error) {
+	provider := opts.Provider
+	if provider == "" {
+		provider = cfg.Provider
+	}
+	model := opts.Model
+	if model == "" {
+		model = cfg.Model
+	}
+	maxTokens := opts.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = cfg.MaxTokens
+	}
+	temperature := opts.Temperature
+	if temperature == 0 {
+		temperature = cfg.Temperature
+	}
+	return NewClientFromConfig(ClientConfig{
+		Provider:         provider,
+		AnthropicAPIKey:  cfg.AnthropicAPIKey,
+		AnthropicBaseURL: cfg.AnthropicBaseURL,
+		OpenAIAPIKey:     cfg.OpenAIAPIKey,
+		OpenAIBaseURL:    cfg.OpenAIBaseURL,
+		GeminiAPIKey:     cfg.GeminiAPIKey,
+		GeminiBaseURL:    cfg.GeminiBaseURL,
+		OllamaURL:        cfg.OllamaURL,
+		Model:            model,
+		MaxTokens:        maxTokens,
+		Temperature:      temperature,
+		Debug:            opts.Debug,
+		UseCompactDescs:  cfg.UseCompactDescriptions,
+		Headers:          opts.Headers,
+	})
+}
+
 // NewClientFromConfig creates an LLMClient for the specified provider using
 // the supplied configuration. It validates that required credentials are
 // present and returns an error if the provider is unknown or misconfigured.

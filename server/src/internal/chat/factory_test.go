@@ -240,3 +240,141 @@ func TestNewClientFromConfig_WithCompactDescriptions(t *testing.T) {
 		t.Fatal("expected non-nil client")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// NewClientFromLLMConfig tests
+// ---------------------------------------------------------------------------
+
+func TestNewClientFromLLMConfig_DefaultsFromConfig(t *testing.T) {
+	cfg := LLMConfig{
+		Provider:               "anthropic",
+		Model:                  "claude-default",
+		AnthropicAPIKey:        "anth-key",
+		MaxTokens:              1024,
+		Temperature:            0.7,
+		UseCompactDescriptions: true,
+	}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+func TestNewClientFromLLMConfig_OverridesWin(t *testing.T) {
+	// Empty/zero LLMConfig fields cannot supply credentials; provide
+	// the API key on the config and verify per-call overrides win.
+	cfg := LLMConfig{
+		Provider:        "anthropic",
+		Model:           "default-model",
+		AnthropicAPIKey: "anth-key",
+		MaxTokens:       100,
+		Temperature:     0.1,
+	}
+	headers := map[string]string{"X-Custom": "value"}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{
+		Provider:    "anthropic",
+		Model:       "override-model",
+		MaxTokens:   2048,
+		Temperature: 0.9,
+		Debug:       true,
+		Headers:     headers,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+func TestNewClientFromLLMConfig_OverrideProvider(t *testing.T) {
+	// LLMConfig defaults to anthropic but lacks an OpenAI key. Override
+	// to openai with a base URL so the OpenAI branch's no-key path is
+	// satisfied.
+	cfg := LLMConfig{
+		Provider:        "anthropic",
+		Model:           "claude-default",
+		AnthropicAPIKey: "anth-key",
+		OpenAIBaseURL:   "http://localhost:8080",
+	}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{
+		Provider: "openai",
+		Model:    "gpt-x",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+func TestNewClientFromLLMConfig_PropagatesValidationError(t *testing.T) {
+	// Anthropic without API key must surface the validation error
+	// from NewClientFromConfig.
+	cfg := LLMConfig{
+		Provider: "anthropic",
+		Model:    "claude-3",
+	}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{})
+	if err == nil {
+		t.Fatal("expected validation error for missing API key")
+	}
+	if client != nil {
+		t.Fatal("expected nil client on error")
+	}
+	if !strings.Contains(err.Error(), "AnthropicAPIKey") {
+		t.Errorf("expected AnthropicAPIKey error, got %v", err)
+	}
+}
+
+func TestNewClientFromLLMConfig_PropagatesEmptyProvider(t *testing.T) {
+	cfg := LLMConfig{
+		Model: "some-model",
+	}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{})
+	if err == nil {
+		t.Fatal("expected error for empty provider")
+	}
+	if client != nil {
+		t.Fatal("expected nil client on error")
+	}
+	if !strings.Contains(err.Error(), "provider is required") {
+		t.Errorf("expected 'provider is required', got %v", err)
+	}
+}
+
+func TestNewClientFromLLMConfig_OllamaUsesConfigURL(t *testing.T) {
+	cfg := LLMConfig{
+		Provider:  "ollama",
+		Model:     "llama3",
+		OllamaURL: "http://localhost:11434",
+	}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{Debug: true})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}
+
+func TestNewClientFromLLMConfig_GeminiBranch(t *testing.T) {
+	cfg := LLMConfig{
+		Provider:     "gemini",
+		Model:        "gemini-pro",
+		GeminiAPIKey: "gem-key",
+		MaxTokens:    256,
+		Temperature:  0.5,
+	}
+	client, err := NewClientFromLLMConfig(cfg, LLMOptions{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+}

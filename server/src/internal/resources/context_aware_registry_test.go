@@ -261,6 +261,22 @@ func TestContextAwareRegistry_GetClient_AuthEnabled_NoToken(t *testing.T) {
 	}
 }
 
+// TestContextAwareRegistry_GetClient_NilClientResolver verifies that
+// getClient returns the canonical "no database connection configured"
+// error when no clientResolver is wired (no client manager).
+func TestContextAwareRegistry_GetClient_NilClientResolver(t *testing.T) {
+	cfg := &conf.Config{}
+	registry := NewContextAwareRegistry(nil, cfg, nil, nil)
+
+	_, err := registry.getClient(context.Background())
+	if err == nil {
+		t.Fatal("expected error for nil client resolver")
+	}
+	if err.Error() != "no database connection configured" {
+		t.Errorf("expected exact 'no database connection configured', got: %q", err.Error())
+	}
+}
+
 func TestContextAwareRegistry_DefaultNilConfig(t *testing.T) {
 	cm := database.NewClientManager(nil)
 	defer cm.CloseAll()

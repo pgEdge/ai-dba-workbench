@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"reflect"
 )
 
 // DatabaseAccessChecker handles database access control based on authentication context
@@ -78,6 +79,47 @@ func NewRBACCheckerWithSharing(store *AuthStore, sharingLookup ConnectionSharing
 		checker.SetConnectionSharingLookup(sharingLookup)
 	}
 	return checker
+}
+
+// DatastoreSharingLookup is the minimal datastore surface that
+// NewRBACCheckerForDatastore needs. *database.Datastore satisfies it via
+// its GetConnectionSharingInfo method. Callers pass a typed nil
+// pointer or an actual datastore; NewRBACCheckerForDatastore handles
+// both.
+type DatastoreSharingLookup interface {
+	GetConnectionSharingInfo(ctx context.Context, connectionID int) (isShared bool, ownerUsername string, err error)
+}
+
+// NewRBACCheckerForDatastore builds an RBACChecker that uses the
+// supplied datastore as its connection-sharing lookup source. A nil
+// datastore - including a typed nil that satisfies the interface
+// without a concrete value - yields a checker with no sharing lookup
+// wired, matching the callers' previous "skip if datastore is nil"
+// behavior.
+func NewRBACCheckerForDatastore(store *AuthStore, ds DatastoreSharingLookup) *RBACChecker {
+	if isNilDatastore(ds) {
+		return NewRBACCheckerWithSharing(store, nil)
+	}
+	return NewRBACCheckerWithSharing(store, ds.GetConnectionSharingInfo)
+}
+
+// isNilDatastore reports whether ds is nil either as an interface or as
+// a typed nil pointer wrapped in the interface. Callers commonly pass
+// `(*database.Datastore)(nil)` directly; the standard equality check
+// reports non-nil for that case because the interface still carries a
+// concrete type, so a reflect-based check is required.
+func isNilDatastore(ds DatastoreSharingLookup) bool {
+	if ds == nil {
+		return true
+	}
+	v := reflect.ValueOf(ds)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Chan,
+		reflect.Func, reflect.Map, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // IsSuperuser checks if the current context has superuser privileges

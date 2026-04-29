@@ -12,12 +12,16 @@ package overview
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/chat"
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
 
 // --- sortInts tests --------------------------------------------------------
@@ -791,5 +795,146 @@ func TestOnRestart_CallbackAndCacheFlush(t *testing.T) {
 	if len(g.scopedCache) != 0 {
 		t.Errorf("expected empty scoped cache after restart, got %d entries",
 			len(g.scopedCache))
+	}
+}
+
+// --- createLLMClient tests -------------------------------------------------
+
+func TestCreateLLMClient_Success(t *testing.T) {
+	// A configured LLM provider yields a non-nil client. Use Ollama
+	// since the factory only requires the URL to be present.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider:  "ollama",
+		Model:     "llama3",
+		OllamaURL: "http://localhost:11434",
+	})
+
+	client := g.createLLMClient()
+	if client == nil {
+		t.Fatal("expected non-nil client when provider is configured")
+	}
+}
+
+func TestCreateLLMClient_AnthropicWithKey(t *testing.T) {
+	// Confirm the field projection wires the API key through to the
+	// chat factory; missing key would yield a nil client.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider:        "anthropic",
+		Model:           "claude-3",
+		AnthropicAPIKey: "test-key",
+	})
+
+	client := g.createLLMClient()
+	if client == nil {
+		t.Fatal("expected non-nil client when API key is supplied")
+	}
+}
+
+func TestCreateLLMClient_MissingProviderReturnsNil(t *testing.T) {
+	// An empty provider must not panic and must return nil so callers
+	// can disable LLM features gracefully.
+	g := NewGenerator(nil, &llmproxy.Config{})
+
+	client := g.createLLMClient()
+	if client != nil {
+		t.Errorf("expected nil client when provider is empty, got %T", client)
+	}
+}
+
+func TestCreateLLMClient_AnthropicMissingKeyReturnsNil(t *testing.T) {
+	// Missing credentials surface as a factory error and createLLMClient
+	// should swallow that and return nil rather than propagate the error.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider: "anthropic",
+		Model:    "claude-3",
+	})
+
+	client := g.createLLMClient()
+	if client != nil {
+		t.Errorf("expected nil client when credentials missing, got %T", client)
+	}
+}
+
+func TestCreateLLMClient_HeaderLoadErrorIsLogged(t *testing.T) {
+	// A header file that does not exist makes getProviderHeaders return
+	// an error. createLLMClient must log it and proceed; with a valid
+	// provider it still returns a non-nil client. Capture os.Stderr to
+	// confirm the error message was emitted, since the production code
+	// writes the diagnostic with fmt.Fprintf(os.Stderr, ...).
+	const headerPath = "/path/to/nonexistent/header/file"
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider:  "ollama",
+		Model:     "llama3",
+		OllamaURL: "http://localhost:11434",
+		LLMConfig: &config.LLMConfig{
+			CustomHeadersFiles: map[string]string{
+				"X-Header": headerPath,
+			},
+		},
+	})
+
+	originalStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	// Read the captured output asynchronously so a full pipe buffer
+	// cannot deadlock the goroutine writing to stderr.
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		data, readErr := io.ReadAll(r)
+		done <- readResult{data: data, err: readErr}
+	}()
+
+	client := g.createLLMClient()
+
+	// Restore stderr before any further test output and close the
+	// writer so io.ReadAll returns.
+	if closeErr := w.Close(); closeErr != nil {
+		os.Stderr = originalStderr
+		t.Fatalf("failed to close pipe writer: %v", closeErr)
+	}
+	os.Stderr = originalStderr
+
+	if client == nil {
+		t.Fatal("expected non-nil client; header error must not abort construction")
+	}
+
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("failed to read captured stderr: %v", result.err)
+	}
+	output := string(result.data)
+	if !strings.Contains(output, "Failed to get ollama provider headers") {
+		t.Errorf("expected stderr to mention the header-load failure, got: %q", output)
+	}
+	if !strings.Contains(output, headerPath) {
+		t.Errorf("expected stderr to mention header file path %q, got: %q", headerPath, output)
+	}
+}
+
+func TestCreateLLMClient_HeadersWiredFromConfig(t *testing.T) {
+	// A populated config-level LLMConfig with custom headers should
+	// flow through getProviderHeaders into the chat client without
+	// returning an error. This exercises the non-nil branch of
+	// getProviderHeaders.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider:  "ollama",
+		Model:     "llama3",
+		OllamaURL: "http://localhost:11434",
+		LLMConfig: &config.LLMConfig{
+			OllamaCustomHeaders: map[string]string{"X-Test": "value"},
+		},
+	})
+
+	client := g.createLLMClient()
+	if client == nil {
+		t.Fatal("expected non-nil client when headers are configured")
 	}
 }

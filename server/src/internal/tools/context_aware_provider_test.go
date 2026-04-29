@@ -1224,3 +1224,20 @@ func TestExecute_QueryMetrics_SuperuserAlwaysInjectsConnectionID(t *testing.T) {
 		}
 	}
 }
+
+// TestContextAwareProvider_GetClient_NilClientResolver verifies that
+// getClient returns the canonical "no database connection configured"
+// error when no clientResolver is wired (no client manager).
+func TestContextAwareProvider_GetClient_NilClientResolver(t *testing.T) {
+	cfg := &config.Config{}
+	resourceReg := resources.NewContextAwareRegistry(nil, cfg, nil, nil)
+	provider := NewContextAwareProvider(nil, resourceReg, nil, cfg, nil, nil, nil)
+
+	_, err := provider.getClient(context.Background())
+	if err == nil {
+		t.Fatal("expected error for nil client resolver")
+	}
+	if err.Error() != "no database connection configured" {
+		t.Errorf("expected exact 'no database connection configured', got: %q", err.Error())
+	}
+}

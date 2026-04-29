@@ -77,6 +77,18 @@ type ClientResolver struct {
 	ClientManager *ClientManager
 }
 
+// ResolveOrError returns a client via r.ResolveClient, or a uniform
+// "no database connection configured" error when r is nil. Callers that
+// hold a possibly-nil *ClientResolver should prefer this helper over a
+// hand-written nil check so that the user-facing error wording stays
+// consistent across the server.
+func (r *ClientResolver) ResolveOrError(ctx context.Context) (*Client, error) {
+	if r == nil {
+		return nil, fmt.Errorf("no database connection configured")
+	}
+	return r.ResolveClient(ctx)
+}
+
 // ResolveClient returns the appropriate database client for the request context.
 // The resolution order is:
 //  1. Extract token hash from context (required)

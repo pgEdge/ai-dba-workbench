@@ -171,7 +171,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 	if h.visibilityListerFn != nil {
 		lister = h.visibilityListerFn()
 	} else {
-		lister = newConnectionSliceVisibilityLister(connections)
+		lister = database.NewSliceVisibilityLister(connections)
 	}
 	visibleIDs, allConnections, err := h.rbacChecker.VisibleConnectionIDs(ctx, lister)
 	if err != nil {

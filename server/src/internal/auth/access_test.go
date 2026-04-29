@@ -2508,3 +2508,116 @@ func TestNewRBACCheckerWithSharing_NilStore(t *testing.T) {
 		t.Error("Expected IsSuperuser to return true with nil store")
 	}
 }
+
+// =============================================================================
+// NewRBACCheckerForDatastore Tests
+// =============================================================================
+
+// fakeSharingDatastore is a minimal stand-in for *database.Datastore that
+// records lookup calls. It is used to verify that NewRBACCheckerForDatastore
+// wires GetConnectionSharingInfo through to the checker.
+type fakeSharingDatastore struct {
+	called      bool
+	lastID      int
+	returnIs    bool
+	returnOwner string
+	returnErr   error
+}
+
+func (f *fakeSharingDatastore) GetConnectionSharingInfo(_ context.Context, id int) (bool, string, error) {
+	f.called = true
+	f.lastID = id
+	return f.returnIs, f.returnOwner, f.returnErr
+}
+
+func TestNewRBACCheckerForDatastore_NilInterface(t *testing.T) {
+	// Untyped nil interface: no sharing lookup wired.
+	checker := NewRBACCheckerForDatastore(nil, nil)
+	if checker == nil {
+		t.Fatal("expected non-nil checker")
+	}
+	if checker.connSharingLookupFn != nil {
+		t.Error("expected nil sharing lookup for nil datastore")
+	}
+}
+
+func TestNewRBACCheckerForDatastore_TypedNilPointer(t *testing.T) {
+	// Typed nil pointer: must be detected as nil and yield a checker
+	// without a sharing lookup. This protects against a panic when
+	// callers pass a `(*database.Datastore)(nil)`.
+	var typedNil *fakeSharingDatastore
+	checker := NewRBACCheckerForDatastore(nil, typedNil)
+	if checker == nil {
+		t.Fatal("expected non-nil checker")
+	}
+	if checker.connSharingLookupFn != nil {
+		t.Error("expected nil sharing lookup for typed-nil datastore")
+	}
+}
+
+func TestNewRBACCheckerForDatastore_NonNilDatastoreWiresLookup(t *testing.T) {
+	ds := &fakeSharingDatastore{returnIs: true, returnOwner: "alice"}
+	checker := NewRBACCheckerForDatastore(nil, ds)
+	if checker == nil {
+		t.Fatal("expected non-nil checker")
+	}
+	if checker.connSharingLookupFn == nil {
+		t.Fatal("expected non-nil sharing lookup wired from datastore")
+	}
+	isShared, owner, err := checker.connSharingLookupFn(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ds.called {
+		t.Error("expected datastore lookup to be called")
+	}
+	if ds.lastID != 42 {
+		t.Errorf("expected ID 42 forwarded, got %d", ds.lastID)
+	}
+	if !isShared {
+		t.Error("expected isShared=true to flow through")
+	}
+	if owner != "alice" {
+		t.Errorf("expected owner 'alice', got %q", owner)
+	}
+}
+
+func TestIsNilDatastore(t *testing.T) {
+	t.Run("untyped nil", func(t *testing.T) {
+		if !isNilDatastore(nil) {
+			t.Error("expected untyped nil to be detected as nil")
+		}
+	})
+
+	t.Run("typed nil pointer", func(t *testing.T) {
+		var ds *fakeSharingDatastore
+		if !isNilDatastore(ds) {
+			t.Error("expected typed-nil pointer to be detected as nil")
+		}
+	})
+
+	t.Run("non-nil pointer", func(t *testing.T) {
+		ds := &fakeSharingDatastore{}
+		if isNilDatastore(ds) {
+			t.Error("expected non-nil datastore to be reported non-nil")
+		}
+	})
+
+	t.Run("non-pointer concrete value", func(t *testing.T) {
+		// A value-receiver implementation falls through the type
+		// switch's default branch; verify it is reported non-nil.
+		ds := valueSharingDatastore{}
+		if isNilDatastore(ds) {
+			t.Error("expected concrete value type to be reported non-nil")
+		}
+	})
+}
+
+// valueSharingDatastore satisfies DatastoreSharingLookup with a value
+// receiver so that reflect.ValueOf reports Kind() == Struct, exercising
+// isNilDatastore's default branch.
+type valueSharingDatastore struct{}
+
+func (valueSharingDatastore) GetConnectionSharingInfo(_ context.Context, _ int) (bool, string, error) {
+	return false, "", nil
+}

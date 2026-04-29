@@ -11,9 +11,12 @@ package database
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -547,5 +550,231 @@ func TestSyncAutoDetectedRelationships_CanceledContext(t *testing.T) {
 	}
 	if !hasRelationship(t, pool, clusterID, connA, connB, "streams_from", true) {
 		t.Fatalf("original auto edge was lost despite canceled context")
+	}
+}
+
+// TestSyncAutoDetectedRelationships_MissingClusterReturnsError verifies
+// that calling sync with a cluster id that does not exist in the
+// clusters table returns ErrClusterNotFound and makes no changes. The
+// SELECT ... FOR UPDATE on the clusters row produces pgx.ErrNoRows
+// which the function maps to the canonical ErrClusterNotFound sentinel.
+func TestSyncAutoDetectedRelationships_MissingClusterReturnsError(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connA := insertSyncTestConnection(t, pool, "node-a")
+	connB := insertSyncTestConnection(t, pool, "node-b")
+
+	const missingClusterID = 999999
+	err := ds.SyncAutoDetectedRelationships(ctx, missingClusterID,
+		[]AutoRelationshipInput{
+			{SourceConnectionID: connA, TargetConnectionID: connB, RelationshipType: "streams_from"},
+		})
+	if err == nil {
+		t.Fatalf("expected error for missing cluster, got nil")
+	}
+	if !errors.Is(err, ErrClusterNotFound) {
+		t.Fatalf("expected ErrClusterNotFound, got %v", err)
+	}
+
+	var rowCount int
+	if scanErr := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM cluster_node_relationships WHERE cluster_id = $1`,
+		missingClusterID,
+	).Scan(&rowCount); scanErr != nil {
+		t.Fatalf("count rows for missing cluster failed: %v", scanErr)
+	}
+	if rowCount != 0 {
+		t.Fatalf("expected 0 rows for missing cluster id, got %d", rowCount)
+	}
+}
+
+// TestSyncAutoDetectedRelationships_LockQueryFailure verifies that any
+// non-ErrNoRows failure on the SELECT ... FOR UPDATE that locks the
+// cluster row is surfaced as a wrapped "failed to lock cluster row"
+// error and not silently swallowed.
+func TestSyncAutoDetectedRelationships_LockQueryFailure(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "test-cluster")
+
+	// Drop the clusters table after the cluster id is captured so the
+	// SELECT ... FOR UPDATE inside SyncAutoDetectedRelationships fails
+	// with a missing-table error rather than ErrNoRows.
+	if _, err := pool.Exec(ctx, `DROP TABLE clusters CASCADE`); err != nil {
+		t.Fatalf("dropping clusters table failed: %v", err)
+	}
+
+	err := ds.SyncAutoDetectedRelationships(ctx, clusterID,
+		[]AutoRelationshipInput{
+			{SourceConnectionID: 1, TargetConnectionID: 2, RelationshipType: "streams_from"},
+		})
+	if err == nil {
+		t.Fatalf("expected error when clusters table is missing, got nil")
+	}
+	if errors.Is(err, ErrClusterNotFound) {
+		t.Fatalf("expected wrapped lock error, got ErrClusterNotFound")
+	}
+	if !strings.Contains(err.Error(), "failed to lock cluster row") {
+		t.Fatalf("expected lock-error wrap, got %v", err)
+	}
+}
+
+// TestSyncAutoDetectedRelationships_SerializesConcurrentSyncsForSameCluster
+// drives two goroutines that both call SyncAutoDetectedRelationships on
+// the same cluster with disjoint inputs. The SELECT ... FOR UPDATE
+// guarantees the second sync only runs after the first commits, so the
+// final auto-detected set must equal exactly one of the two inputs and
+// never the union of both.
+func TestSyncAutoDetectedRelationships_SerializesConcurrentSyncsForSameCluster(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterID := insertSyncTestCluster(t, pool, "test-cluster")
+	connA := insertSyncTestConnection(t, pool, "node-a")
+	connB := insertSyncTestConnection(t, pool, "node-b")
+	connC := insertSyncTestConnection(t, pool, "node-c")
+	connD := insertSyncTestConnection(t, pool, "node-d")
+
+	inputOne := []AutoRelationshipInput{
+		{SourceConnectionID: connA, TargetConnectionID: connB, RelationshipType: "streams_from"},
+		{SourceConnectionID: connB, TargetConnectionID: connA, RelationshipType: "replicates_with"},
+	}
+	inputTwo := []AutoRelationshipInput{
+		{SourceConnectionID: connC, TargetConnectionID: connD, RelationshipType: "streams_from"},
+		{SourceConnectionID: connD, TargetConnectionID: connC, RelationshipType: "replicates_with"},
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, 2)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		errs[0] = ds.SyncAutoDetectedRelationships(ctx, clusterID, inputOne)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		errs[1] = ds.SyncAutoDetectedRelationships(ctx, clusterID, inputTwo)
+	}()
+
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d sync failed: %v", i, err)
+		}
+	}
+
+	got := countRelationships(t, pool, clusterID, true)
+	if got != len(inputOne) {
+		t.Fatalf("expected exactly %d auto rows (one input survives), got %d (union of both inputs would be %d)",
+			len(inputOne), got, len(inputOne)+len(inputTwo))
+	}
+
+	matchesOne := hasRelationship(t, pool, clusterID, connA, connB, "streams_from", true) &&
+		hasRelationship(t, pool, clusterID, connB, connA, "replicates_with", true)
+	matchesTwo := hasRelationship(t, pool, clusterID, connC, connD, "streams_from", true) &&
+		hasRelationship(t, pool, clusterID, connD, connC, "replicates_with", true)
+	if !(matchesOne || matchesTwo) {
+		t.Fatalf("final state does not match either input exactly")
+	}
+	if matchesOne && matchesTwo {
+		t.Fatalf("final state matched both inputs, indicating union (race not prevented)")
+	}
+}
+
+// TestSyncAutoDetectedRelationships_DoesNotBlockDifferentClusters
+// confirms that the cluster-row lock is row-scoped, not table-scoped.
+// One goroutine holds an explicit FOR UPDATE lock on cluster A's row in
+// a long-lived transaction; another goroutine syncs cluster B and must
+// complete promptly without waiting for the first transaction.
+func TestSyncAutoDetectedRelationships_DoesNotBlockDifferentClusters(t *testing.T) {
+	ds, pool, cleanup := newSyncAutoDetectedTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	clusterA := insertSyncTestCluster(t, pool, "cluster-a")
+	clusterB := insertSyncTestCluster(t, pool, "cluster-b")
+	connOne := insertSyncTestConnection(t, pool, "node-1")
+	connTwo := insertSyncTestConnection(t, pool, "node-2")
+
+	// Hold cluster A's row lock in a separate goroutine so that the
+	// blocker tx remains open while the test syncs cluster B. The
+	// blocker signals readiness via `locked` and waits on `release`
+	// before committing.
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	blockerDone := make(chan error, 1)
+	go func() {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			blockerDone <- err
+			return
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+		var id int
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM clusters WHERE id = $1 FOR UPDATE`,
+			clusterA,
+		).Scan(&id); err != nil {
+			blockerDone <- err
+			return
+		}
+		close(locked)
+		<-release
+		blockerDone <- tx.Commit(ctx)
+	}()
+
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocker goroutine never acquired cluster A lock")
+	}
+
+	// While cluster A's row is locked, cluster B sync must proceed
+	// without waiting. Use a short timeout to detect any unintended
+	// blocking behavior; row-scoped locks should let this finish in
+	// well under a second on a healthy local Postgres.
+	syncCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	syncDone := make(chan error, 1)
+	go func() {
+		syncDone <- ds.SyncAutoDetectedRelationships(syncCtx, clusterB,
+			[]AutoRelationshipInput{
+				{SourceConnectionID: connOne, TargetConnectionID: connTwo, RelationshipType: "streams_from"},
+			})
+	}()
+
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			close(release)
+			<-blockerDone
+			t.Fatalf("cluster B sync returned error while cluster A was locked: %v", err)
+		}
+	case <-time.After(4 * time.Second):
+		close(release)
+		<-blockerDone
+		t.Fatal("cluster B sync was blocked by cluster A row lock; row-scoped lock failed")
+	}
+
+	// Release the blocker and confirm it commits cleanly.
+	close(release)
+	if err := <-blockerDone; err != nil {
+		t.Fatalf("blocker tx returned error: %v", err)
+	}
+
+	if got := countRelationships(t, pool, clusterB, true); got != 1 {
+		t.Fatalf("expected 1 auto row in cluster B, got %d", got)
 	}
 }

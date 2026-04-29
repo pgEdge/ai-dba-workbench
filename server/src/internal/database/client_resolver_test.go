@@ -480,3 +480,32 @@ func TestClientResolver_ClearSessionError_StillReturnsAccessDenied(t *testing.T)
 		t.Error("expected ClearConnectionSession to be called despite error")
 	}
 }
+
+func TestClientResolver_ResolveOrError_NilReceiver(t *testing.T) {
+	var resolver *ClientResolver
+
+	client, err := resolver.ResolveOrError(context.Background())
+	if err == nil {
+		t.Fatal("expected error for nil receiver")
+	}
+	if client != nil {
+		t.Errorf("expected nil client on error, got %v", client)
+	}
+	if err.Error() != "no database connection configured" {
+		t.Errorf("expected exact error 'no database connection configured', got: %q", err.Error())
+	}
+}
+
+func TestClientResolver_ResolveOrError_DelegatesToResolveClient(t *testing.T) {
+	// A non-nil resolver should delegate to ResolveClient. Verify by
+	// triggering ResolveClient's nil-extractor branch.
+	resolver := &ClientResolver{TokenExtractor: nil}
+
+	_, err := resolver.ResolveOrError(context.Background())
+	if err == nil {
+		t.Fatal("expected error from ResolveClient")
+	}
+	if !strings.Contains(err.Error(), "no token extractor configured") {
+		t.Errorf("expected delegation to ResolveClient (token extractor error), got: %v", err)
+	}
+}

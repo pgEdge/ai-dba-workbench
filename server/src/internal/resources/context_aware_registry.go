@@ -65,11 +65,7 @@ func (a *authSessionAdapter) ClearConnectionSession(tokenHash string) error {
 
 // NewContextAwareRegistry creates a new context-aware resource registry
 func NewContextAwareRegistry(clientManager *database.ClientManager, cfg *config.Config, authStore *auth.AuthStore, datastore *database.Datastore) *ContextAwareRegistry {
-	var sharingLookup auth.ConnectionSharingLookupFunc
-	if datastore != nil {
-		sharingLookup = datastore.GetConnectionSharingInfo
-	}
-	rbacChecker := auth.NewRBACCheckerWithSharing(authStore, sharingLookup)
+	rbacChecker := auth.NewRBACCheckerForDatastore(authStore, datastore)
 
 	// Build the ClientResolver for per-token database client resolution
 	var clientResolver *database.ClientResolver
@@ -336,8 +332,5 @@ func (r *ContextAwareRegistry) readConnectionInfo(ctx context.Context) (mcp.Reso
 
 // getClient returns the appropriate database client based on authentication state
 func (r *ContextAwareRegistry) getClient(ctx context.Context) (*database.Client, error) {
-	if r.clientResolver != nil {
-		return r.clientResolver.ResolveClient(ctx)
-	}
-	return nil, fmt.Errorf("no database connection configured")
+	return r.clientResolver.ResolveOrError(ctx)
 }

@@ -28,9 +28,10 @@ build:
 	cd src && go build -ldflags="-s -w" -o $(ABS_BIN_DIR)/$(BINARY) .
 
 # Run tests
+# -race enables the data-race detector; CI runs the same target.
 test: killall
 	@echo "Running tests..."
-	cd src && go test -v ./...
+	cd src && go test -race -v ./...
 	@$(MAKE) --no-print-directory killall
 
 # Run linting
@@ -54,9 +55,10 @@ fmt-check:
 	@test -z "$$(cd src && gofmt -l .)" || (echo "Files not formatted:"; cd src && gofmt -l .; exit 1)
 
 # Run tests with coverage
+# -race enables the data-race detector; CI runs the same target.
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && go test -coverprofile=coverage.out ./...
+	cd src && go test -race -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 

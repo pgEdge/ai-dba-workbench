@@ -31,9 +31,10 @@ build:
 # Use -p=1 to serialize per-package test binaries. Integration tests in
 # internal/database and internal/engine share Postgres schema (DROP/CREATE
 # the same tables), so running their test binaries concurrently races.
+# -race enables the data-race detector; CI runs the same target.
 test: killall
 	@echo "Running tests..."
-	cd src && go test -p=1 -v ./...
+	cd src && go test -race -p=1 -v ./...
 	@$(MAKE) --no-print-directory killall
 
 # Run linting
@@ -58,9 +59,10 @@ fmt-check:
 
 # Run tests with coverage
 # Use -p=1 to serialize per-package test binaries (see note on the test target).
+# -race enables the data-race detector; CI runs the same target.
 coverage:
 	@echo "Running tests with coverage..."
-	cd src && go test -p=1 -coverprofile=coverage.out ./...
+	cd src && go test -race -p=1 -coverprofile=coverage.out ./...
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 

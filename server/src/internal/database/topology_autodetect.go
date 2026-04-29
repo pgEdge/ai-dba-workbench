@@ -915,10 +915,8 @@ func (d *Datastore) syncRelationshipsFromTopology(ctx context.Context, autoDetec
 			detected = extractLogicalRelationships(cluster.Servers)
 		}
 
-		if len(detected) > 0 {
-			if err := d.SyncAutoDetectedRelationships(ctx, dbClusterID, detected); err != nil {
-				logger.Errorf("syncRelationshipsFromTopology: failed to sync relationships for cluster %q (id=%d): %v", autoKey, dbClusterID, err)
-			}
+		if err := d.SyncAutoDetectedRelationships(ctx, dbClusterID, detected); err != nil {
+			logger.Errorf("syncRelationshipsFromTopology: failed to sync relationships for cluster %q (id=%d): %v", autoKey, dbClusterID, err)
 		}
 	}
 }

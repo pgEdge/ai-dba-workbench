@@ -684,7 +684,7 @@ func TestSyncAutoDetectedRelationships_SerializesConcurrentSyncsForSameCluster(t
 		hasRelationship(t, pool, clusterID, connB, connA, "replicates_with", true)
 	matchesTwo := hasRelationship(t, pool, clusterID, connC, connD, "streams_from", true) &&
 		hasRelationship(t, pool, clusterID, connD, connC, "replicates_with", true)
-	if !(matchesOne || matchesTwo) {
+	if !matchesOne && !matchesTwo {
 		t.Fatalf("final state does not match either input exactly")
 	}
 	if matchesOne && matchesTwo {

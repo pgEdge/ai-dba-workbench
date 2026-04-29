@@ -29,10 +29,18 @@ type EncryptionKey struct {
 	key []byte
 }
 
+// Package-level function variables wrap external dependencies so
+// tests can swap them to exercise otherwise-unreachable error paths.
+// Production callers see the standard library / pkgcrypto behavior.
+var (
+	randRead   = io.ReadFull
+	encryptGCM = pkgcrypto.EncryptGCM
+)
+
 // GenerateKey creates a new random 256-bit encryption key
 func GenerateKey() (*EncryptionKey, error) {
 	key := make([]byte, KeySize)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+	if _, err := randRead(rand.Reader, key); err != nil {
 		return nil, fmt.Errorf("failed to generate random key: %w", err)
 	}
 	return &EncryptionKey{key: key}, nil
@@ -90,7 +98,7 @@ func (k *EncryptionKey) Encrypt(plaintext string) (string, error) {
 		return "", nil
 	}
 
-	nonceCiphertext, err := pkgcrypto.EncryptGCM(k.key, []byte(plaintext))
+	nonceCiphertext, err := encryptGCM(k.key, []byte(plaintext))
 	if err != nil {
 		return "", err
 	}

@@ -2,7 +2,7 @@ name: E2E Tests
 
 on:
     push:
-        branches: [main, develop]
+        branches: [main, develop, automation_practice]
     pull_request:
         branches: [main, develop]
 

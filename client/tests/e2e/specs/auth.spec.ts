@@ -127,34 +127,24 @@ test.describe('Authentication & Login', () => {
     const header = page.locator('header');
     await expect(header).toBeVisible();
 
-    // Find and click logout
-    // Try multiple selectors for logout
-    let logoutButton = page.locator('button:has-text("Logout")').first();
-    if (!(await logoutButton.isVisible())) {
-      logoutButton = page.locator('button:has-text("Sign Out")').first();
-    }
-    if (!(await logoutButton.isVisible())) {
-      // Try user menu > logout
-      const userMenuButton = page.locator('button[aria-label*="user"], button[aria-label*="User"]').first();
-      if (await userMenuButton.isVisible()) {
-        await userMenuButton.click();
-        await page.waitForTimeout(300);
-        logoutButton = page.locator('button:has-text("Logout"), button:has-text("Sign Out")').first();
-      }
-    }
+    // Open the user menu by clicking the avatar button
+    const userMenuButton = page.getByRole('button', { name: /user menu/i });
+    await expect(userMenuButton).toBeVisible({ timeout: 5_000 });
+    await userMenuButton.click();
 
-    if (await logoutButton.isVisible()) {
-      await logoutButton.click();
+    // Wait for the dropdown menu to appear
+    const signOutItem = page.getByRole('menuitem', { name: /sign out/i });
+    await expect(signOutItem).toBeVisible({ timeout: 5_000 });
 
-      // Wait for the login page to fully render before checking.
-      await page.waitForSelector('input[name="username"]', { timeout: 10_000 });
-    }
+    // Click Sign out
+    await signOutItem.click();
 
-    // After logout the app should show the Login form again.
-    const loginVisible = await page.getByRole('button', { name: 'Sign In' })
-      .isVisible().catch(() => false);
-    const headerGone = !(await page.locator('header').isVisible().catch(() => false));
-    expect(loginVisible || headerGone).toBeTruthy();
+    // Wait for the login form to fully render after logout
+    await expect(page.locator('input[name="username"]')).toBeVisible({ timeout: 10_000 });
+
+    // Verify the app is back on the login screen
+    await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible();
+    await expect(page.locator('header')).not.toBeVisible();
   });
 
   test('Session persists across page refresh', async ({ page }) => {

@@ -86,8 +86,8 @@ test.describe('RBAC Enforcement', () => {
         // The request should succeed (the token itself is valid),
         // but the connections list should be empty or filtered.
         expect(result.status).toBe(200);
-        const body = result.body as { connections?: unknown[] };
-        if (body.connections) {
+        const body = result.body as { connections?: unknown[] } | null;
+        if (body && body.connections) {
             // Each returned connection should only be the scoped one.
             expect(body.connections.length).toBe(0);
         }

@@ -12,7 +12,6 @@ import { test, expect } from '@playwright/test';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
 import {
-    loginViaUI,
     navigateToAdminUsers,
     waitForUsersTable,
     clickAddUser,
@@ -80,7 +79,9 @@ test.describe('User Management', () => {
         const username = makeTestUsername('ui-create');
 
         await page.goto('/');
-        await loginViaUI(page, 'admin', process.env.E2E_ADMIN_PASS || 'E2ETestPass123!');
+        // storageState provides the admin session; wait for the
+        // main layout header to confirm the session is active.
+        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
         await navigateToAdminUsers(page);
 
         await clickAddUser(page);
@@ -134,7 +135,9 @@ test.describe('User Management', () => {
         });
 
         await page.goto('/');
-        await loginViaUI(page, 'admin', process.env.E2E_ADMIN_PASS || 'E2ETestPass123!');
+        // storageState provides the admin session; wait for the
+        // main layout header to confirm the session is active.
+        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
         await navigateToAdminUsers(page);
         await waitForUsersTable(page);
 
@@ -194,7 +197,9 @@ test.describe('User Management', () => {
         });
 
         await page.goto('/');
-        await loginViaUI(page, 'admin', process.env.E2E_ADMIN_PASS || 'E2ETestPass123!');
+        // storageState provides the admin session; wait for the
+        // main layout header to confirm the session is active.
+        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
         await navigateToAdminUsers(page);
         await waitForUsersTable(page);
 

@@ -145,13 +145,12 @@ test.describe('Authentication & Login', () => {
 
     if (await logoutButton.isVisible()) {
       await logoutButton.click();
-      await page.waitForTimeout(500);
+
+      // Wait for the login page to fully render before checking.
+      await page.waitForSelector('input[name="username"]', { timeout: 10_000 });
     }
 
-    // After logout the app should show the Login form again
-    // (the header disappears because the SPA switches to the
-    // Login component). Check for the sign-in button or the
-    // absence of the main header.
+    // After logout the app should show the Login form again.
     const loginVisible = await page.getByRole('button', { name: 'Sign In' })
       .isVisible().catch(() => false);
     const headerGone = !(await page.locator('header').isVisible().catch(() => false));

@@ -11,7 +11,6 @@
 import { test, expect } from '@playwright/test';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
-import { loginViaUI } from '../helpers/browser.helper';
 import {
     ADMIN_USER,
     API_URL,
@@ -33,6 +32,10 @@ const auth = new AuthHelper(api);
 // ---------------------------------------------------------------
 
 test.describe('Token Management', () => {
+    // Apply admin storage state to all browser-based tests in this
+    // describe block so the UI tests skip the manual login flow.
+    test.use({ storageState: '.auth/admin.json' });
+
     let adminCookie: string;
 
     test.beforeAll(async () => {
@@ -180,11 +183,10 @@ test.describe('Token Management', () => {
         });
 
         await page.goto('/');
-        await loginViaUI(
-            page,
-            ADMIN_USER.username,
-            process.env.E2E_ADMIN_PASS || ADMIN_USER.password,
-        );
+        // storageState provides the admin session cookie, so the
+        // app renders the main layout directly. Wait for the
+        // header to confirm the session is active.
+        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
 
         // Navigate to Admin > Token Scopes.
         await page.getByRole('button', { name: /admin/i }).click();

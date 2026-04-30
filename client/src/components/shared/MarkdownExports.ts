@@ -44,6 +44,7 @@ export {
     getLinkSx,
     getBlockquoteSx,
     getTableSx,
+    getTableContainerSx,
     getCodeBlockButtonGroupSx,
     getCopyButtonSx,
     getRunButtonSx,

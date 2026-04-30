@@ -42,6 +42,7 @@ import {
     getLinkSx,
     getBlockquoteSx,
     getTableSx,
+    getTableContainerSx,
 } from './markdownStyles';
 
 // ---------------------------------------------------------------------------
@@ -246,9 +247,17 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                 {children}
             </Box>
         ),
+        // Wrap the table in a horizontally scrollable container so wide
+        // tables (returned by MCP tools, large queries, etc.) scroll within
+        // the parent surface instead of clipping at the right edge.
         table: ({ children }) => (
-            <Box component="table" sx={getTableSx(theme)}>
-                {children}
+            <Box
+                data-testid="markdown-table-container"
+                sx={getTableContainerSx()}
+            >
+                <Box component="table" sx={getTableSx(theme)}>
+                    {children}
+                </Box>
             </Box>
         ),
     }), [isDark, theme, connectionId, databaseName, serverName, connectionMap]);

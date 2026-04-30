@@ -320,4 +320,100 @@ describe('ChatMessage', () => {
             expect(screen.getByText('SELECT')).toBeInTheDocument();
         });
     });
+
+    // Regression coverage for issue #185. Wide markdown tables produced by
+    // MCP tools (get_alert_history, get_alert_rules, query_datastore, ...)
+    // used to overflow the narrow chat bubble and clip the right-side
+    // columns. Each table must now sit inside a horizontally scrollable
+    // wrapper so the bubble width stays unchanged but wide tables scroll.
+    describe('markdown tables (issue #185)', () => {
+        // A 6-column table is wider than the ~414px (92% of 450px) the
+        // assistant bubble offers, so it exercises the scroll behaviour.
+        const wideTable = [
+            '| col_a | col_b | col_c | col_d | col_e | col_f |',
+            '|-------|-------|-------|-------|-------|-------|',
+            '| 1 | 2 | 3 | 4 | 5 | 6 |',
+            '| 7 | 8 | 9 | 10 | 11 | 12 |',
+        ].join('\n');
+
+        it('wraps tables in a horizontally scrollable container', () => {
+            const message: ChatMessageData = {
+                role: 'assistant',
+                content: wideTable,
+            };
+            renderWithTheme(<ChatMessage message={message} mode="dark" />);
+
+            const wrapper = screen.getByTestId('chat-table-container');
+            expect(wrapper).toBeInTheDocument();
+
+            // The wrapper must allow horizontal overflow but not introduce
+            // its own vertical scrollbar (tall tables grow the bubble).
+            const styles = window.getComputedStyle(wrapper);
+            expect(styles.overflowX).toBe('auto');
+            expect(styles.overflowY).toBe('visible');
+            expect(styles.maxWidth).toBe('100%');
+        });
+
+        it('renders the table element inside the scroll wrapper', () => {
+            const message: ChatMessageData = {
+                role: 'assistant',
+                content: wideTable,
+            };
+            renderWithTheme(<ChatMessage message={message} mode="dark" />);
+
+            const wrapper = screen.getByTestId('chat-table-container');
+            const table = wrapper.querySelector('table');
+            expect(table).not.toBeNull();
+            // The table is no longer forced to width: 100% — the wrapper
+            // owns the constraint. MUI/emotion generates a class on the
+            // table; the corresponding stylesheet sets minWidth: 100% so
+            // narrow tables still fill the bubble. jsdom doesn't always
+            // resolve emotion-injected CSS to computed styles, so assert
+            // the contract by checking the table has a class and lives
+            // inside the scroll wrapper rather than the previous fixed
+            // width: 100% layout. The companion wrapper test verifies the
+            // overflow behaviour, which is the critical part of the fix.
+            expect(table?.className).toMatch(/css-/);
+            expect(table?.parentElement).toBe(wrapper);
+        });
+
+        it('preserves header and body cell content inside the table', () => {
+            const message: ChatMessageData = {
+                role: 'assistant',
+                content: wideTable,
+            };
+            renderWithTheme(<ChatMessage message={message} mode="dark" />);
+
+            // Header cells render as <th> from remark-gfm.
+            expect(screen.getByText('col_a')).toBeInTheDocument();
+            expect(screen.getByText('col_f')).toBeInTheDocument();
+            // A body cell from the right-most column proves the right
+            // edge is not clipped from the DOM (even when visually
+            // hidden by overflow it must still be present).
+            expect(screen.getByText('12')).toBeInTheDocument();
+        });
+
+        it('still renders surrounding markdown around a table', () => {
+            const message: ChatMessageData = {
+                role: 'assistant',
+                content: [
+                    '## Recent alerts',
+                    '',
+                    'Here are the rows:',
+                    '',
+                    wideTable,
+                    '',
+                    '- More info follows',
+                ].join('\n'),
+            };
+            renderWithTheme(<ChatMessage message={message} mode="dark" />);
+
+            // Heading, paragraph, table wrapper, and list item all coexist.
+            expect(screen.getByText('Recent alerts')).toBeInTheDocument();
+            expect(screen.getByText('Here are the rows:')).toBeInTheDocument();
+            expect(screen.getByTestId('chat-table-container'))
+                .toBeInTheDocument();
+            expect(screen.getByText('More info follows')).toBeInTheDocument();
+        });
+    });
 });

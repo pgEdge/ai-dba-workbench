@@ -160,10 +160,36 @@ export const getBlockquoteSx = (theme: Theme) => ({
     fontStyle: 'italic',
 });
 
-export const getTableSx = (theme: Theme) => ({
+// Wrapper around <table> that lets wide tables scroll horizontally instead
+// of overflowing the parent (chat bubble, dialog body, etc.). The wrapper
+// must NOT introduce vertical scrolling: tall tables still grow the parent
+// as before.
+//
+// Together with getTableSx (width: 'auto', minWidth: '100%'), narrow tables
+// still fill the container exactly like before; only tables wider than the
+// container produce a horizontal scrollbar.
+export const getTableContainerSx = () => ({
+    display: 'block',
     width: '100%',
-    borderCollapse: 'collapse',
+    maxWidth: '100%',
+    overflowX: 'auto',
+    overflowY: 'visible',
+    // Smooth momentum scrolling on iOS / iPadOS Safari.
+    WebkitOverflowScrolling: 'touch',
     my: 1.5,
+});
+
+export const getTableSx = (theme: Theme) => ({
+    // Let the table grow to fit its widest row. minWidth: '100%' keeps narrow
+    // tables flush with the container (so a 2-column table still spans the
+    // bubble), while wider tables overflow the parent and trigger the
+    // horizontal scrollbar provided by getTableContainerSx.
+    width: 'auto',
+    minWidth: '100%',
+    borderCollapse: 'collapse',
+    // No vertical margin here; the wrapper (getTableContainerSx) owns spacing
+    // so the scroll affordance and the table stay visually grouped.
+    my: 0,
     fontSize: '1rem',
     '& th, & td': {
         border: '1px solid',

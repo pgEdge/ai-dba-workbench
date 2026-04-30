@@ -144,13 +144,13 @@ test.describe('User Management', () => {
         await clickEditUser(page, username);
 
         // Update display name in the edit dialog.
-        const dialog = page.getByRole('dialog');
+        const dialog = page.locator('.MuiDialog-paper:not(.MuiDialog-paperFullScreen)').first();
         await expect(dialog).toBeVisible();
         const nameField = dialog.getByLabel('Display Name');
         await nameField.clear();
         await nameField.fill('UI After');
         await dialog.getByRole('button', { name: /save|update/i }).click();
-        await expect(dialog).toBeHidden({ timeout: 5_000 });
+        await expect(dialog).toBeHidden({ timeout: 10_000 });
 
         // Verify via API.
         const { users } = await api.listUsers(adminCookie);

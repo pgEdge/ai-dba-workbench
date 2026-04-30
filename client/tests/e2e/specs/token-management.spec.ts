@@ -193,7 +193,7 @@ test.describe('Token Management', () => {
         await navigateToAdminTokens(page);
 
         // Click "Add Token" or "Add".
-        await page.getByRole('button', { name: /add/i }).click();
+        await page.getByRole('button', { name: /create token/i }).click();
 
         // Fill the token creation dialog.
         const dialog = page.getByRole('dialog');

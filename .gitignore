@@ -3,6 +3,7 @@
 .claude/plans/
 .claude/specs/
 .claude/worktrees/
+.claude/*.lock
 .playwright-cli/
 
 # Git

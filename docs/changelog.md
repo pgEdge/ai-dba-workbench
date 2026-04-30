@@ -133,6 +133,41 @@ project adheres to
   button, so users can recover from a crash and file
   actionable bug reports without rebuilding the
   container. (#182)
+- Fix stale auto-detected edges remaining in
+  `cluster_node_relationships` after the cluster
+  topology changed through failover, subscriber
+  removal, or a new parent in a binary chain;
+  `SyncAutoDetectedRelationships` now replaces the
+  auto-detected set transactionally, deleting all
+  existing `is_auto_detected = TRUE` rows for the
+  cluster before inserting the freshly detected set,
+  and the `syncRelationshipsFromTopology` caller no
+  longer short-circuits on an empty detected slice.
+  Manual relationships and auto-detected rows for
+  other clusters are preserved, and a failure during
+  the delete or insert rolls the transaction back to
+  the prior state. (#152)
+- Fix the cluster Topology tab dropping cascading
+  standbys and marking empty auto-detected nodes as
+  expandable; persisted and manual chains such as
+  primary -> standby -> cascading standby now render
+  every level regardless of input order, and nodes
+  whose children are filtered out no longer display a
+  disclosure arrow. (#153)
+- Fix the collector probe config loader ignoring scope
+  and silently re-enabling disabled parent overrides;
+  `LoadProbeConfigs` now restricts its query to
+  `scope IN ('global', 'server')` so cluster- and
+  group-scoped rows no longer collapse into the
+  `connection_id = 0` bucket and get misapplied as
+  global defaults, and `EnsureProbeConfig` now inherits
+  the parent config's `is_enabled` value when
+  materializing a server-level row instead of
+  hard-coding it to true. The SQL is extracted into a
+  `loadProbeConfigsQuery` constant and the value
+  resolution moves into a pure
+  `resolveProbeConfigDefaults` helper, both covered by
+  new unit tests. (#151)
 
 - Fix MCP and admin scope privileges granted through a
   wildcard group grant (`"*"`) being silently dropped

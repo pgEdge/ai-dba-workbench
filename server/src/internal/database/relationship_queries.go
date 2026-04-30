@@ -14,6 +14,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // CreateManualCluster creates a cluster with no auto_cluster_key and an
@@ -219,13 +221,59 @@ func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sou
 	return nil
 }
 
-// SyncAutoDetectedRelationships inserts auto-detected relationships for a
-// cluster. For each detected relationship it performs an INSERT ... ON
-// CONFLICT DO NOTHING so that existing rows are preserved. This method
-// NEVER removes existing rows; auto-detection only adds.
+// SyncAutoDetectedRelationships replaces the auto-detected relationship
+// set for a cluster in a single transaction. All existing
+// is_auto_detected = TRUE rows for the cluster are deleted, then the
+// supplied detected slice is inserted with is_auto_detected = TRUE.
+// Manual rows (is_auto_detected = FALSE) and auto-detected rows for
+// other clusters are left untouched. The transaction rolls back on any
+// failure so the prior auto-detected state survives. ON CONFLICT DO
+// NOTHING guards against duplicate entries within the input slice.
+//
+// To prevent the DELETE-then-INSERT race that READ COMMITTED isolation
+// would otherwise allow (two concurrent syncs for the same cluster
+// each observing an empty initial state and committing the union of
+// their disjoint inserts), the transaction first takes a row-level
+// lock on the cluster row via SELECT ... FOR UPDATE. Concurrent syncs
+// for the SAME cluster serialize on this lock; syncs for DIFFERENT
+// clusters proceed in parallel because the lock is row-scoped.
+//
+// If the supplied clusterID does not exist in the clusters table, the
+// function returns ErrClusterNotFound and makes no changes.
 func (d *Datastore) SyncAutoDetectedRelationships(ctx context.Context, clusterID int, detected []AutoRelationshipInput) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+
+	// Take a row-level lock on the cluster's row to serialize concurrent
+	// syncs targeting the same cluster. Other transactions that take this
+	// lock (or otherwise lock the row) block until this transaction
+	// commits or rolls back. A missing cluster yields pgx.ErrNoRows.
+	var lockedID int
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM clusters WHERE id = $1 FOR UPDATE`,
+		clusterID,
+	).Scan(&lockedID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrClusterNotFound
+		}
+		return fmt.Errorf("failed to lock cluster row: %w", err)
+	}
+
+	_, err = tx.Exec(ctx,
+		`DELETE FROM cluster_node_relationships
+         WHERE cluster_id = $1 AND is_auto_detected = TRUE`,
+		clusterID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete existing auto-detected relationships: %w", err)
+	}
+
 	for _, rel := range detected {
-		_, err := d.pool.Exec(ctx,
+		_, err = tx.Exec(ctx,
 			`INSERT INTO cluster_node_relationships
              (cluster_id, source_connection_id, target_connection_id, relationship_type, is_auto_detected)
              VALUES ($1, $2, $3, $4, TRUE)
@@ -236,6 +284,10 @@ func (d *Datastore) SyncAutoDetectedRelationships(ctx context.Context, clusterID
 		if err != nil {
 			return fmt.Errorf("failed to sync auto-detected relationship: %w", err)
 		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil

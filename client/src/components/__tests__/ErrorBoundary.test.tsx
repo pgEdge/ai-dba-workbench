@@ -19,6 +19,7 @@ import { logger } from '../../utils/logger';
  * render so the boundary always observes a real error rather than a
  * flaky async failure.
  */
+// biome-ignore lint/correctness/useQwikValidLexicalScope: not a Qwik project; rule is misfiring on a React component
 const ThrowingChild: React.FC<{ message?: string }> = ({
     message = 'boom',
 }) => {
@@ -33,10 +34,12 @@ describe('ErrorBoundary', () => {
         // React intentionally writes the unhandled-error tree to the
         // browser console even when the boundary handles the failure.
         // Silence it so the test output stays readable.
-        errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        errorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => undefined);
         loggerErrorSpy = vi
             .spyOn(logger, 'error')
-            .mockImplementation(() => {});
+            .mockImplementation(() => undefined);
     });
 
     afterEach(() => {

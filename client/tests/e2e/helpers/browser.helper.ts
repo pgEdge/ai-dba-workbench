@@ -34,8 +34,11 @@ export async function loginViaUI(
     await page.getByLabel('Username').fill(username);
     await page.getByLabel('Password').fill(password);
     await page.getByRole('button', { name: 'Sign In' }).click();
-    // Wait for navigation away from the login page.
-    await page.waitForURL(/.*(?<!\/login)$/);
+    // The application is a SPA without URL-based routing; after a
+    // successful login the Login component is replaced by the main
+    // layout. Wait for the main application header to appear instead
+    // of relying on a URL change.
+    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
 }
 
 // ---------------------------------------------------------------

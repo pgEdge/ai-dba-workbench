@@ -22,23 +22,18 @@ test.describe('Authentication & Login', () => {
     // Navigate to login page
     await page.goto(`${BASE_URL}/login`);
 
-    // Fill login form
+    // Fill login form and submit
     await page.fill('input[name="username"]', ADMIN_USER.username);
     await page.fill('input[name="password"]', ADMIN_USER.password);
-
-    // Submit login
     await page.click('button[type="submit"]');
 
-    // Wait for navigation to dashboard
-    await page.waitForURL(`${BASE_URL}/**`, { timeout: 10000 });
-
-    // Verify logged in (check for header/navigation)
+    // The app is a SPA without URL routing; after login the Login
+    // component is replaced by the main layout. Wait for the header
+    // to appear instead of checking the URL.
     const header = page.locator('header');
-    await expect(header).toBeVisible();
+    await expect(header).toBeVisible({ timeout: 15_000 });
 
-    // Verify admin username appears in header or user menu
-    const userMenu = page.locator('button:has-text("Admin"), [data-testid="user-menu"]');
-    // Try multiple selectors since exact structure may vary
+    // Verify admin username appears in the rendered page
     const pageContent = await page.content();
     expect(pageContent).toContain(ADMIN_USER.username);
   });
@@ -49,7 +44,7 @@ test.describe('Authentication & Login', () => {
     await page.fill('input[name="username"]', ADMIN_USER.username);
     await page.fill('input[name="password"]', ADMIN_USER.password);
     await page.click('button[type="submit"]');
-    await page.waitForURL(`${BASE_URL}/**`, { timeout: 10000 });
+    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
 
     // Navigate to admin panel
     const adminButton = page.locator('button:has-text("Admin"), button[aria-label*="admin"], button[aria-label*="Admin"]').first();
@@ -83,18 +78,16 @@ test.describe('Authentication & Login', () => {
       email: 'login-test@e2e.test',
     });
 
-    // Logout from admin
-    await page.goto(`${BASE_URL}/logout`);
-    await page.waitForURL(`${BASE_URL}/**`, { timeout: 5000 });
+    // Ensure a fresh browser context: navigate to the base URL so
+    // the SPA loads without an active session (the browser context
+    // has no cookies since this test does not use storageState).
 
     // Login as new user
     await page.goto(`${BASE_URL}/login`);
     await loginViaUI(page, testUsername, testPassword);
 
-    // Verify login succeeded: URL should no longer be the login page
-    expect(page.url()).not.toContain('/login');
-
-    // Verify the main application UI is visible (header present)
+    // loginViaUI already waits for the header to appear; verify
+    // the main application UI is visible (header present).
     const header = page.locator('header');
     await expect(header).toBeVisible();
   });
@@ -128,7 +121,7 @@ test.describe('Authentication & Login', () => {
     await page.fill('input[name="username"]', ADMIN_USER.username);
     await page.fill('input[name="password"]', ADMIN_USER.password);
     await page.click('button[type="submit"]');
-    await page.waitForURL(`${BASE_URL}/**`, { timeout: 10000 });
+    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
 
     // Verify logged in
     const header = page.locator('header');
@@ -155,11 +148,14 @@ test.describe('Authentication & Login', () => {
       await page.waitForTimeout(500);
     }
 
-    // Should be back at login or have lost session
-    const isLoggedOut = page.url().includes('/login') ||
-      !(await page.locator('header').isVisible().catch(() => false));
-
-    expect(isLoggedOut).toBeTruthy();
+    // After logout the app should show the Login form again
+    // (the header disappears because the SPA switches to the
+    // Login component). Check for the sign-in button or the
+    // absence of the main header.
+    const loginVisible = await page.getByRole('button', { name: 'Sign In' })
+      .isVisible().catch(() => false);
+    const headerGone = !(await page.locator('header').isVisible().catch(() => false));
+    expect(loginVisible || headerGone).toBeTruthy();
   });
 
   test('Session persists across page refresh', async ({ page }) => {
@@ -168,7 +164,7 @@ test.describe('Authentication & Login', () => {
     await page.fill('input[name="username"]', ADMIN_USER.username);
     await page.fill('input[name="password"]', ADMIN_USER.password);
     await page.click('button[type="submit"]');
-    await page.waitForURL(`${BASE_URL}/**`, { timeout: 10000 });
+    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
 
     // Verify logged in
     const header = page.locator('header');
@@ -182,11 +178,9 @@ test.describe('Authentication & Login', () => {
     // cookie and decide whether to redirect to /login.
     await page.waitForTimeout(2_000);
 
-    // Should still be logged in (header still visible, not on login page)
+    // Should still be logged in (header still visible after refresh)
     const stillLoggedIn = await header.isVisible().catch(() => false);
-    const notOnLoginPage = !page.url().includes('/login');
-
-    expect(stillLoggedIn && notOnLoginPage).toBeTruthy();
+    expect(stillLoggedIn).toBeTruthy();
   });
 
   test('Rate limiting prevents brute force login attempts', async ({ page }) => {

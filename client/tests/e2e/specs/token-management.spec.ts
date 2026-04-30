@@ -224,7 +224,7 @@ test.describe('Token Management', () => {
         await expect(
             page.getByText(/token created|save this token/i).or(
                 page.getByRole('row', { name: new RegExp(TEST_USER_PREFIX) }),
-            ),
+            ).first(),
         ).toBeVisible({ timeout: 10_000 });
     });
 });

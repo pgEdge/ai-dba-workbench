@@ -121,6 +121,13 @@ project adheres to
 
 ### Fixed
 
+- Fix the cluster Topology tab dropping cascading
+  standbys and marking empty auto-detected nodes as
+  expandable; persisted and manual chains such as
+  primary -> standby -> cascading standby now render
+  every level regardless of input order, and nodes
+  whose children are filtered out no longer display a
+  disclosure arrow. (#153)
 - Fix the collector probe config loader ignoring scope
   and silently re-enabling disabled parent overrides;
   `LoadProbeConfigs` now restricts its query to

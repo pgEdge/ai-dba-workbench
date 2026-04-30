@@ -20,7 +20,9 @@ import { useTheme } from '@mui/material/styles';
 import {
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
+    codePointLength,
     scorePasswordStrength,
+    utf8ByteLength,
 } from './passwordStrength';
 import type { PasswordStrength } from './passwordStrength';
 
@@ -74,6 +76,8 @@ export type PasswordStrengthFieldProps = Omit<
         meetsMinimum: boolean;
         isEmpty: boolean;
         strength: PasswordStrength;
+        tooLong: boolean;
+        byteLength: number;
     }) => void;
     /**
      * When true, the policy hint and strength meter are hidden until
@@ -104,15 +108,36 @@ const PasswordStrengthField: React.FC<PasswordStrengthFieldProps> = ({
         () => scorePasswordStrength(value),
         [value],
     );
-    const isEmpty = value.length === 0;
-    const meetsMinimum = value.length >= PASSWORD_MIN_LENGTH;
+    // Count code points (matches Go's utf8.RuneCountInString) rather
+    // than UTF-16 code units so that emoji and other supplementary
+    // characters agree with the server's minimum-length check.
+    const charCount = useMemo(() => codePointLength(value), [value]);
+    // Count UTF-8 bytes (matches Go's len(password)) so the client can
+    // flag values bcrypt would reject.
+    const byteLength = useMemo(() => utf8ByteLength(value), [value]);
+    const isEmpty = charCount === 0;
+    const meetsMinimum = charCount >= PASSWORD_MIN_LENGTH;
+    const tooLong = byteLength > PASSWORD_MAX_LENGTH;
     const showFeedback = !(hideFeedbackWhenEmpty && isEmpty);
-    const showStrengthMeter = !isEmpty && meetsMinimum;
+    const showStrengthMeter = !isEmpty && meetsMinimum && !tooLong;
     const tooShort = !isEmpty && !meetsMinimum;
 
     React.useEffect(() => {
-        onValidityChange?.({ meetsMinimum, isEmpty, strength });
-    }, [meetsMinimum, isEmpty, strength, onValidityChange]);
+        onValidityChange?.({
+            meetsMinimum,
+            isEmpty,
+            strength,
+            tooLong,
+            byteLength,
+        });
+    }, [
+        meetsMinimum,
+        isEmpty,
+        strength,
+        tooLong,
+        byteLength,
+        onValidityChange,
+    ]);
 
     // Map the 0-4 score to a 0-100 progress value for the meter.
     const progressValue = Math.max(0, strength) * 25;
@@ -121,15 +146,21 @@ const PasswordStrengthField: React.FC<PasswordStrengthFieldProps> = ({
 
     const lengthLine = isEmpty
         ? null
-        : `${value.length} / ${PASSWORD_MIN_LENGTH} characters`;
+        : `${charCount} / ${PASSWORD_MIN_LENGTH} characters`;
 
     const policyHelper = helperText
         ?? 'At least 12 characters. Avoid common passwords and reused passwords.';
 
     let feedbackHelper: React.ReactNode = policyHelper;
     if (showFeedback && !isEmpty) {
-        if (tooShort) {
-            feedbackHelper = `Password is ${value.length} of ${PASSWORD_MIN_LENGTH}`
+        if (tooLong) {
+            // Byte-length error takes precedence over the
+            // minimum-length helper because exceeding the bcrypt
+            // 72-byte limit is the more severe failure mode.
+            feedbackHelper = 'Password exceeds the 72-byte server'
+                + ` limit (currently ${byteLength} bytes).`;
+        } else if (tooShort) {
+            feedbackHelper = `Password is ${charCount} of ${PASSWORD_MIN_LENGTH}`
                 + ' minimum characters.';
         } else {
             feedbackHelper = `${lengthLine} • Strength: `
@@ -145,11 +176,13 @@ const PasswordStrengthField: React.FC<PasswordStrengthFieldProps> = ({
                 type="password"
                 value={value}
                 onChange={(event) => { onChange(event.target.value); }}
-                error={tooShort || rest.error}
+                error={tooShort || tooLong || rest.error}
                 helperText={showFeedback ? feedbackHelper : undefined}
+                // Caller-supplied inputProps are spread first so that the
+                // security-critical maxLength below cannot be overridden.
                 inputProps={{
-                    maxLength: PASSWORD_MAX_LENGTH,
                     ...(inputProps || {}),
+                    maxLength: PASSWORD_MAX_LENGTH,
                 }}
                 sx={sx}
             />

@@ -96,17 +96,40 @@ const repetitionPenalty = (value: string): number => {
 };
 
 /**
+ * Counts the Unicode code points in a string. This matches the
+ * server-side `utf8.RuneCountInString` behaviour and avoids the
+ * UTF-16 code-unit miscount that JavaScript's native `.length`
+ * property produces for characters outside the Basic Multilingual
+ * Plane (for example, most emoji).
+ */
+export const codePointLength = (value: string): number => {
+    return Array.from(value).length;
+};
+
+/**
+ * Returns the UTF-8 byte length of a string. The server enforces a
+ * 72-byte upper bound (the bcrypt limit) using Go's `len(password)`,
+ * which counts bytes; this helper mirrors that count so the client
+ * can flag strings the server would reject.
+ */
+export const utf8ByteLength = (value: string): number => {
+    return new TextEncoder().encode(value).length;
+};
+
+/**
  * Returns an integer strength score from 0 (too short) through 4
  * (strong) using a length-and-entropy heuristic. Bucket boundaries
  * are chosen so that a 12-character password using mixed character
  * classes lands in the "good" bucket and longer or more varied
- * passwords reach "strong".
+ * passwords reach "strong". Length is measured in code points so the
+ * scorer agrees with the server's rune-based minimum check.
  */
 export const scorePasswordStrength = (value: string): PasswordStrength => {
-    if (!value || value.length < PASSWORD_MIN_LENGTH) {
+    const charCount = codePointLength(value);
+    if (!value || charCount < PASSWORD_MIN_LENGTH) {
         return 0;
     }
-    const entropy = value.length * Math.log2(charsetSize(value));
+    const entropy = charCount * Math.log2(charsetSize(value));
     const penalty = repetitionPenalty(value) * 6;
     const adjusted = Math.max(0, entropy - penalty);
     if (adjusted < 50) {

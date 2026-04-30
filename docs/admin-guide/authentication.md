@@ -210,14 +210,20 @@ correct-horse-battery-staple-9z
 ```
 
 The next two passwords look strong under traditional
-composition rules but fail the modern policy because
-they follow well-known patterns that attackers
-target first:
+composition rules, but they follow common patterns
+that frequently appear in password dictionaries;
+modern policies treat such passwords as weak:
 
 ```text
 Password123!
 Summer2026!
 ```
+
+The validator rejects these passwords when they match
+the embedded common-password list; otherwise it
+relies on the 12-character minimum to discourage
+short variants. Avoid these patterns even when a
+specific example slips past the dictionary check.
 
 ### Live Strength Feedback
 

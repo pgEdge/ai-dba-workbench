@@ -39,11 +39,14 @@ type HarnessProps = {
         meetsMinimum: boolean;
         isEmpty: boolean;
         strength: number;
+        tooLong: boolean;
+        byteLength: number;
     }) => void;
     helperText?: React.ReactNode;
     label?: string;
     required?: boolean;
     error?: boolean;
+    inputProps?: Record<string, unknown>;
 };
 
 const Harness: React.FC<HarnessProps> = ({
@@ -54,6 +57,7 @@ const Harness: React.FC<HarnessProps> = ({
     label = 'Password',
     required,
     error,
+    inputProps,
 }) => {
     const [value, setValue] = useState(initialValue);
     return (
@@ -66,6 +70,7 @@ const Harness: React.FC<HarnessProps> = ({
             helperText={helperText}
             required={required}
             error={error}
+            inputProps={inputProps}
         />
     );
 };
@@ -232,11 +237,14 @@ describe('PasswordStrengthField', () => {
         renderWithTheme(
             <Harness onValidityChange={onValidityChange} />
         );
-        // Initial render reports an empty value.
+        // Initial render reports an empty value with the new
+        // byte-length/too-long fields included in the payload.
         expect(onValidityChange).toHaveBeenCalledWith({
             meetsMinimum: false,
             isEmpty: true,
             strength: 0,
+            tooLong: false,
+            byteLength: 0,
         });
         const input = getInput();
         await user.type(input, 'Correct-Horse-Battery-Staple-99!');
@@ -246,6 +254,8 @@ describe('PasswordStrengthField', () => {
             meetsMinimum: true,
             isEmpty: false,
             strength: 4,
+            tooLong: false,
+            byteLength: 32,
         });
     });
 
@@ -323,5 +333,100 @@ describe('PasswordStrengthField', () => {
         expect(
             screen.getByRole('progressbar', { name: /password strength/i })
         ).toBeInTheDocument();
+    });
+
+    it('counts emoji as code points rather than UTF-16 code units', () => {
+        // Six smiley emoji form a 12-code-unit string under JavaScript's
+        // UTF-16 indexing but only 6 code points; the field must report
+        // the lower count so it agrees with the server's rune-based
+        // minimum check.
+        const onValidityChange = vi.fn();
+        renderWithTheme(
+            <Harness
+                initialValue={'\u{1F600}'.repeat(6)}
+                onValidityChange={onValidityChange}
+            />
+        );
+        expect(
+            screen.getByText(/password is 6 of 12 minimum characters/i)
+        ).toBeInTheDocument();
+        const last = onValidityChange.mock.calls.at(-1)?.[0];
+        expect(last).toMatchObject({
+            meetsMinimum: false,
+            isEmpty: false,
+            tooLong: false,
+            byteLength: 24,
+        });
+        // The strength meter must stay hidden while the value is below
+        // the 12-code-point minimum, even though the UTF-16 length is 12.
+        expect(
+            screen.queryByRole('progressbar', { name: /password strength/i })
+        ).not.toBeInTheDocument();
+    });
+
+    it('flags strings whose UTF-8 byte length exceeds the bcrypt limit', () => {
+        // 20 four-byte emoji = 80 UTF-8 bytes, which exceeds the
+        // 72-byte bcrypt limit even though the code-point count
+        // satisfies the minimum.
+        const onValidityChange = vi.fn();
+        renderWithTheme(
+            <Harness
+                initialValue={'\u{1F600}'.repeat(20)}
+                onValidityChange={onValidityChange}
+            />
+        );
+        expect(
+            screen.getByText(
+                /password exceeds the 72-byte server limit \(currently 80 bytes\)/i
+            )
+        ).toBeInTheDocument();
+        const root = getInput().closest('.MuiFormControl-root');
+        expect(root?.querySelector('.Mui-error')).not.toBeNull();
+        const last = onValidityChange.mock.calls.at(-1)?.[0];
+        expect(last).toMatchObject({
+            meetsMinimum: true,
+            isEmpty: false,
+            tooLong: true,
+            byteLength: 80,
+        });
+        // Strength meter is suppressed for over-limit values because
+        // submitting them would fail server-side regardless of
+        // strength.
+        expect(
+            screen.queryByRole('progressbar', { name: /password strength/i })
+        ).not.toBeInTheDocument();
+    });
+
+    it('treats a 12-character ASCII passphrase as valid', () => {
+        const onValidityChange = vi.fn();
+        renderWithTheme(
+            <Harness
+                initialValue="Tr0ub4dor&3xQ"
+                onValidityChange={onValidityChange}
+            />
+        );
+        // No error helper, byte-length helper, or below-minimum helper.
+        expect(
+            screen.queryByText(/minimum characters/i)
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByText(/exceeds the 72-byte server limit/i)
+        ).not.toBeInTheDocument();
+        const last = onValidityChange.mock.calls.at(-1)?.[0];
+        expect(last).toMatchObject({
+            meetsMinimum: true,
+            isEmpty: false,
+            tooLong: false,
+            byteLength: 13,
+        });
+    });
+
+    it('ignores caller attempts to widen the maxLength input attribute', () => {
+        // The field spreads caller-supplied inputProps before it sets
+        // the security-critical maxLength so the bcrypt cap cannot be
+        // overridden by a parent.
+        renderWithTheme(<Harness inputProps={{ maxLength: 1000 }} />);
+        const input = getInput();
+        expect(input.maxLength).toBe(PASSWORD_MAX_LENGTH);
     });
 });

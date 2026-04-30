@@ -45,7 +45,7 @@ import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import PasswordStrengthField from './PasswordStrengthField';
-import { PASSWORD_MIN_LENGTH } from './passwordStrength';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, codePointLength, utf8ByteLength } from './passwordStrength';
 import { useAuth } from '../../contexts/useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
@@ -643,7 +643,11 @@ const AdminUsers: React.FC = () => {
                             || (!createServiceAccount && !createPassword)
                             || (!createServiceAccount
                                 && createPassword.length > 0
-                                && createPassword.length < PASSWORD_MIN_LENGTH)
+                                && codePointLength(createPassword)
+                                    < PASSWORD_MIN_LENGTH)
+                            || (!createServiceAccount
+                                && utf8ByteLength(createPassword)
+                                    > PASSWORD_MAX_LENGTH)
                         }
                         sx={containedButtonSx}
                     >
@@ -737,7 +741,10 @@ const AdminUsers: React.FC = () => {
                         disabled={
                             editLoading
                             || (editPassword.length > 0
-                                && editPassword.length < PASSWORD_MIN_LENGTH)
+                                && codePointLength(editPassword)
+                                    < PASSWORD_MIN_LENGTH)
+                            || utf8ByteLength(editPassword)
+                                > PASSWORD_MAX_LENGTH
                         }
                         sx={containedButtonSx}
                     >

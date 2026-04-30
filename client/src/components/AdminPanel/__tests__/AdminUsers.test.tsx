@@ -78,11 +78,13 @@ const mockUsers = [
     },
 ];
 
-const installListMocks = (overrides?: {
+interface ListMockOverrides {
     users?: typeof mockUsers;
     privileges?: unknown;
-    privilegesRejection?: unknown;
-}) => {
+    privilegesRejection?: Error;
+}
+
+function installListMocks(overrides?: ListMockOverrides): void {
     mockApiGet.mockImplementation((url: string) => {
         if (url === '/api/v1/rbac/users') {
             return Promise.resolve({ users: overrides?.users ?? mockUsers });
@@ -105,29 +107,39 @@ const installListMocks = (overrides?: {
         }
         return Promise.resolve({});
     });
-};
+}
 
-const findFieldByLabel = (
+// Escapes regex metacharacters so that label strings supplied by call
+// sites can be safely composed into a startsWith regex without
+// interpreting them as patterns.
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+type FormFieldElement = HTMLInputElement | HTMLTextAreaElement;
+
+function findFieldByLabel(
     container: HTMLElement,
-    labelText: string | RegExp
-): HTMLInputElement => {
-    const labels = within(container).getAllByText(
-        typeof labelText === 'string'
-            ? new RegExp(`^${labelText}`, 'i')
-            : labelText
-    );
+    labelText: string | RegExp,
+): FormFieldElement {
+    const matcher = typeof labelText === 'string'
+        ? new RegExp('^' + escapeRegExp(labelText), 'i')
+        : labelText;
+    const labels = within(container).getAllByText(matcher);
     for (const label of labels) {
         const forAttr = label.getAttribute('for');
         if (forAttr) {
-            const input = document.getElementById(forAttr) as HTMLInputElement
-                | null;
-            if (input) {
-                return input;
+            const inputEl = document.getElementById(forAttr);
+            if (
+                inputEl instanceof HTMLInputElement
+                || inputEl instanceof HTMLTextAreaElement
+            ) {
+                return inputEl;
             }
         }
     }
-    throw new Error(`Could not find field with label: ${labelText}`);
-};
+    throw new Error(`Could not find field with label: ${String(labelText)}`);
+}
 
 describe('AdminUsers', () => {
     beforeEach(() => {
@@ -143,7 +155,10 @@ describe('AdminUsers', () => {
 
     describe('Initial rendering', () => {
         it('shows a loading spinner while fetching users', () => {
-            mockApiGet.mockReturnValue(new Promise(() => {}));
+            // A promise that never resolves keeps AdminUsers in its
+            // initial loading state for the duration of the assertion.
+            const neverResolves = new Promise<never>((): void => undefined);
+            mockApiGet.mockReturnValue(neverResolves);
             renderWithTheme(<AdminUsers />);
             expect(
                 screen.getByLabelText('Loading users')

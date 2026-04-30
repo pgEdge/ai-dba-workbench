@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
+import type { ReactNode, JSX } from 'react';
 import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -27,38 +28,41 @@ import {
     scorePasswordStrength,
 } from '../passwordStrength';
 
+const noop = (): void => undefined;
+
 /**
  * Tiny controlled wrapper used to drive the field through user
  * interactions. The wrapper forwards the validity callback prop so tests
  * can assert on the values reported by the field.
  */
-type HarnessProps = {
+interface HarnessProps {
     initialValue?: string;
     hideFeedbackWhenEmpty?: boolean;
-    onValidityChange?: (info: {
+    onValidityChange?: (_info: {
         meetsMinimum: boolean;
         isEmpty: boolean;
         strength: number;
         tooLong: boolean;
         byteLength: number;
     }) => void;
-    helperText?: React.ReactNode;
+    helperText?: ReactNode;
     label?: string;
     required?: boolean;
     error?: boolean;
     inputProps?: Record<string, unknown>;
-};
+}
 
-const Harness: React.FC<HarnessProps> = ({
-    initialValue = '',
-    hideFeedbackWhenEmpty,
-    onValidityChange,
-    helperText,
-    label = 'Password',
-    required,
-    error,
-    inputProps,
-}) => {
+function Harness(props: HarnessProps): JSX.Element {
+    const {
+        initialValue = '',
+        hideFeedbackWhenEmpty,
+        onValidityChange,
+        helperText,
+        label = 'Password',
+        required,
+        error,
+        inputProps,
+    } = props;
     const [value, setValue] = useState(initialValue);
     return (
         <PasswordStrengthField
@@ -73,12 +77,15 @@ const Harness: React.FC<HarnessProps> = ({
             inputProps={inputProps}
         />
     );
-};
+}
 
-const getInput = (): HTMLInputElement => {
-    const input = screen.getByLabelText(/password/i);
-    return input as HTMLInputElement;
-};
+function getInput(): HTMLInputElement {
+    const inputEl = screen.getByLabelText<HTMLInputElement>(/password/i);
+    if (!(inputEl instanceof HTMLInputElement)) {
+        throw new Error('expected an input element');
+    }
+    return inputEl;
+}
 
 describe('scorePasswordStrength', () => {
     it('returns 0 for empty values', () => {
@@ -193,7 +200,8 @@ describe('PasswordStrengthField', () => {
         ).not.toBeInTheDocument();
         expect(
             screen.getByText(
-                new RegExp(`${PASSWORD_MIN_LENGTH} / ${PASSWORD_MIN_LENGTH} characters`)
+                `${PASSWORD_MIN_LENGTH} / ${PASSWORD_MIN_LENGTH}`
+                + ' characters • Strength: Fair'
             )
         ).toBeInTheDocument();
         const meter = screen.getByRole('progressbar', {
@@ -286,8 +294,8 @@ describe('PasswordStrengthField', () => {
                 onChange={onChange}
             />
         );
-        const input = screen.getByLabelText(/password/i) as HTMLInputElement;
-        fireEvent.change(input, { target: { value: 'abc' } });
+        const inputEl = screen.getByLabelText<HTMLInputElement>(/password/i);
+        fireEvent.change(inputEl, { target: { value: 'abc' } });
         expect(onChange).toHaveBeenCalledWith('abc');
     });
 
@@ -296,11 +304,11 @@ describe('PasswordStrengthField', () => {
             <PasswordStrengthField
                 label="Password"
                 value=""
-                onChange={() => {}}
+                onChange={noop}
             />
         );
-        const input = screen.getByLabelText(/password/i) as HTMLInputElement;
-        expect(input.getAttribute('autocomplete')).toBe('new-password');
+        const inputEl = screen.getByLabelText<HTMLInputElement>(/password/i);
+        expect(inputEl.getAttribute('autocomplete')).toBe('new-password');
     });
 
     it('lets a caller-supplied autoComplete override the default', () => {
@@ -308,15 +316,15 @@ describe('PasswordStrengthField', () => {
             <PasswordStrengthField
                 label="Password"
                 value=""
-                onChange={() => {}}
+                onChange={noop}
                 autoComplete="off"
             />
         );
-        const input = screen.getByLabelText(/password/i) as HTMLInputElement;
-        expect(input.getAttribute('autocomplete')).toBe('off');
+        const inputEl = screen.getByLabelText<HTMLInputElement>(/password/i);
+        expect(inputEl.getAttribute('autocomplete')).toBe('off');
     });
 
-    it('keeps the strength meter hidden when feedback is suppressed', async () => {
+    it('keeps the strength meter hidden when feedback is suppressed', () => {
         renderWithTheme(<Harness hideFeedbackWhenEmpty />);
         // No characters typed yet, hideFeedbackWhenEmpty: meter must not
         // render.

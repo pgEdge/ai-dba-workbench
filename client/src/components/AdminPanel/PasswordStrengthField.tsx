@@ -8,53 +8,58 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
-import {
-    Box,
-    LinearProgress,
-    TextField,
-    Typography,
-} from '@mui/material';
+import { useEffect, useMemo } from 'react';
+import type { JSX } from 'react';
+import { Box, LinearProgress, TextField, Typography } from '@mui/material';
 import type { TextFieldProps } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import {
-    PASSWORD_MAX_LENGTH,
-    PASSWORD_MIN_LENGTH,
-    codePointLength,
-    scorePasswordStrength,
-    utf8ByteLength,
-} from './passwordStrength';
+import { PASSWORD_MAX_LENGTH } from './passwordStrength';
 import type { PasswordStrength } from './passwordStrength';
+import {
+    STRENGTH_LABELS,
+    buildFeedbackHelper,
+    derivePasswordState,
+    strengthColor,
+} from './passwordStrengthHelpers';
+
+interface StrengthMeterProps {
+    strength: PasswordStrength;
+    color: string;
+    progressValue: number;
+}
 
 /**
- * Human-readable label aligned with each strength bucket.
+ * Visual strength bar with the bucket label underneath. Rendered only
+ * when the parent decides feedback should be visible.
  */
-const STRENGTH_LABELS: Record<PasswordStrength, string> = {
-    0: 'Too short',
-    1: 'Weak',
-    2: 'Fair',
-    3: 'Good',
-    4: 'Strong',
-};
-
-/**
- * Maps a strength bucket to the MUI palette color used for the meter
- * and helper text.
- */
-const strengthColor = (
-    strength: PasswordStrength,
-): 'error' | 'warning' | 'info' | 'success' => {
-    if (strength <= 1) {
-        return 'error';
-    }
-    if (strength === 2) {
-        return 'warning';
-    }
-    if (strength === 3) {
-        return 'info';
-    }
-    return 'success';
-};
+function StrengthMeter(props: StrengthMeterProps): JSX.Element {
+    const { strength, color, progressValue } = props;
+    const theme = useTheme();
+    return (
+        <Box sx={{ mt: 0.5, px: 1.75 }}>
+            <LinearProgress
+                variant="determinate"
+                value={progressValue}
+                aria-label="Password strength"
+                aria-valuenow={progressValue}
+                sx={{
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: theme.palette.action.hover,
+                    '& .MuiLinearProgress-bar': {
+                        backgroundColor: color,
+                    },
+                }}
+            />
+            <Typography
+                variant="caption"
+                sx={{ color, mt: 0.25, display: 'block' }}
+            >
+                {STRENGTH_LABELS[strength]}
+            </Typography>
+        </Box>
+    );
+}
 
 /**
  * Props that the parent component may forward to the underlying
@@ -66,13 +71,13 @@ export type PasswordStrengthFieldProps = Omit<
     'type' | 'onChange' | 'value'
 > & {
     value: string;
-    onChange: (value: string) => void;
+    onChange: (_value: string) => void;
     /**
      * Optional callback invoked whenever the input or its derived
      * validity changes. The parent uses this to gate Submit on the
      * 12-character minimum without re-implementing the policy.
      */
-    onValidityChange?: (info: {
+    onValidityChange?: (_info: {
         meetsMinimum: boolean;
         isEmpty: boolean;
         strength: PasswordStrength;
@@ -93,36 +98,40 @@ export type PasswordStrengthFieldProps = Omit<
  * submission on its own; the parent decides based on
  * `onValidityChange`. Server-side validation remains authoritative.
  */
-const PasswordStrengthField: React.FC<PasswordStrengthFieldProps> = ({
-    value,
-    onChange,
-    onValidityChange,
-    hideFeedbackWhenEmpty = false,
-    helperText,
-    inputProps,
-    sx,
-    ...rest
-}) => {
+function PasswordStrengthField(
+    props: PasswordStrengthFieldProps,
+): JSX.Element {
+    const {
+        value,
+        onChange,
+        onValidityChange,
+        hideFeedbackWhenEmpty = false,
+        helperText,
+        inputProps,
+        sx,
+        ...rest
+    } = props;
     const theme = useTheme();
-    const strength = useMemo(
-        () => scorePasswordStrength(value),
-        [value],
+    // `derivePasswordState` runs the rune count, byte count, scorer,
+    // and policy flags in one pass; centralising them keeps the
+    // component's cyclomatic complexity low.
+    const state = useMemo(
+        () => derivePasswordState(value, hideFeedbackWhenEmpty),
+        [value, hideFeedbackWhenEmpty],
     );
-    // Count code points (matches Go's utf8.RuneCountInString) rather
-    // than UTF-16 code units so that emoji and other supplementary
-    // characters agree with the server's minimum-length check.
-    const charCount = useMemo(() => codePointLength(value), [value]);
-    // Count UTF-8 bytes (matches Go's len(password)) so the client can
-    // flag values bcrypt would reject.
-    const byteLength = useMemo(() => utf8ByteLength(value), [value]);
-    const isEmpty = charCount === 0;
-    const meetsMinimum = charCount >= PASSWORD_MIN_LENGTH;
-    const tooLong = byteLength > PASSWORD_MAX_LENGTH;
-    const showFeedback = !(hideFeedbackWhenEmpty && isEmpty);
-    const showStrengthMeter = !isEmpty && meetsMinimum && !tooLong;
-    const tooShort = !isEmpty && !meetsMinimum;
+    const {
+        strength,
+        charCount,
+        byteLength,
+        isEmpty,
+        meetsMinimum,
+        tooLong,
+        tooShort,
+        showFeedback,
+        showStrengthMeter,
+    } = state;
 
-    React.useEffect(() => {
+    useEffect(() => {
         onValidityChange?.({
             meetsMinimum,
             isEmpty,
@@ -141,32 +150,17 @@ const PasswordStrengthField: React.FC<PasswordStrengthFieldProps> = ({
 
     // Map the 0-4 score to a 0-100 progress value for the meter.
     const progressValue = Math.max(0, strength) * 25;
-    const colorKey = strengthColor(strength);
-    const meterColor = theme.palette[colorKey].main;
-
-    const lengthLine = isEmpty
-        ? null
-        : `${charCount} / ${PASSWORD_MIN_LENGTH} characters`;
-
-    const policyHelper = helperText
-        ?? 'At least 12 characters. Avoid common passwords and reused passwords.';
-
-    let feedbackHelper: React.ReactNode = policyHelper;
-    if (showFeedback && !isEmpty) {
-        if (tooLong) {
-            // Byte-length error takes precedence over the
-            // minimum-length helper because exceeding the bcrypt
-            // 72-byte limit is the more severe failure mode.
-            feedbackHelper = 'Password exceeds the 72-byte server'
-                + ` limit (currently ${byteLength} bytes).`;
-        } else if (tooShort) {
-            feedbackHelper = `Password is ${charCount} of ${PASSWORD_MIN_LENGTH}`
-                + ' minimum characters.';
-        } else {
-            feedbackHelper = `${lengthLine} • Strength: `
-                + `${STRENGTH_LABELS[strength]}`;
-        }
-    }
+    const meterColor = theme.palette[strengthColor(strength)].main;
+    const feedbackHelper = buildFeedbackHelper({
+        helperText,
+        showFeedback,
+        isEmpty,
+        tooLong,
+        tooShort,
+        charCount,
+        byteLength,
+        strength,
+    });
 
     return (
         <Box>
@@ -187,31 +181,14 @@ const PasswordStrengthField: React.FC<PasswordStrengthFieldProps> = ({
                 sx={sx}
             />
             {showFeedback && showStrengthMeter && (
-                <Box sx={{ mt: 0.5, px: 1.75 }}>
-                    <LinearProgress
-                        variant="determinate"
-                        value={progressValue}
-                        aria-label="Password strength"
-                        aria-valuenow={progressValue}
-                        sx={{
-                            height: 6,
-                            borderRadius: 3,
-                            backgroundColor: theme.palette.action.hover,
-                            '& .MuiLinearProgress-bar': {
-                                backgroundColor: meterColor,
-                            },
-                        }}
-                    />
-                    <Typography
-                        variant="caption"
-                        sx={{ color: meterColor, mt: 0.25, display: 'block' }}
-                    >
-                        {STRENGTH_LABELS[strength]}
-                    </Typography>
-                </Box>
+                <StrengthMeter
+                    strength={strength}
+                    color={meterColor}
+                    progressValue={progressValue}
+                />
             )}
         </Box>
     );
-};
+}
 
 export default PasswordStrengthField;

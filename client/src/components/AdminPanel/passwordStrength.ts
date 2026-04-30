@@ -45,7 +45,7 @@ export type PasswordStrength = 0 | 1 | 2 | 3 | 4;
  * rather than counting exact unicode classes because the goal is a
  * lightweight heuristic, not a cryptographic measure.
  */
-const charsetSize = (value: string): number => {
+function charsetSize(value: string): number {
     let size = 0;
     if (/[a-z]/.test(value)) {
         size += 26;
@@ -62,14 +62,14 @@ const charsetSize = (value: string): number => {
         size += 33;
     }
     return size || 1;
-};
+}
 
 /**
  * Counts repeated-character runs of length 3 or more (e.g. "aaa") and
  * simple monotonic sequences of length 3 or more (e.g. "abc", "123").
  * Each occurrence reduces the effective entropy below.
  */
-const repetitionPenalty = (value: string): number => {
+function repetitionPenalty(value: string): number {
     let runs = 0;
     let i = 0;
     while (i < value.length) {
@@ -93,7 +93,7 @@ const repetitionPenalty = (value: string): number => {
         }
     }
     return runs + sequences;
-};
+}
 
 /**
  * Counts the Unicode code points in a string. This matches the

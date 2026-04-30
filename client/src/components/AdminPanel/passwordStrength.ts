@@ -51,7 +51,7 @@ export type PasswordStrength = 0 | 1 | 2 | 3 | 4;
  * single loop predicate, regardless of how many character classes the
  * heuristic eventually grows to recognise.
  */
-const CHARSET_BUCKETS: ReadonlyArray<{ pattern: RegExp; size: number }> = [
+const CHARSET_BUCKETS: readonly { pattern: RegExp; size: number }[] = [
     { pattern: /[a-z]/, size: 26 },
     { pattern: /[A-Z]/, size: 26 },
     { pattern: /[0-9]/, size: 10 },

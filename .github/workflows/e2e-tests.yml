@@ -1,0 +1,180 @@
+name: E2E Tests
+
+on:
+    push:
+        branches: [main, develop]
+    pull_request:
+        branches: [main, develop]
+
+jobs:
+    e2e:
+        name: E2E (PG ${{ matrix.postgres_version }})
+        runs-on: ubuntu-latest
+        timeout-minutes: 45
+        strategy:
+            fail-fast: false
+            matrix:
+                postgres_version: [16, 17, 18]
+        env:
+            POSTGRES_PASSWORD: postgres
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+            - name: Setup Node.js
+              uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+              with:
+                  node-version: 22
+                  cache-dependency-path: client/tests/e2e/package-lock.json
+
+            - name: Setup Docker Buildx
+              uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+            - name: Create secret files
+              run: |
+                  mkdir -p client/tests/e2e/secret
+                  openssl rand -base64 32 > client/tests/e2e/secret/ai-dba.secret
+                  echo "postgres" > client/tests/e2e/secret/pg-password
+
+            - name: Set PostgreSQL image variables
+              run: |
+                  case "${{ matrix.postgres_version }}" in
+                    16)
+                      echo "POSTGRES_IMAGE=postgres:16-alpine" >> "$GITHUB_ENV"
+                      echo "PGDATA_DIR=/var/lib/postgresql/data" >> "$GITHUB_ENV"
+                      ;;
+                    17)
+                      echo "POSTGRES_IMAGE=postgres:17-alpine" >> "$GITHUB_ENV"
+                      echo "PGDATA_DIR=/var/lib/postgresql/data" >> "$GITHUB_ENV"
+                      ;;
+                    18)
+                      echo "POSTGRES_IMAGE=ghcr.io/pgedge/pgedge-postgres:18-spock5-standard" >> "$GITHUB_ENV"
+                      echo "PGDATA_DIR=/var/lib/pgsql/18/data" >> "$GITHUB_ENV"
+                      ;;
+                  esac
+
+            - name: Build Docker images
+              run: docker compose -f client/tests/e2e/docker/docker-compose.yml build --parallel
+              timeout-minutes: 20
+
+            - name: Start services
+              run: docker compose -f client/tests/e2e/docker/docker-compose.yml up -d
+
+            - name: Wait for PostgreSQL to be healthy
+              run: |
+                  echo "Waiting for PostgreSQL..."
+                  attempts=0
+                  max_attempts=30
+                  while [ $attempts -lt $max_attempts ]; do
+                    if docker compose -f client/tests/e2e/docker/docker-compose.yml ps postgres | grep -q "healthy"; then
+                      echo "PostgreSQL is healthy"
+                      break
+                    fi
+                    sleep 3
+                    attempts=$((attempts + 1))
+                  done
+                  if [ $attempts -ge $max_attempts ]; then
+                    echo "ERROR: PostgreSQL failed to become healthy"
+                    docker compose -f client/tests/e2e/docker/docker-compose.yml ps
+                    docker compose -f client/tests/e2e/docker/docker-compose.yml logs postgres
+                    exit 1
+                  fi
+
+            - name: Wait for server to respond
+              run: |
+                  echo "Waiting for server health endpoint..."
+                  attempts=0
+                  max_attempts=30
+                  while [ $attempts -lt $max_attempts ]; do
+                    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+                      echo "Server is responsive"
+                      break
+                    fi
+                    sleep 3
+                    attempts=$((attempts + 1))
+                  done
+                  if [ $attempts -ge $max_attempts ]; then
+                    echo "ERROR: Server did not respond"
+                    docker compose -f client/tests/e2e/docker/docker-compose.yml ps
+                    docker compose -f client/tests/e2e/docker/docker-compose.yml logs server
+                    exit 1
+                  fi
+
+            - name: Create admin user
+              run: |
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml exec -T server \
+                    /usr/local/bin/ai-dba-server \
+                    -config /etc/pgedge/ai-dba-server.yaml \
+                    -data-dir /data \
+                    -add-user -username admin -password "E2ETestPass123!" \
+                    -full-name "E2E Admin" -email "admin@e2e.test" </dev/null
+
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml exec -T server \
+                    /usr/local/bin/ai-dba-server \
+                    -config /etc/pgedge/ai-dba-server.yaml \
+                    -data-dir /data \
+                    -set-superuser -username admin </dev/null
+
+            - name: Install E2E dependencies
+              working-directory: client/tests/e2e
+              run: npm ci
+
+            - name: Cache Playwright browsers
+              id: playwright-cache
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/ms-playwright
+                  key: playwright-${{ runner.os }}-${{ hashFiles('client/tests/e2e/package-lock.json') }}
+
+            - name: Install Playwright browsers
+              if: steps.playwright-cache.outputs.cache-hit != 'true'
+              working-directory: client/tests/e2e
+              run: npx playwright install --with-deps chromium
+
+            - name: Install Playwright system dependencies
+              if: steps.playwright-cache.outputs.cache-hit == 'true'
+              working-directory: client/tests/e2e
+              run: npx playwright install-deps chromium
+
+            - name: Run E2E tests
+              working-directory: client/tests/e2e
+              env:
+                  E2E_BASE_URL: http://localhost:3000
+                  E2E_API_URL: http://localhost:8080
+                  E2E_ADMIN_USER: admin
+                  E2E_ADMIN_PASS: "E2ETestPass123!"
+                  CI: "true"
+              run: npm test
+
+            - name: Upload test artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: e2e-results-pg${{ matrix.postgres_version }}
+                  path: |
+                      client/tests/e2e/playwright-report/
+                      client/tests/e2e/test-results/
+                  retention-days: 14
+
+            - name: Dump service logs on failure
+              if: failure()
+              run: |
+                  echo "=== PostgreSQL Logs ==="
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml logs postgres
+                  echo ""
+                  echo "=== Server Logs ==="
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml logs server
+                  echo ""
+                  echo "=== Collector Logs ==="
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml logs collector
+                  echo ""
+                  echo "=== Alerter Logs ==="
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml logs alerter
+                  echo ""
+                  echo "=== Client Logs ==="
+                  docker compose -f client/tests/e2e/docker/docker-compose.yml logs client
+
+            - name: Cleanup
+              if: always()
+              run: docker compose -f client/tests/e2e/docker/docker-compose.yml down -v

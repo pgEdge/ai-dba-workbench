@@ -1,0 +1,95 @@
+# pgEdge AI DBA Workbench - E2E Test Compose
+#
+# This compose file defines the full service stack for end-to-end
+# testing. PostgreSQL version is parameterized via POSTGRES_IMAGE
+# and PGDATA_DIR environment variables.
+#
+# Quick start:
+#
+#   bash scripts/setup-e2e-secrets.sh
+#   POSTGRES_PASSWORD=postgres docker compose -f docker/docker-compose.e2e.yml up -d
+#
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ai_workbench
+      PGDATA: ${PGDATA_DIR:-/var/lib/postgresql/data}
+    command: ["postgres", "-c", "listen_addresses=*"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - e2e-network
+
+  server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./config/ai-dba-server-e2e.yaml:/etc/pgedge/ai-dba-server.yaml:ro
+      - ./secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - server-data:/data
+    ports:
+      - "8080:8080"
+    networks:
+      - e2e-network
+    restart: unless-stopped
+
+  collector:
+    build:
+      context: ..
+      dockerfile: collector/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
+      - ./secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ./secret/pg-password:/etc/pgedge/pg-password:ro
+    networks:
+      - e2e-network
+    restart: unless-stopped
+
+  alerter:
+    build:
+      context: ..
+      dockerfile: alerter/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
+      - ./secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ./secret/pg-password:/etc/pgedge/pg-password:ro
+    networks:
+      - e2e-network
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ..
+      dockerfile: client/Dockerfile
+    depends_on:
+      - server
+    ports:
+      - "3000:80"
+    networks:
+      - e2e-network
+    restart: unless-stopped
+
+volumes:
+  server-data:
+
+networks:
+  e2e-network:
+    driver: bridge

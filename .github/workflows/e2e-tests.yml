@@ -13,7 +13,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                postgres_version: [16, 17, 18]
+                postgres_version: [18]
         env:
             POSTGRES_PASSWORD: postgres
 

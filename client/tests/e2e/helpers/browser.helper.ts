@@ -111,8 +111,8 @@ export async function waitForUsersTable(page: Page): Promise<void> {
  */
 export async function clickAddUser(page: Page): Promise<void> {
     await page.getByRole('button', { name: /create user/i }).click();
-    // Wait for the create user dialog to open and form to be visible
-    await expect(page.getByLabel('Username', { exact: true })).toBeVisible({ timeout: 5_000 });
+    // Wait for the create user dialog to open (look for dialog title)
+    await expect(page.getByRole('heading', { name: 'Create user' })).toBeVisible({ timeout: 5_000 });
 }
 
 /**

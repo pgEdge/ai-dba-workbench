@@ -11,6 +11,7 @@
 import { test, expect } from '@playwright/test';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
+import { navigateToAdminTokens } from '../helpers/browser.helper';
 import {
     ADMIN_USER,
     API_URL,
@@ -188,9 +189,8 @@ test.describe('Token Management', () => {
         // header to confirm the session is active.
         await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
 
-        // Navigate to Admin > Token Scopes.
-        await page.getByRole('button', { name: /admin/i }).click();
-        await page.getByRole('link', { name: /token/i }).first().click();
+        // Navigate to Admin > Tokens.
+        await navigateToAdminTokens(page);
 
         // Click "Add Token" or "Add".
         await page.getByRole('button', { name: /add/i }).click();

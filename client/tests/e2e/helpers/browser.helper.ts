@@ -46,23 +46,45 @@ export async function loginViaUI(
 // ---------------------------------------------------------------
 
 /**
+ * Click the admin/settings icon button in the application header.
+ * The button uses aria-label="open administration" and renders a
+ * SettingsIcon with no visible text.
+ */
+async function openAdminPanel(page: Page): Promise<void> {
+    const adminBtn = page
+        .getByRole('button', { name: /open administration/i })
+        .or(page.locator('button[aria-label="open administration"]'))
+        .first();
+    await adminBtn.waitFor({ state: 'visible', timeout: 60_000 });
+    await adminBtn.click();
+    // Allow the admin dialog and its navigation list to render.
+    await page.waitForTimeout(300);
+}
+
+/**
  * Navigate to the Admin > Users page by clicking the admin icon
  * in the header and then the "Users" navigation item.
  */
 export async function navigateToAdminUsers(page: Page): Promise<void> {
-    // Open admin section via the icon button in the app header.
-    // Use a longer timeout and fall back to alternative selectors
-    // because the button text/label varies across builds.
-    const adminBtn = page.getByRole('button', { name: /admin/i })
-        .or(page.locator('button[aria-label*="admin" i]'))
-        .or(page.locator('button[aria-label*="Admin"]'))
-        .or(page.locator('[data-testid="admin-button"]'))
-        .first();
-    await adminBtn.waitFor({ state: 'visible', timeout: 60_000 });
-    await adminBtn.click();
-    // Click the "Users" link in the admin sidebar or navigation.
-    await page.getByRole('link', { name: /users/i }).first().click();
+    await openAdminPanel(page);
+    // The admin navigation items are MUI ListItemButtons (role=button),
+    // not links.
+    await page.getByRole('button', { name: /^Users$/i }).click();
     await waitForUsersTable(page);
+}
+
+/**
+ * Navigate to the Admin > Tokens page by clicking the admin icon
+ * in the header and then the "Tokens" navigation item.
+ */
+export async function navigateToAdminTokens(page: Page): Promise<void> {
+    await openAdminPanel(page);
+    await page.getByRole('button', { name: /^Tokens$/i }).click();
+    // Wait for the tokens content to render.
+    const loader = page.getByRole('progressbar');
+    if (await loader.isVisible().catch(() => false)) {
+        await loader.waitFor({ state: 'hidden', timeout: 15_000 });
+    }
 }
 
 /**

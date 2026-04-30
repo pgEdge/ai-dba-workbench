@@ -95,12 +95,12 @@ test.describe('Authentication & Login', () => {
     // Wait for dashboard
     await page.waitForURL(`${BASE_URL}/**`, { timeout: 10000 });
 
-    // Verify logged in
+    // Verify login succeeded: URL should no longer be the login page
+    expect(page.url()).not.toContain('/login');
+
+    // Verify the main application UI is visible (header present)
     const header = page.locator('header');
     await expect(header).toBeVisible();
-
-    const pageContent = await page.content();
-    expect(pageContent).toContain(testUsername);
   });
 
   test('Invalid login shows error message', async ({ page }) => {

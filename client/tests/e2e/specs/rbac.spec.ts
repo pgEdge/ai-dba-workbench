@@ -74,7 +74,7 @@ test.describe('RBAC Enforcement', () => {
         // Scope the token to connection ID 99999 (which should not
         // exist). Any real connections should be excluded.
         await api.setTokenScope(adminCookie, tokenId, {
-            connections: [{ connection_id: 99999, access_level: 'read_only' }],
+            connections: [{ connection_id: 99999, access_level: 'read' }],
         });
 
         // Attempt to list connections with the scoped token. The

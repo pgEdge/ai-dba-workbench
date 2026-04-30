@@ -29,10 +29,13 @@ async function globalTeardown(_config: FullConfig): Promise<void> {
             ADMIN_USER.password,
         );
         cookie = result.cookie;
-    } catch {
-        // If we cannot log in (e.g. server already down), skip
-        // cleanup silently.
-        console.warn('[E2E teardown] Could not log in as admin; skipping cleanup.');
+    } catch (err) {
+        // If we cannot log in (e.g. server already down or rate
+        // limited), skip cleanup and log the reason.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+            `[E2E teardown] Could not log in as admin; skipping cleanup. Reason: ${msg}`,
+        );
         return;
     }
 

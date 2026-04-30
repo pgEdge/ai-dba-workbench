@@ -39,8 +39,30 @@ export interface CreatedToken {
 export class AuthHelper {
     private readonly api: ApiHelper;
 
+    /**
+     * Minimum delay (ms) between consecutive login calls to
+     * avoid triggering the server's rate limiter.
+     */
+    private static readonly LOGIN_DELAY_MS = 500;
+    private static lastLoginTime = 0;
+
     constructor(api: ApiHelper) {
         this.api = api;
+    }
+
+    /**
+     * Wait if needed so that consecutive login calls are spaced
+     * at least `LOGIN_DELAY_MS` apart.
+     */
+    private async throttleLogin(): Promise<void> {
+        const now = Date.now();
+        const elapsed = now - AuthHelper.lastLoginTime;
+        if (elapsed < AuthHelper.LOGIN_DELAY_MS) {
+            await new Promise((r) =>
+                setTimeout(r, AuthHelper.LOGIN_DELAY_MS - elapsed),
+            );
+        }
+        AuthHelper.lastLoginTime = Date.now();
     }
 
     /**
@@ -50,6 +72,7 @@ export class AuthHelper {
      * @returns The raw session cookie string.
      */
     async loginAsAdmin(): Promise<string> {
+        await this.throttleLogin();
         const { cookie } = await this.api.login(
             ADMIN_USER.username,
             ADMIN_USER.password,
@@ -86,6 +109,7 @@ export class AuthHelper {
         }
 
         // Log in as the newly created user.
+        await this.throttleLogin();
         const { cookie } = await this.api.login(username, password);
 
         return { userId: user.id, username, cookie };

@@ -144,7 +144,7 @@ describe('ErrorBoundary', () => {
             // The secondary failure must be logged through the project
             // logger so operators can see why telemetry was lost.
             const callbackFailureCall = loggerErrorSpy.mock.calls.find(
-                (call) =>
+                (call: unknown[]) =>
                     call[0] === 'ErrorBoundary onError callback failed:',
             );
             expect(callbackFailureCall).toBeDefined();
@@ -173,25 +173,27 @@ describe('ErrorBoundary', () => {
             // defineProperty so the test can install the spy without
             // mutating the read-only descriptor.
             const original = window.location;
-            Object.defineProperty(window, 'location', {
-                configurable: true,
-                value: { ...original, reload: reloadMock },
-            });
+            try {
+                Object.defineProperty(window, 'location', {
+                    configurable: true,
+                    value: { ...original, reload: reloadMock },
+                });
 
-            render(
-                <ErrorBoundary>
-                    <ThrowingChild />
-                </ErrorBoundary>,
-            );
+                render(
+                    <ErrorBoundary>
+                        <ThrowingChild />
+                    </ErrorBoundary>,
+                );
 
-            const reloadButton = screen.getByRole('button', { name: /reload/i });
-            fireEvent.click(reloadButton);
-            expect(reloadMock).toHaveBeenCalledTimes(1);
-
-            Object.defineProperty(window, 'location', {
-                configurable: true,
-                value: original,
-            });
+                const reloadButton = screen.getByRole('button', { name: /reload/i });
+                fireEvent.click(reloadButton);
+                expect(reloadMock).toHaveBeenCalledTimes(1);
+            } finally {
+                Object.defineProperty(window, 'location', {
+                    configurable: true,
+                    value: original,
+                });
+            }
         });
 
         it('toggles the details panel when the expand button is clicked', () => {

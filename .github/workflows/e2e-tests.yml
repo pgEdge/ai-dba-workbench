@@ -6,16 +6,6 @@ on:
     pull_request:
         branches: [main, develop]
     workflow_dispatch:
-        inputs:
-            postgres_version:
-                description: 'PostgreSQL version to test (16, 17, or 18)'
-                required: false
-                default: '17'
-                type: choice
-                options:
-                    - '16'
-                    - '17'
-                    - '18'
 
 jobs:
     e2e:

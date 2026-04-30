@@ -54,11 +54,11 @@ jobs:
                   esac
 
             - name: Build Docker images
-              run: docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml build --parallel
+              run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml build --parallel
               timeout-minutes: 20
 
             - name: Start services
-              run: docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml up -d
+              run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml up -d
 
             - name: Wait for PostgreSQL to be healthy
               run: |
@@ -66,7 +66,7 @@ jobs:
                   attempts=0
                   max_attempts=30
                   while [ $attempts -lt $max_attempts ]; do
-                    if docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml ps postgres | grep -q "healthy"; then
+                    if docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml ps postgres | grep -q "healthy"; then
                       echo "PostgreSQL is healthy"
                       break
                     fi
@@ -75,8 +75,8 @@ jobs:
                   done
                   if [ $attempts -ge $max_attempts ]; then
                     echo "ERROR: PostgreSQL failed to become healthy"
-                    docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml ps
-                    docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs postgres
+                    docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml ps
+                    docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs postgres
                     exit 1
                   fi
 
@@ -95,21 +95,21 @@ jobs:
                   done
                   if [ $attempts -ge $max_attempts ]; then
                     echo "ERROR: Server did not respond"
-                    docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml ps
-                    docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs server
+                    docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml ps
+                    docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs server
                     exit 1
                   fi
 
             - name: Create admin user
               run: |
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml exec -T server \
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml exec -T server \
                     /usr/local/bin/ai-dba-server \
                     -config /etc/pgedge/ai-dba-server.yaml \
                     -data-dir /data \
                     -add-user -username admin -password "E2ETestPass123!" \
                     -full-name "E2E Admin" -email "admin@e2e.test" </dev/null
 
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml exec -T server \
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml exec -T server \
                     /usr/local/bin/ai-dba-server \
                     -config /etc/pgedge/ai-dba-server.yaml \
                     -data-dir /data \
@@ -160,20 +160,20 @@ jobs:
               if: failure()
               run: |
                   echo "=== PostgreSQL Logs ==="
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs postgres
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs postgres
                   echo ""
                   echo "=== Server Logs ==="
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs server
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs server
                   echo ""
                   echo "=== Collector Logs ==="
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs collector
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs collector
                   echo ""
                   echo "=== Alerter Logs ==="
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs alerter
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs alerter
                   echo ""
                   echo "=== Client Logs ==="
-                  docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml logs client
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs client
 
             - name: Cleanup
               if: always()
-              run: docker compose --project-directory $GITHUB_WORKSPACE -f client/tests/e2e/docker/docker-compose.yml down -v
+              run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml down -v

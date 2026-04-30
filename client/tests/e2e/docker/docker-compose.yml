@@ -30,7 +30,7 @@ services:
 
   server:
     build:
-      context: ../../..
+      context: ../../../..
       dockerfile: server/Dockerfile
     depends_on:
       postgres:
@@ -47,7 +47,7 @@ services:
 
   collector:
     build:
-      context: ../../..
+      context: ../../../..
       dockerfile: collector/Dockerfile
     depends_on:
       postgres:
@@ -62,7 +62,7 @@ services:
 
   alerter:
     build:
-      context: ../../..
+      context: ../../../..
       dockerfile: alerter/Dockerfile
     depends_on:
       postgres:
@@ -77,7 +77,7 @@ services:
 
   client:
     build:
-      context: ../../..
+      context: ../../../..
       dockerfile: client/Dockerfile
     depends_on:
       - server

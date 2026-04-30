@@ -123,7 +123,7 @@ function findFieldByLabel(
     labelText: string | RegExp,
 ): FormFieldElement {
     const matcher = typeof labelText === 'string'
-        ? new RegExp('^' + escapeRegExp(labelText), 'i')
+        ? new RegExp(`^${escapeRegExp(labelText)}`, 'i')
         : labelText;
     const labels = within(container).getAllByText(matcher);
     for (const label of labels) {

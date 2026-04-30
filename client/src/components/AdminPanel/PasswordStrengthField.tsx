@@ -175,7 +175,7 @@ function PasswordStrengthField(
                 // Caller-supplied inputProps are spread first so that the
                 // security-critical maxLength below cannot be overridden.
                 inputProps={{
-                    ...(inputProps || {}),
+                    ...(inputProps ?? {}),
                     maxLength: PASSWORD_MAX_LENGTH,
                 }}
                 sx={sx}

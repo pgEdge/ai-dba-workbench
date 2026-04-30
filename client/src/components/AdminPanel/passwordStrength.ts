@@ -41,26 +41,33 @@ export const PASSWORD_MAX_LENGTH = 72;
 export type PasswordStrength = 0 | 1 | 2 | 3 | 4;
 
 /**
+ * Character class buckets used by `charsetSize`. Each entry contributes
+ * its `size` once when the password contains at least one character
+ * matching its `pattern`. The "other" bucket approximates the printable
+ * ASCII symbol set; non-ASCII glyphs also fall into that bucket.
+ *
+ * Encoding the buckets as a table (rather than an inline chain of
+ * if-statements) keeps the cyclomatic complexity of `charsetSize` to a
+ * single loop predicate, regardless of how many character classes the
+ * heuristic eventually grows to recognise.
+ */
+const CHARSET_BUCKETS: ReadonlyArray<{ pattern: RegExp; size: number }> = [
+    { pattern: /[a-z]/, size: 26 },
+    { pattern: /[A-Z]/, size: 26 },
+    { pattern: /[0-9]/, size: 10 },
+    { pattern: /[^a-zA-Z0-9]/, size: 33 },
+];
+
+/**
  * Charset size estimate for a single character. We use rough buckets
  * rather than counting exact unicode classes because the goal is a
  * lightweight heuristic, not a cryptographic measure.
  */
 function charsetSize(value: string): number {
-    let size = 0;
-    if (/[a-z]/.test(value)) {
-        size += 26;
-    }
-    if (/[A-Z]/.test(value)) {
-        size += 26;
-    }
-    if (/[0-9]/.test(value)) {
-        size += 10;
-    }
-    if (/[^a-zA-Z0-9]/.test(value)) {
-        // Approximate the printable ASCII symbol set; non-ASCII
-        // glyphs also fall into this bucket.
-        size += 33;
-    }
+    const size = CHARSET_BUCKETS.reduce(
+        (acc, bucket) => acc + (bucket.pattern.test(value) ? bucket.size : 0),
+        0,
+    );
     return size || 1;
 }
 

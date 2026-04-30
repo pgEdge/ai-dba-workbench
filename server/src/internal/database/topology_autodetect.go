@@ -766,37 +766,69 @@ func (d *Datastore) createShellClustersForUnmerged(ctx context.Context, groups [
 // nestPersistedMembers arranges persisted members into a parent-child
 // hierarchy using the parentMap (child ID -> parent ID). Members without
 // a parent or whose parent is not in the list stay at the top level.
+//
+// The function builds a child-ID graph first, then materializes the tree
+// by deep-copying values from the root down. This avoids the
+// shallow-copy bug where appending *child into parent.Children before
+// child has all of its own descendants attached would silently drop
+// grandchildren in chains such as primary -> standby -> cascading
+// standby (issue #153).
 func nestPersistedMembers(members []TopologyServerInfo, parentMap map[int]int) []TopologyServerInfo {
 	if len(parentMap) == 0 {
 		return members
 	}
 
-	// Build index by ID
+	// Build index by ID; initialize Children to a non-nil empty slice
+	// so the materialization step below can safely append.
 	byID := make(map[int]*TopologyServerInfo)
 	for i := range members {
 		members[i].Children = make([]TopologyServerInfo, 0)
 		byID[members[i].ID] = &members[i]
 	}
 
+	// First pass: link children to parents using ID lists only. No
+	// struct copies happen here, so later passes can attach
+	// grandchildren to their intermediate parents without losing them.
+	childrenByParent := make(map[int][]int)
 	childIDs := make(map[int]bool)
 	for i := range members {
-		parentID, ok := parentMap[members[i].ID]
+		childID := members[i].ID
+		parentID, ok := parentMap[childID]
 		if !ok {
 			continue
 		}
-		parent, parentInSet := byID[parentID]
-		if !parentInSet {
+		if _, parentInSet := byID[parentID]; !parentInSet {
 			continue
 		}
-		parent.IsExpandable = true
-		parent.Children = append(parent.Children, *byID[members[i].ID])
-		childIDs[members[i].ID] = true
+		childrenByParent[parentID] = append(childrenByParent[parentID], childID)
+		childIDs[childID] = true
+	}
+
+	// Mark expandable parents up front so the recursive materializer
+	// preserves the flag in the deep-copied output.
+	for parentID := range childrenByParent {
+		byID[parentID].IsExpandable = true
+	}
+
+	// materialize returns a value-copy of the subtree rooted at id with
+	// every descendant attached. Because it recurses depth-first the
+	// returned struct already contains all grandchildren, so the
+	// caller's append sees a fully built sub-tree (issue #153).
+	var materialize func(id int) TopologyServerInfo
+	materialize = func(id int) TopologyServerInfo {
+		node := *byID[id]
+		childIDsForParent := childrenByParent[id]
+		node.Children = make([]TopologyServerInfo, 0, len(childIDsForParent))
+		for _, childID := range childIDsForParent {
+			node.Children = append(node.Children, materialize(childID))
+		}
+		return node
 	}
 
 	var result []TopologyServerInfo
 	for i := range members {
 		if !childIDs[members[i].ID] {
-			result = append(result, *byID[members[i].ID])
+			result = append(result, materialize(members[i].ID))
 		}
 	}
 	return result

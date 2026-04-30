@@ -135,6 +135,27 @@ project adheres to
   other clusters are preserved, and a failure during
   the delete or insert rolls the transaction back to
   the prior state. (#152)
+- Fix the cluster Topology tab dropping cascading
+  standbys and marking empty auto-detected nodes as
+  expandable; persisted and manual chains such as
+  primary -> standby -> cascading standby now render
+  every level regardless of input order, and nodes
+  whose children are filtered out no longer display a
+  disclosure arrow. (#153)
+- Fix the collector probe config loader ignoring scope
+  and silently re-enabling disabled parent overrides;
+  `LoadProbeConfigs` now restricts its query to
+  `scope IN ('global', 'server')` so cluster- and
+  group-scoped rows no longer collapse into the
+  `connection_id = 0` bucket and get misapplied as
+  global defaults, and `EnsureProbeConfig` now inherits
+  the parent config's `is_enabled` value when
+  materializing a server-level row instead of
+  hard-coding it to true. The SQL is extracted into a
+  `loadProbeConfigsQuery` constant and the value
+  resolution moves into a pure
+  `resolveProbeConfigDefaults` helper, both covered by
+  new unit tests. (#151)
 
 - Fix MCP and admin scope privileges granted through a
   wildcard group grant (`"*"`) being silently dropped

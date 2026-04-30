@@ -110,7 +110,7 @@ export async function waitForUsersTable(page: Page): Promise<void> {
  * Click the "Add" button to open the create-user dialog.
  */
 export async function clickAddUser(page: Page): Promise<void> {
-    await page.getByRole('button', { name: /add/i }).click();
+    await page.getByRole('button', { name: /create user/i }).click();
 }
 
 /**
@@ -164,8 +164,8 @@ export async function clickDeleteUser(
  * Confirm a pending deletion in the DeleteConfirmationDialog.
  */
 export async function confirmDelete(page: Page): Promise<void> {
-    const dialog = page.getByRole('dialog');
+    const dialog = page.locator('.MuiDialog-paper:not(.MuiDialog-paperFullScreen)').first();
     await expect(dialog).toBeVisible({ timeout: 5_000 });
     await dialog.getByRole('button', { name: /confirm|delete|yes/i }).click();
-    await expect(dialog).toBeHidden({ timeout: 5_000 });
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
 }

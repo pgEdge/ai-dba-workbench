@@ -36,8 +36,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./config/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
-      - ./secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ../config/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
+      - ../secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
       - server-data:/data
     ports:
       - "8080:8080"
@@ -53,9 +53,9 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
-      - ./secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
-      - ./secret/pg-password:/etc/pgedge/pg-password:ro
+      - ../config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
+      - ../secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ../secret/pg-password:/etc/pgedge/pg-password:ro
     networks:
       - e2e-network
     restart: unless-stopped
@@ -68,9 +68,9 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
-      - ./secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
-      - ./secret/pg-password:/etc/pgedge/pg-password:ro
+      - ../config/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
+      - ../secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ../secret/pg-password:/etc/pgedge/pg-password:ro
     networks:
       - e2e-network
     restart: unless-stopped

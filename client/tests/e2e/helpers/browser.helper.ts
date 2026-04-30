@@ -124,8 +124,8 @@ export async function fillUserForm(
     password: string,
     displayName?: string,
 ): Promise<void> {
-    await page.getByLabel('Username', { exact: true }).fill(username);
-    await page.getByLabel('Password', { exact: true }).fill(password);
+    await page.getByLabel('Username').fill(username);
+    await page.getByLabel('Password').fill(password);
     if (displayName) {
         await page.getByLabel('Display Name').fill(displayName);
     }

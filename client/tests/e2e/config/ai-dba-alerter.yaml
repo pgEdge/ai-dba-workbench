@@ -1,0 +1,21 @@
+datastore:
+  host: postgres
+  database: ai_workbench
+  username: postgres
+  password_file: /etc/pgedge/pg-password
+  port: 5432
+  sslmode: disable
+
+pool:
+  max_connections: 10
+
+anomaly:
+  enabled: true
+  tier1:
+    enabled: true
+  tier2:
+    enabled: false
+  tier3:
+    enabled: false
+
+secret_file: /etc/pgedge/ai-dba.secret

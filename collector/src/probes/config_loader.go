@@ -22,15 +22,33 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
-// LoadProbeConfigs loads all enabled probe configurations from the database
-// Returns a map of connection ID to probe configs, where connection ID 0 represents global defaults
-func LoadProbeConfigs(ctx context.Context, conn *pgxpool.Conn) (map[int][]ProbeConfig, error) {
-	rows, err := conn.Query(ctx, `
+// loadProbeConfigsQuery is the SELECT used by LoadProbeConfigs.
+//
+// The WHERE clause restricts the result set to scope IN ('global',
+// 'server'). Cluster- and group-scoped rows also have connection_id
+// IS NULL and would otherwise collapse into the global-default bucket
+// (key 0) when grouped by COALESCE(connection_id, 0). Cluster and
+// group inheritance is resolved separately by EnsureProbeConfig when
+// a server-level row is materialized for each connection.
+const loadProbeConfigsQuery = `
         SELECT id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
         FROM probe_configs
         WHERE is_enabled = TRUE
+          AND scope IN ('global', 'server')
         ORDER BY COALESCE(connection_id, 0), name
-    `)
+    `
+
+// LoadProbeConfigs loads enabled global and server-scoped probe
+// configurations from the database. The returned map keys server-scoped
+// rows by their connection_id and global rows by 0.
+//
+// Cluster- and group-scoped rows are intentionally excluded because they
+// also have connection_id IS NULL and would otherwise collapse into the
+// global-default bucket (key 0); cluster and group inheritance is
+// resolved separately by EnsureProbeConfig when a server-level row is
+// materialized for each connection.
+func LoadProbeConfigs(ctx context.Context, conn *pgxpool.Conn) (map[int][]ProbeConfig, error) {
+	rows, err := conn.Query(ctx, loadProbeConfigsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query probe configs: %w", err)
 	}
@@ -143,27 +161,16 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 		}
 	}
 
-	// Determine values for the new server-level config
-	var interval, retention int
-	var description string
-
-	if found {
-		interval = parentConfig.CollectionIntervalSeconds
-		retention = parentConfig.RetentionDays
-		description = parentConfig.Description
-	} else {
-		// Step 5: No parent config found; use hardcoded defaults
-		interval = getDefaultInterval(probeName)
-		retention = 28
-		description = fmt.Sprintf("Configuration for %s probe", probeName)
-	}
+	// Determine values for the new server-level config from the
+	// resolved parent (or hardcoded defaults if no parent matched).
+	interval, retention, description, isEnabled := resolveProbeConfigDefaults(probeName, &parentConfig, found)
 
 	// Insert a new server-level config for this connection
 	err = conn.QueryRow(ctx, `
         INSERT INTO probe_configs (name, description, collection_interval_seconds, retention_days, is_enabled, connection_id, scope)
-        VALUES ($1, $2, $3, $4, TRUE, $5, 'server')
+        VALUES ($1, $2, $3, $4, $5, $6, 'server')
         RETURNING id, name, description, collection_interval_seconds, retention_days, is_enabled, connection_id
-    `, probeName, description, interval, retention, connectionID).Scan(
+    `, probeName, description, interval, retention, isEnabled, connectionID).Scan(
 		&config.ID, &config.Name, &config.Description,
 		&config.CollectionIntervalSeconds, &config.RetentionDays, &config.IsEnabled,
 		&config.ConnectionID)
@@ -172,10 +179,37 @@ func EnsureProbeConfig(ctx context.Context, conn *pgxpool.Conn, connectionID int
 		return nil, fmt.Errorf("failed to insert probe config: %w", err)
 	}
 
-	logger.Infof("Created probe config for %s on connection %d (interval: %ds, retention: %dd)",
-		probeName, connectionID, interval, retention)
+	logger.Infof("Created probe config for %s on connection %d (interval: %ds, retention: %dd, enabled: %t)",
+		probeName, connectionID, interval, retention, isEnabled)
 
 	return &config, nil
+}
+
+// resolveProbeConfigDefaults returns the (interval, retention,
+// description, isEnabled) tuple to use when materializing a new
+// server-level probe_configs row.
+//
+// When found is true, all four values are inherited from parentConfig
+// so a disabled cluster/group/global override is not silently
+// re-enabled at the server scope. When found is false, the function
+// falls back to hardcoded defaults: the per-probe default interval,
+// 28 days of retention, a generated description, and is_enabled=TRUE.
+//
+// The function is pure (no I/O, no shared state); callers must pass a
+// non-nil parentConfig only when found is true. When found is false
+// parentConfig is ignored and may be nil.
+func resolveProbeConfigDefaults(probeName string, parentConfig *ProbeConfig, found bool) (int, int, string, bool) {
+	if found && parentConfig != nil {
+		return parentConfig.CollectionIntervalSeconds,
+			parentConfig.RetentionDays,
+			parentConfig.Description,
+			parentConfig.IsEnabled
+	}
+
+	return getDefaultInterval(probeName),
+		28,
+		fmt.Sprintf("Configuration for %s probe", probeName),
+		true
 }
 
 // getDefaultInterval returns the default collection interval for a probe based on its name

@@ -12,7 +12,6 @@ import { test, expect } from '@playwright/test';
 import { ADMIN_USER, BASE_URL, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
 import { AuthHelper } from '../helpers/auth.helper';
 import { ApiHelper } from '../helpers/api.helper';
-import { BrowserHelper } from '../helpers/browser.helper';
 
 test.describe('Authentication & Login', () => {
   const apiHelper = new ApiHelper();
@@ -76,10 +75,10 @@ test.describe('Authentication & Login', () => {
     const testPassword = TEST_USER_PASSWORD;
 
     const cookie = await authHelper.loginAsAdmin();
-    await apiHelper.createUser({
+    await apiHelper.createUser(cookie, {
       username: testUsername,
       password: testPassword,
-      full_name: 'Login Test User',
+      display_name: 'Login Test User',
       email: 'login-test@e2e.test',
     });
 
@@ -179,9 +178,13 @@ test.describe('Authentication & Login', () => {
     const header = page.locator('header');
     await expect(header).toBeVisible();
 
-    // Refresh page
-    await page.reload();
-    await page.waitForTimeout(1000);
+    // Refresh page and wait for the network to settle and the
+    // page to fully load before checking session state.
+    await page.reload({ waitUntil: 'networkidle' });
+
+    // Give the client-side router time to evaluate the session
+    // cookie and decide whether to redirect to /login.
+    await page.waitForTimeout(2_000);
 
     // Should still be logged in (header still visible, not on login page)
     const stillLoggedIn = await header.isVisible().catch(() => false);

@@ -8,6 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { ApiHelper } from './api.helper';
 import { ADMIN_USER, TEST_USER_PREFIX, TEST_USER_PASSWORD } from '../fixtures/test-data';
 
@@ -66,18 +68,67 @@ export class AuthHelper {
     }
 
     /**
-     * Log in as the admin user using the E2E environment
-     * variables (or their defaults).
+     * Log in as the admin user.
+     *
+     * First tries to reuse the session cookie saved by global
+     * setup (either via the E2E_ADMIN_COOKIE env var or the
+     * `.auth/admin.json` storage state file).  Falls back to a
+     * fresh API login when neither source is available.
      *
      * @returns The raw session cookie string.
      */
     async loginAsAdmin(): Promise<string> {
+        // 1. Check the env var set by global setup.
+        const envCookie = process.env.E2E_ADMIN_COOKIE;
+        if (envCookie) {
+            return envCookie;
+        }
+
+        // 2. Try to extract the cookie from the saved storage
+        //    state file that global setup writes.
+        const saved = AuthHelper.loadCookieFromStorageState();
+        if (saved) {
+            return saved;
+        }
+
+        // 3. Fall back to a fresh login.
         await this.throttleLogin();
         const { cookie } = await this.api.login(
             ADMIN_USER.username,
             ADMIN_USER.password,
         );
         return cookie;
+    }
+
+    /**
+     * Read the `.auth/admin.json` storage state file written by
+     * global setup and extract the `session_token` cookie value.
+     *
+     * Returns the cookie in `session_token=<value>` format, or
+     * `null` when the file is missing or unparseable.
+     */
+    private static loadCookieFromStorageState(): string | null {
+        try {
+            const statePath = path.resolve(
+                __dirname, '..', '.auth', 'admin.json',
+            );
+            if (!fs.existsSync(statePath)) {
+                return null;
+            }
+            const raw = fs.readFileSync(statePath, 'utf-8');
+            const state = JSON.parse(raw) as {
+                cookies?: Array<{ name: string; value: string }>;
+            };
+            const match = state.cookies?.find(
+                (c) => c.name === 'session_token',
+            );
+            if (match) {
+                return `session_token=${match.value}`;
+            }
+        } catch {
+            // Silently fall through to fresh login.
+        }
+        return null;
     }
 
     /**

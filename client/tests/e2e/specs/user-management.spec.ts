@@ -40,6 +40,11 @@ const auth = new AuthHelper(api);
 // ---------------------------------------------------------------
 
 test.describe('User Management', () => {
+    // Apply admin storage state to all browser-based tests in this
+    // describe block.  test.use() must be called at describe scope,
+    // not inside individual test functions.
+    test.use({ storageState: '.auth/admin.json' });
+
     let adminCookie: string;
 
     test.beforeAll(async () => {
@@ -72,8 +77,6 @@ test.describe('User Management', () => {
     // 2. Create user via UI
     // -------------------------------------------------------
     test('create user via UI', async ({ page }) => {
-        test.use({ storageState: '.auth/admin.json' });
-
         const username = makeTestUsername('ui-create');
 
         await page.goto('/');

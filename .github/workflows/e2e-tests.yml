@@ -16,6 +16,8 @@ jobs:
                 postgres_version: [18]
         env:
             POSTGRES_PASSWORD: postgres
+            E2E_CONFIG_DIR: ${{ github.workspace }}/client/tests/e2e/config
+            E2E_SECRET_DIR: ${{ github.workspace }}/client/tests/e2e/secret
 
         steps:
             - name: Checkout code

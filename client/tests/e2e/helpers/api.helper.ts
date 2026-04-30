@@ -102,29 +102,52 @@ export class ApiHelper {
     /**
      * Authenticate via username and password. Returns the raw
      * session cookie string and the server-reported expiry.
+     *
+     * Automatically retries with exponential backoff when the
+     * server responds with 429 (Too Many Requests).
      */
     async login(username: string, password: string): Promise<LoginResult> {
-        const res = await fetch(`${this.baseUrl}/api/v1/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-            redirect: 'manual',
-        });
+        const maxRetries = 4;
+        let lastError: Error | null = null;
 
-        if (!res.ok) {
-            const text = await res.text();
-            throw new Error(
-                `Login failed for ${username}: ${res.status} ${text}`,
-            );
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            const res = await fetch(`${this.baseUrl}/api/v1/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+                redirect: 'manual',
+            });
+
+            if (res.status === 429) {
+                const delayMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s, 16s
+                console.warn(
+                    `[E2E] Login rate-limited (429) for ${username}, ` +
+                    `retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries + 1})`,
+                );
+                await new Promise((r) => setTimeout(r, delayMs));
+                lastError = new Error(
+                    `Login rate-limited for ${username}: 429 Too Many Requests`,
+                );
+                continue;
+            }
+
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(
+                    `Login failed for ${username}: ${res.status} ${text}`,
+                );
+            }
+
+            const cookie = this.extractSessionCookie(res);
+            if (!cookie) {
+                throw new Error('Login succeeded but no session_token cookie was returned');
+            }
+
+            const body = (await res.json()) as { expires_at: string };
+            return { cookie, expiresAt: body.expires_at };
         }
 
-        const cookie = this.extractSessionCookie(res);
-        if (!cookie) {
-            throw new Error('Login succeeded but no session_token cookie was returned');
-        }
-
-        const body = (await res.json()) as { expires_at: string };
-        return { cookie, expiresAt: body.expires_at };
+        throw lastError ?? new Error(`Login failed for ${username} after ${maxRetries + 1} attempts`);
     }
 
     /**
@@ -343,12 +366,7 @@ export class ApiHelper {
             headers: headers ?? {},
             redirect: 'manual',
         });
-        let body: unknown;
-        try {
-            body = await res.json();
-        } catch {
-            body = await res.text();
-        }
+        const body = await this.parseResponseBody(res);
         return { status: res.status, body };
     }
 
@@ -366,12 +384,7 @@ export class ApiHelper {
             body: payload !== undefined ? JSON.stringify(payload) : undefined,
             redirect: 'manual',
         });
-        let body: unknown;
-        try {
-            body = await res.json();
-        } catch {
-            body = await res.text();
-        }
+        const body = await this.parseResponseBody(res);
         return { status: res.status, body };
     }
 
@@ -454,6 +467,21 @@ export class ApiHelper {
         }
 
         return (await res.json()) as T;
+    }
+
+    /**
+     * Safely parse a response body as JSON, falling back to plain
+     * text. Uses `res.text()` first to avoid the "body already
+     * read" error that occurs when `res.json()` fails after the
+     * body stream has been consumed.
+     */
+    private async parseResponseBody(res: Response): Promise<unknown> {
+        const text = await res.text();
+        try {
+            return JSON.parse(text);
+        } catch {
+            return text;
+        }
     }
 
     /**

@@ -48,10 +48,24 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     // -------------------------------------------------------
     // 2. Authenticate as admin via API
     // -------------------------------------------------------
-    const { cookie } = await api.login(
-        ADMIN_USER.username,
-        ADMIN_USER.password,
-    );
+    // Brief delay after health check to let the server finish
+    // any remaining startup work (rate limiter init, etc.).
+    await sleep(2_000);
+
+    let cookie: string;
+    try {
+        const result = await api.login(
+            ADMIN_USER.username,
+            ADMIN_USER.password,
+        );
+        cookie = result.cookie;
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+            `[E2E setup] Admin login failed for user ` +
+            `"${ADMIN_USER.username}" at ${API_URL}: ${msg}`,
+        );
+    }
 
     // Expose the raw cookie to helpers that run outside of a
     // Playwright browser context (e.g. ApiHelper in test hooks).

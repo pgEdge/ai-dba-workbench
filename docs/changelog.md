@@ -121,6 +121,20 @@ project adheres to
 
 ### Fixed
 
+- Fix stale auto-detected edges remaining in
+  `cluster_node_relationships` after the cluster
+  topology changed through failover, subscriber
+  removal, or a new parent in a binary chain;
+  `SyncAutoDetectedRelationships` now replaces the
+  auto-detected set transactionally, deleting all
+  existing `is_auto_detected = TRUE` rows for the
+  cluster before inserting the freshly detected set,
+  and the `syncRelationshipsFromTopology` caller no
+  longer short-circuits on an empty detected slice.
+  Manual relationships and auto-detected rows for
+  other clusters are preserved, and a failure during
+  the delete or insert rolls the transaction back to
+  the prior state. (#152)
 - Fix the cluster Topology tab dropping cascading
   standbys and marking empty auto-detected nodes as
   expandable; persisted and manual chains such as

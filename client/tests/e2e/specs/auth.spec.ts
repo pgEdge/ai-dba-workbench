@@ -12,6 +12,7 @@ import { test, expect } from '@playwright/test';
 import { ADMIN_USER, BASE_URL, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
 import { AuthHelper } from '../helpers/auth.helper';
 import { ApiHelper } from '../helpers/api.helper';
+import { loginViaUI } from '../helpers/browser.helper';
 
 test.describe('Authentication & Login', () => {
   const apiHelper = new ApiHelper();
@@ -88,12 +89,7 @@ test.describe('Authentication & Login', () => {
 
     // Login as new user
     await page.goto(`${BASE_URL}/login`);
-    await page.fill('input[name="username"]', testUsername);
-    await page.fill('input[name="password"]', testPassword);
-    await page.click('button[type="submit"]');
-
-    // Wait for dashboard
-    await page.waitForURL(`${BASE_URL}/**`, { timeout: 10000 });
+    await loginViaUI(page, testUsername, testPassword);
 
     // Verify login succeeded: URL should no longer be the login page
     expect(page.url()).not.toContain('/login');

@@ -48,7 +48,15 @@ export async function loginViaUI(
  */
 export async function navigateToAdminUsers(page: Page): Promise<void> {
     // Open admin section via the icon button in the app header.
-    await page.getByRole('button', { name: /admin/i }).click();
+    // Use a longer timeout and fall back to alternative selectors
+    // because the button text/label varies across builds.
+    const adminBtn = page.getByRole('button', { name: /admin/i })
+        .or(page.locator('button[aria-label*="admin" i]'))
+        .or(page.locator('button[aria-label*="Admin"]'))
+        .or(page.locator('[data-testid="admin-button"]'))
+        .first();
+    await adminBtn.waitFor({ state: 'visible', timeout: 60_000 });
+    await adminBtn.click();
     // Click the "Users" link in the admin sidebar or navigation.
     await page.getByRole('link', { name: /users/i }).first().click();
     await waitForUsersTable(page);

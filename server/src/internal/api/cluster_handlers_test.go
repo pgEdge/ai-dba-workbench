@@ -873,7 +873,7 @@ func TestClusterHandler_UpdateAutoDetectedGroup_PermissionDenied(t *testing.T) {
 	handler := NewClusterHandler(nil, store, checker)
 
 	// Create an unprivileged user.
-	if err := store.CreateUser("noperm", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("noperm", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	userID, err := store.GetUserID("noperm")
@@ -1049,7 +1049,7 @@ func setupGroupUpdateHandler(t *testing.T, ds *database.Datastore) (*ClusterHand
 	_, store, storeCleanup := createTestRBACHandler(t)
 	userID := setupUserWithPermission(t, store, "group_updater",
 		auth.PermManageConnections)
-	token, _, err := store.AuthenticateUser("group_updater", "Password1")
+	token, _, err := store.AuthenticateUser("group_updater", "Password1234")
 	if err != nil {
 		storeCleanup()
 		t.Fatalf("Failed to authenticate test user: %v", err)
@@ -1275,14 +1275,14 @@ func TestClusterHandler_UpdateClusterGroup_Integration_Forbidden(t *testing.T) {
 	defer cleanupStore()
 
 	// A user with no admin permissions at all.
-	if err := store.CreateUser("outsider", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("outsider", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	userID, err := store.GetUserID("outsider")
 	if err != nil {
 		t.Fatalf("Failed to get outsider user id: %v", err)
 	}
-	token, _, err := store.AuthenticateUser("outsider", "Password1")
+	token, _, err := store.AuthenticateUser("outsider", "Password1234")
 	if err != nil {
 		t.Fatalf("Failed to authenticate outsider: %v", err)
 	}
@@ -1712,7 +1712,7 @@ func TestClusterHandler_DeleteAutoDetectedCluster_PermissionDenied(t *testing.T)
 	handler := NewClusterHandler(nil, store, checker)
 
 	// Create an unprivileged user.
-	if err := store.CreateUser("noperm", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("noperm", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	userID, err := store.GetUserID("noperm")
@@ -1749,7 +1749,7 @@ func TestClusterHandler_DeleteAutoDetectedCluster_SpockPermissionDenied(t *testi
 	handler := NewClusterHandler(nil, store, checker)
 
 	// Create an unprivileged user.
-	if err := store.CreateUser("noperm2", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("noperm2", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 	userID, err := store.GetUserID("noperm2")

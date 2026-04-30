@@ -200,7 +200,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	defer cleanup()
 
 	// Create a user and token
-	store.CreateUser("tokenuser", "Password1", "", "", "")
+	store.CreateUser("tokenuser", "Password1234", "", "", "")
 	rawToken, _, err := store.CreateToken("tokenuser", "Test token", nil)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
@@ -253,7 +253,7 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user and a token that expires immediately
-	store.CreateUser("tokenuser", "Password1", "", "", "")
+	store.CreateUser("tokenuser", "Password1234", "", "", "")
 	expiryTime := time.Now().Add(1 * time.Millisecond)
 	rawToken, _, err := store.CreateToken("tokenuser", "Test expired token", &expiryTime)
 	if err != nil {
@@ -327,13 +327,13 @@ func TestAuthMiddleware_ValidSessionToken(t *testing.T) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user
-	err = store.CreateUser("testuser", "Testpass123", "Test user", "", "")
+	err = store.CreateUser("testuser", "Testpass1234", "Test user", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
 
 	// Authenticate to get session token
-	sessionToken, _, err := store.AuthenticateUser("testuser", "Testpass123")
+	sessionToken, _, err := store.AuthenticateUser("testuser", "Testpass1234")
 	if err != nil {
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}
@@ -814,8 +814,8 @@ func TestAuthMiddleware_SessionCookie(t *testing.T) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user and get session token
-	store.CreateUser("testuser", "Testpass123", "Test user", "", "")
-	sessionToken, _, err := store.AuthenticateUser("testuser", "Testpass123")
+	store.CreateUser("testuser", "Testpass1234", "Test user", "", "")
+	sessionToken, _, err := store.AuthenticateUser("testuser", "Testpass1234")
 	if err != nil {
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}
@@ -890,7 +890,7 @@ func TestAuthMiddleware_APITokenWithOwner(t *testing.T) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a user and a token
-	store.CreateUser("testuser", "Testpass123", "Test user", "", "")
+	store.CreateUser("testuser", "Testpass1234", "Test user", "", "")
 	rawToken, _, err := store.CreateToken("testuser", "User API token", nil)
 	if err != nil {
 		t.Fatalf("Failed to create token: %v", err)
@@ -939,7 +939,7 @@ func TestAuthMiddleware_SuperuserToken(t *testing.T) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a superuser and a token for them
-	store.CreateUser("superuser-svc", "Testpass123", "Superuser service", "", "")
+	store.CreateUser("superuser-svc", "Testpass1234", "Superuser service", "", "")
 	store.SetUserSuperuser("superuser-svc", true)
 	rawToken, _, err := store.CreateToken("superuser-svc", "Superuser token", nil)
 	if err != nil {
@@ -984,10 +984,10 @@ func TestAuthMiddleware_SuperuserSessionUser(t *testing.T) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a superuser
-	store.CreateUser("superuser", "Testpass123", "Superuser", "", "")
+	store.CreateUser("superuser", "Testpass1234", "Superuser", "", "")
 	store.SetUserSuperuser("superuser", true)
 
-	sessionToken, _, err := store.AuthenticateUser("superuser", "Testpass123")
+	sessionToken, _, err := store.AuthenticateUser("superuser", "Testpass1234")
 	if err != nil {
 		t.Fatalf("Failed to authenticate user: %v", err)
 	}

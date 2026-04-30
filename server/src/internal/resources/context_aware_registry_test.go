@@ -311,7 +311,7 @@ func TestGetClient_TokenScopeEnforcement(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a test user and token
-	if err := authStore.CreateUser("testuser", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("testuser")
@@ -408,7 +408,7 @@ func TestGetClient_SessionClearedOnRBACDenial(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
-	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	_, token, err := authStore.CreateToken("alice", "alice-token", nil)
@@ -466,7 +466,7 @@ func TestGetClient_RBACDenialClearsSession(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
-	if err := authStore.CreateUser("alice", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("alice", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("alice")
@@ -547,7 +547,7 @@ func TestGetClient_RBACAllowsAccessProceedsToDatastore(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create user and token
-	if err := authStore.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := authStore.GetUserID("bob")
@@ -633,7 +633,7 @@ func TestGetClient_SuperuserBypassesRBAC(t *testing.T) {
 	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create superuser and token
-	if err := authStore.CreateUser("admin", "Password1", "", "", ""); err != nil {
+	if err := authStore.CreateUser("admin", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	if err := authStore.SetUserSuperuser("admin", true); err != nil {

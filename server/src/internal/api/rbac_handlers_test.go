@@ -74,7 +74,7 @@ func TestRBACHandler_CreateAndListGroups(t *testing.T) {
 	defer cleanup()
 
 	// Grant manage_groups to a group and assign user
-	store.CreateUser("admin", "Password1", "Admin user", "", "")
+	store.CreateUser("admin", "Password1234", "Admin user", "", "")
 	userID, _ := store.GetUserID("admin")
 	groupID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(groupID, userID)
@@ -113,7 +113,7 @@ func TestRBACHandler_CreateGroup_MissingName(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	userID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, userID)
@@ -142,7 +142,7 @@ func TestRBACHandler_AddAndRemoveMembers(t *testing.T) {
 	defer cleanup()
 
 	// Setup admin user with manage_groups permission
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	adminGroupID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(adminGroupID, adminID)
@@ -150,7 +150,7 @@ func TestRBACHandler_AddAndRemoveMembers(t *testing.T) {
 
 	// Create target group and user
 	targetGroupID, _ := store.CreateGroup("devs", "Developers")
-	store.CreateUser("dev1", "Password1", "Developer", "", "")
+	store.CreateUser("dev1", "Password1234", "Developer", "", "")
 	devID, _ := store.GetUserID("dev1")
 
 	// Add user to group
@@ -249,7 +249,7 @@ func TestRBACHandler_PermissionEnforcement_NonSuperuser403(t *testing.T) {
 	defer cleanup()
 
 	// Create non-superuser without any admin permissions
-	store.CreateUser("normie", "Password1", "Normal user", "", "")
+	store.CreateUser("normie", "Password1234", "Normal user", "", "")
 	userID, _ := store.GetUserID("normie")
 	store.CreateGroup("target", "Target group")
 
@@ -314,14 +314,14 @@ func TestRBACHandler_ListUsers(t *testing.T) {
 	defer cleanup()
 
 	// Create admin with manage_users permission
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
 	// Create another user
-	store.CreateUser("user2", "Password1", "User 2", "", "")
+	store.CreateUser("user2", "Password1234", "User 2", "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
 	req = withUser(req, adminID)
@@ -352,7 +352,7 @@ func TestRBACHandler_ListUsers_PermissionDenied(t *testing.T) {
 	defer cleanup()
 
 	// Create user without manage_users permission
-	store.CreateUser("normie", "Password1", "Normal", "", "")
+	store.CreateUser("normie", "Password1234", "Normal", "", "")
 	userID, _ := store.GetUserID("normie")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
@@ -638,7 +638,7 @@ func TestRBACHandler_HandleTokenSubpath_Scope_MethodNotAllowed(t *testing.T) {
 	defer cleanup()
 
 	// Grant manage_token_scopes permission
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -668,13 +668,13 @@ func TestRBACHandler_CreateUser_MissingUsername(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
 	store.GrantAdminPermission(gID, auth.PermManageUsers)
 
-	body := `{"password": "Secret123"}`
+	body := `{"password": "Secret123456"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users",
 		bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -701,7 +701,7 @@ func TestRBACHandler_CreateUser_MissingPassword(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -738,7 +738,7 @@ func TestRBACHandler_UpdateGroup_EmptyUpdate(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -776,7 +776,7 @@ func TestRBACHandler_AddGroupMember_MissingBothIDs(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -810,7 +810,7 @@ func TestRBACHandler_AddGroupMember_BothIDsProvided(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)
@@ -844,7 +844,7 @@ func TestRBACHandler_RemoveGroupMember_InvalidType(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("admin", "Password1", "Admin", "", "")
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
 	adminID, _ := store.GetUserID("admin")
 	gID, _ := store.CreateGroup("admins", "Admins")
 	store.AddUserToGroup(gID, adminID)

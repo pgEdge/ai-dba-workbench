@@ -33,7 +33,7 @@ func createTestAuthStoreForTokenScope(t *testing.T) (*AuthStore, func()) {
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 
 	// Create a default user for token tests
-	if err := store.CreateUser("testuser", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("testuser", "Password1234", "", "", ""); err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("Failed to create test user: %v", err)
 	}

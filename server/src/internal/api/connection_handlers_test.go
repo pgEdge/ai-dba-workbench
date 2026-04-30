@@ -579,7 +579,7 @@ func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
 	_, store, cleanupStore := createTestRBACHandler(t)
 	defer cleanupStore()
 
-	if err := store.CreateUser("bob", "Password1", "Bob", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "Bob", "", ""); err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
 	bobID, err := store.GetUserID("bob")
@@ -801,7 +801,7 @@ func TestListConnections_Issue68_OwnerSeesOwnUnshared(t *testing.T) {
 	_, store, cleanupStore := createTestRBACHandler(t)
 	defer cleanupStore()
 
-	if err := store.CreateUser("alice", "Password1", "Alice", "", ""); err != nil {
+	if err := store.CreateUser("alice", "Password1234", "Alice", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	aliceID, err := store.GetUserID("alice")
@@ -844,7 +844,7 @@ func TestListConnections_Issue68_NonOwnerZeroGrant_SeesSharedOnly(t *testing.T) 
 	_, store, cleanupStore := createTestRBACHandler(t)
 	defer cleanupStore()
 
-	if err := store.CreateUser("bob", "Password1", "Bob", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "Bob", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	bobID, err := store.GetUserID("bob")
@@ -933,7 +933,7 @@ func TestListConnections_Issue68_VisibleConnectionIDsError_Returns500(t *testing
 	_, store, cleanupStore := createTestRBACHandler(t)
 	defer cleanupStore()
 
-	if err := store.CreateUser("bob", "Password1", "Bob", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "Bob", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	bobID, err := store.GetUserID("bob")

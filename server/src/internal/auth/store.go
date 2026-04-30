@@ -180,6 +180,19 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 		Created:           !dbExisted,
 	}
 
+	// Defense-in-depth: confirm that the embedded common-password
+	// dictionary loaded with a plausible number of entries. A broken
+	// build that fails to embed the file would silently weaken the
+	// password policy, so log a warning when the count drops below the
+	// expected floor.
+	const minCommonPasswordEntries = 5000
+	if n := commonPasswordCount(); n < minCommonPasswordEntries {
+		log.Printf(
+			"[AUTH] WARNING: common-password dictionary loaded with only %d entries (expected at least %d); password policy may be weakened",
+			n, minCommonPasswordEntries,
+		)
+	}
+
 	// Initialize schema
 	if err := store.initSchema(); err != nil {
 		db.Close()
@@ -565,46 +578,43 @@ func (s *AuthStore) SetBcryptCostForTesting(t interface{ Helper() }, cost int) {
 // Password Validation
 // =============================================================================
 
-// MinPasswordLength is the minimum number of characters required for a password.
-const MinPasswordLength = 8
+// MinPasswordLength is the minimum number of characters required for a
+// password. The value follows the NIST SP 800-63B guidance that favors
+// longer length over composition rules.
+const MinPasswordLength = 12
 
-// MaxPasswordLength is the maximum number of characters allowed for a password.
-// This is set to 72 because bcrypt silently truncates inputs beyond 72 bytes.
+// MaxPasswordLength is the maximum number of bytes allowed for a password.
+// The limit is dictated by bcrypt, which silently truncates inputs beyond
+// 72 bytes; allowing longer passwords would create surprising behavior.
 const MaxPasswordLength = 72
 
-// ValidatePassword checks that a password meets complexity requirements.
-// Passwords must be between MinPasswordLength and MaxPasswordLength characters
-// and contain at least one uppercase letter, one lowercase letter, and one digit.
+// ValidatePassword enforces a NIST SP 800-63B-aligned password policy. The
+// policy requires a minimum length and rejects passwords that appear in an
+// embedded common-password dictionary; it deliberately omits composition
+// rules (uppercase, lowercase, digit) which NIST recommends against.
+//
+// Length is measured in runes for the minimum to give Unicode passphrases
+// a fair count, and in bytes for the maximum so bcrypt truncation never
+// silently discards user input.
+//
+// Control characters (including NUL) are not rejected. NIST SP 800-63B
+// explicitly recommends accepting any printable character a user can type,
+// and bcrypt safely accepts arbitrary bytes within its 72-byte limit; the
+// dictionary check normalizes its input separately so it does not depend
+// on character class filtering here.
 func ValidatePassword(password string) error {
 	var failures []string
 	if utf8.RuneCountInString(password) < MinPasswordLength {
 		failures = append(failures, fmt.Sprintf("must be at least %d characters", MinPasswordLength))
 	}
 	if len(password) > MaxPasswordLength {
-		failures = append(failures, fmt.Sprintf("must be at most %d characters", MaxPasswordLength))
-	}
-	var hasUpper, hasLower, hasDigit bool
-	for _, r := range password {
-		switch {
-		case unicode.IsUpper(r):
-			hasUpper = true
-		case unicode.IsLower(r):
-			hasLower = true
-		case unicode.IsDigit(r):
-			hasDigit = true
-		}
-	}
-	if !hasUpper {
-		failures = append(failures, "must contain at least one uppercase letter")
-	}
-	if !hasLower {
-		failures = append(failures, "must contain at least one lowercase letter")
-	}
-	if !hasDigit {
-		failures = append(failures, "must contain at least one digit")
+		failures = append(failures, fmt.Sprintf("must be at most %d bytes", MaxPasswordLength))
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("password does not meet complexity requirements: %s", strings.Join(failures, "; "))
+		return fmt.Errorf("password does not meet length requirements: %s", strings.Join(failures, "; "))
+	}
+	if isCommonPassword(password) {
+		return fmt.Errorf("password is too common; choose a less predictable password")
 	}
 	return nil
 }

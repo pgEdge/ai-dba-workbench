@@ -99,7 +99,7 @@ func TestGetAlertHistoryTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	defer cleanup()
 
 	// bob has no group membership and no grants.
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := store.GetUserID("bob")
@@ -149,7 +149,7 @@ func TestGetMetricBaselinesTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := store.GetUserID("bob")
@@ -203,7 +203,7 @@ func TestQueryMetricsTool_RBAC_DeniesUnsharedConnection(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := store.GetUserID("bob")
@@ -259,7 +259,7 @@ func TestGetAlertRulesTool_RBAC_DeniesUnsharedConnection(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := store.GetUserID("bob")
@@ -320,7 +320,7 @@ func TestGetBlackoutsTool_RBAC_NoAccessDeniesEmptyResult(t *testing.T) {
 	store, cleanup := newRBACRegressionTestStore(t)
 	defer cleanup()
 
-	if err := store.CreateUser("bob", "Password1", "", "", ""); err != nil {
+	if err := store.CreateUser("bob", "Password1234", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	userID, err := store.GetUserID("bob")

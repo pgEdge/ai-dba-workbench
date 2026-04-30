@@ -64,7 +64,7 @@ func TestHandleGroupPrivileges_PermissionDenied(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("user", "Password1", "User", "", "")
+	store.CreateUser("user", "Password1234", "User", "", "")
 	userID, _ := store.GetUserID("user")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups/1/privileges/mcp", nil)
@@ -573,7 +573,7 @@ func TestHandleGroupPermissions_NonSuperuser(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
 
-	store.CreateUser("user", "Password1", "User", "", "")
+	store.CreateUser("user", "Password1234", "User", "", "")
 	userID, _ := store.GetUserID("user")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/groups/1/permissions", nil)

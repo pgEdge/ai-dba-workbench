@@ -147,7 +147,19 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         this.setState({ errorInfo });
 
         if (this.props.onError) {
-            this.props.onError(error, errorInfo);
+            // Guard the consumer-provided callback: this is the
+            // top-level boundary, so a throwing onError (telemetry
+            // beacon failure, SDK init not ready, etc.) would escape
+            // mid-recovery and re-brick the UI -- the exact failure
+            // mode this boundary exists to prevent (issue #182).
+            try {
+                this.props.onError(error, errorInfo);
+            } catch (callbackError) {
+                logger.error(
+                    'ErrorBoundary onError callback failed:',
+                    callbackError,
+                );
+            }
         }
     }
 

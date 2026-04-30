@@ -115,6 +115,42 @@ describe('ErrorBoundary', () => {
             expect(infoArg).toBeDefined();
         });
 
+        it('still renders the fallback UI when the onError callback throws', () => {
+            // Simulate a flaky telemetry beacon: the consumer's onError
+            // raises mid-recovery.  The boundary must swallow it,
+            // surface the secondary failure via the project logger,
+            // and still show the Reload UI -- otherwise issue #182
+            // regresses for any consumer wiring up onError.
+            const onError = vi.fn(() => {
+                throw new Error('telemetry-beacon-down');
+            });
+
+            render(
+                <ErrorBoundary onError={onError}>
+                    <ThrowingChild message="primary-error" />
+                </ErrorBoundary>,
+            );
+
+            // Fallback UI is intact even though onError exploded.
+            expect(onError).toHaveBeenCalledTimes(1);
+            expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+            expect(
+                screen.getByText('The application has crashed'),
+            ).toBeInTheDocument();
+
+            // The secondary failure must be logged through the project
+            // logger so operators can see why telemetry was lost.
+            const callbackFailureCall = loggerErrorSpy.mock.calls.find(
+                (call) =>
+                    call[0] === 'ErrorBoundary onError callback failed:',
+            );
+            expect(callbackFailureCall).toBeDefined();
+            expect(callbackFailureCall?.[1]).toBeInstanceOf(Error);
+            expect((callbackFailureCall?.[1] as Error).message).toBe(
+                'telemetry-beacon-down',
+            );
+        });
+
         it('renders the custom fallback when one is supplied', () => {
             render(
                 <ErrorBoundary fallback={<div>custom fallback ui</div>}>

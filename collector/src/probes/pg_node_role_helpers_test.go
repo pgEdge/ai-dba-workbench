@@ -19,6 +19,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPgNodeRoleProbe_GetBinaryReplicationStatus_Recovery(t *testing.T) {
@@ -113,10 +115,20 @@ func TestPgNodeRoleProbe_GetLogicalReplicationStatus_WithSubscription(t *testing
 
 func TestPgNodeRoleProbe_GetSpockStatus_NoExtension(t *testing.T) {
 	// On a default cluster the spock extension is not installed,
-	// so this exercises the early-return path of getSpockStatus.
+	// so this exercises the early-return path of getSpockStatus. The
+	// integration test database is created fresh from `template1`
+	// each process by requireIntegrationPool, so spock is never
+	// pre-installed in practice. We still precheck pg_extension and
+	// skip if a future setup change ends up seeding it; that keeps
+	// the test correct regardless of the environment.
 	pool := requireIntegrationPool(t)
 	conn := acquireConn(t, pool)
 	ctx := context.Background()
+
+	if spockAlreadyInstalled(t, ctx, conn) {
+		t.Skip("spock extension already installed; this test " +
+			"requires an environment without spock")
+	}
 
 	p := NewPgNodeRoleProbe(&ProbeConfig{Name: ProbeNamePgNodeRole})
 	info := &NodeRoleInfo{RoleDetails: map[string]any{}}
@@ -128,15 +140,48 @@ func TestPgNodeRoleProbe_GetSpockStatus_NoExtension(t *testing.T) {
 	}
 }
 
+// spockAlreadyInstalled reports whether the spock extension is already
+// registered in pg_extension. The integration database is created
+// fresh per process, so this should always return false in CI; the
+// guard is defensive against future setup changes that pre-seed the
+// extension (which would otherwise turn the destructive cleanup in
+// the spock-stub tests into data loss).
+func spockAlreadyInstalled(t *testing.T, ctx context.Context,
+	conn *pgxpool.Conn) bool {
+	t.Helper()
+	var present bool
+	err := conn.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_extension WHERE extname = 'spock'
+		)
+	`).Scan(&present)
+	if err != nil {
+		t.Fatalf("check pg_extension for spock: %v", err)
+	}
+	return present
+}
+
 // TestPgNodeRoleProbe_GetSpockStatus_FakeExtension drives the
 // spock-installed branch of getSpockStatus by registering a dummy
 // spock extension and creating the spock.local_node, spock.node, and
 // spock.subscription objects the probe queries. The dummy entries are
 // removed before other tests run.
+//
+// The cleanup is gated on `wePreInstalledSpock` so the test never
+// removes a real spock install if one happens to be present. The
+// integration database is created fresh per process, so the guard is
+// defensive against future setup changes; today the precheck always
+// returns false here.
 func TestPgNodeRoleProbe_GetSpockStatus_FakeExtension(t *testing.T) {
 	pool := requireIntegrationPool(t)
 	conn := acquireConn(t, pool)
 	ctx := context.Background()
+
+	if spockAlreadyInstalled(t, ctx, conn) {
+		t.Skip("spock extension already installed; this test " +
+			"creates a stub spock and would otherwise need to " +
+			"destroy a real one to clean up")
+	}
 
 	stmts := []string{
 		`CREATE SCHEMA IF NOT EXISTS spock`,
@@ -171,6 +216,9 @@ func TestPgNodeRoleProbe_GetSpockStatus_FakeExtension(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
+		// Only tear down what this test created. If a future change
+		// causes spock to be pre-installed, the precheck above would
+		// have skipped the test and we would not get here.
 		if _, cleanupErr := conn.Exec(ctx,
 			"DELETE FROM pg_extension "+
 				"WHERE extname='spock'"); cleanupErr != nil {
@@ -204,10 +252,20 @@ func TestPgNodeRoleProbe_GetSpockStatus_FakeExtension(t *testing.T) {
 // TestPgNodeRoleProbe_GetSpockStatus_NoLocalNode drives the
 // "spock installed but local_node has no row" branch which logs and
 // returns nil without populating SpockNodeID.
+//
+// The cleanup is gated on the precheck so we never tear down a real
+// spock install. See the comment on TestPgNodeRoleProbe_GetSpockStatus_
+// FakeExtension for the full rationale.
 func TestPgNodeRoleProbe_GetSpockStatus_NoLocalNode(t *testing.T) {
 	pool := requireIntegrationPool(t)
 	conn := acquireConn(t, pool)
 	ctx := context.Background()
+
+	if spockAlreadyInstalled(t, ctx, conn) {
+		t.Skip("spock extension already installed; this test " +
+			"creates a stub spock and would otherwise need to " +
+			"destroy a real one to clean up")
+	}
 
 	stmts := []string{
 		`CREATE SCHEMA IF NOT EXISTS spock`,

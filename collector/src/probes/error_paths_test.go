@@ -17,6 +17,7 @@ package probes
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,8 +120,16 @@ func TestCheckHelpers_ErrorPath(t *testing.T) {
 			defer conn.Release()
 			breakConn(t, conn)
 
-			if err := tc.run(ctx, conn); err == nil {
+			err = tc.run(ctx, conn)
+			if err == nil {
 				t.Fatal("expected error from broken conn")
+			}
+			// Every helper wraps its underlying query failure with a
+			// "failed to ..." prefix; assert the wrap so a fixture
+			// regression that produced a different early error would
+			// surface here instead of going green.
+			if !strings.Contains(err.Error(), "failed to") {
+				t.Errorf("expected wrapped helper error, got %v", err)
 			}
 		})
 	}
@@ -331,8 +340,21 @@ func TestProbeExecute_QueryError(t *testing.T) {
 			defer conn.Release()
 			breakConn(t, conn)
 
-			if err := tc.run(ctx, conn); err == nil {
+			err = tc.run(ctx, conn)
+			if err == nil {
 				t.Fatal("expected error from broken conn")
+			}
+			// Every Execute path wraps its underlying failure with a
+			// known prefix: "failed to ..." for the bulk of probes
+			// (failed to execute query, failed to check ..., etc.)
+			// or a probe-specific phrase such as "connectivity
+			// check failed" for the connectivity probe. Assert the
+			// wrap so a fixture regression that produced a
+			// different early error would surface here.
+			msg := err.Error()
+			if !strings.Contains(msg, "failed to") &&
+				!strings.Contains(msg, "connectivity check failed") {
+				t.Errorf("expected wrapped Execute error, got %v", err)
 			}
 		})
 	}
@@ -535,8 +557,17 @@ func TestProbeStore_PartitionError(t *testing.T) {
 			defer conn.Release()
 			breakConn(t, conn)
 
-			if err := tc.run(ctx, conn); err == nil {
+			err = tc.run(ctx, conn)
+			if err == nil {
 				t.Fatal("expected error from broken conn")
+			}
+			// Every probe Store path begins with EnsurePartition and
+			// wraps its failure with "failed to ensure partition" (or
+			// the per-row "failed to insert ..." wrap). Assert the
+			// wrap so a fixture regression that produced a different
+			// early error would surface here.
+			if !strings.Contains(err.Error(), "failed to") {
+				t.Errorf("expected wrapped Store error, got %v", err)
 			}
 		})
 	}

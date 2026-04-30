@@ -91,12 +91,18 @@ func TestStoreMetrics_BeginError(t *testing.T) {
 	conn := acquireConn(t, pool)
 	ctx := context.Background()
 
-	// Close the underlying connection to force Begin to fail.
-	conn.Conn().Close(ctx)
+	// Close the underlying connection to force Begin to fail. We use
+	// the shared breakConn helper so a failed close fails the test
+	// instead of silently leaving an open conn.
+	breakConn(t, conn)
 
 	err := StoreMetrics(ctx, conn, "pg_stat_activity",
 		[]string{"connection_id"}, [][]any{{int64(1)}})
 	if err == nil {
 		t.Fatal("expected error from closed connection")
+	}
+	if !strings.Contains(err.Error(), "failed to begin transaction") {
+		t.Errorf("expected wrapped begin-transaction error, got %v",
+			err)
 	}
 }

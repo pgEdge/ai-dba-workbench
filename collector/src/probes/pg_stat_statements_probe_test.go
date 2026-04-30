@@ -143,10 +143,18 @@ func TestPgStatStatementsProbe_StoreSyntheticAndDedup(t *testing.T) {
 	p := newPgStatStatementsProbeForTest()
 	ctx := context.Background()
 
+	// Use a connection_id and database_name that are unique to this
+	// test so the row-count assertions below are not affected by
+	// other tests sharing the integration database.
+	const (
+		testConnID   = 9911
+		testDatabase = "stmts_dedup_testdb"
+	)
+
 	// Build three rows: one with NULL queryid (should be skipped), two
 	// with the same uniqueness key (one should be deduped).
 	common := map[string]any{
-		"_database_name":      "testdb",
+		"_database_name":      testDatabase,
 		"userid":              int64(10),
 		"dbid":                int64(20),
 		"toplevel":            true,
@@ -184,17 +192,58 @@ func TestPgStatStatementsProbe_StoreSyntheticAndDedup(t *testing.T) {
 		mkRow(int64(99)),  // duplicate: skipped
 		mkRow(int64(100)), // stored
 	}
-	if err := p.Store(ctx, conn, 1, time.Now().UTC(),
+	if err := p.Store(ctx, conn, testConnID, time.Now().UTC(),
 		rows); err != nil {
 		t.Fatalf("Store synthetic: %v", err)
+	}
+
+	// After the first Store call we should have exactly two rows
+	// (queryid=99 and queryid=100) for our private connection_id;
+	// the nil-queryid row was skipped and the duplicate queryid=99
+	// was deduped.
+	var total, q99, q100 int64
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(*),
+			COUNT(*) FILTER (WHERE queryid = 99),
+			COUNT(*) FILTER (WHERE queryid = 100)
+		FROM metrics.pg_stat_statements
+		WHERE connection_id = $1 AND database_name = $2
+	`, testConnID, testDatabase).Scan(&total, &q99, &q100); err != nil {
+		t.Fatalf("count rows after first Store: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 rows after first Store, got %d", total)
+	}
+	if q99 != 1 {
+		t.Errorf("expected exactly 1 row for queryid=99, got %d",
+			q99)
+	}
+	if q100 != 1 {
+		t.Errorf("expected exactly 1 row for queryid=100, got %d",
+			q100)
 	}
 
 	// Calling Store with only NULL queryid rows must short-circuit
 	// without attempting to write a partition row.
 	allNil := []map[string]any{mkRow(nil), mkRow(nil)}
-	if err := p.Store(ctx, conn, 1, time.Now().UTC(),
+	if err := p.Store(ctx, conn, testConnID, time.Now().UTC(),
 		allNil); err != nil {
 		t.Fatalf("Store all-nil queryid: %v", err)
+	}
+
+	// The all-nil call must not have inserted anything; the row
+	// counts should be unchanged.
+	var totalAfter int64
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM metrics.pg_stat_statements
+		WHERE connection_id = $1 AND database_name = $2
+	`, testConnID, testDatabase).Scan(&totalAfter); err != nil {
+		t.Fatalf("count rows after all-nil Store: %v", err)
+	}
+	if totalAfter != total {
+		t.Errorf("all-nil Store inserted rows: before=%d after=%d",
+			total, totalAfter)
 	}
 }
 

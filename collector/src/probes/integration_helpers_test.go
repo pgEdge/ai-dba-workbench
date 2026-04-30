@@ -45,14 +45,21 @@ func TestMain(m *testing.M) {
 }
 
 // teardownIntegrationPool closes the shared pool and drops the test
-// database created by requireIntegrationPool. It is a no-op when the
-// integration helper was never used.
+// database created by requireIntegrationPool. The two cleanup steps are
+// independent: the pool close runs only if the pool was assigned, and
+// the DROP DATABASE runs whenever a database name was reserved. This
+// guards against leaking a temporary database when CREATE DATABASE
+// succeeded but a later setup step (pgxpool.New, applyMetricsSchema)
+// failed before integration.pool was set.
 func teardownIntegrationPool() {
-	if integration.pool == nil {
+	if integration.pool != nil {
+		integration.pool.Close()
+		integration.pool = nil
+	}
+
+	if integration.dbName == "" {
 		return
 	}
-	integration.pool.Close()
-	integration.pool = nil
 
 	if os.Getenv("TEST_AI_WORKBENCH_KEEP_DB") == "1" ||
 		os.Getenv("TEST_AI_WORKBENCH_KEEP_DB") == "true" {
@@ -101,6 +108,10 @@ func integrationConnString() (string, bool) {
 // replaceProbeDatabase swaps the dbname in either a postgres URL or a
 // libpq key=value string. It is independent of the database package's
 // helper so the probe tests stay free of inter-package dependencies.
+//
+// The libpq branch uses splitLibpqFields rather than strings.Fields so
+// quoted values such as `options='-c search_path=public'` survive the
+// round-trip without being shredded on internal whitespace.
 func replaceProbeDatabase(connStr, dbName string) string {
 	if strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
 		parts := strings.SplitN(connStr, "?", 2)
@@ -117,7 +128,7 @@ func replaceProbeDatabase(connStr, dbName string) string {
 		}
 		return baseURL + query
 	}
-	parts := strings.Fields(connStr)
+	parts := splitLibpqFields(connStr)
 	out := make([]string, 0, len(parts)+1)
 	found := false
 	for _, p := range parts {
@@ -132,6 +143,51 @@ func replaceProbeDatabase(connStr, dbName string) string {
 		out = append(out, "dbname="+dbName)
 	}
 	return strings.Join(out, " ")
+}
+
+// splitLibpqFields splits a libpq key=value connection string into its
+// constituent fields, preserving single-quoted values verbatim so the
+// round-trip output remains parseable by libpq. Backslash escapes
+// inside a quoted value are passed through as-is (the goal here is a
+// faithful round-trip, not interpretation). Whitespace outside quoted
+// values is treated as a delimiter.
+func splitLibpqFields(s string) []string {
+	var (
+		out     []string
+		current []byte
+		inQuote bool
+	)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inQuote:
+			// Pass backslash escapes through verbatim so the output
+			// preserves the original encoding exactly.
+			if c == '\\' && i+1 < len(s) {
+				current = append(current, c, s[i+1])
+				i++
+				continue
+			}
+			current = append(current, c)
+			if c == '\'' {
+				inQuote = false
+			}
+		case c == '\'':
+			inQuote = true
+			current = append(current, c)
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			if len(current) > 0 {
+				out = append(out, string(current))
+				current = current[:0]
+			}
+		default:
+			current = append(current, c)
+		}
+	}
+	if len(current) > 0 {
+		out = append(out, string(current))
+	}
+	return out
 }
 
 // requireIntegrationPool returns a connection pool to a freshly created

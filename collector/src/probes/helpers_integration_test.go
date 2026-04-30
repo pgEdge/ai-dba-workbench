@@ -242,16 +242,39 @@ func TestDropExpiredPartitions_ProtectedTable(t *testing.T) {
 		t.Fatalf("StoreMetrics: %v", err)
 	}
 
+	// Compute the partition name for `now` so we can verify it
+	// survives the GC pass.
+	suffix, _, _ := weeklyPartitionBounds(now)
+	partitionName := "pg_settings_" + suffix
+
 	dropped, err := DropExpiredPartitions(ctx, conn,
 		"pg_settings", 0)
 	if err != nil {
 		t.Fatalf("DropExpiredPartitions: %v", err)
 	}
-	// The partition that holds the row we just inserted must be
-	// protected even with retentionDays=0; we cannot prove non-zero
-	// drops because no other partitions exist for the table here.
-	if dropped < 0 {
-		t.Errorf("dropped count should not be negative: %d", dropped)
+	// The partition that holds the row we just inserted is
+	// change-tracked and must be protected, even with
+	// retentionDays=0. Asserting dropped == 0 catches a regression
+	// that drops a protected partition; we additionally verify the
+	// partition still exists in pg_tables so the test does not pass
+	// in the (impossible-here) case where `dropped` is zero because
+	// nothing was dropped at all.
+	if dropped != 0 {
+		t.Errorf("expected 0 protected partitions to be dropped, "+
+			"got %d", dropped)
+	}
+	var stillExists bool
+	if err := conn.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_tables
+			WHERE schemaname = 'metrics' AND tablename = $1
+		)
+	`, partitionName).Scan(&stillExists); err != nil {
+		t.Fatalf("verify partition existence: %v", err)
+	}
+	if !stillExists {
+		t.Errorf("protected partition %s was dropped",
+			partitionName)
 	}
 }
 
@@ -429,6 +452,64 @@ func TestGetDefaultInterval(t *testing.T) {
 			got := getDefaultInterval(tc.probe)
 			if got != tc.expected {
 				t.Errorf("got %d, want %d", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestReplaceProbeDatabase(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		db   string
+		want string
+	}{
+		{
+			"url with path",
+			"postgres://u:p@h:5432/old?sslmode=disable",
+			"new",
+			"postgres://u:p@h:5432/new?sslmode=disable",
+		},
+		{
+			"url no path",
+			"postgres://u:p@h:5432",
+			"new",
+			"postgres://u:p@h:5432/new",
+		},
+		{
+			"libpq simple",
+			"host=h port=5432 dbname=old user=u",
+			"new",
+			"host=h port=5432 dbname=new user=u",
+		},
+		{
+			"libpq missing dbname",
+			"host=h user=u",
+			"new",
+			"host=h user=u dbname=new",
+		},
+		{
+			// Quoted options must survive intact even though the
+			// inner value contains spaces.
+			"libpq quoted options",
+			"host=h dbname=old options='-c search_path=public'",
+			"new",
+			"host=h dbname=new options='-c search_path=public'",
+		},
+		{
+			// Backslash escapes inside a quoted value are passed
+			// through verbatim so the output round-trips exactly.
+			"libpq quoted with escape",
+			`host=h dbname=old password='p\'q'`,
+			"new",
+			`host=h dbname=new password='p\'q'`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := replaceProbeDatabase(tc.in, tc.db)
+			if got != tc.want {
+				t.Errorf("got %q want %q", got, tc.want)
 			}
 		})
 	}

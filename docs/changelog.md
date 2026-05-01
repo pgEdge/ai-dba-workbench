@@ -151,6 +151,11 @@ project adheres to
 
 ### Fixed
 
+- Fix Ask Ellie entering a long retry loop ("Joining the
+  relations..." / "Validating query") when the signed-in
+  user has no MCP privileges; the chat now surfaces a
+  clear permission-denied message immediately instead of
+  cycling through planning steps. (#188)
 - Fix wide markdown tables overflowing and clipping the
   right-side columns inside the Ask Ellie chat panel;
   tables returned by MCP tools such as

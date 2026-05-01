@@ -29,6 +29,17 @@ const mockToAPIMessages = vi.fn();
 
 vi.mock('../chatAgenticLoop', () => ({
     runAgenticLoop: (...args: unknown[]) => mockRunAgenticLoop(...args),
+    NO_MCP_PRIVILEGES_MESSAGE:
+        "You don't have permission to use any of the tools I need to " +
+        'answer questions like this. Ask your administrator to grant ' +
+        'you the relevant MCP privileges and try again.',
+    UNKNOWN_TOOL_MESSAGE:
+        'The model attempted to call tools that are not available to ' +
+        'you. This usually means your account lacks the necessary MCP ' +
+        'privileges. Please contact your administrator.',
+    ITERATION_LIMIT_MESSAGE:
+        'I was unable to complete the request within the allowed ' +
+        'number of steps. Please try rephrasing your question.',
 }));
 
 vi.mock('../chatCompaction', () => ({
@@ -127,9 +138,26 @@ describe('useChat', () => {
             ],
         });
 
+        // Default tools fetch returns a non-empty tool list. This
+        // mirrors a privileged user and keeps the agentic loop active
+        // for the existing tests; tests that need to exercise the
+        // no-privileges short-circuit override this mock explicitly.
         mockApiFetch.mockResolvedValue({
             ok: true,
-            json: () => Promise.resolve({ tools: [] }),
+            json: () =>
+                Promise.resolve({
+                    tools: [
+                        {
+                            name: 'list_connections',
+                            description: 'List database connections',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {},
+                                required: [],
+                            },
+                        },
+                    ],
+                }),
         });
     });
 
@@ -203,9 +231,24 @@ describe('useChat', () => {
 
             const { result } = renderHook(() => useChat());
 
+            // Wait for the initial tools fetch so sendMessage no
+            // longer needs to await it; without this, the hook
+            // suspends at `await toolsFetchRef.current` before ever
+            // invoking runAgenticLoop and resolveLoop never gets set.
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledWith(
+                    '/api/v1/mcp/tools',
+                );
+            });
+
             let sendPromise: Promise<void>;
-            act(() => {
+            await act(async () => {
                 sendPromise = result.current.sendMessage('Hello');
+                // Allow microtasks to flush so sendMessage proceeds
+                // past the toolsFetchRef await and reaches the
+                // runAgenticLoop call that captures resolveLoop.
+                await Promise.resolve();
+                await Promise.resolve();
             });
 
             // isLoading should be true while waiting
@@ -742,6 +785,124 @@ describe('useChat', () => {
 
             // Should still be functional with default tools
             expect(result.current.error).toBeNull();
+        });
+    });
+
+    // -------------------------------------------------------------------
+    // No-MCP-privileges short-circuit (issue #188)
+    //
+    // When the server returns an empty tools list (the user has zero
+    // MCP privileges), sendMessage must skip the agentic loop and
+    // surface a clear permission-denied message rather than spinning
+    // up to maxIterations LLM calls that all fail with "Access
+    // denied".
+    // -------------------------------------------------------------------
+
+    describe('no MCP privileges short-circuit', () => {
+        beforeEach(() => {
+            // Server returns an empty tool list, simulating a user
+            // with no MCP privileges. The fetch is OK so the empty
+            // list is authoritative (not a transient failure).
+            mockApiFetch.mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ tools: [] }),
+            } as Response);
+        });
+
+        it('does not call runAgenticLoop when tool list is empty', async () => {
+            const { result } = renderHook(() => useChat());
+
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledWith(
+                    '/api/v1/mcp/tools',
+                );
+            });
+
+            await act(async () => {
+                await result.current.sendMessage('Show me alert history');
+            });
+
+            expect(mockRunAgenticLoop).not.toHaveBeenCalled();
+        });
+
+        it('renders a permission-denied assistant message', async () => {
+            const { result } = renderHook(() => useChat());
+
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledWith(
+                    '/api/v1/mcp/tools',
+                );
+            });
+
+            await act(async () => {
+                await result.current.sendMessage('Show me alert history');
+            });
+
+            await waitFor(() => {
+                expect(result.current.messages.length).toBe(2);
+            });
+
+            const assistant = result.current.messages[1];
+            expect(assistant.role).toBe('assistant');
+            expect(assistant.isError).toBe(true);
+            expect(assistant.content).toContain("don't have permission");
+            expect(assistant.content).toContain('administrator');
+        });
+
+        it('clears the loading state after short-circuit', async () => {
+            const { result } = renderHook(() => useChat());
+
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledWith(
+                    '/api/v1/mcp/tools',
+                );
+            });
+
+            await act(async () => {
+                await result.current.sendMessage('Hello');
+            });
+
+            await waitFor(() => {
+                expect(result.current.isLoading).toBe(false);
+            });
+            expect(result.current.activeTools).toEqual([]);
+        });
+
+        it('still records input in history when short-circuiting', async () => {
+            const { result } = renderHook(() => useChat());
+
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledWith(
+                    '/api/v1/mcp/tools',
+                );
+            });
+
+            await act(async () => {
+                await result.current.sendMessage('Test input');
+            });
+
+            expect(mockSaveInputHistory).toHaveBeenCalled();
+        });
+
+        it('appends user message before the denial reply', async () => {
+            const { result } = renderHook(() => useChat());
+
+            await waitFor(() => {
+                expect(mockApiFetch).toHaveBeenCalledWith(
+                    '/api/v1/mcp/tools',
+                );
+            });
+
+            await act(async () => {
+                await result.current.sendMessage('Hello there');
+            });
+
+            await waitFor(() => {
+                expect(result.current.messages.length).toBe(2);
+            });
+            expect(result.current.messages[0].role).toBe('user');
+            expect(result.current.messages[0].content).toBe('Hello there');
+            expect(result.current.messages[1].role).toBe('assistant');
         });
     });
 });

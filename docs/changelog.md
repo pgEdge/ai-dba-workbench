@@ -111,6 +111,25 @@ project adheres to
 
 ### Security
 
+- Redact notification channel secrets from API responses;
+  `GET /api/v1/notification-channels` and
+  `GET /api/v1/notification-channels/{id}` no longer return
+  `smtp_username`, `smtp_password`, `webhook_url`, or
+  `auth_credentials`, all of which were previously emitted in
+  plaintext after server-side decryption. Each response now
+  includes the boolean indicators `smtp_username_set`,
+  `smtp_password_set`, `webhook_url_set`, and
+  `auth_credentials_set` so clients can show whether a secret
+  is configured without ever reading the value. The
+  `PUT /api/v1/notification-channels/{id}` endpoint applies a
+  three-way merge to the four secret fields; omit a field to
+  preserve the stored value, send an empty string to clear
+  it, or send a new value to replace it. The web admin UI for
+  the Email, Slack and Mattermost, and Webhook channel
+  editors now leaves secret form fields blank when editing an
+  existing channel and preserves the stored value unless the
+  user types a replacement. (#187)
+
 - Fix log, SQL, and SMTP injection findings surfaced by
   the golangci-lint v2 upgrade; the knowledgebase search
   now binds its filter values through `?` placeholders

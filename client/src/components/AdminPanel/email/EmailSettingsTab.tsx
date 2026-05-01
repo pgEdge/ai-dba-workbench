@@ -51,15 +51,16 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
     smtpPasswordConfigured = false,
 }) => {
     // The username and password are redacted by the server. When
-    // editing, surface a placeholder so users know the value is set;
-    // submitting an empty form value tells the server to keep it.
+    // editing a channel that already has a value stored, surface a
+    // placeholder so users know submitting an empty form value will
+    // preserve it. When no value is configured (e.g. an edit dialog
+    // for a channel that was created without SMTP credentials), the
+    // placeholder must stay empty so we do not imply a stored secret.
     const usernamePlaceholder = isEditing && smtpUsernameConfigured
         ? 'Leave blank to keep existing'
         : '';
-    const passwordPlaceholder = isEditing
-        ? smtpPasswordConfigured
-            ? 'Leave blank to keep existing'
-            : '(unchanged)'
+    const passwordPlaceholder = isEditing && smtpPasswordConfigured
+        ? 'Leave blank to keep existing'
         : '';
 
     return (

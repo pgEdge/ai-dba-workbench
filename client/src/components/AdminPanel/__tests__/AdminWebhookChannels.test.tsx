@@ -901,6 +901,172 @@ describe('AdminWebhookChannels', () => {
             expect(body.auth_credentials).toBe('X-Token:topsecret');
         });
 
+        it('rejects partial basic auth input on edit when only username is typed', async () => {
+            // Regression test for the partial-credential replacement bug.
+            // After issue #187 redacts existing credentials, edit forms
+            // start blank — typing only one half of a basic auth pair
+            // must NOT silently clear the other half on the server.
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Another Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[1]); // basic auth channel
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Type only the username; leave the password blank.
+            fireEvent.change(screen.getByLabelText('Username'), {
+                target: { value: 'newuser' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            // The save handler must surface a dialog error and skip
+            // the PUT request entirely.
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).getByText(
+                    /Re-enter both username and password/i,
+                ),
+            ).toBeInTheDocument();
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
+        it('rejects partial basic auth input on edit when only password is typed', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Another Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[1]); // basic auth channel
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Type only the password; leave the username blank.
+            fireEvent.change(screen.getByLabelText('Password'), {
+                target: { value: 'newpass' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).getByText(
+                    /Re-enter both username and password/i,
+                ),
+            ).toBeInTheDocument();
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
+        it('rejects partial api_key input on edit when only header name is typed', async () => {
+            const channelWithApiKey = [{
+                id: 4,
+                channel_type: 'webhook',
+                name: 'API Key Webhook',
+                description: 'Test',
+                enabled: true,
+                is_estate_default: false,
+                endpoint_url: 'https://example.com/hook',
+                http_method: 'POST',
+                headers: {},
+                auth_type: 'api_key',
+                auth_credentials_set: true,
+                template_alert_fire: '',
+                template_alert_clear: '',
+                template_reminder: '',
+            }];
+            mockApiGet.mockResolvedValue({ notification_channels: channelWithApiKey });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('API Key Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Type only the header name; leave the API key value blank.
+            fireEvent.change(screen.getByLabelText('Header Name'), {
+                target: { value: 'X-Token' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).getByText(
+                    /Re-enter both header name and API key value/i,
+                ),
+            ).toBeInTheDocument();
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
+        it('rejects partial api_key input on edit when only API key value is typed', async () => {
+            const channelWithApiKey = [{
+                id: 4,
+                channel_type: 'webhook',
+                name: 'API Key Webhook',
+                description: 'Test',
+                enabled: true,
+                is_estate_default: false,
+                endpoint_url: 'https://example.com/hook',
+                http_method: 'POST',
+                headers: {},
+                auth_type: 'api_key',
+                auth_credentials_set: true,
+                template_alert_fire: '',
+                template_alert_clear: '',
+                template_reminder: '',
+            }];
+            mockApiGet.mockResolvedValue({ notification_channels: channelWithApiKey });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('API Key Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Type only the API key value; leave the header name blank.
+            fireEvent.change(screen.getByLabelText('API Key Value'), {
+                target: { value: 'topsecret' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            const dialog = await screen.findByRole('dialog');
+            expect(
+                within(dialog).getByText(
+                    /Re-enter both header name and API key value/i,
+                ),
+            ).toBeInTheDocument();
+            expect(mockApiPut).not.toHaveBeenCalled();
+        });
+
         it('hides hint when the user switches auth type away from the channel original', async () => {
             mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
             const user = userEvent.setup({ delay: null });

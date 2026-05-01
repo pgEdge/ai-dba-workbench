@@ -146,24 +146,64 @@ const AdminWebhookChannels: React.FC = () => {
     }, []);
 
     /**
-     * Returns true when the user has typed at least one non-empty value
-     * into the credential form fields for the current auth type. We do
-     * not rely on `buildAuthCredentials` returning a non-empty string
-     * because some schemes (e.g. `basic`, `api_key`) return strings
-     * containing only separator characters when both inputs are blank.
+     * Returns true only when the user has supplied EVERY constituent
+     * field required by the given auth scheme. We deliberately require
+     * all parts of multi-field schemes (e.g. `basic` needs both
+     * username and password) so that the resulting credentials string
+     * is well-formed.
+     *
+     * The previous implementation accepted partial input on edit forms,
+     * which caused a subtle data-loss bug: re-typing only the password
+     * while leaving the redacted username field blank would send
+     * `auth_credentials = ":newpass"` and silently clear the existing
+     * username on the server. The save handler now rejects partial
+     * input via `partiallyEnteredCredentials` so users see an explicit
+     * error instead of accidentally truncating their secret.
      */
     const hasUserEnteredCredentials = useCallback(
         (authType: string, fields: Record<string, string>): boolean => {
             switch (authType) {
                 case 'basic':
-                    return Boolean(fields.username) || Boolean(fields.password);
+                    return Boolean(fields.username) && Boolean(fields.password);
                 case 'bearer':
                     return Boolean(fields.token);
                 case 'api_key':
-                    return Boolean(fields.headerName) || Boolean(fields.apiKeyValue);
+                    return Boolean(fields.headerName) && Boolean(fields.apiKeyValue);
                 default:
                     return false;
             }
+        },
+        [],
+    );
+
+    /**
+     * Returns an error message when the user has filled in some, but
+     * not all, of the constituent credential fields for a multi-part
+     * auth scheme. Single-field schemes (`bearer`, `none`) and empty
+     * input always return null.
+     */
+    const partiallyEnteredCredentials = useCallback(
+        (authType: string, fields: Record<string, string>): string | null => {
+            if (authType === 'basic') {
+                const hasUser = Boolean(fields.username);
+                const hasPass = Boolean(fields.password);
+                if (hasUser !== hasPass) {
+                    return (
+                        'Re-enter both username and password to replace '
+                        + 'existing basic auth credentials.'
+                    );
+                }
+            } else if (authType === 'api_key') {
+                const hasHeader = Boolean(fields.headerName);
+                const hasValue = Boolean(fields.apiKeyValue);
+                if (hasHeader !== hasValue) {
+                    return (
+                        'Re-enter both header name and API key value to '
+                        + 'replace existing API key credentials.'
+                    );
+                }
+            }
+            return null;
         },
         [],
     );
@@ -178,6 +218,23 @@ const AdminWebhookChannels: React.FC = () => {
         if (!form.endpoint_url.trim()) {
             crud.setDialogError('Endpoint URL is required.');
             return;
+        }
+
+        // When editing, reject partial credential input so we never
+        // send an `auth_credentials` value that would silently clear
+        // the unentered field on the server. On create, the standard
+        // required-field validation already covers this case (the
+        // server rejects malformed credentials), so the guard is
+        // limited to the edit path to avoid false positives there.
+        if (crud.editingChannel) {
+            const partialMsg = partiallyEnteredCredentials(
+                form.auth_type,
+                authFields,
+            );
+            if (partialMsg) {
+                crud.setDialogError(partialMsg);
+                return;
+            }
         }
 
         const headersObj = headersArrayToObject(form.headers);
@@ -297,7 +354,13 @@ const AdminWebhookChannels: React.FC = () => {
         } finally {
             crud.setSaving(false);
         }
-    }, [form, authFields, crud, hasUserEnteredCredentials]);
+    }, [
+        form,
+        authFields,
+        crud,
+        hasUserEnteredCredentials,
+        partiallyEnteredCredentials,
+    ]);
 
     // --- Render ---
 

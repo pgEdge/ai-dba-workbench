@@ -571,6 +571,96 @@ describe('AdminEmailChannels', () => {
             });
         });
 
+        it('shows "Leave blank to keep existing" placeholder when password is configured', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+            const passwordField = getFieldByLabel(dialog, 'SMTP Password');
+            expect(passwordField).toHaveAttribute(
+                'placeholder',
+                'Leave blank to keep existing',
+            );
+        });
+
+        it('shows empty password placeholder when no password is configured', async () => {
+            // Regression test: the old code rendered a misleading
+            // "(unchanged)" placeholder when smtp_password_set was
+            // false, implying a stored secret that did not exist.
+            const channelsWithoutPassword = [
+                {
+                    ...mockEmailChannels[0],
+                    smtp_password_set: false,
+                },
+            ];
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({
+                        notification_channels: channelsWithoutPassword,
+                    });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+            const passwordField = getFieldByLabel(dialog, 'SMTP Password');
+            // The field must NOT advertise a stored value when none
+            // exists. We accept either no placeholder attribute or an
+            // empty string; the misleading "(unchanged)" string must
+            // never appear.
+            const placeholder = passwordField.getAttribute('placeholder') ?? '';
+            expect(placeholder).toBe('');
+            expect(passwordField).not.toHaveAttribute(
+                'placeholder',
+                '(unchanged)',
+            );
+            // The configured-helper-text must also be absent for the
+            // password field. Username is still configured in this
+            // fixture, so we narrow the assertion to the password's
+            // helper text wording.
+            expect(
+                within(dialog).queryByText(/A password is configured/i),
+            ).not.toBeInTheDocument();
+        });
+
         it('keeps the Save button enabled with blank SMTP secret fields on edit', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/v1/notification-channels') {

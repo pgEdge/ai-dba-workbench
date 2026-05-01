@@ -175,43 +175,77 @@ func TestLoadConfiguration_Success(t *testing.T) {
 }
 
 // TestLoadConfiguration_NoConfigFileUsesDefaults exercises the
-// "no explicit config, no default config present" branch: the function
-// should log and continue with defaults (then fail only at secret load
-// because no secret file is present).
+// "no explicit config, no default config present" branch: the
+// function should log and continue with defaults (then fail only
+// at secret load because no secret file is present).
+//
+// We redirect os.UserConfigDir() at a temp directory so the test
+// is deterministic regardless of the developer's environment, and
+// we tolerate the rare case where /etc/pgedge/ai-dba-collector.yaml
+// exists on the host (the helper will pick it up and the
+// "configuration loaded from" branch will run instead).
 func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 	defer saveAndClearFlags(t)()
 
-	// *configFile is empty; default search path is resolved via
-	// os.Executable(). The binary directory typically has no
-	// ai-dba-collector.yaml so the function should fall through to the
-	// secret-loading step.
-	// Make sure the secret file does not exist either.
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
 
-	// Use GetDefaultConfigPath and GetDefaultSecretPath to check the same
-	// paths that loadConfiguration() will check, rather than manually
-	// constructing them.
-	defaultYAML := GetDefaultConfigPath(exe)
-	defaultSecret := GetDefaultSecretPath(exe)
-
-	// Remove secret file if it exists from a previous test run.
-	_ = os.Remove(defaultSecret)
-
-	// Pre-flight: also ensure the default config path doesn't exist. If
-	// it somehow does (CI cache, etc.) the test still passes so long as
-	// the function returns *some* result; we just skip stronger
-	// assertions in that case.
-	_, cfgStatErr := os.Stat(defaultYAML)
-	if cfgStatErr == nil {
-		t.Skipf("default config file unexpectedly exists at %s; skipping", defaultYAML)
-	}
-
-	_, err = loadConfiguration()
+	// loadConfiguration must surface an error from LoadSecret since
+	// there is no secret file available in either default location.
+	_, err := loadConfiguration()
 	if err == nil {
 		t.Fatal("expected error because no secret file exists on default paths")
+	}
+}
+
+// TestLoadConfiguration_DefaultConfigFromUserDir verifies that the
+// auto-discovery path correctly loads a config file dropped into
+// the per-user pgedge directory.
+func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
+	defer saveAndClearFlags(t)()
+
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Drop a real config (with secret_file) and a matching secret
+	// so loadConfiguration runs end-to-end without any --config
+	// flag.
+	secretPath := filepath.Join(pgedgeDir, "ai-dba-collector.secret")
+	if err := os.WriteFile(secretPath, []byte("auto-discovered-secret"), 0600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	cfgPath := filepath.Join(pgedgeDir, "ai-dba-collector.yaml")
+	cfgYAML := "datastore:\n" +
+		"  host: discovered-host\n" +
+		"  database: discovered-db\n" +
+		"  username: discovered-user\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	cfg, err := loadConfiguration()
+	if err != nil {
+		t.Fatalf("loadConfiguration: %v", err)
+	}
+	if cfg.Datastore.Host != "discovered-host" {
+		t.Errorf("Host: got %q, want discovered-host", cfg.Datastore.Host)
+	}
+	if cfg.GetServerSecret() != "auto-discovered-secret" {
+		t.Errorf("Secret: got %q, want auto-discovered-secret",
+			cfg.GetServerSecret())
 	}
 }
 

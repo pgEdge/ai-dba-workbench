@@ -16,14 +16,26 @@ following order; later sources override earlier ones:
 ## Configuration File
 
 The alerter searches for its configuration file in the
-following locations:
+following order:
 
-- `/etc/pgedge/ai-dba-alerter.yaml` (system-wide).
-- `<binary-directory>/ai-dba-alerter.yaml` (alongside
-  the executable).
+1. The path specified via the `-config` flag.
+2. The per-user config directory at
+   `~/.config/pgedge/ai-dba-alerter.yaml` on Linux
+   (honouring `$XDG_CONFIG_HOME`),
+   `~/Library/Application Support/pgedge/ai-dba-alerter.yaml`
+   on macOS, and `%AppData%\pgedge\ai-dba-alerter.yaml`
+   on Windows.
+3. `/etc/pgedge/ai-dba-alerter.yaml` (system-wide).
 
-You can specify a custom path using the `-config`
-flag.
+If `-config` is set and the file is missing, the
+alerter exits with an error. If `-config` is not set
+and none of the default locations contain a
+configuration file, the alerter uses built-in defaults
+silently. The alerter no longer searches the binary
+directory or the current working directory. A `SIGHUP`
+signal re-runs discovery on each reload, so a
+configuration file installed at a default location
+after startup is picked up on the next signal.
 
 A complete example configuration file is available at
 [ai-dba-alerter.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-alerter.yaml)

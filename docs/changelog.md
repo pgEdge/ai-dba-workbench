@@ -12,6 +12,38 @@ project adheres to
 
 ### Changed
 
+- **Breaking change:** the collector, alerter, and
+  server no longer auto-discover configuration or
+  secret files in the binary directory or the current
+  working directory; review the migration steps below
+  before upgrading. (#195)
+
+    - The new lookup order is the `--config` flag, the
+      per-user config directory, and `/etc/pgedge/`;
+      the first match wins, and missing files fall
+      through to compiled-in defaults.
+    - The per-user path resolves to
+      `~/.config/pgedge/<binary>.yaml` on Linux
+      (honouring `$XDG_CONFIG_HOME`),
+      `~/Library/Application Support/pgedge/<binary>.yaml`
+      on macOS, and `%AppData%\pgedge\<binary>.yaml`
+      on Windows.
+    - The same precedence applies to the collector and
+      server secret files (`ai-dba-collector.secret`
+      and `ai-dba-server.secret`); the alerter does not
+      use a secret file.
+    - Production deployments that already use
+      `/etc/pgedge/` are unaffected.
+    - Development setups that drop a YAML file next to
+      the binary or in the current working directory
+      will silently fall through to compiled-in
+      defaults; move the file to `/etc/pgedge/` or the
+      per-user directory, or pass `--config` with an
+      explicit path.
+    - The alerter's `SIGHUP` handler re-runs discovery
+      on each reload, so installing a config at a
+      default location after startup is picked up on
+      the next signal.
 - Replace the composition-rule password validator
   with a policy aligned to NIST SP 800-63B; the
   server now requires a minimum of 12 characters,

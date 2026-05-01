@@ -116,37 +116,46 @@ func main() {
 	logger.Startup("Collector stopped")
 }
 
-// loadConfiguration loads configuration from file, environment, and command line
-// Priority (highest to lowest): CLI flags > environment variables > config file > defaults
+// loadConfiguration loads configuration from file, environment, and command line.
+// Priority (highest to lowest): CLI flags > environment variables > config file > defaults.
+//
+// When --config is not given, the function consults the shared
+// helper which searches the per-user config directory first and
+// /etc/pgedge second. When neither exists the function logs an
+// informational message and proceeds with compiled-in defaults
+// rather than failing.
 func loadConfiguration() (*Config, error) {
 	config := NewConfig()
 
-	// Determine config file path
+	// Determine config file path. The empty string from the helper
+	// is meaningful here ("no default file found"), so we track the
+	// explicit-vs-default distinction separately.
 	configPath := *configFile
 	explicitConfigPath := (configPath != "")
 
-	if configPath == "" {
-		// Use default search path: /etc/pgedge/ first, then binary directory
-		exe, err := os.Executable()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get executable path: %w", err)
-		}
-		configPath = GetDefaultConfigPath(exe)
+	if !explicitConfigPath {
+		configPath = GetDefaultConfigPath("")
 	}
 
-	// Load config file if it exists
-	if _, err := os.Stat(configPath); err == nil {
+	if configPath == "" {
+		// No --config flag and no default file present. Use
+		// compiled-in defaults silently (info log only).
+		logger.Info("No configuration file found in default search " +
+			"paths (per-user config dir, /etc/pgedge); using defaults")
+	} else if _, err := os.Stat(configPath); err == nil {
 		if err := config.LoadFromFile(configPath); err != nil {
 			return nil, fmt.Errorf("failed to load config file: %w", err)
 		}
 		logger.Startupf("Configuration loaded from: %s", configPath)
+	} else if explicitConfigPath {
+		// The user explicitly asked for a file that does not
+		// exist; this is fatal.
+		return nil, fmt.Errorf("specified config file not found: %s", configPath)
 	} else {
-		// If user explicitly specified a config file that doesn't exist, fail
-		if explicitConfigPath {
-			return nil, fmt.Errorf("specified config file not found: %s", configPath)
-		}
-		// Otherwise, just log and continue with defaults
-		logger.Infof("Configuration file not found: %s, using defaults", configPath)
+		// Defensive branch: between the helper's stat and ours
+		// the file disappeared. Fall back to defaults rather
+		// than crashing.
+		logger.Infof("Configuration file %s no longer exists; using defaults", configPath)
 	}
 
 	// Override with command line flags (highest priority)
@@ -157,12 +166,10 @@ func loadConfiguration() (*Config, error) {
 		return nil, err
 	}
 
-	// Load server secret from file
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get executable path for secret search: %w", err)
-	}
-	if err := config.LoadSecret(exe); err != nil {
+	// Load server secret from file. The helper inside LoadSecret no
+	// longer needs the binary path, but we keep the call signature
+	// stable for callers that might still pass it.
+	if err := config.LoadSecret(""); err != nil {
 		return nil, err
 	}
 

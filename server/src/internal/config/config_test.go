@@ -433,24 +433,84 @@ func TestLoadConfigNonExistentFile(t *testing.T) {
 	}
 }
 
+// TestGetDefaultConfigPath verifies the wrapper returns "" when
+// neither the per-user config dir nor /etc/pgedge holds a server
+// config file.
 func TestGetDefaultConfigPath(t *testing.T) {
-	// Test with a known binary path
-	result := GetDefaultConfigPath("/usr/local/bin/pgedge-postgres-mcp")
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
 
-	// If system path exists, it would return that instead
-	// Just check that we get a .yaml file
-	if filepath.Ext(result) != ".yaml" {
-		t.Errorf("expected .yaml extension, got %q", result)
+	result := GetDefaultConfigPath("/usr/local/bin/pgedge-postgres-mcp")
+	if result != "" && filepath.Ext(result) != ".yaml" {
+		t.Errorf("expected empty path or .yaml extension, got %q", result)
 	}
 }
 
-func TestGetDefaultSecretPath(t *testing.T) {
-	result := GetDefaultSecretPath("/usr/local/bin/pgedge-postgres-mcp")
+// TestGetDefaultConfigPath_UserDirHit verifies the wrapper returns
+// the per-user config path when one is present.
+func TestGetDefaultConfigPath_UserDirHit(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
 
-	// If system path exists, it would return that instead
-	// Just check that we get a .secret file
-	if filepath.Ext(result) != ".secret" {
-		t.Errorf("expected .secret extension, got %q", result)
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expected := filepath.Join(pgedgeDir, "ai-dba-server.yaml")
+	if err := os.WriteFile(expected, []byte("http:\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := GetDefaultConfigPath(""); got != expected {
+		t.Errorf("GetDefaultConfigPath = %q, want %q", got, expected)
+	}
+}
+
+// TestGetDefaultSecretPath verifies the wrapper returns "" when no
+// candidate secret file is present.
+func TestGetDefaultSecretPath(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	result := GetDefaultSecretPath("/usr/local/bin/pgedge-postgres-mcp")
+	if result != "" && filepath.Ext(result) != ".secret" {
+		t.Errorf("expected empty path or .secret extension, got %q", result)
+	}
+}
+
+// TestGetDefaultSecretPath_UserDirHit verifies the wrapper returns
+// the per-user secret path when one is present.
+func TestGetDefaultSecretPath_UserDirHit(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expected := filepath.Join(pgedgeDir, "ai-dba-server.secret")
+	if err := os.WriteFile(expected, []byte("super-secret"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := GetDefaultSecretPath(""); got != expected {
+		t.Errorf("GetDefaultSecretPath = %q, want %q", got, expected)
 	}
 }
 

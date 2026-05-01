@@ -408,14 +408,44 @@ func TestConfigFileExists(t *testing.T) {
 	})
 }
 
-// TestGetDefaultConfigPath tests the GetDefaultConfigPath function
+// TestGetDefaultConfigPath verifies the alerter wrapper returns
+// "" when no candidate file is present. The binaryPath argument
+// is no longer consulted.
 func TestGetDefaultConfigPath(t *testing.T) {
-	// When system config doesn't exist, should return path relative to binary
-	path := GetDefaultConfigPath("/usr/local/bin/ai-dba-alerter")
-	expected := "/usr/local/bin/ai-dba-alerter.yaml"
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
 
-	if path != expected {
-		t.Errorf("GetDefaultConfigPath = %q, expected %q", path, expected)
+	path := GetDefaultConfigPath("/usr/local/bin/ai-dba-alerter")
+	if path != "" && path != "/etc/pgedge/ai-dba-alerter.yaml" {
+		t.Errorf("GetDefaultConfigPath = %q, expected empty path or /etc/pgedge fallback", path)
+	}
+}
+
+// TestGetDefaultConfigPath_UserDirHit verifies the wrapper returns
+// the per-user config path when one is present.
+func TestGetDefaultConfigPath_UserDirHit(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expected := filepath.Join(pgedgeDir, "ai-dba-alerter.yaml")
+	if err := os.WriteFile(expected, []byte("datastore:\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := GetDefaultConfigPath(""); got != expected {
+		t.Errorf("GetDefaultConfigPath = %q, want %q", got, expected)
 	}
 }
 

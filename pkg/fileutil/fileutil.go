@@ -93,19 +93,64 @@ func FileExists(path string) bool {
 	return err == nil
 }
 
+// systemConfigDir is the directory consulted as the system-wide
+// fallback in GetDefaultConfigPath. It is a variable rather than a
+// constant so tests can redirect it onto a temp directory and
+// exercise the system-path branch on a host that does not have a
+// real /etc/pgedge populated.
+var systemConfigDir = "/etc/pgedge"
+
 // GetDefaultConfigPath returns the default config file path for a
-// service. The function checks /etc/pgedge/ first for a system-wide
-// config file, then falls back to the directory containing the
-// binary. The configFilename parameter is the base name of the
-// config file (e.g. "ai-dba-alerter.yaml").
+// service. The function searches for an existing file in the
+// following order, returning the first match:
+//
+//  1. The user config directory reported by os.UserConfigDir(),
+//     under a "pgedge" subdirectory. On Linux this resolves to
+//     ~/.config/pgedge/<configFilename>; on macOS it resolves to
+//     ~/Library/Application Support/pgedge/<configFilename>; and
+//     on Windows it resolves to %AppData%\pgedge\<configFilename>.
+//
+//  2. The system-wide path /etc/pgedge/<configFilename>.
+//
+// If neither candidate exists, the function returns "" so the
+// caller can fall through to compiled-in defaults. Callers that
+// need to require a config file must check the empty return value
+// and act accordingly.
+//
+// The binaryPath parameter is no longer consulted; in earlier
+// revisions the helper would silently pick up a file sitting next
+// to the binary, which made it easy to load a development config
+// in production. The parameter is retained for now so the three
+// service callers continue to compile without churn; remove it
+// when the call sites are next refactored.
+//
+// The configFilename parameter is the base name of the config file
+// (e.g. "ai-dba-alerter.yaml" or "ai-dba-server.secret"). The
+// helper applies the same precedence rules to secret-file lookups
+// because the issue that motivated this change ("avoid silent
+// prod-vs-dev confusion") applies equally to secrets.
 func GetDefaultConfigPath(binaryPath, configFilename string) string {
-	systemPath := filepath.Join("/etc/pgedge", configFilename)
+	_ = binaryPath // intentionally unused; retained for caller stability
+
+	// 1. Per-user XDG-style config directory. os.UserConfigDir only
+	// fails when HOME (or its platform equivalent) is unset, which
+	// is rare; in that case skip straight to the system path.
+	if userDir, err := os.UserConfigDir(); err == nil {
+		userPath := filepath.Join(userDir, "pgedge", configFilename)
+		if _, statErr := os.Stat(userPath); statErr == nil {
+			return userPath
+		}
+	}
+
+	// 2. System-wide path under /etc/pgedge (overridable for tests).
+	systemPath := filepath.Join(systemConfigDir, configFilename)
 	if _, err := os.Stat(systemPath); err == nil {
 		return systemPath
 	}
 
-	dir := filepath.Dir(binaryPath)
-	return filepath.Join(dir, configFilename)
+	// 3. Nothing matched. Signal "fall through to defaults" with
+	// an empty string rather than guessing at a synthetic path.
+	return ""
 }
 
 // LoadYAMLFile reads a YAML file and unmarshals its contents into the

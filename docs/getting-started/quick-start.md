@@ -70,14 +70,22 @@ automatically on first startup.
 The server secret encrypts passwords for monitored
 database connections. All components that handle
 connection passwords must share the same secret file.
+The collector and server discover the secret at
+`/etc/pgedge/ai-dba-server.secret` by default.
 
-In the following example, the `openssl` command
-generates a secure secret:
+In the following example, the `openssl` command writes
+a secure secret to the system-wide default location:
 
 ```bash
-openssl rand -base64 32 > ./ai-dba-server.secret
-chmod 600 ./ai-dba-server.secret
+sudo openssl rand -base64 32 \
+    | sudo tee /etc/pgedge/ai-dba-server.secret \
+    > /dev/null
+sudo chmod 600 /etc/pgedge/ai-dba-server.secret
 ```
+
+To store the secret outside the default search paths,
+set `secret_file:` in the YAML configuration to an
+absolute path of your choice.
 
 ## Create a Password File
 
@@ -126,7 +134,7 @@ successful initialization:
 
 ```
 pgEdge AI DBA Workbench Collector starting...
-Configuration loaded from: ./ai-dba-collector.yaml
+Configuration loaded from: /etc/pgedge/ai-dba-collector.yaml
 Database schema initialized
 Datastore connection established
 Probe scheduler started with 24 probe(s)

@@ -279,15 +279,75 @@ func TestReadPasswordFromSecretFile(t *testing.T) {
 }
 
 func TestGetDefaultConfigPath(t *testing.T) {
-	// Test that it returns a path ending in ai-dba-collector.yaml
+	// With nothing set up the helper returns "" so the caller can
+	// fall through to compiled-in defaults.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
+
 	binaryPath := "/usr/local/bin/ai-dba-collector"
 	configPath := GetDefaultConfigPath(binaryPath)
 
-	// Since /etc/pgedge/ai-dba-collector.yaml likely doesn't exist,
-	// it should fall back to the binary directory
-	expected := "/usr/local/bin/ai-dba-collector.yaml"
-	if configPath != expected {
-		t.Errorf("Expected config path '%s', got '%s'", expected, configPath)
+	// Since neither the per-user config dir nor /etc/pgedge holds a
+	// matching file, the helper should signal "no config found".
+	// We accept the existing /etc/pgedge file if the developer
+	// happens to have one installed locally.
+	if configPath != "" && configPath != "/etc/pgedge/ai-dba-collector.yaml" {
+		t.Errorf("Expected empty path or /etc/pgedge path, got %q", configPath)
+	}
+}
+
+// TestGetDefaultConfigPath_UserDirHit confirms the wrapper returns
+// the per-user config path when one exists. We use t.Setenv to
+// redirect os.UserConfigDir() into a writable temp directory so
+// the test does not depend on the developer's environment.
+func TestGetDefaultConfigPath_UserDirHit(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expected := filepath.Join(pgedgeDir, "ai-dba-collector.yaml")
+	if err := os.WriteFile(expected, []byte("datastore:\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := GetDefaultConfigPath(""); got != expected {
+		t.Errorf("GetDefaultConfigPath() = %q, want %q", got, expected)
+	}
+}
+
+// TestGetDefaultSecretPath_UserDirHit mirrors the config test for
+// the secret-file lookup wrapper.
+func TestGetDefaultSecretPath_UserDirHit(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expected := filepath.Join(pgedgeDir, "ai-dba-collector.secret")
+	if err := os.WriteFile(expected, []byte("s3cr3t"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := GetDefaultSecretPath(""); got != expected {
+		t.Errorf("GetDefaultSecretPath() = %q, want %q", got, expected)
 	}
 }
 
@@ -680,19 +740,30 @@ func TestLoadSecret_ExplicitPath(t *testing.T) {
 }
 
 func TestLoadSecret_DefaultPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	binaryPath := filepath.Join(tmpDir, "ai-dba-collector")
-	secretFile := filepath.Join(tmpDir, "ai-dba-collector.secret")
+	// Redirect os.UserConfigDir() into a temp directory so the
+	// helper finds our test secret without relying on host state.
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
 
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	secretFile := filepath.Join(pgedgeDir, "ai-dba-collector.secret")
 	testSecret := "default-path-secret"
 	if err := os.WriteFile(secretFile, []byte(testSecret), 0600); err != nil {
 		t.Fatalf("Failed to write test secret file: %v", err)
 	}
 
 	config := NewConfig()
-	// Don't set SecretFile - let it search default paths
-
-	if err := config.LoadSecret(binaryPath); err != nil {
+	// Don't set SecretFile - let it search default paths.
+	if err := config.LoadSecret(""); err != nil {
 		t.Fatalf("LoadSecret() error = %v", err)
 	}
 
@@ -702,15 +773,48 @@ func TestLoadSecret_DefaultPath(t *testing.T) {
 }
 
 func TestLoadSecret_NotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	binaryPath := filepath.Join(tmpDir, "ai-dba-collector")
-	// Don't create any secret file
+	// Redirect os.UserConfigDir() at an empty temp dir so neither
+	// the user nor the system path resolves.
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
 
 	config := NewConfig()
-
-	err := config.LoadSecret(binaryPath)
+	err := config.LoadSecret("")
 	if err == nil {
 		t.Error("Expected error when no secret file is found")
+	}
+}
+
+// TestLoadSecret_DefaultPathReadError exercises the rare branch
+// where the helper finds a file at the default location but the
+// subsequent read fails. We simulate that by placing a directory
+// (rather than a regular file) at the discovered path.
+func TestLoadSecret_DefaultPathReadError(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir(): %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Create a subdirectory at the would-be secret path so os.Stat
+	// in the helper succeeds but ReadFile fails.
+	bogusPath := filepath.Join(pgedgeDir, "ai-dba-collector.secret")
+	if err := os.Mkdir(bogusPath, 0700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	config := NewConfig()
+	if err := config.LoadSecret(""); err == nil {
+		t.Error("Expected error when secret path is unreadable")
 	}
 }
 

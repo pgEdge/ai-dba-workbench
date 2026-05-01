@@ -373,7 +373,11 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// GetDefaultConfigPath returns the default config file path
+// GetDefaultConfigPath returns the path to an existing default
+// alerter config file, or "" if none was found. Searches the
+// per-user config directory (e.g. ~/.config/pgedge/) first, then
+// /etc/pgedge/. The binaryPath parameter is no longer consulted
+// but kept for caller stability.
 func GetDefaultConfigPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-alerter.yaml")
 }

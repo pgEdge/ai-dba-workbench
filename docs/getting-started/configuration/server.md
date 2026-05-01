@@ -21,8 +21,22 @@ The server searches for its configuration file in
 the following order:
 
 1. The path specified via the `-config` flag.
-2. `/etc/pgedge/ai-dba-server.yaml` (system-wide).
-3. `./ai-dba-server.yaml` (binary directory).
+2. The per-user config directory at
+   `~/.config/pgedge/ai-dba-server.yaml` on Linux
+   (honouring `$XDG_CONFIG_HOME`),
+   `~/Library/Application Support/pgedge/ai-dba-server.yaml`
+   on macOS, and `%AppData%\pgedge\ai-dba-server.yaml`
+   on Windows.
+3. `/etc/pgedge/ai-dba-server.yaml` (system-wide).
+
+If `-config` is set and the file is missing, the
+server exits with an error. If `-config` is not set
+and none of the default locations contain a
+configuration file, the server uses built-in defaults
+silently. The server no longer searches the binary
+directory or the current working directory. The same
+precedence applies to the `secret_file` discovery for
+`ai-dba-server.secret`.
 
 ### Example Configuration
 

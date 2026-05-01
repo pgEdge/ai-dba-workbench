@@ -26,19 +26,47 @@ import (
 // Version information
 const Version = "1.0.0-beta1"
 
+// resolveConfigPathResult describes the outcome of a config-path
+// lookup. Exposed so main() and its unit tests share the same shape.
+type resolveConfigPathResult struct {
+	// Path is the resolved path. It is empty if no config file was
+	// found in any default location and no explicit path was given.
+	Path string
+	// Explicit is true if the user passed --config on the command
+	// line. When Explicit is true and Path is non-empty but the
+	// file is missing, callers must error out rather than fall back
+	// to defaults.
+	Explicit bool
+}
+
+// resolveConfigPath returns the config path to use, given the value
+// of the --config flag. When --config is empty, the shared
+// discovery helper consults the per-user config directory first
+// and /etc/pgedge second. The returned struct tells callers
+// whether the path came from an explicit flag (in which case a
+// missing file is fatal) or from auto-discovery (in which case a
+// missing file means "use defaults").
+//
+// The helper is its own function so we can exercise both branches
+// in tests without driving the alerter's main() entry point.
+func resolveConfigPath(flagValue string) resolveConfigPathResult {
+	if flagValue != "" {
+		return resolveConfigPathResult{Path: flagValue, Explicit: true}
+	}
+	return resolveConfigPathResult{
+		Path:     config.GetDefaultConfigPath(""),
+		Explicit: false,
+	}
+}
+
 func main() {
 	fmt.Fprintf(os.Stderr, "pgEdge AI DBA Workbench Alerter v%s starting...\n", Version)
 
-	// Get executable path for default config location
-	execPath, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get executable path: %v\n", err)
-		os.Exit(1)
-	}
-	defaultConfigPath := config.GetDefaultConfigPath(execPath)
-
-	// Command line flags
-	configFile := flag.String("config", defaultConfigPath, "Path to configuration file")
+	// Command line flags. The --config default is left empty so we
+	// can distinguish "user passed an explicit path" from "user
+	// relied on default discovery"; the actual default lookup
+	// happens after flag.Parse below.
+	configFile := flag.String("config", "", "Path to configuration file (default: per-user pgedge config dir, then /etc/pgedge)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 
 	// Database connection flags
@@ -51,16 +79,40 @@ func main() {
 
 	flag.Parse()
 
+	// Resolve the config path: an explicit flag wins, otherwise the
+	// shared discovery helper picks the highest-priority path that
+	// exists. If neither exists, the resolved path is "" and the
+	// alerter proceeds with compiled-in defaults.
+	resolved := resolveConfigPath(*configFile)
+	explicitConfigPath := resolved.Explicit
+	resolvedConfigPath := resolved.Path
+
 	// Load configuration
 	cfg := config.NewConfig()
 
-	// Load from file if exists
-	if config.ConfigFileExists(*configFile) {
-		if err := cfg.LoadFromFile(*configFile); err != nil {
+	// Load from file if it was explicitly requested or auto-discovered.
+	if resolvedConfigPath != "" {
+		if !config.ConfigFileExists(resolvedConfigPath) {
+			if explicitConfigPath {
+				fmt.Fprintf(os.Stderr, "ERROR: configuration file not found: %s\n", resolvedConfigPath)
+				os.Exit(1)
+			}
+			// The helper said the file was there but it has since
+			// vanished; fall through to defaults rather than
+			// crashing.
+			resolvedConfigPath = ""
+		}
+	}
+	if resolvedConfigPath != "" {
+		if err := cfg.LoadFromFile(resolvedConfigPath); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to load config: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "Configuration loaded from %s\n", *configFile)
+		fmt.Fprintf(os.Stderr, "Configuration loaded from %s\n", resolvedConfigPath)
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"No configuration file found in default search paths "+
+				"(per-user config dir, /etc/pgedge); using defaults\n")
 	}
 
 	// Apply command line overrides
@@ -113,10 +165,16 @@ func main() {
 			switch sig {
 			case syscall.SIGHUP:
 				fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
-				// Reload configuration
+				// Reload configuration. Re-run discovery so that an
+				// admin who installed a new config file at one of
+				// the default locations does not have to restart.
+				reloadPath := resolvedConfigPath
+				if !explicitConfigPath {
+					reloadPath = config.GetDefaultConfigPath("")
+				}
 				newCfg := config.NewConfig()
-				if config.ConfigFileExists(*configFile) {
-					if err := newCfg.LoadFromFile(*configFile); err != nil {
+				if reloadPath != "" && config.ConfigFileExists(reloadPath) {
+					if err := newCfg.LoadFromFile(reloadPath); err != nil {
 						fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
 						continue
 					}

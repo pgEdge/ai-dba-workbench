@@ -21,11 +21,20 @@ The collector searches for its configuration file in
 the following order:
 
 1. The path specified via the `-config` flag.
-2. `/etc/pgedge/ai-dba-collector.yaml` (system-wide).
-3. `ai-dba-collector.yaml` in the binary directory.
+2. The per-user config directory at
+   `~/.config/pgedge/ai-dba-collector.yaml` on Linux
+   (honouring `$XDG_CONFIG_HOME`),
+   `~/Library/Application Support/pgedge/ai-dba-collector.yaml`
+   on macOS, and `%AppData%\pgedge\ai-dba-collector.yaml`
+   on Windows.
+3. `/etc/pgedge/ai-dba-collector.yaml` (system-wide).
 
-If no configuration file exists, the collector uses
-built-in defaults.
+If `-config` is set and the file is missing, the
+collector exits with an error. If `-config` is not set
+and none of the default locations contain a
+configuration file, the collector uses built-in
+defaults silently. The collector no longer searches the
+binary directory or the current working directory.
 
 ### File Format
 
@@ -288,11 +297,19 @@ encryption.
 
 - Type: string (file path)
 - Default: Searches in order:
-    1. `/etc/pgedge/ai-dba-collector.secret`
-    2. `<binary-directory>/ai-dba-collector.secret`
-    3. `./ai-dba-collector.secret`
+    1. The per-user config directory at
+       `~/.config/pgedge/ai-dba-collector.secret` on Linux
+       (honouring `$XDG_CONFIG_HOME`),
+       `~/Library/Application Support/pgedge/ai-dba-collector.secret`
+       on macOS, and
+       `%AppData%\pgedge\ai-dba-collector.secret` on
+       Windows.
+    2. `/etc/pgedge/ai-dba-collector.secret` (system-wide).
 - Required: Yes (a secret file must exist)
 - Example: `secret_file: /etc/pgedge/collector.secret`
+- Note: The collector no longer searches the binary
+  directory or the current working directory for the
+  secret file.
 
 The collector uses AES-256-GCM encryption to protect
 stored passwords. Each password is encrypted with a

@@ -18,7 +18,6 @@ import {
     type WebhookFormState,
     DEFAULT_WEBHOOK_FORM,
     buildAuthCredentials,
-    headersObjectToArray,
     headersArrayToObject,
     WebhookSettingsTab,
     WebhookHeadersTab,
@@ -29,8 +28,11 @@ import {
 /**
  * Map raw API data to a typed WebhookChannel object.
  *
- * The server redacts `auth_credentials` (issue #187), so we read the
- * `auth_credentials_set` boolean indicator instead.
+ * The server redacts `auth_credentials` AND the custom webhook
+ * `headers` map (issue #187). We read the `auth_credentials_set`
+ * boolean and the `header_names` array (sorted) instead. Header
+ * names are non-secret and may be displayed; values never leave
+ * the server.
  */
 const mapWebhookChannel = (ch: Record<string, unknown>): WebhookChannel => ({
     id: ch.id as number,
@@ -40,7 +42,9 @@ const mapWebhookChannel = (ch: Record<string, unknown>): WebhookChannel => ({
     is_estate_default: ch.is_estate_default as boolean,
     endpoint_url: (ch.endpoint_url as string) || '',
     http_method: (ch.http_method as string) || 'POST',
-    headers: (ch.headers as Record<string, string>) || {},
+    header_names: Array.isArray(ch.header_names)
+        ? (ch.header_names as string[])
+        : [],
     auth_type: (ch.auth_type as string) || 'none',
     auth_credentials_set: Boolean(ch.auth_credentials_set),
     template_alert_fire: (ch.template_alert_fire as string) || '',
@@ -56,6 +60,21 @@ const AdminWebhookChannels: React.FC = () => {
     // Local form state
     const [form, setForm] = useState<WebhookFormState>(DEFAULT_WEBHOOK_FORM);
     const [authFields, setAuthFields] = useState<Record<string, string>>({});
+    /**
+     * True once the user has interacted with the headers tab in the
+     * current dialog session (added, edited, or removed any row).
+     *
+     * Issue #187: the server redacts custom webhook header VALUES.
+     * The edit dialog therefore opens with an empty headers list even
+     * when the channel has headers configured. We must NOT submit an
+     * empty `headers: {}` object to the server in that case — that
+     * would replace the stored headers with nothing. The
+     * three-way-merge contract is: omit `headers` to preserve, send a
+     * non-empty object to replace, send an empty object to clear.
+     * `headersTouched` tracks whether the user actually intended a
+     * change so we can omit the field when they didn't.
+     */
+    const [headersTouched, setHeadersTouched] = useState(false);
 
     // --- Form management ---
 
@@ -71,20 +90,22 @@ const AdminWebhookChannels: React.FC = () => {
     const handleOpenCreate = useCallback(() => {
         setForm(DEFAULT_WEBHOOK_FORM);
         setAuthFields({});
+        setHeadersTouched(false);
         crud.openCreate();
     }, [crud]);
 
     const handleOpenEdit = useCallback(
         (e: React.MouseEvent, channel: WebhookChannel) => {
-            // Auth credentials are redacted by the server, so we cannot
-            // pre-populate the credential fields. Leave them blank; an
-            // empty submission means "preserve the existing credentials".
+            // Auth credentials and custom header VALUES are redacted
+            // by the server, so we cannot pre-populate either. Leave
+            // them blank; an untouched submission means "preserve
+            // existing values" via the server's three-way merge.
             setForm({
                 name: channel.name,
                 description: channel.description,
                 endpoint_url: channel.endpoint_url,
                 http_method: channel.http_method,
-                headers: headersObjectToArray(channel.headers),
+                headers: [],
                 auth_type: channel.auth_type || 'none',
                 auth_credentials: '',
                 enabled: channel.enabled,
@@ -94,6 +115,7 @@ const AdminWebhookChannels: React.FC = () => {
                 template_reminder: channel.template_reminder || '',
             });
             setAuthFields({});
+            setHeadersTouched(false);
             crud.openEdit(e, channel);
         },
         [crud],
@@ -104,6 +126,10 @@ const AdminWebhookChannels: React.FC = () => {
     }, [crud]);
 
     // --- Header management ---
+    //
+    // Each handler flips `headersTouched` to true. The save handler
+    // uses that flag to decide whether to include `headers` in the
+    // PUT body (see `handleSaveChannel` for the omit-vs-send logic).
 
     const handleAddHeader = useCallback(() => {
         setForm((prev) => ({
@@ -113,6 +139,7 @@ const AdminWebhookChannels: React.FC = () => {
                 { id: crypto.randomUUID(), key: '', value: '' },
             ],
         }));
+        setHeadersTouched(true);
     }, []);
 
     const handleHeaderChange = useCallback(
@@ -123,6 +150,7 @@ const AdminWebhookChannels: React.FC = () => {
                     h.id === id ? { ...h, [field]: value } : h,
                 ),
             }));
+            setHeadersTouched(true);
         },
         [],
     );
@@ -132,6 +160,7 @@ const AdminWebhookChannels: React.FC = () => {
             ...prev,
             headers: prev.headers.filter((h) => h.id !== id),
         }));
+        setHeadersTouched(true);
     }, []);
 
     // --- Auth management ---
@@ -271,10 +300,15 @@ const AdminWebhookChannels: React.FC = () => {
                 if (form.http_method !== crud.editingChannel.http_method) {
                     body.http_method = form.http_method;
                 }
-                if (
-                    JSON.stringify(headersObj) !==
-                    JSON.stringify(crud.editingChannel.headers)
-                ) {
+                // Headers handling (issue #187): values are redacted
+                // server-side, so the edit dialog never sees them. We
+                // include `headers` in the PUT body only when the
+                // user has actually interacted with the headers tab.
+                // Untouched edits omit the field entirely so the
+                // server's three-way merge preserves stored headers.
+                // A user-initiated empty list (added then removed all
+                // rows) sends `{}` to clear the stored headers.
+                if (headersTouched) {
                     body.headers = headersObj;
                 }
                 const authTypeChanged =
@@ -358,6 +392,7 @@ const AdminWebhookChannels: React.FC = () => {
         form,
         authFields,
         crud,
+        headersTouched,
         hasUserEnteredCredentials,
         partiallyEnteredCredentials,
     ]);
@@ -418,6 +453,15 @@ const AdminWebhookChannels: React.FC = () => {
                     onRemoveHeader={handleRemoveHeader}
                     saving={crud.saving}
                     visible={crud.dialogTab === 1}
+                    // Surface the configured header NAMES (no values)
+                    // when editing a channel that has stored headers
+                    // and the user has not yet touched the form;
+                    // values are redacted by the server (issue #187).
+                    configuredHeaderNames={
+                        isEditing && !headersTouched
+                            ? crud.editingChannel?.header_names ?? []
+                            : []
+                    }
                 />
                 <WebhookAuthTab
                     authType={form.auth_type}

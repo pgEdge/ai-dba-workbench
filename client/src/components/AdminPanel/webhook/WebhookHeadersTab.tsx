@@ -22,6 +22,16 @@ export interface WebhookHeadersTabProps {
     onRemoveHeader: (id: string) => void;
     saving: boolean;
     visible: boolean;
+    /**
+     * Names of headers already stored on the server for this channel.
+     * Surfaced to the user when editing a channel that has stored
+     * headers but no header VALUES are available (the server redacts
+     * them; see issue #187). When non-empty, a helper line lists the
+     * names and explains the merge semantics: re-enter all to
+     * replace, leave blank to keep. The component does NOT pre-fill
+     * the form fields with these names — they're informational only.
+     */
+    configuredHeaderNames?: string[];
 }
 
 /**
@@ -35,13 +45,34 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
     onRemoveHeader,
     saving,
     visible,
+    configuredHeaderNames = [],
 }) => {
     const theme = useTheme();
     const containedButtonSx = getContainedButtonSx(theme);
     const deleteIconSx = getDeleteIconSx(theme);
 
+    const hasConfiguredNames = configuredHeaderNames.length > 0;
+    // Helper line shown only when editing a channel that already has
+    // stored headers and the user has not yet touched the headers
+    // tab. Pluralise "header" for readability when there is more than
+    // one configured name.
+    const configuredHelperText = hasConfiguredNames
+        ? `${configuredHeaderNames.length} custom `
+            + `header${configuredHeaderNames.length === 1 ? '' : 's'} `
+            + `configured: ${configuredHeaderNames.join(', ')} — `
+            + 're-enter all to replace, leave blank to keep'
+        : null;
+
     return (
         <Box sx={{ display: visible ? 'block' : 'none' }}>
+            {configuredHelperText && (
+                <Typography
+                    color="text.secondary"
+                    sx={{ fontSize: '0.875rem', mb: 2, mt: 1 }}
+                >
+                    {configuredHelperText}
+                </Typography>
+            )}
             {headers.length > 0 ? (
                 headers.map((header) => (
                     <Box
@@ -78,12 +109,19 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
                     </Box>
                 ))
             ) : (
-                <Typography
-                    color="text.secondary"
-                    sx={{ fontSize: '1rem', mb: 2, mt: 1 }}
-                >
-                    No custom headers configured.
-                </Typography>
+                // The "No custom headers configured." message would
+                // mislead the user when the server actually has
+                // headers stored but redacted (issue #187); the
+                // configured-names helper above already conveys that
+                // state, so suppress this empty-state line in that case.
+                !hasConfiguredNames && (
+                    <Typography
+                        color="text.secondary"
+                        sx={{ fontSize: '1rem', mb: 2, mt: 1 }}
+                    >
+                        No custom headers configured.
+                    </Typography>
+                )
             )}
             <Button
                 size="small"

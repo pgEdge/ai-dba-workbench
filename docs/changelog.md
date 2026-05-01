@@ -132,6 +132,16 @@ project adheres to
 
 ### Fixed
 
+- Fix wide markdown tables overflowing and clipping the
+  right-side columns inside the Ask Ellie chat panel;
+  tables returned by MCP tools such as
+  `get_alert_history`, `get_alert_rules`, and
+  `query_datastore` now sit inside a horizontally
+  scrollable wrapper, so narrow tables still fill the
+  bubble while wide tables scroll within it instead of
+  spilling outside. The shared `MarkdownContent`
+  helper used by other dialogs received the same
+  treatment. (#185)
 - Fix the web client rendering a blank screen on every
   navigation when the LLM proxy was enabled with a
   reasoning model that returns a structured `summary`

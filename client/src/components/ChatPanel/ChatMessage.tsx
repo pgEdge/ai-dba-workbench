@@ -266,10 +266,31 @@ const getMdBlockquoteSx = (theme: Theme) => ({
     fontStyle: 'italic',
 });
 
-const getMdTableSx = (theme: Theme) => ({
+// Wrapper around <table> that turns wide markdown tables into horizontally
+// scrollable regions instead of letting them clip at the right edge of the
+// chat bubble. Vertical overflow stays visible so tall tables still grow
+// the bubble naturally. Combined with getMdTableSx (width: 'auto', minWidth:
+// '100%') narrow tables look identical to the previous full-width layout.
+const getMdTableContainerSx = () => ({
+    display: 'block',
     width: '100%',
-    borderCollapse: 'collapse',
+    maxWidth: '100%',
+    overflowX: 'auto',
+    overflowY: 'visible',
+    // Smooth momentum scrolling on iOS / iPadOS Safari.
+    WebkitOverflowScrolling: 'touch',
     my: 1,
+});
+
+const getMdTableSx = (theme: Theme) => ({
+    // The wrapper provides horizontal scrolling; the table itself sizes to
+    // its widest row and only stretches to fill the bubble (minWidth: 100%)
+    // when its natural width is smaller than the container.
+    width: 'auto',
+    minWidth: '100%',
+    borderCollapse: 'collapse',
+    // Spacing lives on the container so the scrollbar tracks with the table.
+    my: 0,
     fontSize: '1.125rem',
     '& th, & td': {
         border: '1px solid',
@@ -450,9 +471,19 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                     {children}
                 </Box>
             ),
+            // Wrap the rendered <table> in a horizontally scrollable
+            // container. Without this the table inherits the bubble's
+            // ~92% maxWidth and clips its right-side columns; MCP tool
+            // payloads (alerts, query rows, etc.) are routinely wider
+            // than the chat panel.
             table: ({ children }: { children?: React.ReactNode }) => (
-                <Box component="table" sx={getMdTableSx(theme)}>
-                    {children}
+                <Box
+                    data-testid="chat-table-container"
+                    sx={getMdTableContainerSx()}
+                >
+                    <Box component="table" sx={getMdTableSx(theme)}>
+                        {children}
+                    </Box>
                 </Box>
             ),
         }),

@@ -694,6 +694,64 @@ func TestNotificationChannelStruct(t *testing.T) {
 	}
 }
 
+// assertChannelInitial checks the literal struct initialization
+// captures the expected values. Pulling these checks out of the
+// outer test keeps the per-function cyclomatic complexity below the
+// project Lizard ccn-medium budget (limit 12).
+func assertChannelInitial(t *testing.T, ch *NotificationChannel) {
+	t.Helper()
+	wantTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	if ch.ID != 2 {
+		t.Errorf("expected ID 2, got %d", ch.ID)
+	}
+	if ch.Description != nil {
+		t.Errorf("expected nil Description, got %v", ch.Description)
+	}
+	if ch.CreatedAt != wantTime {
+		t.Errorf("expected CreatedAt 2025-06-01, got %v", ch.CreatedAt)
+	}
+	if ch.UpdatedAt != wantTime {
+		t.Errorf("expected UpdatedAt 2025-06-01, got %v", ch.UpdatedAt)
+	}
+}
+
+// assertJSONRedactsHeaders checks that header values never appear in
+// the serialized JSON, the "headers" key is absent, and the
+// "header_names" projection lists the configured key names.
+func assertJSONRedactsHeaders(t *testing.T, jsonStr string) {
+	t.Helper()
+	if strings.Contains(jsonStr, "Bearer token123") {
+		t.Errorf("JSON output leaked header secret: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"headers"`) {
+		t.Errorf("JSON output unexpectedly contains \"headers\" key: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"header_names":["Authorization"]`) {
+		t.Errorf("JSON output missing header_names projection: %s", jsonStr)
+	}
+}
+
+// assertChannelDecoded checks the round-tripped struct: Headers must
+// be empty (json:"-" drops on marshal AND unmarshal) and HeaderNames
+// must round-trip intact.
+func assertChannelDecoded(t *testing.T, decoded *NotificationChannel) {
+	t.Helper()
+	if decoded.Name != "custom-webhook" {
+		t.Errorf("expected Name 'custom-webhook', got %q", decoded.Name)
+	}
+	if decoded.ChannelType != ChannelTypeWebhook {
+		t.Errorf("expected ChannelType 'webhook', got %q", decoded.ChannelType)
+	}
+	if len(decoded.Headers) != 0 {
+		t.Errorf("expected decoded.Headers empty after json round-trip, got %v",
+			decoded.Headers)
+	}
+	if len(decoded.HeaderNames) != 1 || decoded.HeaderNames[0] != "Authorization" {
+		t.Errorf("expected HeaderNames [Authorization], got %v",
+			decoded.HeaderNames)
+	}
+}
+
 func TestNotificationChannelJSON(t *testing.T) {
 	ch := NotificationChannel{
 		ID:          2,
@@ -701,44 +759,29 @@ func TestNotificationChannelJSON(t *testing.T) {
 		ChannelType: ChannelTypeWebhook,
 		Name:        "custom-webhook",
 		HTTPMethod:  "POST",
+		// Headers values are sensitive (Authorization, X-API-Key, ...)
+		// and must never appear in JSON output. HeaderNames is the
+		// public projection: just the configured key names.
 		Headers:     map[string]string{"Authorization": "Bearer token123"},
+		HeaderNames: []string{"Authorization"},
 		SMTPPort:    0,
 		CreatedAt:   time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:   time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
 
-	if ch.ID != 2 {
-		t.Errorf("expected ID 2, got %d", ch.ID)
-	}
-	if ch.Description != nil {
-		t.Errorf("expected nil Description, got %v", ch.Description)
-	}
-	if ch.CreatedAt != time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC) {
-		t.Errorf("expected CreatedAt 2025-06-01, got %v", ch.CreatedAt)
-	}
-	if ch.UpdatedAt != time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC) {
-		t.Errorf("expected UpdatedAt 2025-06-01, got %v", ch.UpdatedAt)
-	}
+	assertChannelInitial(t, &ch)
 
 	data, err := json.Marshal(ch)
 	if err != nil {
 		t.Fatalf("failed to marshal NotificationChannel: %v", err)
 	}
+	assertJSONRedactsHeaders(t, string(data))
 
 	var decoded NotificationChannel
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("failed to unmarshal NotificationChannel: %v", err)
 	}
-
-	if decoded.Name != "custom-webhook" {
-		t.Errorf("expected Name 'custom-webhook', got %q", decoded.Name)
-	}
-	if decoded.ChannelType != ChannelTypeWebhook {
-		t.Errorf("expected ChannelType 'webhook', got %q", decoded.ChannelType)
-	}
-	if decoded.Headers["Authorization"] != "Bearer token123" {
-		t.Errorf("expected Authorization header, got %v", decoded.Headers)
-	}
+	assertChannelDecoded(t, &decoded)
 }
 
 func TestEmailRecipientStruct(t *testing.T) {

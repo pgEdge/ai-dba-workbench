@@ -10518,10 +10518,10 @@
             "description": "From name (email)",
             "nullable": true
           },
-          "headers": {
-            "type": "object",
-            "description": "HTTP headers for webhook",
-            "additionalProperties": {
+          "header_names": {
+            "type": "array",
+            "description": "Names of configured custom HTTP headers; values are never returned because they may carry bearer tokens or API keys",
+            "items": {
               "type": "string"
             }
           },
@@ -10651,7 +10651,7 @@
           },
           "headers": {
             "type": "object",
-            "description": "HTTP headers for webhook",
+            "description": "HTTP headers for webhook. On PUT: omit to keep existing, send an empty object to clear, send a non-empty map to replace. Values are accepted but never returned; the response exposes only header_names.",
             "additionalProperties": {
               "type": "string"
             }

@@ -436,14 +436,160 @@ func TestGetChannel_FlagsFalseWhenSecretsAbsent(t *testing.T) {
 	}
 
 	got := decodeRaw(t, rec.Body.Bytes())
+	// Require the *_set keys to be present, decode as bool, and report
+	// false. The previous form `got[key].(bool)` returned the zero
+	// value for a missing key, so a regression that dropped the flags
+	// entirely from the response would silently pass.
 	for _, key := range []string{
 		"webhook_url_set", "auth_credentials_set",
 		"smtp_username_set", "smtp_password_set",
 	} {
-		if v, _ := got[key].(bool); v {
-			t.Errorf("%s = true, want false", key)
+		v, ok := got[key]
+		if !ok {
+			t.Errorf("missing %s in response", key)
+			continue
+		}
+		b, isBool := v.(bool)
+		if !isBool || b {
+			t.Errorf("%s = %v, want false", key, v)
 		}
 	}
+}
+
+// createTestWebhookChannelWithHeaders inserts a webhook channel that
+// carries a custom Headers map and returns its ID. Webhook channels
+// are minimal — they don't need SMTP fields — but the dedicated
+// helper avoids tangling the existing email-focused createTestChannel
+// signature with another optional argument.
+func createTestWebhookChannelWithHeaders(t *testing.T, ds *database.Datastore,
+	name string, headers map[string]string) int64 {
+	t.Helper()
+	owner := "channel_admin"
+	endpoint := "https://example.com/webhook"
+	channel := &database.NotificationChannel{
+		OwnerUsername:         &owner,
+		Enabled:               true,
+		ChannelType:           database.ChannelTypeWebhook,
+		Name:                  name,
+		HTTPMethod:            "POST",
+		EndpointURL:           &endpoint,
+		Headers:               headers,
+		ReminderIntervalHours: 4,
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), channel); err != nil {
+		t.Fatalf("CreateNotificationChannel: %v", err)
+	}
+	return channel.ID
+}
+
+// TestGetChannel_RedactsHeaderValues is a regression test for the
+// CodeRabbit finding on PR #196. Custom webhook headers commonly
+// carry secrets (Authorization bearer tokens, X-API-Key, etc.), so
+// the response struct uses `json:"-"` for Headers and exposes only
+// header_names. This test creates a webhook channel with a
+// secret-bearing header, fetches it, and asserts:
+//   - the secret value is absent from the response body;
+//   - the JSON key "headers" is absent from the response;
+//   - the JSON key "header_names" is present and lists the configured
+//     header keys in alphabetical order.
+func TestGetChannel_RedactsHeaderValues(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	const bearer = "secret-token-xyz"
+	channelID := createTestWebhookChannelWithHeaders(t, ds,
+		"with-headers", map[string]string{
+			"Authorization": "Bearer " + bearer,
+			"X-Tenant-ID":   "tenant-1",
+		})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/notification-channels/"+strconv.FormatInt(channelID, 10), nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The secret value MUST NOT appear anywhere in the response.
+	if strings.Contains(body, bearer) {
+		t.Errorf("body leaked header secret %q; body=%s", bearer, body)
+	}
+	// The "headers" JSON key MUST be absent.
+	if strings.Contains(body, `"headers"`) {
+		t.Errorf("response includes redacted key \"headers\"; body=%s", body)
+	}
+
+	got := decodeRaw(t, rec.Body.Bytes())
+	raw, ok := got["header_names"]
+	if !ok {
+		t.Fatalf("response missing header_names; body=%s", body)
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("header_names = %v (%T), want []any", raw, raw)
+	}
+	names := make([]string, 0, len(arr))
+	for _, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			t.Errorf("header_names entry %v is not a string", v)
+			continue
+		}
+		names = append(names, s)
+	}
+	want := []string{"Authorization", "X-Tenant-ID"}
+	if !equalStringSlice(names, want) {
+		t.Errorf("header_names = %v, want %v (sorted)", names, want)
+	}
+}
+
+// TestGetChannel_NoHeadersOmitsHeaderNames verifies that a channel
+// configured without custom headers has the `header_names` field
+// omitted entirely from the JSON response (omitempty + nil slice).
+func TestGetChannel_NoHeadersOmitsHeaderNames(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	channelID := createTestWebhookChannelWithHeaders(t, ds, "no-headers", nil)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/notification-channels/"+strconv.FormatInt(channelID, 10), nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"header_names"`) {
+		t.Errorf("response includes header_names when none configured; body=%s",
+			rec.Body.String())
+	}
+}
+
+// equalStringSlice reports whether two string slices have identical
+// contents and order. Used by the header-redaction test to confirm
+// the alphabetical ordering of header_names.
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestGetChannel_NotFound covers the 404 path.
@@ -466,8 +612,83 @@ func TestGetChannel_NotFound(t *testing.T) {
 
 // -- GET /api/v1/notification-channels (list) ---------------------------------
 
-// TestListChannels_RedactsSecrets verifies the list endpoint also
-// redacts secrets and exposes the `*_set` flags for every channel.
+// expectBoolField asserts that `got[key]` is present, decodes as a
+// bool, and matches the expected value. It centralizes the
+// require-key-present + type-check + value-match pattern so list
+// assertions stay readable and stay below the project complexity
+// budget.
+func expectBoolField(t *testing.T, got rawJSON, label, key string, want bool) {
+	t.Helper()
+	v, ok := got[key]
+	if !ok {
+		t.Errorf("%s: missing %s in response", label, key)
+		return
+	}
+	b, isBool := v.(bool)
+	if !isBool {
+		t.Errorf("%s: %s = %v (%T), want bool", label, key, v, v)
+		return
+	}
+	if b != want {
+		t.Errorf("%s: %s = %v, want %v", label, key, b, want)
+	}
+}
+
+// expectKeyAbsent reports an error when a redacted JSON key appears
+// in the response payload. Used to keep the list-redaction loop
+// concise.
+func expectKeyAbsent(t *testing.T, got rawJSON, label, key string) {
+	t.Helper()
+	if _, ok := got[key]; ok {
+		t.Errorf("%s: leaked redacted key %q; value=%v", label, key, got[key])
+	}
+}
+
+// listChannelsFlagKeys are the four boolean indicators every channel
+// in the list response must expose.
+var listChannelsFlagKeys = []string{
+	"webhook_url_set", "auth_credentials_set",
+	"smtp_username_set", "smtp_password_set",
+}
+
+// listChannelsRedactedKeys are the four secret JSON keys that must
+// never appear on a channel in the list response.
+var listChannelsRedactedKeys = []string{
+	"webhook_url", "auth_credentials", "smtp_username", "smtp_password",
+}
+
+// expectListRowFlags identifies the row by name and asserts the
+// four `*_set` flags match the expected state for that row, plus
+// none of the redacted keys leak. The helper keeps
+// TestListChannels_RedactsSecrets below the project ccn-medium
+// budget.
+func expectListRowFlags(t *testing.T, item rawJSON) {
+	t.Helper()
+	name, _ := item["name"].(string)
+	var want bool
+	switch name {
+	case "list-with-secrets":
+		want = true
+	case "list-without-secrets":
+		want = false
+	default:
+		t.Errorf("unexpected channel name in list: %q", name)
+		return
+	}
+	for _, key := range listChannelsFlagKeys {
+		expectBoolField(t, item, name, key, want)
+	}
+	for _, redactedKey := range listChannelsRedactedKeys {
+		expectKeyAbsent(t, item, name, redactedKey)
+	}
+}
+
+// TestListChannels_RedactsSecrets verifies the list endpoint redacts
+// secret values, exposes per-row `*_set` flags that match the actual
+// stored state, and never echoes a redacted key. Two channels are
+// created — one with all four secrets, one with none — so a
+// regression that returned all-true or all-false uniformly across
+// the list cannot pass this test.
 func TestListChannels_RedactsSecrets(t *testing.T) {
 	ds, _, cleanupDS := newChannelTestDatastore(t)
 	defer cleanupDS()
@@ -475,9 +696,13 @@ func TestListChannels_RedactsSecrets(t *testing.T) {
 	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
 	defer cleanupAuth()
 
-	wh := "https://hooks.example.com/list-leak"
-	pw := "list-leak-password"
-	createTestChannel(t, ds, "list-with-secrets", &wh, nil, nil, &pw)
+	const (
+		wh   = "https://hooks.example.com/list-leak"
+		ac   = "Bearer list-leak-bearer"
+		user = "list-leak-user"
+		pw   = "list-leak-password"
+	)
+	createTestChannel(t, ds, "list-with-secrets", ptr(wh), ptr(ac), ptr(user), ptr(pw))
 	createTestChannel(t, ds, "list-without-secrets", nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/notification-channels", nil)
@@ -489,8 +714,7 @@ func TestListChannels_RedactsSecrets(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-
-	for _, leaked := range []string{wh, pw} {
+	for _, leaked := range []string{wh, ac, user, pw} {
 		if strings.Contains(body, leaked) {
 			t.Errorf("list leaked %q; body=%s", leaked, body)
 		}
@@ -504,22 +728,7 @@ func TestListChannels_RedactsSecrets(t *testing.T) {
 		t.Fatalf("len(channels) = %d, want 2", len(arr))
 	}
 	for _, item := range arr {
-		for _, key := range []string{
-			"webhook_url_set", "auth_credentials_set",
-			"smtp_username_set", "smtp_password_set",
-		} {
-			if _, ok := item[key]; !ok {
-				t.Errorf("list item missing %s", key)
-			}
-		}
-		// Redacted keys must not appear at all.
-		for _, redactedKey := range []string{
-			"webhook_url", "auth_credentials", "smtp_username", "smtp_password",
-		} {
-			if _, ok := item[redactedKey]; ok {
-				t.Errorf("list item leaked redacted key %q", redactedKey)
-			}
-		}
+		expectListRowFlags(t, item)
 	}
 }
 

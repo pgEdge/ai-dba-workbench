@@ -47,6 +47,9 @@ const getFieldByLabel = (container: HTMLElement, labelText: string): HTMLElement
     throw new Error(`Could not find field with label: ${labelText}`);
 };
 
+// API responses no longer include `smtp_username` or `smtp_password`
+// (redacted by the server, issue #187). Channels indicate whether each
+// secret is configured via the matching `*_set` boolean instead.
 const mockEmailChannels = [
     {
         id: 1,
@@ -57,7 +60,8 @@ const mockEmailChannels = [
         is_estate_default: false,
         smtp_host: 'smtp.example.com',
         smtp_port: 587,
-        smtp_username: 'user@example.com',
+        smtp_username_set: true,
+        smtp_password_set: true,
         smtp_use_tls: true,
         from_address: 'from@example.com',
         from_name: 'Test Sender',
@@ -72,7 +76,8 @@ const mockEmailChannels = [
         is_estate_default: true,
         smtp_host: 'smtp.prod.com',
         smtp_port: 465,
-        smtp_username: 'prod@example.com',
+        smtp_username_set: true,
+        smtp_password_set: true,
         smtp_use_tls: true,
         from_address: 'alerts@prod.com',
         from_name: 'Production Alerts',
@@ -369,6 +374,233 @@ describe('AdminEmailChannels', () => {
             const putCall = mockApiPut.mock.calls[0];
             expect(putCall[1]).not.toHaveProperty('smtp_host');
             expect(putCall[1]).not.toHaveProperty('smtp_port');
+            // SMTP credentials must NOT be sent when the form fields
+            // are blank — even though the channel reports them as set.
+            // Sending an empty string would clear the redacted secret
+            // on the server (see issue #187).
+            expect(putCall[1]).not.toHaveProperty('smtp_username');
+            expect(putCall[1]).not.toHaveProperty('smtp_password');
+        });
+
+        it('leaves SMTP secret form fields blank when editing a channel that has them configured', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+
+            // Both username and password should be blank, with a hint
+            // that values are configured on the server.
+            expect(getFieldByLabel(dialog, 'SMTP Username')).toHaveValue('');
+            expect(getFieldByLabel(dialog, 'SMTP Password')).toHaveValue('');
+            expect(
+                within(dialog).getAllByText(/Leave blank to keep it unchanged/i),
+            ).not.toHaveLength(0);
+        });
+
+        it('omits SMTP password from the PUT body when left blank', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+
+            // Tweak something benign and submit without touching
+            // either secret field.
+            fireEvent.change(getFieldByLabel(dialog, 'Description'), {
+                target: { value: 'tweaked' },
+            });
+
+            await user.click(within(dialog).getByRole('button', { name: /Save/i }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body).not.toHaveProperty('smtp_username');
+            expect(body).not.toHaveProperty('smtp_password');
+            expect(body).toHaveProperty('description', 'tweaked');
+        });
+
+        it('sends typed SMTP password in the PUT body', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Password'), {
+                target: { value: 'rotated-secret' },
+            });
+            fireEvent.change(getFieldByLabel(dialog, 'SMTP Username'), {
+                target: { value: 'rotated-user' },
+            });
+
+            await user.click(within(dialog).getByRole('button', { name: /Save/i }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalledWith(
+                    '/api/v1/notification-channels/1',
+                    expect.objectContaining({
+                        smtp_password: 'rotated-secret',
+                        smtp_username: 'rotated-user',
+                    }),
+                );
+            });
+        });
+
+        it('toggles use_tls, enabled, and is_estate_default and updates from_name', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+
+            // Update the From Name (no copyrighted secret).
+            fireEvent.change(getFieldByLabel(dialog, 'From Name'), {
+                target: { value: 'Renamed Sender' },
+            });
+            // Toggle Use TLS, Enabled (dialog), and Estate Default.
+            const useTlsToggle = within(dialog).getByRole('checkbox', {
+                name: 'Toggle use TLS',
+            });
+            fireEvent.click(useTlsToggle);
+            const enabledToggle = within(dialog).getByRole('checkbox', {
+                name: 'Toggle channel enabled',
+            });
+            fireEvent.click(enabledToggle);
+            const estateToggle = within(dialog).getByRole('checkbox', {
+                name: 'Toggle estate default',
+            });
+            fireEvent.click(estateToggle);
+
+            await user.click(within(dialog).getByRole('button', { name: /Save/i }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body).toMatchObject({
+                from_name: 'Renamed Sender',
+                smtp_use_tls: false,
+                enabled: false,
+                is_estate_default: true,
+            });
+        });
+
+        it('keeps the Save button enabled with blank SMTP secret fields on edit', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.resolve({ recipients: [] });
+                }
+                return Promise.resolve({});
+            });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            const dialog = screen.getByRole('dialog');
+            const saveButton = within(dialog).getByRole('button', { name: /Save/i });
+            // Save button must be enabled even though the password
+            // form field is blank — empty means "preserve existing".
+            expect(saveButton).not.toBeDisabled();
         });
     });
 

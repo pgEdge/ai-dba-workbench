@@ -20,6 +20,13 @@ export interface WebhookAuthTabProps {
     onAuthFieldChange: (field: string, value: string) => void;
     saving: boolean;
     visible: boolean;
+    /**
+     * True when the channel already has credentials stored on the
+     * server. The server redacts the actual values, so we surface a
+     * placeholder hint instead of leaving secret fields looking like
+     * plain "empty" inputs (which would be misleading).
+     */
+    credentialsConfigured?: boolean;
 }
 
 /**
@@ -33,7 +40,18 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
     onAuthFieldChange,
     saving,
     visible,
+    credentialsConfigured = false,
 }) => {
+    // Hint shown only when editing an existing channel that has
+    // credentials configured server-side. The server will preserve the
+    // stored value if the user submits the form with these fields blank.
+    const placeholder = credentialsConfigured
+        ? 'Leave blank to keep existing'
+        : '';
+    const helperText = credentialsConfigured
+        ? 'Existing credentials are configured. Leave blank to keep them unchanged.'
+        : undefined;
+
     return (
         <Box sx={{ display: visible ? 'block' : 'none' }}>
             <TextField
@@ -68,6 +86,8 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         }}
                         disabled={saving}
                         margin="dense"
+                        placeholder={placeholder}
+                        helperText={helperText}
                         InputLabelProps={{ shrink: true }}
                     />
                     <TextField
@@ -80,6 +100,7 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         }}
                         disabled={saving}
                         margin="dense"
+                        placeholder={placeholder}
                         InputLabelProps={{ shrink: true }}
                     />
                 </>
@@ -98,6 +119,8 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                     }}
                     disabled={saving}
                     margin="dense"
+                    placeholder={placeholder}
+                    helperText={helperText}
                     InputLabelProps={{ shrink: true }}
                 />
             )}
@@ -114,6 +137,8 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         }}
                         disabled={saving}
                         margin="dense"
+                        placeholder={placeholder}
+                        helperText={helperText}
                         InputLabelProps={{ shrink: true }}
                     />
                     <TextField
@@ -127,6 +152,7 @@ const WebhookAuthTab: React.FC<WebhookAuthTabProps> = ({
                         }}
                         disabled={saving}
                         margin="dense"
+                        placeholder={placeholder}
                         InputLabelProps={{ shrink: true }}
                     />
                 </>

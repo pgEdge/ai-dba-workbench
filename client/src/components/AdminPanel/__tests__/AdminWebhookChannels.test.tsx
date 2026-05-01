@@ -29,6 +29,9 @@ import AdminWebhookChannels from '../AdminWebhookChannels';
 
 let uuidCounter = 0;
 
+// API responses no longer include `auth_credentials` (redacted by the
+// server, issue #187). Channels indicate whether credentials are
+// configured via the `auth_credentials_set` boolean instead.
 const mockWebhookChannels = [
     {
         id: 1,
@@ -41,7 +44,7 @@ const mockWebhookChannels = [
         http_method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         auth_type: 'bearer',
-        auth_credentials: 'test-token',
+        auth_credentials_set: true,
         template_alert_fire: '',
         template_alert_clear: '',
         template_reminder: '',
@@ -57,7 +60,7 @@ const mockWebhookChannels = [
         http_method: 'PUT',
         headers: {},
         auth_type: 'basic',
-        auth_credentials: 'user:pass',
+        auth_credentials_set: true,
         template_alert_fire: '{"custom": true}',
         template_alert_clear: '',
         template_reminder: '',
@@ -146,7 +149,7 @@ describe('AdminWebhookChannels', () => {
         expect(screen.getByLabelText('Endpoint URL *')).toHaveValue('');
     });
 
-    it('opens edit dialog populated with channel data', async () => {
+    it('opens edit dialog populated with non-secret channel data', async () => {
         mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
         const user = userEvent.setup({ delay: null });
 
@@ -163,6 +166,7 @@ describe('AdminWebhookChannels', () => {
             expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
         });
 
+        // Non-secret fields are pre-populated.
         expect(screen.getByLabelText('Name *')).toHaveValue('Test Webhook');
         expect(screen.getByLabelText('Endpoint URL *')).toHaveValue('https://example.com/webhook');
     });
@@ -272,6 +276,10 @@ describe('AdminWebhookChannels', () => {
         const [, body] = mockApiPut.mock.calls[0];
         expect(body).not.toHaveProperty('endpoint_url');
         expect(body).not.toHaveProperty('http_method');
+        // The auth credentials must not be in the body when the form
+        // fields are blank, even though `auth_credentials_set` is true.
+        // Otherwise the server would clear the redacted secret.
+        expect(body).not.toHaveProperty('auth_credentials');
     });
 
     it('deletes channel via confirmation dialog', async () => {
@@ -479,7 +487,7 @@ describe('AdminWebhookChannels', () => {
     });
 
     describe('Authentication tab', () => {
-        it('displays bearer auth fields when bearer type is selected', async () => {
+        it('shows blank credential fields and a configured hint when editing a bearer channel', async () => {
             mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
             const user = userEvent.setup({ delay: null });
 
@@ -498,11 +506,18 @@ describe('AdminWebhookChannels', () => {
 
             await user.click(screen.getByRole('tab', { name: 'Authentication' }));
 
-            // Bearer is already selected for this channel
-            expect(screen.getByLabelText('Token')).toHaveValue('test-token');
+            // Bearer token must NOT be pre-populated; the API redacts it.
+            const tokenField = screen.getByLabelText('Token');
+            expect(tokenField).toHaveValue('');
+            // The placeholder/helper text should communicate that
+            // credentials are configured server-side.
+            expect(tokenField).toHaveAttribute('placeholder', 'Leave blank to keep existing');
+            expect(
+                screen.getByText(/Existing credentials are configured/i),
+            ).toBeInTheDocument();
         });
 
-        it('displays basic auth fields when basic type is selected', async () => {
+        it('shows blank basic auth fields with hint when credentials are configured', async () => {
             mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
             const user = userEvent.setup({ delay: null });
 
@@ -521,39 +536,126 @@ describe('AdminWebhookChannels', () => {
 
             await user.click(screen.getByRole('tab', { name: 'Authentication' }));
 
-            expect(screen.getByLabelText('Username')).toHaveValue('user');
-            expect(screen.getByLabelText('Password')).toHaveValue('pass');
+            expect(screen.getByLabelText('Username')).toHaveValue('');
+            expect(screen.getByLabelText('Password')).toHaveValue('');
+            expect(
+                screen.getByText(/Existing credentials are configured/i),
+            ).toBeInTheDocument();
         });
 
-        it('displays different auth fields based on channel auth type', async () => {
-            // Test that basic auth shows username/password
+        it('keeps existing credentials when the user saves without typing new ones', async () => {
             mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
             const user = userEvent.setup({ delay: null });
 
             renderWithTheme(<AdminWebhookChannels />);
 
             await waitFor(() => {
-                expect(screen.getByText('Another Webhook')).toBeInTheDocument();
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
             });
 
-            // Second channel has basic auth type
             const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
-            await user.click(editButtons[1]);
+            await user.click(editButtons[0]);
 
             await waitFor(() => {
-                expect(screen.getByText('Edit channel: Another Webhook')).toBeInTheDocument();
+                expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
+            });
+
+            // Tweak only the description.
+            await user.click(screen.getByRole('tab', { name: 'Settings' }));
+            const descField = screen.getByLabelText('Description');
+            fireEvent.change(descField, { target: { value: 'tweaked' } });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+
+            const [, body] = mockApiPut.mock.calls[0];
+            // Must NOT send auth_credentials at all; sending an empty
+            // string would clear the secret on the server.
+            expect(body).not.toHaveProperty('auth_credentials');
+            expect(body).not.toHaveProperty('auth_type');
+            expect(body).toHaveProperty('description', 'tweaked');
+        });
+
+        it('sends typed credentials in the PUT body', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
             });
 
             await user.click(screen.getByRole('tab', { name: 'Authentication' }));
 
-            // Basic auth fields should be visible
-            expect(screen.getByLabelText('Username')).toHaveValue('user');
-            expect(screen.getByLabelText('Password')).toHaveValue('pass');
+            // User types a new token.
+            fireEvent.change(screen.getByLabelText('Token'), {
+                target: { value: 'rotated-token' },
+            });
 
-            // Bearer token field should not be visible
-            expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
-            // API Key fields should not be visible
-            expect(screen.queryByLabelText('Header Name')).not.toBeInTheDocument();
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalledWith(
+                    '/api/v1/notification-channels/1',
+                    expect.objectContaining({
+                        auth_credentials: 'rotated-token',
+                    }),
+                );
+            });
+        });
+
+        it('clears credentials when switching auth_type to none', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Switch from bearer to none. The Auth Type field is a MUI
+            // Select; opening it requires a mousedown, then we click
+            // the desired option in the listbox.
+            fireEvent.mouseDown(screen.getByLabelText('Auth Type'));
+            const noneOption = await screen.findByRole('option', { name: 'None' });
+            fireEvent.click(noneOption);
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body.auth_type).toBe('none');
+            // Switching to `none` is the one case where we send the
+            // empty string explicitly: it tells the server to clear
+            // the stored credentials.
+            expect(body.auth_credentials).toBe('');
         });
 
         it('shows no auth fields for none auth type', async () => {
@@ -569,7 +671,7 @@ describe('AdminWebhookChannels', () => {
                 http_method: 'POST',
                 headers: {},
                 auth_type: 'none',
-                auth_credentials: '',
+                auth_credentials_set: false,
                 template_alert_fire: '',
                 template_alert_clear: '',
                 template_reminder: '',
@@ -600,8 +702,8 @@ describe('AdminWebhookChannels', () => {
             expect(screen.queryByLabelText('API Key Value')).not.toBeInTheDocument();
         });
 
-        it('displays api key auth fields', async () => {
-            // Create a channel with api_key auth type
+        it('shows blank api key fields with hint', async () => {
+            // Create a channel with api_key auth type and credentials set
             const channelWithApiKey = [{
                 id: 4,
                 channel_type: 'webhook',
@@ -613,7 +715,7 @@ describe('AdminWebhookChannels', () => {
                 http_method: 'POST',
                 headers: {},
                 auth_type: 'api_key',
-                auth_credentials: 'X-Api-Key:secret123',
+                auth_credentials_set: true,
                 template_alert_fire: '',
                 template_alert_clear: '',
                 template_reminder: '',
@@ -636,16 +738,16 @@ describe('AdminWebhookChannels', () => {
 
             await user.click(screen.getByRole('tab', { name: 'Authentication' }));
 
-            // API Key fields should be visible
-            expect(screen.getByLabelText('Header Name')).toHaveValue('X-Api-Key');
-            expect(screen.getByLabelText('API Key Value')).toHaveValue('secret123');
-
-            // Other auth fields should not be visible
-            expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
-            expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
+            // API key fields are blank but a hint indicates the
+            // credentials are configured.
+            expect(screen.getByLabelText('Header Name')).toHaveValue('');
+            expect(screen.getByLabelText('API Key Value')).toHaveValue('');
+            expect(
+                screen.getByText(/Existing credentials are configured/i),
+            ).toBeInTheDocument();
         });
 
-        it('masks sensitive credentials with password input type', async () => {
+        it('masks bearer token field with password input type', async () => {
             mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
             const user = userEvent.setup({ delay: null });
 
@@ -671,8 +773,7 @@ describe('AdminWebhookChannels', () => {
             expect(tokenField).toHaveAttribute('autocomplete', 'off');
         });
 
-        it('masks API key value with password input type', async () => {
-            // Create a channel with api_key auth type
+        it('masks api key value with password input type', async () => {
             const channelWithApiKey = [{
                 id: 4,
                 channel_type: 'webhook',
@@ -684,7 +785,7 @@ describe('AdminWebhookChannels', () => {
                 http_method: 'POST',
                 headers: {},
                 auth_type: 'api_key',
-                auth_credentials: 'X-Api-Key:secret123',
+                auth_credentials_set: true,
                 template_alert_fire: '',
                 template_alert_clear: '',
                 template_reminder: '',
@@ -715,6 +816,160 @@ describe('AdminWebhookChannels', () => {
             // Header Name should NOT be masked (not a secret)
             const headerNameField = screen.getByLabelText('Header Name');
             expect(headerNameField).not.toHaveAttribute('type', 'password');
+        });
+
+        it('sends typed basic auth credentials in the PUT body', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Another Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[1]); // basic auth channel
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Type into both basic-auth fields, exercising both
+            // onChange handlers in WebhookAuthTab.
+            fireEvent.change(screen.getByLabelText('Username'), {
+                target: { value: 'newuser' },
+            });
+            fireEvent.change(screen.getByLabelText('Password'), {
+                target: { value: 'newpass' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body.auth_credentials).toBe('newuser:newpass');
+        });
+
+        it('sends typed api_key credentials in the PUT body', async () => {
+            const channelWithApiKey = [{
+                id: 4,
+                channel_type: 'webhook',
+                name: 'API Key Webhook',
+                description: 'Test',
+                enabled: true,
+                is_estate_default: false,
+                endpoint_url: 'https://example.com/hook',
+                http_method: 'POST',
+                headers: {},
+                auth_type: 'api_key',
+                auth_credentials_set: true,
+                template_alert_fire: '',
+                template_alert_clear: '',
+                template_reminder: '',
+            }];
+            mockApiGet.mockResolvedValue({ notification_channels: channelWithApiKey });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('API Key Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Type both api_key fields, exercising both onChange handlers.
+            fireEvent.change(screen.getByLabelText('Header Name'), {
+                target: { value: 'X-Token' },
+            });
+            fireEvent.change(screen.getByLabelText('API Key Value'), {
+                target: { value: 'topsecret' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body.auth_credentials).toBe('X-Token:topsecret');
+        });
+
+        it('hides hint when the user switches auth type away from the channel original', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]); // Bearer auth originally
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            // Switch from bearer to basic via the MUI Select.
+            fireEvent.mouseDown(screen.getByLabelText('Auth Type'));
+            const basicOption = await screen.findByRole('option', { name: 'Basic' });
+            fireEvent.click(basicOption);
+
+            // After the switch, the existing credentials no longer
+            // apply, so the helper text should disappear.
+            expect(
+                screen.queryByText(/Existing credentials are configured/i),
+            ).not.toBeInTheDocument();
+        });
+
+        it('does not show configured hint when channel has no credentials set', async () => {
+            const channel = [{
+                id: 5,
+                channel_type: 'webhook',
+                name: 'Bearer Empty',
+                description: '',
+                enabled: true,
+                is_estate_default: false,
+                endpoint_url: 'https://example.com/hook',
+                http_method: 'POST',
+                headers: {},
+                auth_type: 'bearer',
+                auth_credentials_set: false,
+                template_alert_fire: '',
+                template_alert_clear: '',
+                template_reminder: '',
+            }];
+            mockApiGet.mockResolvedValue({ notification_channels: channel });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Bearer Empty')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Bearer Empty')).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('tab', { name: 'Authentication' }));
+
+            expect(
+                screen.queryByText(/Existing credentials are configured/i),
+            ).not.toBeInTheDocument();
         });
     });
 
@@ -851,6 +1106,126 @@ describe('AdminWebhookChannels', () => {
 
             await waitFor(() => {
                 expect(screen.queryByText('Delete Webhook Channel')).not.toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('change detection on edit', () => {
+        it('sends description, enabled, is_estate_default, http_method when toggled', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Webhook')).toBeInTheDocument();
+            });
+
+            // Tweak description.
+            fireEvent.change(screen.getByLabelText('Description'), {
+                target: { value: 'updated' },
+            });
+            const dialog = screen.getByRole('dialog');
+            // Toggle enabled inside the dialog (the table renders one too).
+            const dialogEnabledToggle = within(dialog).getByRole('checkbox', {
+                name: 'Toggle channel enabled',
+            });
+            fireEvent.click(dialogEnabledToggle);
+            // Toggle is_estate_default inside the dialog.
+            const estateToggle = within(dialog).getByRole('checkbox', {
+                name: 'Toggle estate default',
+            });
+            fireEvent.click(estateToggle);
+
+            // Change HTTP method via the MUI Select.
+            fireEvent.mouseDown(screen.getByLabelText('HTTP Method'));
+            const putOption = await screen.findByRole('option', { name: 'PUT' });
+            fireEvent.click(putOption);
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body).toMatchObject({
+                description: 'updated',
+                enabled: false,
+                is_estate_default: true,
+                http_method: 'PUT',
+            });
+        });
+
+        it('sends template_alert_clear and template_reminder when changed', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: mockWebhookChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Webhook')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: 'edit channel' });
+            await user.click(editButtons[0]);
+
+            await user.click(screen.getByRole('tab', { name: 'Templates' }));
+
+            fireEvent.change(screen.getByLabelText('Alert Clear Template'), {
+                target: { value: '{"event": "clear"}' },
+            });
+            fireEvent.change(screen.getByLabelText('Alert Reminder Template'), {
+                target: { value: '{"event": "reminder"}' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Save' }));
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalled();
+            });
+            const [, body] = mockApiPut.mock.calls[0];
+            expect(body).toMatchObject({
+                template_alert_clear: '{"event": "clear"}',
+                template_reminder: '{"event": "reminder"}',
+            });
+        });
+
+        it('shows fallback dialog error when save throws non-Error', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: [] });
+            mockApiPost.mockRejectedValue('boom');
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminWebhookChannels />);
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('No webhook channels configured.'),
+                ).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('button', { name: /Add Channel/i }));
+            fireEvent.change(screen.getByLabelText('Name *'), {
+                target: { value: 'X' },
+            });
+            fireEvent.change(screen.getByLabelText('Endpoint URL *'), {
+                target: { value: 'https://x' },
+            });
+
+            await user.click(screen.getByRole('button', { name: 'Create' }));
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
             });
         });
     });

@@ -17,7 +17,6 @@ import {
     type WebhookChannel,
     type WebhookFormState,
     DEFAULT_WEBHOOK_FORM,
-    parseAuthCredentials,
     buildAuthCredentials,
     headersObjectToArray,
     headersArrayToObject,
@@ -29,6 +28,9 @@ import {
 
 /**
  * Map raw API data to a typed WebhookChannel object.
+ *
+ * The server redacts `auth_credentials` (issue #187), so we read the
+ * `auth_credentials_set` boolean indicator instead.
  */
 const mapWebhookChannel = (ch: Record<string, unknown>): WebhookChannel => ({
     id: ch.id as number,
@@ -40,7 +42,7 @@ const mapWebhookChannel = (ch: Record<string, unknown>): WebhookChannel => ({
     http_method: (ch.http_method as string) || 'POST',
     headers: (ch.headers as Record<string, string>) || {},
     auth_type: (ch.auth_type as string) || 'none',
-    auth_credentials: (ch.auth_credentials as string) || '',
+    auth_credentials_set: Boolean(ch.auth_credentials_set),
     template_alert_fire: (ch.template_alert_fire as string) || '',
     template_alert_clear: (ch.template_alert_clear as string) || '',
     template_reminder: (ch.template_reminder as string) || '',
@@ -74,10 +76,9 @@ const AdminWebhookChannels: React.FC = () => {
 
     const handleOpenEdit = useCallback(
         (e: React.MouseEvent, channel: WebhookChannel) => {
-            const parsedAuth = parseAuthCredentials(
-                channel.auth_type,
-                channel.auth_credentials,
-            );
+            // Auth credentials are redacted by the server, so we cannot
+            // pre-populate the credential fields. Leave them blank; an
+            // empty submission means "preserve the existing credentials".
             setForm({
                 name: channel.name,
                 description: channel.description,
@@ -85,14 +86,14 @@ const AdminWebhookChannels: React.FC = () => {
                 http_method: channel.http_method,
                 headers: headersObjectToArray(channel.headers),
                 auth_type: channel.auth_type || 'none',
-                auth_credentials: channel.auth_credentials,
+                auth_credentials: '',
                 enabled: channel.enabled,
                 is_estate_default: channel.is_estate_default,
                 template_alert_fire: channel.template_alert_fire || '',
                 template_alert_clear: channel.template_alert_clear || '',
                 template_reminder: channel.template_reminder || '',
             });
-            setAuthFields(parsedAuth);
+            setAuthFields({});
             crud.openEdit(e, channel);
         },
         [crud],
@@ -144,6 +145,29 @@ const AdminWebhookChannels: React.FC = () => {
         setAuthFields((prev) => ({ ...prev, [field]: value }));
     }, []);
 
+    /**
+     * Returns true when the user has typed at least one non-empty value
+     * into the credential form fields for the current auth type. We do
+     * not rely on `buildAuthCredentials` returning a non-empty string
+     * because some schemes (e.g. `basic`, `api_key`) return strings
+     * containing only separator characters when both inputs are blank.
+     */
+    const hasUserEnteredCredentials = useCallback(
+        (authType: string, fields: Record<string, string>): boolean => {
+            switch (authType) {
+                case 'basic':
+                    return Boolean(fields.username) || Boolean(fields.password);
+                case 'bearer':
+                    return Boolean(fields.token);
+                case 'api_key':
+                    return Boolean(fields.headerName) || Boolean(fields.apiKeyValue);
+                default:
+                    return false;
+            }
+        },
+        [],
+    );
+
     // --- Save channel ---
 
     const handleSaveChannel = useCallback(async () => {
@@ -157,7 +181,13 @@ const AdminWebhookChannels: React.FC = () => {
         }
 
         const headersObj = headersArrayToObject(form.headers);
-        const authCredentials = buildAuthCredentials(form.auth_type, authFields);
+        const credentialsTyped = hasUserEnteredCredentials(
+            form.auth_type,
+            authFields,
+        );
+        const authCredentials = credentialsTyped
+            ? buildAuthCredentials(form.auth_type, authFields)
+            : '';
 
         try {
             crud.setSaving(true);
@@ -190,11 +220,20 @@ const AdminWebhookChannels: React.FC = () => {
                 ) {
                     body.headers = headersObj;
                 }
-                if (form.auth_type !== crud.editingChannel.auth_type) {
+                const authTypeChanged =
+                    form.auth_type !== crud.editingChannel.auth_type;
+                if (authTypeChanged) {
                     body.auth_type = form.auth_type;
                 }
-                if (authCredentials !== crud.editingChannel.auth_credentials) {
+                // Only send `auth_credentials` when the user typed
+                // something or when switching to `none` (which clears
+                // the credentials on the server). Sending the field as
+                // an empty string in any other situation would erase
+                // the existing redacted secret.
+                if (credentialsTyped) {
                     body.auth_credentials = authCredentials;
+                } else if (authTypeChanged && form.auth_type === 'none') {
+                    body.auth_credentials = '';
                 }
                 if (
                     form.template_alert_fire.trim() !==
@@ -258,7 +297,7 @@ const AdminWebhookChannels: React.FC = () => {
         } finally {
             crud.setSaving(false);
         }
-    }, [form, authFields, crud]);
+    }, [form, authFields, crud, hasUserEnteredCredentials]);
 
     // --- Render ---
 
@@ -324,6 +363,17 @@ const AdminWebhookChannels: React.FC = () => {
                     onAuthFieldChange={handleAuthFieldChange}
                     saving={crud.saving}
                     visible={crud.dialogTab === 2}
+                    credentialsConfigured={
+                        // Only show the "leave blank to keep existing"
+                        // hint when editing a channel that has stored
+                        // credentials AND the user has not switched
+                        // auth types away from the original; switching
+                        // discards the old credentials anyway.
+                        isEditing
+                        && form.auth_type !== 'none'
+                        && form.auth_type === crud.editingChannel?.auth_type
+                        && crud.editingChannel.auth_credentials_set
+                    }
                 />
                 <WebhookTemplatesTab
                     form={form}

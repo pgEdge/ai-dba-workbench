@@ -10,13 +10,21 @@
 
 import type { BaseChannel } from '../channels/channelTypes';
 
-/** Webhook notification channel returned by the API. */
+/**
+ * Webhook notification channel as returned by the API.
+ *
+ * Note: The server intentionally redacts `auth_credentials` from the
+ * channel response (see issue #187). Clients receive a boolean
+ * `auth_credentials_set` indicator instead so they can show whether
+ * credentials are configured without exposing the value itself.
+ */
 export interface WebhookChannel extends BaseChannel {
     endpoint_url: string;
     http_method: string;
     headers: Record<string, string>;
     auth_type: string;
-    auth_credentials: string;
+    /** True when the channel has auth credentials stored on the server. */
+    auth_credentials_set: boolean;
     template_alert_fire: string;
     template_alert_clear: string;
     template_reminder: string;
@@ -29,7 +37,14 @@ export interface HeaderEntry {
     value: string;
 }
 
-/** Form state for creating or editing a webhook channel. */
+/**
+ * Form state for creating or editing a webhook channel.
+ *
+ * `auth_credentials` is the assembled credential string built from the
+ * per-auth-type form fields. It is local form state only and is never
+ * pre-populated from the API response. On edit, an empty value means
+ * "preserve the existing server-side credentials".
+ */
 export interface WebhookFormState {
     name: string;
     description: string;

@@ -30,7 +30,10 @@ import {
     updateConversation,
     fetchConversation,
 } from './chatConversation';
-import { runAgenticLoop } from './chatAgenticLoop';
+import {
+    NO_MCP_PRIVILEGES_MESSAGE,
+    runAgenticLoop,
+} from './chatAgenticLoop';
 import { logger } from '../../utils/logger';
 
 // Re-export types that consuming modules import from this hook.
@@ -101,11 +104,30 @@ export function useChat(): UseChatReturn {
     // Ref to track visible messages within the sendMessage closure
     // without depending on the `messages` state value.
     const visibleMessagesRef = useRef<ChatMessageData[]>([]);
+    // Ref mirroring the latest `availableTools` value. Reading the
+    // tool list through a ref inside sendMessage eliminates the
+    // closure-staleness race where a fast user could click send
+    // between the tools fetch starting and the resulting setState
+    // committing — without the ref, sendMessage would observe the
+    // hardcoded CHAT_TOOLS fallback and skip the empty-list short
+    // circuit even when the user has zero MCP privileges (issue
+    // #188).
+    const availableToolsRef = useRef<ToolDefinition[]>(CHAT_TOOLS);
+    // Ref to the in-flight tools fetch promise. sendMessage awaits
+    // this before reading availableToolsRef so it always observes
+    // the authoritative tool list rather than the initial fallback.
+    const toolsFetchRef = useRef<Promise<void> | null>(null);
 
     // Keep the visible messages ref in sync with React state.
     useEffect(() => {
         visibleMessagesRef.current = messages;
     }, [messages]);
+
+    // Keep the tools ref in sync with React state so async closures
+    // (sendMessage in particular) always read the latest list.
+    useEffect(() => {
+        availableToolsRef.current = availableTools;
+    }, [availableTools]);
 
     /**
      * Keep the conversation id ref in sync with React state so
@@ -116,39 +138,51 @@ export function useChat(): UseChatReturn {
         setCurrentConversationId(id);
     }, []);
 
-    // Fetch available tools from the server on mount
+    // Fetch available tools from the server on mount.
+    //
+    // The server returns the RBAC-filtered tool list for the current
+    // user. Trust that list verbatim, including empty arrays: a user
+    // with zero MCP privileges legitimately has no tools available,
+    // and treating an empty list as "fall back to the hardcoded
+    // defaults" causes the agentic loop to send tools the user is not
+    // allowed to call, triggering the infinite "Access denied" loop
+    // described in issue #188. We only fall back to CHAT_TOOLS when
+    // the fetch itself fails (network error / non-OK response).
     useEffect(() => {
-        const fetchTools = async () => {
+        const fetchTools = async (): Promise<void> => {
             try {
                 const response = await apiFetch('/api/v1/mcp/tools');
                 if (response.ok) {
                     const data = await response.json();
                     const tools = data.tools || [];
-                    if (tools.length > 0) {
-                        setAvailableTools(
-                            tools.map(
-                                (t: {
-                                    name: string;
-                                    description: string;
-                                    inputSchema: Record<
-                                        string,
-                                        unknown
-                                    >;
-                                }) => ({
-                                    name: t.name,
-                                    description: t.description,
-                                    inputSchema: t.inputSchema,
-                                }),
-                            ),
-                        );
-                    }
+                    const mapped: ToolDefinition[] = tools.map(
+                        (t: {
+                            name: string;
+                            description: string;
+                            inputSchema: Record<string, unknown>;
+                        }) => ({
+                            name: t.name,
+                            description: t.description,
+                            inputSchema: t.inputSchema,
+                        }),
+                    );
+                    // Update the ref synchronously alongside the
+                    // state update so that any sendMessage call
+                    // awaiting toolsFetchRef sees the resolved list
+                    // immediately on its next read, regardless of
+                    // whether React has flushed the state update.
+                    availableToolsRef.current = mapped;
+                    setAvailableTools(mapped);
                 }
             } catch {
                 // Fall back to hardcoded CHAT_TOOLS (already the
-                // initial state)
+                // initial state). This preserves chat functionality
+                // when the tools endpoint is transiently unreachable.
             }
         };
-        void fetchTools();
+        // Track the in-flight fetch so sendMessage can await it
+        // and avoid the closure-staleness race described above.
+        toolsFetchRef.current = fetchTools();
     }, []);
 
     // ---------------------------------------------------------------
@@ -209,12 +243,70 @@ export function useChat(): UseChatReturn {
                 userAPIMessage,
             ];
 
+            // Wait for the initial tools fetch to settle before
+            // reading the tool list. Without this, a fast user (or a
+            // synchronous test runner) can invoke sendMessage between
+            // the fetch starting and setAvailableTools committing,
+            // causing the closure to observe the hardcoded CHAT_TOOLS
+            // fallback and bypass the empty-list short circuit even
+            // when the server reported zero tools — see issue #188.
+            if (toolsFetchRef.current) {
+                try {
+                    await toolsFetchRef.current;
+                } catch {
+                    // Fetch errors are already handled inside the
+                    // useEffect; the ref still holds the resolved
+                    // (or fallback) tool list.
+                }
+            }
+
+            // Read the authoritative tool list from the ref. The ref
+            // is updated synchronously alongside setAvailableTools so
+            // it reflects the latest list immediately, even if React
+            // has not yet flushed the state update.
+            const currentTools = availableToolsRef.current;
+
+            // Short-circuit when the user has no MCP tool privileges.
+            // Without this guard the agentic loop would invoke the LLM
+            // with an empty tool list (or, worse, with the hardcoded
+            // fallback tools the user is forbidden from calling), and
+            // every proposed call would fail with "Access denied". The
+            // loop would then spin until `maxIterations` is exhausted
+            // — see issue #188. Render a clear permission message and
+            // skip the loop entirely.
+            if (currentTools.length === 0) {
+                const deniedMessage: ChatMessageData = {
+                    role: 'assistant',
+                    content: NO_MCP_PRIVILEGES_MESSAGE,
+                    timestamp: new Date().toISOString(),
+                    isError: true,
+                };
+                setMessages(prev => {
+                    const updated = [...prev, deniedMessage];
+                    visibleMessagesRef.current = updated;
+                    return updated;
+                });
+                apiMessagesRef.current = [
+                    ...apiMessagesRef.current,
+                    {
+                        role: 'assistant',
+                        content: NO_MCP_PRIVILEGES_MESSAGE,
+                    },
+                ];
+                setIsLoading(false);
+                setActiveTools([]);
+                if (abortControllerRef.current === abortController) {
+                    abortControllerRef.current = null;
+                }
+                return;
+            }
+
             try {
-                // Run the agentic loop
+                // Run the agentic loop with the resolved tool list.
                 const { finalMessage, updatedApiMessages } =
                     await runAgenticLoop({
                         apiMessages: apiMessagesRef.current,
-                        availableTools,
+                        availableTools: currentTools,
                         systemPrompt: SYSTEM_PROMPT,
                         maxIterations,
                         abortSignal: abortController.signal,
@@ -293,7 +385,10 @@ export function useChat(): UseChatReturn {
                 }
             }
         },
-        [availableTools, maxIterations, syncConversationId],
+        // The tool list is read through availableToolsRef rather than
+        // captured via closure, so availableTools is intentionally not
+        // a dependency here.
+        [maxIterations, syncConversationId],
     );
 
     // ---------------------------------------------------------------

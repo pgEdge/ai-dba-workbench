@@ -14,6 +14,8 @@ import {
     type AgenticLoopParams,
     type FetchFunction,
     ITERATION_LIMIT_MESSAGE,
+    NO_MCP_PRIVILEGES_MESSAGE,
+    UNKNOWN_TOOL_MESSAGE,
 } from '../chatAgenticLoop';
 import type { APIMessage, ToolDefinition } from '../chatTypes';
 import type { LLMResponse, ToolCallResponse } from '../../../types/llm';
@@ -424,7 +426,11 @@ describe('chatAgenticLoop', () => {
                 expect(result.finalMessage.content).toBe('Done');
             });
 
-            it('handles tool with missing name', async () => {
+            it('bails out when tool_use omits name', async () => {
+                // A tool_use without a name cannot match any entry in
+                // availableTools, so the loop bails out with the
+                // unknown-tool message rather than attempting an
+                // unnamed call (the old behaviour). See issue #188.
                 const mockFetch = createMockFetch(
                     [
                         {
@@ -449,12 +455,11 @@ describe('chatAgenticLoop', () => {
 
                 const result = await runAgenticLoop(params);
 
-                // Should use 'unknown' as tool name
-                const activity = result.finalMessage.activity;
-                if (!activity) {
-                    throw new Error('expected activity');
-                }
-                expect(activity[0].name).toBe('unknown');
+                expect(result.finalMessage.isError).toBe(true);
+                expect(result.finalMessage.content).toBe(
+                    UNKNOWN_TOOL_MESSAGE,
+                );
+                expect(result.finalMessage.activity).toBeUndefined();
             });
 
             it('handles tool response with no content', async () => {
@@ -861,6 +866,160 @@ describe('chatAgenticLoop', () => {
 
                 const lastCall = onToolActivity.mock.calls[onToolActivity.mock.calls.length - 1][0];
                 expect(lastCall[0].status).toBe('error');
+            });
+        });
+
+        // ---------------------------------------------------------------
+        // Unknown-tool bail-out (issue #188)
+        //
+        // Defensive guard: if the LLM proposes only tool calls that
+        // are not in availableTools, exit with a single, clear error
+        // rather than feeding "Tool execution failed" results back to
+        // the LLM N times.
+        // ---------------------------------------------------------------
+
+        describe('unknown-tool bail-out', () => {
+            it('bails out when LLM calls a tool not in availableTools', async () => {
+                const mockFetch = createMockFetch([
+                    createToolUseResponse([
+                        {
+                            id: 'tool-1',
+                            name: 'forbidden_tool',
+                            input: {},
+                        },
+                    ]),
+                    createTextResponse('Should not reach here'),
+                ]);
+                const params = createLoopParams({ fetchFn: mockFetch });
+
+                const result = await runAgenticLoop(params);
+
+                expect(result.finalMessage.isError).toBe(true);
+                expect(result.finalMessage.content).toBe(
+                    UNKNOWN_TOOL_MESSAGE,
+                );
+            });
+
+            it('does not call /mcp/tools/call for unknown tools', async () => {
+                const mockFetch = createMockFetch([
+                    createToolUseResponse([
+                        {
+                            id: 'tool-1',
+                            name: 'forbidden_tool',
+                            input: {},
+                        },
+                    ]),
+                ]);
+                const params = createLoopParams({ fetchFn: mockFetch });
+
+                await runAgenticLoop(params);
+
+                const toolCalls = (
+                    mockFetch as ReturnType<typeof vi.fn>
+                ).mock.calls.filter(c => c[0] === '/api/v1/mcp/tools/call');
+                expect(toolCalls).toHaveLength(0);
+            });
+
+            it('exits in a single LLM iteration', async () => {
+                // The loop must not keep calling the LLM after
+                // detecting unknown tools. Provide only one LLM
+                // response; if the loop iterates past it, the test
+                // helper would supply an empty fallback response.
+                const mockFetch = createMockFetch([
+                    createToolUseResponse([
+                        { id: 't1', name: 'unknown_a', input: {} },
+                        { id: 't2', name: 'unknown_b', input: {} },
+                    ]),
+                ]);
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                const llmCalls = (
+                    mockFetch as ReturnType<typeof vi.fn>
+                ).mock.calls.filter(c => c[0] === '/api/v1/llm/chat');
+                expect(llmCalls).toHaveLength(1);
+                expect(result.finalMessage.content).toBe(
+                    UNKNOWN_TOOL_MESSAGE,
+                );
+            });
+
+            it('does not bail out when at least one tool is known', async () => {
+                // If the LLM proposes a mix of known and unknown
+                // tools, the loop should proceed normally; the
+                // unknown call falls through to /mcp/tools/call and
+                // the server returns its own error. This preserves
+                // existing behaviour for partial mismatches.
+                const mockFetch = createMockFetch(
+                    [
+                        createToolUseResponse([
+                            { id: 't1', name: 'list_connections', input: {} },
+                            { id: 't2', name: 'forbidden_tool', input: {} },
+                        ]),
+                        createTextResponse('Done'),
+                    ],
+                    new Map([
+                        [
+                            'list_connections',
+                            createToolCallResponse('OK'),
+                        ],
+                        [
+                            'forbidden_tool',
+                            createToolCallResponse('Denied', true),
+                        ],
+                    ]),
+                );
+                const params = createLoopParams({ fetchFn: mockFetch });
+
+                const result = await runAgenticLoop(params);
+
+                expect(result.finalMessage.content).toBe('Done');
+                expect(result.finalMessage.isError).toBeUndefined();
+                expect(result.finalMessage.activity).toHaveLength(2);
+            });
+
+            it('appends the bail-out message to API history', async () => {
+                const mockFetch = createMockFetch([
+                    createToolUseResponse([
+                        {
+                            id: 'tool-1',
+                            name: 'forbidden_tool',
+                            input: {},
+                        },
+                    ]),
+                ]);
+                const params = createLoopParams({
+                    apiMessages: [{ role: 'user', content: 'Hi' }],
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                const last =
+                    result.updatedApiMessages[
+                        result.updatedApiMessages.length - 1
+                    ];
+                expect(last.role).toBe('assistant');
+                expect(last.content).toBe(UNKNOWN_TOOL_MESSAGE);
+            });
+        });
+
+        // ---------------------------------------------------------------
+        // Module-level constants exposed for the orchestrator (issue #188)
+        // ---------------------------------------------------------------
+
+        describe('exported constants', () => {
+            it('exports a non-empty NO_MCP_PRIVILEGES_MESSAGE', () => {
+                expect(NO_MCP_PRIVILEGES_MESSAGE.length).toBeGreaterThan(0);
+                expect(NO_MCP_PRIVILEGES_MESSAGE).toContain('permission');
+            });
+
+            it('exports a non-empty UNKNOWN_TOOL_MESSAGE', () => {
+                expect(UNKNOWN_TOOL_MESSAGE.length).toBeGreaterThan(0);
+                expect(UNKNOWN_TOOL_MESSAGE).toContain('tools');
             });
         });
     });

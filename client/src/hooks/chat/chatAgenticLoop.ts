@@ -73,6 +73,30 @@ export const ITERATION_LIMIT_MESSAGE =
     'steps. Please try rephrasing your question.';
 
 /**
+ * Error message rendered when the user has no MCP tool privileges.
+ *
+ * The chat short-circuits before invoking the agentic loop when the
+ * server reports an empty tool list. Without this guard, the LLM would
+ * keep proposing tool calls that all fail with "Access denied", causing
+ * the loop to spin until `maxIterations` is exhausted. See issue #188.
+ */
+export const NO_MCP_PRIVILEGES_MESSAGE =
+    "You don't have permission to use any of the tools I need to answer " +
+    'questions like this. Ask your administrator to grant you the ' +
+    'relevant MCP privileges and try again.';
+
+/**
+ * Error message returned when the LLM proposes a tool call that is not
+ * in the available tool list. This guards against drift between the
+ * system prompt (which mentions tools by name) and the RBAC-filtered
+ * tool list the user is actually permitted to call.
+ */
+export const UNKNOWN_TOOL_MESSAGE =
+    'The model attempted to call tools that are not available to you. ' +
+    'This usually means your account lacks the necessary MCP ' +
+    'privileges. Please contact your administrator.';
+
+/**
  * Run the agentic LLM tool-use loop.
  *
  * This function calls the LLM with the current message history. If the
@@ -137,6 +161,41 @@ export async function runAgenticLoop(
             data.content?.filter(c => c.type === 'tool_use') || [];
         const textBlocks =
             data.content?.filter(c => c.type === 'text') || [];
+
+        // Defensive check: if the LLM proposes only tool calls that are
+        // not in the available tool list, bail out rather than feeding
+        // back N "unknown tool" errors. This typically indicates the
+        // user lacks MCP privileges for the tools the model is reaching
+        // for (the system prompt mentions all tools by name; RBAC may
+        // filter them out of `availableTools`). See issue #188.
+        if (toolUses.length > 0) {
+            const availableNames = new Set(
+                availableTools.map(t => t.name),
+            );
+            const allUnknown = toolUses.every(
+                t => !availableNames.has(t.name ?? ''),
+            );
+            if (allUnknown) {
+                const finalMessage: ChatMessageData = {
+                    role: 'assistant',
+                    content: UNKNOWN_TOOL_MESSAGE,
+                    timestamp: new Date().toISOString(),
+                    isError: true,
+                    activity:
+                        collectedActivity.length > 0
+                            ? [...collectedActivity]
+                            : undefined,
+                };
+                currentMessages = [
+                    ...currentMessages,
+                    { role: 'assistant', content: UNKNOWN_TOOL_MESSAGE },
+                ];
+                return {
+                    finalMessage,
+                    updatedApiMessages: currentMessages,
+                };
+            }
+        }
 
         if (toolUses.length === 0) {
             // No tool calls - extract final text response

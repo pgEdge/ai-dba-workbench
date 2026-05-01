@@ -10480,6 +10480,11 @@
             "type": "boolean",
             "description": "Whether webhook auth credentials are configured"
           },
+          "auth_type": {
+            "type": "string",
+            "description": "Webhook auth type (e.g. bearer, basic)",
+            "nullable": true
+          },
           "channel_type": {
             "type": "string",
             "description": "Channel type (email, slack, mattermost, webhook)"
@@ -10513,6 +10518,13 @@
             "description": "From name (email)",
             "nullable": true
           },
+          "headers": {
+            "type": "object",
+            "description": "HTTP headers for webhook",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "http_method": {
             "type": "string",
             "description": "HTTP method for webhook"
@@ -10530,10 +10542,22 @@
             "type": "string",
             "description": "Channel name"
           },
+          "owner_token": {
+            "type": "string",
+            "description": "Owner service-token identifier; populated when the channel is owned by a token rather than a user",
+            "nullable": true
+          },
           "owner_username": {
             "type": "string",
             "description": "Owner username",
             "nullable": true
+          },
+          "recipients": {
+            "type": "array",
+            "description": "Email recipients (email channels only)",
+            "items": {
+              "$ref": "#/components/schemas/EmailRecipient"
+            }
           },
           "reminder_enabled": {
             "type": "boolean",
@@ -10556,9 +10580,28 @@
             "type": "integer",
             "description": "SMTP port (email)"
           },
+          "smtp_use_tls": {
+            "type": "boolean",
+            "description": "Whether the SMTP connection uses TLS"
+          },
           "smtp_username_set": {
             "type": "boolean",
             "description": "Whether an SMTP username is configured"
+          },
+          "template_alert_clear": {
+            "type": "string",
+            "description": "Template used when an alert clears; null means use the built-in default",
+            "nullable": true
+          },
+          "template_alert_fire": {
+            "type": "string",
+            "description": "Template used when an alert fires; null means use the built-in default",
+            "nullable": true
+          },
+          "template_reminder": {
+            "type": "string",
+            "description": "Template used for reminder notifications; null means use the built-in default",
+            "nullable": true
           },
           "updated_at": {
             "type": "string",

@@ -560,6 +560,65 @@ func readEncryptedColumn(t *testing.T, pool *pgxpool.Pool,
 	return *v, true
 }
 
+// assertSecretPointer compares a loaded notification channel pointer
+// field against an expected non-nil string. It exists so the per-field
+// sub-tests below stay below the project cyclomatic complexity floor:
+// each sub-test reduces to a single helper call instead of a
+// `nil-or-mismatch` compound conditional.
+func assertSecretPointer(t *testing.T, name string, got *string, want string) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("%s = nil, want pointer to %q", name, want)
+		return
+	}
+	if *got != want {
+		t.Errorf("%s = %q, want %q", name, *got, want)
+	}
+}
+
+// secretFieldCase describes one encrypted secret on NotificationChannel
+// for the sub-test tables below. The getter pulls the pointer out of a
+// loaded channel so each sub-test body is a single helper call.
+type secretFieldCase struct {
+	name   string
+	want   string
+	getter func(*database.NotificationChannel) *string
+	flag   func(*database.NotificationChannel) bool
+}
+
+// allSecretFieldCases enumerates the four redacted secret columns and
+// supplies the per-case expected plaintext, pointer accessor, and the
+// matching `*_set` flag accessor used by the preservation/replacement
+// sub-tests.
+func allSecretFieldCases(webhook, authCreds, smtpUser, smtpPass string) []secretFieldCase {
+	return []secretFieldCase{
+		{
+			name:   "webhook_url",
+			want:   webhook,
+			getter: func(c *database.NotificationChannel) *string { return c.WebhookURL },
+			flag:   func(c *database.NotificationChannel) bool { return c.WebhookURLSet },
+		},
+		{
+			name:   "auth_credentials",
+			want:   authCreds,
+			getter: func(c *database.NotificationChannel) *string { return c.AuthCredentials },
+			flag:   func(c *database.NotificationChannel) bool { return c.AuthCredentialsSet },
+		},
+		{
+			name:   "smtp_username",
+			want:   smtpUser,
+			getter: func(c *database.NotificationChannel) *string { return c.SMTPUsername },
+			flag:   func(c *database.NotificationChannel) bool { return c.SMTPUsernameSet },
+		},
+		{
+			name:   "smtp_password",
+			want:   smtpPass,
+			getter: func(c *database.NotificationChannel) *string { return c.SMTPPassword },
+			flag:   func(c *database.NotificationChannel) bool { return c.SMTPPasswordSet },
+		},
+	}
+}
+
 // TestUpdateChannel_OmittedSecretsArePreserved ensures that a PUT body
 // that does NOT mention a secret field leaves the existing decrypted
 // value untouched. This is the crucial guarantee the redaction change
@@ -571,6 +630,10 @@ func readEncryptedColumn(t *testing.T, pool *pgxpool.Pool,
 // each call with a fresh random salt, so a re-encrypt of the same
 // plaintext yields different bytes — the persisted column changes
 // even when the secret value is preserved.
+//
+// Per-field assertions are split into table-driven sub-tests so the
+// outer function stays under the project's cyclomatic complexity
+// budget (Codacy/Lizard `ccn-medium`, limit 12).
 func TestUpdateChannel_OmittedSecretsArePreserved(t *testing.T) {
 	ds, _, cleanupDS := newChannelTestDatastore(t)
 	defer cleanupDS()
@@ -578,12 +641,14 @@ func TestUpdateChannel_OmittedSecretsArePreserved(t *testing.T) {
 	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
 	defer cleanupAuth()
 
-	origWebhook := "https://hooks.example.com/orig"
-	origAuth := "Bearer original"
-	origUser := "original-user"
-	origPass := "original-password"
+	const (
+		origWebhook = "https://hooks.example.com/orig"
+		origAuth    = "Bearer original"
+		origUser    = "original-user"
+		origPass    = "original-password"
+	)
 	channelID := createTestChannel(t, ds, "preserve-test",
-		&origWebhook, &origAuth, &origUser, &origPass)
+		ptr(origWebhook), ptr(origAuth), ptr(origUser), ptr(origPass))
 
 	// PUT with only non-secret fields. smtp_host and from_address are
 	// already populated on the row and carry forward via the merge.
@@ -598,31 +663,30 @@ func TestUpdateChannel_OmittedSecretsArePreserved(t *testing.T) {
 		t.Fatalf("GetNotificationChannel: %v", err)
 	}
 
-	if loaded.WebhookURL == nil || *loaded.WebhookURL != origWebhook {
-		t.Errorf("WebhookURL = %v, want %q", loaded.WebhookURL, origWebhook)
-	}
-	if loaded.AuthCredentials == nil || *loaded.AuthCredentials != origAuth {
-		t.Errorf("AuthCredentials = %v, want %q", loaded.AuthCredentials, origAuth)
-	}
-	if loaded.SMTPUsername == nil || *loaded.SMTPUsername != origUser {
-		t.Errorf("SMTPUsername = %v, want %q", loaded.SMTPUsername, origUser)
-	}
-	if loaded.SMTPPassword == nil || *loaded.SMTPPassword != origPass {
-		t.Errorf("SMTPPassword = %v, want %q", loaded.SMTPPassword, origPass)
+	cases := allSecretFieldCases(origWebhook, origAuth, origUser, origPass)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name+"_preserved", func(t *testing.T) {
+			assertSecretPointer(t, tc.name, tc.getter(loaded), tc.want)
+		})
+		t.Run(tc.name+"_set_flag", func(t *testing.T) {
+			if !tc.flag(loaded) {
+				t.Errorf("%s_set = false, want true (preservation should keep flag on)", tc.name)
+			}
+		})
 	}
 
-	// Sanity: name was actually updated and the *_set flags remain on.
-	if loaded.Name != "renamed" {
-		t.Errorf("Name = %q, want %q", loaded.Name, "renamed")
-	}
-	if !loaded.WebhookURLSet || !loaded.AuthCredentialsSet ||
-		!loaded.SMTPUsernameSet || !loaded.SMTPPasswordSet {
-		t.Errorf("expected all *_set flags true after preservation, got %+v", loaded)
-	}
+	t.Run("name_updated", func(t *testing.T) {
+		if loaded.Name != "renamed" {
+			t.Errorf("Name = %q, want %q", loaded.Name, "renamed")
+		}
+	})
 }
 
 // TestUpdateChannel_NonEmptySecretReplaces verifies that supplying a
-// new value for each secret field overwrites the stored value.
+// new value for each secret field overwrites the stored value. The
+// per-field assertions are factored into a sub-test loop so the outer
+// function stays under the project complexity budget.
 func TestUpdateChannel_NonEmptySecretReplaces(t *testing.T) {
 	ds, pool, cleanupDS := newChannelTestDatastore(t)
 	defer cleanupDS()
@@ -637,40 +701,49 @@ func TestUpdateChannel_NonEmptySecretReplaces(t *testing.T) {
 		ptr("original-password"),
 	)
 
+	const (
+		newWebhook = "https://hooks.example.com/new"
+		newAuth    = "Bearer new"
+		newUser    = "new-user"
+		newPass    = "new-password"
+	)
 	body := `{
-		"webhook_url": "https://hooks.example.com/new",
-		"auth_credentials": "Bearer new",
-		"smtp_username": "new-user",
-		"smtp_password": "new-password"
+		"webhook_url": "` + newWebhook + `",
+		"auth_credentials": "` + newAuth + `",
+		"smtp_username": "` + newUser + `",
+		"smtp_password": "` + newPass + `"
 	}`
 	rec := putChannel(t, handler, userID, channelID, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	// smtp_username is stored plaintext, so we can compare directly.
-	if v, _ := readEncryptedColumn(t, pool, channelID, "smtp_username"); v != "new-user" {
-		t.Errorf("smtp_username = %q, want %q", v, "new-user")
-	}
+	// smtp_username is stored plaintext, so we can compare directly
+	// against the raw column. Other secrets go through GetNotificationChannel
+	// which decrypts on read.
+	t.Run("smtp_username_plaintext_column", func(t *testing.T) {
+		v, _ := readEncryptedColumn(t, pool, channelID, "smtp_username")
+		if v != newUser {
+			t.Errorf("smtp_username = %q, want %q", v, newUser)
+		}
+	})
 
-	// For encrypted columns, decrypt via GetNotificationChannel.
 	loaded, err := ds.GetNotificationChannel(context.Background(), channelID)
 	if err != nil {
 		t.Fatalf("GetNotificationChannel: %v", err)
 	}
-	if loaded.WebhookURL == nil || *loaded.WebhookURL != "https://hooks.example.com/new" {
-		t.Errorf("WebhookURL = %v, want pointer to %q",
-			loaded.WebhookURL, "https://hooks.example.com/new")
-	}
-	if loaded.AuthCredentials == nil || *loaded.AuthCredentials != "Bearer new" {
-		t.Errorf("AuthCredentials = %v, want %q", loaded.AuthCredentials, "Bearer new")
-	}
-	if loaded.SMTPPassword == nil || *loaded.SMTPPassword != "new-password" {
-		t.Errorf("SMTPPassword = %v, want %q", loaded.SMTPPassword, "new-password")
-	}
-	if !loaded.SMTPPasswordSet || !loaded.WebhookURLSet ||
-		!loaded.AuthCredentialsSet || !loaded.SMTPUsernameSet {
-		t.Errorf("expected all *_set flags true, got %+v", loaded)
+
+	cases := allSecretFieldCases(newWebhook, newAuth, newUser, newPass)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name+"_replaced", func(t *testing.T) {
+			assertSecretPointer(t, tc.name, tc.getter(loaded), tc.want)
+		})
+		t.Run(tc.name+"_set_flag", func(t *testing.T) {
+			if !tc.flag(loaded) {
+				t.Errorf("%s_set = false, want true after replacement", tc.name)
+			}
+		})
 	}
 }
 

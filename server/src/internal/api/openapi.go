@@ -907,21 +907,33 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"NotificationChannel": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"id":                      {Type: "integer", Format: "int64", Description: "Channel ID"},
-				"owner_username":          {Type: "string", Description: "Owner username", Nullable: true},
-				"enabled":                 {Type: "boolean", Description: "Whether the channel is enabled"},
-				"channel_type":            {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
-				"name":                    {Type: "string", Description: "Channel name"},
-				"description":             {Type: "string", Description: "Channel description", Nullable: true},
-				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
-				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
-				"smtp_host":               {Type: "string", Description: "SMTP host (email)", Nullable: true},
-				"smtp_port":               {Type: "integer", Description: "SMTP port (email)"},
-				"from_address":            {Type: "string", Description: "From address (email)", Nullable: true},
-				"from_name":               {Type: "string", Description: "From name (email)", Nullable: true},
-				"is_estate_default":       {Type: "boolean", Description: "Whether this is an estate default channel"},
+				"id":                {Type: "integer", Format: "int64", Description: "Channel ID"},
+				"owner_username":    {Type: "string", Description: "Owner username", Nullable: true},
+				"owner_token":       {Type: "string", Description: "Owner service-token identifier; populated when the channel is owned by a token rather than a user", Nullable: true},
+				"enabled":           {Type: "boolean", Description: "Whether the channel is enabled"},
+				"channel_type":      {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
+				"name":              {Type: "string", Description: "Channel name"},
+				"description":       {Type: "string", Description: "Channel description", Nullable: true},
+				"endpoint_url":      {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
+				"http_method":       {Type: "string", Description: "HTTP method for webhook"},
+				"headers":           {Type: "object", Description: "HTTP headers for webhook", AdditionalProperties: &OpenAPISchema{Type: "string"}},
+				"auth_type":         {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)", Nullable: true},
+				"smtp_host":         {Type: "string", Description: "SMTP host (email)", Nullable: true},
+				"smtp_port":         {Type: "integer", Description: "SMTP port (email)"},
+				"smtp_use_tls":      {Type: "boolean", Description: "Whether the SMTP connection uses TLS"},
+				"from_address":      {Type: "string", Description: "From address (email)", Nullable: true},
+				"from_name":         {Type: "string", Description: "From name (email)", Nullable: true},
+				"is_estate_default": {Type: "boolean", Description: "Whether this is an estate default channel"},
+				// Per-event message templates. nil means "fall back to the
+				// built-in default template for the event type".
+				"template_alert_fire":     {Type: "string", Description: "Template used when an alert fires; null means use the built-in default", Nullable: true},
+				"template_alert_clear":    {Type: "string", Description: "Template used when an alert clears; null means use the built-in default", Nullable: true},
+				"template_reminder":       {Type: "string", Description: "Template used for reminder notifications; null means use the built-in default", Nullable: true},
 				"reminder_enabled":        {Type: "boolean", Description: "Whether reminders are enabled"},
 				"reminder_interval_hours": {Type: "integer", Description: "Reminder interval in hours"},
+				// Email recipients are populated for email-type channels;
+				// other channel types omit the array entirely.
+				"recipients": {Type: "array", Description: "Email recipients (email channels only)", Items: &OpenAPISchema{Ref: "#/components/schemas/EmailRecipient"}},
 				// Boolean indicators that flag whether each secret is
 				// configured. The actual secret values (webhook_url,
 				// auth_credentials, smtp_username, smtp_password) are

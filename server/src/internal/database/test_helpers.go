@@ -46,3 +46,16 @@ func NewTestDatastore(pool *pgxpool.Pool) *Datastore {
 		serverSecret: "",
 	}
 }
+
+// NewTestDatastoreWithSecret behaves like NewTestDatastore but seeds the
+// server secret used for encrypting notification channel and connection
+// passwords. Tests that exercise paths which call EncryptPassword or
+// DecryptPassword (for example, the notification channel handlers) must
+// supply a non-empty secret; an empty serverSecret is rejected by
+// encryptNotificationSecret when a value is present.
+func NewTestDatastoreWithSecret(pool *pgxpool.Pool, secret string) *Datastore {
+	return &Datastore{
+		pool:         pool,
+		serverSecret: secret,
+	}
+}

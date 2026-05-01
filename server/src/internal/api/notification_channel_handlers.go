@@ -373,7 +373,16 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		return
 	}
 
-	RespondJSON(w, http.StatusCreated, channel)
+	// Reload so the response carries the same redacted view (and
+	// `*_set` indicators) that GET would return.
+	created, err := h.datastore.GetNotificationChannel(r.Context(), channel.ID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to reload notification channel after create: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
+		return
+	}
+
+	RespondJSON(w, http.StatusCreated, created)
 }
 
 // updateChannel handles PUT /api/v1/notification-channels/{id}
@@ -436,7 +445,14 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 		}
 	}
 
-	// Merge fields
+	// Merge fields. Each `*string` request field uses three-way
+	// semantics: nil pointer means "field omitted - preserve the
+	// existing value", an explicit empty string means "clear the
+	// stored value", and a non-empty string means "replace". This
+	// matters most for the secret fields (webhook_url,
+	// auth_credentials, smtp_username, smtp_password) because the
+	// GET response no longer echoes them, so a UI fetch+edit
+	// round-trip must omit any field it does not want to change.
 	if req.Description != nil {
 		existing.Description = req.Description
 	}
@@ -514,7 +530,20 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, existing)
+	// Reload the channel so the response carries the canonical
+	// post-update view, including freshly recomputed `*_set` flags.
+	// Returning `existing` directly would echo the flag state that
+	// was loaded BEFORE the merge applied any new secrets, which
+	// would be wrong when the request supplied a previously-empty
+	// secret value.
+	updated, err := h.datastore.GetNotificationChannel(r.Context(), id)
+	if err != nil {
+		log.Printf("[ERROR] Failed to reload notification channel after update: %v", err)
+		RespondError(w, http.StatusInternalServerError, "Failed to fetch notification channel")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, updated)
 }
 
 // deleteChannel handles DELETE /api/v1/notification-channels/{id}

@@ -10476,6 +10476,10 @@
       "NotificationChannel": {
         "type": "object",
         "properties": {
+          "auth_credentials_set": {
+            "type": "boolean",
+            "description": "Whether webhook auth credentials are configured"
+          },
           "channel_type": {
             "type": "string",
             "description": "Channel type (email, slack, mattermost, webhook)"
@@ -10544,25 +10548,40 @@
             "description": "SMTP host (email)",
             "nullable": true
           },
+          "smtp_password_set": {
+            "type": "boolean",
+            "description": "Whether an SMTP password is configured"
+          },
           "smtp_port": {
             "type": "integer",
             "description": "SMTP port (email)"
+          },
+          "smtp_username_set": {
+            "type": "boolean",
+            "description": "Whether an SMTP username is configured"
           },
           "updated_at": {
             "type": "string",
             "format": "date-time",
             "description": "Last update timestamp"
           },
-          "webhook_url": {
-            "type": "string",
-            "description": "Webhook URL (Slack/Mattermost)",
-            "nullable": true
+          "webhook_url_set": {
+            "type": "boolean",
+            "description": "Whether a webhook URL is configured"
           }
         }
       },
       "NotificationChannelCreateRequest": {
         "type": "object",
         "properties": {
+          "auth_credentials": {
+            "type": "string",
+            "description": "Webhook auth credentials. On PUT: omit to keep existing, empty string to clear, value to replace."
+          },
+          "auth_type": {
+            "type": "string",
+            "description": "Webhook auth type (e.g. bearer, basic)"
+          },
           "channel_type": {
             "type": "string",
             "description": "Channel type (email, slack, mattermost, webhook)"
@@ -10620,7 +10639,7 @@
           },
           "smtp_password": {
             "type": "string",
-            "description": "SMTP password (email)"
+            "description": "SMTP password (email). On PUT: omit to keep existing, empty string to clear, value to replace."
           },
           "smtp_port": {
             "type": "integer",
@@ -10632,11 +10651,11 @@
           },
           "smtp_username": {
             "type": "string",
-            "description": "SMTP username (email)"
+            "description": "SMTP username (email). On PUT: omit to keep existing, empty string to clear, value to replace."
           },
           "webhook_url": {
             "type": "string",
-            "description": "Webhook URL (Slack/Mattermost)"
+            "description": "Webhook URL (Slack/Mattermost). On PUT: omit to keep existing, empty string to clear, value to replace."
           }
         },
         "required": [

@@ -69,13 +69,19 @@ export interface MessagingChannelConfig {
     webhookUrlLabel: string;
 }
 
+/**
+ * Messaging channel as returned by the API.
+ *
+ * The server redacts `webhook_url` (issue #187); clients only see whether
+ * one is configured via `webhook_url_set`.
+ */
 interface MessagingChannel {
     id: number;
     name: string;
     description: string;
     enabled: boolean;
     is_estate_default: boolean;
-    webhook_url: string;
+    webhook_url_set: boolean;
 }
 
 interface ChannelFormState {
@@ -137,7 +143,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                     description: (ch.description as string) || '',
                     enabled: ch.enabled as boolean,
                     is_estate_default: ch.is_estate_default as boolean,
-                    webhook_url: (ch.webhook_url as string) || '',
+                    webhook_url_set: Boolean(ch.webhook_url_set),
                 }));
             setChannels(filtered);
         } catch (err: unknown) {
@@ -167,10 +173,13 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     const handleOpenEdit = (e: React.MouseEvent, channel: MessagingChannel) => {
         e.stopPropagation();
         setEditingChannel(channel);
+        // The webhook URL is a redacted secret on the server; never
+        // pre-populate it. An empty value at save time means "leave the
+        // existing URL unchanged".
         setForm({
             name: channel.name,
             description: channel.description,
-            webhook_url: channel.webhook_url,
+            webhook_url: '',
             enabled: channel.enabled,
             is_estate_default: channel.is_estate_default,
         });
@@ -193,7 +202,15 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             setDialogError('Name is required.');
             return;
         }
-        if (!form.webhook_url.trim()) {
+        // On create, the URL is required. On edit, an empty URL means
+        // "preserve the existing one", which is allowed only when the
+        // server already has one configured.
+        const trimmedUrl = form.webhook_url.trim();
+        if (!editingChannel && !trimmedUrl) {
+            setDialogError('Webhook URL is required.');
+            return;
+        }
+        if (editingChannel && !trimmedUrl && !editingChannel.webhook_url_set) {
             setDialogError('Webhook URL is required.');
             return;
         }
@@ -203,7 +220,10 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             setDialogError(null);
 
             if (editingChannel) {
-                // Update - send only changed fields
+                // Update - send only changed fields. For the webhook URL,
+                // omit it entirely when the user left the form blank;
+                // the server preserves the stored value when the field
+                // is absent from the request body.
                 const body: Record<string, unknown> = {};
                 if (form.name.trim() !== editingChannel.name) {
                     body.name = form.name.trim();
@@ -217,8 +237,8 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                 if (form.is_estate_default !== editingChannel.is_estate_default) {
                     body.is_estate_default = form.is_estate_default;
                 }
-                if (form.webhook_url.trim() !== editingChannel.webhook_url) {
-                    body.webhook_url = form.webhook_url.trim();
+                if (trimmedUrl) {
+                    body.webhook_url = trimmedUrl;
                 }
 
                 await apiPut(`/api/v1/notification-channels/${editingChannel.id}`, body);
@@ -229,7 +249,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                     channel_type: channelType,
                     name: form.name.trim(),
                     description: form.description.trim(),
-                    webhook_url: form.webhook_url.trim(),
+                    webhook_url: trimmedUrl,
                     enabled: form.enabled,
                     is_estate_default: form.is_estate_default,
                 };
@@ -328,6 +348,17 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
     const isEditing = editingChannel !== null;
+    // When editing a channel that already has a URL configured, allow
+    // saving without re-typing the URL. The empty value will be omitted
+    // from the PUT body so the server preserves the stored secret.
+    const webhookUrlOptional = isEditing && editingChannel.webhook_url_set;
+    const webhookUrlPlaceholder = webhookUrlOptional
+        ? 'Leave blank to keep existing URL'
+        : '';
+    const submitDisabled =
+        saving
+        || !form.name.trim()
+        || (!form.webhook_url.trim() && !webhookUrlOptional);
 
     return (
         <Box>
@@ -494,7 +525,13 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         onChange={(e) => { handleFormChange('webhook_url', e.target.value); }}
                         disabled={saving}
                         margin="dense"
-                        required
+                        required={!webhookUrlOptional}
+                        placeholder={webhookUrlPlaceholder}
+                        helperText={
+                            webhookUrlOptional
+                                ? 'A webhook URL is configured. Leave this blank to keep it unchanged.'
+                                : undefined
+                        }
                         InputLabelProps={{ shrink: true }}
                     />
                     <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -538,7 +575,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                     <Button
                         onClick={handleSaveChannel}
                         variant="contained"
-                        disabled={saving || !form.name.trim() || !form.webhook_url.trim()}
+                        disabled={submitDisabled}
                         sx={containedButtonSx}
                     >
                         {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : (isEditing ? 'Save' : 'Create')}

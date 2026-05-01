@@ -907,43 +907,71 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"NotificationChannel": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"id":                      {Type: "integer", Format: "int64", Description: "Channel ID"},
-				"owner_username":          {Type: "string", Description: "Owner username", Nullable: true},
-				"enabled":                 {Type: "boolean", Description: "Whether the channel is enabled"},
-				"channel_type":            {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
-				"name":                    {Type: "string", Description: "Channel name"},
-				"description":             {Type: "string", Description: "Channel description", Nullable: true},
-				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost)", Nullable: true},
-				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
-				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
-				"smtp_host":               {Type: "string", Description: "SMTP host (email)", Nullable: true},
-				"smtp_port":               {Type: "integer", Description: "SMTP port (email)"},
-				"from_address":            {Type: "string", Description: "From address (email)", Nullable: true},
-				"from_name":               {Type: "string", Description: "From name (email)", Nullable: true},
-				"is_estate_default":       {Type: "boolean", Description: "Whether this is an estate default channel"},
+				"id":                {Type: "integer", Format: "int64", Description: "Channel ID"},
+				"owner_username":    {Type: "string", Description: "Owner username", Nullable: true},
+				"owner_token":       {Type: "string", Description: "Owner service-token identifier; populated when the channel is owned by a token rather than a user", Nullable: true},
+				"enabled":           {Type: "boolean", Description: "Whether the channel is enabled"},
+				"channel_type":      {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
+				"name":              {Type: "string", Description: "Channel name"},
+				"description":       {Type: "string", Description: "Channel description", Nullable: true},
+				"endpoint_url":      {Type: "string", Description: "Endpoint URL (webhook)", Nullable: true},
+				"http_method":       {Type: "string", Description: "HTTP method for webhook"},
+				"header_names":      {Type: "array", Description: "Names of configured custom HTTP headers; values are never returned because they may carry bearer tokens or API keys", Items: &OpenAPISchema{Type: "string"}},
+				"auth_type":         {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)", Nullable: true},
+				"smtp_host":         {Type: "string", Description: "SMTP host (email)", Nullable: true},
+				"smtp_port":         {Type: "integer", Description: "SMTP port (email)"},
+				"smtp_use_tls":      {Type: "boolean", Description: "Whether the SMTP connection uses TLS"},
+				"from_address":      {Type: "string", Description: "From address (email)", Nullable: true},
+				"from_name":         {Type: "string", Description: "From name (email)", Nullable: true},
+				"is_estate_default": {Type: "boolean", Description: "Whether this is an estate default channel"},
+				// Per-event message templates. nil means "fall back to the
+				// built-in default template for the event type".
+				"template_alert_fire":     {Type: "string", Description: "Template used when an alert fires; null means use the built-in default", Nullable: true},
+				"template_alert_clear":    {Type: "string", Description: "Template used when an alert clears; null means use the built-in default", Nullable: true},
+				"template_reminder":       {Type: "string", Description: "Template used for reminder notifications; null means use the built-in default", Nullable: true},
 				"reminder_enabled":        {Type: "boolean", Description: "Whether reminders are enabled"},
 				"reminder_interval_hours": {Type: "integer", Description: "Reminder interval in hours"},
-				"created_at":              {Type: "string", Format: "date-time", Description: "Creation timestamp"},
-				"updated_at":              {Type: "string", Format: "date-time", Description: "Last update timestamp"},
+				// Email recipients are populated for email-type channels;
+				// other channel types omit the array entirely.
+				"recipients": {Type: "array", Description: "Email recipients (email channels only)", Items: &OpenAPISchema{Ref: "#/components/schemas/EmailRecipient"}},
+				// Boolean indicators that flag whether each secret is
+				// configured. The actual secret values (webhook_url,
+				// auth_credentials, smtp_username, smtp_password) are
+				// never returned by the API; clients use these flags
+				// to render a "configured" badge or to decide whether
+				// to show a "leave unchanged" affordance on edit.
+				"webhook_url_set":      {Type: "boolean", Description: "Whether a webhook URL is configured"},
+				"auth_credentials_set": {Type: "boolean", Description: "Whether webhook auth credentials are configured"},
+				"smtp_username_set":    {Type: "boolean", Description: "Whether an SMTP username is configured"},
+				"smtp_password_set":    {Type: "boolean", Description: "Whether an SMTP password is configured"},
+				"created_at":           {Type: "string", Format: "date-time", Description: "Creation timestamp"},
+				"updated_at":           {Type: "string", Format: "date-time", Description: "Last update timestamp"},
 			},
 		},
 		"NotificationChannelCreateRequest": {
 			Type:     "object",
 			Required: []string{"channel_type", "name"},
 			Properties: map[string]*OpenAPISchema{
-				"channel_type":            {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
-				"name":                    {Type: "string", Description: "Channel name"},
-				"description":             {Type: "string", Description: "Channel description"},
-				"enabled":                 {Type: "boolean", Description: "Whether the channel is enabled"},
-				"is_estate_default":       {Type: "boolean", Description: "Whether this is an estate default channel"},
-				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost)"},
+				"channel_type":      {Type: "string", Description: "Channel type (email, slack, mattermost, webhook)"},
+				"name":              {Type: "string", Description: "Channel name"},
+				"description":       {Type: "string", Description: "Channel description"},
+				"enabled":           {Type: "boolean", Description: "Whether the channel is enabled"},
+				"is_estate_default": {Type: "boolean", Description: "Whether this is an estate default channel"},
+				// Secret fields: on PUT, omit the field to keep the
+				// existing value, send "" to clear, or send a non-empty
+				// string to replace. The corresponding GET response
+				// never echoes these values; use the *_set indicators
+				// on the response to detect whether they are configured.
+				"webhook_url":             {Type: "string", Description: "Webhook URL (Slack/Mattermost). On PUT: omit to keep existing, empty string to clear, value to replace."},
 				"endpoint_url":            {Type: "string", Description: "Endpoint URL (webhook)"},
 				"http_method":             {Type: "string", Description: "HTTP method for webhook"},
-				"headers":                 {Type: "object", Description: "HTTP headers for webhook", AdditionalProperties: &OpenAPISchema{Type: "string"}},
+				"headers":                 {Type: "object", Description: "HTTP headers for webhook. On PUT: omit to keep existing, send an empty object to clear, send a non-empty map to replace. Values are accepted but never returned; the response exposes only header_names.", AdditionalProperties: &OpenAPISchema{Type: "string"}},
+				"auth_type":               {Type: "string", Description: "Webhook auth type (e.g. bearer, basic)"},
+				"auth_credentials":        {Type: "string", Description: "Webhook auth credentials. On PUT: omit to keep existing, empty string to clear, value to replace."},
 				"smtp_host":               {Type: "string", Description: "SMTP host (email)"},
 				"smtp_port":               {Type: "integer", Description: "SMTP port (email)"},
-				"smtp_username":           {Type: "string", Description: "SMTP username (email)"},
-				"smtp_password":           {Type: "string", Description: "SMTP password (email)"},
+				"smtp_username":           {Type: "string", Description: "SMTP username (email). On PUT: omit to keep existing, empty string to clear, value to replace."},
+				"smtp_password":           {Type: "string", Description: "SMTP password (email). On PUT: omit to keep existing, empty string to clear, value to replace."},
 				"smtp_use_tls":            {Type: "boolean", Description: "Use TLS for SMTP (email)"},
 				"from_address":            {Type: "string", Description: "From address (email)"},
 				"from_name":               {Type: "string", Description: "From name (email)"},

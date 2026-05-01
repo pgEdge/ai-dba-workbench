@@ -28,7 +28,12 @@ import {
     EmailRecipientsTab,
 } from './email';
 
-/** Map raw API response to EmailChannel type. */
+/**
+ * Map raw API response to EmailChannel type.
+ *
+ * The server redacts `smtp_username` and `smtp_password` (issue #187);
+ * we read the `*_set` boolean indicators instead.
+ */
 const mapEmailChannel = (ch: Record<string, unknown>): EmailChannel => ({
     id: ch.id as number,
     name: ch.name as string,
@@ -37,7 +42,8 @@ const mapEmailChannel = (ch: Record<string, unknown>): EmailChannel => ({
     is_estate_default: ch.is_estate_default as boolean,
     smtp_host: (ch.smtp_host as string) || '',
     smtp_port: (ch.smtp_port as number) || 587,
-    smtp_username: (ch.smtp_username as string) || '',
+    smtp_username_set: Boolean(ch.smtp_username_set),
+    smtp_password_set: Boolean(ch.smtp_password_set),
     use_tls: ch.smtp_use_tls as boolean,
     from_address: (ch.from_address as string) || '',
     from_name: (ch.from_name as string) || '',
@@ -131,6 +137,9 @@ const AdminEmailChannels: React.FC = () => {
     const handleOpenEdit = (e: React.MouseEvent, channel: EmailChannel) => {
         editingChannelIdRef.current = channel.id;
         crud.openEdit(e, channel);
+        // The SMTP username and password are redacted by the server;
+        // both are left blank in the form. Empty values at save time
+        // mean "preserve the existing server-side value".
         setForm({
             name: channel.name,
             description: channel.description,
@@ -138,7 +147,7 @@ const AdminEmailChannels: React.FC = () => {
             is_estate_default: channel.is_estate_default,
             smtp_host: channel.smtp_host,
             smtp_port: String(channel.smtp_port),
-            smtp_username: channel.smtp_username,
+            smtp_username: '',
             smtp_password: '',
             use_tls: channel.use_tls,
             from_address: channel.from_address,
@@ -203,7 +212,10 @@ const AdminEmailChannels: React.FC = () => {
                 if (portNum !== crud.editingChannel.smtp_port) {
                     body.smtp_port = portNum;
                 }
-                if (form.smtp_username.trim() !== crud.editingChannel.smtp_username) {
+                // SMTP username and password are redacted secrets. Send
+                // them only when the user typed something. Leaving them
+                // out tells the server to preserve the stored values.
+                if (form.smtp_username.trim()) {
                     body.smtp_username = form.smtp_username.trim();
                 }
                 if (form.smtp_password) {
@@ -458,6 +470,12 @@ const AdminEmailChannels: React.FC = () => {
                     saving={crud.saving}
                     isEditing={!!crud.editingChannel}
                     visible={crud.dialogTab === 0}
+                    smtpUsernameConfigured={
+                        crud.editingChannel?.smtp_username_set ?? false
+                    }
+                    smtpPasswordConfigured={
+                        crud.editingChannel?.smtp_password_set ?? false
+                    }
                 />
                 <EmailRecipientsTab
                     visible={crud.dialogTab === 1}

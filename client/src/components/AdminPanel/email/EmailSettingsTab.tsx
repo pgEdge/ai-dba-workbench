@@ -24,6 +24,17 @@ export interface EmailSettingsTabProps {
     saving: boolean;
     isEditing: boolean;
     visible: boolean;
+    /**
+     * True when the channel being edited has an SMTP username
+     * configured server-side. Used to show a "leave blank to keep
+     * existing" hint, since the server redacts the actual value.
+     */
+    smtpUsernameConfigured?: boolean;
+    /**
+     * True when the channel being edited has an SMTP password
+     * configured server-side.
+     */
+    smtpPasswordConfigured?: boolean;
 }
 
 /**
@@ -36,7 +47,22 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
     saving,
     isEditing,
     visible,
+    smtpUsernameConfigured = false,
+    smtpPasswordConfigured = false,
 }) => {
+    // The username and password are redacted by the server. When
+    // editing a channel that already has a value stored, surface a
+    // placeholder so users know submitting an empty form value will
+    // preserve it. When no value is configured (e.g. an edit dialog
+    // for a channel that was created without SMTP credentials), the
+    // placeholder must stay empty so we do not imply a stored secret.
+    const usernamePlaceholder = isEditing && smtpUsernameConfigured
+        ? 'Leave blank to keep existing'
+        : '';
+    const passwordPlaceholder = isEditing && smtpPasswordConfigured
+        ? 'Leave blank to keep existing'
+        : '';
+
     return (
         <Box sx={{ display: visible ? 'block' : 'none' }}>
             <TextField
@@ -89,6 +115,12 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 onChange={(e) => { onChange('smtp_username', e.target.value); }}
                 disabled={saving}
                 margin="dense"
+                placeholder={usernamePlaceholder}
+                helperText={
+                    isEditing && smtpUsernameConfigured
+                        ? 'A username is configured. Leave blank to keep it unchanged.'
+                        : undefined
+                }
                 InputLabelProps={{ shrink: true }}
             />
             <TextField
@@ -99,7 +131,12 @@ export const EmailSettingsTab: React.FC<EmailSettingsTabProps> = ({
                 onChange={(e) => { onChange('smtp_password', e.target.value); }}
                 disabled={saving}
                 margin="dense"
-                placeholder={isEditing ? '(unchanged)' : ''}
+                placeholder={passwordPlaceholder}
+                helperText={
+                    isEditing && smtpPasswordConfigured
+                        ? 'A password is configured. Leave blank to keep it unchanged.'
+                        : undefined
+                }
                 InputLabelProps={{ shrink: true }}
             />
             <TextField

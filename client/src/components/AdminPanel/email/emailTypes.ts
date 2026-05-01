@@ -10,11 +10,21 @@
 
 import type { BaseChannel } from '../channels/channelTypes';
 
-/** Email channel with SMTP configuration and recipient count. */
+/**
+ * Email channel as returned by the API.
+ *
+ * Note: The server intentionally redacts `smtp_username` and `smtp_password`
+ * from the channel response (see issue #187). Clients receive boolean
+ * `*_set` indicators instead so they can show whether a secret is
+ * configured without exposing the value itself.
+ */
 export interface EmailChannel extends BaseChannel {
     smtp_host: string;
     smtp_port: number;
-    smtp_username: string;
+    /** True when the channel has an SMTP username stored on the server. */
+    smtp_username_set: boolean;
+    /** True when the channel has an SMTP password stored on the server. */
+    smtp_password_set: boolean;
     use_tls: boolean;
     from_address: string;
     from_name: string;
@@ -29,7 +39,13 @@ export interface EmailRecipient {
     enabled: boolean;
 }
 
-/** Form state for creating or editing an email channel. */
+/**
+ * Form state for creating or editing an email channel.
+ *
+ * The `smtp_username` and `smtp_password` fields are local form state only;
+ * they are never pre-populated from the API response. On edit, an empty
+ * value means "preserve the existing server-side secret".
+ */
 export interface EmailFormState {
     name: string;
     description: string;

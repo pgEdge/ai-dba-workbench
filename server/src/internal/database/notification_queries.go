@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -44,7 +45,24 @@ var (
 	ErrEmailRecipientNotFound      = errors.New("email recipient not found")
 )
 
-// NotificationChannel represents a notification channel configuration
+// NotificationChannel represents a notification channel configuration.
+//
+// Secret fields (WebhookURL, AuthCredentials, SMTPUsername, SMTPPassword)
+// are intentionally NOT serialized to JSON. They are still loaded into
+// the struct from the database for internal callers (e.g. the test
+// endpoint that delivers a probe message), but the API must never echo
+// them back to clients. Companion boolean fields with the suffix `Set`
+// expose whether each secret is configured so that the UI can render an
+// indicator without ever seeing the secret value.
+//
+// Custom webhook Headers are also redacted: the values commonly carry
+// bearer tokens or API keys (`Authorization`, `X-API-Key`, etc.), so
+// the map is excluded from JSON output. The HeaderNames slice exposes
+// only the configured key names (sorted for deterministic JSON output)
+// so the UI can confirm which headers exist without ever seeing the
+// values. Internal callers (alerter delivery, the test-channel
+// endpoint) read Headers directly via Go field access — `json:"-"`
+// only affects JSON serialization. See issue #187.
 type NotificationChannel struct {
 	ID            int64                   `json:"id"`
 	OwnerUsername *string                 `json:"owner_username,omitempty"`
@@ -54,24 +72,31 @@ type NotificationChannel struct {
 	Name          string                  `json:"name"`
 	Description   *string                 `json:"description,omitempty"`
 
-	// Slack/Mattermost
-	WebhookURL *string `json:"webhook_url,omitempty"`
+	// Slack/Mattermost. Secret; never serialized.
+	WebhookURL    *string `json:"-"`
+	WebhookURLSet bool    `json:"webhook_url_set"`
 
-	// Webhook specific
-	EndpointURL     *string           `json:"endpoint_url,omitempty"`
-	HTTPMethod      string            `json:"http_method"`
-	Headers         map[string]string `json:"headers,omitempty"`
-	AuthType        *string           `json:"auth_type,omitempty"`
-	AuthCredentials *string           `json:"auth_credentials,omitempty"`
+	// Webhook specific. Headers values are secret (Authorization,
+	// X-API-Key, etc.); never serialized. HeaderNames advertises only
+	// the configured key names, sorted alphabetically.
+	EndpointURL        *string           `json:"endpoint_url,omitempty"`
+	HTTPMethod         string            `json:"http_method"`
+	Headers            map[string]string `json:"-"`
+	HeaderNames        []string          `json:"header_names,omitempty"`
+	AuthType           *string           `json:"auth_type,omitempty"`
+	AuthCredentials    *string           `json:"-"`
+	AuthCredentialsSet bool              `json:"auth_credentials_set"`
 
 	// Email specific
-	SMTPHost     *string `json:"smtp_host,omitempty"`
-	SMTPPort     int     `json:"smtp_port"`
-	SMTPUsername *string `json:"smtp_username,omitempty"`
-	SMTPPassword *string `json:"smtp_password,omitempty"`
-	SMTPUseTLS   bool    `json:"smtp_use_tls"`
-	FromAddress  *string `json:"from_address,omitempty"`
-	FromName     *string `json:"from_name,omitempty"`
+	SMTPHost        *string `json:"smtp_host,omitempty"`
+	SMTPPort        int     `json:"smtp_port"`
+	SMTPUsername    *string `json:"-"`
+	SMTPUsernameSet bool    `json:"smtp_username_set"`
+	SMTPPassword    *string `json:"-"`
+	SMTPPasswordSet bool    `json:"smtp_password_set"`
+	SMTPUseTLS      bool    `json:"smtp_use_tls"`
+	FromAddress     *string `json:"from_address,omitempty"`
+	FromName        *string `json:"from_name,omitempty"`
 
 	// Templates
 	TemplateAlertFire  *string `json:"template_alert_fire,omitempty"`
@@ -134,11 +159,53 @@ func (d *Datastore) decryptNotificationSecret(value *string) *string {
 }
 
 // decryptNotificationChannelSecrets decrypts all secret fields on a
-// notification channel in place.
+// notification channel in place and populates the matching `*Set`
+// boolean flags. Callers must invoke this after every load so that
+// the API layer can advertise which secrets are configured without
+// echoing the secret values themselves (see issue #187).
+//
+// SMTPUsername is stored plaintext in the database, so we do not
+// decrypt it; we only flip its `Set` flag if it is non-empty.
+//
+// HeaderNames is populated from the keys of the loaded Headers map
+// (sorted alphabetically for deterministic JSON output). Header
+// VALUES are kept on the struct for internal delivery code but are
+// excluded from JSON via `json:"-"`. An empty/nil Headers map yields
+// a nil HeaderNames slice, which `omitempty` then omits from the
+// response.
 func (d *Datastore) decryptNotificationChannelSecrets(c *NotificationChannel) {
 	c.WebhookURL = d.decryptNotificationSecret(c.WebhookURL)
 	c.AuthCredentials = d.decryptNotificationSecret(c.AuthCredentials)
 	c.SMTPPassword = d.decryptNotificationSecret(c.SMTPPassword)
+	c.WebhookURLSet = isSecretSet(c.WebhookURL)
+	c.AuthCredentialsSet = isSecretSet(c.AuthCredentials)
+	c.SMTPUsernameSet = isSecretSet(c.SMTPUsername)
+	c.SMTPPasswordSet = isSecretSet(c.SMTPPassword)
+	c.HeaderNames = sortedHeaderNames(c.Headers)
+}
+
+// sortedHeaderNames returns the keys of the headers map in
+// alphabetical order. The empty/nil map yields a nil slice so that
+// the JSON `omitempty` tag drops the field entirely when no headers
+// are configured.
+func sortedHeaderNames(headers map[string]string) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// isSecretSet reports whether a secret pointer is configured. A secret
+// is considered configured when the pointer is non-nil and the
+// referenced string is non-empty. This drives the `*_set` indicator
+// fields exposed to API clients.
+func isSecretSet(value *string) bool {
+	return value != nil && *value != ""
 }
 
 // ListNotificationChannels returns all notification channels ordered by name.

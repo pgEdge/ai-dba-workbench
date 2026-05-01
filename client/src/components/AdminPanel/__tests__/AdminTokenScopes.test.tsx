@@ -316,6 +316,10 @@ describe('AdminTokenScopes - copy-to-clipboard behaviour', () => {
         }
     );
 
+    // Load-sensitive: this test runs two full walkCreateFlow flows back-to-back
+    // inside JSDOM, so under heavier overall test load it can exceed the 5s
+    // default (notably on the Node 22 CI runner). Bump per-test rather than
+    // globally so other tests still enforce the tighter budget.
     it('resets the copied state when the created-token dialog is closed',
         async () => {
             const user = await openCreatedDialog();
@@ -348,7 +352,8 @@ describe('AdminTokenScopes - copy-to-clipboard behaviour', () => {
             expect(
                 screen.queryByTestId('CheckIcon')
             ).not.toBeInTheDocument();
-        }
+        },
+        15000
     );
 
     it('resets the 2-second timer when copy is clicked again while already in copied state',

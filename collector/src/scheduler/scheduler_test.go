@@ -118,6 +118,8 @@ func TestCreateProbe_AllKnownNames(t *testing.T) {
 		probes.ProbeNamePgStatUserFunctions,
 		probes.ProbeNamePgStatStatements,
 		probes.ProbeNamePgExtension,
+		probes.ProbeNameSpockExceptionLog,
+		probes.ProbeNameSpockResolutions,
 		probes.ProbeNamePgSysOsInfo,
 		probes.ProbeNamePgSysCPUInfo,
 		probes.ProbeNamePgSysCPUUsageInfo,

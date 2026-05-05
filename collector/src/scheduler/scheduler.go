@@ -811,6 +811,10 @@ func (ps *ProbeScheduler) createProbe(config *probes.ProbeConfig) probes.Metrics
 		return probes.NewPgStatStatementsProbe(config)
 	case probes.ProbeNamePgExtension:
 		return probes.NewPgExtensionProbe(config)
+	case probes.ProbeNameSpockExceptionLog:
+		return probes.NewSpockExceptionLogProbe(config)
+	case probes.ProbeNameSpockResolutions:
+		return probes.NewSpockResolutionsProbe(config)
 	// System Stats Extension probes (server-scoped)
 	case probes.ProbeNamePgSysOsInfo:
 		return probes.NewPgSysOsInfoProbe(config)

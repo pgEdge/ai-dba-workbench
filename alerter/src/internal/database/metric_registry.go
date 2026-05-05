@@ -310,11 +310,21 @@ var metricRegistry = map[string]metricQueryConfig{
 	// so the latest-sample count equals the live rolling-window count.
 	// Counting only the latest sample (rather than across multiple samples)
 	// avoids double-counting rows captured by overlapping cycles.
+	//
+	// The latest CTE constrains MAX(collected_at) to samples within the past
+	// 5 minutes. Without the cutoff a stale-but-still-present sample (for
+	// example, the source-side rolling window has drained but the probe
+	// short-circuits Store on the empty result) keeps the alert active long
+	// after the underlying condition resolves. Five minutes spans five
+	// default 60-second probe cycles, which is enough headroom to absorb a
+	// missed cycle without flapping but short enough that the alert clears
+	// promptly when source rows age out of the rolling window.
 	"spock_exception_log.recent_count": {
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
 				  FROM metrics.spock_exception_log
+				 WHERE collected_at > NOW() - INTERVAL '5 minutes'
 				 GROUP BY connection_id
 			)
 			SELECT s.connection_id,
@@ -345,11 +355,17 @@ var metricRegistry = map[string]metricQueryConfig{
 	// against the metrics.spock_resolutions table. The collector applies the
 	// same rolling 15-minute source-side window to spock.resolutions, so the
 	// latest-sample count equals the live rolling-window count.
+	//
+	// As with spock_exception_log.recent_count the latest CTE constrains
+	// MAX(collected_at) to samples within the past 5 minutes so a stale
+	// non-empty sample cannot keep an otherwise-resolved alert active after
+	// the source-side rolling window has drained.
 	"spock_resolutions.recent_count": {
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
 				  FROM metrics.spock_resolutions
+				 WHERE collected_at > NOW() - INTERVAL '5 minutes'
 				 GROUP BY connection_id
 			)
 			SELECT s.connection_id,

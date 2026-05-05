@@ -12,6 +12,7 @@ package database
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,6 +255,85 @@ func TestMetricRegistry_SpockResolutionsRecentCount(t *testing.T) {
 	got := findValueForConnection(t, results, connID)
 	if got != 2 {
 		t.Errorf("spock_resolutions.recent_count = %v; want 2 (latest sample only)", got)
+	}
+}
+
+// TestMetricRegistry_SpockExceptionLogRecentCount_StaleSampleExcluded
+// proves the freshness cutoff on the latest CTE: a sample older than
+// the 5-minute cutoff must not keep the metric reporting a non-zero
+// value after the rolling source-side window has drained.
+//
+// The probe short-circuits Store when Execute returns no rows, so a
+// stale non-empty sample can otherwise persist as the latest-recorded
+// state long after the underlying condition has resolved. The
+// freshness cutoff in the latest CTE is what causes the alert to
+// auto-clear in that situation.
+//
+// Seed a single row at now() - 6 minutes (outside the 5-minute cutoff)
+// and assert the metric returns no row for that connection.
+// GetLatestMetricValues returns "no data found for metric" when the
+// underlying query yields zero rows; that is the expected outcome
+// when every sample lies outside the cutoff.
+func TestMetricRegistry_SpockExceptionLogRecentCount_StaleSampleExcluded(t *testing.T) {
+	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertConnection(t, pool, "spock-exception-stale")
+	stale := time.Now().UTC().Add(-6 * time.Minute)
+	insertSpockExceptionRow(t, pool, connID, stale, 1)
+
+	results, err := ds.GetLatestMetricValues(ctx, "spock_exception_log.recent_count")
+	if err == nil {
+		// If GetLatestMetricValues returns rows the cutoff did not
+		// apply; surface a precise diagnostic before failing.
+		for _, mv := range results {
+			if mv.ConnectionID == connID {
+				t.Errorf("spock_exception_log.recent_count returned a "+
+					"value for connection %d after the only sample "+
+					"aged out of the 5-minute cutoff: got %v",
+					connID, mv.Value)
+			}
+		}
+		return
+	}
+
+	// "no data found" is the expected error path when every sample
+	// for every connection is outside the cutoff. Any other error
+	// indicates a real failure in the registry SQL.
+	if !strings.Contains(err.Error(), "no data found") {
+		t.Fatalf("unexpected error from GetLatestMetricValues: %v", err)
+	}
+}
+
+// TestMetricRegistry_SpockResolutionsRecentCount_StaleSampleExcluded
+// mirrors the exception_log freshness assertion for the resolutions
+// table. The cutoff is what allows the high/critical resolutions
+// alerts to auto-clear once Spock stops auto-resolving conflicts.
+func TestMetricRegistry_SpockResolutionsRecentCount_StaleSampleExcluded(t *testing.T) {
+	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertConnection(t, pool, "spock-resolutions-stale")
+	stale := time.Now().UTC().Add(-6 * time.Minute)
+	insertSpockResolutionRow(t, pool, connID, stale, 1)
+
+	results, err := ds.GetLatestMetricValues(ctx, "spock_resolutions.recent_count")
+	if err == nil {
+		for _, mv := range results {
+			if mv.ConnectionID == connID {
+				t.Errorf("spock_resolutions.recent_count returned a "+
+					"value for connection %d after the only sample "+
+					"aged out of the 5-minute cutoff: got %v",
+					connID, mv.Value)
+			}
+		}
+		return
+	}
+
+	if !strings.Contains(err.Error(), "no data found") {
+		t.Fatalf("unexpected error from GetLatestMetricValues: %v", err)
 	}
 }
 

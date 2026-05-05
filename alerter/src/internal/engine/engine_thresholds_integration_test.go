@@ -700,3 +700,87 @@ func TestEngine_ReplicationSlotRetentionHigh_FireAndClear(t *testing.T) {
 
 	assertAlertCleared(t, ds, pool, rules["replication_slot_retention_high"], connID, alert.ID)
 }
+
+// TestEngine_SpockRecentExceptionsPresent_StaleSampleAutoClears proves that
+// the freshness cutoff in spock_exception_log.recent_count's latest CTE
+// auto-clears the alert when the most recent sample ages past 5 minutes.
+//
+// This models the production scenario where the source-side rolling window
+// drains: the probe's Execute returns no rows for several cycles, Store
+// short-circuits without writing anything, and the latest sample for the
+// connection ages out of the cutoff. The clean-resolved-alerts pass must
+// then transition the alert to status='cleared' even though the row that
+// caused the alert is still present in the table.
+//
+// The test fires the alert with a fresh row, ages the sample by rewriting
+// collected_at to 6 minutes ago (just outside the cutoff), and asserts the
+// alert clears. Rewriting collected_at is more deterministic than waiting
+// real time to elapse and exercises exactly the staleness-driven clear
+// path the cutoff was added to enable.
+func TestEngine_SpockRecentExceptionsPresent_StaleSampleAutoClears(t *testing.T) {
+	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	rules := seedSpockBuiltInRules(t, pool)
+	disableAllRulesExcept(t, pool, "spock_recent_exceptions_present")
+
+	connID := insertTestConnection(t, pool, "spock-exceptions-stale-conn")
+	fresh := time.Now().UTC().Add(-1 * time.Minute)
+	insertSpockExceptionRow(t, pool, connID, fresh, 1)
+
+	engine.evaluateThresholds(ctx)
+
+	alert := assertAlertFired(t, ds, rules["spock_recent_exceptions_present"], connID, "warning")
+
+	// Age the only row past the 5-minute freshness cutoff. The probe
+	// short-circuits Store on empty results so a real probe never writes a
+	// fresher row in this scenario; rewriting collected_at simulates the
+	// passage of time without flaking on real-clock waits.
+	stale := time.Now().UTC().Add(-6 * time.Minute)
+	if _, err := pool.Exec(ctx, `
+		UPDATE metrics.spock_exception_log
+		   SET collected_at = $1
+		 WHERE connection_id = $2
+	`, stale, connID); err != nil {
+		t.Fatalf("Failed to age spock_exception_log row: %v", err)
+	}
+
+	engine.cleanResolvedAlerts(ctx)
+
+	assertAlertCleared(t, ds, pool, rules["spock_recent_exceptions_present"], connID, alert.ID)
+}
+
+// TestEngine_SpockRecentResolutionsPresent_StaleSampleAutoClears mirrors the
+// exception_log auto-clear test for the resolutions table. The freshness
+// cutoff applies symmetrically to both Spock recent_count metrics so a
+// drained source-side window clears the resolutions alert too.
+func TestEngine_SpockRecentResolutionsPresent_StaleSampleAutoClears(t *testing.T) {
+	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	rules := seedSpockBuiltInRules(t, pool)
+	disableAllRulesExcept(t, pool, "spock_recent_resolutions_present")
+
+	connID := insertTestConnection(t, pool, "spock-resolutions-stale-conn")
+	fresh := time.Now().UTC().Add(-1 * time.Minute)
+	insertSpockResolutionRow(t, pool, connID, fresh, 1)
+
+	engine.evaluateThresholds(ctx)
+
+	alert := assertAlertFired(t, ds, rules["spock_recent_resolutions_present"], connID, "warning")
+
+	stale := time.Now().UTC().Add(-6 * time.Minute)
+	if _, err := pool.Exec(ctx, `
+		UPDATE metrics.spock_resolutions
+		   SET collected_at = $1
+		 WHERE connection_id = $2
+	`, stale, connID); err != nil {
+		t.Fatalf("Failed to age spock_resolutions row: %v", err)
+	}
+
+	engine.cleanResolvedAlerts(ctx)
+
+	assertAlertCleared(t, ds, pool, rules["spock_recent_resolutions_present"], connID, alert.ID)
+}

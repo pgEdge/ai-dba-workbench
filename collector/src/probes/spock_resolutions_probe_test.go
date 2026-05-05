@@ -154,6 +154,19 @@ func TestSpockResolutionsProbe_ExecuteWithStubSpock(t *testing.T) {
 			"destroy a real one to clean up")
 	}
 
+	// Track whether this test created the spock schema. If a stale
+	// schema exists from a previous crashed run (or a future setup
+	// step pre-creates it for unrelated reasons) the cleanup must
+	// leave it alone rather than drop a structure it does not own.
+	var createdSchema bool
+	if err := conn.QueryRow(ctx, `
+		SELECT NOT EXISTS (
+			SELECT 1 FROM pg_namespace WHERE nspname = 'spock'
+		)
+	`).Scan(&createdSchema); err != nil {
+		t.Fatalf("check spock schema existence: %v", err)
+	}
+
 	stmts := []string{
 		`CREATE SCHEMA IF NOT EXISTS spock`,
 		`CREATE TABLE IF NOT EXISTS spock.resolutions (
@@ -195,6 +208,18 @@ func TestSpockResolutionsProbe_ExecuteWithStubSpock(t *testing.T) {
 			"DELETE FROM pg_extension "+
 				"WHERE extname='spock'"); err != nil {
 			t.Logf("cleanup pg_extension spock row: %v", err)
+		}
+		if !createdSchema {
+			// The schema was already there; leave it alone so a
+			// crashed previous run or unrelated test fixture does
+			// not lose its structure to this cleanup. In that
+			// situation we still drop the table the test created
+			// so subsequent runs find a clean schema.
+			if _, err := conn.Exec(ctx,
+				"DROP TABLE IF EXISTS spock.resolutions"); err != nil {
+				t.Logf("cleanup spock.resolutions table: %v", err)
+			}
+			return
 		}
 		if _, err := conn.Exec(ctx,
 			"DROP SCHEMA spock CASCADE"); err != nil {

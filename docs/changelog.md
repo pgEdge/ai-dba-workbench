@@ -10,6 +10,25 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add the `spock_exception_log` and `spock_resolutions`
+  collector probes; both probes capture a rolling
+  15-minute window of the Spock extension's
+  exception and conflict-resolution catalogs and
+  no-op cleanly on databases without Spock installed.
+  (#200)
+- Add six built-in alert rules in the `replication`
+  category: `spock_recent_exceptions_present`,
+  `spock_recent_exceptions_high`,
+  `spock_recent_resolutions_present`,
+  `spock_recent_resolutions_high`,
+  `replication_slot_retention_warn`, and
+  `replication_slot_retention_high`; the Spock rules
+  require the `spock` extension and the slot
+  retention rules apply to every PostgreSQL
+  deployment. (#200)
+
 ### Changed
 
 - **Breaking change:** the collector, alerter, and

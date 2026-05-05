@@ -698,6 +698,61 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			stats_reset TIMESTAMPTZ
 		) PARTITION BY RANGE (collected_at)`,
 
+		// Spock probe target tables. Mirrors the v3 migration column
+		// shape so the probe Store paths can write rows without
+		// schema drift in unit/integration tests. database_name is
+		// NOT NULL here just like in the v3 migration: the probe's
+		// Store path always supplies a value sourced from the
+		// scheduler-injected "_database_name" key.
+		`CREATE TABLE IF NOT EXISTS metrics.spock_exception_log (
+			connection_id INTEGER NOT NULL,
+			database_name TEXT NOT NULL,
+			collected_at TIMESTAMPTZ NOT NULL,
+			remote_origin OID,
+			remote_commit_ts TIMESTAMPTZ,
+			command_counter INTEGER,
+			retry_errored_at TIMESTAMPTZ,
+			remote_xid BIGINT,
+			local_origin OID,
+			local_commit_ts TIMESTAMPTZ,
+			table_schema TEXT,
+			table_name TEXT,
+			operation TEXT,
+			local_tup JSONB,
+			remote_old_tup JSONB,
+			remote_new_tup JSONB,
+			ddl_statement TEXT,
+			ddl_user TEXT,
+			error_message TEXT
+		) PARTITION BY RANGE (collected_at)`,
+
+		// metrics.spock_resolutions mirrors the v3 migration column
+		// list, including the TEXT representation of xid and pg_lsn
+		// values that the probe casts on the source side. The probe's
+		// Store path appends to this parent table; child partitions
+		// are created on demand by EnsurePartition during the test.
+		`CREATE TABLE IF NOT EXISTS metrics.spock_resolutions (
+			connection_id INTEGER NOT NULL,
+			database_name TEXT NOT NULL,
+			collected_at TIMESTAMPTZ NOT NULL,
+			id INTEGER NOT NULL,
+			node_name NAME NOT NULL,
+			log_time TIMESTAMPTZ NOT NULL,
+			relname TEXT,
+			idxname TEXT,
+			conflict_type TEXT,
+			conflict_resolution TEXT,
+			local_origin INTEGER,
+			local_tuple TEXT,
+			local_xid TEXT,
+			local_timestamp TIMESTAMPTZ,
+			remote_origin INTEGER,
+			remote_tuple TEXT,
+			remote_xid TEXT,
+			remote_timestamp TIMESTAMPTZ,
+			remote_lsn TEXT
+		) PARTITION BY RANGE (collected_at)`,
+
 		// pg_stat_statements is a real extension and is enabled in
 		// the CI environment via shared_preload_libraries. We try
 		// to install it; if the server was not started with the

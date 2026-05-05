@@ -10,7 +10,7 @@ The Collector organizes probes into two categories:
 - Server-scoped probes collect server-wide statistics
   and total 26 probes.
 - Database-scoped probes collect per-database
-  statistics and total 8 probes.
+  statistics and total 10 probes.
 
 ## Server-Scoped Probes
 
@@ -561,6 +561,135 @@ when installed extensions change.
 
 **Columns Collected**: extname, extversion,
 extrelocatable, schema_name
+
+### spock_exception_log
+
+This probe captures rows added to `spock.exception_log`
+within a rolling 15-minute source-side window. The
+probe targets Spock v5 or later; the probe checks for
+the `spock` extension through `CheckExtensionExists`
+against `pg_extension` and returns a successful no-op
+on databases without Spock installed.
+
+- Source View: `spock.exception_log`
+- Default Interval: 60 seconds
+- Default Retention: 7 days
+- Key Metrics: Recent apply-side exception count,
+  remote origin, error message, DDL statement
+- Use Cases: Detecting Spock apply errors, tracking
+  recent exception bursts, alerting on exception
+  presence
+- Required Extension: `spock`
+- Window Semantics: The query filters
+  `retry_errored_at > now() - interval '15 minutes'`
+  on the source side; alerts that read the
+  `recent_count` aggregate clear automatically as rows
+  age out of the window.
+
+The probe reads from the source view with the
+following query:
+
+```sql
+SELECT remote_origin,
+       remote_commit_ts,
+       command_counter,
+       retry_errored_at,
+       remote_xid,
+       local_origin,
+       local_commit_ts,
+       table_schema,
+       table_name,
+       operation,
+       local_tup,
+       remote_old_tup,
+       remote_new_tup,
+       ddl_statement,
+       ddl_user,
+       error_message
+  FROM spock.exception_log
+ WHERE retry_errored_at > now() - interval '15 minutes';
+```
+
+The probe stores rows in `metrics.spock_exception_log`,
+a partitioned table keyed on `collected_at`. The
+primary key is `(connection_id, database_name,
+collected_at, remote_origin, remote_commit_ts,
+command_counter, retry_errored_at)`; `database_name`
+discriminates rows captured from different databases on
+the same monitored connection so the natural Spock keys
+remain unique within a `(connection, database, sample)`
+tuple.
+
+**Columns Collected**: connection_id, database_name,
+collected_at, remote_origin, remote_commit_ts,
+command_counter, retry_errored_at, remote_xid,
+local_origin, local_commit_ts, table_schema, table_name,
+operation, local_tup, remote_old_tup, remote_new_tup,
+ddl_statement, ddl_user, error_message
+
+### spock_resolutions
+
+This probe captures rows added to `spock.resolutions`
+within a rolling 15-minute source-side window. The
+probe targets Spock v5 or later; the probe checks for
+the `spock` extension through `CheckExtensionExists`
+against `pg_extension` and returns a successful no-op
+on databases without Spock installed.
+
+- Source View: `spock.resolutions`
+- Default Interval: 60 seconds
+- Default Retention: 7 days
+- Key Metrics: Recent auto-resolved conflict count,
+  conflict type, conflict resolution, node name
+- Use Cases: Detecting conflict-resolution activity,
+  alerting on resolution bursts, auditing applied
+  conflict resolutions
+- Required Extension: `spock`
+- Window Semantics: The query filters
+  `log_time > now() - interval '15 minutes'` on the
+  source side; alerts that read the `recent_count`
+  aggregate clear automatically as rows age out of
+  the window.
+
+The probe casts `xid` and `pg_lsn` columns to text on
+the source side so the values land in the destination
+`TEXT` columns without pgx type negotiation:
+
+```sql
+SELECT id,
+       node_name,
+       log_time,
+       relname,
+       idxname,
+       conflict_type,
+       conflict_resolution,
+       local_origin,
+       local_tuple,
+       local_xid::text  AS local_xid,
+       local_timestamp,
+       remote_origin,
+       remote_tuple,
+       remote_xid::text AS remote_xid,
+       remote_timestamp,
+       remote_lsn::text AS remote_lsn
+  FROM spock.resolutions
+ WHERE log_time > now() - interval '15 minutes';
+```
+
+The probe stores rows in `metrics.spock_resolutions`,
+a partitioned table keyed on `collected_at`. The
+primary key is `(connection_id, database_name,
+collected_at, id, node_name)`; `database_name` is part
+of the key because the `spock.resolutions.id` sequence
+is per-database, so rows captured from two databases on
+the same monitored connection can otherwise collide.
+
+**Columns Collected**: connection_id, database_name,
+collected_at, id, node_name, log_time, relname, idxname,
+conflict_type, conflict_resolution, local_origin,
+local_tuple, local_xid, local_timestamp,
+remote_origin, remote_tuple, remote_xid,
+remote_timestamp, remote_lsn
 
 ## System Statistics Probes
 

@@ -2597,6 +2597,167 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #3: Add Spock exception_log and resolutions metrics tables,
+	// seed the matching probe_configs rows, and seed six new built-in alert
+	// rules covering Spock recent-count thresholds and replication-slot WAL
+	// retention warn/critical tiers. The migration is forward-only and
+	// idempotent: CREATE TABLE IF NOT EXISTS for the metrics tables and
+	// ON CONFLICT DO NOTHING on the seed rows.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     3,
+		Description: "Add Spock metrics tables and seed Spock/slot retention alert rules",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			// metrics.spock_exception_log
+			//
+			// Captures rows pulled from spock.exception_log within a rolling
+			// 15-minute source-side window. The composite primary key prefixes
+			// the natural Spock identity columns with collector keys
+			// (connection_id, database_name, collected_at) so re-collected
+			// rows from a still-open window slot in cleanly. database_name is
+			// part of the key because the probe is database-scoped: when Spock
+			// is installed in more than one database on the same monitored
+			// connection, the probe writes one set of rows per database and
+			// the natural Spock keys (remote_origin, remote_commit_ts,
+			// command_counter, retry_errored_at) collide across databases
+			// without the database_name discriminator.
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.spock_exception_log (
+					connection_id INTEGER NOT NULL,
+					database_name TEXT NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					remote_origin OID NOT NULL,
+					remote_commit_ts TIMESTAMPTZ NOT NULL,
+					command_counter INTEGER NOT NULL,
+					retry_errored_at TIMESTAMPTZ NOT NULL,
+					remote_xid BIGINT NOT NULL,
+					local_origin OID,
+					local_commit_ts TIMESTAMPTZ,
+					table_schema TEXT,
+					table_name TEXT,
+					operation TEXT,
+					local_tup JSONB,
+					remote_old_tup JSONB,
+					remote_new_tup JSONB,
+					ddl_statement TEXT,
+					ddl_user TEXT,
+					error_message TEXT,
+					PRIMARY KEY (connection_id, database_name, collected_at, remote_origin, remote_commit_ts, command_counter, retry_errored_at)
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.spock_exception_log IS
+					'Rolling 15-minute snapshots of rows from the Spock extension''s exception_log catalog';
+				COMMENT ON COLUMN metrics.spock_exception_log.database_name IS
+					'Source database the row was collected from; included in the primary key to disambiguate rows when Spock is installed in multiple databases on the same monitored connection';
+
+				ALTER TABLE metrics.spock_exception_log
+					DROP CONSTRAINT IF EXISTS fk_spock_exception_log_connection_id;
+				ALTER TABLE metrics.spock_exception_log
+					ADD CONSTRAINT fk_spock_exception_log_connection_id
+					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
+				CREATE INDEX IF NOT EXISTS idx_spock_exception_log_conn_time
+					ON metrics.spock_exception_log(connection_id, collected_at DESC);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create metrics.spock_exception_log: %w", err)
+			}
+
+			// metrics.spock_resolutions
+			//
+			// Captures rows pulled from spock.resolutions within a rolling
+			// 15-minute source-side window. xid and pg_lsn columns are stored
+			// as TEXT so they round-trip cleanly via the standard COPY path.
+			// database_name is part of the primary key because the per-
+			// database resolutions.id sequence is independent across
+			// databases; without the discriminator two rows with the same id
+			// collected from different databases on the same monitored
+			// connection would collide on the composite key.
+			_, err = tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS metrics.spock_resolutions (
+					connection_id INTEGER NOT NULL,
+					database_name TEXT NOT NULL,
+					collected_at TIMESTAMPTZ NOT NULL,
+					id INTEGER NOT NULL,
+					node_name NAME NOT NULL,
+					log_time TIMESTAMPTZ NOT NULL,
+					relname TEXT,
+					idxname TEXT,
+					conflict_type TEXT,
+					conflict_resolution TEXT,
+					local_origin INTEGER,
+					local_tuple TEXT,
+					local_xid TEXT,
+					local_timestamp TIMESTAMPTZ,
+					remote_origin INTEGER,
+					remote_tuple TEXT,
+					remote_xid TEXT,
+					remote_timestamp TIMESTAMPTZ,
+					remote_lsn TEXT,
+					PRIMARY KEY (connection_id, database_name, collected_at, id, node_name)
+				) PARTITION BY RANGE (collected_at);
+
+				COMMENT ON TABLE metrics.spock_resolutions IS
+					'Rolling 15-minute snapshots of rows from the Spock extension''s resolutions catalog';
+				COMMENT ON COLUMN metrics.spock_resolutions.database_name IS
+					'Source database the row was collected from; included in the primary key to disambiguate rows because the spock.resolutions.id sequence is per-database, not per-connection';
+
+				ALTER TABLE metrics.spock_resolutions
+					DROP CONSTRAINT IF EXISTS fk_spock_resolutions_connection_id;
+				ALTER TABLE metrics.spock_resolutions
+					ADD CONSTRAINT fk_spock_resolutions_connection_id
+					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
+
+				CREATE INDEX IF NOT EXISTS idx_spock_resolutions_conn_time
+					ON metrics.spock_resolutions(connection_id, collected_at DESC);
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create metrics.spock_resolutions: %w", err)
+			}
+
+			// Seed global probe_configs for the two new probes. ON CONFLICT
+			// DO NOTHING preserves any operator override that may already
+			// exist (matching the v1 seed's behavior).
+			_, err = tx.Exec(ctx, `
+				INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
+				VALUES
+					(NULL, TRUE, 'spock_exception_log', 'Captures rows added to spock.exception_log in a rolling 15-minute window', 60, 7),
+					(NULL, TRUE, 'spock_resolutions', 'Captures rows added to spock.resolutions in a rolling 15-minute window', 60, 7)
+				ON CONFLICT DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to seed Spock probe_configs: %w", err)
+			}
+
+			// Seed built-in alert rules. ON CONFLICT (name) DO NOTHING
+			// preserves operator overrides on previously seeded rules.
+			// The two slot-retention rules carry required_extension = NULL
+			// because slot retention applies to every PostgreSQL deployment.
+			_, err = tx.Exec(ctx, `
+				INSERT INTO alert_rules (name, description, category, metric_name, metric_unit, default_operator, default_threshold, default_severity, default_enabled, required_extension, is_built_in)
+				VALUES
+					-- Spock exception_log content rules.
+					('spock_recent_exceptions_present', 'Spock has logged at least one exception in the last 15 minutes', 'replication', 'spock_exception_log.recent_count', 'exceptions', '>=', 1, 'warning', TRUE, 'spock', TRUE),
+					('spock_recent_exceptions_high', 'Spock has logged a high number of exceptions in the last 15 minutes', 'replication', 'spock_exception_log.recent_count', 'exceptions', '>=', 10, 'critical', TRUE, 'spock', TRUE),
+
+					-- Spock resolutions content rules.
+					('spock_recent_resolutions_present', 'Spock has auto-resolved at least one conflict in the last 15 minutes', 'replication', 'spock_resolutions.recent_count', 'resolutions', '>=', 1, 'warning', TRUE, 'spock', TRUE),
+					('spock_recent_resolutions_high', 'Spock has auto-resolved a high number of conflicts in the last 15 minutes', 'replication', 'spock_resolutions.recent_count', 'resolutions', '>=', 25, 'critical', TRUE, 'spock', TRUE),
+
+					-- Replication slot WAL retention tiers.
+					('replication_slot_retention_warn', 'A replication slot is retaining more than 1 GiB of WAL', 'replication', 'pg_replication_slots.max_retained_bytes', 'bytes', '>=', 1073741824, 'warning', TRUE, NULL, TRUE),
+					('replication_slot_retention_high', 'A replication slot is retaining more than 10 GiB of WAL', 'replication', 'pg_replication_slots.max_retained_bytes', 'bytes', '>=', 10737418240, 'critical', TRUE, NULL, TRUE)
+				ON CONFLICT (name) DO NOTHING;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to seed Spock and slot retention alert rules: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations

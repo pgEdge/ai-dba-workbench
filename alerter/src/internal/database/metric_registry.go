@@ -231,6 +231,167 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// pg_replication_slots.inactive_count counts replication slots that
+	// have active=false in the latest metrics.pg_replication_slots sample
+	// for each connection. The COUNT(*) FILTER aggregate yields zero when
+	// every slot is active (the alert clears) and the inactive count when
+	// any slot has dropped its WAL receiver.
+	"pg_replication_slots.inactive_count": {
+		latestSQL: `
+			WITH latest AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
+				  FROM metrics.pg_replication_slots
+				 GROUP BY connection_id
+			)
+			SELECT s.connection_id,
+			       COUNT(*) FILTER (WHERE NOT s.active)::float AS value,
+			       l.collected_at
+			  FROM metrics.pg_replication_slots s
+			  JOIN latest l
+			    ON s.connection_id = l.connection_id
+			   AND s.collected_at  = l.collected_at
+			 GROUP BY s.connection_id, l.collected_at
+		`,
+		historicalSQL: `
+			SELECT s.connection_id,
+			       NULL::text AS database_name,
+			       COUNT(*) FILTER (WHERE NOT s.active)::float AS value,
+			       s.collected_at
+			  FROM metrics.pg_replication_slots s
+			  JOIN connections c ON c.id = s.connection_id
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			 GROUP BY s.connection_id, s.collected_at
+			 ORDER BY s.connection_id, s.collected_at
+		`,
+		scan:           scanBasic,
+		historicalScan: historicalScanBasic,
+	},
+
+	// pg_replication_slots.max_retained_bytes returns the maximum
+	// retained_bytes across all replication slots in the latest sample
+	// for each connection. retained_bytes is NUMERIC in the source table
+	// to handle WAL retention values larger than int64; the cast to float
+	// is safe for the threshold ranges the operator-facing alert rules
+	// configure (1 GiB warning, 10 GiB critical).
+	"pg_replication_slots.max_retained_bytes": {
+		latestSQL: `
+			WITH latest AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
+				  FROM metrics.pg_replication_slots
+				 GROUP BY connection_id
+			)
+			SELECT s.connection_id,
+			       COALESCE(MAX(s.retained_bytes), 0)::float AS value,
+			       l.collected_at
+			  FROM metrics.pg_replication_slots s
+			  JOIN latest l
+			    ON s.connection_id = l.connection_id
+			   AND s.collected_at  = l.collected_at
+			 GROUP BY s.connection_id, l.collected_at
+		`,
+		historicalSQL: `
+			SELECT s.connection_id,
+			       NULL::text AS database_name,
+			       COALESCE(MAX(s.retained_bytes), 0)::float AS value,
+			       s.collected_at
+			  FROM metrics.pg_replication_slots s
+			  JOIN connections c ON c.id = s.connection_id
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			 GROUP BY s.connection_id, s.collected_at
+			 ORDER BY s.connection_id, s.collected_at
+		`,
+		scan:           scanBasic,
+		historicalScan: historicalScanBasic,
+	},
+
+	// spock_exception_log.recent_count counts rows in the latest
+	// metrics.spock_exception_log sample for each connection. The collector
+	// re-evaluates a rolling 15-minute source-side window every probe cycle,
+	// so the latest-sample count equals the live rolling-window count.
+	// Counting only the latest sample (rather than across multiple samples)
+	// avoids double-counting rows captured by overlapping cycles.
+	//
+	// The latest CTE constrains MAX(collected_at) to samples within the past
+	// 5 minutes. Without the cutoff a stale-but-still-present sample (for
+	// example, the source-side rolling window has drained but the probe
+	// short-circuits Store on the empty result) keeps the alert active long
+	// after the underlying condition resolves. Five minutes spans five
+	// default 60-second probe cycles, which is enough headroom to absorb a
+	// missed cycle without flapping but short enough that the alert clears
+	// promptly when source rows age out of the rolling window.
+	"spock_exception_log.recent_count": {
+		latestSQL: `
+			WITH latest AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
+				  FROM metrics.spock_exception_log
+				 WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				 GROUP BY connection_id
+			)
+			SELECT s.connection_id,
+			       COUNT(*)::float AS value,
+			       l.collected_at
+			  FROM metrics.spock_exception_log s
+			  JOIN latest l
+			    ON s.connection_id = l.connection_id
+			   AND s.collected_at  = l.collected_at
+			 GROUP BY s.connection_id, l.collected_at
+		`,
+		historicalSQL: `
+			SELECT s.connection_id,
+			       NULL::text AS database_name,
+			       COUNT(*)::float AS value,
+			       s.collected_at
+			  FROM metrics.spock_exception_log s
+			  JOIN connections c ON c.id = s.connection_id
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			 GROUP BY s.connection_id, s.collected_at
+			 ORDER BY s.connection_id, s.collected_at
+		`,
+		scan:           scanBasic,
+		historicalScan: historicalScanBasic,
+	},
+
+	// spock_resolutions.recent_count mirrors spock_exception_log.recent_count
+	// against the metrics.spock_resolutions table. The collector applies the
+	// same rolling 15-minute source-side window to spock.resolutions, so the
+	// latest-sample count equals the live rolling-window count.
+	//
+	// As with spock_exception_log.recent_count the latest CTE constrains
+	// MAX(collected_at) to samples within the past 5 minutes so a stale
+	// non-empty sample cannot keep an otherwise-resolved alert active after
+	// the source-side rolling window has drained.
+	"spock_resolutions.recent_count": {
+		latestSQL: `
+			WITH latest AS (
+				SELECT connection_id, MAX(collected_at) AS collected_at
+				  FROM metrics.spock_resolutions
+				 WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				 GROUP BY connection_id
+			)
+			SELECT s.connection_id,
+			       COUNT(*)::float AS value,
+			       l.collected_at
+			  FROM metrics.spock_resolutions s
+			  JOIN latest l
+			    ON s.connection_id = l.connection_id
+			   AND s.collected_at  = l.collected_at
+			 GROUP BY s.connection_id, l.collected_at
+		`,
+		historicalSQL: `
+			SELECT s.connection_id,
+			       NULL::text AS database_name,
+			       COUNT(*)::float AS value,
+			       s.collected_at
+			  FROM metrics.spock_resolutions s
+			  JOIN connections c ON c.id = s.connection_id
+			 WHERE s.collected_at > NOW() - INTERVAL '1 day' * $1
+			 GROUP BY s.connection_id, s.collected_at
+			 ORDER BY s.connection_id, s.collected_at
+		`,
+		scan:           scanBasic,
+		historicalScan: historicalScanBasic,
+	},
+
 	"pg_stat_replication.standby_disconnected": {
 		latestSQL: `
 			WITH recent_standby AS (

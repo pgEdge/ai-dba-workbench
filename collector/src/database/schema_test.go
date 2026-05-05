@@ -283,7 +283,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify all migrations are registered
-	expectedVersions := []int{1, 2}
+	expectedVersions := []int{1, 2, 3}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -995,6 +995,8 @@ func TestZZZ_FullSchemaForInspection(t *testing.T) {
 		"pg_stat_wal",
 		"pg_stat_replication",
 		"pg_replication_slots",
+		"spock_exception_log",
+		"spock_resolutions",
 		"pg_stat_subscription",
 		"pg_stat_recovery_prefetch",
 		"pg_stat_io",

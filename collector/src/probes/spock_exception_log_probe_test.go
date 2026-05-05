@@ -87,13 +87,23 @@ func TestSpockExceptionLogProbe_StoreEmpty(t *testing.T) {
 // raising an error or attempting to query a missing catalog. This
 // branch is hit on every collection cycle for non-Spock databases
 // and must not log noise or churn the connection pool.
+//
+// The test is skipped when Spock is already installed on the host
+// integration database; the integration pool is created fresh per
+// process today, but the guard keeps this test correct on hosts where
+// Spock is part of the base image.
 func TestSpockExceptionLogProbe_ExecuteWhenSpockAbsent(t *testing.T) {
 	pool := requireIntegrationPool(t)
 	conn := acquireConn(t, pool)
+	ctx := context.Background()
 	pgVersion := detectPgVersion(t, conn)
 
+	if spockAlreadyInstalled(t, ctx, conn) {
+		t.Skip("spock extension already installed; cannot exercise " +
+			"the spock-absent branch")
+	}
+
 	p := newSpockExceptionLogProbeForTest()
-	ctx := context.Background()
 
 	metrics, err := p.Execute(ctx, "no-spock", conn, pgVersion)
 	if err != nil {

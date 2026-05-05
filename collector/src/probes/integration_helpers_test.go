@@ -698,6 +698,30 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			stats_reset TIMESTAMPTZ
 		) PARTITION BY RANGE (collected_at)`,
 
+		// Spock probe target tables. Mirrors the v3 migration column
+		// shape so the probe Store paths can write rows without
+		// schema drift in unit/integration tests.
+		`CREATE TABLE IF NOT EXISTS metrics.spock_exception_log (
+			connection_id INTEGER NOT NULL,
+			collected_at TIMESTAMPTZ NOT NULL,
+			remote_origin OID,
+			remote_commit_ts TIMESTAMPTZ,
+			command_counter INTEGER,
+			retry_errored_at TIMESTAMPTZ,
+			remote_xid BIGINT,
+			local_origin OID,
+			local_commit_ts TIMESTAMPTZ,
+			table_schema TEXT,
+			table_name TEXT,
+			operation TEXT,
+			local_tup JSONB,
+			remote_old_tup JSONB,
+			remote_new_tup JSONB,
+			ddl_statement TEXT,
+			ddl_user TEXT,
+			error_message TEXT
+		) PARTITION BY RANGE (collected_at)`,
+
 		// pg_stat_statements is a real extension and is enabled in
 		// the CI environment via shared_preload_libraries. We try
 		// to install it; if the server was not started with the

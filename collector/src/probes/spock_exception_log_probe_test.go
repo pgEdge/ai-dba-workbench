@@ -105,3 +105,218 @@ func TestSpockExceptionLogProbe_ExecuteWhenSpockAbsent(t *testing.T) {
 			len(metrics))
 	}
 }
+
+// TestSpockExceptionLogProbe_GetExtensionName documents the
+// extension dependency advertised to the scheduler so operator-
+// facing reasons ("Spock not installed") stay in sync with the
+// runtime guard inside Execute.
+func TestSpockExceptionLogProbe_GetExtensionName(t *testing.T) {
+	p := newSpockExceptionLogProbeForTest()
+	if got := p.GetExtensionName(); got != "spock" {
+		t.Errorf("GetExtensionName() = %q, want %q", got, "spock")
+	}
+}
+
+// TestSpockExceptionLogProbe_ExecuteWithStubSpock drives the Spock-
+// installed branch of Execute by registering a stub spock extension
+// and creating a minimal spock.exception_log table that matches the
+// columns the probe selects. With the schema in place Execute should
+// succeed and return an empty (non-nil) slice when no rows fall
+// inside the rolling 15-minute window. We then insert a single row
+// and verify it round-trips through Execute and Store.
+func TestSpockExceptionLogProbe_ExecuteWithStubSpock(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+
+	if spockAlreadyInstalled(t, ctx, conn) {
+		t.Skip("spock extension already installed; this test " +
+			"creates a stub spock and would otherwise need to " +
+			"destroy a real one to clean up")
+	}
+
+	stmts := []string{
+		`CREATE SCHEMA IF NOT EXISTS spock`,
+		`CREATE TABLE IF NOT EXISTS spock.exception_log (
+			remote_origin OID NOT NULL,
+			remote_commit_ts TIMESTAMPTZ NOT NULL,
+			command_counter INTEGER NOT NULL,
+			retry_errored_at TIMESTAMPTZ NOT NULL,
+			remote_xid BIGINT NOT NULL,
+			local_origin OID,
+			local_commit_ts TIMESTAMPTZ,
+			table_schema TEXT,
+			table_name TEXT,
+			operation TEXT,
+			local_tup JSONB,
+			remote_old_tup JSONB,
+			remote_new_tup JSONB,
+			ddl_statement TEXT,
+			ddl_user TEXT,
+			error_message TEXT
+		)`,
+		`INSERT INTO pg_extension (oid, extname, extowner,
+			extnamespace, extrelocatable, extversion,
+			extconfig, extcondition)
+			SELECT (SELECT MAX(oid::oid::int)
+				FROM pg_extension) + 1, 'spock', 10,
+				(SELECT oid FROM pg_namespace
+					WHERE nspname='spock'),
+				TRUE, '1.0', NULL, NULL
+			WHERE NOT EXISTS (SELECT 1 FROM pg_extension
+				WHERE extname='spock')`,
+	}
+	for _, s := range stmts {
+		if _, err := conn.Exec(ctx, s); err != nil {
+			t.Fatalf("setup spock stub: %v\n%s", err, s)
+		}
+	}
+	t.Cleanup(func() {
+		if _, err := conn.Exec(ctx,
+			"DELETE FROM pg_extension "+
+				"WHERE extname='spock'"); err != nil {
+			t.Logf("cleanup pg_extension spock row: %v", err)
+		}
+		if _, err := conn.Exec(ctx,
+			"DROP SCHEMA spock CASCADE"); err != nil {
+			t.Logf("cleanup spock schema: %v", err)
+		}
+	})
+
+	p := newSpockExceptionLogProbeForTest()
+
+	// Empty-window case: no rows yet, but the query and scan path
+	// must succeed and return a non-error result.
+	metrics, err := p.Execute(ctx, "with-spock", conn, pgVersion)
+	if err != nil {
+		t.Fatalf("Execute (empty window): %v", err)
+	}
+	if len(metrics) != 0 {
+		t.Errorf("Execute (empty window) returned %d metrics, "+
+			"want 0", len(metrics))
+	}
+
+	// Insert a synthetic row that falls inside the 15-minute window.
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO spock.exception_log (
+			remote_origin, remote_commit_ts, command_counter,
+			retry_errored_at, remote_xid, local_origin,
+			local_commit_ts, table_schema, table_name, operation,
+			local_tup, remote_old_tup, remote_new_tup,
+			ddl_statement, ddl_user, error_message)
+		VALUES (
+			16384, now(), 1, now(), 12345, 16385,
+			now(), 'public', 't1', 'INSERT',
+			'{"a":1}'::jsonb, NULL, '{"a":2}'::jsonb,
+			NULL, NULL, 'apply failed: dup key')
+	`); err != nil {
+		t.Fatalf("insert exception_log row: %v", err)
+	}
+
+	metrics, err = p.Execute(ctx, "with-spock", conn, pgVersion)
+	if err != nil {
+		t.Fatalf("Execute (one row): %v", err)
+	}
+	if len(metrics) != 1 {
+		t.Fatalf("Execute returned %d rows, want 1", len(metrics))
+	}
+	if got := metrics[0]["error_message"]; got !=
+		"apply failed: dup key" {
+		t.Errorf("error_message = %v, want %q",
+			got, "apply failed: dup key")
+	}
+
+	// Store the row to metrics.spock_exception_log to exercise the
+	// happy path of the COPY/INSERT pipeline. The integration
+	// helper schema includes this table so partition creation and
+	// the column ordering above are both verified end-to-end.
+	if err := p.Store(ctx, conn, 1, time.Now().UTC(),
+		metrics); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	// Confirm at least one row landed in the destination table.
+	var stored int
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(*) FROM metrics.spock_exception_log
+		 WHERE connection_id = 1
+	`).Scan(&stored); err != nil {
+		t.Fatalf("count stored rows: %v", err)
+	}
+	if stored != 1 {
+		t.Errorf("metrics.spock_exception_log count = %d, want 1",
+			stored)
+	}
+}
+
+// TestSpockExceptionLogProbe_ExecuteCheckExtensionError exercises the
+// CheckExtensionExists error branch by passing a connection that has
+// already been released. pgxpool returns an error for any query
+// attempted on a released connection; the probe must wrap and
+// return that error rather than swallowing it.
+func TestSpockExceptionLogProbe_ExecuteCheckExtensionError(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+
+	// Force the underlying *pgx.Conn into a state that fails the
+	// next query. Cancelling the context is the cheapest way to
+	// guarantee QueryRow returns an error without disturbing the
+	// shared pool.
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	p := newSpockExceptionLogProbeForTest()
+	if _, err := p.Execute(cancelCtx, "cancelled", conn,
+		pgVersion); err == nil {
+		t.Fatal("Execute with cancelled context: expected error, " +
+			"got nil")
+	}
+}
+
+// TestSpockExceptionLogProbe_StoreEnsurePartitionError drives the
+// EnsurePartition error branch of Store by passing a cancelled
+// context with a real datastore connection. EnsurePartition issues
+// SQL through the connection, which fails immediately when the
+// context is already cancelled, causing Store to surface the wrapped
+// "failed to ensure partition" error.
+func TestSpockExceptionLogProbe_StoreEnsurePartitionError(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	metrics := []map[string]any{
+		{
+			"remote_origin":    uint32(1),
+			"remote_commit_ts": time.Now(),
+			"command_counter":  1,
+			"retry_errored_at": time.Now(),
+			"remote_xid":       int64(1),
+			"local_origin":     nil,
+			"local_commit_ts":  nil,
+			"table_schema":     "public",
+			"table_name":       "t",
+			"operation":        "INSERT",
+			"local_tup":        nil,
+			"remote_old_tup":   nil,
+			"remote_new_tup":   nil,
+			"ddl_statement":    nil,
+			"ddl_user":         nil,
+			"error_message":    "boom",
+		},
+	}
+
+	p := newSpockExceptionLogProbeForTest()
+	err := p.Store(cancelCtx, conn, 1, time.Now(), metrics)
+	if err == nil {
+		t.Fatal("Store(cancelled ctx) expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to ensure partition") {
+		t.Errorf("Store error = %q; want it to mention "+
+			"'failed to ensure partition'", err.Error())
+	}
+}

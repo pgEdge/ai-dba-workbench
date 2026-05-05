@@ -111,9 +111,13 @@ func TestMigrationV3_SpockMetricsTablesExist(t *testing.T) {
 		}
 	}
 
-	// Verify a representative subset of the documented column shapes.
+	// Verify a representative subset of the documented column shapes,
+	// including the database_name discriminator added so rows from
+	// different databases on the same monitored connection cannot
+	// collide on the composite primary key.
 	exceptionColumns := map[string]string{
 		"connection_id":    "integer",
+		"database_name":    "text",
 		"collected_at":     "timestamp with time zone",
 		"remote_origin":    "oid",
 		"remote_commit_ts": "timestamp with time zone",
@@ -129,6 +133,7 @@ func TestMigrationV3_SpockMetricsTablesExist(t *testing.T) {
 
 	resolutionColumns := map[string]string{
 		"connection_id":    "integer",
+		"database_name":    "text",
 		"collected_at":     "timestamp with time zone",
 		"id":               "integer",
 		"node_name":        "name",
@@ -140,6 +145,70 @@ func TestMigrationV3_SpockMetricsTablesExist(t *testing.T) {
 		"remote_timestamp": "timestamp with time zone",
 	}
 	assertColumnTypes(t, pool, "spock_resolutions", resolutionColumns)
+
+	// database_name must participate in the composite primary key so a
+	// monitored connection running Spock in two databases keeps the
+	// per-database identity columns from colliding (notably
+	// spock.resolutions.id, which is a per-database sequence).
+	assertNotNullColumn(t, pool, "spock_exception_log", "database_name")
+	assertNotNullColumn(t, pool, "spock_resolutions", "database_name")
+	assertPrimaryKeyContains(t, pool, "spock_exception_log", "database_name")
+	assertPrimaryKeyContains(t, pool, "spock_resolutions", "database_name")
+}
+
+// assertNotNullColumn fails the test if the named column is nullable.
+// The Spock metrics tables require database_name to be NOT NULL so
+// every row carries a usable discriminator into the composite key.
+func assertNotNullColumn(t *testing.T, pool *pgxpool.Pool, table, column string) {
+	t.Helper()
+	ctx := context.Background()
+	var isNullable string
+	err := pool.QueryRow(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'metrics'
+		  AND table_name = $1
+		  AND column_name = $2
+	`, table, column).Scan(&isNullable)
+	if err != nil {
+		t.Errorf("metrics.%s column %q lookup failed: %v", table, column, err)
+		return
+	}
+	if isNullable != "NO" {
+		t.Errorf("metrics.%s.%s is_nullable = %q, want \"NO\"",
+			table, column, isNullable)
+	}
+}
+
+// assertPrimaryKeyContains fails the test if the named column is not
+// part of the primary key for the given metrics table.
+func assertPrimaryKeyContains(t *testing.T, pool *pgxpool.Pool, table, column string) {
+	t.Helper()
+	ctx := context.Background()
+	var contains bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
+			JOIN pg_attribute a
+			  ON a.attrelid = c.oid
+			 AND a.attnum = ANY (i.indkey)
+			WHERE n.nspname = 'metrics'
+			  AND c.relname = $1
+			  AND a.attname = $2
+		)
+	`, table, column).Scan(&contains)
+	if err != nil {
+		t.Errorf("metrics.%s primary key lookup for %q failed: %v",
+			table, column, err)
+		return
+	}
+	if !contains {
+		t.Errorf("metrics.%s primary key does not include %q",
+			table, column)
+	}
 }
 
 // assertColumnTypes asserts that each column in the given metrics table

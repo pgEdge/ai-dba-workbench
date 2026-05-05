@@ -700,9 +700,13 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 
 		// Spock probe target tables. Mirrors the v3 migration column
 		// shape so the probe Store paths can write rows without
-		// schema drift in unit/integration tests.
+		// schema drift in unit/integration tests. database_name is
+		// NOT NULL here just like in the v3 migration: the probe's
+		// Store path always supplies a value sourced from the
+		// scheduler-injected "_database_name" key.
 		`CREATE TABLE IF NOT EXISTS metrics.spock_exception_log (
 			connection_id INTEGER NOT NULL,
+			database_name TEXT NOT NULL,
 			collected_at TIMESTAMPTZ NOT NULL,
 			remote_origin OID,
 			remote_commit_ts TIMESTAMPTZ,
@@ -729,6 +733,7 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		// are created on demand by EnsurePartition during the test.
 		`CREATE TABLE IF NOT EXISTS metrics.spock_resolutions (
 			connection_id INTEGER NOT NULL,
+			database_name TEXT NOT NULL,
 			collected_at TIMESTAMPTZ NOT NULL,
 			id INTEGER NOT NULL,
 			node_name NAME NOT NULL,

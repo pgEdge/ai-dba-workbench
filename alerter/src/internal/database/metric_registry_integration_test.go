@@ -45,23 +45,25 @@ CREATE SCHEMA metrics;
 
 CREATE TABLE metrics.spock_exception_log (
     connection_id INTEGER NOT NULL,
+    database_name TEXT NOT NULL,
     collected_at TIMESTAMPTZ NOT NULL,
     remote_origin OID NOT NULL,
     remote_commit_ts TIMESTAMPTZ NOT NULL,
     command_counter INTEGER NOT NULL,
     retry_errored_at TIMESTAMPTZ NOT NULL,
     remote_xid BIGINT NOT NULL,
-    PRIMARY KEY (connection_id, collected_at, remote_origin,
+    PRIMARY KEY (connection_id, database_name, collected_at, remote_origin,
                  remote_commit_ts, command_counter, retry_errored_at)
 );
 
 CREATE TABLE metrics.spock_resolutions (
     connection_id INTEGER NOT NULL,
+    database_name TEXT NOT NULL,
     collected_at TIMESTAMPTZ NOT NULL,
     id INTEGER NOT NULL,
     node_name NAME NOT NULL,
     log_time TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (connection_id, collected_at, id, node_name)
+    PRIMARY KEY (connection_id, database_name, collected_at, id, node_name)
 );
 
 CREATE TABLE metrics.pg_replication_slots (
@@ -134,10 +136,10 @@ func insertSpockExceptionRow(t *testing.T, pool *pgxpool.Pool, connID int,
 
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO metrics.spock_exception_log (
-		    connection_id, collected_at, remote_origin, remote_commit_ts,
-		    command_counter, retry_errored_at, remote_xid
+		    connection_id, database_name, collected_at, remote_origin,
+		    remote_commit_ts, command_counter, retry_errored_at, remote_xid
 		) VALUES (
-		    $1, $2, 12345, $2, $3, $2, 999
+		    $1, 'app', $2, 12345, $2, $3, $2, 999
 		)
 	`, connID, collectedAt, commandCounter); err != nil {
 		t.Fatalf("Failed to insert spock_exception_log row: %v", err)
@@ -152,9 +154,9 @@ func insertSpockResolutionRow(t *testing.T, pool *pgxpool.Pool, connID int,
 
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO metrics.spock_resolutions (
-		    connection_id, collected_at, id, node_name, log_time
+		    connection_id, database_name, collected_at, id, node_name, log_time
 		) VALUES (
-		    $1, $2, $3, 'node-a', $2
+		    $1, 'app', $2, $3, 'node-a', $2
 		)
 	`, connID, collectedAt, id); err != nil {
 		t.Fatalf("Failed to insert spock_resolutions row: %v", err)

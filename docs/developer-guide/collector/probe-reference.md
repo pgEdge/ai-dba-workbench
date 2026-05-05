@@ -612,16 +612,19 @@ SELECT remote_origin,
 
 The probe stores rows in `metrics.spock_exception_log`,
 a partitioned table keyed on `collected_at`. The
-primary key is `(connection_id, collected_at,
-remote_origin, remote_commit_ts, command_counter,
-retry_errored_at)` so re-collected rows from a
-still-open window slot in cleanly.
+primary key is `(connection_id, database_name,
+collected_at, remote_origin, remote_commit_ts,
+command_counter, retry_errored_at)`; `database_name`
+discriminates rows captured from different databases on
+the same monitored connection so the natural Spock keys
+remain unique within a `(connection, database, sample)`
+tuple.
 
-**Columns Collected**: connection_id, collected_at,
-remote_origin, remote_commit_ts, command_counter,
-retry_errored_at, remote_xid, local_origin,
-local_commit_ts, table_schema, table_name, operation,
-local_tup, remote_old_tup, remote_new_tup,
+**Columns Collected**: connection_id, database_name,
+collected_at, remote_origin, remote_commit_ts,
+command_counter, retry_errored_at, remote_xid,
+local_origin, local_commit_ts, table_schema, table_name,
+operation, local_tup, remote_old_tup, remote_new_tup,
 ddl_statement, ddl_user, error_message
 
 ### spock_resolutions
@@ -675,12 +678,14 @@ SELECT id,
 
 The probe stores rows in `metrics.spock_resolutions`,
 a partitioned table keyed on `collected_at`. The
-primary key is `(connection_id, collected_at, id,
-node_name)` so re-collected rows from a still-open
-window slot in cleanly.
+primary key is `(connection_id, database_name,
+collected_at, id, node_name)`; `database_name` is part
+of the key because the `spock.resolutions.id` sequence
+is per-database, so rows captured from two databases on
+the same monitored connection can otherwise collide.
 
-**Columns Collected**: connection_id, collected_at,
-id, node_name, log_time, relname, idxname,
+**Columns Collected**: connection_id, database_name,
+collected_at, id, node_name, log_time, relname, idxname,
 conflict_type, conflict_resolution, local_origin,
 local_tuple, local_xid, local_timestamp,
 remote_origin, remote_tuple, remote_xid,

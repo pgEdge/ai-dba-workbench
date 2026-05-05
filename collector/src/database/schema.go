@@ -2612,12 +2612,20 @@ func (sm *SchemaManager) registerMigrations() {
 			// metrics.spock_exception_log
 			//
 			// Captures rows pulled from spock.exception_log within a rolling
-			// 15-minute source-side window. Composite primary key matches
-			// the source-side identity columns prefixed with collector keys
-			// so re-collected rows from a still-open window slot in cleanly.
+			// 15-minute source-side window. The composite primary key prefixes
+			// the natural Spock identity columns with collector keys
+			// (connection_id, database_name, collected_at) so re-collected
+			// rows from a still-open window slot in cleanly. database_name is
+			// part of the key because the probe is database-scoped: when Spock
+			// is installed in more than one database on the same monitored
+			// connection, the probe writes one set of rows per database and
+			// the natural Spock keys (remote_origin, remote_commit_ts,
+			// command_counter, retry_errored_at) collide across databases
+			// without the database_name discriminator.
 			_, err := tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.spock_exception_log (
 					connection_id INTEGER NOT NULL,
+					database_name TEXT NOT NULL,
 					collected_at TIMESTAMPTZ NOT NULL,
 					remote_origin OID NOT NULL,
 					remote_commit_ts TIMESTAMPTZ NOT NULL,
@@ -2635,11 +2643,13 @@ func (sm *SchemaManager) registerMigrations() {
 					ddl_statement TEXT,
 					ddl_user TEXT,
 					error_message TEXT,
-					PRIMARY KEY (connection_id, collected_at, remote_origin, remote_commit_ts, command_counter, retry_errored_at)
+					PRIMARY KEY (connection_id, database_name, collected_at, remote_origin, remote_commit_ts, command_counter, retry_errored_at)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.spock_exception_log IS
 					'Rolling 15-minute snapshots of rows from the Spock extension''s exception_log catalog';
+				COMMENT ON COLUMN metrics.spock_exception_log.database_name IS
+					'Source database the row was collected from; included in the primary key to disambiguate rows when Spock is installed in multiple databases on the same monitored connection';
 
 				ALTER TABLE metrics.spock_exception_log
 					DROP CONSTRAINT IF EXISTS fk_spock_exception_log_connection_id;
@@ -2659,9 +2669,15 @@ func (sm *SchemaManager) registerMigrations() {
 			// Captures rows pulled from spock.resolutions within a rolling
 			// 15-minute source-side window. xid and pg_lsn columns are stored
 			// as TEXT so they round-trip cleanly via the standard COPY path.
+			// database_name is part of the primary key because the per-
+			// database resolutions.id sequence is independent across
+			// databases; without the discriminator two rows with the same id
+			// collected from different databases on the same monitored
+			// connection would collide on the composite key.
 			_, err = tx.Exec(ctx, `
 				CREATE TABLE IF NOT EXISTS metrics.spock_resolutions (
 					connection_id INTEGER NOT NULL,
+					database_name TEXT NOT NULL,
 					collected_at TIMESTAMPTZ NOT NULL,
 					id INTEGER NOT NULL,
 					node_name NAME NOT NULL,
@@ -2679,11 +2695,13 @@ func (sm *SchemaManager) registerMigrations() {
 					remote_xid TEXT,
 					remote_timestamp TIMESTAMPTZ,
 					remote_lsn TEXT,
-					PRIMARY KEY (connection_id, collected_at, id, node_name)
+					PRIMARY KEY (connection_id, database_name, collected_at, id, node_name)
 				) PARTITION BY RANGE (collected_at);
 
 				COMMENT ON TABLE metrics.spock_resolutions IS
 					'Rolling 15-minute snapshots of rows from the Spock extension''s resolutions catalog';
+				COMMENT ON COLUMN metrics.spock_resolutions.database_name IS
+					'Source database the row was collected from; included in the primary key to disambiguate rows because the spock.resolutions.id sequence is per-database, not per-connection';
 
 				ALTER TABLE metrics.spock_resolutions
 					DROP CONSTRAINT IF EXISTS fk_spock_resolutions_connection_id;

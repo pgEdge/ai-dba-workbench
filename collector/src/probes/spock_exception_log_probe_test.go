@@ -227,6 +227,13 @@ func TestSpockExceptionLogProbe_ExecuteWithStubSpock(t *testing.T) {
 			got, "apply failed: dup key")
 	}
 
+	// The scheduler injects _database_name on every row before
+	// Store is called. Mirror that here so Store can populate the
+	// destination database_name column without errors.
+	for i := range metrics {
+		metrics[i]["_database_name"] = "stub-db"
+	}
+
 	// Store the row to metrics.spock_exception_log to exercise the
 	// happy path of the COPY/INSERT pipeline. The integration
 	// helper schema includes this table so partition creation and

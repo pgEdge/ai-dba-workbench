@@ -115,6 +115,12 @@ func (p *SpockExceptionLogProbe) Execute(ctx context.Context, connectionName str
 // The column order matches the v3 migration (collector/src/database/
 // schema.go) and the surface contract documented on GetQuery; do not
 // reorder or rename columns without updating both call sites.
+//
+// database_name is sourced from the per-row "_database_name" key the
+// scheduler injects on every database-scoped probe. The value is part
+// of the destination primary key because the probe runs once per
+// monitored database and the Spock identity columns can collide across
+// databases on the same monitored connection.
 func (p *SpockExceptionLogProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil
@@ -125,7 +131,7 @@ func (p *SpockExceptionLogProbe) Store(ctx context.Context, datastoreConn *pgxpo
 	}
 
 	columns := []string{
-		"connection_id", "collected_at",
+		"connection_id", "database_name", "collected_at",
 		"remote_origin", "remote_commit_ts", "command_counter",
 		"retry_errored_at", "remote_xid", "local_origin",
 		"local_commit_ts", "table_schema", "table_name", "operation",
@@ -135,8 +141,13 @@ func (p *SpockExceptionLogProbe) Store(ctx context.Context, datastoreConn *pgxpo
 
 	values := make([][]any, 0, len(metrics))
 	for _, m := range metrics {
+		databaseName, ok := m["_database_name"]
+		if !ok {
+			return fmt.Errorf("database_name not found in metrics for spock_exception_log; scheduler must inject _database_name on database-scoped probes")
+		}
 		values = append(values, []any{
 			connectionID,
+			databaseName,
 			timestamp,
 			m["remote_origin"],
 			m["remote_commit_ts"],

@@ -257,6 +257,13 @@ func TestSpockResolutionsProbe_ExecuteWithStubSpock(t *testing.T) {
 			metrics[0]["remote_lsn"], metrics[0]["remote_lsn"])
 	}
 
+	// The scheduler injects _database_name on every row before
+	// Store is called. Mirror that here so Store can populate the
+	// destination database_name column without errors.
+	for i := range metrics {
+		metrics[i]["_database_name"] = "stub-db"
+	}
+
 	// Store the row to metrics.spock_resolutions to exercise the
 	// happy path of the COPY/INSERT pipeline. The integration helper
 	// schema includes this table so partition creation and the

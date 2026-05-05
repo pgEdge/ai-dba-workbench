@@ -121,6 +121,13 @@ func (p *SpockResolutionsProbe) Execute(ctx context.Context, connectionName stri
 // pg_lsn values arrive as Go strings (already cast to text on the
 // source side) and land in TEXT columns on the destination, avoiding
 // any pgx type negotiation in the COPY path.
+//
+// database_name is sourced from the per-row "_database_name" key the
+// scheduler injects on every database-scoped probe. The value is part
+// of the destination primary key because the spock.resolutions.id
+// sequence is per-database, so two rows with the same id collected
+// from different databases on the same monitored connection would
+// otherwise collide on the composite key.
 func (p *SpockResolutionsProbe) Store(ctx context.Context, datastoreConn *pgxpool.Conn, connectionID int, timestamp time.Time, metrics []map[string]any) error {
 	if len(metrics) == 0 {
 		return nil
@@ -131,7 +138,7 @@ func (p *SpockResolutionsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 	}
 
 	columns := []string{
-		"connection_id", "collected_at",
+		"connection_id", "database_name", "collected_at",
 		"id", "node_name", "log_time", "relname", "idxname",
 		"conflict_type", "conflict_resolution",
 		"local_origin", "local_tuple", "local_xid", "local_timestamp",
@@ -141,8 +148,13 @@ func (p *SpockResolutionsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 
 	values := make([][]any, 0, len(metrics))
 	for _, m := range metrics {
+		databaseName, ok := m["_database_name"]
+		if !ok {
+			return fmt.Errorf("database_name not found in metrics for spock_resolutions; scheduler must inject _database_name on database-scoped probes")
+		}
 		values = append(values, []any{
 			connectionID,
+			databaseName,
 			timestamp,
 			m["id"],
 			m["node_name"],

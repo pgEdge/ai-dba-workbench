@@ -83,13 +83,21 @@ func main() {
 		return
 	}
 
-	// Load configuration
+	// Load configuration. If --config was passed explicitly but
+	// points at a missing file, fail loudly. Otherwise, an empty or
+	// missing default just falls through to the compiled-in
+	// defaults; LoadConfig is tolerant of an empty path.
 	configPathForLoad := ""
-	if config.ConfigFileExists(configPath) {
+	if configPath != "" && config.ConfigFileExists(configPath) {
 		configPathForLoad = configPath
 		fmt.Fprintf(os.Stderr, "Config: %s\n", configPath)
+	} else if cliFlags.ConfigFileSet {
+		fmt.Fprintf(os.Stderr, "ERROR: configuration file not found: %s\n", configPath)
+		os.Exit(1)
 	} else {
-		fmt.Fprintf(os.Stderr, "Config: no config file found\n")
+		fmt.Fprintf(os.Stderr,
+			"Config: no config file found in default search paths "+
+				"(per-user config dir, /etc/pgedge); using defaults\n")
 	}
 	fmt.Fprintf(os.Stderr, "Data directory: %s\n", dataDir)
 

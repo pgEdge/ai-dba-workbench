@@ -13,7 +13,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
@@ -28,8 +27,10 @@ type Config struct {
 	// Connection pool settings
 	Pool PoolConfig `yaml:"pool"`
 
-	// Path to file containing server secret for encryption
-	// Default search paths: /etc/pgedge/ai-dba-collector.secret, ./ai-dba-collector.secret
+	// Path to file containing server secret for encryption.
+	// When unset, LoadSecret searches the per-user config directory
+	// (e.g. ~/.config/pgedge/ai-dba-collector.secret) first and
+	// /etc/pgedge/ai-dba-collector.secret second.
 	SecretFile string `yaml:"secret_file"`
 
 	// Loaded server secret (not from YAML, loaded from SecretFile)
@@ -140,10 +141,23 @@ func (c *Config) LoadPassword() error {
 	return nil
 }
 
-// LoadSecret loads the server secret from the secret file
-// Search order: explicit SecretFile config > /etc/pgedge/ > binary directory
+// LoadSecret loads the server secret from the secret file.
+//
+// Search order (highest priority first):
+//
+//  1. The explicit SecretFile path from the YAML config (if set).
+//  2. The per-user config directory reported by os.UserConfigDir(),
+//     under pgedge/ai-dba-collector.secret.
+//  3. The system-wide path /etc/pgedge/ai-dba-collector.secret.
+//
+// The binary directory and the current working directory are no
+// longer consulted, matching the precedence rules used for the
+// config file. The binaryPath parameter is retained for caller
+// stability and is intentionally ignored.
 func (c *Config) LoadSecret(binaryPath string) error {
-	// If secret file is explicitly specified, use it
+	_ = binaryPath // intentionally unused; retained for caller stability
+
+	// If secret file is explicitly specified, use it.
 	if c.SecretFile != "" {
 		secret, err := fileutil.ReadTrimmedFileWithTilde(c.SecretFile)
 		if err != nil {
@@ -153,32 +167,20 @@ func (c *Config) LoadSecret(binaryPath string) error {
 		return nil
 	}
 
-	// Search default paths
-	searchPaths := []string{
-		"/etc/pgedge/ai-dba-collector.secret",
-	}
-
-	// Add binary directory path
-	if binaryPath != "" {
-		dir := filepath.Dir(binaryPath)
-		searchPaths = append(searchPaths, filepath.Join(dir, "ai-dba-collector.secret"))
-	}
-
-	// Also check current directory
-	searchPaths = append(searchPaths, "./ai-dba-collector.secret")
-
-	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
-			secret, err := fileutil.ReadTrimmedFileWithTilde(path)
-			if err != nil {
-				return fmt.Errorf("failed to read secret file %s: %w", path, err)
-			}
-			c.serverSecret = secret
-			return nil
+	// Resolve via the shared helper so all three services apply
+	// identical precedence to default paths.
+	if path := fileutil.GetDefaultConfigPath("", "ai-dba-collector.secret"); path != "" {
+		secret, err := fileutil.ReadTrimmedFileWithTilde(path)
+		if err != nil {
+			return fmt.Errorf("failed to read secret file %s: %w", path, err)
 		}
+		c.serverSecret = secret
+		return nil
 	}
 
-	return fmt.Errorf("server secret file not found. Create a secret file at one of: %v", searchPaths)
+	return fmt.Errorf("server secret file not found. Searched: " +
+		"per-user config dir (~/.config/pgedge or platform " +
+		"equivalent) and /etc/pgedge/ai-dba-collector.secret")
 }
 
 // GetServerSecret returns the loaded server secret
@@ -237,14 +239,18 @@ func (c *Config) GetDatastorePoolMaxIdleSeconds() int { return c.Pool.DatastoreM
 func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.Pool.DatastoreMaxWaitSeconds }
 func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredMaxWaitSeconds }
 
-// GetDefaultConfigPath returns the default config file path
-// Searches /etc/pgedge/ first, then binary directory
+// GetDefaultConfigPath returns the path to an existing default
+// config file, or "" if none was found. Searches the per-user
+// config directory (e.g. ~/.config/pgedge/) first, then
+// /etc/pgedge/. The binaryPath parameter is no longer consulted
+// but kept for caller stability.
 func GetDefaultConfigPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-collector.yaml")
 }
 
-// GetDefaultSecretPath returns the default secret file path
-// Searches /etc/pgedge/ first, then binary directory
+// GetDefaultSecretPath returns the path to an existing default
+// secret file, or "" if none was found. Search order matches
+// GetDefaultConfigPath.
 func GetDefaultSecretPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-collector.secret")
 }

@@ -13,6 +13,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,19 +27,132 @@ import (
 // Version information
 const Version = "1.0.0-beta1"
 
+// resolveConfigPathResult describes the outcome of a config-path
+// lookup. Exposed so main() and its unit tests share the same shape.
+type resolveConfigPathResult struct {
+	// Path is the resolved path. It is empty if no config file was
+	// found in any default location and no explicit path was given.
+	Path string
+	// Explicit is true if the user passed --config on the command
+	// line. When Explicit is true and Path is non-empty but the
+	// file is missing, callers must error out rather than fall back
+	// to defaults.
+	Explicit bool
+}
+
+// resolveConfigPath returns the config path to use, given the value
+// of the --config flag. When --config is empty, the shared
+// discovery helper consults the per-user config directory first
+// and /etc/pgedge second. The returned struct tells callers
+// whether the path came from an explicit flag (in which case a
+// missing file is fatal) or from auto-discovery (in which case a
+// missing file means "use defaults").
+//
+// The helper is its own function so we can exercise both branches
+// in tests without driving the alerter's main() entry point.
+func resolveConfigPath(flagValue string) resolveConfigPathResult {
+	if flagValue != "" {
+		return resolveConfigPathResult{Path: flagValue, Explicit: true}
+	}
+	return resolveConfigPathResult{
+		Path:     config.GetDefaultConfigPath(""),
+		Explicit: false,
+	}
+}
+
+// reloadFlagOverrides bundles the CLI flag values that survive
+// across a SIGHUP reload and must be reapplied to the freshly
+// loaded config so operators do not lose their command-line
+// overrides on every reload.
+type reloadFlagOverrides struct {
+	DBHost         string
+	DBPort         int
+	DBName         string
+	DBUser         string
+	DBPasswordFile string
+	DBSSLMode      string
+}
+
+// reloadConfigOnSignal builds a fresh *config.Config from the same
+// discovery rules used at startup, applies the original flag
+// overrides, validates the result, and returns it. The function
+// is intentionally side-effect free apart from logging to the
+// supplied io.Writer: callers (typically the SIGHUP handler in
+// main) decide whether to install the new config and notify the
+// running engine.
+//
+// The "no candidate file found" and "candidate file vanished"
+// cases both return (nil, nil) so the caller can keep the
+// running config rather than silently downgrade to compiled-in
+// defaults. A non-nil error indicates a hard failure (read error,
+// invalid YAML, validation failure, etc.) - again the caller
+// keeps the current config.
+//
+// Splitting the reload logic out of main() keeps the goroutine
+// that owns the signal channel small and lets us cover the
+// branches in unit tests without driving the binary entry point.
+func reloadConfigOnSignal(
+	logOut io.Writer,
+	prevPath string,
+	explicit bool,
+	overrides reloadFlagOverrides,
+) (*config.Config, error) {
+	reloadPath := prevPath
+	if !explicit {
+		reloadPath = config.GetDefaultConfigPath("")
+	}
+	if reloadPath == "" {
+		fmt.Fprintf(logOut,
+			"ERROR: No configuration file found in default search "+
+				"paths during SIGHUP reload; keeping current config\n")
+		return nil, nil
+	}
+	if !config.ConfigFileExists(reloadPath) {
+		fmt.Fprintf(logOut,
+			"ERROR: Configuration file %s not found during SIGHUP "+
+				"reload; keeping current config\n", reloadPath)
+		return nil, nil
+	}
+
+	newCfg := config.NewConfig()
+	if err := newCfg.LoadFromFile(reloadPath); err != nil {
+		return nil, fmt.Errorf("failed to reload config: %w", err)
+	}
+
+	if err := applyFlagOverrides(newCfg,
+		overrides.DBHost, overrides.DBPort, overrides.DBName,
+		overrides.DBUser, overrides.DBPasswordFile, overrides.DBSSLMode,
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply overrides on reload: %w", err)
+	}
+
+	if err := newCfg.Validate(); err != nil {
+		return nil, fmt.Errorf("reloaded config is invalid: %w", err)
+	}
+
+	if err := newCfg.LoadPassword(); err != nil {
+		return nil, fmt.Errorf("failed to load password on reload: %w", err)
+	}
+
+	// API keys are non-critical: an error here is logged but does
+	// not block the reload.
+	if err := newCfg.LoadAPIKeys(); err != nil {
+		fmt.Fprintf(logOut,
+			"WARNING: Failed to load API keys on reload: %v\n", err)
+	}
+
+	fmt.Fprintf(logOut, "Configuration reloaded from %s\n", reloadPath)
+	return newCfg, nil
+}
+
 func main() {
 	fmt.Fprintf(os.Stderr, "pgEdge AI DBA Workbench Alerter v%s starting...\n", Version)
 
-	// Get executable path for default config location
-	execPath, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get executable path: %v\n", err)
-		os.Exit(1)
-	}
-	defaultConfigPath := config.GetDefaultConfigPath(execPath)
-
-	// Command line flags
-	configFile := flag.String("config", defaultConfigPath, "Path to configuration file")
+	// Command line flags. The --config default is left empty so we
+	// can distinguish "user passed an explicit path" from "user
+	// relied on default discovery"; the actual default lookup
+	// happens after flag.Parse below.
+	configFile := flag.String("config", "", "Path to configuration file (default: per-user pgedge config dir, then /etc/pgedge)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 
 	// Database connection flags
@@ -51,16 +165,40 @@ func main() {
 
 	flag.Parse()
 
+	// Resolve the config path: an explicit flag wins, otherwise the
+	// shared discovery helper picks the highest-priority path that
+	// exists. If neither exists, the resolved path is "" and the
+	// alerter proceeds with compiled-in defaults.
+	resolved := resolveConfigPath(*configFile)
+	explicitConfigPath := resolved.Explicit
+	resolvedConfigPath := resolved.Path
+
 	// Load configuration
 	cfg := config.NewConfig()
 
-	// Load from file if exists
-	if config.ConfigFileExists(*configFile) {
-		if err := cfg.LoadFromFile(*configFile); err != nil {
+	// Load from file if it was explicitly requested or auto-discovered.
+	if resolvedConfigPath != "" {
+		if !config.ConfigFileExists(resolvedConfigPath) {
+			if explicitConfigPath {
+				fmt.Fprintf(os.Stderr, "ERROR: configuration file not found: %s\n", resolvedConfigPath)
+				os.Exit(1)
+			}
+			// The helper said the file was there but it has since
+			// vanished; fall through to defaults rather than
+			// crashing.
+			resolvedConfigPath = ""
+		}
+	}
+	if resolvedConfigPath != "" {
+		if err := cfg.LoadFromFile(resolvedConfigPath); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: Failed to load config: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "Configuration loaded from %s\n", *configFile)
+		fmt.Fprintf(os.Stderr, "Configuration loaded from %s\n", resolvedConfigPath)
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"No configuration file found in default search paths "+
+				"(per-user config dir, /etc/pgedge); using defaults\n")
 	}
 
 	// Apply command line overrides
@@ -113,41 +251,39 @@ func main() {
 			switch sig {
 			case syscall.SIGHUP:
 				fmt.Fprintf(os.Stderr, "Received SIGHUP, reloading configuration...\n")
-				// Reload configuration
-				newCfg := config.NewConfig()
-				if config.ConfigFileExists(*configFile) {
-					if err := newCfg.LoadFromFile(*configFile); err != nil {
-						fmt.Fprintf(os.Stderr, "ERROR: Failed to reload config: %v\n", err)
-						continue
-					}
+				// Delegate the reload work to a side-effect-free
+				// helper so the SIGHUP handler stays small and
+				// the reload logic stays testable. A nil config
+				// (with a nil error) means "the helper logged
+				// the reason and we should keep the current
+				// running config" - never replace the live
+				// config with compiled-in defaults.
+				newCfg, err := reloadConfigOnSignal(
+					os.Stderr,
+					resolvedConfigPath,
+					explicitConfigPath,
+					reloadFlagOverrides{
+						DBHost:         *dbHost,
+						DBPort:         *dbPort,
+						DBName:         *dbName,
+						DBUser:         *dbUser,
+						DBPasswordFile: *dbPasswordFile,
+						DBSSLMode:      *dbSSLMode,
+					},
+				)
+				if err != nil {
+					fmt.Fprintf(os.Stderr,
+						"ERROR: %v; keeping current config\n", err)
+					continue
 				}
-
-				// Reapply CLI flag overrides
-				if err := applyFlagOverrides(newCfg, *dbHost, *dbPort, *dbName, *dbUser, *dbPasswordFile, *dbSSLMode); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: Failed to apply overrides on reload: %v\n", err)
+				if newCfg == nil {
+					// Helper already logged the reason. Skip
+					// applying anything; the running engine
+					// continues with its existing config.
 					continue
 				}
 
-				// Validate configuration
-				if err := newCfg.Validate(); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: Reloaded config is invalid, skipping reload: %v\n", err)
-					continue
-				}
-
-				// Load password from file if needed
-				if err := newCfg.LoadPassword(); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: Failed to load password on reload, skipping reload: %v\n", err)
-					continue
-				}
-
-				// Load API keys (non-critical)
-				if err := newCfg.LoadAPIKeys(); err != nil {
-					fmt.Fprintf(os.Stderr, "WARNING: Failed to load API keys on reload: %v\n", err)
-				}
-
-				// Apply reloadable settings to the engine
 				alerterEngine.ReloadConfig(newCfg)
-				fmt.Fprintf(os.Stderr, "Configuration reloaded\n")
 			case syscall.SIGINT, syscall.SIGTERM:
 				fmt.Fprintf(os.Stderr, "\nShutting down...\n")
 				cancel()

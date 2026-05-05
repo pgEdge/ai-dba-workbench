@@ -235,11 +235,22 @@ func (s *Server) initRateLimiter() error {
 	return nil
 }
 
-// loadServerSecret loads the server secret for password decryption
+// loadServerSecret loads the server secret for password decryption.
+// Search order: explicit s.cfg.SecretFile > per-user config dir
+// (e.g. ~/.config/pgedge/ai-dba-server.secret) > /etc/pgedge/
+// ai-dba-server.secret. Falling out of all three is a fatal error
+// because the server cannot decrypt stored passwords without it.
 func (s *Server) loadServerSecret(execPath string) (string, error) {
 	secretPath := s.cfg.SecretFile
 	if secretPath == "" {
 		secretPath = config.GetDefaultSecretPath(execPath)
+	}
+
+	if secretPath == "" {
+		return "", fmt.Errorf("server secret file not found in any " +
+			"default search path (per-user config dir, " +
+			"/etc/pgedge/ai-dba-server.secret); set secret_file in " +
+			"the config or place the file in one of those locations")
 	}
 
 	secretData, err := os.ReadFile(secretPath)

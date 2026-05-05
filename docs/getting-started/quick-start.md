@@ -70,14 +70,34 @@ automatically on first startup.
 The server secret encrypts passwords for monitored
 database connections. All components that handle
 connection passwords must share the same secret file.
+The server discovers the secret at
+`/etc/pgedge/ai-dba-server.secret` by default. The
+collector's auto-discovered default is a different
+filename (`ai-dba-collector.secret`), so the collector
+only reads the server's secret when `secret_file:` in
+`ai-dba-collector.yaml` points at it explicitly.
 
-In the following example, the `openssl` command
-generates a secure secret:
+Create the system-wide configuration directory if it
+does not already exist; the same directory holds the
+YAML configuration files used in later steps:
 
 ```bash
-openssl rand -base64 32 > ./ai-dba-server.secret
-chmod 600 ./ai-dba-server.secret
+sudo mkdir -p /etc/pgedge
 ```
+
+In the following example, the `openssl` command writes
+a secure secret to the system-wide default location:
+
+```bash
+sudo openssl rand -base64 32 \
+    | sudo tee /etc/pgedge/ai-dba-server.secret \
+    > /dev/null
+sudo chmod 600 /etc/pgedge/ai-dba-server.secret
+```
+
+To store the secret outside the default search paths,
+set `secret_file:` in the YAML configuration to an
+absolute path of your choice.
 
 ## Create a Password File
 
@@ -111,7 +131,7 @@ datastore:
   port: 5432
   sslmode: disable
 
-secret_file: /path/to/ai-dba-server.secret
+secret_file: /etc/pgedge/ai-dba-server.secret
 ```
 
 Start the collector:
@@ -126,7 +146,7 @@ successful initialization:
 
 ```
 pgEdge AI DBA Workbench Collector starting...
-Configuration loaded from: ./ai-dba-collector.yaml
+Configuration loaded from: /etc/pgedge/ai-dba-collector.yaml
 Database schema initialized
 Datastore connection established
 Probe scheduler started with 24 probe(s)
@@ -162,7 +182,7 @@ database:
   user: ai_workbench
   sslmode: disable
 
-secret_file: /path/to/ai-dba-server.secret
+secret_file: /etc/pgedge/ai-dba-server.secret
 ```
 
 Create a user account before starting the server:

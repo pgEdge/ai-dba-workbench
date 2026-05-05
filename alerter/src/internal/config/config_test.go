@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // TestNewConfig tests that NewConfig creates a configuration with sensible defaults
@@ -408,14 +410,47 @@ func TestConfigFileExists(t *testing.T) {
 	})
 }
 
-// TestGetDefaultConfigPath tests the GetDefaultConfigPath function
+// TestGetDefaultConfigPath verifies the alerter wrapper returns
+// "" when no candidate file is present. The binaryPath argument
+// is no longer consulted. The system-wide fallback is redirected
+// at a non-existent path so the assertion is exact and not
+// dependent on whether the test host has /etc/pgedge populated.
 func TestGetDefaultConfigPath(t *testing.T) {
-	// When system config doesn't exist, should return path relative to binary
-	path := GetDefaultConfigPath("/usr/local/bin/ai-dba-alerter")
-	expected := "/usr/local/bin/ai-dba-alerter.yaml"
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
-	if path != expected {
-		t.Errorf("GetDefaultConfigPath = %q, expected %q", path, expected)
+	path := GetDefaultConfigPath("/usr/local/bin/ai-dba-alerter")
+	if path != "" {
+		t.Errorf("GetDefaultConfigPath = %q, want empty path", path)
+	}
+}
+
+// TestGetDefaultConfigPath_UserDirHit verifies the wrapper returns
+// the per-user config path when one is present.
+func TestGetDefaultConfigPath_UserDirHit(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir() error: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	expected := filepath.Join(pgedgeDir, "ai-dba-alerter.yaml")
+	if err := os.WriteFile(expected, []byte("datastore:\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := GetDefaultConfigPath(""); got != expected {
+		t.Errorf("GetDefaultConfigPath = %q, want %q", got, expected)
 	}
 }
 

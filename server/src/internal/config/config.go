@@ -964,8 +964,11 @@ func validateConfig(cfg *Config) error {
 	return nil
 }
 
-// GetDefaultConfigPath returns the default config file path
-// Searches /etc/pgedge/ first, then binary directory
+// GetDefaultConfigPath returns the path to an existing default
+// server config file, or "" if none was found. Searches the
+// per-user config directory (e.g. ~/.config/pgedge/) first, then
+// /etc/pgedge/. The binaryPath parameter is no longer consulted
+// but kept for caller stability.
 func GetDefaultConfigPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.yaml")
 }
@@ -1004,8 +1007,10 @@ func LoadConfigDataDir(configPath string) (string, error) {
 	return cfg.DataDir, nil
 }
 
-// GetDefaultSecretPath returns the default secret file path
-// Searches /etc/pgedge/ first, then binary directory
+// GetDefaultSecretPath returns the path to an existing default
+// server secret file, or "" if none was found. Search order
+// matches GetDefaultConfigPath: per-user config directory first,
+// then /etc/pgedge/.
 func GetDefaultSecretPath(binaryPath string) string {
 	return fileutil.GetDefaultConfigPath(binaryPath, "ai-dba-server.secret")
 }

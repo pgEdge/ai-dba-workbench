@@ -101,6 +101,15 @@ datastore:
 secret_file: ./ai-dba-collector.secret
 ```
 
+The collector does not auto-discover a YAML file in
+the working directory or next to the binary; pass the
+dev config explicitly with `--config` when you run
+the collector, as shown in the
+[Development Mode](#development-mode) section below.
+The `secret_file:` entry above is a relative path
+read from the YAML, so the collector resolves it
+against the working directory at startup.
+
 Create a development secret file. In the following
 example, the commands generate a random secret:
 

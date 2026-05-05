@@ -12,9 +12,12 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // saveAndClearFlags resets the package-level flag pointers and returns a
@@ -175,43 +178,143 @@ func TestLoadConfiguration_Success(t *testing.T) {
 }
 
 // TestLoadConfiguration_NoConfigFileUsesDefaults exercises the
-// "no explicit config, no default config present" branch: the function
-// should log and continue with defaults (then fail only at secret load
-// because no secret file is present).
+// "no explicit config, no default config present" branch: the
+// function should log and continue with defaults (then fail only
+// at secret load because no secret file is present). Both the
+// per-user config dir and the system-wide fallback are redirected
+// so the test is fully isolated from any real /etc/pgedge state.
 func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 	defer saveAndClearFlags(t)()
 
-	// *configFile is empty; default search path is resolved via
-	// os.Executable(). The binary directory typically has no
-	// ai-dba-collector.yaml so the function should fall through to the
-	// secret-loading step.
-	// Make sure the secret file does not exist either.
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
+
+	// loadConfiguration must surface an error from LoadSecret since
+	// there is no secret file available in either default location.
+	_, err := loadConfiguration()
+	if err == nil {
+		t.Fatal("expected error because no secret file exists on default paths")
+	}
+}
+
+// TestLoadConfiguration_ExplicitConfigPermissionError covers the
+// non-IsNotExist error branch on the explicit-config path: when
+// the user passes --config and the file exists but cannot be
+// loaded (here we simulate that by passing a directory in place
+// of a file), loadConfiguration must surface the load error
+// rather than silently fall through to defaults. This keeps
+// behavior symmetrical with auto-discovery, where only
+// IsNotExist triggers the silent fallback.
+func TestLoadConfiguration_ExplicitConfigPermissionError(t *testing.T) {
+	defer saveAndClearFlags(t)()
+
+	tmpDir := t.TempDir()
+	// Create a directory at the path the user "passed"; reading
+	// it as a YAML file fails with a non-IsNotExist error.
+	cfgPath := filepath.Join(tmpDir, "cfg-as-dir")
+	if err := os.Mkdir(cfgPath, 0700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
 	}
 
-	// Use GetDefaultConfigPath and GetDefaultSecretPath to check the same
-	// paths that loadConfiguration() will check, rather than manually
-	// constructing them.
-	defaultYAML := GetDefaultConfigPath(exe)
-	defaultSecret := GetDefaultSecretPath(exe)
+	*configFile = cfgPath
+	_, err := loadConfiguration()
+	if err == nil {
+		t.Fatal("expected error when explicit config path is unreadable")
+	}
+}
 
-	// Remove secret file if it exists from a previous test run.
-	_ = os.Remove(defaultSecret)
+// TestLoadConfiguration_AutoDiscoveredUnreadable exercises the
+// auto-discovery branch where the discovered path exists (so
+// GetDefaultConfigPath returns a non-empty value) but cannot be
+// read as a YAML file. We trigger this by placing a directory at
+// the would-be config path: os.Stat in the discovery helper
+// succeeds, but os.ReadFile inside LoadFromFile fails with EISDIR
+// (which is NOT os.IsNotExist). For the non-explicit branch this
+// must surface as an error rather than silently fall through to
+// defaults; the IsNotExist-only fallback is reserved for the
+// genuine "file disappeared between Stat and Read" race.
+func TestLoadConfiguration_AutoDiscoveredUnreadable(t *testing.T) {
+	defer saveAndClearFlags(t)()
 
-	// Pre-flight: also ensure the default config path doesn't exist. If
-	// it somehow does (CI cache, etc.) the test still passes so long as
-	// the function returns *some* result; we just skip stronger
-	// assertions in that case.
-	_, cfgStatErr := os.Stat(defaultYAML)
-	if cfgStatErr == nil {
-		t.Skipf("default config file unexpectedly exists at %s; skipping", defaultYAML)
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Create a *directory* where the YAML file should be. Stat
+	// succeeds, ReadFile fails with EISDIR.
+	bogus := filepath.Join(pgedgeDir, "ai-dba-collector.yaml")
+	if err := os.Mkdir(bogus, 0700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
 	}
 
 	_, err = loadConfiguration()
 	if err == nil {
-		t.Fatal("expected error because no secret file exists on default paths")
+		t.Fatal("expected error from non-IsNotExist auto-discovery branch")
+	}
+	if !strings.Contains(err.Error(), "failed to load config file") {
+		t.Errorf("err = %v, want it to mention 'failed to load config file'", err)
+	}
+}
+
+// TestLoadConfiguration_DefaultConfigFromUserDir verifies that the
+// auto-discovery path correctly loads a config file dropped into
+// the per-user pgedge directory.
+func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
+	defer saveAndClearFlags(t)()
+
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Drop a real config (with secret_file) and a matching secret
+	// so loadConfiguration runs end-to-end without any --config
+	// flag.
+	secretPath := filepath.Join(pgedgeDir, "ai-dba-collector.secret")
+	if err := os.WriteFile(secretPath, []byte("auto-discovered-secret"), 0600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	cfgPath := filepath.Join(pgedgeDir, "ai-dba-collector.yaml")
+	cfgYAML := "datastore:\n" +
+		"  host: discovered-host\n" +
+		"  database: discovered-db\n" +
+		"  username: discovered-user\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	cfg, err := loadConfiguration()
+	if err != nil {
+		t.Fatalf("loadConfiguration: %v", err)
+	}
+	if cfg.Datastore.Host != "discovered-host" {
+		t.Errorf("Host: got %q, want discovered-host", cfg.Datastore.Host)
+	}
+	if cfg.GetServerSecret() != "auto-discovered-secret" {
+		t.Errorf("Secret: got %q, want auto-discovered-secret",
+			cfg.GetServerSecret())
 	}
 }
 

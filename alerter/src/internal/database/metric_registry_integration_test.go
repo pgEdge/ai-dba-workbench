@@ -84,7 +84,7 @@ DROP TABLE IF EXISTS connections CASCADE;
 // newMetricRegistryTestDatastore returns a Datastore backed by the
 // integration-test database referenced by TEST_AI_WORKBENCH_SERVER. The test
 // is skipped when the variable is unset (or SKIP_DB_TESTS is set), matching
-// the behaviour of the other integration tests in this package. The returned
+// the behavior of the other integration tests in this package. The returned
 // cleanup function tears down the schema and closes the pool.
 func newMetricRegistryTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()

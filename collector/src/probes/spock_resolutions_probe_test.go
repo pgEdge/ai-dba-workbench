@@ -18,7 +18,7 @@ import (
 
 // newSpockResolutionsProbeForTest constructs a probe with a minimal,
 // deterministic configuration suitable for unit and integration tests.
-// The returned probe is database-scoped, matching production behaviour.
+// The returned probe is database-scoped, matching production behavior.
 // Mirrors newSpockExceptionLogProbeForTest for symmetry.
 func newSpockResolutionsProbeForTest() *SpockResolutionsProbe {
 	return NewSpockResolutionsProbe(&ProbeConfig{
@@ -85,7 +85,7 @@ func TestSpockResolutionsProbe_StoreEmpty(t *testing.T) {
 }
 
 // TestSpockResolutionsProbe_ExecuteWhenSpockAbsent verifies the
-// graceful-skip behaviour: when the Spock extension is not installed
+// graceful-skip behavior: when the Spock extension is not installed
 // in the connected database, Execute returns (nil, nil) rather than
 // raising an error or attempting to query a missing catalog. This
 // branch is hit on every collection cycle for non-Spock databases
@@ -281,8 +281,8 @@ func TestSpockResolutionsProbe_ExecuteWithStubSpock(t *testing.T) {
 }
 
 // TestSpockResolutionsProbe_ExecuteCheckExtensionError exercises the
-// CheckExtensionExists error branch by passing a cancelled context.
-// pgxpool returns an error for any query attempted with a cancelled
+// CheckExtensionExists error branch by passing a canceled context.
+// pgxpool returns an error for any query attempted with a canceled
 // context; the probe must wrap and return that error rather than
 // swallowing it.
 func TestSpockResolutionsProbe_ExecuteCheckExtensionError(t *testing.T) {
@@ -292,25 +292,25 @@ func TestSpockResolutionsProbe_ExecuteCheckExtensionError(t *testing.T) {
 	pgVersion := detectPgVersion(t, conn)
 
 	// Force the underlying *pgx.Conn into a state that fails the
-	// next query. Cancelling the context is the cheapest way to
+	// next query. Canceling the context is the cheapest way to
 	// guarantee QueryRow returns an error without disturbing the
 	// shared pool.
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
 
 	p := newSpockResolutionsProbeForTest()
-	if _, err := p.Execute(cancelCtx, "cancelled", conn,
+	if _, err := p.Execute(cancelCtx, "canceled", conn,
 		pgVersion); err == nil {
-		t.Fatal("Execute with cancelled context: expected error, " +
+		t.Fatal("Execute with canceled context: expected error, " +
 			"got nil")
 	}
 }
 
 // TestSpockResolutionsProbe_StoreEnsurePartitionError drives the
-// EnsurePartition error branch of Store by passing a cancelled
+// EnsurePartition error branch of Store by passing a canceled
 // context with a real datastore connection. EnsurePartition issues
 // SQL through the connection, which fails immediately when the
-// context is already cancelled, causing Store to surface the wrapped
+// context is already canceled, causing Store to surface the wrapped
 // "failed to ensure partition" error.
 func TestSpockResolutionsProbe_StoreEnsurePartitionError(t *testing.T) {
 	pool := requireIntegrationPool(t)
@@ -343,7 +343,7 @@ func TestSpockResolutionsProbe_StoreEnsurePartitionError(t *testing.T) {
 	p := newSpockResolutionsProbeForTest()
 	err := p.Store(cancelCtx, conn, 1, time.Now(), metrics)
 	if err == nil {
-		t.Fatal("Store(cancelled ctx) expected error, got nil")
+		t.Fatal("Store(canceled ctx) expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "failed to ensure partition") {
 		t.Errorf("Store error = %q; want it to mention "+

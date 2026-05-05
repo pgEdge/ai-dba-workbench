@@ -2700,7 +2700,7 @@ func (sm *SchemaManager) registerMigrations() {
 
 			// Seed global probe_configs for the two new probes. ON CONFLICT
 			// DO NOTHING preserves any operator override that may already
-			// exist (matching the v1 seed's behaviour).
+			// exist (matching the v1 seed's behavior).
 			_, err = tx.Exec(ctx, `
 				INSERT INTO probe_configs (connection_id, is_enabled, name, description, collection_interval_seconds, retention_days)
 				VALUES

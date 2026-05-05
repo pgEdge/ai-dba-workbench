@@ -18,7 +18,7 @@ import (
 
 // newSpockExceptionLogProbeForTest constructs a probe with a minimal,
 // deterministic configuration suitable for unit and integration tests.
-// The returned probe is database-scoped, matching production behaviour.
+// The returned probe is database-scoped, matching production behavior.
 func newSpockExceptionLogProbeForTest() *SpockExceptionLogProbe {
 	return NewSpockExceptionLogProbe(&ProbeConfig{
 		Name:                      ProbeNameSpockExceptionLog,
@@ -82,7 +82,7 @@ func TestSpockExceptionLogProbe_StoreEmpty(t *testing.T) {
 }
 
 // TestSpockExceptionLogProbe_ExecuteWhenSpockAbsent verifies the
-// graceful-skip behaviour: when the Spock extension is not installed
+// graceful-skip behavior: when the Spock extension is not installed
 // in the connected database, Execute returns (nil, nil) rather than
 // raising an error or attempting to query a missing catalog. This
 // branch is hit on every collection cycle for non-Spock databases
@@ -262,25 +262,25 @@ func TestSpockExceptionLogProbe_ExecuteCheckExtensionError(t *testing.T) {
 	pgVersion := detectPgVersion(t, conn)
 
 	// Force the underlying *pgx.Conn into a state that fails the
-	// next query. Cancelling the context is the cheapest way to
+	// next query. Canceling the context is the cheapest way to
 	// guarantee QueryRow returns an error without disturbing the
 	// shared pool.
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
 
 	p := newSpockExceptionLogProbeForTest()
-	if _, err := p.Execute(cancelCtx, "cancelled", conn,
+	if _, err := p.Execute(cancelCtx, "canceled", conn,
 		pgVersion); err == nil {
-		t.Fatal("Execute with cancelled context: expected error, " +
+		t.Fatal("Execute with canceled context: expected error, " +
 			"got nil")
 	}
 }
 
 // TestSpockExceptionLogProbe_StoreEnsurePartitionError drives the
-// EnsurePartition error branch of Store by passing a cancelled
+// EnsurePartition error branch of Store by passing a canceled
 // context with a real datastore connection. EnsurePartition issues
 // SQL through the connection, which fails immediately when the
-// context is already cancelled, causing Store to surface the wrapped
+// context is already canceled, causing Store to surface the wrapped
 // "failed to ensure partition" error.
 func TestSpockExceptionLogProbe_StoreEnsurePartitionError(t *testing.T) {
 	pool := requireIntegrationPool(t)
@@ -313,7 +313,7 @@ func TestSpockExceptionLogProbe_StoreEnsurePartitionError(t *testing.T) {
 	p := newSpockExceptionLogProbeForTest()
 	err := p.Store(cancelCtx, conn, 1, time.Now(), metrics)
 	if err == nil {
-		t.Fatal("Store(cancelled ctx) expected error, got nil")
+		t.Fatal("Store(canceled ctx) expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "failed to ensure partition") {
 		t.Errorf("Store error = %q; want it to mention "+

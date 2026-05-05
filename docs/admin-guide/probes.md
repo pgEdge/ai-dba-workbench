@@ -48,6 +48,8 @@ execute once per monitored connection:
   configuration (change-tracked).
 - `pg_node_role` detects the node role for cluster
   topologies.
+- `pg_connectivity` monitors database connectivity and
+  measures connection response time.
 - `pg_database` collects the database catalog with
   XID wraparound indicators.
 
@@ -79,6 +81,33 @@ server:
 - `spock_resolutions` collects rows added to
   `spock.resolutions` in a rolling 15-minute window
   and targets Spock v5 or later.
+
+### System Statistics Probes
+
+System statistics probes collect host-level metrics
+through the `system_stats` extension and execute once
+per monitored connection:
+
+- `pg_sys_os_info` collects operating system
+  identification and version information.
+- `pg_sys_cpu_info` collects CPU model, vendor, and
+  configuration information.
+- `pg_sys_cpu_usage_info` collects CPU utilisation
+  statistics across all cores.
+- `pg_sys_memory_info` collects total, used, and free
+  memory statistics for the host.
+- `pg_sys_io_analysis_info` collects per-device read
+  and write I/O statistics.
+- `pg_sys_disk_info` collects disk capacity and used
+  space for each mounted filesystem.
+- `pg_sys_load_avg_info` collects 1, 5, and 15 minute
+  system load averages.
+- `pg_sys_process_info` collects process counts grouped
+  by execution state.
+- `pg_sys_network_info` collects per-interface network
+  send and receive statistics.
+- `pg_sys_cpu_memory_by_process` collects CPU and
+  memory consumption for the top processes.
 
 ## Default Collection Intervals
 

@@ -39,6 +39,8 @@ const (
 	ProbeNamePgStatUserFunctions     = "pg_stat_user_functions"
 	ProbeNamePgStatStatements        = "pg_stat_statements"
 	ProbeNamePgExtension             = "pg_extension"
+	ProbeNameSpockExceptionLog       = "spock_exception_log"
+	ProbeNameSpockResolutions        = "spock_resolutions"
 )
 
 // Probe names - System Stats Extension probes (server-scoped, require system_stats extension)

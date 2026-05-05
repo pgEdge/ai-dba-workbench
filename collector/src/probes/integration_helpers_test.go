@@ -722,6 +722,32 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			error_message TEXT
 		) PARTITION BY RANGE (collected_at)`,
 
+		// metrics.spock_resolutions mirrors the v3 migration column
+		// list, including the TEXT representation of xid and pg_lsn
+		// values that the probe casts on the source side. The probe's
+		// Store path appends to this parent table; child partitions
+		// are created on demand by EnsurePartition during the test.
+		`CREATE TABLE IF NOT EXISTS metrics.spock_resolutions (
+			connection_id INTEGER NOT NULL,
+			collected_at TIMESTAMPTZ NOT NULL,
+			id INTEGER NOT NULL,
+			node_name NAME NOT NULL,
+			log_time TIMESTAMPTZ NOT NULL,
+			relname TEXT,
+			idxname TEXT,
+			conflict_type TEXT,
+			conflict_resolution TEXT,
+			local_origin INTEGER,
+			local_tuple TEXT,
+			local_xid TEXT,
+			local_timestamp TIMESTAMPTZ,
+			remote_origin INTEGER,
+			remote_tuple TEXT,
+			remote_xid TEXT,
+			remote_timestamp TIMESTAMPTZ,
+			remote_lsn TEXT
+		) PARTITION BY RANGE (collected_at)`,
+
 		// pg_stat_statements is a real extension and is enabled in
 		// the CI environment via shared_preload_libraries. We try
 		// to install it; if the server was not started with the

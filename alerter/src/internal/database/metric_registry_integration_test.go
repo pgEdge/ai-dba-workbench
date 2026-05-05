@@ -12,7 +12,6 @@ package database
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -269,40 +268,55 @@ func TestMetricRegistry_SpockResolutionsRecentCount(t *testing.T) {
 // freshness cutoff in the latest CTE is what causes the alert to
 // auto-clear in that situation.
 //
-// Seed a single row at now() - 6 minutes (outside the 5-minute cutoff)
-// and assert the metric returns no row for that connection.
-// GetLatestMetricValues returns "no data found for metric" when the
-// underlying query yields zero rows; that is the expected outcome
-// when every sample lies outside the cutoff.
+// To exercise the success path of GetLatestMetricValues without the
+// no-data sentinel error masking a real bug, seed two connections:
+// the "stale" connection at now() - 6 minutes (outside the 5-minute
+// cutoff) and a "fresh" connection at now() - 1 minute (inside the
+// cutoff). The query must therefore return exactly one row -- for
+// the fresh connection -- with no entry for the stale connection.
+// Any returned error fails the test outright.
 func TestMetricRegistry_SpockExceptionLogRecentCount_StaleSampleExcluded(t *testing.T) {
 	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	connID := insertConnection(t, pool, "spock-exception-stale")
+	staleConnID := insertConnection(t, pool, "spock-exception-stale")
+	freshConnID := insertConnection(t, pool, "spock-exception-fresh")
+
 	stale := time.Now().UTC().Add(-6 * time.Minute)
-	insertSpockExceptionRow(t, pool, connID, stale, 1)
+	fresh := time.Now().UTC().Add(-1 * time.Minute)
+	insertSpockExceptionRow(t, pool, staleConnID, stale, 1)
+	insertSpockExceptionRow(t, pool, freshConnID, fresh, 1)
 
 	results, err := ds.GetLatestMetricValues(ctx, "spock_exception_log.recent_count")
-	if err == nil {
-		// If GetLatestMetricValues returns rows the cutoff did not
-		// apply; surface a precise diagnostic before failing.
-		for _, mv := range results {
-			if mv.ConnectionID == connID {
-				t.Errorf("spock_exception_log.recent_count returned a "+
-					"value for connection %d after the only sample "+
-					"aged out of the 5-minute cutoff: got %v",
-					connID, mv.Value)
-			}
-		}
-		return
+	if err != nil {
+		t.Fatalf("GetLatestMetricValues(spock_exception_log.recent_count) "+
+			"returned unexpected error: %v", err)
 	}
 
-	// "no data found" is the expected error path when every sample
-	// for every connection is outside the cutoff. Any other error
-	// indicates a real failure in the registry SQL.
-	if !strings.Contains(err.Error(), "no data found") {
-		t.Fatalf("unexpected error from GetLatestMetricValues: %v", err)
+	// The fresh connection must be present and the stale connection must
+	// be absent. Iterating once lets us assert both properties with
+	// targeted diagnostics.
+	var sawFresh bool
+	for _, mv := range results {
+		switch mv.ConnectionID {
+		case staleConnID:
+			t.Errorf("spock_exception_log.recent_count returned a value "+
+				"for stale connection %d whose only sample (at %s) was "+
+				"outside the 5-minute freshness cutoff: got value %v",
+				staleConnID, stale.Format(time.RFC3339), mv.Value)
+		case freshConnID:
+			sawFresh = true
+		default:
+			t.Errorf("spock_exception_log.recent_count returned an "+
+				"unexpected connection_id=%d (value %v); only the fresh "+
+				"connection (%d) should appear in the result set",
+				mv.ConnectionID, mv.Value, freshConnID)
+		}
+	}
+	if !sawFresh {
+		t.Errorf("spock_exception_log.recent_count did not return the "+
+			"fresh connection %d; results=%+v", freshConnID, results)
 	}
 }
 
@@ -310,30 +324,51 @@ func TestMetricRegistry_SpockExceptionLogRecentCount_StaleSampleExcluded(t *test
 // mirrors the exception_log freshness assertion for the resolutions
 // table. The cutoff is what allows the high/critical resolutions
 // alerts to auto-clear once Spock stops auto-resolving conflicts.
+//
+// As with the exception_log variant, a second "fresh" connection is
+// seeded so the query returns a non-empty result set. The assertions
+// then explicitly check that the stale connection is excluded and the
+// fresh connection is included, eliminating any silent-pass gap when
+// results happen to be empty.
 func TestMetricRegistry_SpockResolutionsRecentCount_StaleSampleExcluded(t *testing.T) {
 	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	connID := insertConnection(t, pool, "spock-resolutions-stale")
+	staleConnID := insertConnection(t, pool, "spock-resolutions-stale")
+	freshConnID := insertConnection(t, pool, "spock-resolutions-fresh")
+
 	stale := time.Now().UTC().Add(-6 * time.Minute)
-	insertSpockResolutionRow(t, pool, connID, stale, 1)
+	fresh := time.Now().UTC().Add(-1 * time.Minute)
+	insertSpockResolutionRow(t, pool, staleConnID, stale, 1)
+	insertSpockResolutionRow(t, pool, freshConnID, fresh, 1)
 
 	results, err := ds.GetLatestMetricValues(ctx, "spock_resolutions.recent_count")
-	if err == nil {
-		for _, mv := range results {
-			if mv.ConnectionID == connID {
-				t.Errorf("spock_resolutions.recent_count returned a "+
-					"value for connection %d after the only sample "+
-					"aged out of the 5-minute cutoff: got %v",
-					connID, mv.Value)
-			}
-		}
-		return
+	if err != nil {
+		t.Fatalf("GetLatestMetricValues(spock_resolutions.recent_count) "+
+			"returned unexpected error: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "no data found") {
-		t.Fatalf("unexpected error from GetLatestMetricValues: %v", err)
+	var sawFresh bool
+	for _, mv := range results {
+		switch mv.ConnectionID {
+		case staleConnID:
+			t.Errorf("spock_resolutions.recent_count returned a value "+
+				"for stale connection %d whose only sample (at %s) was "+
+				"outside the 5-minute freshness cutoff: got value %v",
+				staleConnID, stale.Format(time.RFC3339), mv.Value)
+		case freshConnID:
+			sawFresh = true
+		default:
+			t.Errorf("spock_resolutions.recent_count returned an "+
+				"unexpected connection_id=%d (value %v); only the fresh "+
+				"connection (%d) should appear in the result set",
+				mv.ConnectionID, mv.Value, freshConnID)
+		}
+	}
+	if !sawFresh {
+		t.Errorf("spock_resolutions.recent_count did not return the "+
+			"fresh connection %d; results=%+v", freshConnID, results)
 	}
 }
 

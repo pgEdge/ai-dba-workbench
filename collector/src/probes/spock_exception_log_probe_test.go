@@ -318,6 +318,50 @@ func TestSpockExceptionLogProbe_ExecuteCheckExtensionError(t *testing.T) {
 	}
 }
 
+// TestSpockExceptionLogProbe_StoreMissingDatabaseName drives the
+// guard that surfaces a clear error when the scheduler-injected
+// _database_name key is missing from a metric row. database_name is
+// part of the destination primary key, so a missing value is a
+// programming error in the scheduler rather than a runtime data
+// condition the probe can recover from.
+func TestSpockExceptionLogProbe_StoreMissingDatabaseName(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+
+	metrics := []map[string]any{
+		{
+			// _database_name deliberately omitted so Store hits the
+			// guarded error path before issuing any SQL.
+			"remote_origin":    uint32(1),
+			"remote_commit_ts": time.Now(),
+			"command_counter":  1,
+			"retry_errored_at": time.Now(),
+			"remote_xid":       int64(1),
+			"local_origin":     nil,
+			"local_commit_ts":  nil,
+			"table_schema":     "public",
+			"table_name":       "t",
+			"operation":        "INSERT",
+			"local_tup":        nil,
+			"remote_old_tup":   nil,
+			"remote_new_tup":   nil,
+			"ddl_statement":    nil,
+			"ddl_user":         nil,
+			"error_message":    "boom",
+		},
+	}
+
+	p := newSpockExceptionLogProbeForTest()
+	err := p.Store(context.Background(), conn, 1, time.Now(), metrics)
+	if err == nil {
+		t.Fatal("Store(no _database_name) expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "database_name not found") {
+		t.Errorf("Store error = %q; want it to mention "+
+			"'database_name not found'", err.Error())
+	}
+}
+
 // TestSpockExceptionLogProbe_StoreEnsurePartitionError drives the
 // EnsurePartition error branch of Store by passing a canceled
 // context with a real datastore connection. EnsurePartition issues

@@ -348,6 +348,51 @@ func TestSpockResolutionsProbe_ExecuteCheckExtensionError(t *testing.T) {
 	}
 }
 
+// TestSpockResolutionsProbe_StoreMissingDatabaseName drives the
+// guard that surfaces a clear error when the scheduler-injected
+// _database_name key is missing from a metric row. database_name is
+// part of the destination primary key (the spock.resolutions.id
+// sequence is per-database, so the discriminator is essential), and
+// a missing value is a programming error in the scheduler rather
+// than a runtime data condition the probe can recover from.
+func TestSpockResolutionsProbe_StoreMissingDatabaseName(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+
+	metrics := []map[string]any{
+		{
+			// _database_name deliberately omitted so Store hits the
+			// guarded error path before issuing any SQL.
+			"id":                  1,
+			"node_name":           "n1",
+			"log_time":            time.Now(),
+			"relname":             "public.t",
+			"idxname":             "t_pkey",
+			"conflict_type":       "update_update",
+			"conflict_resolution": "keep_local",
+			"local_origin":        int32(16384),
+			"local_tuple":         "a=1",
+			"local_xid":           "12345",
+			"local_timestamp":     time.Now(),
+			"remote_origin":       int32(16385),
+			"remote_tuple":        "a=2",
+			"remote_xid":          "12346",
+			"remote_timestamp":    time.Now(),
+			"remote_lsn":          "0/16B6300",
+		},
+	}
+
+	p := newSpockResolutionsProbeForTest()
+	err := p.Store(context.Background(), conn, 1, time.Now(), metrics)
+	if err == nil {
+		t.Fatal("Store(no _database_name) expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "database_name not found") {
+		t.Errorf("Store error = %q; want it to mention "+
+			"'database_name not found'", err.Error())
+	}
+}
+
 // TestSpockResolutionsProbe_StoreEnsurePartitionError drives the
 // EnsurePartition error branch of Store by passing a canceled
 // context with a real datastore connection. EnsurePartition issues

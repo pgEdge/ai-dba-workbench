@@ -7,7 +7,7 @@ enabled states through the admin panel or the REST API.
 
 ## Overview
 
-The Collector includes 34 built-in probes that cover
+The Collector includes 36 built-in probes that cover
 the most important PostgreSQL statistics views. Each
 probe runs on an independent schedule and stores
 results in partitioned metrics tables.
@@ -73,6 +73,12 @@ server:
   statistics (requires extension).
 - `pg_extension` collects installed extensions
   (change-tracked).
+- `spock_exception_log` collects rows added to
+  `spock.exception_log` in a rolling 15-minute window
+  and targets Spock v5 or later.
+- `spock_resolutions` collects rows added to
+  `spock.resolutions` in a rolling 15-minute window
+  and targets Spock v5 or later.
 
 ## Default Collection Intervals
 

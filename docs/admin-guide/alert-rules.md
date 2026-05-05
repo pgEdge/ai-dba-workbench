@@ -3,7 +3,7 @@
 Alert rules define the conditions that trigger
 threshold-based alerts. Each rule specifies a metric to
 monitor, a comparison operator, and a threshold value.
-The alerter includes 24 built-in rules and supports
+The alerter includes 30 built-in rules and supports
 custom rules.
 
 ## Rule Structure
@@ -58,14 +58,66 @@ categories:
 
 - Connection rules monitor database connections and
   session state.
-- Replication rules monitor replication lag and slot
-  status.
+- Replication rules monitor replication lag, slot
+  status, Spock exceptions, and Spock conflict
+  resolutions.
 - Performance rules monitor query performance and
   locking.
 - Storage rules monitor disk usage and table
   maintenance.
 - System rules monitor CPU, memory, and system
   resources.
+
+## Replication Rules
+
+The replication category includes built-in rules that
+monitor Spock exception activity, Spock conflict
+auto-resolutions, and replication-slot WAL retention.
+The Spock rules require the `spock` extension on the
+monitored database; the slot retention rules apply to
+every PostgreSQL deployment.
+
+The Spock recent-count rules read from the
+`spock_exception_log` and `spock_resolutions` probe
+tables, both of which capture a rolling 15-minute
+window. The alerter clears each Spock alert
+automatically as the corresponding rows age out of the
+window and the recent count returns below the
+threshold.
+
+The following bullets describe the built-in
+replication rules added for Spock and slot retention
+monitoring:
+
+- `spock_recent_exceptions_present` fires at warning
+  severity when `spock_exception_log.recent_count` is
+  greater than or equal to 1; the rule requires the
+  `spock` extension.
+- `spock_recent_exceptions_high` fires at critical
+  severity when `spock_exception_log.recent_count` is
+  greater than or equal to 10; the rule requires the
+  `spock` extension.
+- `spock_recent_resolutions_present` fires at warning
+  severity when `spock_resolutions.recent_count` is
+  greater than or equal to 1; the rule requires the
+  `spock` extension.
+- `spock_recent_resolutions_high` fires at critical
+  severity when `spock_resolutions.recent_count` is
+  greater than or equal to 25; the rule requires the
+  `spock` extension.
+- `replication_slot_retention_warn` fires at warning
+  severity when `pg_replication_slots.max_retained_bytes`
+  is greater than or equal to 1073741824 (1 GiB); the
+  rule has no extension requirement.
+- `replication_slot_retention_high` fires at critical
+  severity when `pg_replication_slots.max_retained_bytes`
+  is greater than or equal to 10737418240 (10 GiB); the
+  rule has no extension requirement.
+
+The slot retention rules evaluate the maximum retained
+WAL across all replication slots on a server; the
+alerter fires a rule when any single slot retains more
+WAL than the threshold permits.
 
 ## Hierarchical Overrides
 

@@ -100,7 +100,7 @@ per monitored connection:
   and write I/O statistics.
 - `pg_sys_disk_info` collects disk capacity and used
   space for each mounted filesystem.
-- `pg_sys_load_avg_info` collects 1, 5, and 15 minute
+- `pg_sys_load_avg_info` collects 1-, 5-, and 15-minute
   system load averages.
 - `pg_sys_process_info` collects process counts grouped
   by execution state.

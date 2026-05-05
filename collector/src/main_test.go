@@ -12,9 +12,12 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // saveAndClearFlags resets the package-level flag pointers and returns a
@@ -177,13 +180,9 @@ func TestLoadConfiguration_Success(t *testing.T) {
 // TestLoadConfiguration_NoConfigFileUsesDefaults exercises the
 // "no explicit config, no default config present" branch: the
 // function should log and continue with defaults (then fail only
-// at secret load because no secret file is present).
-//
-// We redirect os.UserConfigDir() at a temp directory so the test
-// is deterministic regardless of the developer's environment, and
-// we tolerate the rare case where /etc/pgedge/ai-dba-collector.yaml
-// exists on the host (the helper will pick it up and the
-// "configuration loaded from" branch will run instead).
+// at secret load because no secret file is present). Both the
+// per-user config dir and the system-wide fallback are redirected
+// so the test is fully isolated from any real /etc/pgedge state.
 func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 	defer saveAndClearFlags(t)()
 
@@ -191,12 +190,82 @@ func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	// loadConfiguration must surface an error from LoadSecret since
 	// there is no secret file available in either default location.
 	_, err := loadConfiguration()
 	if err == nil {
 		t.Fatal("expected error because no secret file exists on default paths")
+	}
+}
+
+// TestLoadConfiguration_ExplicitConfigPermissionError covers the
+// non-IsNotExist error branch on the explicit-config path: when
+// the user passes --config and the file exists but cannot be
+// loaded (here we simulate that by passing a directory in place
+// of a file), loadConfiguration must surface the load error
+// rather than silently fall through to defaults. This keeps
+// behavior symmetrical with auto-discovery, where only
+// IsNotExist triggers the silent fallback.
+func TestLoadConfiguration_ExplicitConfigPermissionError(t *testing.T) {
+	defer saveAndClearFlags(t)()
+
+	tmpDir := t.TempDir()
+	// Create a directory at the path the user "passed"; reading
+	// it as a YAML file fails with a non-IsNotExist error.
+	cfgPath := filepath.Join(tmpDir, "cfg-as-dir")
+	if err := os.Mkdir(cfgPath, 0700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	*configFile = cfgPath
+	_, err := loadConfiguration()
+	if err == nil {
+		t.Fatal("expected error when explicit config path is unreadable")
+	}
+}
+
+// TestLoadConfiguration_AutoDiscoveredUnreadable exercises the
+// auto-discovery branch where the discovered path exists (so
+// GetDefaultConfigPath returns a non-empty value) but cannot be
+// read as a YAML file. We trigger this by placing a directory at
+// the would-be config path: os.Stat in the discovery helper
+// succeeds, but os.ReadFile inside LoadFromFile fails with EISDIR
+// (which is NOT os.IsNotExist). For the non-explicit branch this
+// must surface as an error rather than silently fall through to
+// defaults; the IsNotExist-only fallback is reserved for the
+// genuine "file disappeared between Stat and Read" race.
+func TestLoadConfiguration_AutoDiscoveredUnreadable(t *testing.T) {
+	defer saveAndClearFlags(t)()
+
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir: %v", err)
+	}
+	pgedgeDir := filepath.Join(userDir, "pgedge")
+	if err := os.MkdirAll(pgedgeDir, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Create a *directory* where the YAML file should be. Stat
+	// succeeds, ReadFile fails with EISDIR.
+	bogus := filepath.Join(pgedgeDir, "ai-dba-collector.yaml")
+	if err := os.Mkdir(bogus, 0700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	_, err = loadConfiguration()
+	if err == nil {
+		t.Fatal("expected error from non-IsNotExist auto-discovery branch")
+	}
+	if !strings.Contains(err.Error(), "failed to load config file") {
+		t.Errorf("err = %v, want it to mention 'failed to load config file'", err)
 	}
 }
 

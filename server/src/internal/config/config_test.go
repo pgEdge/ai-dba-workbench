@@ -435,16 +435,19 @@ func TestLoadConfigNonExistentFile(t *testing.T) {
 
 // TestGetDefaultConfigPath verifies the wrapper returns "" when
 // neither the per-user config dir nor /etc/pgedge holds a server
-// config file.
+// config file. The system-wide fallback is redirected at a
+// directory guaranteed not to exist so the assertion is exact and
+// not influenced by whatever the test host has in /etc/pgedge.
 func TestGetDefaultConfigPath(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	result := GetDefaultConfigPath("/usr/local/bin/pgedge-postgres-mcp")
-	if result != "" && filepath.Ext(result) != ".yaml" {
-		t.Errorf("expected empty path or .yaml extension, got %q", result)
+	if result != "" {
+		t.Errorf("expected empty path, got %q", result)
 	}
 }
 
@@ -475,16 +478,18 @@ func TestGetDefaultConfigPath_UserDirHit(t *testing.T) {
 }
 
 // TestGetDefaultSecretPath verifies the wrapper returns "" when no
-// candidate secret file is present.
+// candidate secret file is present. As with TestGetDefaultConfigPath
+// the system fallback is redirected so the assertion is exact.
 func TestGetDefaultSecretPath(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	result := GetDefaultSecretPath("/usr/local/bin/pgedge-postgres-mcp")
-	if result != "" && filepath.Ext(result) != ".secret" {
-		t.Errorf("expected empty path or .secret extension, got %q", result)
+	if result != "" {
+		t.Errorf("expected empty path, got %q", result)
 	}
 }
 

@@ -142,20 +142,31 @@ func loadConfiguration() (*Config, error) {
 		// compiled-in defaults silently (info log only).
 		logger.Info("No configuration file found in default search " +
 			"paths (per-user config dir, /etc/pgedge); using defaults")
-	} else if _, err := os.Stat(configPath); err == nil {
-		if err := config.LoadFromFile(configPath); err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
-		}
+	} else if err := config.LoadFromFile(configPath); err == nil {
 		logger.Startupf("Configuration loaded from: %s", configPath)
 	} else if explicitConfigPath {
-		// The user explicitly asked for a file that does not
-		// exist; this is fatal.
-		return nil, fmt.Errorf("specified config file not found: %s", configPath)
-	} else {
-		// Defensive branch: between the helper's stat and ours
-		// the file disappeared. Fall back to defaults rather
-		// than crashing.
+		// The user explicitly asked for a file; any failure to
+		// read it is fatal. We do not differentiate a missing
+		// file from a permission error here because both
+		// indicate operator intent that the file should exist
+		// and be readable.
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("specified config file not found: %s", configPath)
+		}
+		return nil, fmt.Errorf("failed to load config file: %w", err)
+	} else if os.IsNotExist(err) {
+		// Auto-discovered path that has since vanished (TOCTOU
+		// race between the helper's stat and our load). Fall
+		// back to defaults rather than crashing, matching the
+		// silent-fallback behavior above when no candidate is
+		// present at all.
 		logger.Infof("Configuration file %s no longer exists; using defaults", configPath)
+	} else {
+		// Auto-discovered path that exists but cannot be read
+		// for some other reason (permissions, malformed YAML,
+		// etc.). This is unexpected enough that we surface it
+		// rather than silently fall through to defaults.
+		return nil, fmt.Errorf("failed to load config file: %w", err)
 	}
 
 	// Override with command line flags (highest priority)

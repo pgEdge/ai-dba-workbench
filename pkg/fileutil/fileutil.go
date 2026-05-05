@@ -100,6 +100,38 @@ func FileExists(path string) bool {
 // real /etc/pgedge populated.
 var systemConfigDir = "/etc/pgedge"
 
+// SetSystemConfigDirForTest temporarily redirects the system-wide
+// config directory consulted by GetDefaultConfigPath. It is intended
+// for use by test code in this and other packages: the production
+// default of /etc/pgedge can leak host state into tests on
+// developer machines and CI runners that have a real config
+// installed, making tests for the "no file found" branch
+// non-deterministic. The helper installs a t.Cleanup that restores
+// the previous value when the test (or its subtests) finishes.
+//
+// Pass an empty string to point the system fallback at a directory
+// that is guaranteed not to exist, fully isolating tests from any
+// real /etc/pgedge content. Pass a non-empty path (typically a
+// t.TempDir()) to drive the system-path branch deterministically.
+func SetSystemConfigDirForTest(t TestingT, dir string) {
+	t.Helper()
+	prev := systemConfigDir
+	systemConfigDir = dir
+	t.Cleanup(func() {
+		systemConfigDir = prev
+	})
+}
+
+// TestingT is the subset of *testing.T used by SetSystemConfigDirForTest.
+// Defining it as an interface keeps fileutil free of a hard dependency
+// on the testing package at production build time, while still making
+// the helper callable from any *testing.T (and from *testing.B if a
+// future caller needs it).
+type TestingT interface {
+	Helper()
+	Cleanup(func())
+}
+
 // GetDefaultConfigPath returns the default config file path for a
 // service. The function searches for an existing file in the
 // following order, returning the first match:

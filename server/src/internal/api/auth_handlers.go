@@ -195,6 +195,11 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// This prevents XSS attacks from accessing the session token.
 	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)
+	// #nosec G124 -- Secure is intentionally conditional on
+	// isSecureRequest so local HTTP development still works;
+	// in production behind TLS (direct or via a trusted proxy
+	// supplying X-Forwarded-Proto) the flag evaluates to true.
+	// HttpOnly and SameSite are unconditional.
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
@@ -234,6 +239,13 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Clear the session cookie by setting it to expire immediately
 	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)
+	// #nosec G124 -- Secure is intentionally conditional on
+	// isSecureRequest so local HTTP development still works;
+	// in production behind TLS (direct or via a trusted proxy
+	// supplying X-Forwarded-Proto) the flag evaluates to true.
+	// HttpOnly and SameSite are unconditional. The clear-cookie
+	// flags must mirror the set-cookie flags above so browsers
+	// match and overwrite the original cookie on logout.
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    "",

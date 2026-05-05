@@ -114,7 +114,7 @@ func isNilDatastore(ds DatastoreSharingLookup) bool {
 	}
 	v := reflect.ValueOf(ds)
 	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Chan,
+	case reflect.Pointer, reflect.Interface, reflect.Chan,
 		reflect.Func, reflect.Map, reflect.Slice:
 		return v.IsNil()
 	default:

@@ -585,3 +585,66 @@ func TestLoadOptionalYAMLFileInvalidYAML(t *testing.T) {
 		t.Error("LoadOptionalYAMLFile() expected error for invalid YAML")
 	}
 }
+
+// TestSetSystemConfigDirForTest_RedirectsAndRestores verifies that
+// SetSystemConfigDirForTest both redirects the system fallback for
+// the lifetime of the surrounding test and restores the previous
+// value via t.Cleanup so later tests are not affected.
+func TestSetSystemConfigDirForTest_RedirectsAndRestores(t *testing.T) {
+	original := systemConfigDir
+
+	// Drop a candidate file at a temp dir and point the system
+	// fallback at it. The per-user dir is also redirected at an
+	// empty location so the helper falls through to the system
+	// path deterministically.
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	systemDir := filepath.Join(base, "fake-etc-pgedge")
+	pgedgeSub := filepath.Join(systemDir, "pgedge")
+	if err := os.MkdirAll(pgedgeSub, 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	t.Run("redirected", func(t *testing.T) {
+		// systemConfigDir = systemDir, expect lookup to find the
+		// dropped candidate file under it.
+		SetSystemConfigDirForTest(t, systemDir)
+		expected := filepath.Join(systemDir, "fake.yaml")
+		if err := os.WriteFile(expected, []byte("k: v\n"), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		got := GetDefaultConfigPath("", "fake.yaml")
+		if got != expected {
+			t.Errorf("GetDefaultConfigPath = %q, want %q", got, expected)
+		}
+	})
+
+	// After the inner test (and its t.Cleanup) ran, the package
+	// variable must have been restored to whatever it was before
+	// we called SetSystemConfigDirForTest above (i.e. the original
+	// value at the top of this test).
+	if systemConfigDir != original {
+		t.Errorf("systemConfigDir = %q, want restored value %q",
+			systemConfigDir, original)
+	}
+}
+
+// TestSetSystemConfigDirForTest_EmptyDirYieldsNoMatch verifies the
+// "fully isolated" use case: pointing the system fallback at a
+// directory that does not exist makes GetDefaultConfigPath return
+// "" deterministically when neither the per-user dir nor the
+// system dir holds a candidate file.
+func TestSetSystemConfigDirForTest_EmptyDirYieldsNoMatch(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
+
+	if got := GetDefaultConfigPath("", "ai-dba-server.yaml"); got != "" {
+		t.Errorf("GetDefaultConfigPath = %q, want empty string", got)
+	}
+}

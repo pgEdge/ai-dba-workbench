@@ -35,8 +35,12 @@ and none of the default locations contain a
 configuration file, the server uses built-in defaults
 silently. The server no longer searches the binary
 directory or the current working directory. The same
-precedence applies to the `secret_file` discovery for
-`ai-dba-server.secret`.
+search paths apply to `secret_file` discovery for
+`ai-dba-server.secret`; however, secret discovery is
+not silent. If no `secret_file` is set in the YAML and
+no `ai-dba-server.secret` file is present at any
+search path, the server exits with an error at
+startup.
 
 ### Example Configuration
 

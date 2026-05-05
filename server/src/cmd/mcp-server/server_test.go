@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
@@ -53,6 +54,10 @@ func TestLoadServerSecret_DefaultUserDir(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	// Isolate the system-path branch so the test reflects only
+	// the per-user candidate, even on hosts where /etc/pgedge
+	// happens to contain a real ai-dba-server.secret.
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	userDir, err := os.UserConfigDir()
 	if err != nil {
@@ -80,24 +85,25 @@ func TestLoadServerSecret_DefaultUserDir(t *testing.T) {
 
 // TestLoadServerSecret_NoneFound verifies that the helper returns
 // a descriptive error when neither an explicit path nor any of the
-// default search paths yield a secret file.
+// default search paths yield a secret file. Both the per-user and
+// the system-wide candidates are redirected at directories
+// guaranteed not to exist, so the assertion is deterministic
+// regardless of the host's real /etc/pgedge contents.
 func TestLoadServerSecret_NoneFound(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	s := newServerWithSecretFile("")
 	_, err := s.loadServerSecret("/ignored/exec/path")
 	if err == nil {
 		t.Fatal("expected error when no secret file is reachable")
 	}
-	// Skip strong assertion if the host happens to have a real
-	// /etc/pgedge/ai-dba-server.secret file installed.
-	if strings.Contains(err.Error(), "not found in any") {
-		return
+	if !strings.Contains(err.Error(), "not found in any") {
+		t.Errorf("err = %v, want it to mention 'not found in any'", err)
 	}
-	t.Logf("note: host appears to have /etc/pgedge populated; err = %v", err)
 }
 
 // TestLoadServerSecret_EmptyFile verifies that a secret file

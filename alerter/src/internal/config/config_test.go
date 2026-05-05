@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // TestNewConfig tests that NewConfig creates a configuration with sensible defaults
@@ -410,16 +412,19 @@ func TestConfigFileExists(t *testing.T) {
 
 // TestGetDefaultConfigPath verifies the alerter wrapper returns
 // "" when no candidate file is present. The binaryPath argument
-// is no longer consulted.
+// is no longer consulted. The system-wide fallback is redirected
+// at a non-existent path so the assertion is exact and not
+// dependent on whether the test host has /etc/pgedge populated.
 func TestGetDefaultConfigPath(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	path := GetDefaultConfigPath("/usr/local/bin/ai-dba-alerter")
-	if path != "" && path != "/etc/pgedge/ai-dba-alerter.yaml" {
-		t.Errorf("GetDefaultConfigPath = %q, expected empty path or /etc/pgedge fallback", path)
+	if path != "" {
+		t.Errorf("GetDefaultConfigPath = %q, want empty path", path)
 	}
 }
 

@@ -279,21 +279,21 @@ func TestReadPasswordFromSecretFile(t *testing.T) {
 }
 
 func TestGetDefaultConfigPath(t *testing.T) {
-	// With nothing set up the helper returns "" so the caller can
-	// fall through to compiled-in defaults.
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("AppData", t.TempDir())
+	// Redirect both the per-user config dir and the system-wide
+	// fallback at empty/non-existent locations so the test
+	// asserts an exact "" return regardless of what the host has
+	// installed in /etc/pgedge.
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	binaryPath := "/usr/local/bin/ai-dba-collector"
 	configPath := GetDefaultConfigPath(binaryPath)
 
-	// Since neither the per-user config dir nor /etc/pgedge holds a
-	// matching file, the helper should signal "no config found".
-	// We accept the existing /etc/pgedge file if the developer
-	// happens to have one installed locally.
-	if configPath != "" && configPath != "/etc/pgedge/ai-dba-collector.yaml" {
-		t.Errorf("Expected empty path or /etc/pgedge path, got %q", configPath)
+	if configPath != "" {
+		t.Errorf("Expected empty path, got %q", configPath)
 	}
 }
 
@@ -773,12 +773,17 @@ func TestLoadSecret_DefaultPath(t *testing.T) {
 }
 
 func TestLoadSecret_NotFound(t *testing.T) {
-	// Redirect os.UserConfigDir() at an empty temp dir so neither
-	// the user nor the system path resolves.
+	// Redirect os.UserConfigDir() at an empty temp dir so the
+	// per-user candidate cannot resolve. We also redirect the
+	// system-wide fallback at a directory that does not exist so
+	// CI hosts and developer machines that happen to have a real
+	// /etc/pgedge/ai-dba-collector.secret installed do not turn
+	// this test into a flake.
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)
 	t.Setenv("HOME", base)
 	t.Setenv("AppData", base)
+	fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
 
 	config := NewConfig()
 	err := config.LoadSecret("")

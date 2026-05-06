@@ -31,7 +31,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // toolsIntegrationSchema creates the minimum subset of datastore tables
@@ -43,6 +45,9 @@ import (
 // collector/src/database/schema.go.
 const toolsIntegrationSchema = `
 DROP TABLE IF EXISTS connections CASCADE;
+DROP SCHEMA IF EXISTS metrics CASCADE;
+
+CREATE SCHEMA metrics;
 
 CREATE TABLE connections (
     id SERIAL PRIMARY KEY,
@@ -56,12 +61,20 @@ CREATE TABLE connections (
     owner_username VARCHAR(255),
     cluster_id INTEGER,
     membership_source VARCHAR(16) NOT NULL DEFAULT 'auto',
+    connection_error TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE metrics.pg_connectivity (
+    id SERIAL PRIMARY KEY,
+    connection_id INTEGER NOT NULL,
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
 
 const toolsIntegrationTeardown = `
 DROP TABLE IF EXISTS connections CASCADE;
+DROP SCHEMA IF EXISTS metrics CASCADE;
 `
 
 // newToolsTestPool returns a *pgxpool.Pool and *database.Datastore wired
@@ -487,5 +500,138 @@ func TestManagedTxBeginTxCommitMarksCommittedIntegration(t *testing.T) {
 	}
 	if !mt.committed {
 		t.Error("expected committed to be true after successful Commit()")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// list_connections: RBAC filtering message distinction
+// ---------------------------------------------------------------------------
+
+// newRBACTestStore spins up a throwaway SQLite auth store for RBAC tests.
+// The caller receives a cleanup closure that closes the store and removes
+// the temp directory.
+func newRBACTestStore(t *testing.T) (*auth.AuthStore, func()) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "tools-rbac-int-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	store, err := auth.NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("NewAuthStore: %v", err)
+	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+	return store, func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	}
+}
+
+// nonSuperuserContextInt builds a context that matches how the auth
+// middleware would populate it for a logged-in, non-superuser session.
+func nonSuperuserContextInt(userID int64, username string) context.Context {
+	ctx := context.WithValue(context.Background(), auth.IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, userID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, username)
+	return ctx
+}
+
+// TestListConnectionsRBACNoAccessDistinctMessageIntegration is the
+// regression guard for the scenario where connections exist in the datastore
+// but the user has no access to any of them after RBAC filtering.
+//
+// Previously the tool returned "No database connections found in the datastore"
+// in BOTH cases:
+//  1. When no connections exist at all (correct)
+//  2. When connections exist but user has no access (incorrect - misleading)
+//
+// The fix distinguishes these cases by tracking whether connections were
+// filtered out vs. whether there were none to begin with.
+func TestListConnectionsRBACNoAccessDistinctMessageIntegration(t *testing.T) {
+	pool, ds, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	authStore, authCleanup := newRBACTestStore(t)
+	defer authCleanup()
+
+	// Create user "bob" who has no group membership and no grants.
+	if err := authStore.CreateUser("bob", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID, err := authStore.GetUserID("bob")
+	if err != nil {
+		t.Fatalf("GetUserID: %v", err)
+	}
+
+	// Insert a connection owned by alice and NOT shared, so bob cannot see it.
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO connections (name, host, port, database_name, is_shared, owner_username)
+		 VALUES ('alice-conn', 'localhost', 5432, 'postgres', FALSE, 'alice')`); err != nil {
+		t.Fatalf("failed to seed connections row: %v", err)
+	}
+
+	rbac := auth.NewRBACChecker(authStore)
+	lister := database.NewVisibilityLister(ds)
+	tool := ListConnectionsTool(pool, rbac, lister)
+
+	userCtx := nonSuperuserContextInt(userID, "bob")
+	resp, err := tool.Handler(map[string]any{"__context": userCtx})
+	if err != nil {
+		t.Fatalf("Handler returned error: %v", err)
+	}
+	// The response should NOT be an error (it's informational).
+	if resp.IsError {
+		t.Fatalf("Handler returned error response: %+v", resp.Content)
+	}
+	if len(resp.Content) == 0 {
+		t.Fatal("Expected content in response")
+	}
+	body := resp.Content[0].Text
+
+	// Must indicate user has no connection access (not that connections don't exist).
+	if !strings.Contains(body, "You do not have access to any connections") {
+		t.Errorf("Expected RBAC denial message 'You do not have access to any connections', got: %q", body)
+	}
+
+	// Must NOT contain the misleading "No database connections found in the datastore"
+	// message, since connections DO exist - the user just can't see them.
+	if strings.Contains(body, "No database connections found in the datastore") {
+		t.Errorf("Should NOT say 'No database connections found' when connections exist but are inaccessible: %q", body)
+	}
+
+	// Must NOT leak alice's connection name anywhere in the body.
+	if strings.Contains(body, "alice-conn") {
+		t.Errorf("Response leaked connection name 'alice-conn': %q", body)
+	}
+}
+
+// TestListConnectionsNoConnectionsExistIntegration verifies that when no
+// connections exist at all in the datastore, the tool returns the correct
+// message indicating connections must be added.
+func TestListConnectionsNoConnectionsExistIntegration(t *testing.T) {
+	pool, _, cleanup := newToolsTestPool(t)
+	defer cleanup()
+
+	// No connections are inserted - the connections table is empty.
+	tool := ListConnectionsTool(pool, nil, nil)
+
+	resp, err := tool.Handler(map[string]any{})
+	if err != nil {
+		t.Fatalf("Handler returned error: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("Handler returned error response: %+v", resp.Content)
+	}
+	if len(resp.Content) == 0 {
+		t.Fatal("Expected content in response")
+	}
+	body := resp.Content[0].Text
+
+	// When no connections exist, should say so explicitly.
+	if !strings.Contains(body, "No database connections found in the datastore") {
+		t.Errorf("Expected 'No database connections found in the datastore', got: %q", body)
 	}
 }

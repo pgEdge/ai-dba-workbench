@@ -123,6 +123,30 @@ project adheres to
   Makefile targets in the `server`, `collector`, and
   `alerter` sub-projects. The race detector now runs in
   CI and on developer machines. (#78)
+- Auto-collapse the Server Dashboard's "System
+  Resources" section when its data is unavailable,
+  typically because the `system_stats` PostgreSQL
+  extension is not installed on the connected server;
+  the section previously stayed expanded and rendered
+  five empty CPU, Memory, Disk, Load, and Network IO
+  panels that pushed the "PostgreSQL Overview"
+  section far down the page. The collapsed header now
+  shows the italic message "No data available. Is the
+  system_stats extension installed?" next to the
+  title, and the user can still expand the section
+  manually to inspect the empty panels. The manual
+  override is intentionally not persisted to
+  `localStorage`, so the section returns to the
+  user's previous expand or collapse preference once
+  the extension is installed. The shared
+  `CollapsibleSection` component gained two new
+  props, `forceCollapsed` and `forceCollapsedMessage`,
+  which temporarily override the persisted state
+  without mutating storage and render the italic
+  header message; an anti-flicker guard delays the
+  force-collapsed state until the initial KPI fetch
+  completes, so the section does not briefly collapse
+  during loading.
 - Consolidate four duplicated patterns in `server/src` as
   part of the codebase cleanup tracked in #77. The
   copy-pasted `getClient()` helper in
@@ -202,6 +226,13 @@ project adheres to
 
 ### Fixed
 
+- Fix the npm-install branch in
+  `start_dev_web_client.sh` never firing because an
+  intervening `echo` clobbered `$?` before the
+  `if [ $? -eq 0 ]` check; the script now uses a
+  direct `&&`/`||` pattern that tests the previous
+  command's exit status without an intermediate
+  command.
 - Fix Ask Ellie entering a long retry loop ("Joining the
   relations..." / "Validating query") when the signed-in
   user has no MCP privileges; the chat now surfaces a

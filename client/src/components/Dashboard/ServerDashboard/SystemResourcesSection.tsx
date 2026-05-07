@@ -302,8 +302,23 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     const isKpiLoading = cpuKpi.loading || memoryKpi.loading
         || diskKpi.loading || loadKpi.loading;
 
+    // Determine if initial data load is complete. We only force collapse
+    // after loading finishes to avoid flickering during the initial fetch.
+    const initialLoadComplete = !cpuKpi.loading && cpuKpi.data !== null;
+
+    // Force collapse the section when all system resource data is unavailable
+    // (typically when system_stats extension is not installed). Only apply
+    // this after initial load completes to avoid premature collapse.
+    const forceCollapsed = initialLoadComplete && !hasSystemStats;
+
     return (
-        <CollapsibleSection title="System Resources" icon={<ComputerIcon sx={{ fontSize: 16 }} />} defaultExpanded>
+        <CollapsibleSection
+            title="System Resources"
+            icon={<ComputerIcon sx={{ fontSize: 16 }} />}
+            defaultExpanded
+            forceCollapsed={forceCollapsed}
+            forceCollapsedMessage="No data available. Is the system_stats extension installed?"
+        >
             {isKpiLoading && !cpuKpi.data && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                     <CircularProgress size={24} aria-label="Loading" />

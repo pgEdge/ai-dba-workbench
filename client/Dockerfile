@@ -20,14 +20,22 @@ RUN npm ci
 COPY client/ ./
 RUN npm run build
 
-# Stage 2: Serve with nginx
-FROM nginx:stable-alpine
+# Stage 2: Serve with the unprivileged nginx image. This variant of
+# the official nginx image listens on port 8080 by default and runs
+# the master and worker processes as the non-root "nginx" user (UID
+# 101). The base image relocates the PID file and temp paths to
+# /tmp, removes the "user" directive, and otherwise mirrors the
+# stock alpine image. See https://hub.docker.com/r/nginxinc/nginx-unprivileged
+FROM nginxinc/nginx-unprivileged:stable-alpine
 
 COPY --from=builder /build/client/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
+# The base image already declares the "nginx" user. Restate USER
+# explicitly so static analysers (and humans reading the Dockerfile)
+# can verify that the container does not run as root.
+USER nginx
 
-# nginx starts as root to bind port 80, then drops to the
-# nginx user for worker processes via its own configuration.
+EXPOSE 8080
+
 CMD ["nginx", "-g", "daemon off;"]

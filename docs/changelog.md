@@ -31,6 +31,24 @@ project adheres to
 
 ### Changed
 
+- **Breaking change:** the web client container now
+  runs as a non-root user and listens on port
+  **8080** instead of port 80. The base image in
+  `client/Dockerfile` switched from
+  `nginx:stable-alpine` to
+  `nginxinc/nginx-unprivileged:stable-alpine`, with
+  an explicit `USER nginx` directive. Host-side port
+  mappings in `docker-compose.yml`,
+  `docker-compose.prod.yml`, and the walkthrough
+  compose file are unchanged, so
+  `http://localhost:3000` continues to work with the
+  default `CLIENT_PORT`. Operators running custom
+  reverse-proxy configurations, Kubernetes
+  manifests, or external `proxy_pass` upstreams that
+  target container port 80 must update those
+  references to 8080; this includes Service
+  `targetPort` values, health probes, and any
+  direct container-to-container references.
 - **Breaking change:** the collector, alerter, and
   server no longer auto-discover configuration or
   secret files in the binary directory or the current
@@ -147,6 +165,23 @@ project adheres to
   force-collapsed state until the initial KPI fetch
   completes, so the section does not briefly collapse
   during loading.
+- Bump the Go toolchain from 1.26.1 to 1.26.2
+  across the server, collector, alerter, and `pkg`
+  modules and the dev-container image; the upgrade
+  picks up upstream fixes for seven Go security
+  advisories listed in the Security section.
+- Bump `github.com/jackc/pgx/v5` from 5.7.6 to
+  5.9.2 in the server, collector, and alerter; the
+  upgrade picks up the memory-safety and
+  dollar-quoted-string fixes listed in the Security
+  section.
+- Add a `.codacy.yaml` configuration that suppresses
+  confirmed false-positive findings from Codacy's
+  Semgrep and ESLint8 engines; suppressions are
+  scoped to specific files or to `__tests__/**`
+  globs, were independently reviewed by the
+  security-auditor agent, and mask no real
+  vulnerabilities.
 - Consolidate four duplicated patterns in `server/src` as
   part of the codebase cleanup tracked in #77. The
   copy-pasted `getClient()` helper in
@@ -186,6 +221,27 @@ project adheres to
 
 ### Security
 
+- Pick up upstream fixes for seven Go security
+  advisories by bumping the toolchain to 1.26.2;
+  the advisories are CVE-2026-32280 (certificate
+  chain validation denial of service), CVE-2026-33810
+  (DNS-constraint certificate validation bypass),
+  CVE-2026-32281 (certificate chain validation denial
+  of service), CVE-2026-32283 (TLS 1.3 key-update
+  denial of service), CVE-2026-32289 (`html/template`
+  cross-site scripting), CVE-2026-32288
+  (`archive/tar` denial of service), and
+  CVE-2026-32282 (`Root.Chmod` symlink escape).
+- Pick up upstream fixes in `github.com/jackc/pgx/v5`
+  by bumping to 5.9.2; the advisories are
+  CVE-2026-33816 (Critical, memory safety) and
+  GHSA-j88v-2chj-qfwx (Low, SQL injection through
+  dollar-quoted-string and `$N` placeholder
+  confusion). A code audit confirmed that no query
+  in this project mixes `$$...$$` literals with `$N`
+  placeholders, so the second advisory was
+  theoretical for our code base; the bump is still
+  warranted as a defence-in-depth measure.
 - Redact notification channel secrets from API responses;
   `GET /api/v1/notification-channels` and
   `GET /api/v1/notification-channels/{id}` no longer return

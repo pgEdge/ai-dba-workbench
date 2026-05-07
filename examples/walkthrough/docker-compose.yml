@@ -111,7 +111,10 @@ services:
             - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
             - ./nginx/walkthrough:/usr/share/nginx/html/walkthrough:ro
         ports:
-            - "127.0.0.1:${WT_CLIENT_PORT:-3000}:80"
+            # The ai-dba-client image runs nginx as a non-root user
+            # listening on the unprivileged port 8080. The walkthrough
+            # nginx.conf mounted above also listens on 8080.
+            - "127.0.0.1:${WT_CLIENT_PORT:-3000}:8080"
         restart: unless-stopped
         deploy:
             resources:

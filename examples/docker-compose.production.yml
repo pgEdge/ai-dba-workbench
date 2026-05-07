@@ -136,9 +136,12 @@ services:
             server:
                 condition: service_healthy
         ports:
-            - "${CLIENT_PORT:-3000}:80"
+            # The client image runs nginx as a non-root user
+            # listening on the unprivileged port 8080. CLIENT_PORT
+            # is the host-side port and stays at 3000 by default.
+            - "${CLIENT_PORT:-3000}:8080"
         healthcheck:
-            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/"]
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/"]
             interval: 30s
             timeout: 5s
             retries: 3

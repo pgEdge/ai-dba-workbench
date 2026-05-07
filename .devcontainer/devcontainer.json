@@ -3,7 +3,7 @@
 {
 	"name": "pgEdge AI DBA Workbench — Development",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/go:2-1.25-trixie",
+	"image": "mcr.microsoft.com/devcontainers/go:2-1.26-trixie",
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli:1": {
 			"installDirectlyFromGitHubRelease": true,

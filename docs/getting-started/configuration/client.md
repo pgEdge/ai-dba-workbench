@@ -113,6 +113,14 @@ client files; a separate web server is required.
 
 ### Nginx Configuration
 
+The following example targets a non-containerized
+deployment in which Nginx runs on the host as the
+root user and serves the built client files directly
+from disk. The official client container image runs
+Nginx as a non-root user and listens on port 8080;
+see the Docker deployment guide for the container
+configuration.
+
 In the following example, the Nginx configuration
 serves the web client and proxies API, MCP, and
 health check requests to the server:

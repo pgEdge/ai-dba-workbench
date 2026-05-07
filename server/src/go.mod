@@ -2,10 +2,10 @@ module github.com/pgedge/ai-workbench/server
 
 go 1.26.0
 
-toolchain go1.26.1
+toolchain go1.26.2
 
 require (
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/sync v0.19.0

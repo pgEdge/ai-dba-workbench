@@ -78,7 +78,10 @@ services:
     depends_on:
       - server
     ports:
-      - "${CLIENT_PORT:-3000}:80"
+      # The client image runs nginx as a non-root user listening on
+      # the unprivileged port 8080. CLIENT_PORT is the host-side
+      # port and stays at 3000 by default.
+      - "${CLIENT_PORT:-3000}:8080"
     restart: unless-stopped
 
 volumes:

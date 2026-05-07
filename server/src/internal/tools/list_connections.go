@@ -161,6 +161,10 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 				return mcp.NewToolError(fmt.Sprintf("Error iterating connections: %v", err))
 			}
 
+			// Track total connections before RBAC filtering to distinguish
+			// between "no connections exist" and "user has no access".
+			totalConnectionsBeforeFilter := len(connections)
+
 			// RBAC: filter connections to the caller's visible set.
 			if rbacChecker != nil {
 				visible, allConns, visErr := rbacChecker.VisibleConnectionIDs(ctx, visibilityLister)
@@ -182,6 +186,10 @@ CRITICAL: Never silently analyze multiple connections. Always get explicit user 
 			}
 
 			if len(connections) == 0 {
+				// Distinguish between "no connections exist" and "user has no access"
+				if totalConnectionsBeforeFilter > 0 {
+					return mcp.NewToolSuccess("You do not have access to any connections.")
+				}
 				return mcp.NewToolSuccess("No database connections found in the datastore. Connections must be added before they can be monitored.")
 			}
 

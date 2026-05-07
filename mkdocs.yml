@@ -63,11 +63,11 @@ copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
 repo_url: https://github.com/pgEdge/ai-dba-workbench
 
 nav:
-  - Home: index.md
+  - Overview: index.md
 
-  - Getting Started:
-    - Quick Start: getting-started/quick-start.md
+  - Installing and Configuring pgEdge AI DBA Workbench:
     - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
     - Docker Deployment: getting-started/docker.md
     - Configuration:
       - Server: getting-started/configuration/server.md
@@ -76,7 +76,7 @@ nav:
       - Web Client: getting-started/configuration/client.md
 
   - User Guide:
-    - Overview: user-guide/index.md
+    - Using the Workbench: user-guide/index.md
     - Monitoring Dashboards:
       - Dashboard Overview: user-guide/dashboards/index.md
       - Estate Dashboard: user-guide/dashboards/estate.md

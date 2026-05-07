@@ -1,15 +1,19 @@
 # Installation Guide
 
-This guide covers installing the pgEdge AI DBA
-Workbench for production environments. The system
-consists of four components: a collector, a server,
-an alerter, and a web client.
+This guide covers installing the pgEdge AI DBA Workbench for production
+environments. The system consists of four components: a collector, a
+server, an alerter, and a web client.
 
 ## Installation Paths by Method
 
-The workbench supports three deployment methods. Each
-method places files in different locations. The
-following table summarizes the paths for each method.
+You can deploy the Workbench in three ways:
+
+* With pre-built binary files or source code from Github
+* Using Docker
+* With RPM/DEB packages from pgEdge
+
+Each method places files in different locations. The following table
+summarizes the locations for each deployment method.
 
 | Resource | GitHub Release | Docker | RPM/DEB Package |
 |----------|---------------|--------|-----------------|
@@ -22,104 +26,99 @@ following table summarizes the paths for each method.
 | Run-as user | user-chosen | container user | `pgedge` |
 
 !!! note
-    RPM and DEB packages are available from the pgEdge
-    enterprise repository. Contact pgEdge for access
-    details.
+    RPM and DEB packages are available from the 
+    [pgEdge Enterprise Repository](https://docs.pgedge.com/enterprise/). 
+    Contact pgEdge for access details.
 
-The installation steps below use the GitHub release
-method with example paths. Adjust the paths to match
-your deployment method.
+The installation steps below demonstrate using the GitHub release method with
+sample paths; adjust the paths to match your deployment method.
+
 
 ## System Requirements
 
-The following minimum requirements apply to all
-deployment environments.
+The following minimum requirements apply to all deployment environments.
 
-### Hardware
+The collector, server, and alerter components share the following hardware
+requirements:
 
 - 4 CPU cores.
 - 16 GB RAM.
 - 120 GB disk space for binaries and datastore.
 
-### Software
+Before installing the Workbench with binary files or building the project from
+source, install the following software:
 
-- [PostgreSQL 14](https://www.postgresql.org/download/)
-  or later for the datastore.
-- Linux x86_64 operating system for the server-side
+- [Go 1.24](https://go.dev/doc/install) or later for building server-side
   components.
-
-### Network
-
-- The collector requires network access to each
-  monitored PostgreSQL server.
-- The alerter requires network access to the
+- [Node.js 18](https://nodejs.org/) or later for building the web client.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or later for the
   datastore.
-- The server requires network access to the datastore
-  and must be reachable by web client users.
-- Database credentials for the datastore and each
-  monitored PostgreSQL server.
+- [Make](https://www.gnu.org/software/make/) for build automation.
 
-## Downloading Binaries
+Each component requires specific network access to operate correctly:
 
-Download pre-built binaries from the
+- The collector requires network access to each monitored PostgreSQL server.
+- The alerter requires network access to the datastore.
+- The server requires network access to the datastore and must be
+  reachable by web client users.
+- Database credentials for the datastore and each monitored PostgreSQL
+  server are required.
+
+
+## Using Binary Files to Install Workbench
+
+You can download pre-built binaries from the 
 [GitHub releases page](https://github.com/pgEdge/ai-dba-workbench/releases).
 Each release includes the following components:
 
-- The `ai-dba-collector` binary for the collector
-  service.
+- The `ai-dba-collector` binary for the collector service.
 - The `ai-dba-server` binary for the server service.
 - The `ai-dba-alerter` binary for the alerter service.
-- The `ai-dba-client.tar.gz` archive containing
-  pre-built web client files.
+- The `ai-dba-client.tar.gz` archive containing pre-built web client files.
 
-### Install Server-Side Binaries
+The Quick Start Guide contains detailed instructions for using the binary
+files to install and configure 
+[the Workbench](docs/getting-started/quick-start.md). 
 
-Create a deployment directory and copy the downloaded
-binaries to that location.
 
-In the following example, the commands install the
-binaries to `/opt/ai-workbench`:
+## Building AI DBA Workbench from Source Code
 
-```bash
-sudo mkdir -p /opt/ai-workbench
-sudo cp ai-dba-collector /opt/ai-workbench/
-sudo cp ai-dba-server /opt/ai-workbench/
-sudo cp ai-dba-alerter /opt/ai-workbench/
-sudo chmod +x /opt/ai-workbench/ai-dba-*
-```
-
-### Install the Web Client
-
-Extract the pre-built web client archive to the
-deployment directory.
-
-In the following example, the commands create the
-client directory and extract the archive:
+This project uses Makefiles for building and testing. All components can be
+built from the top-level directory with the command:
 
 ```bash
-sudo mkdir -p /opt/ai-workbench/client
-sudo tar xzf ai-dba-client.tar.gz \
-    -C /opt/ai-workbench/client
+make all
 ```
 
-Serve the web client files using a reverse proxy or
-static file server such as Nginx. The web client
-consists of static HTML, CSS, and JavaScript files
-that require no server-side runtime.
+To build an individual component (for example the `collector`), use the
+following command:
 
-!!! note
-    To build the components from source instead,
-    see the
-    [Developer Guide](../developer-guide/index.md).
+```bash
+cd collector && make build
+```
 
-## Setting Up systemd Services
+After completing the installation, configure each component for your
+environment:
 
-Create systemd service files to run each component as
-a background service.
+- The [Collector Configuration](configuration/collector.md) document
+  describes datastore and connection pool settings.
+- The [Server Configuration](configuration/server.md) document describes
+  authentication, TLS, and LLM settings.
+- The [Alerter Configuration](configuration/alerter.md) document describes
+  threshold and anomaly detection settings.
+- The [Client Configuration](configuration/client.md) document describes
+  proxy and build settings.
+
+
+## Configuring systemd Services
+
+The following sections provide details about creating systemd service files
+to run each component as a background service.
 
 ### Collector Service
 
-Create the service file at
+The collector service file configures the collector to start
+automatically and restart on failure. Create the service file at
 `/etc/systemd/system/pgedge-ai-dba-collector.service`:
 
 ```ini
@@ -142,7 +141,8 @@ WantedBy=multi-user.target
 
 ### Server Service
 
-Create the service file at
+The server service file configures the server to start automatically
+and restart on failure. Create the service file at
 `/etc/systemd/system/pgedge-ai-dba-server.service`:
 
 ```ini
@@ -165,7 +165,8 @@ WantedBy=multi-user.target
 
 ### Alerter Service
 
-Create the service file at
+The alerter service file configures the alerter to start automatically
+and always restart if the process exits. Create the service file at
 `/etc/systemd/system/pgedge-ai-dba-alerter.service`:
 
 ```ini
@@ -186,7 +187,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-### Enable and Start Services
+### Enable and Start the Services
 
 Reload the systemd daemon and enable each service:
 
@@ -210,68 +211,41 @@ sudo systemctl status pgedge-ai-dba-alerter
 
 ## Verifying the Installation
 
-After starting all components, verify the installation
-by following these steps.
+After starting all components, verify the installation by completing the
+following steps.
 
-### Check the Collector
+1. Check the collector. The collector logs probe executions to `stderr`.
+   Use the following command to confirm the collector is running:
 
-The collector logs probe executions to `stderr`. Use
-the following command to verify the collector is
-running:
+    ```bash
+    sudo systemctl status pgedge-ai-dba-collector
+    ```
 
-```bash
-sudo systemctl status pgedge-ai-dba-collector
-```
+2. Check the server. The server listens on the configured HTTP port.
+   Use the following command to test connectivity:
 
-### Check the Server
+    ```bash
+    curl -s http://localhost:8080/api/v1/capabilities
+    ```
 
-The server listens on the configured HTTP port. Use
-the following command to test connectivity:
+   A successful response confirms the server is running and accepting
+   requests.
 
-```bash
-curl -s http://localhost:8080/api/v1/capabilities
-```
+3. Check the alerter. The alerter logs rule evaluations to `stderr`.
+   Use the following command to confirm the alerter is running:
 
-A successful response confirms the server is running
-and accepting requests.
+    ```bash
+    sudo systemctl status pgedge-ai-dba-alerter
+    ```
 
-### Check the Alerter
+4. Check metrics collection. Connect to the datastore and run the
+   following query to verify that metrics tables contain recent data:
 
-The alerter logs rule evaluations to `stderr`. Use
-the following command to verify the alerter is
-running:
+    ```sql
+    SELECT COUNT(*), MAX(collected_at)
+    FROM metrics.pg_stat_activity;
+    ```
 
-```bash
-sudo systemctl status pgedge-ai-dba-alerter
-```
+   A non-zero count with a recent timestamp confirms the collector is
+   gathering metrics.
 
-### Check Metrics Collection
-
-Connect to the datastore and verify that metrics
-tables contain recent data:
-
-```sql
-SELECT COUNT(*), MAX(collected_at)
-FROM metrics.pg_stat_activity;
-```
-
-A non-zero count with a recent timestamp confirms
-the collector is gathering metrics.
-
-## Next Steps
-
-After completing the installation, configure each
-component for your environment:
-
-- Review the
-  [collector configuration](configuration/collector.md)
-  for datastore and pool settings.
-- Review the
-  [server configuration](configuration/server.md)
-  for authentication, TLS, and LLM settings.
-- Review the
-  [alerter configuration](configuration/alerter.md)
-  for threshold and anomaly detection settings.
-- Review the
-  [client configuration](configuration/client.md)
-  for proxy and build settings.

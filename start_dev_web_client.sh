@@ -137,7 +137,8 @@ needs_npm_install() {
 }
 
 echo -e "${BLUE}Checking if client dependencies need updating...${NC}"
-if INSTALL_REASON=$(needs_npm_install); then
+INSTALL_REASON=$(needs_npm_install)
+if [ $? -eq 0 ]; then
     echo -e "${BLUE}Installing client dependencies ($INSTALL_REASON)...${NC}"
     cd "$CLIENT_DIR"
     npm install

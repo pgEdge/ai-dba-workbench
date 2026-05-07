@@ -42,7 +42,7 @@
             "8080": {
                 "label": "MCP",
                 "onAutoForward": "notify"
-            },
+            }
         }
 
 	// Use 'postCreateCommand' to run commands after the container is created.

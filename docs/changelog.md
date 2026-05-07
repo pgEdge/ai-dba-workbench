@@ -242,6 +242,26 @@ project adheres to
   placeholders, so the second advisory was
   theoretical for our code base; the bump is still
   warranted as a defence-in-depth measure.
+- Bump the web client container's base images to
+  pick up upstream fixes for high-severity CVEs
+  flagged by Docker Scout. The builder stage moves
+  from `node:22-slim` to `node:22-trixie-slim`
+  (Debian 13), which closes CVE-2026-33845 and
+  CVE-2026-33846 in `gnutls28`. The runtime stage
+  moves from `nginxinc/nginx-unprivileged:stable-alpine`
+  to `nginxinc/nginx-unprivileged:stable-alpine-slim`,
+  which closes CVE-2026-3805 in `curl` on Alpine
+  3.23; the slim variant omits `curl`, which the
+  runtime does not need. One residual high finding,
+  CVE-2026-33671 in the `picomatch` package bundled
+  inside npm, persists across all Node 22 and 24
+  tags pending an npm release; the residual lives
+  only in the builder stage and never reaches the
+  shipped image. The non-root UID 101 nginx user,
+  port 8080, and other hardening from the earlier
+  base-image change are preserved, and
+  `docker scout cves` reports no vulnerable
+  packages in the final image.
 - Redact notification channel secrets from API responses;
   `GET /api/v1/notification-channels` and
   `GET /api/v1/notification-channels/{id}` no longer return
@@ -282,6 +302,17 @@ project adheres to
 
 ### Fixed
 
+- Fix the `Chart.test.tsx` regression introduced in
+  commit `aa28aa8` that has been failing the CI -
+  Client workflow on every commit since; the
+  vitest mock specifier `echarts-for-react/lib/core`
+  was not updated to `echarts-for-react/esm/core`
+  when production code switched to the ESM path,
+  leaving the real `ReactEChartsCore` running in
+  tests and tripping the deliberately-narrow
+  `echarts/core` mock. The change updates only the
+  test mock specifier; no production source code
+  was modified.
 - Fix the npm-install branch in
   `start_dev_web_client.sh` never firing because an
   intervening `echo` clobbered `$?` before the

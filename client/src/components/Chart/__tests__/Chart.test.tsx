@@ -15,7 +15,12 @@ import { ThemeProvider, createTheme, type PaletteOptions } from '@mui/material/s
 import { Chart } from '../Chart';
 import type { ChartData } from '../types';
 
-vi.mock('echarts-for-react/lib/core', () => ({
+// Chart.tsx imports ReactEChartsCore from `echarts-for-react/esm/core`
+// (switched in commit aa28aa8 to align with Vite's ESM resolution).
+// The mock must target that exact path so the test environment short
+// circuits before the real component reaches `echarts.init()` on the
+// mocked `echarts/core` module below.
+vi.mock('echarts-for-react/esm/core', () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     default: vi.fn(({ style, onChartReady }: { style: React.CSSProperties; onChartReady?: (instance: any) => void }) => {
         if (onChartReady) {

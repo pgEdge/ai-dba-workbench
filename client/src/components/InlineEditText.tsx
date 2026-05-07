@@ -99,7 +99,7 @@ const InlineEditText: React.FC<InlineEditTextProps> = ({
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            handleSave();
+            void handleSave();
         } else if (e.key === 'Escape') {
             e.preventDefault();
             handleCancel();

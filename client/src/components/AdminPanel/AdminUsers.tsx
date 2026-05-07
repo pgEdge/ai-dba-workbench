@@ -103,7 +103,7 @@ const AdminUsers: React.FC = () => {
     const theme = useTheme();
     const { user: currentUser } = useAuth();
     const [users, setUsers] = useState<RbacUser[]>([]);
-    const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
+    const [connections, setConnections] = useState<{ id: number; name: string }[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [expandedUser, setExpandedUser] = useState<number | null>(null);
@@ -147,7 +147,7 @@ const AdminUsers: React.FC = () => {
             setError(null);
             const [usersData, connResult] = await Promise.all([
                 apiGet<{ users: RbacUser[] }>('/api/v1/rbac/users'),
-                apiGet<{ connections: Array<{ id: number; name: string }> }>('/api/v1/connections').catch(() => null),
+                apiGet<{ connections: { id: number; name: string }[] }>('/api/v1/connections').catch(() => null),
             ]);
             setUsers(usersData.users || []);
             if (connResult) {
@@ -162,7 +162,7 @@ const AdminUsers: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        fetchUsers();
+        void fetchUsers();
     }, [fetchUsers]);
 
     const handleRowClick = async (rowUser: RbacUser) => {
@@ -239,11 +239,11 @@ const AdminUsers: React.FC = () => {
         e.stopPropagation();
         setEditUser(rowUser);
         setEditPassword('');
-        setEditDisplayName(rowUser.display_name || '');
-        setEditEmail(rowUser.email || '');
-        setEditAnnotation(rowUser.annotation || '');
+        setEditDisplayName(rowUser.display_name ?? '');
+        setEditEmail(rowUser.email ?? '');
+        setEditAnnotation(rowUser.annotation ?? '');
         setEditEnabled(rowUser.enabled !== false);
-        setEditSuperuser(rowUser.is_superuser || false);
+        setEditSuperuser(rowUser.is_superuser ?? false);
         setEditError(null);
         setEditOpen(true);
     };
@@ -257,15 +257,15 @@ const AdminUsers: React.FC = () => {
             if (editPassword) {
                 body.password = editPassword;
             }
-            const currentDisplayName = editUser.display_name || '';
+            const currentDisplayName = editUser.display_name ?? '';
             if (editDisplayName.trim() !== currentDisplayName) {
                 body.display_name = editDisplayName.trim();
             }
-            const currentEmail = editUser.email || '';
+            const currentEmail = editUser.email ?? '';
             if (editEmail.trim() !== currentEmail) {
                 body.email = editEmail.trim();
             }
-            const currentAnnotation = editUser.annotation || '';
+            const currentAnnotation = editUser.annotation ?? '';
             if (editAnnotation.trim() !== currentAnnotation) {
                 body.annotation = editAnnotation.trim();
             }
@@ -273,7 +273,7 @@ const AdminUsers: React.FC = () => {
             if (editEnabled !== currentEnabled) {
                 body.enabled = editEnabled;
             }
-            const currentSuperuser = editUser.is_superuser || false;
+            const currentSuperuser = editUser.is_superuser ?? false;
             if (editSuperuser !== currentSuperuser) {
                 body.is_superuser = editSuperuser;
             }
@@ -444,7 +444,7 @@ const AdminUsers: React.FC = () => {
                                     <TableCell>{rowUser.annotation || '-'}</TableCell>
                                     <TableCell align="center">
                                         <Switch
-                                            checked={rowUser.is_superuser || false}
+                                            checked={rowUser.is_superuser ?? false}
                                             size="small"
                                             onClick={(e) => handleToggleSuperuser(e, rowUser)}
                                             disabled={
@@ -508,7 +508,7 @@ const AdminUsers: React.FC = () => {
                                                             connectionPrivileges={permissions.connection_privileges}
                                                             adminPermissions={permissions.admin_permissions}
                                                             mcpPrivileges={permissions.mcp_privileges}
-                                                            isSuperuser={rowUser.is_superuser || false}
+                                                            isSuperuser={rowUser.is_superuser ?? false}
                                                             isDark={isDark}
                                                             groups={permissions.groups}
                                                             connections={connections}

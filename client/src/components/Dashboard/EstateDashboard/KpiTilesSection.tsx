@@ -160,7 +160,7 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         );
     }
 
-    const data = aggregate || {
+    const data = aggregate ?? {
         totalServers,
         totalConnections: 0,
         transactionRate: 0,

@@ -97,7 +97,7 @@ const AdminGroups: React.FC = () => {
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
     const [groups, setGroups] = useState<RbacGroup[]>([]);
-    const [connections, setConnections] = useState<Array<{ id: number; name: string }>>([]);
+    const [connections, setConnections] = useState<{ id: number; name: string }[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [expandedGroup, setExpandedGroup] = useState<number | null>(null);
@@ -141,11 +141,11 @@ const AdminGroups: React.FC = () => {
             setError(null);
             const [groupsData, connResult] = await Promise.all([
                 apiGet<{ groups: RbacGroup[] }>('/api/v1/rbac/groups'),
-                apiGet<{ connections?: Array<{ id: number; name: string }> }>('/api/v1/connections').catch(() => null),
+                apiGet<{ connections?: { id: number; name: string }[] }>('/api/v1/connections').catch(() => null),
             ]);
             setGroups(groupsData.groups || []);
             if (connResult) {
-                setConnections(connResult.connections || []);
+                setConnections(connResult.connections ?? []);
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -156,7 +156,7 @@ const AdminGroups: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        fetchGroups();
+        void fetchGroups();
     }, [fetchGroups]);
 
     const fetchGroupDetail = useCallback(async (groupId: number) => {
@@ -185,7 +185,7 @@ const AdminGroups: React.FC = () => {
             setEffectivePerms(null);
         } else {
             setExpandedGroup(group.id);
-            fetchGroupDetail(group.id);
+            void fetchGroupDetail(group.id);
         }
     };
 
@@ -216,7 +216,7 @@ const AdminGroups: React.FC = () => {
         e.stopPropagation();
         setEditGroup(group);
         setEditName(group.name);
-        setEditDesc(group.description || '');
+        setEditDesc(group.description ?? '');
         setEditError(null);
         setEditOpen(true);
     };
@@ -233,7 +233,7 @@ const AdminGroups: React.FC = () => {
             setEditOpen(false);
             fetchGroups();
             if (expandedGroup === editGroup.id) {
-                fetchGroupDetail(editGroup.id);
+                void fetchGroupDetail(editGroup.id);
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -316,7 +316,7 @@ const AdminGroups: React.FC = () => {
                 );
             }
             setAddMemberOpen(false);
-            fetchGroupDetail(expandedGroup);
+            void fetchGroupDetail(expandedGroup);
             fetchGroups();
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -344,8 +344,8 @@ const AdminGroups: React.FC = () => {
             let memberId: number | undefined;
             if (mType === 'user') {
                 try {
-                    const data = await apiGet<{ users?: Array<{ id: number; username: string }> }>('/api/v1/rbac/users');
-                    const foundUser = (data.users || []).find(u => u.username === name);
+                    const data = await apiGet<{ users?: { id: number; username: string }[] }>('/api/v1/rbac/users');
+                    const foundUser = (data.users ?? []).find(u => u.username === name);
                     if (foundUser) {memberId = foundUser.id;}
                 } catch { /* ignore */ }
             } else {
@@ -479,7 +479,7 @@ const AdminGroups: React.FC = () => {
                                                         </Box>
                                                         {((groupDetail.user_members?.length > 0) || (groupDetail.group_members?.length > 0)) ? (
                                                             <List dense disablePadding>
-                                                                {(groupDetail.user_members || []).map((username, i) => (
+                                                                {(groupDetail.user_members ?? []).map((username, i) => (
                                                                     <ListItem key={`user-${i}`} disablePadding sx={{ py: 0.5 }}>
                                                                         <ListItemText
                                                                             primary={username}
@@ -500,7 +500,7 @@ const AdminGroups: React.FC = () => {
                                                                         </ListItemSecondaryAction>
                                                                     </ListItem>
                                                                 ))}
-                                                                {(groupDetail.group_members || []).map((groupName, i) => (
+                                                                {(groupDetail.group_members ?? []).map((groupName, i) => (
                                                                     <ListItem key={`group-${i}`} disablePadding sx={{ py: 0.5 }}>
                                                                         <ListItemText
                                                                             primary={groupName}

@@ -101,7 +101,7 @@ const AdminAlertRules: React.FC = () => {
             if (Array.isArray(data)) {
                 setRules(data);
             } else {
-                setRules(data.alert_rules || []);
+                setRules(data.alert_rules ?? []);
             }
         } catch (err: unknown) {
             if (err instanceof Error) {
@@ -115,7 +115,7 @@ const AdminAlertRules: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        fetchRules();
+        void fetchRules();
     }, [fetchRules]);
 
     const handleEditRule = (rule: AlertRule, e: React.MouseEvent) => {

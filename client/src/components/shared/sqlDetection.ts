@@ -74,6 +74,6 @@ export const isSqlCodeBlock = (className: string | undefined, content: string): 
  * Return the language string extracted from a className, or empty string.
  */
 export const extractLanguage = (className: string | undefined): string => {
-    const match = /language-(\w+)/.exec(className || '');
+    const match = /language-(\w+)/.exec(className ?? '');
     return match ? match[1] : '';
 };

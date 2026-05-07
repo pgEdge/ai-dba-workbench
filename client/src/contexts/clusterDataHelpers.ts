@@ -47,7 +47,7 @@ export const collectServerFingerprints = (servers: ClusterServer[]): string => {
     if (!servers || servers.length === 0) {return '';}
     return servers.map(server => {
         const childFingerprints = collectServerFingerprints(server.children ?? []);
-        return `${server.id}:${server.name}:${server.description || ''}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}:${server.membership_source || ''}${childFingerprints ? `:${childFingerprints}` : ''}`;
+        return `${server.id}:${server.name}:${server.description ?? ''}:${server.status}:${server.connection_error || ''}:${server.primary_role || server.role || ''}:${server.membership_source || ''}${childFingerprints ? `:${childFingerprints}` : ''}`;
     }).join(',');
 };
 
@@ -62,7 +62,7 @@ export const generateDataFingerprint = (data: ClusterGroup[]): string => {
     const fingerprint = data.map(group => {
         const clusterFingerprints = (group.clusters || []).map(cluster => {
             const serverFingerprints = collectServerFingerprints(cluster.servers || []);
-            return `${cluster.id}:${cluster.name}:${cluster.description || ''}:${cluster.replication_type || ''}:${serverFingerprints}`;
+            return `${cluster.id}:${cluster.name}:${cluster.description ?? ''}:${cluster.replication_type || ''}:${serverFingerprints}`;
         }).join('|');
         return `${group.id}:${group.name}:${clusterFingerprints}`;
     }).join('||');
@@ -106,7 +106,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
                 cluster.servers.push({
                     id: conn.id,
                     name: conn.name,
-                    description: conn.description || '',
+                    description: conn.description ?? '',
                     host: conn.host,
                     port: conn.port,
                     status: conn.status || 'unknown',
@@ -124,7 +124,7 @@ export const transformConnectionsToHierarchy = (connections: ConnectionRecord[])
                 servers: [{
                     id: conn.id,
                     name: conn.name,
-                    description: conn.description || '',
+                    description: conn.description ?? '',
                     host: conn.host,
                     port: conn.port,
                     status: conn.status || 'unknown',

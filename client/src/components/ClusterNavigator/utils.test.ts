@@ -61,7 +61,7 @@ describe('parseGroupNumericId', () => {
         it('never returns NaN, always number or undefined', () => {
             // Exercise a range of shapes and confirm the result is either
             // a finite number or undefined; NaN must never leak through.
-            const inputs: Array<string | undefined> = [
+            const inputs: (string | undefined)[] = [
                 undefined,
                 '',
                 'group-0',

@@ -176,7 +176,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
 
     const handleLogout = () => {
         userMenu.handleClose();
-        logout();
+        void logout();
     };
 
     const handleHelpOpen = () => {

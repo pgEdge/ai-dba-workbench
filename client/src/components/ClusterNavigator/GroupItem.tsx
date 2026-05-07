@@ -121,7 +121,7 @@ interface GroupData {
     name: string;
     auto_group_key?: string;
     is_default?: boolean;
-    clusters?: Array<Cluster & { cluster_type?: string; replication_type?: string | null }>;
+    clusters?: (Cluster & { cluster_type?: string; replication_type?: string | null })[];
 }
 
 interface GroupItemProps {
@@ -188,11 +188,11 @@ const GroupItem = memo<GroupItemProps>(({
     const totalServers = group.clusters?.reduce(
         (acc, c) => acc + countServersRecursive(c.servers),
         0
-    ) || 0;
+    ) ?? 0;
     const onlineServers = group.clusters?.reduce(
         (acc, c) => acc + countServersRecursive(c.servers, s => s.status !== 'offline'),
         0
-    ) || 0;
+    ) ?? 0;
 
     // Groups can be deleted if they're not auto-detected and not the default group
     const canDeleteGroup = canEditGroup && !group.auto_group_key && !group.is_default;

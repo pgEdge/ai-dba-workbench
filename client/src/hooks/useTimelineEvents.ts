@@ -165,8 +165,8 @@ export const useTimelineEvents = ({
             const data = await apiGet<TimelineApiResponse>(`/api/v1/timeline/events?${queryString}`);
 
             if (isMountedRef.current) {
-                setEvents(data.events || []);
-                setTotalCount(data.total_count || 0);
+                setEvents(data.events ?? []);
+                setTotalCount(data.total_count ?? 0);
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {

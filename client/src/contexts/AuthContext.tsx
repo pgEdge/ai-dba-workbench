@@ -78,9 +78,9 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                 setUser({
                     authenticated: true,
                     username: userInfo.username,
-                    isSuperuser: userInfo.is_superuser || false
+                    isSuperuser: userInfo.is_superuser ?? false
                 });
-                setAdminPermissions(userInfo.admin_permissions || []);
+                setAdminPermissions(userInfo.admin_permissions ?? []);
             } else {
                 // Session is invalid - clear it
                 setUser(null);
@@ -113,10 +113,10 @@ export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElemen
                 setUser({
                     authenticated: true,
                     username: userInfo.username,
-                    isSuperuser: userInfo.is_superuser || false,
+                    isSuperuser: userInfo.is_superuser ?? false,
                     expiresAt: result.expires_at
                 });
-                setAdminPermissions(userInfo.admin_permissions || []);
+                setAdminPermissions(userInfo.admin_permissions ?? []);
             } catch {
                 // Fallback if user info fetch fails
                 setUser({

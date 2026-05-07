@@ -226,7 +226,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         isMountedRef.current = true;
 
         if (user) {
-            fetchQueryData();
+            void fetchQueryData();
         }
 
         return () => {

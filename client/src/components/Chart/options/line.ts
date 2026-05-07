@@ -39,7 +39,7 @@ export function buildLineOptions(
         stack: options.stacked ? 'total' : undefined,
         areaStyle: options.areaFill ? {} : undefined,
         symbol: options.showMarkers
-            ? (options.markerSymbol || 'circle')
+            ? (options.markerSymbol ?? 'circle')
             : 'none',
         symbolSize: options.showMarkers ? 8 : 0,
     }));

@@ -163,8 +163,8 @@ const TopologyPanel: React.FC<TopologyPanelProps> = ({
     }, [clusterId]);
 
     useEffect(() => {
-        fetchData();
-        fetchUnassigned();
+        void fetchData();
+        void fetchUnassigned();
     }, [fetchData, fetchUnassigned]);
 
     /**

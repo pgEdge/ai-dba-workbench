@@ -204,7 +204,7 @@ export function useQueryOverview(
             input.databaseName,
         );
         overviewCache.delete(cacheKey);
-        generateSummary(input);
+        void generateSummary(input);
     }, [input, generateSummary]);
 
     if (!input) {

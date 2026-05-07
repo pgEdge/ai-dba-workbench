@@ -234,7 +234,7 @@ interface PopoverContentProps {
  * Renders the detail popover content for a plan node.
  */
 const PopoverContent: React.FC<PopoverContentProps> = ({ node }) => {
-    const conditions: Array<{ label: string; value: string }> = [];
+    const conditions: { label: string; value: string }[] = [];
     if (node.Filter) {
         conditions.push({ label: 'Filter', value: node.Filter });
     }
@@ -509,7 +509,7 @@ const PlanTree: React.FC<PlanTreeProps> = ({ plan }) => {
     const layoutMap = new Map(layout.map(n => [n.id, n]));
 
     // Collect edges: each child points to its parent.
-    const edges: Array<{ child: LayoutNode; parent: LayoutNode }> = [];
+    const edges: { child: LayoutNode; parent: LayoutNode }[] = [];
     for (const ln of layout) {
         if (ln.parentId !== null) {
             const parent = layoutMap.get(ln.parentId);
@@ -645,7 +645,7 @@ const PlanTree: React.FC<PlanTreeProps> = ({ plan }) => {
                             tabIndex={0}
                             aria-label={
                                 `View details for `
-                                + `${nodeTypeLabel(ln.node)}`
+                                + nodeTypeLabel(ln.node)
                             }
                         >
                             <Typography

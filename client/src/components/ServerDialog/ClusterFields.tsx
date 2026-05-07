@@ -62,7 +62,7 @@ const REPLICATION_TYPES = [
  */
 function getRolesForType(
     replicationType: string | null | undefined,
-): Array<{ value: string; label: string }> {
+): { value: string; label: string }[] {
     switch (replicationType) {
         case 'binary':
             return [
@@ -291,7 +291,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
 
     useEffect(() => {
         if (!hasFetched.current) {
-            fetchData();
+            void fetchData();
         }
     }, [fetchData]);
 
@@ -691,7 +691,7 @@ const ClusterFields: React.FC<ClusterFieldsProps> = ({
 
             {/* Role dropdown - shown when a cluster is selected or being
                 created, and replication type is known */}
-            {roleOptions.length > 0 && (selectedOption || showNewClusterFields) && (
+            {roleOptions.length > 0 && (selectedOption ?? showNewClusterFields) && (
                 <TextField
                     select
                     fullWidth

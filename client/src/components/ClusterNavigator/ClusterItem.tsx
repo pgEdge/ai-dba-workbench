@@ -248,7 +248,7 @@ const ClusterItem = memo<ClusterItemProps>(({
                     status={clusterStatus}
                     alertCount={clusterAlertCount}
                     blackoutActive={getClusterBlackoutStatus?.(cluster.id)?.active}
-                    blackoutInherited={getClusterBlackoutStatus?.(cluster.id).inherited}
+                    blackoutInherited={getClusterBlackoutStatus?.(cluster.id)?.inherited}
                 />
                 <ClusterIcon sx={getClusterIconSx(isSelected)} />
                 <Box sx={flexMinWidthSx}>
@@ -269,7 +269,7 @@ const ClusterItem = memo<ClusterItemProps>(({
                         sx={getCountChipSx(theme)}
                     />
                 </Box>
-                {canEditCluster && (onConfigureCluster || (onDeleteCluster && totalCount === 0)) && (
+                {canEditCluster && (onConfigureCluster ?? (onDeleteCluster && totalCount === 0)) && (
                     <Box sx={getClusterActionsSx(theme)}>
                         {onConfigureCluster && (
                             <IconButton

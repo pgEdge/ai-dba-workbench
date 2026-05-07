@@ -157,7 +157,7 @@ const AdminPermissions: React.FC = () => {
         const fetchGroups = async () => {
             try {
                 const data = await apiGet<{ groups?: RbacGroup[] }>(`${API_BASE_URL}/rbac/groups`);
-                setGroups(data.groups || []);
+                setGroups(data.groups ?? []);
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : String(err);
                 setError(message);
@@ -165,7 +165,7 @@ const AdminPermissions: React.FC = () => {
                 setLoading(false);
             }
         };
-        fetchGroups();
+        void fetchGroups();
     }, []);
 
     // Fetch MCP and connection permissions when group changes
@@ -182,13 +182,13 @@ const AdminPermissions: React.FC = () => {
                     `${API_BASE_URL}/connections`
                 ).catch(() => null),
             ]);
-            setMcpPermissions(groupData.mcp_privileges || []);
+            setMcpPermissions(groupData.mcp_privileges ?? []);
             setConnPermissions(groupData.connection_privileges ?? []);
             if (connData) {
                 if (Array.isArray(connData)) {
                     setConnections(connData);
                 } else {
-                    setConnections(connData.connections || []);
+                    setConnections(connData.connections ?? []);
                 }
             }
         } catch (err: unknown) {
@@ -208,7 +208,7 @@ const AdminPermissions: React.FC = () => {
             const data = await apiGet<{ permissions?: string[] }>(
                 `${API_BASE_URL}/rbac/groups/${groupId}/permissions`
             );
-            setAdminPermissions(data.permissions || []);
+            setAdminPermissions(data.permissions ?? []);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             setError(message);
@@ -219,8 +219,8 @@ const AdminPermissions: React.FC = () => {
 
     useEffect(() => {
         if (selectedGroupId) {
-            fetchPermissions(selectedGroupId);
-            fetchAdminPermissions(selectedGroupId);
+            void fetchPermissions(selectedGroupId);
+            void fetchAdminPermissions(selectedGroupId);
         } else {
             setMcpPermissions([]);
             setConnPermissions([]);
@@ -452,7 +452,7 @@ const AdminPermissions: React.FC = () => {
                                         connPermissions.map((p, i) => (
                                             <TableRow key={i}>
                                                 <TableCell>{getConnectionName(p.connection_id)}</TableCell>
-                                                <TableCell>{p.access_level || 'read'}</TableCell>
+                                                <TableCell>{p.access_level ?? 'read'}</TableCell>
                                                 <TableCell align="right">
                                                     <IconButton
                                                         size="small"
@@ -526,7 +526,7 @@ const AdminPermissions: React.FC = () => {
                                                     ? 'All Admin Permissions'
                                                     : PERMISSION_TYPES.find(
                                                         (pt) => pt.value === p
-                                                    )?.label || p;
+                                                    )?.label ?? p;
                                                 return (
                                                     <TableRow key={i}>
                                                         <TableCell>{permLabel}</TableCell>

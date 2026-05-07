@@ -314,7 +314,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
         }
     };
 
-    const deleteDialogMessage = pendingDelete?.type === 'blackout' && pendingDelete?.isActive
+    const deleteDialogMessage = pendingDelete?.type === 'blackout' && pendingDelete.isActive
         ? 'Are you sure you want to delete this active blackout? This will immediately resume normal alert processing.'
         : pendingDelete?.type === 'schedule'
             ? 'Are you sure you want to delete this schedule? This action cannot be undone.'

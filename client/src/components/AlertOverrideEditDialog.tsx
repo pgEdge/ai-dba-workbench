@@ -100,7 +100,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
 
     const [context, setContext] = useState<OverrideContextResponse | null>(null);
     const [scopeOptions, setScopeOptions] = useState<
-        Array<{ value: string; label: string; disabled: boolean }>
+        { value: string; label: string; disabled: boolean }[]
     >([]);
     const [selectedScope, setSelectedScope] = useState<string>('server');
 
@@ -170,7 +170,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                 setContext(data);
 
                 // Build scope options
-                const options: Array<{ value: string; label: string; disabled: boolean }> = [];
+                const options: { value: string; label: string; disabled: boolean }[] = [];
 
                 // Determine highest existing override scope
                 // Hierarchy from highest to lowest: group > cluster > server
@@ -222,7 +222,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
                 setScopeOptions(options);
 
                 // Default scope selection: highest existing override, or 'server'
-                const defaultScope = highestExistingScope || 'server';
+                const defaultScope = highestExistingScope ?? 'server';
                 setSelectedScope(defaultScope);
                 populateFields(defaultScope, data);
             } catch (err: unknown) {
@@ -236,7 +236,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
             }
         };
 
-        fetchContext();
+        void fetchContext();
     }, [open, alert?.ruleId, alert?.connectionId, populateFields]);
 
     // Update form fields when scope changes
@@ -325,7 +325,7 @@ const AlertOverrideEditDialog: React.FC<AlertOverrideEditDialogProps> = ({
         >
             <DialogTitle sx={dialogTitleSx}>
                 Edit alert override
-                {context?.rule?.name && (
+                {context?.rule.name && (
                     <Typography
                         variant="body2"
                         sx={{ color: 'text.secondary', mt: 0.5 }}

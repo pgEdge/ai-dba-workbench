@@ -67,9 +67,9 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
 
             if (isMountedRef.current) {
                 setAlertCounts({
-                    total: data.total || 0,
+                    total: data.total ?? 0,
                     byServer: data.by_server ?? {},
-                    byCluster: data.by_cluster || {},
+                    byCluster: data.by_cluster ?? {},
                 });
                 setLastFetch(new Date());
             }
@@ -108,7 +108,7 @@ export const AlertsProvider = ({ children }: AlertsProviderProps): React.ReactEl
     useEffect(() => {
         isMountedRef.current = true;
         if (user) {
-            fetchAlertCounts();
+            void fetchAlertCounts();
         }
         return () => {
             isMountedRef.current = false;

@@ -115,15 +115,15 @@ const AdminTokenScopes: React.FC = () => {
                 apiGet<McpPrivilege[]>('/api/v1/rbac/privileges/mcp').catch(() => null),
                 apiGet<{ users?: User[] }>('/api/v1/rbac/users').catch(() => null),
             ]);
-            setTokens(tokData.tokens || []);
+            setTokens(tokData.tokens ?? []);
             if (connResult) {
-                setConnections(connResult.connections || (connResult as unknown as Connection[]) || []);
+                setConnections((connResult.connections ?? (connResult as unknown as Connection[])) || []);
             }
             if (mcpResult) {
                 setMcpPrivileges(mcpResult || []);
             }
             if (usersResult) {
-                setUsers(usersResult.users || []);
+                setUsers(usersResult.users ?? []);
             }
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
@@ -133,7 +133,7 @@ const AdminTokenScopes: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        fetchData();
+        void fetchData();
     }, [fetchData]);
 
     const handleTokenRowClick = (token: Token) => {
@@ -172,7 +172,7 @@ const AdminTokenScopes: React.FC = () => {
                 setOwnerAdminPermissions(ADMIN_PERMISSIONS);
             } else {
                 setOwnerIsSuperuser(false);
-                const connPrivs = data.connection_privileges || {};
+                const connPrivs = data.connection_privileges ?? {};
                 const allowedConnIds = Object.keys(connPrivs).map(Number);
                 setOwnerConnectionLevels(
                     Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v]))
@@ -182,8 +182,8 @@ const AdminTokenScopes: React.FC = () => {
                 } else {
                     setOwnerConnections(connections.filter((c) => allowedConnIds.includes(c.id)));
                 }
-                setOwnerMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges || []));
-                setOwnerAdminPermissions(filterAdminPermissions(data.admin_permissions || []));
+                setOwnerMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges ?? []));
+                setOwnerAdminPermissions(filterAdminPermissions(data.admin_permissions ?? []));
             }
         } catch {
             setOwnerConnections(connections);
@@ -260,7 +260,7 @@ const AdminTokenScopes: React.FC = () => {
     // Edit scope
     const handleOpenEdit = async (token: Token) => {
         setEditToken(token);
-        const scopeConns = token.scope?.connections || [];
+        const scopeConns = token.scope?.connections ?? [];
         setEditConnections(scopeConns.map((sc: TokenScopeConnection) => {
             const conn = connections.find((c) => c.id === sc.connection_id);
             return {
@@ -270,7 +270,7 @@ const AdminTokenScopes: React.FC = () => {
             };
         }));
 
-        const scopeMcpIds = token.scope?.mcp_privileges || [];
+        const scopeMcpIds = token.scope?.mcp_privileges ?? [];
         const mcpNames = scopeMcpIds.map((id: number) => getMcpPrivilegeName(id));
         if (mcpNames.includes('*')) {
             setEditMcpPrivileges([ALL_MCP_OPTION]);
@@ -278,7 +278,7 @@ const AdminTokenScopes: React.FC = () => {
             setEditMcpPrivileges(mcpPrivileges.filter((p) => scopeMcpIds.includes(p.id)));
         }
 
-        const scopeAdminPerms = token.scope?.admin_permissions || [];
+        const scopeAdminPerms = token.scope?.admin_permissions ?? [];
         if (scopeAdminPerms.includes('*')) {
             setEditAdminPermissions([ALL_ADMIN_OPTION]);
         } else {
@@ -305,7 +305,7 @@ const AdminTokenScopes: React.FC = () => {
                     setEditAvailableAdminPermissions(ADMIN_PERMISSIONS);
                 } else {
                     setEditOwnerIsSuperuser(false);
-                    const connPrivs = data.connection_privileges || {};
+                    const connPrivs = data.connection_privileges ?? {};
                     const allowedConnIds = Object.keys(connPrivs).map(Number);
                     setEditOwnerConnectionLevels(
                         Object.fromEntries(Object.entries(connPrivs).map(([k, v]) => [Number(k), v]))
@@ -315,8 +315,8 @@ const AdminTokenScopes: React.FC = () => {
                     } else {
                         setEditAvailableConnections(connections.filter((c) => allowedConnIds.includes(c.id)));
                     }
-                    setEditAvailableMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges || []));
-                    setEditAvailableAdminPermissions(filterAdminPermissions(data.admin_permissions || []));
+                    setEditAvailableMcpPrivileges(filterMcpPrivileges(mcpPrivileges, data.mcp_privileges ?? []));
+                    setEditAvailableAdminPermissions(filterAdminPermissions(data.admin_permissions ?? []));
                 }
             } catch {
                 setEditOwnerIsSuperuser(false);

@@ -89,7 +89,7 @@ const TopologySection: React.FC<TopologySectionProps> = ({ selection }) => {
 
     const handleNodeClick = useCallback(
         (node: TopoNode) => {
-            selectServer(node.server);
+            void selectServer(node.server);
         },
         [selectServer],
     );

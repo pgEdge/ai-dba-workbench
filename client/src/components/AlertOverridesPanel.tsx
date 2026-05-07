@@ -125,7 +125,7 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
     }, [scope, scopeId]);
 
     useEffect(() => {
-        fetchOverrides();
+        void fetchOverrides();
     }, [fetchOverrides]);
 
     const handleEditOverride = (override: AlertOverride, e: React.MouseEvent) => {

@@ -271,7 +271,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
             const preferred = isScopeAvailable(selType, selection)
                 ? selType
                 : ['server', 'cluster', 'group', 'estate']
-                    .find(s => isScopeAvailable(s, selection)) || 'estate';
+                    .find(s => isScopeAvailable(s, selection)) ?? 'estate';
             setScope(preferred);
             setMode('now');
             setSelectedPreset(60);

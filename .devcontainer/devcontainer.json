@@ -1,0 +1,56 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/go .
+{
+	"name": "pgEdge AI DBA Workbench — Development",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/go:2-1.25-trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/github-cli:1": {
+			"installDirectlyFromGitHubRelease": true,
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/claude-code:1": {
+			"version": "latest"
+		}
+	},
+        "mounts": [
+            "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind",
+            "source=${localEnv:HOME}/.claude/commands,target=/home/vscode/.claude-host/commands,type=bind,readonly",
+            "source=${localEnv:HOME}/.claude/settings.json,target=/home/vscode/.claude-host/settings.json,type=bind,readonly"
+        ],
+        "initializeCommand": "export GH_TOKEN=$(gh auth token 2>/dev/null)",
+        "containerEnv": {
+            "GH_TOKEN": "${localEnv:GH_TOKEN}",
+            "DISABLE_AUTOUPDATER": "1"
+        },
+        "postCreateCommand": "mkdir -p ~/.claude && ln -sf ~/.claude-host/commands ~/.claude/commands && ln -sf ~/.claude-host/settings.json ~/.claude/settings.json && echo 'alias claude=\"claude --dangerously-skip-permissions\"' >> ~/.bashrc && sudo env \"PATH=$PATH\" npm update -g @anthropic-ai/claude-code",
+
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	// "features": {},
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	"forwardPorts": [5173, 8000, 8080],
+        "portsAttributes": {
+            "5173": {
+                "label": "NLA",
+                "onAutoForward": "notify"
+            },
+            "8000": {
+                "label": "Docs",
+                "onAutoForward": "notify"
+            },
+            "8080": {
+                "label": "MCP",
+                "onAutoForward": "notify"
+            },
+        }
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// "postCreateCommand": "go version",
+
+	// Configure tool-specific properties.
+	// "customizations": {},
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+}

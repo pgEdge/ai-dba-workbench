@@ -15,7 +15,7 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
-import QueryStatsIcon from '@mui/icons-material/QueryStats';
+import { QueryStats as QueryStatsIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';

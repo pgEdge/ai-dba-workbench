@@ -15,7 +15,7 @@ import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
-import PsychologyIcon from '@mui/icons-material/Psychology';
+import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import { useTheme, type Theme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';

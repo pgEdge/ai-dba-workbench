@@ -14,7 +14,7 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
-import ViewListIcon from '@mui/icons-material/ViewList';
+import { ViewList as ViewListIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../../../contexts/useAuth';
 import { apiFetch } from '../../../utils/apiClient';

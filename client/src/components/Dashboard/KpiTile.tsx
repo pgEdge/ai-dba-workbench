@@ -14,10 +14,12 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import PsychologyIcon from '@mui/icons-material/Psychology';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
-import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
+import {
+    Psychology as PsychologyIcon,
+    TrendingUp as TrendingUpIcon,
+    TrendingDown as TrendingDownIcon,
+    TrendingFlat as TrendingFlatIcon,
+} from '@mui/icons-material';
 import { type Theme, useTheme } from '@mui/material/styles';
 import type { ChartAnalysisContext, ChartData } from '../Chart/types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';

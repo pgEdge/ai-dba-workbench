@@ -105,22 +105,47 @@ else
 fi
 
 # Check if client dependencies need updating
-if [ ! -d "$CLIENT_DIR/node_modules" ]; then
-    echo -e "${BLUE}Installing client dependencies...${NC}"
+# Platform marker tracks OS/arch to detect cross-platform node_modules
+PLATFORM_MARKER="$CLIENT_DIR/node_modules/.platform_marker"
+CURRENT_PLATFORM="$(uname -s)-$(uname -m)"
+
+needs_npm_install() {
+    # No node_modules directory
+    if [ ! -d "$CLIENT_DIR/node_modules" ]; then
+        echo "node_modules directory missing"
+        return 0
+    fi
+
+    # Platform mismatch (cross-platform development)
+    if [ ! -f "$PLATFORM_MARKER" ] || [ "$(cat "$PLATFORM_MARKER" 2>/dev/null)" != "$CURRENT_PLATFORM" ]; then
+        echo "platform changed (native modules need rebuild)"
+        return 0
+    fi
+
+    # Package files newer than node_modules
+    if [ "$CLIENT_DIR/package.json" -nt "$CLIENT_DIR/node_modules" ]; then
+        echo "package.json changed"
+        return 0
+    fi
+
+    if [ -f "$CLIENT_DIR/package-lock.json" ] && [ "$CLIENT_DIR/package-lock.json" -nt "$CLIENT_DIR/node_modules" ]; then
+        echo "package-lock.json changed"
+        return 0
+    fi
+
+    return 1
+}
+
+echo -e "${BLUE}Checking if client dependencies need updating...${NC}"
+if INSTALL_REASON=$(needs_npm_install); then
+    echo -e "${BLUE}Installing client dependencies ($INSTALL_REASON)...${NC}"
     cd "$CLIENT_DIR"
     npm install
+    # Record the platform for future cross-platform detection
+    echo "$CURRENT_PLATFORM" > "$PLATFORM_MARKER"
     cd "$SCRIPT_DIR"
 else
-    echo -e "${BLUE}Checking if client dependencies need updating...${NC}"
-    # Check if package.json or package-lock.json are newer than node_modules
-    if [ "$CLIENT_DIR/package.json" -nt "$CLIENT_DIR/node_modules" ] || [ -f "$CLIENT_DIR/package-lock.json" ] && [ "$CLIENT_DIR/package-lock.json" -nt "$CLIENT_DIR/node_modules" ]; then
-        echo -e "${BLUE}Package files changed, running npm install...${NC}"
-        cd "$CLIENT_DIR"
-        npm install
-        cd "$SCRIPT_DIR"
-    else
-        echo -e "${GREEN}Client dependencies are up to date${NC}"
-    fi
+    echo -e "${GREEN}Client dependencies are up to date${NC}"
 fi
 
 echo -e "${BLUE}+------------------------------------------------------------+${NC}"

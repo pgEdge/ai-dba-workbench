@@ -15,8 +15,10 @@ import Collapse from '@mui/material/Collapse';
 import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import type { SxProps, Theme } from '@mui/material/styles';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import {
+    ExpandMore as ExpandMoreIcon,
+    ExpandLess as ExpandLessIcon,
+} from '@mui/icons-material';
 import {
     SECTION_CONTAINER_SX,
     SECTION_HEADER_SX,

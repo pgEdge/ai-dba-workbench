@@ -12,7 +12,7 @@ import type React from 'react';
 import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
-import StorageIcon from '@mui/icons-material/Storage';
+import { Storage as StorageIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import type { MetricDataPoint, MetricQueryParams, MetricSeries } from '../types';

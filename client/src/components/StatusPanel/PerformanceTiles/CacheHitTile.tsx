@@ -11,7 +11,7 @@
 import type React from 'react';
 import { useMemo, useState, useCallback } from 'react';
 import { Box, Typography, useTheme, IconButton, Tooltip } from '@mui/material';
-import PsychologyIcon from '@mui/icons-material/Psychology';
+import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import { Chart } from '../../Chart/Chart';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import type { ChartAnalysisContext } from '../../Chart/types';

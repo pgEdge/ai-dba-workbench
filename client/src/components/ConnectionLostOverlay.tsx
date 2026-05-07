@@ -18,7 +18,7 @@ import {
     Button,
     Box,
 } from '@mui/material';
-import LinkOffIcon from '@mui/icons-material/LinkOff';
+import { LinkOff as LinkOffIcon } from '@mui/icons-material';
 import { useConnectionStatus } from '../contexts/useConnectionStatus';
 
 const reasonMessages: Record<string, string> = {

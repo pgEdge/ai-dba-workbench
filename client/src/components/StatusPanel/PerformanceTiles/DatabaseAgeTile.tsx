@@ -12,7 +12,7 @@ import type React from 'react';
 import { useState, useCallback } from 'react';
 import { Box, Typography, LinearProgress, IconButton, Tooltip } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import PsychologyIcon from '@mui/icons-material/Psychology';
+import { Psychology as PsychologyIcon } from '@mui/icons-material';
 import TileContainer from './TileContainer';
 import { ChartAnalysisDialog } from '../../ChartAnalysisDialog';
 import type { ChartData, ChartAnalysisContext } from '../../Chart/types';

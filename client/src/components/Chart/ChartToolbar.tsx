@@ -11,9 +11,11 @@
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import PsychologyIcon from '@mui/icons-material/Psychology';
-import SaveAltIcon from '@mui/icons-material/SaveAlt';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import {
+    Psychology as PsychologyIcon,
+    SaveAlt as SaveAltIcon,
+    Refresh as RefreshIcon,
+} from '@mui/icons-material';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { CHART_TOOLBAR_SX } from './styles';
 

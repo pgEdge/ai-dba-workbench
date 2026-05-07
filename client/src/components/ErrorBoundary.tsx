@@ -20,10 +20,12 @@ import {
     Collapse,
     IconButton,
 } from '@mui/material';
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import {
+    ErrorOutline as ErrorOutlineIcon,
+    Refresh as RefreshIcon,
+    ExpandMore as ExpandMoreIcon,
+    ExpandLess as ExpandLessIcon,
+} from '@mui/icons-material';
 import { logger } from '../utils/logger';
 
 interface ErrorBoundaryProps {

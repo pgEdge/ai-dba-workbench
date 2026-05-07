@@ -18,7 +18,7 @@ import Alert from '@mui/material/Alert';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Tooltip from '@mui/material/Tooltip';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import { Refresh as RefreshIcon } from '@mui/icons-material';
 import CollapsibleSection from '../CollapsibleSection';
 import PlanTree from './PlanTree';
 import { useQueryPlan } from '../../../hooks/useQueryPlan';

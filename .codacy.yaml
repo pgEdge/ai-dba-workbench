@@ -57,6 +57,26 @@ engines:
   # Excluding these specific files preserves ESLint coverage of every
   # other production source file. The project's local ESLint runs
   # against all of these paths in CI via `make lint`.
+  #
+  # Two unused-vars patterns also need to be disabled in the Codacy UI
+  # (Code patterns page) because Codacy's ESLint8 ignores the project's
+  # eslint.config.js for these rules and `.codacy.yaml` does not support
+  # per-pattern disables (only path exclusions per engine):
+  #
+  #   ESLint8_no-unused-vars
+  #     Vanilla ESLint rule. Cannot distinguish parameter names inside
+  #     TypeScript function-type annotations (which are documentation,
+  #     not bindings) from real unused variables. The project relies on
+  #     the typescript-eslint variant exclusively; the vanilla rule is
+  #     not enabled in eslint.config.js. Disable in the Codacy UI.
+  #
+  #   ESLint8_@typescript-eslint_no-unused-vars
+  #     Codacy runs this rule with default options. The project enables
+  #     it with `argsIgnorePattern: '^_'` and `varsIgnorePattern: '^_'`
+  #     (eslint.config.js, lines 39-45) so that intentional `_`-prefixed
+  #     destructured params (e.g. `depth: _depth = 0`) do not trip it.
+  #     Codacy ignores those options. Disable in the Codacy UI; the
+  #     project's local ESLint continues to enforce it correctly.
   eslint-8:
     exclude_paths:
       # Test directories - eslint-plugin-xss flags every RTL pattern.

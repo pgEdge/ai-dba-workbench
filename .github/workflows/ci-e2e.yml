@@ -1,0 +1,153 @@
+name: CI - E2E
+
+on:
+    push:
+        branches: [ main, master ]
+        paths:
+            - 'client/**'
+            - 'server/**'
+            - 'e2e/**'
+            - '.github/workflows/ci-e2e.yml'
+            - '.github/workflows/coverage-finalize.yml'
+    pull_request:
+        branches: [ main, master ]
+        paths:
+            - 'client/**'
+            - 'server/**'
+            - 'e2e/**'
+            - '.github/workflows/ci-e2e.yml'
+            - '.github/workflows/coverage-finalize.yml'
+
+jobs:
+    e2e:
+        name: E2E (${{ matrix.browser }})
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                browser: [chromium, firefox, webkit]
+
+        services:
+            postgres:
+                image: postgres:16
+                env:
+                    POSTGRES_PASSWORD: postgres
+                    POSTGRES_DB: postgres
+                options: >-
+                    --health-cmd "pg_isready -U postgres"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 10
+                ports:
+                    - 5432:5432
+
+        env:
+            E2E_RUN_DIR: ${{ github.workspace }}/e2e/.runtime
+            E2E_SERVER_BIN: ${{ github.workspace }}/bin/ai-dba-server
+            E2E_CLIENT_DIR: ${{ github.workspace }}/client
+            E2E_DB_HOST: 127.0.0.1
+            E2E_DB_PORT: '5432'
+            E2E_DB_NAME: postgres
+            E2E_DB_USER: postgres
+            E2E_DB_PASSWORD: postgres
+            E2E_SERVER_PORT: '8080'
+            E2E_SERVER_ADDR: ':8080'
+            E2E_PREVIEW_PORT: '4173'
+            E2E_ADMIN_USERNAME: e2e-admin
+            E2E_ADMIN_PASSWORD: e2e-admin-password-ci-only
+            GOCOVERDIR: ${{ github.workspace }}/e2e/.runtime/cov
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+            - name: Set up Go
+              uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+              with:
+                  go-version: '1.26.2'
+
+            - name: Set up Node.js
+              uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  node-version: '22'
+                  cache: 'npm'
+                  cache-dependency-path: |
+                      client/package-lock.json
+                      e2e/package-lock.json
+
+            - name: Install Postgres client tools
+              run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+            - name: Build server (with coverage)
+              working-directory: server/src
+              run: |
+                  go build -cover -covermode=atomic \
+                      -o "${E2E_SERVER_BIN}" \
+                      ./cmd/mcp-server
+
+            - name: Install client deps
+              working-directory: client
+              run: npm ci
+
+            - name: Build client
+              working-directory: client
+              run: npm run build
+
+            - name: Install e2e deps
+              working-directory: e2e
+              run: npm ci
+
+            - name: Cache Playwright browsers
+              uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+              with:
+                  path: ~/.cache/ms-playwright
+                  key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('e2e/package-lock.json') }}
+
+            - name: Install Playwright browser (${{ matrix.browser }})
+              working-directory: e2e
+              run: npx playwright install --with-deps ${{ matrix.browser }}
+
+            - name: Start stack
+              run: e2e/scripts/start-stack.sh
+
+            - name: Run Playwright (${{ matrix.browser }})
+              working-directory: e2e
+              run: npx playwright test --project=${{ matrix.browser }}
+
+            - name: Stop stack (always)
+              if: always()
+              run: e2e/scripts/stop-stack.sh || true
+
+            - name: Tail server log on failure
+              if: failure()
+              run: |
+                  echo "=== last 200 lines of server.log ==="
+                  tail -n 200 "${E2E_RUN_DIR}/logs/server.log" || true
+                  echo "=== last 200 lines of preview.log ==="
+                  tail -n 200 "${E2E_RUN_DIR}/logs/preview.log" || true
+
+            - name: Upload Playwright report
+              if: always()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: e2e-report-${{ matrix.browser }}
+                  path: |
+                      e2e/playwright-report
+                      e2e/test-results
+                  retention-days: 14
+
+            - name: Upload stack logs on failure
+              if: failure()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: e2e-stack-logs-${{ matrix.browser }}
+                  path: ${{ env.E2E_RUN_DIR }}/logs
+                  retention-days: 14
+
+            - name: Upload server integration coverage (chromium only)
+              if: matrix.browser == 'chromium' && always()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: server-coverage-e2e
+                  path: ${{ env.GOCOVERDIR }}
+                  retention-days: 7

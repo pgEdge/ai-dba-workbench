@@ -1526,6 +1526,17 @@ func TestSchedulerExecuteProbeForConnection_ClearError(t *testing.T) {
 		UpdatedAt:       time.Now(),
 		ConnectionError: &preMsg,
 	}
+	// Mirror makeMonitoredConn: when the test server URL supplied a
+	// password, the fixture stores it encrypted with testServerSecret.
+	// The pool manager decrypts it with the same secret to authenticate
+	// against CI's password-protected PostgreSQL service. Without this
+	// the probe's connection acquisition fails with SQLSTATE 28P01.
+	if f.passwordEncrypted != "" {
+		mc.PasswordEncrypted = sql.NullString{
+			String: f.passwordEncrypted,
+			Valid:  true,
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	ps.executeProbeForConnection(ctx, probe, mc)

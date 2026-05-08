@@ -118,6 +118,35 @@ jobs:
               if: always()
               run: e2e/scripts/stop-stack.sh || true
 
+            - name: Convert E2E server coverage to text format
+              if: matrix.browser == 'chromium' && github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+              run: |
+                  set -euo pipefail
+                  go tool covdata textfmt \
+                      -i="${GOCOVERDIR}" \
+                      -o="${E2E_RUN_DIR}/server-e2e.out"
+                  head -n 3 "${E2E_RUN_DIR}/server-e2e.out"
+
+            - name: Convert E2E server coverage to lcov
+              if: matrix.browser == 'chromium' && github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+              working-directory: server/src
+              run: |
+                  go install github.com/jandelgado/gcov2lcov@v1.1.1
+                  $(go env GOPATH)/bin/gcov2lcov \
+                      -infile="${E2E_RUN_DIR}/server-e2e.out" \
+                      -outfile="${E2E_RUN_DIR}/server-e2e.lcov"
+
+            - name: Upload E2E server coverage to Codacy (partial)
+              if: matrix.browser == 'chromium' && github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+              env:
+                  CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+              run: |
+                  bash <(curl -Ls https://coverage.codacy.com/get.sh) \
+                      report \
+                      --partial \
+                      -l Go \
+                      -r "${E2E_RUN_DIR}/server-e2e.lcov"
+
             - name: Tail server log on failure
               if: failure()
               run: |

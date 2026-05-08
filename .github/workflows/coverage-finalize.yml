@@ -31,6 +31,7 @@ on:
             - "CI - Collector"
             - "CI - Alerter"
             - "CI - Client"
+            - "CI - E2E"
         types:
             - completed
 

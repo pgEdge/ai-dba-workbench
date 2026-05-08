@@ -6,6 +6,7 @@ on:
         paths:
             - 'client/**'
             - 'server/**'
+            - 'collector/**'
             - 'e2e/**'
             - '.github/workflows/ci-e2e.yml'
             - '.github/workflows/coverage-finalize.yml'
@@ -14,6 +15,7 @@ on:
         paths:
             - 'client/**'
             - 'server/**'
+            - 'collector/**'
             - 'e2e/**'
             - '.github/workflows/ci-e2e.yml'
             - '.github/workflows/coverage-finalize.yml'
@@ -44,6 +46,7 @@ jobs:
         env:
             E2E_RUN_DIR: ${{ github.workspace }}/e2e/.runtime
             E2E_SERVER_BIN: ${{ github.workspace }}/bin/ai-dba-server
+            E2E_COLLECTOR_BIN: ${{ github.workspace }}/bin/ai-dba-collector
             E2E_CLIENT_DIR: ${{ github.workspace }}/client
             E2E_DB_HOST: 127.0.0.1
             E2E_DB_PORT: '5432'
@@ -81,9 +84,17 @@ jobs:
             - name: Build server (with coverage)
               working-directory: server/src
               run: |
-                  go build -cover -covermode=atomic \
+                  # `-coverpkg=./...` instruments every package in the
+                  # server module so handler code (internal/api, etc.)
+                  # is included in the integration coverage signal.
+                  go build -cover -covermode=atomic -coverpkg=./... \
                       -o "${E2E_SERVER_BIN}" \
                       ./cmd/mcp-server
+
+            - name: Build collector (for datastore schema migrations)
+              working-directory: collector/src
+              run: |
+                  go build -o "${E2E_COLLECTOR_BIN}" .
 
             - name: Install client deps
               working-directory: client

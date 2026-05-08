@@ -43,6 +43,15 @@ echo "==> Waiting for Postgres at ${E2E_DB_HOST}:${E2E_DB_PORT}"
 echo "==> Rendering server config"
 "${SCRIPTS_DIR}/render-config.sh"
 
+# The server reads from operational tables (cluster_groups, alerts,
+# blackouts, etc.) that are owned by the collector's schema manager,
+# not the server's authstore migrations. Without these tables the
+# post-login dashboard endpoints return HTTP 500 and Playwright sees
+# console errors. Apply the collector schema before launching the
+# server.
+echo "==> Applying collector datastore schema"
+"${SCRIPTS_DIR}/apply-collector-schema.sh"
+
 echo "==> Starting server (binary: ${E2E_SERVER_BIN})"
 "${E2E_SERVER_BIN}" \
     --config="${E2E_RUN_DIR}/ai-dba-server.yaml" \

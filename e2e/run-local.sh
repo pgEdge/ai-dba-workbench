@@ -22,15 +22,16 @@ PG_CONTAINER="ai-dba-e2e-postgres"
 
 export E2E_RUN_DIR="${RUN_DIR}"
 export E2E_SERVER_BIN="${REPO_ROOT}/bin/ai-dba-server"
+export E2E_COLLECTOR_BIN="${REPO_ROOT}/bin/ai-dba-collector"
 export E2E_CLIENT_DIR="${REPO_ROOT}/client"
-export E2E_DB_HOST="127.0.0.1"
-export E2E_DB_PORT="55432"
-export E2E_DB_NAME="postgres"
-export E2E_DB_USER="postgres"
-export E2E_DB_PASSWORD="postgres"
-export E2E_SERVER_PORT="8080"
-export E2E_SERVER_ADDR=":${E2E_SERVER_PORT}"
-export E2E_PREVIEW_PORT="4173"
+export E2E_DB_HOST="${E2E_DB_HOST:-127.0.0.1}"
+export E2E_DB_PORT="${E2E_DB_PORT:-55432}"
+export E2E_DB_NAME="${E2E_DB_NAME:-postgres}"
+export E2E_DB_USER="${E2E_DB_USER:-postgres}"
+export E2E_DB_PASSWORD="${E2E_DB_PASSWORD:-postgres}"
+export E2E_SERVER_PORT="${E2E_SERVER_PORT:-8080}"
+export E2E_SERVER_ADDR="${E2E_SERVER_ADDR:-:${E2E_SERVER_PORT}}"
+export E2E_PREVIEW_PORT="${E2E_PREVIEW_PORT:-4173}"
 export E2E_ADMIN_USERNAME="${E2E_ADMIN_USERNAME:-e2e-admin}"
 export E2E_ADMIN_PASSWORD="${E2E_ADMIN_PASSWORD:-e2e-admin-password-please-change}"
 
@@ -62,9 +63,19 @@ docker run --rm -d \
 echo "==> Building server with coverage"
 (
     cd "${REPO_ROOT}/server/src"
-    go build -cover -covermode=atomic \
+    # `-coverpkg=./...` instruments every package in the server module,
+    # not just `cmd/mcp-server`. Without it the integration coverage
+    # signal is near-zero because handler packages such as internal/api
+    # are not in the default instrumentation set.
+    go build -cover -covermode=atomic -coverpkg=./... \
         -o "${E2E_SERVER_BIN}" \
         ./cmd/mcp-server
+)
+
+echo "==> Building collector (for datastore migrations)"
+(
+    cd "${REPO_ROOT}/collector/src"
+    go build -o "${E2E_COLLECTOR_BIN}" .
 )
 
 echo "==> Building client"

@@ -33,6 +33,9 @@ test.describe('login flow', () => {
         assertNoErrorBoundary,
         assertNoConsoleErrors,
     }) => {
+        // The auth.setup.ts project writes `.auth/admin.json` once
+        // up-front (see playwright.config.ts). This behavioural test
+        // asserts the same flow without needing to persist state.
         await page.goto('/');
         await page.getByTestId('login-username-input').fill(username);
         await page.getByTestId('login-password-input').fill(password);
@@ -45,8 +48,6 @@ test.describe('login flow', () => {
 
         await assertNoErrorBoundary();
         assertNoConsoleErrors();
-
-        await page.context().storageState({ path: '.auth/admin.json' });
     });
 
     test('rejects wrong credentials', async ({

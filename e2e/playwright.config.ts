@@ -30,17 +30,29 @@ export default defineConfig({
         navigationTimeout: 15_000,
     },
     projects: [
+        // The setup project runs once and writes
+        // `.auth/admin.json`, which the app-shell and admin-panel
+        // specs reuse via `test.use({ storageState: ... })`. Each
+        // browser project depends on it so the storage file always
+        // exists before any spec that loads it runs.
+        {
+            name: 'setup',
+            testMatch: /.*\.setup\.ts/,
+        },
         {
             name: 'chromium',
             use: { ...devices['Desktop Chrome'] },
+            dependencies: ['setup'],
         },
         {
             name: 'firefox',
             use: { ...devices['Desktop Firefox'] },
+            dependencies: ['setup'],
         },
         {
             name: 'webkit',
             use: { ...devices['Desktop Safari'] },
+            dependencies: ['setup'],
         },
     ],
 });

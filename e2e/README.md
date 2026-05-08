@@ -36,7 +36,25 @@ E2E_KEEP_STACK=1 ./run-local.sh
 e2e/scripts/stop-stack.sh && docker rm -f ai-dba-e2e-postgres
 ```
 
-Logs are written to `e2e/.runtime/logs/{server,preview}.log`.
+Logs are written to `e2e/.runtime/logs/{server,preview,collector-migrate}.log`.
+
+## Stack bring-up at a glance
+
+1. `docker run postgres:16` listens on `${E2E_DB_PORT}` (default 55432).
+2. `scripts/render-config.sh` writes the server config and a random
+   secret into `.runtime/`.
+3. `scripts/apply-collector-schema.sh` builds the collector binary
+   (if missing), runs it briefly so its embedded schema migrations
+   create the operational tables (cluster_groups, alerts, blackouts,
+   etc.) that the server reads, then stops it. Without this step the
+   post-login dashboard endpoints return HTTP 500.
+4. The server starts under `GOCOVERDIR=.runtime/cov` so Go integration
+   coverage is collected.
+5. `vite preview` serves the production client bundle and proxies
+   `/api/v1/*` to the server.
+6. Playwright runs the suite. The `setup` project authenticates once
+   and writes `.auth/admin.json`, which the app-shell and admin-panel
+   specs reuse.
 
 ## Running in CI
 

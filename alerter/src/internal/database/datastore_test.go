@@ -10,6 +10,8 @@
 package database
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -215,4 +217,122 @@ func TestDatastorePoolAccessor(t *testing.T) {
 	if ds.Pool() != nil {
 		t.Errorf("Pool() should return nil for uninitialized datastore")
 	}
+}
+
+// TestNewDatastoreSuccess exercises the happy path through NewDatastore
+// against the integration test database. This is required to lift the
+// datastore.go line coverage above 90%; the closed-pool error path
+// short-circuits at Close() so it cannot reach the pool-creation code
+// inside NewDatastore.
+func TestNewDatastoreSuccess(t *testing.T) {
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping NewDatastore success test")
+	}
+
+	// Parse the connection string into a DatastoreConfig.
+	host, port, db, user, pw := parseTestConnString(connStr)
+	cfg := &config.Config{
+		Datastore: datastoreconfig.DatastoreConfig{
+			Host:     host,
+			Port:     port,
+			Database: db,
+			Username: user,
+			Password: pw,
+			SSLMode:  "disable",
+		},
+		Pool: config.PoolConfig{
+			MaxConnections: 5,
+			MaxIdleSeconds: 30,
+		},
+	}
+	ds, err := NewDatastore(cfg)
+	if err != nil {
+		t.Fatalf("NewDatastore: %v", err)
+	}
+	defer ds.Close()
+	if ds.Pool() == nil {
+		t.Errorf("expected non-nil pool from NewDatastore")
+	}
+}
+
+// TestNewDatastoreInvalidConfig exercises the parse-failure branch of
+// NewDatastore. An invalid SSL mode produces a parse error from the
+// underlying pgxpool.ParseConfig call.
+func TestNewDatastoreInvalidConfig(t *testing.T) {
+	cfg := &config.Config{
+		Datastore: datastoreconfig.DatastoreConfig{
+			Host:     "localhost",
+			Port:     -1,
+			Database: "x",
+			Username: "x",
+			SSLMode:  "not-a-real-mode",
+		},
+	}
+	if _, err := NewDatastore(cfg); err == nil {
+		t.Errorf("expected error for invalid config")
+	}
+}
+
+// TestNewDatastorePingFailure exercises the failed-Ping branch of
+// NewDatastore by pointing it at an unreachable port. The connection
+// pool can be constructed (lazy), but the Ping() at the end of
+// NewDatastore must fail and trigger pool.Close + error return.
+func TestNewDatastorePingFailure(t *testing.T) {
+	cfg := &config.Config{
+		Datastore: datastoreconfig.DatastoreConfig{
+			Host:     "127.0.0.1",
+			Port:     1, // unlikely to host PostgreSQL
+			Database: "no_such_db",
+			Username: "nobody",
+			SSLMode:  "disable",
+		},
+		Pool: config.PoolConfig{
+			MaxConnections: 1,
+			MaxIdleSeconds: 1,
+		},
+	}
+	if _, err := NewDatastore(cfg); err == nil {
+		t.Errorf("expected ping failure on unreachable port")
+	}
+}
+
+// parseTestConnString extracts host, port, db, user, password from a
+// libpq-style URI. Only the limited form used by the integration tests
+// is supported.
+func parseTestConnString(connStr string) (host string, port int, db, user, pw string) {
+	// Default values
+	host = "localhost"
+	port = 5432
+	// Strip protocol.
+	rest := strings.TrimPrefix(connStr, "postgres://")
+	rest = strings.TrimPrefix(rest, "postgresql://")
+	// Strip query.
+	if i := strings.Index(rest, "?"); i >= 0 {
+		rest = rest[:i]
+	}
+	// user[:pw]@host[:port]/db
+	if i := strings.Index(rest, "@"); i >= 0 {
+		userPart := rest[:i]
+		rest = rest[i+1:]
+		if j := strings.Index(userPart, ":"); j >= 0 {
+			user = userPart[:j]
+			pw = userPart[j+1:]
+		} else {
+			user = userPart
+		}
+	}
+	if i := strings.Index(rest, "/"); i >= 0 {
+		db = rest[i+1:]
+		hostPart := rest[:i]
+		if j := strings.Index(hostPart, ":"); j >= 0 {
+			host = hostPart[:j]
+			if p, err := strconv.Atoi(hostPart[j+1:]); err == nil {
+				port = p
+			}
+		} else {
+			host = hostPart
+		}
+	}
+	return
 }

@@ -116,6 +116,16 @@ jobs:
               run: |
                   go tool cover -func=src/coverage.out
 
+            # Codacy's coverage reporter cannot parse Go's native cover
+            # profile, so convert to lcov (which it does understand)
+            # using gcov2lcov before uploading. Pinned to v1.1.1 for
+            # reproducibility; see https://github.com/jandelgado/gcov2lcov/releases.
+            - name: Convert coverage to lcov
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.2' && matrix.postgres-version == '18'
+              run: |
+                  go install github.com/jandelgado/gcov2lcov@v1.1.1
+                  $(go env GOPATH)/bin/gcov2lcov -infile=collector/src/coverage.out -outfile=collector/src/coverage.lcov
+
             # Codacy multi-language coverage: upload as a partial here.
             # Finalization (the single `final` call) happens in the client
             # CI workflow after all language partials have been pushed.
@@ -128,7 +138,7 @@ jobs:
                     report \
                     --partial \
                     -l Go \
-                    -r collector/src/coverage.out
+                    -r collector/src/coverage.lcov
 
             - name: Upload build artifact
               if: matrix.go-version == '1.26.2' && matrix.postgres-version == '18'

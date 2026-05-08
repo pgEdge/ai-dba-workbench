@@ -22,11 +22,25 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
 
+// testMonitoredServerSecret is the server secret used by integration
+// tests to encrypt the test PostgreSQL password into the
+// MonitoredConnection.PasswordEncrypted field. The pool manager and
+// connection-string builder receive the same secret so decryption
+// succeeds end-to-end. The literal value is irrelevant; it just must
+// be non-empty (crypto.EncryptPassword rejects empty secrets) and
+// stable across the test process.
+const testMonitoredServerSecret = "monitored-pool-test-secret"
+
 // makeMonitoredConn builds a MonitoredConnection pointed at the test
-// PostgreSQL server (no password expected). It uses the database name
-// from the schema_test test fixture. If serverSecret is non-empty the
-// connection's password_encrypted field is populated using that secret
-// and the empty plaintext password.
+// PostgreSQL server. It uses the database name from the schema_test
+// test fixture. When the parsed test-server URL contains a password
+// (typical in CI), the helper encrypts it into PasswordEncrypted using
+// the supplied serverSecret so the pool manager can decrypt and
+// connect. Callers that need to actually open a connection must pass
+// testMonitoredServerSecret (the same secret threaded through to
+// downstream pool-manager calls); empty serverSecret produces an
+// unencrypted connection which is only useful when the test never
+// dials the server.
 func makeMonitoredConn(t *testing.T, id int, serverSecret string) MonitoredConnection {
 	t.Helper()
 	cfg := parseTestServerURL(t)
@@ -40,9 +54,12 @@ func makeMonitoredConn(t *testing.T, id int, serverSecret string) MonitoredConne
 		SSLMode:      sql.NullString{String: cfg.sslMode, Valid: cfg.sslMode != ""},
 		UpdatedAt:    time.Now(),
 	}
-	if cfg.password != "" {
-		// Encrypt the configured password using the server secret so the
-		// pool manager can decrypt and connect.
+	if cfg.password != "" && serverSecret != "" {
+		// Encrypt the configured password using the supplied secret so
+		// the pool manager can decrypt and connect. crypto.EncryptPassword
+		// rejects an empty serverSecret, so callers that want password
+		// auth must pass a non-empty serverSecret (use
+		// testMonitoredServerSecret for the typical case).
 		enc, err := crypto.EncryptPassword(cfg.password, serverSecret)
 		if err != nil {
 			t.Fatalf("EncryptPassword: %v", err)
@@ -270,7 +287,18 @@ func TestCreateMonitoredPool_Success(t *testing.T) {
 		Username:     cfg.username,
 		SSLMode:      sql.NullString{String: cfg.sslMode, Valid: cfg.sslMode != ""},
 	}
-	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", "")
+	// Encrypt the test server password into the connection so the
+	// builder produces a complete conn string. CI's PostgreSQL service
+	// requires password auth; locally a passwordless trust setup works
+	// because cfg.password is empty and encryption is skipped.
+	if cfg.password != "" {
+		enc, err := crypto.EncryptPassword(cfg.password, testMonitoredServerSecret)
+		if err != nil {
+			t.Fatalf("EncryptPassword: %v", err)
+		}
+		conn.PasswordEncrypted = sql.NullString{String: enc, Valid: true}
+	}
+	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -308,7 +336,17 @@ func TestCreateMonitoredPool_ClampsMaxConns(t *testing.T) {
 		Username:     cfg.username,
 		SSLMode:      sql.NullString{String: cfg.sslMode, Valid: cfg.sslMode != ""},
 	}
-	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", "")
+	// Encrypt the test server password into the connection so the
+	// builder produces a complete conn string under CI (which requires
+	// password auth). See TestCreateMonitoredPool_Success.
+	if cfg.password != "" {
+		enc, err := crypto.EncryptPassword(cfg.password, testMonitoredServerSecret)
+		if err != nil {
+			t.Fatalf("EncryptPassword: %v", err)
+		}
+		conn.PasswordEncrypted = sql.NullString{String: enc, Valid: true}
+	}
+	connStr, err := buildMonitoredConnectionStringForDatabase(conn, "", testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -326,15 +364,15 @@ func TestPoolManager_GetReturnRemoveClose(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc := makeMonitoredConn(t, 100, "")
+	mc := makeMonitoredConn(t, 100, testMonitoredServerSecret)
 	ctx := context.Background()
-	c1, err := m.GetConnection(ctx, mc, "")
+	c1, err := m.GetConnection(ctx, mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("first GetConnection: %v", err)
 	}
 
 	// Second call should reuse the existing pool.
-	c2, err := m.GetConnection(ctx, mc, "")
+	c2, err := m.GetConnection(ctx, mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("second GetConnection: %v", err)
 	}
@@ -342,7 +380,7 @@ func TestPoolManager_GetReturnRemoveClose(t *testing.T) {
 	m.ReturnConnection(mc.ID, c2)
 
 	// Version should be detectable.
-	c3, err := m.GetConnection(ctx, mc, "")
+	c3, err := m.GetConnection(ctx, mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("third GetConnection: %v", err)
 	}
@@ -381,25 +419,25 @@ func TestPoolManager_GetConnectionForDatabase(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc := makeMonitoredConn(t, 200, "")
+	mc := makeMonitoredConn(t, 200, testMonitoredServerSecret)
 	ctx := context.Background()
 
 	// Same DB name as default -> still uses positive pool key.
-	c, err := m.GetConnectionForDatabase(ctx, mc, "", "")
+	c, err := m.GetConnectionForDatabase(ctx, mc, "", testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("first GetConnectionForDatabase (default): %v", err)
 	}
 	m.ReturnConnection(mc.ID, c)
 
 	// Different DB name -> negative pool key.
-	c2, err := m.GetConnectionForDatabase(ctx, mc, testDBName, "")
+	c2, err := m.GetConnectionForDatabase(ctx, mc, testDBName, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnectionForDatabase (named): %v", err)
 	}
 	m.ReturnConnection(mc.ID, c2)
 
 	// Re-acquire to exercise the "pool exists" branch for both keys.
-	c3, err := m.GetConnectionForDatabase(ctx, mc, testDBName, "")
+	c3, err := m.GetConnectionForDatabase(ctx, mc, testDBName, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("re-GetConnectionForDatabase: %v", err)
 	}
@@ -461,9 +499,9 @@ func TestPoolManager_CheckConnectionUpdated(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc := makeMonitoredConn(t, 300, "")
+	mc := makeMonitoredConn(t, 300, testMonitoredServerSecret)
 	ctx := context.Background()
-	c, err := m.GetConnection(ctx, mc, "")
+	c, err := m.GetConnection(ctx, mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
@@ -497,12 +535,12 @@ func TestPoolManager_SyncPools(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc1 := makeMonitoredConn(t, 401, "")
-	mc2 := makeMonitoredConn(t, 402, "")
+	mc1 := makeMonitoredConn(t, 401, testMonitoredServerSecret)
+	mc2 := makeMonitoredConn(t, 402, testMonitoredServerSecret)
 
 	// Build pools for two connections.
 	for _, mc := range []MonitoredConnection{mc1, mc2} {
-		c, err := m.GetConnection(context.Background(), mc, "")
+		c, err := m.GetConnection(context.Background(), mc, testMonitoredServerSecret)
 		if err != nil {
 			t.Fatalf("GetConnection(%d): %v", mc.ID, err)
 		}
@@ -510,7 +548,7 @@ func TestPoolManager_SyncPools(t *testing.T) {
 	}
 
 	// Also build a database-scoped pool for mc1 (different pool key).
-	c, err := m.GetConnectionForDatabase(context.Background(), mc1, testDBName, "")
+	c, err := m.GetConnectionForDatabase(context.Background(), mc1, testDBName, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnectionForDatabase: %v", err)
 	}
@@ -536,8 +574,8 @@ func TestPoolManager_InvalidateChangedPools(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc := makeMonitoredConn(t, 500, "")
-	c, err := m.GetConnection(context.Background(), mc, "")
+	mc := makeMonitoredConn(t, 500, testMonitoredServerSecret)
+	c, err := m.GetConnection(context.Background(), mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
@@ -553,7 +591,7 @@ func TestPoolManager_InvalidateChangedPools(t *testing.T) {
 
 	// Calling with a connection whose current hash differs from the
 	// stored hash should invalidate the pool.
-	m.InvalidateChangedPools([]MonitoredConnection{mc}, "")
+	m.InvalidateChangedPools([]MonitoredConnection{mc}, testMonitoredServerSecret)
 	m.mu.RLock()
 	_, stillExists := m.pools[mc.ID]
 	m.mu.RUnlock()
@@ -562,7 +600,7 @@ func TestPoolManager_InvalidateChangedPools(t *testing.T) {
 	}
 
 	// Invalidate again with no pools present is a no-op.
-	m.InvalidateChangedPools([]MonitoredConnection{mc}, "")
+	m.InvalidateChangedPools([]MonitoredConnection{mc}, testMonitoredServerSecret)
 }
 
 func TestPoolManager_InvalidateChangedPools_BuildError(t *testing.T) {
@@ -607,8 +645,8 @@ func TestPoolManager_Close_WithPool(t *testing.T) {
 	requireSchema(t)
 	m := NewMonitoredConnectionPoolManager(2, 60)
 
-	mc := makeMonitoredConn(t, 600, "")
-	c, err := m.GetConnection(context.Background(), mc, "")
+	mc := makeMonitoredConn(t, 600, testMonitoredServerSecret)
+	c, err := m.GetConnection(context.Background(), mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
@@ -632,7 +670,7 @@ func TestPoolManager_GetConnection_Race(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(4, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc := makeMonitoredConn(t, 700, "")
+	mc := makeMonitoredConn(t, 700, testMonitoredServerSecret)
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -641,7 +679,7 @@ func TestPoolManager_GetConnection_Race(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, err := m.GetConnection(ctx, mc, "")
+			c, err := m.GetConnection(ctx, mc, testMonitoredServerSecret)
 			if err != nil {
 				t.Errorf("GetConnection error: %v", err)
 				return
@@ -661,8 +699,8 @@ func TestPoolManager_RemovePool_ClosesPool(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 60)
 	t.Cleanup(func() { _ = m.Close() })
 
-	mc := makeMonitoredConn(t, 800, "")
-	c, err := m.GetConnection(context.Background(), mc, "")
+	mc := makeMonitoredConn(t, 800, testMonitoredServerSecret)
+	c, err := m.GetConnection(context.Background(), mc, testMonitoredServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}

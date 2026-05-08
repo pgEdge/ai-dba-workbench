@@ -97,10 +97,10 @@ func TestGetNotificationChannelsForConnection(t *testing.T) {
 		t.Errorf("expected 2 channels (default + override), got %d", len(got))
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetNotificationChannelsForConnection(cancelled, connID); err == nil {
+	if _, err := ds.GetNotificationChannelsForConnection(canceled, connID); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }
@@ -157,14 +157,14 @@ func TestCreateUpdateDeleteNotificationChannel(t *testing.T) {
 		t.Errorf("expected error after delete")
 	}
 
-	// Cancelled context: errors propagate.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context: errors propagate.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := ds.UpdateNotificationChannel(cancelled, ch); err == nil {
-		t.Errorf("update cancelled: expected error")
+	if err := ds.UpdateNotificationChannel(canceled, ch); err == nil {
+		t.Errorf("update canceled: expected error")
 	}
-	if err := ds.DeleteNotificationChannel(cancelled, 1); err == nil {
-		t.Errorf("delete cancelled: expected error")
+	if err := ds.DeleteNotificationChannel(canceled, 1); err == nil {
+		t.Errorf("delete canceled: expected error")
 	}
 }
 
@@ -203,7 +203,10 @@ func TestEmailRecipients(t *testing.T) {
 	if err := ds.CreateEmailRecipient(ctx, disabled); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = ds.GetEmailRecipients(ctx, channelID)
+	got, err = ds.GetEmailRecipients(ctx, channelID)
+	if err != nil {
+		t.Fatalf("GetEmailRecipients (after disabled insert): %v", err)
+	}
 	if len(got) != 1 {
 		t.Errorf("expected 1 enabled recipient, got %d", len(got))
 	}
@@ -212,18 +215,21 @@ func TestEmailRecipients(t *testing.T) {
 	if err := ds.DeleteEmailRecipient(ctx, r.ID); err != nil {
 		t.Fatalf("DeleteEmailRecipient: %v", err)
 	}
-	got, _ = ds.GetEmailRecipients(ctx, channelID)
+	got, err = ds.GetEmailRecipients(ctx, channelID)
+	if err != nil {
+		t.Fatalf("GetEmailRecipients (after delete): %v", err)
+	}
 	if len(got) != 0 {
 		t.Errorf("expected 0 after delete, got %d", len(got))
 	}
 
-	// Cancelled context paths.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context paths.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetEmailRecipients(cancelled, channelID); err == nil {
+	if _, err := ds.GetEmailRecipients(canceled, channelID); err == nil {
 		t.Errorf("expected cancel error")
 	}
-	if err := ds.DeleteEmailRecipient(cancelled, 1); err == nil {
+	if err := ds.DeleteEmailRecipient(canceled, 1); err == nil {
 		t.Errorf("expected delete cancel error")
 	}
 }
@@ -260,18 +266,21 @@ func TestConnectionChannelLink(t *testing.T) {
 	if err := ds.UnlinkConnectionFromChannel(ctx, connID, channelID); err != nil {
 		t.Fatalf("UnlinkConnectionFromChannel: %v", err)
 	}
-	links, _ = ds.GetConnectionChannelLinks(ctx, connID)
+	links, err = ds.GetConnectionChannelLinks(ctx, connID)
+	if err != nil {
+		t.Fatalf("GetConnectionChannelLinks (after unlink): %v", err)
+	}
 	if len(links) != 0 {
 		t.Errorf("expected 0 links after unlink")
 	}
 
 	// Cancel paths.
-	cancelled, cancel := context.WithCancel(ctx)
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := ds.UnlinkConnectionFromChannel(cancelled, connID, channelID); err == nil {
+	if err := ds.UnlinkConnectionFromChannel(canceled, connID, channelID); err == nil {
 		t.Errorf("expected unlink cancel")
 	}
-	if _, err := ds.GetConnectionChannelLinks(cancelled, connID); err == nil {
+	if _, err := ds.GetConnectionChannelLinks(canceled, connID); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }
@@ -349,16 +358,16 @@ func TestNotificationHistoryLifecycle(t *testing.T) {
 		t.Errorf("expected 1 pending, got %d", len(pendList))
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := ds.UpdateNotificationHistory(cancelled, hist); err == nil {
+	if err := ds.UpdateNotificationHistory(canceled, hist); err == nil {
 		t.Errorf("expected update cancel")
 	}
-	if _, err := ds.GetPendingNotifications(cancelled); err == nil {
+	if _, err := ds.GetPendingNotifications(canceled); err == nil {
 		t.Errorf("expected pending cancel")
 	}
-	if _, err := ds.GetNotificationHistoryForAlert(cancelled, alertID); err == nil {
+	if _, err := ds.GetNotificationHistoryForAlert(canceled, alertID); err == nil {
 		t.Errorf("expected history cancel")
 	}
 }
@@ -421,18 +430,21 @@ func TestReminderState(t *testing.T) {
 	if err := ds.DeleteReminderStatesForAlert(ctx, alertID); err != nil {
 		t.Fatalf("DeleteReminderStatesForAlert: %v", err)
 	}
-	got, _ = ds.GetReminderState(ctx, alertID, channelID)
+	got, err = ds.GetReminderState(ctx, alertID, channelID)
+	if err != nil {
+		t.Fatalf("GetReminderState (after delete): %v", err)
+	}
 	if got != nil {
 		t.Errorf("expected nil after delete")
 	}
 
-	// Cancelled context paths.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context paths.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := ds.UpsertReminderState(cancelled, state); err == nil {
+	if err := ds.UpsertReminderState(canceled, state); err == nil {
 		t.Errorf("expected upsert cancel")
 	}
-	if err := ds.DeleteReminderStatesForAlert(cancelled, alertID); err == nil {
+	if err := ds.DeleteReminderStatesForAlert(canceled, alertID); err == nil {
 		t.Errorf("expected delete cancel")
 	}
 }
@@ -501,13 +513,13 @@ func TestGetDueRemindersAndConnectionInfo(t *testing.T) {
 		t.Errorf("expected error for missing conn")
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetDueReminders(cancelled); err == nil {
+	if _, err := ds.GetDueReminders(canceled); err == nil {
 		t.Errorf("expected cancel error")
 	}
-	if _, _, _, err := ds.GetConnectionInfo(cancelled, connID); err == nil {
+	if _, _, _, err := ds.GetConnectionInfo(canceled, connID); err == nil {
 		t.Errorf("expected info cancel")
 	}
 }

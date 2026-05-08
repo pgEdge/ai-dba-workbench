@@ -118,10 +118,10 @@ func TestGetUnprocessedAndUpdateAnomalyCandidate(t *testing.T) {
 		t.Errorf("expected c1.ID=%d, got %d", c1.ID, results[0].ID)
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetUnprocessedAnomalyCandidates(cancelled, 10); err == nil {
+	if _, err := ds.GetUnprocessedAnomalyCandidates(canceled, 10); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }
@@ -256,10 +256,10 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 		t.Errorf("mean = %v, want 6.5 (update path)", baselines[0].Mean)
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetMetricBaselines(cancelled, connID, "m_b"); err == nil {
+	if _, err := ds.GetMetricBaselines(canceled, connID, "m_b"); err == nil {
 		t.Errorf("expected cancel error")
 	}
 
@@ -341,15 +341,18 @@ func TestGetAcknowledgedAnomalyAlerts(t *testing.T) {
 	`, recentID); err != nil {
 		t.Fatal(err)
 	}
-	alerts, _ = ds.GetAcknowledgedAnomalyAlerts(ctx, 86400, 10)
+	alerts, err = ds.GetAcknowledgedAnomalyAlerts(ctx, 86400, 10)
+	if err != nil {
+		t.Fatalf("GetAcknowledgedAnomalyAlerts (long interval): %v", err)
+	}
 	if len(alerts) != 1 {
 		t.Errorf("expected 1 (only old enough), got %d", len(alerts))
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetAcknowledgedAnomalyAlerts(cancelled, 60, 10); err == nil {
+	if _, err := ds.GetAcknowledgedAnomalyAlerts(canceled, 60, 10); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }
@@ -389,15 +392,18 @@ func TestGetAcknowledgmentHistoryForMetric(t *testing.T) {
 	}
 
 	// Pass an exclude id of one of them; result should drop to 1.
-	got, _ = ds.GetAcknowledgmentHistoryForMetric(ctx, "m_hist", connID, got[0].ID, 10)
+	got, err = ds.GetAcknowledgmentHistoryForMetric(ctx, "m_hist", connID, got[0].ID, 10)
+	if err != nil {
+		t.Fatalf("GetAcknowledgmentHistoryForMetric (with exclude): %v", err)
+	}
 	if len(got) != 1 {
 		t.Errorf("after exclude: expected 1, got %d", len(got))
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetAcknowledgmentHistoryForMetric(cancelled, "x", connID, 0, 10); err == nil {
+	if _, err := ds.GetAcknowledgmentHistoryForMetric(canceled, "x", connID, 0, 10); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }

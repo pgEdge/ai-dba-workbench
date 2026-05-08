@@ -23,7 +23,20 @@ import (
 
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
+
+// testServerSecret is the server secret threaded through scheduler
+// integration tests. CI's PostgreSQL service requires password
+// authentication; the password is encrypted into
+// connections.password_encrypted (and into the in-memory
+// MonitoredConnection records the scheduler builds) using this
+// secret. The pool manager and scheduler must be invoked with the
+// same secret so decryption succeeds. The literal value is
+// irrelevant; it just must be non-empty
+// (crypto.EncryptPassword rejects empty secrets) and stable across
+// the test process.
+const testServerSecret = "scheduler-integration-test-secret"
 
 // integrationFixture wires up a Datastore, a MonitoredConnectionPoolManager
 // pointing at the same test PostgreSQL server, and seeds a single
@@ -39,6 +52,13 @@ type integrationFixture struct {
 	port        int
 	username    string
 	rawPassword string
+	// passwordEncrypted holds the test server password encrypted with
+	// testServerSecret. It is empty when rawPassword is empty (e.g.
+	// local trust-auth setups). When non-empty it is written into
+	// connections.password_encrypted so probes can connect back to the
+	// monitored server and copied into MonitoredConnection records used
+	// by tests that drive the pool manager directly.
+	passwordEncrypted string
 }
 
 var (
@@ -227,23 +247,51 @@ func setupIntegration(t *testing.T) *integrationFixture {
 			return
 		}
 
+		// Encrypt the test server password so it can be stored in the
+		// connections table. CI's PostgreSQL service uses password auth;
+		// without password_encrypted set, the scheduler builds incomplete
+		// connection strings and probe execution fails with SASL auth.
+		// Local trust-auth setups have an empty rawPassword and skip
+		// encryption entirely, leaving password_encrypted NULL. If
+		// encryption fails the integration teardown still drops the
+		// freshly-created database via teardownIntegration, so we don't
+		// need an explicit DROP here.
+		var encryptedPassword string
+		if base.password != "" {
+			enc, encErr := crypto.EncryptPassword(base.password, testServerSecret)
+			if encErr != nil {
+				ds.Close()
+				integrationSkip = fmt.Sprintf("EncryptPassword: %v", encErr)
+				return
+			}
+			encryptedPassword = enc
+		}
+
 		// Insert a monitored connection pointing at the same database.
 		// The probe execution code will then connect back to the same
-		// host so we don't need a separate monitored server.
+		// host so we don't need a separate monitored server. The
+		// password_encrypted column is populated when a password is
+		// configured; when empty we pass NULL via the typed sql.Null
+		// wrapper so PostgreSQL stores NULL rather than an empty string.
 		conn, err := ds.GetConnection()
 		if err != nil {
 			ds.Close()
 			integrationSkip = fmt.Sprintf("GetConnection: %v", err)
 			return
 		}
+		passwordParam := sql.NullString{
+			String: encryptedPassword,
+			Valid:  encryptedPassword != "",
+		}
 		var connID int
 		err = conn.QueryRow(ctx, `
 			INSERT INTO connections
-				(name, host, port, database_name, username, owner_username, is_monitored, sslmode)
+				(name, host, port, database_name, username, owner_username,
+				 is_monitored, sslmode, password_encrypted)
 			VALUES
-				('monitored-test', $1, $2, $3, $4, 'tester', TRUE, $5)
+				('monitored-test', $1, $2, $3, $4, 'tester', TRUE, $5, $6)
 			RETURNING id
-		`, base.host, base.port, dbName, base.username, base.sslMode).Scan(&connID)
+		`, base.host, base.port, dbName, base.username, base.sslMode, passwordParam).Scan(&connID)
 		ds.ReturnConnection(conn)
 		if err != nil {
 			ds.Close()
@@ -276,14 +324,15 @@ func setupIntegration(t *testing.T) *integrationFixture {
 			// time so concurrent tests can't exhaust the postgres
 			// max_connections limit. We have ~30 tests that may each
 			// trigger pool creation against the same server.
-			pool:        database.NewMonitoredConnectionPoolManager(1, 5),
-			connID:      connID,
-			connName:    "monitored-test",
-			dbName:      dbName,
-			host:        base.host,
-			port:        base.port,
-			username:    base.username,
-			rawPassword: base.password,
+			pool:              database.NewMonitoredConnectionPoolManager(1, 5),
+			connID:            connID,
+			connName:          "monitored-test",
+			dbName:            dbName,
+			host:              base.host,
+			port:              base.port,
+			username:          base.username,
+			rawPassword:       base.password,
+			passwordEncrypted: encryptedPassword,
 		}
 	})
 
@@ -297,9 +346,13 @@ func setupIntegration(t *testing.T) *integrationFixture {
 }
 
 // makeMonitoredConn returns a database.MonitoredConnection whose
-// connection details point at the test PostgreSQL server.
+// connection details point at the test PostgreSQL server. When the
+// fixture has an encrypted password (set whenever the test server URL
+// supplies one), it is copied into PasswordEncrypted so callers that
+// drive the pool manager directly can authenticate against CI's
+// password-protected PostgreSQL service.
 func makeMonitoredConn(f *integrationFixture) database.MonitoredConnection {
-	return database.MonitoredConnection{
+	mc := database.MonitoredConnection{
 		ID:           f.connID,
 		Name:         f.connName,
 		Host:         f.host,
@@ -309,6 +362,13 @@ func makeMonitoredConn(f *integrationFixture) database.MonitoredConnection {
 		SSLMode:      sql.NullString{String: "disable", Valid: true},
 		UpdatedAt:    time.Now(),
 	}
+	if f.passwordEncrypted != "" {
+		mc.PasswordEncrypted = sql.NullString{
+			String: f.passwordEncrypted,
+			Valid:  true,
+		}
+	}
+	return mc
 }
 
 func TestSchedulerStart_RunsLoadConfigs(t *testing.T) {
@@ -338,7 +398,7 @@ func TestSchedulerStart_RunsLoadConfigs(t *testing.T) {
 		exec("DELETE FROM probe_configs WHERE scope = 'server'")
 	})
 
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	if err := ps.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -364,7 +424,7 @@ func TestSchedulerLoadConfigs_NoMonitoredConnections(t *testing.T) {
 		exec("UPDATE connections SET is_monitored = TRUE WHERE id = $1", f.connID)
 	})
 
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	if err := ps.loadConfigs(context.Background()); err != nil {
 		t.Fatalf("loadConfigs: %v", err)
 	}
@@ -399,7 +459,7 @@ func TestSchedulerLoadConfigs_WithMonitoredConnection(t *testing.T) {
 		exec("DELETE FROM probe_configs WHERE scope = 'server'")
 	})
 
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	if err := ps.loadConfigs(context.Background()); err != nil {
 		t.Fatalf("loadConfigs: %v", err)
 	}
@@ -433,7 +493,7 @@ func TestSchedulerLoadConfigs_WithMonitoredConnection(t *testing.T) {
 
 func TestSchedulerCalculateInitialDelay(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -442,8 +502,17 @@ func TestSchedulerCalculateInitialDelay(t *testing.T) {
 	}
 	probe := probes.NewPgConnectivityProbe(cfg)
 
+	// Use a connection ID that no other integration test populates so
+	// calculateInitialDelay sees an empty metrics history. The shared
+	// fixture means f.connID may have collected metrics before this
+	// test runs (depending on test ordering); pick an unused ID
+	// instead. The metrics tables don't enforce foreign keys against
+	// connections for SELECTs, so an unused ID is safe here.
+	const unusedConnID = 888_888
+	const unusedConnName = "delay-unused-conn"
+
 	// With no last collection, delay should be 0.
-	delay := ps.calculateInitialDelay(probe, f.connID, f.connName, cfg)
+	delay := ps.calculateInitialDelay(probe, unusedConnID, unusedConnName, cfg)
 	if delay != 0 {
 		t.Errorf("expected 0 delay with no history, got %v", delay)
 	}
@@ -451,7 +520,7 @@ func TestSchedulerCalculateInitialDelay(t *testing.T) {
 
 func TestSchedulerGetMonitoredConnectionByID(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	got, err := ps.getMonitoredConnectionByID(f.connID)
@@ -469,12 +538,14 @@ func TestSchedulerGetMonitoredConnectionByID(t *testing.T) {
 
 func TestSchedulerGetDatabaseList(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	mc := makeMonitoredConn(f)
 	ctx := context.Background()
-	conn, err := ps.poolManager.GetConnection(ctx, mc, "")
+	// Pass testServerSecret so the pool manager can decrypt the
+	// password baked into mc.PasswordEncrypted by makeMonitoredConn.
+	conn, err := ps.poolManager.GetConnection(ctx, mc, testServerSecret)
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
@@ -498,7 +569,7 @@ func TestSchedulerGetDatabaseList(t *testing.T) {
 
 func TestSchedulerExecuteProbeForServerWide(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -519,7 +590,7 @@ func TestSchedulerExecuteProbeForServerWide(t *testing.T) {
 
 func TestSchedulerExecuteProbeForServerWide_CtxCanceled(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -542,7 +613,7 @@ func TestSchedulerExecuteProbeForServerWide_CtxCanceled(t *testing.T) {
 
 func TestSchedulerExecuteProbeForServerWide_ConnectionFailure(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -575,7 +646,7 @@ func TestSchedulerExecuteProbeForServerWide_ConnectionFailure(t *testing.T) {
 
 func TestSchedulerExecuteProbeForAllDatabases(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -613,7 +684,7 @@ func TestSchedulerExecuteProbeForAllDatabases(t *testing.T) {
 // runs successfully against multiple databases.
 func TestSchedulerExecuteProbeForAllDatabases_HappyPath(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -638,7 +709,7 @@ func TestSchedulerExecuteProbeForAllDatabases_HappyPath(t *testing.T) {
 
 func TestSchedulerExecuteProbeForAllDatabases_PreCanceled(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -658,7 +729,7 @@ func TestSchedulerExecuteProbeForAllDatabases_PreCanceled(t *testing.T) {
 
 func TestSchedulerExecuteProbeForAllDatabases_ConnectionFailure(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -691,7 +762,7 @@ func TestSchedulerExecuteProbeForAllDatabases_ConnectionFailure(t *testing.T) {
 
 func TestSchedulerStoreMetrics(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -727,7 +798,7 @@ func TestSchedulerStoreMetrics_DatastoreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatastore: %v", err)
 	}
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	// Force store path to fail by closing the underlying pool.
@@ -746,7 +817,7 @@ func TestSchedulerStoreMetrics_DatastoreClosed(t *testing.T) {
 
 func TestSchedulerRecordAvailability(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	// Available probe.
@@ -794,7 +865,7 @@ func TestSchedulerRecordAvailability_DatastoreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatastore: %v", err)
 	}
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	// Closing the pool ensures every Acquire fails.
@@ -810,7 +881,7 @@ func TestSchedulerRecordAvailability_DatastoreClosed(t *testing.T) {
 // UpsertProbeAvailability.
 func TestSchedulerRecordAvailability_UpsertError(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	// connection ID 999_999 is not present in connections, so FK fails.
@@ -821,7 +892,7 @@ func TestSchedulerRecordAvailability_UpsertError(t *testing.T) {
 // of configReloadLoop. We override configReloader to fire quickly.
 func TestSchedulerConfigReloadLoop_TickerFires(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	// Replace the (nil) reloader with a fast ticker.
 	ps.configReloader = time.NewTicker(50 * time.Millisecond)
@@ -855,7 +926,7 @@ func TestSchedulerStart_Failure(t *testing.T) {
 	}
 	ds2.Close()
 
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	if err := ps.Start(context.Background()); err == nil {
 		t.Error("expected Start to return error when loadConfigs fails")
 	}
@@ -883,7 +954,7 @@ func TestSchedulerLoadConfigs_DatastoreClosed(t *testing.T) {
 	}
 	ds2.Close()
 
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	if err := ps.loadConfigs(context.Background()); err == nil {
 		t.Error("expected loadConfigs to return error with closed datastore")
 	}
@@ -896,7 +967,7 @@ func TestSchedulerLoadConfigs_DatastoreClosed(t *testing.T) {
 // is not installed, which is the normal state in the test database.
 func TestSchedulerExecuteProbeForConnection_ExtensionMissing(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -917,7 +988,7 @@ func TestSchedulerExecuteProbeForConnection_ExtensionMissing(t *testing.T) {
 // extension name.
 func TestSchedulerExecuteProbeForConnection_TimeoutWithExtensionProbe(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, schedulerConfig{datastoreMaxWait: 5, monitoredMaxWait: 1}, "")
+	ps := NewProbeScheduler(f.ds, f.pool, schedulerConfig{datastoreMaxWait: 5, monitoredMaxWait: 1}, testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -944,7 +1015,7 @@ func TestSchedulerExecuteProbeForConnection_TimeoutWithExtensionProbe(t *testing
 // pre-deadline-exceeded context to exercise the timeout-recording path.
 func TestSchedulerExecuteProbeForConnection_TimeoutDeadline(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, schedulerConfig{datastoreMaxWait: 5, monitoredMaxWait: 1}, "")
+	ps := NewProbeScheduler(f.ds, f.pool, schedulerConfig{datastoreMaxWait: 5, monitoredMaxWait: 1}, testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -973,7 +1044,7 @@ func TestSchedulerExecuteProbeForConnection_TimeoutDeadline(t *testing.T) {
 // with the same message, the errorChanged path is skipped.
 func TestSchedulerExecuteProbeForConnection_ErrorMessageUnchanged(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1118,7 +1189,7 @@ func (p *cancelAfterFirst) EnsurePartition(_ context.Context, _ *pgxpool.Conn, _
 // and break out (line 581).
 func TestSchedulerExecuteProbeForAllDatabases_CancelMidLoop(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1137,7 +1208,7 @@ func TestSchedulerExecuteProbeForAllDatabases_CancelMidLoop(t *testing.T) {
 // the multi-database loop.
 func TestSchedulerExecuteProbeForAllDatabases_ExecuteFails(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	probe := &failingProbe{dbScoped: true}
@@ -1210,7 +1281,7 @@ func TestSchedulerExecuteProbeForConnection_DatastoreClosedDuringErrorUpdate(t *
 	if err != nil {
 		t.Fatalf("NewDatastore: %v", err)
 	}
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1247,7 +1318,7 @@ func TestSchedulerExecuteProbeForConnection_DatastoreClosedDuringErrorUpdate(t *
 // with a non-existent connection id.
 func TestSchedulerStoreMetrics_StoreFailure(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1269,7 +1340,7 @@ func TestSchedulerStoreMetrics_StoreFailure(t *testing.T) {
 // ctx-canceled branch inside executeProbeForServerWide.
 func TestSchedulerExecuteProbeForServerWide_ExecuteCanceled(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1284,7 +1355,7 @@ func TestSchedulerExecuteProbeForServerWide_ExecuteCanceled(t *testing.T) {
 // "Execute returns error" branch of executeProbeForServerWide.
 func TestSchedulerExecuteProbeForServerWide_ExecuteFails(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	probe := &failingProbe{dbScoped: false}
@@ -1355,7 +1426,7 @@ func TestSchedulerLoadConfigs_GetMonitoredFails(t *testing.T) {
 	}
 	ds2.ReturnConnection(conn)
 
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	if err := ps.loadConfigs(context.Background()); err == nil {
 		t.Error("expected loadConfigs to fail when connections table is gone")
 	}
@@ -1366,7 +1437,7 @@ func TestSchedulerLoadConfigs_GetMonitoredFails(t *testing.T) {
 // loop that drops probes for connections that are no longer monitored.
 func TestSchedulerLoadConfigs_RemovesStaleProbes(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	// Manually populate probesByConn for a connection ID that doesn't
@@ -1399,7 +1470,7 @@ func TestSchedulerLoadConfigs_RemovesStaleProbes(t *testing.T) {
 // but cannot connect to (revoked CONNECT).
 func TestSchedulerExecuteProbeForAllDatabases_PerDBConnFailure(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	// We can't easily create a DB the user lacks CONNECT on without
@@ -1418,7 +1489,7 @@ func TestSchedulerExecuteProbeForAllDatabases_PerDBConnFailure(t *testing.T) {
 // it.
 func TestSchedulerExecuteProbeForConnection_ClearError(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	connID := seedTestConnection(t, f, fmt.Sprintf("clear-%d", time.Now().UnixNano()))
@@ -1429,9 +1500,10 @@ func TestSchedulerExecuteProbeForConnection_ClearError(t *testing.T) {
 		t.Fatalf("GetConnection: %v", err)
 	}
 	preMsg := "previously failed"
+	pwParam := sql.NullString{String: f.passwordEncrypted, Valid: f.passwordEncrypted != ""}
 	if _, err := conn.Exec(context.Background(),
-		"UPDATE connections SET connection_error = $1, host = $2, port = $3, database_name = $4, username = $5, sslmode = 'disable' WHERE id = $6",
-		preMsg, f.host, f.port, f.dbName, f.username, connID); err != nil {
+		"UPDATE connections SET connection_error = $1, host = $2, port = $3, database_name = $4, username = $5, sslmode = 'disable', password_encrypted = $6 WHERE id = $7",
+		preMsg, f.host, f.port, f.dbName, f.username, pwParam, connID); err != nil {
 		f.ds.ReturnConnection(conn)
 		t.Fatalf("UPDATE: %v", err)
 	}
@@ -1478,7 +1550,7 @@ func TestSchedulerExecuteProbeForConnection_ClearError(t *testing.T) {
 // database-scoped branch of executeProbeForConnection (line 349).
 func TestSchedulerExecuteProbeForConnection_DatabaseScoped(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1495,7 +1567,7 @@ func TestSchedulerExecuteProbeForConnection_DatabaseScoped(t *testing.T) {
 
 func TestSchedulerExecuteProbeForConnection_HappyPath(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1514,7 +1586,7 @@ func TestSchedulerExecuteProbeForConnection_HappyPath(t *testing.T) {
 
 func TestSchedulerExecuteProbeForConnection_ConnectionError(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1602,7 +1674,7 @@ func TestSchedulerExecuteProbeForConnection_Timeout(t *testing.T) {
 	f := setupIntegration(t)
 
 	// monitoredMaxWait=0 → immediate timeout.
-	ps := NewProbeScheduler(f.ds, f.pool, schedulerConfig{datastoreMaxWait: 5, monitoredMaxWait: 0}, "")
+	ps := NewProbeScheduler(f.ds, f.pool, schedulerConfig{datastoreMaxWait: 5, monitoredMaxWait: 0}, testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -1621,7 +1693,7 @@ func TestSchedulerExecuteProbeForConnection_Timeout(t *testing.T) {
 // branch and the ticker-driven re-execute branch.
 func TestSchedulerScheduleProbeForConnection_ShortRun(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	cfg := &probes.ProbeConfig{
 		Name:                      probes.ProbeNamePgConnectivity,
@@ -1648,7 +1720,7 @@ func TestSchedulerScheduleProbeForConnection_ShortRun(t *testing.T) {
 // "config changed, exit goroutine" branch on the ticker tick.
 func TestSchedulerScheduleProbeForConnection_ConfigChanged(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	originalCfg := &probes.ProbeConfig{
 		Name:                      probes.ProbeNamePgConnectivity,
@@ -1689,7 +1761,7 @@ func TestSchedulerScheduleProbeForConnection_ConfigChanged(t *testing.T) {
 // removed, exit" branch when the probe disappears from probesByConn.
 func TestSchedulerScheduleProbeForConnection_Removed(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	cfg := &probes.ProbeConfig{
 		Name:                      probes.ProbeNamePgConnectivity,
@@ -1736,7 +1808,7 @@ func TestSchedulerScheduleProbeForConnection_Removed(t *testing.T) {
 // select race).
 func TestSchedulerScheduleProbeForConnection_InitialDelayShutdown(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	connID := seedTestConnection(t, f, fmt.Sprintf("init-delay-shut-%d", time.Now().UnixNano()))
 
@@ -1805,7 +1877,7 @@ func TestSchedulerScheduleProbeForConnection_InitialDelayShutdown(t *testing.T) 
 // ctx.Done.
 func TestSchedulerScheduleProbeForConnection_TickerShutdown(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	connID := seedTestConnection(t, f, fmt.Sprintf("ticker-shut-%d", time.Now().UnixNano()))
 
@@ -1813,9 +1885,10 @@ func TestSchedulerScheduleProbeForConnection_TickerShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
+	pwParam := sql.NullString{String: f.passwordEncrypted, Valid: f.passwordEncrypted != ""}
 	if _, err := conn.Exec(context.Background(),
-		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable' WHERE id = $5",
-		f.host, f.port, f.dbName, f.username, connID); err != nil {
+		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable', password_encrypted = $5 WHERE id = $6",
+		f.host, f.port, f.dbName, f.username, pwParam, connID); err != nil {
 		f.ds.ReturnConnection(conn)
 		t.Fatalf("UPDATE: %v", err)
 	}
@@ -1859,7 +1932,7 @@ func TestSchedulerScheduleProbeForConnection_TickerShutdown(t *testing.T) {
 // "past due, executing immediately" log branch (line ~280).
 func TestSchedulerScheduleProbeForConnection_PastDue(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	connID := seedTestConnection(t, f, fmt.Sprintf("past-due-%d", time.Now().UnixNano()))
 
@@ -1868,9 +1941,10 @@ func TestSchedulerScheduleProbeForConnection_PastDue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
+	pwParam := sql.NullString{String: f.passwordEncrypted, Valid: f.passwordEncrypted != ""}
 	if _, err := conn.Exec(context.Background(),
-		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable' WHERE id = $5",
-		f.host, f.port, f.dbName, f.username, connID); err != nil {
+		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable', password_encrypted = $5 WHERE id = $6",
+		f.host, f.port, f.dbName, f.username, pwParam, connID); err != nil {
 		f.ds.ReturnConnection(conn)
 		t.Fatalf("UPDATE: %v", err)
 	}
@@ -1917,7 +1991,7 @@ func TestSchedulerScheduleProbeForConnection_PastDue(t *testing.T) {
 // connections row after the goroutine starts.
 func TestSchedulerScheduleProbeForConnection_RefreshFails(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	connID := seedTestConnection(t, f, fmt.Sprintf("refresh-fail-%d", time.Now().UnixNano()))
 
@@ -1927,9 +2001,10 @@ func TestSchedulerScheduleProbeForConnection_RefreshFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConnection: %v", err)
 	}
+	pwParam := sql.NullString{String: f.passwordEncrypted, Valid: f.passwordEncrypted != ""}
 	if _, err := conn.Exec(context.Background(),
-		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable' WHERE id = $5",
-		f.host, f.port, f.dbName, f.username, connID); err != nil {
+		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable', password_encrypted = $5 WHERE id = $6",
+		f.host, f.port, f.dbName, f.username, pwParam, connID); err != nil {
 		f.ds.ReturnConnection(conn)
 		t.Fatalf("UPDATE: %v", err)
 	}
@@ -1972,7 +2047,7 @@ func TestSchedulerScheduleProbeForConnection_RefreshFails(t *testing.T) {
 // calculateInitialDelay returns a positive value.
 func TestSchedulerScheduleProbeForConnection_InitialDelay(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 
 	uniqueConnID := seedTestConnection(t, f, fmt.Sprintf("delay-init-%d", time.Now().UnixNano()))
 
@@ -2030,7 +2105,7 @@ func TestSchedulerScheduleProbeForConnection_InitialDelay(t *testing.T) {
 
 func TestSchedulerScheduleProbeForConnection_UnknownConn(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -2083,7 +2158,7 @@ func seedTestConnection(t *testing.T, f *integrationFixture, name string) int {
 // tests.
 func TestSchedulerCalculateInitialDelay_PastDue(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -2121,7 +2196,7 @@ func TestSchedulerCalculateInitialDelay_PastDue(t *testing.T) {
 // — within the configured interval. The expected delay is positive.
 func TestSchedulerCalculateInitialDelay_FutureCollection(t *testing.T) {
 	f := setupIntegration(t)
-	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 
 	cfg := &probes.ProbeConfig{
@@ -2175,7 +2250,7 @@ func TestSchedulerCalculateInitialDelay_DatastoreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatastore: %v", err)
 	}
-	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), "")
+	ps := NewProbeScheduler(ds2, f.pool, integrationTestConfig(), testServerSecret)
 	defer ps.Stop()
 	ds2.Close()
 

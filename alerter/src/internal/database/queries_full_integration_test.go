@@ -554,11 +554,11 @@ func TestGetMonitoredConnectionErrors(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 
-	// Cancelled context should error.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context should error.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetMonitoredConnectionErrors(cancelled); err == nil {
-		t.Errorf("expected error from cancelled context")
+	if _, err := ds.GetMonitoredConnectionErrors(canceled); err == nil {
+		t.Errorf("expected error from canceled context")
 	}
 }
 
@@ -753,7 +753,10 @@ func TestIsBlackoutActive(t *testing.T) {
 	`, clusterID); err != nil {
 		t.Fatalf("insert cluster blackout: %v", err)
 	}
-	active, _ = ds.IsBlackoutActive(ctx, &connID, nil)
+	active, err = ds.IsBlackoutActive(ctx, &connID, nil)
+	if err != nil {
+		t.Fatalf("IsBlackoutActive (cluster scope): %v", err)
+	}
 	if !active {
 		t.Errorf("cluster scope should be active")
 	}
@@ -768,19 +771,22 @@ func TestIsBlackoutActive(t *testing.T) {
 	`, groupID); err != nil {
 		t.Fatalf("insert group blackout: %v", err)
 	}
-	active, _ = ds.IsBlackoutActive(ctx, &connID, nil)
+	active, err = ds.IsBlackoutActive(ctx, &connID, nil)
+	if err != nil {
+		t.Fatalf("IsBlackoutActive (group scope): %v", err)
+	}
 	if !active {
 		t.Errorf("group scope should be active")
 	}
 
-	// Cancelled context returns error.
+	// Canceled context returns error.
 	if _, err := pool.Exec(ctx, `DELETE FROM blackouts`); err != nil {
 		t.Fatal(err)
 	}
-	cancelled, cancel := context.WithCancel(ctx)
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.IsBlackoutActive(cancelled, &connID, nil); err == nil {
-		t.Errorf("cancelled context should error")
+	if _, err := ds.IsBlackoutActive(canceled, &connID, nil); err == nil {
+		t.Errorf("canceled context should error")
 	}
 }
 

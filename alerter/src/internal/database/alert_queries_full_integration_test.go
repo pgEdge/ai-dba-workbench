@@ -76,10 +76,10 @@ func TestGetActiveThresholdAlert(t *testing.T) {
 		t.Fatal("expected db-scoped alert")
 	}
 
-	// Cancelled context: error.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context: error.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetActiveThresholdAlert(cancelled, ruleID, connID, nil); err == nil {
+	if _, err := ds.GetActiveThresholdAlert(canceled, ruleID, connID, nil); err == nil {
 		t.Errorf("expected cancellation error")
 	}
 }
@@ -145,10 +145,10 @@ func TestGetRecentlyClearedAlert(t *testing.T) {
 		t.Errorf("expected exists=false with 1s cooldown")
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetRecentlyClearedAlert(cancelled, ruleID, connID, nil, 60*time.Second); err == nil {
+	if _, err := ds.GetRecentlyClearedAlert(canceled, ruleID, connID, nil, 60*time.Second); err == nil {
 		t.Errorf("expected error")
 	}
 }
@@ -178,15 +178,18 @@ func TestGetReevaluationSuppressedAlert(t *testing.T) {
 	`, connID); err != nil {
 		t.Fatal(err)
 	}
-	exists, _ = ds.GetReevaluationSuppressedAlert(ctx, "metric_rs", connID, nil, 60*time.Second)
+	exists, err = ds.GetReevaluationSuppressedAlert(ctx, "metric_rs", connID, nil, 60*time.Second)
+	if err != nil {
+		t.Fatalf("GetReevaluationSuppressedAlert (after insert): %v", err)
+	}
 	if !exists {
 		t.Errorf("expected true within cooldown")
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetReevaluationSuppressedAlert(cancelled, "x", connID, nil, time.Second); err == nil {
+	if _, err := ds.GetReevaluationSuppressedAlert(canceled, "x", connID, nil, time.Second); err == nil {
 		t.Errorf("expected error")
 	}
 }
@@ -223,15 +226,18 @@ func TestGetFalsePositiveSuppressedAlert(t *testing.T) {
 	`, alertID); err != nil {
 		t.Fatal(err)
 	}
-	exists, _ = ds.GetFalsePositiveSuppressedAlert(ctx, "metric_fp", connID, nil, 60*time.Second)
+	exists, err = ds.GetFalsePositiveSuppressedAlert(ctx, "metric_fp", connID, nil, 60*time.Second)
+	if err != nil {
+		t.Fatalf("GetFalsePositiveSuppressedAlert (after ack): %v", err)
+	}
 	if !exists {
 		t.Errorf("expected true with false-positive ack")
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetFalsePositiveSuppressedAlert(cancelled, "x", connID, nil, time.Second); err == nil {
+	if _, err := ds.GetFalsePositiveSuppressedAlert(canceled, "x", connID, nil, time.Second); err == nil {
 		t.Errorf("expected cancellation error")
 	}
 }
@@ -378,24 +384,24 @@ func TestGetAlertsByClusterAndConnection(t *testing.T) {
 		t.Errorf("expected 1 alert for own connection, got %+v", gotConn)
 	}
 
-	// Cancelled context.
-	cancelled, cancel := context.WithCancel(ctx)
+	// Canceled context.
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetAlertsByCluster(cancelled, conn1); err == nil {
+	if _, err := ds.GetAlertsByCluster(canceled, conn1); err == nil {
 		t.Errorf("expected cancel error")
 	}
-	if _, err := ds.GetAlertsByConnection(cancelled, conn1); err == nil {
+	if _, err := ds.GetAlertsByConnection(canceled, conn1); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }
 
-func TestGetActiveAlertsCancelled(t *testing.T) {
+func TestGetActiveAlertsCanceled(t *testing.T) {
 	ds, _, cleanup := newFullTestDatastore(t)
 	defer cleanup()
 
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := ds.GetActiveAlerts(cancelled); err == nil {
+	if _, err := ds.GetActiveAlerts(canceled); err == nil {
 		t.Errorf("expected cancel error")
 	}
 }

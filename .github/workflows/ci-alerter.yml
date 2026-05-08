@@ -116,6 +116,20 @@ jobs:
               run: |
                   go tool cover -func=coverage.out
 
+            # Codacy multi-language coverage: upload as a partial here.
+            # Finalization (the single `final` call) happens in the client
+            # CI workflow after all language partials have been pushed.
+            - name: Upload coverage to Codacy
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.2' && matrix.postgres-version == '18'
+              env:
+                  CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+              run: |
+                  bash <(curl -Ls https://coverage.codacy.com/get.sh) \
+                    report \
+                    --partial \
+                    -l Go \
+                    -r alerter/src/coverage.out
+
             - name: Upload build artifact
               if: matrix.go-version == '1.26.2' && matrix.postgres-version == '18'
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

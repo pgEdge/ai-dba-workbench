@@ -1,0 +1,58 @@
+name: Coverage - Finalize
+
+# Finalize Codacy coverage uploads.
+#
+# The four CI workflows (ci-server.yml, ci-collector.yml,
+# ci-alerter.yml, ci-client.yml) each upload their own coverage
+# report to Codacy with `--partial`. Codacy holds those partial
+# reports in a buffer keyed to the commit SHA and only publishes
+# them once it receives a `final` call for that SHA. Without the
+# final call coverage stays "pending" forever and the project
+# coverage grade does not update.
+#
+# This workflow runs after each producer workflow finishes a push
+# to main and issues the final call for the commit that workflow
+# built. The final call is idempotent for a given commit: if all
+# four producers have already finished, the first finalize run
+# publishes coverage and the subsequent runs are no-ops on
+# Codacy's side. If a producer has not yet finished, Codacy waits
+# until the next finalize call (triggered by the next producer to
+# finish) before publishing.
+#
+# The workflow is intentionally minimal -- it does not check out
+# code, install language tooling, or download artifacts. The
+# codacy-coverage-reporter only needs the project token and the
+# commit SHA to issue a final call.
+
+on:
+    workflow_run:
+        workflows:
+            - "CI - Server"
+            - "CI - Collector"
+            - "CI - Alerter"
+            - "CI - Client"
+        types:
+            - completed
+
+jobs:
+    finalize:
+        name: Finalize Codacy coverage
+        runs-on: ubuntu-latest
+        # Only finalize for successful runs on main. PR runs, branch
+        # runs, and failed runs do not contribute partial uploads
+        # (see the gating in each producer workflow), so there is
+        # nothing to finalize for them.
+        if: >-
+            github.event.workflow_run.conclusion == 'success' &&
+            github.event.workflow_run.head_branch == 'main' &&
+            github.event.workflow_run.event == 'push'
+
+        steps:
+            - name: Finalize Codacy coverage
+              env:
+                  CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+                  COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+              run: |
+                  bash <(curl -Ls https://coverage.codacy.com/get.sh) \
+                    final \
+                    --commit-uuid "${COMMIT_SHA}"

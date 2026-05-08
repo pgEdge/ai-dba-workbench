@@ -89,3 +89,42 @@ engines:
       - 'client/src/utils/mcpTools.ts'
       - 'client/src/utils/agenticLoop.ts'
       - 'client/src/utils/apiClient.ts'
+
+  # Codacy uses PMD's Copy/Paste Detector under the `duplication`
+  # engine. CPD measures structural similarity between source files
+  # and reports near-identical token sequences as "clones". The
+  # repository's table-driven test files trigger this detector very
+  # heavily because Go and Vitest table tests are *intentionally*
+  # repetitive: each entry in a test table shares the same arrange/
+  # act/assert skeleton, varying only the inputs and expected outputs.
+  # That structural similarity is the entire point of the pattern --
+  # it is good test code, not duplicated production logic, and it
+  # should not influence the duplication grade.
+  #
+  # Without these exclusions Codacy graded the project a D, with the
+  # top offenders all being table-driven test files:
+  #   * server/src/internal/auth/access_test.go        (437 clones)
+  #   * server/src/internal/api/cluster_handlers_test.go (313 clones)
+  #   * server/src/internal/api/rbac_user_handlers_test.go (278 clones)
+  # Production source files were not significant contributors.
+  #
+  # The patterns below cover Go test files (`*_test.go`), Go testdata
+  # fixtures (where any duplication is the fixture's job), Vitest
+  # tests (`*.test.ts`/`*.test.tsx` and anything under `__tests__/`),
+  # and the shared client test helpers under `client/src/test/`.
+  # Production code in every sub-project remains scanned for
+  # duplication, so genuine copy/paste in shipping code still gets
+  # caught.
+  duplication:
+    exclude_paths:
+      # Go: table-driven unit tests and Go testdata fixtures.
+      - '**/*_test.go'
+      - '**/testdata/**'
+      # TypeScript/React: Vitest tests in __tests__ folders and any
+      # *.test.ts / *.test.tsx co-located with source.
+      - '**/__tests__/**'
+      - '**/*.test.ts'
+      - '**/*.test.tsx'
+      # Shared Vitest setup and render helpers (see
+      # client/vitest.config.js -> setupFiles).
+      - 'client/src/test/**'

@@ -46,6 +46,38 @@ jobs:
               if: matrix.node-version == '22'
               run: npm run test:coverage
 
+            # Codacy coverage upload.
+            #
+            # This is a *partial* upload. The repository has four
+            # coverage producers: server/, collector/, alerter/ (Go)
+            # and client/ (TypeScript). Each CI workflow uploads its
+            # own coverage with `--partial` and the
+            # `.github/workflows/coverage-finalize.yml` workflow
+            # issues a single `final` call once all four have
+            # completed. Do not switch this step to a non-partial
+            # upload without coordinating with the Go workflows --
+            # mismatched `--partial` flags cause Codacy to publish
+            # incomplete coverage and overwrite the previous run.
+            #
+            # The upload is gated to push events on the main branch.
+            # PR builds and topic-branch builds are skipped on
+            # purpose: those runs would push noisy diff baselines
+            # into Codacy and burn through the per-project upload
+            # quota. CODACY_PROJECT_TOKEN must be configured as a
+            # repository secret for this step to succeed; without
+            # it the curl pipeline exits non-zero.
+            - name: Upload coverage to Codacy
+              if: matrix.node-version == '22' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+              env:
+                  CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+              working-directory: ${{ github.workspace }}
+              run: |
+                  bash <(curl -Ls https://coverage.codacy.com/get.sh) \
+                    report \
+                    --partial \
+                    -l TypeScript \
+                    -r client/coverage/lcov.info
+
             - name: Build client
               run: npm run build
 

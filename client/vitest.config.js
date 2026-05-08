@@ -18,7 +18,13 @@ export default defineConfig({
         setupFiles: ['./src/test/setup.ts'],
         include: ['src/**/*.{test,spec}.{js,jsx,ts,tsx}'],
         coverage: {
-            reporter: ['text', 'json', 'html'],
+            // 'lcov' is required by the Codacy coverage upload step
+            // in .github/workflows/ci-client.yml; it writes
+            // coverage/lcov.info which the codacy-coverage-reporter
+            // consumes. 'text' prints the per-file table during
+            // local `make coverage` runs; 'json' and 'html' feed the
+            // browser-viewable report under coverage/.
+            reporter: ['text', 'json', 'html', 'lcov'],
             exclude: [
                 'node_modules/',
                 'src/test/',

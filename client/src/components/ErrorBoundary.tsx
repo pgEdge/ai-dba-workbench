@@ -204,7 +204,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         const detailsText = this.getDetailsText();
 
         return (
-            <Container maxWidth="md">
+            <Container maxWidth="md" data-testid="error-boundary-fallback">
                 <Box sx={styles.outerContainer}>
                     <Paper elevation={3} sx={styles.errorPaper}>
                         <Box sx={styles.iconRow}>

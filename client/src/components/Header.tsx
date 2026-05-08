@@ -202,6 +202,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
                 position="static"
                 elevation={0}
                 sx={getAppBarSx}
+                data-testid="app-header"
             >
                 <Toolbar sx={toolbarSx}>
                     {/* Logo and Title */}
@@ -246,6 +247,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleTheme, helpContext }) => {
                                     onClick={() => { setAdminOpen(true); }}
                                     aria-label="open administration"
                                     sx={getIconButtonSx}
+                                    data-testid="admin-panel-trigger"
                                 >
                                     <SettingsIcon />
                                 </IconButton>

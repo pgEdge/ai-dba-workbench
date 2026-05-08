@@ -153,6 +153,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
             onClose={onClose}
             TransitionComponent={SlideTransition}
             TransitionProps={{ onEnter: handleEnter }}
+            data-testid="admin-panel"
         >
             <AppBar
                 position="static"
@@ -221,6 +222,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
                                             key={item.id}
                                             selected={isSelected}
                                             onClick={() => { setActiveId(item.id); }}
+                                            data-testid={`admin-panel-item-${item.id}`}
                                             sx={{
                                                 borderRadius: 1,
                                                 mx: 1,
@@ -250,6 +252,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ open, onClose }) => {
                         bgcolor: theme.palette.background.default,
                         p: 3,
                     }}
+                    data-testid="admin-panel-section-content"
                 >
                     {ActiveComponent && <ActiveComponent />}
                 </Box>

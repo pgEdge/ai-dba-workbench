@@ -75,6 +75,7 @@ const ChatFAB: React.FC<ChatFABProps> = ({ onClick, isOpen }) => {
                 onClick={onClick}
                 aria-label={isOpen ? 'close chat' : 'open chat'}
                 sx={getFabSx(isOpen)}
+                data-testid="chat-fab"
             >
                 {isOpen ? (
                     <CloseIcon sx={iconSx} />

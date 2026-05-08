@@ -827,7 +827,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
         >
-            <Box sx={getPanelSx(theme, panelWidth)}>
+            <Box sx={getPanelSx(theme, panelWidth)} data-testid="cluster-navigator">
                 {/* Resize handle */}
             <Box
                 ref={resizeRef}

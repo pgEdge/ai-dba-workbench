@@ -120,11 +120,18 @@ jobs:
             # profile, so convert to lcov (which it does understand)
             # using gcov2lcov before uploading. Pinned to v1.1.1 for
             # reproducibility; see https://github.com/jandelgado/gcov2lcov/releases.
+            # gcov2lcov resolves each package path in coverage.out via
+            # `go list`, which requires running from inside the module
+            # (where go.mod lives). Unlike server/alerter, the collector's
+            # go.mod sits at collector/, not collector/src/, so we set
+            # working-directory to collector and use src/-prefixed paths
+            # for -infile/-outfile.
             - name: Convert coverage to lcov
               if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.go-version == '1.26.2' && matrix.postgres-version == '18'
+              working-directory: collector
               run: |
                   go install github.com/jandelgado/gcov2lcov@v1.1.1
-                  $(go env GOPATH)/bin/gcov2lcov -infile=collector/src/coverage.out -outfile=collector/src/coverage.lcov
+                  $(go env GOPATH)/bin/gcov2lcov -infile=src/coverage.out -outfile=src/coverage.lcov
 
             # Codacy multi-language coverage: upload as a partial here.
             # Finalization (the single `final` call) happens in the client

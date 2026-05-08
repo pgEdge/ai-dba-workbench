@@ -144,12 +144,17 @@ engines:
   # issues in test code.
   duplication:
     exclude_paths:
-      # Go: table-driven unit tests (alerter).
+      # Go: alerter unit and integration tests.
       - 'alerter/src/cmd/ai-dba-alerter/main_test.go'
       - 'alerter/src/internal/config/config_test.go'
       - 'alerter/src/internal/cron/cron_test.go'
+      - 'alerter/src/internal/database/alert_queries_full_integration_test.go'
+      - 'alerter/src/internal/database/anomaly_queries_full_integration_test.go'
       - 'alerter/src/internal/database/datastore_test.go'
+      - 'alerter/src/internal/database/error_paths_integration_test.go'
       - 'alerter/src/internal/database/metric_registry_integration_test.go'
+      - 'alerter/src/internal/database/notification_queries_full_integration_test.go'
+      - 'alerter/src/internal/database/queries_full_integration_test.go'
       - 'alerter/src/internal/database/queries_integration_test.go'
       - 'alerter/src/internal/database/reactivate_alert_integration_test.go'
       - 'alerter/src/internal/engine/anomalies_helpers_test.go'
@@ -206,7 +211,9 @@ engines:
       - 'client/src/components/AdminPanel/webhook/__tests__/webhookHelpers.test.ts'
       - 'client/src/components/Chart/__tests__/Chart.test.tsx'
       - 'client/src/components/Chart/__tests__/ChartThemeBridge.test.ts'
+      - 'client/src/components/Chart/__tests__/common.test.ts'
       - 'client/src/components/Chart/__tests__/options.test.ts'
+      - 'client/src/components/Chart/utils/__tests__/exportPng.test.ts'
       - 'client/src/components/ChatPanel/__tests__/ChatFAB.test.tsx'
       - 'client/src/components/ChatPanel/__tests__/ChatInput.test.tsx'
       - 'client/src/components/ChatPanel/__tests__/ChatMessage.test.tsx'
@@ -215,6 +222,7 @@ engines:
       - 'client/src/components/ChatPanel/__tests__/ToolStatus.test.tsx'
       - 'client/src/components/ClusterNavigator/utils.test.ts'
       - 'client/src/components/Dashboard/ClusterDashboard/__tests__/ClusterDashboard.test.tsx'
+      - 'client/src/components/Dashboard/ClusterDashboard/topology/__tests__/TopologyNode.test.tsx'
       - 'client/src/components/Dashboard/ClusterDashboard/topology/__tests__/graphBuilder.test.ts'
       - 'client/src/components/Dashboard/ClusterDashboard/topology/__tests__/layoutEngine.test.ts'
       - 'client/src/components/Dashboard/DatabaseDashboard/__tests__/DatabaseDashboard.test.tsx'
@@ -245,12 +253,14 @@ engines:
       - 'client/src/components/StatusPanel/PerformanceTiles/__tests__/TransactionTile.test.tsx'
       - 'client/src/components/StatusPanel/PerformanceTiles/__tests__/useDatabaseCacheHit.test.ts'
       - 'client/src/components/StatusPanel/__tests__/AlertItem.test.tsx'
+      - 'client/src/components/StatusPanel/__tests__/MetricCard.test.tsx'
       - 'client/src/components/StatusPanel/__tests__/StatusPanel.unacknowledge.test.tsx'
       - 'client/src/components/__tests__/AIOverview.test.tsx'
       - 'client/src/components/__tests__/AlertOverrideEditDialog.test.tsx'
       - 'client/src/components/__tests__/AlertOverridesPanel.test.tsx'
       - 'client/src/components/__tests__/BlackoutPanel.test.tsx'
       - 'client/src/components/__tests__/ChannelOverridesPanel.test.tsx'
+      - 'client/src/components/__tests__/ChartAnalysisDialog.test.tsx'
       - 'client/src/components/__tests__/ClusterFields.test.tsx'
       - 'client/src/components/__tests__/ClusterFieldsTopology.test.tsx'
       - 'client/src/components/__tests__/ClusterNavigator.test.tsx'
@@ -269,8 +279,10 @@ engines:
       - 'client/src/components/__tests__/TopologyPanel.test.tsx'
       - 'client/src/components/shared/__tests__/AnalysisSkeleton.test.tsx'
       - 'client/src/components/shared/__tests__/BaseAnalysisDialog.test.tsx'
+      - 'client/src/components/shared/__tests__/ConnectionSelectorCodeBlock.test.tsx'
       - 'client/src/components/shared/__tests__/MarkdownContent.test.tsx'
       - 'client/src/components/shared/__tests__/markdownUtils.test.ts'
+      - 'client/src/components/shared/__tests__/sqlDetection.test.ts'
       - 'client/src/components/topology/__tests__/RelationshipSection.test.tsx'
       - 'client/src/components/topology/__tests__/RemoveServerDialog.test.tsx'
       - 'client/src/components/topology/__tests__/ServerManagementSection.test.tsx'
@@ -324,10 +336,12 @@ engines:
       - 'client/src/utils/__tests__/textHelpers.test.ts'
       - 'client/src/utils/__tests__/timelineEvents.test.ts'
       - 'client/src/utils/__tests__/toolDisplayNames.test.ts'
-      # Go: collector unit tests.
+      # Go: collector unit and integration tests.
       - 'collector/src/config_test.go'
+      - 'collector/src/database/datastore_integration_test.go'
       - 'collector/src/database/datastore_test.go'
       - 'collector/src/database/migration_v3_test.go'
+      - 'collector/src/database/monitored_pool_test.go'
       - 'collector/src/database/schema_pg_settings_test.go'
       - 'collector/src/database/schema_test.go'
       - 'collector/src/garbage_collector_test.go'
@@ -371,6 +385,7 @@ engines:
       - 'collector/src/probes/spock_exception_log_probe_test.go'
       - 'collector/src/probes/spock_resolutions_probe_test.go'
       - 'collector/src/probes/version_branches_test.go'
+      - 'collector/src/scheduler/scheduler_integration_test.go'
       - 'collector/src/scheduler/scheduler_test.go'
       - 'collector/src/utils/db_test.go'
       # Go: shared packages under pkg/.
@@ -391,7 +406,7 @@ engines:
       - 'pkg/worker/dynamic_periodic_task_test.go'
       - 'pkg/worker/periodic_task_test.go'
       - 'pkg/worker/worker_pool_test.go'
-      # Go: server unit tests.
+      # Go: server unit and integration tests.
       - 'server/src/cmd/mcp-server/commands_test.go'
       - 'server/src/cmd/mcp-server/flags_test.go'
       - 'server/src/cmd/mcp-server/passwords_test.go'
@@ -451,12 +466,15 @@ engines:
       - 'server/src/internal/conversations/store_test.go'
       - 'server/src/internal/crypto/encryption_test.go'
       - 'server/src/internal/database/alert_counts_integration_test.go'
+      - 'server/src/internal/database/blackout_queries_integration_test.go'
       - 'server/src/internal/database/client_manager_test.go'
       - 'server/src/internal/database/client_resolver_test.go'
       - 'server/src/internal/database/cluster_dismiss_integration_test.go'
       - 'server/src/internal/database/cluster_dismiss_resolve_integration_test.go'
+      - 'server/src/internal/database/config_queries_integration_test.go'
       - 'server/src/internal/database/connection_test.go'
       - 'server/src/internal/database/logger_test.go'
+      - 'server/src/internal/database/notification_queries_integration_test.go'
       - 'server/src/internal/database/notification_secrets_test.go'
       - 'server/src/internal/database/parser_test.go'
       - 'server/src/internal/database/queries_test.go'
@@ -524,3 +542,31 @@ engines:
       - 'server/src/internal/tools/validation_test.go'
       - 'server/src/internal/tracing/tracer_test.go'
       - 'server/src/internal/tsv/format_test.go'
+
+  # Codacy's Lizard engine reports cyclomatic complexity (CCN) and
+  # non-comment lines of code (NLOC) per function. Test files are
+  # inherently long and complex by design: table-driven tests in
+  # Go and Vitest `describe`/`it` blocks accumulate setup/arrange/
+  # act/assert boilerplate that legitimately drives function NLOC
+  # and branch counts well past Lizard's defaults. That complexity
+  # has no bearing on production maintainability and should not
+  # influence the project's code-quality grade.
+  #
+  # Unlike duplication, Codacy's quality engines (including Lizard)
+  # honour glob wildcards in `exclude_paths` per:
+  #   https://docs.codacy.com/repositories-configure/codacy-configuration-file/
+  # so this block uses globs rather than the explicit-path list
+  # required by the duplication engine above.
+  #
+  # The patterns below mirror the duplication block's coverage:
+  #   * every `*_test.go` file across all Go modules;
+  #   * every Vitest test file under `__tests__/` directories;
+  #   * every co-located `*.test.ts` / `*.test.tsx` file;
+  #   * the shared Vitest setup helpers under `client/src/test/`.
+  lizard:
+    exclude_paths:
+      - '**/*_test.go'
+      - '**/__tests__/**'
+      - '**/*.test.ts'
+      - '**/*.test.tsx'
+      - 'client/src/test/**'

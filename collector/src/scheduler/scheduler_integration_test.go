@@ -102,8 +102,13 @@ func teardownIntegration() {
 		return
 	}
 	defer pool.Close()
-	_, _ = pool.Exec(ctx, fmt.Sprintf(
-		"DROP DATABASE IF EXISTS %s WITH (FORCE)", integration.dbName))
+	// Best-effort drop on test teardown; if the DB is still busy or
+	// already gone we don't want to fail the suite, but log so a
+	// stuck DB doesn't get silently leaked.
+	if _, err := pool.Exec(ctx, fmt.Sprintf(
+		"DROP DATABASE IF EXISTS %s WITH (FORCE)", integration.dbName)); err != nil {
+		fmt.Printf("warning: drop test database %s: %v\n", integration.dbName, err)
+	}
 }
 
 // schedulerConfig satisfies scheduler.Config and matches the fields
@@ -193,7 +198,9 @@ func parseTestServer(t *testing.T) *datastoreCfg {
 		}
 		if c := strings.LastIndex(hostpart, ":"); c != -1 {
 			cfg.host = hostpart[:c]
-			fmt.Sscanf(hostpart[c+1:], "%d", &cfg.port)
+			if _, err := fmt.Sscanf(hostpart[c+1:], "%d", &cfg.port); err != nil {
+				t.Fatalf("parse port from URL: %v", err)
+			}
 		} else {
 			cfg.host = hostpart
 		}
@@ -216,15 +223,15 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		// so we share one DB across all scheduler integration tests.
 		dbName := fmt.Sprintf("ai_workbench_sched_%d", time.Now().UnixNano())
 
-		// Connect to admin DB to create the test DB.
-		adminCfg := *base
-		adminCfg.database = "postgres"
+		// Connect to admin DB to create the test DB. The connection
+		// string below hardcodes dbname=postgres; we use *base directly
+		// for the host/port/user/password/sslmode fields.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		adminPool, err := pgxpool.New(ctx, fmt.Sprintf(
 			"host=%s port=%d user=%s password=%s sslmode=%s dbname=postgres",
-			adminCfg.host, adminCfg.port, adminCfg.username, adminCfg.password, adminCfg.sslMode))
+			base.host, base.port, base.username, base.password, base.sslMode))
 		if err != nil {
 			integrationSkip = fmt.Sprintf("connect admin: %v", err)
 			return
@@ -242,7 +249,12 @@ func setupIntegration(t *testing.T) *integrationFixture {
 		dsCfg.database = dbName
 		ds, err := database.NewDatastore(&dsCfg)
 		if err != nil {
-			_, _ = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", dbName))
+			// Best-effort cleanup of the freshly created DB; the test is
+			// already aborting via integrationSkip, so report-and-continue
+			// is appropriate here.
+			if _, dropErr := adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", dbName)); dropErr != nil {
+				fmt.Printf("warning: drop %s after NewDatastore failure: %v\n", dbName, dropErr)
+			}
 			integrationSkip = fmt.Sprintf("NewDatastore: %v", err)
 			return
 		}
@@ -559,7 +571,7 @@ func TestSchedulerGetDatabaseList(t *testing.T) {
 		t.Error("expected at least one database returned")
 	}
 
-	// Cancelled context -> error.
+	// Canceled context -> error.
 	cctx, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := ps.getDatabaseList(cctx, conn); err == nil {
@@ -1395,8 +1407,12 @@ func TestSchedulerLoadConfigs_GetMonitoredFails(t *testing.T) {
 		t.Fatalf("create db: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = adminPool.Exec(context.Background(),
-			fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName))
+		// Best-effort cleanup; if the admin pool is gone or the DB is
+		// busy, log rather than fail the test that already passed.
+		if _, err := adminPool.Exec(context.Background(),
+			fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", dbName)); err != nil {
+			t.Logf("warning: drop %s on cleanup: %v", dbName, err)
+		}
 	})
 
 	dsCfg := datastoreCfg{
@@ -1662,15 +1678,10 @@ func TestSchedulerExecuteProbeForConnection_ConnectionError(t *testing.T) {
 	ps.executeProbeForConnection(ctx, probe, bad)
 
 	// Now exercise the "error cleared" path by pointing the bad
-	// connection back at the working server.
-	good := bad
-	good.Host = f.host
-	good.Port = f.port
-	good.DatabaseName = f.dbName
-	good.Username = f.username
-	// The connections row for badID still has the old (broken) host —
-	// load it fresh so executeProbeForConnection sees ConnectionError
-	// set on the row, then runs successfully and clears it.
+	// connection back at the working server. We load the row fresh
+	// from the datastore so executeProbeForConnection sees the
+	// ConnectionError column set, then overlay the working host/port
+	// in memory so the probe succeeds and clears the column.
 	mc, err := f.ds.GetMonitoredConnectionByID(badID)
 	if err == nil {
 		mc.Host = f.host
@@ -1845,7 +1856,10 @@ func TestSchedulerScheduleProbeForConnection_InitialDelayShutdown(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetConnection 2: %v", err)
 	}
-	_ = probe.EnsurePartition(context.Background(), conn2, time.Now())
+	if err := probe.EnsurePartition(context.Background(), conn2, time.Now()); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("EnsurePartition: %v", err)
+	}
 	if _, err := conn2.Exec(context.Background(), `
 		INSERT INTO metrics.pg_connectivity (connection_id, collected_at, response_time_ms)
 		VALUES ($1, NOW(), 1.0)
@@ -1974,7 +1988,10 @@ func TestSchedulerScheduleProbeForConnection_PastDue(t *testing.T) {
 		t.Fatalf("GetConnection 2: %v", err)
 	}
 	twoHoursAgo := time.Now().Add(-2 * time.Hour)
-	_ = probe.EnsurePartition(context.Background(), conn2, twoHoursAgo)
+	if err := probe.EnsurePartition(context.Background(), conn2, twoHoursAgo); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("EnsurePartition: %v", err)
+	}
 	if _, err := conn2.Exec(context.Background(), `
 		INSERT INTO metrics.pg_connectivity (connection_id, collected_at, response_time_ms)
 		VALUES ($1, $2, 1.0)

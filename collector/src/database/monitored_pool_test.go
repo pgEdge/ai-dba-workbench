@@ -138,7 +138,7 @@ func TestAcquireReleaseSlot(t *testing.T) {
 		t.Fatalf("first acquireSlot error = %v", err)
 	}
 
-	// Slot is full; with cancelled context we should get an error fast.
+	// Slot is full; with canceled context we should get an error fast.
 	ctx2, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
 	if err := m.acquireSlot(ctx2, 1); err == nil {
@@ -686,7 +686,9 @@ func TestPoolManager_GetConnection_Race(t *testing.T) {
 			}
 			defer m.ReturnConnection(mc.ID, c)
 			// Quick query to make sure the conn is usable.
-			_, _ = c.Exec(ctx, "SELECT 1")
+			if _, err := c.Exec(ctx, "SELECT 1"); err != nil {
+				t.Errorf("SELECT 1 on pooled conn: %v", err)
+			}
 		}()
 	}
 	wg.Wait()

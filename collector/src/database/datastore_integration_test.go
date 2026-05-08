@@ -113,7 +113,9 @@ func parseTestServerURL(t *testing.T) *integrationConfig {
 		}
 		if c := strings.LastIndex(hostpart, ":"); c != -1 {
 			cfg.host = hostpart[:c]
-			fmt.Sscanf(hostpart[c+1:], "%d", &cfg.port)
+			if _, err := fmt.Sscanf(hostpart[c+1:], "%d", &cfg.port); err != nil {
+				t.Fatalf("parse port from URL: %v", err)
+			}
 		} else {
 			cfg.host = hostpart
 		}
@@ -130,7 +132,9 @@ func parseTestServerURL(t *testing.T) *integrationConfig {
 		case "host":
 			cfg.host = kv[1]
 		case "port":
-			fmt.Sscanf(kv[1], "%d", &cfg.port)
+			if _, err := fmt.Sscanf(kv[1], "%d", &cfg.port); err != nil {
+				t.Fatalf("parse port from kv: %v", err)
+			}
 		case "user":
 			cfg.username = kv[1]
 		case "password":
@@ -192,20 +196,21 @@ func TestNewDatastore_BadConnect(t *testing.T) {
 
 func TestConnect_BadConnString(t *testing.T) {
 	// Force ParseConfig to fail by giving a host that yields an invalid
-	// port; we must use a path that fails very fast.
-	ds := &Datastore{
-		config: &integrationConfig{
-			// "host" containing invalid characters trips ParseConfig.
-			host: "::::not-a-valid-host::::",
-		},
+	// port; we must use a path that fails very fast. We populate every
+	// field up front (including a max-conns value above MaxInt32 to
+	// exercise the bounds clamp) so the only way connect() can fail is
+	// through ParseConfig rejecting the host.
+	cfg := &integrationConfig{
+		// "host" containing invalid characters trips ParseConfig.
+		host:           "::::not-a-valid-host::::",
+		database:       "x",
+		username:       "x",
+		port:           -1,
+		sslMode:        "disable",
+		maxConnections: int(int64(1<<31) + 100),
+		maxIdleSeconds: 1,
 	}
-	// Set max conns above MaxInt32 to also exercise the bounds clamp.
-	ds.config.(*integrationConfig).maxConnections = int(int64(1<<31) + 100)
-	ds.config.(*integrationConfig).maxIdleSeconds = 1
-	ds.config.(*integrationConfig).port = -1
-	ds.config.(*integrationConfig).database = "x"
-	ds.config.(*integrationConfig).username = "x"
-	ds.config.(*integrationConfig).sslMode = "disable"
+	ds := &Datastore{config: cfg}
 
 	if err := ds.connect(); err == nil {
 		t.Fatal("expected connect failure")
@@ -255,7 +260,7 @@ func TestGetConnectionWithContext(t *testing.T) {
 	}
 	defer ds.ReturnConnection(conn)
 
-	// Cancelled context should yield an error.
+	// Canceled context should yield an error.
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	cancel2()
 	if _, err := ds.GetConnectionWithContext(ctx2); err == nil {

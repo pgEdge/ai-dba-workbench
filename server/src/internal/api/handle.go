@@ -54,6 +54,12 @@ func notFound(sentinel error, message string) dbErrorMapping {
 // HTTP surface and log output stay byte-identical across the refactor.
 // Pass zero mappings to skip the 404 path entirely; in that case every
 // non-nil error becomes a 500.
+//
+// The helper emits a fixed log line shape, so call sites whose original
+// log line decorated the verb with formatted arguments (for example
+// `log.Printf("Failed to add server %d to cluster %d: %v", ...)`) must
+// keep the manual form; folding them into respondDBError would silently
+// drop the %d identifiers and weaken the log record.
 func respondDBError(w http.ResponseWriter, err error, internalVerb string, mappings ...dbErrorMapping) bool {
 	if err == nil {
 		return false

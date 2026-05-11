@@ -204,8 +204,8 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Parse request body
-	var req ConnectionCreateRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[ConnectionCreateRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -623,8 +623,8 @@ func (h *ConnectionHandler) getCurrentConnection(w http.ResponseWriter, r *http.
 
 // setCurrentConnection handles POST /api/v1/connections/current
 func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.Request, tokenHash string) {
-	var req CurrentConnectionRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[CurrentConnectionRequest](w, r)
+	if !ok {
 		return
 	}
 

@@ -408,8 +408,8 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req BlackoutCreateRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutCreateRequest](w, r)
+	if !ok {
 		return
 	}
 

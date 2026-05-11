@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -186,21 +187,19 @@ func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConn
 	return &conn, nil
 }
 
-// scanConnectionListItem scans a row into a ConnectionListItem struct.
-// The row must contain columns in this order:
-// id, name, description, host, port, database_name, is_monitored, is_shared,
-// owner_username, cluster_id, membership_source
-func scanConnectionListItem(scanner interface{ Scan(...any) error }) (*ConnectionListItem, error) {
-	var conn ConnectionListItem
-	err := scanner.Scan(
+// scanConnectionListItem scans a row into the supplied ConnectionListItem
+// in place. The caller owns the destination struct so the helper does
+// no heap allocation per row; this matters in the scanAll callback used
+// by GetAllConnections where the closure is invoked once per scanned
+// row. The row must contain columns in this order: id, name, description,
+// host, port, database_name, is_monitored, is_shared, owner_username,
+// cluster_id, membership_source.
+func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(...any) error }) error {
+	return scanner.Scan(
 		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port,
 		&conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername,
 		&conn.ClusterID, &conn.MembershipSource,
 	)
-	if err != nil {
-		return nil, err
-	}
-	return &conn, nil
 }
 
 // NewDatastore creates a new datastore connection
@@ -283,21 +282,15 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	if err != nil {
 		return nil, fmt.Errorf("failed to query connections: %w", err)
 	}
-	defer rows.Close()
-
-	var connections []ConnectionListItem
-	for rows.Next() {
-		conn, err := scanConnectionListItem(rows)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan connection: %w", err)
-		}
-		connections = append(connections, *conn)
+	connections, err := scanAll(rows, func(r pgx.Rows, conn *ConnectionListItem) error {
+		// Scan directly into the destination scanAll provides; this
+		// avoids the per-row *ConnectionListItem heap allocation the
+		// old (*ConnectionListItem, error) signature required.
+		return scanConnectionListItem(conn, r)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read connections: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating connections: %w", err)
-	}
-
 	return connections, nil
 }
 
@@ -647,21 +640,12 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 	if err != nil {
 		return nil, fmt.Errorf("failed to query databases: %w", err)
 	}
-	defer rows.Close()
-
-	var databases []DatabaseInfo
-	for rows.Next() {
-		var db DatabaseInfo
-		if err := rows.Scan(&db.Name, &db.Owner, &db.Encoding, &db.Size); err != nil {
-			return nil, fmt.Errorf("failed to scan database: %w", err)
-		}
-		databases = append(databases, db)
+	databases, err := scanAll(rows, func(r pgx.Rows, db *DatabaseInfo) error {
+		return r.Scan(&db.Name, &db.Owner, &db.Encoding, &db.Size)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read databases: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating databases: %w", err)
-	}
-
 	return databases, nil
 }
 

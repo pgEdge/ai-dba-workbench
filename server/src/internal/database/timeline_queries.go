@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // TimelineEvent represents a single event on the timeline
@@ -98,33 +100,26 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 	if err != nil {
 		return nil, fmt.Errorf("failed to query timeline events: %w", err)
 	}
-	defer rows.Close()
-
-	var events []TimelineEvent
-	for rows.Next() {
-		var event TimelineEvent
+	events, err := scanAll(rows, func(r pgx.Rows, event *TimelineEvent) error {
 		var details *string
-		err := rows.Scan(
+		if err := r.Scan(
 			&event.ID, &event.EventType, &event.ConnectionID, &event.ServerName,
 			&event.OccurredAt, &event.Severity, &event.Title, &event.Summary,
 			&details,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan timeline event: %w", err)
+		); err != nil {
+			return err
 		}
 		if details != nil {
 			event.Details = json.RawMessage(*details)
 		}
-		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read timeline events: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating timeline events: %w", err)
-	}
-
-	if events == nil {
-		events = []TimelineEvent{}
-	}
+	// scanAll guarantees a non-nil zero-length slice on empty result
+	// sets, so no manual normalization is needed here.
 
 	// Get total count (without limit)
 	countQuery := buildCountQuery(connCondition, timeCondition, "", filter)

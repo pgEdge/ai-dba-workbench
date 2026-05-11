@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Sentinel errors for cluster operations
@@ -109,22 +111,13 @@ func (d *Datastore) GetClusterGroups(ctx context.Context) ([]ClusterGroup, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query cluster groups: %w", err)
 	}
-	defer rows.Close()
-
-	var groups []ClusterGroup
-	for rows.Next() {
-		var g ClusterGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.OwnerUsername,
-			&g.OwnerToken, &g.IsShared, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan cluster group: %w", err)
-		}
-		groups = append(groups, g)
+	groups, err := scanAll(rows, func(r pgx.Rows, g *ClusterGroup) error {
+		return r.Scan(&g.ID, &g.Name, &g.Description, &g.OwnerUsername,
+			&g.OwnerToken, &g.IsShared, &g.CreatedAt, &g.UpdatedAt)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cluster groups: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating cluster groups: %w", err)
-	}
-
 	return groups, nil
 }
 
@@ -242,21 +235,12 @@ func (d *Datastore) GetClustersInGroup(ctx context.Context, groupID int) ([]Clus
 	if err != nil {
 		return nil, fmt.Errorf("failed to query clusters: %w", err)
 	}
-	defer rows.Close()
-
-	var clusters []Cluster
-	for rows.Next() {
-		var c Cluster
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan cluster: %w", err)
-		}
-		clusters = append(clusters, c)
+	clusters, err := scanAll(rows, func(r pgx.Rows, c *Cluster) error {
+		return r.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read clusters: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating clusters: %w", err)
-	}
-
 	return clusters, nil
 }
 
@@ -877,22 +861,22 @@ func (d *Datastore) GetServersInCluster(ctx context.Context, clusterID int) ([]S
 	if err != nil {
 		return nil, fmt.Errorf("failed to query servers: %w", err)
 	}
-	defer rows.Close()
-
+	// Capture "now" once outside the closure so every row in the
+	// batch is judged against the same reference instant. role is
+	// scanned through sql.NullString because the DB column is
+	// nullable; the status calculation classifies a server as
+	// online/warning/offline based on how stale its last metrics
+	// sample is relative to "now".
 	now := time.Now()
-	var servers []ServerInfo
-	for rows.Next() {
-		var s ServerInfo
+	servers, err := scanAll(rows, func(r pgx.Rows, s *ServerInfo) error {
 		var lastCollected time.Time
 		var role sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &role, &s.Database, &s.MembershipSource, &lastCollected); err != nil {
-			return nil, fmt.Errorf("failed to scan server: %w", err)
+		if err := r.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &role, &s.Database, &s.MembershipSource, &lastCollected); err != nil {
+			return err
 		}
-
 		if role.Valid {
 			s.Role = &role.String
 		}
-
 		// Determine status based on last collected metrics
 		// Online: metrics within last 2 minutes
 		// Warning: metrics 2-5 minutes old
@@ -906,14 +890,11 @@ func (d *Datastore) GetServersInCluster(ctx context.Context, clusterID int) ([]S
 		default:
 			s.Status = "offline"
 		}
-
-		servers = append(servers, s)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read servers: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating servers: %w", err)
-	}
-
 	return servers, nil
 }
 
@@ -1019,25 +1000,23 @@ func (d *Datastore) getUngroupedServersInternal(ctx context.Context) ([]ServerIn
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ungrouped servers: %w", err)
 	}
-	defer rows.Close()
-
-	var servers []ServerInfo
-	for rows.Next() {
-		var s ServerInfo
+	// The connection_error column is nullable in the DB, so we scan it
+	// into a sql.NullString and map it to the *string field only when
+	// the value is non-null; otherwise the field stays nil to signal
+	// "no recorded error" rather than "empty error string".
+	servers, err := scanAll(rows, func(r pgx.Rows, s *ServerInfo) error {
 		var connErr sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &s.Role, &s.Status, &connErr); err != nil {
-			return nil, fmt.Errorf("failed to scan server: %w", err)
+		if err := r.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &s.Role, &s.Status, &connErr); err != nil {
+			return err
 		}
 		if connErr.Valid {
 			s.ConnectionError = &connErr.String
 		}
-		servers = append(servers, s)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ungrouped servers: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating ungrouped servers: %w", err)
-	}
-
 	return servers, nil
 }
 
@@ -1054,21 +1033,12 @@ func (d *Datastore) getClusterGroupsInternal(ctx context.Context) ([]ClusterGrou
 	if err != nil {
 		return nil, fmt.Errorf("failed to query cluster groups: %w", err)
 	}
-	defer rows.Close()
-
-	var groups []ClusterGroup
-	for rows.Next() {
-		var g ClusterGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan cluster group: %w", err)
-		}
-		groups = append(groups, g)
+	groups, err := scanAll(rows, func(r pgx.Rows, g *ClusterGroup) error {
+		return r.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cluster groups: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating cluster groups: %w", err)
-	}
-
 	return groups, nil
 }
 
@@ -1085,21 +1055,12 @@ func (d *Datastore) getClustersInGroupInternal(ctx context.Context, groupID int)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query clusters: %w", err)
 	}
-	defer rows.Close()
-
-	var clusters []Cluster
-	for rows.Next() {
-		var c Cluster
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan cluster: %w", err)
-		}
-		clusters = append(clusters, c)
+	clusters, err := scanAll(rows, func(r pgx.Rows, c *Cluster) error {
+		return r.Scan(&c.ID, &c.GroupID, &c.Name, &c.Description, &c.ReplicationType, &c.AutoClusterKey, &c.CreatedAt, &c.UpdatedAt)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read clusters: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating clusters: %w", err)
-	}
-
 	return clusters, nil
 }
 
@@ -1132,31 +1093,27 @@ func (d *Datastore) getServersInClusterInternal(ctx context.Context, clusterID i
 	if err != nil {
 		return nil, fmt.Errorf("failed to query servers: %w", err)
 	}
-	defer rows.Close()
-
-	var servers []ServerInfo
-	for rows.Next() {
-		var s ServerInfo
+	// role and connection_error are both nullable columns. We scan
+	// them into sql.NullString locals and only populate the *string
+	// fields when the corresponding value is non-null so callers can
+	// distinguish "missing" from "empty string".
+	servers, err := scanAll(rows, func(r pgx.Rows, s *ServerInfo) error {
 		var role sql.NullString
 		var connErr sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &role, &s.Database, &s.Status, &connErr); err != nil {
-			return nil, fmt.Errorf("failed to scan server: %w", err)
+		if err := r.Scan(&s.ID, &s.Name, &s.Host, &s.Port, &role, &s.Database, &s.Status, &connErr); err != nil {
+			return err
 		}
-
 		if role.Valid {
 			s.Role = &role.String
 		}
 		if connErr.Valid {
 			s.ConnectionError = &connErr.String
 		}
-
-		servers = append(servers, s)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read servers: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating servers: %w", err)
-	}
-
 	return servers, nil
 }
 

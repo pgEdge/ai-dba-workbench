@@ -156,26 +156,17 @@ func (d *Datastore) GetClusterRelationships(ctx context.Context, clusterID int) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to query cluster relationships: %w", err)
 	}
-	defer rows.Close()
-
-	var relationships []NodeRelationship
-	for rows.Next() {
-		var rel NodeRelationship
-		if err := rows.Scan(
+	relationships, err := scanAll(rows, func(r pgx.Rows, rel *NodeRelationship) error {
+		return r.Scan(
 			&rel.ID, &rel.ClusterID,
 			&rel.SourceConnectionID, &rel.TargetConnectionID,
 			&rel.SourceName, &rel.TargetName,
 			&rel.RelationshipType, &rel.IsAutoDetected,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan relationship: %w", err)
-		}
-		relationships = append(relationships, rel)
+		)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cluster relationships: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating relationships: %w", err)
-	}
-
 	return relationships, nil
 }
 

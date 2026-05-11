@@ -8,49 +8,47 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { apiGet, apiPut, apiDelete } from '../utils/apiClient';
+/**
+ * AlertOverridesPanel renders and manages per-scope overrides for
+ * alert rules. The cross-cutting list, fetch, banner, reset and
+ * scaffolding behaviour is delegated to ScopedOverridesPanel; this
+ * file owns only the alert-specific row projection (with category
+ * grouping) and the alert-specific edit dialog.
+ */
+
+import type React from 'react';
+import { useState } from 'react';
 import {
     Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    Paper,
     Button,
-    IconButton,
-    Switch,
-    TextField,
-    MenuItem,
     Chip,
     CircularProgress,
-    Alert,
     Dialog,
-    DialogTitle,
-    DialogContent,
     DialogActions,
-    Tooltip,
+    DialogContent,
+    DialogTitle,
+    MenuItem,
+    Switch,
+    TableCell,
+    TextField,
+    Typography,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import { apiPut } from '../utils/apiClient';
 import {
-    Edit as EditIcon,
-    RestartAlt as ResetIcon,
-} from '@mui/icons-material';
-import { SELECT_FIELD_SX, SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
+    SELECT_FIELD_DEFAULT_BG_SX,
+    SELECT_FIELD_SX,
+} from './shared/formStyles';
 import {
-    tableHeaderCellSx,
-    dialogTitleSx,
     dialogActionsSx,
-    loadingContainerSx,
-    emptyRowSx,
-    emptyRowTextSx,
-    categoryLabelSx,
+    dialogTitleSx,
     getContainedButtonSx,
-    getTableContainerSx,
+    inheritedCellSx,
 } from './AdminPanel/styles';
+import ScopedOverridesPanel, {
+    type ScopedOverridesColumn,
+    type ScopedOverridesEditHelpers,
+} from './shared/ScopedOverridesPanel';
 
 const API_BASE_URL = '/api/v1';
 
@@ -80,304 +78,170 @@ interface AlertOverridesPanelProps {
     scopeId: number;
 }
 
-const severityColor = (severity: string): 'default' | 'info' | 'warning' | 'error' => {
+/** Map a severity string to the matching MUI Chip color variant. */
+const severityColor = (
+    severity: string,
+): 'default' | 'info' | 'warning' | 'error' => {
     switch (severity) {
-        case 'critical': return 'error';
-        case 'warning': return 'warning';
-        case 'info': return 'info';
-        default: return 'default';
+        case 'critical':
+            return 'error';
+        case 'warning':
+            return 'warning';
+        case 'info':
+            return 'info';
+        default:
+            return 'default';
     }
 };
 
-const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeId }) => {
+/** Column definitions for the alert overrides table. */
+const ALERT_COLUMNS: ScopedOverridesColumn[] = [
+    { label: 'Name' },
+    { label: 'Metric' },
+    { label: 'Condition' },
+    { label: 'Severity' },
+    { label: 'Enabled' },
+];
+
+/**
+ * Resolve the effective values for an alert rule row. Mirrors the
+ * server-side resolution: explicit override fields win, anything
+ * left null falls through to the corresponding default.
+ */
+const getDisplayValues = (item: AlertOverride) => {
+    if (item.has_override) {
+        return {
+            operator: item.override_operator ?? item.default_operator,
+            threshold: item.override_threshold ?? item.default_threshold,
+            severity: item.override_severity ?? item.default_severity,
+            enabled: item.override_enabled ?? item.default_enabled,
+        };
+    }
+    return {
+        operator: item.default_operator,
+        threshold: item.default_threshold,
+        severity: item.default_severity,
+        enabled: item.default_enabled,
+    };
+};
+
+const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({
+    scope,
+    scopeId,
+}) => {
     const theme = useTheme();
 
-    const [overrides, setOverrides] = useState<AlertOverride[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
-
-    // Edit override dialog
+    // The shared scaffold owns the list, alerts, and reset action;
+    // the dialog and its form state remain local because the field
+    // set is alert-specific.
     const [editOpen, setEditOpen] = useState(false);
-    const [editOverride, setEditOverride] = useState<AlertOverride | null>(null);
+    const [editOverride, setEditOverride] = useState<AlertOverride | null>(
+        null,
+    );
     const [editEnabled, setEditEnabled] = useState(false);
     const [editOperator, setEditOperator] = useState('');
     const [editThreshold, setEditThreshold] = useState('');
     const [editSeverity, setEditSeverity] = useState('');
     const [saving, setSaving] = useState(false);
 
-    const fetchOverrides = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data = await apiGet<AlertOverride[]>(
-                `${API_BASE_URL}/alert-overrides/${scope}/${scopeId}`
-            );
-            setOverrides(data || []);
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [scope, scopeId]);
-
-    useEffect(() => {
-        void fetchOverrides();
-    }, [fetchOverrides]);
-
-    const handleEditOverride = (override: AlertOverride, e: React.MouseEvent) => {
-        e.stopPropagation();
+    /**
+     * Pre-populate the edit dialog with the row's effective values
+     * so the user starts from "current state" rather than blanks.
+     * Delegates the override-vs-default resolution to the shared
+     * `getDisplayValues` helper so the dialog and the table row stay
+     * in lockstep.
+     */
+    const handleEditRequested = (override: AlertOverride) => {
+        const display = getDisplayValues(override);
         setEditOverride(override);
-        setEditEnabled(
-            override.has_override
-                ? override.override_enabled ?? override.default_enabled
-                : override.default_enabled
-        );
-        setEditOperator(
-            override.has_override
-                ? override.override_operator ?? override.default_operator
-                : override.default_operator
-        );
-        setEditThreshold(
-            String(
-                override.has_override
-                    ? override.override_threshold ?? override.default_threshold
-                    : override.default_threshold
-            )
-        );
-        setEditSeverity(
-            override.has_override
-                ? override.override_severity ?? override.default_severity
-                : override.default_severity
-        );
-        setError(null);
+        setEditEnabled(display.enabled);
+        setEditOperator(display.operator);
+        setEditThreshold(String(display.threshold));
+        setEditSeverity(display.severity);
         setEditOpen(true);
     };
 
-    const handleSaveOverride = async () => {
-        if (!editOverride) {
-            return;
-        }
-        const thresholdNum = parseFloat(editThreshold);
-        if (Number.isNaN(thresholdNum)) {
-            setError('Threshold must be a valid number.');
-            return;
-        }
-        try {
-            setSaving(true);
-            setError(null);
-            await apiPut(
-                `${API_BASE_URL}/alert-overrides/${scope}/${scopeId}/${editOverride.rule_id}`,
-                {
-                    operator: editOperator,
-                    threshold: thresholdNum,
-                    severity: editSeverity,
-                    enabled: editEnabled,
-                }
-            );
-            setEditOpen(false);
-            setSuccess(`Override for "${editOverride.name}" saved successfully.`);
-            fetchOverrides();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleResetOverride = async (override: AlertOverride, e: React.MouseEvent) => {
-        e.stopPropagation();
-        try {
-            setError(null);
-            await apiDelete(
-                `${API_BASE_URL}/alert-overrides/${scope}/${scopeId}/${override.rule_id}`
-            );
-            setSuccess(`Override for "${override.name}" reset to default.`);
-            fetchOverrides();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        }
-    };
-
-    if (loading) {
+    const renderRowCells = (item: AlertOverride) => {
+        const display = getDisplayValues(item);
+        const cellSx = item.has_override ? {} : inheritedCellSx;
         return (
-            <Box sx={loadingContainerSx}>
-                <CircularProgress aria-label="Loading alert overrides" />
-            </Box>
+            <>
+                <TableCell sx={cellSx}>{item.name}</TableCell>
+                <TableCell sx={cellSx}>{item.metric_name}</TableCell>
+                <TableCell sx={cellSx}>
+                    {display.operator} {display.threshold}
+                    {item.metric_unit ? ` ${item.metric_unit}` : ''}
+                </TableCell>
+                <TableCell>
+                    <Chip
+                        label={display.severity}
+                        size="small"
+                        color={severityColor(display.severity)}
+                        sx={!item.has_override ? { opacity: 0.6 } : undefined}
+                    />
+                </TableCell>
+                <TableCell>
+                    <Switch
+                        checked={display.enabled}
+                        size="small"
+                        disabled
+                        sx={!item.has_override ? { opacity: 0.6 } : undefined}
+                    />
+                </TableCell>
+            </>
         );
-    }
+    };
 
     const containedButtonSx = getContainedButtonSx(theme);
-    const tableContainerSx = getTableContainerSx(theme);
 
-    // Group rules by category
-    const categories = Array.from(new Set(overrides.map((r) => r.category))).sort();
-
-    /** Return the effective display values for a rule row. */
-    const getDisplayValues = (item: AlertOverride) => {
-        if (item.has_override) {
-            return {
-                operator: item.override_operator ?? item.default_operator,
-                threshold: item.override_threshold ?? item.default_threshold,
-                severity: item.override_severity ?? item.default_severity,
-                enabled: item.override_enabled ?? item.default_enabled,
-            };
-        }
-        return {
-            operator: item.default_operator,
-            threshold: item.default_threshold,
-            severity: item.default_severity,
-            enabled: item.default_enabled,
+    /**
+     * Render the alert-specific edit dialog. Both validation
+     * failures and server errors flow through helpers.onSaveError
+     * so the user sees a single error banner above the table.
+     */
+    const renderEditDialog = (helpers: ScopedOverridesEditHelpers) => {
+        const handleSaveOverride = async () => {
+            if (!editOverride) {
+                return;
+            }
+            const thresholdNum = parseFloat(editThreshold);
+            if (Number.isNaN(thresholdNum)) {
+                helpers.onSaveError(
+                    new Error('Threshold must be a valid number.'),
+                );
+                return;
+            }
+            try {
+                setSaving(true);
+                await apiPut(
+                    `${API_BASE_URL}/alert-overrides/${scope}/${String(scopeId)}/${String(editOverride.rule_id)}`,
+                    {
+                        operator: editOperator,
+                        threshold: thresholdNum,
+                        severity: editSeverity,
+                        enabled: editEnabled,
+                    },
+                );
+                setEditOpen(false);
+                helpers.onSaveSuccess(
+                    `Override for "${editOverride.name}" saved successfully.`,
+                );
+                helpers.refresh();
+            } catch (err: unknown) {
+                helpers.onSaveError(err);
+            } finally {
+                setSaving(false);
+            }
         };
-    };
 
-    /** Style applied to cells that display inherited default values. */
-    const inheritedCellSx = {
-        fontStyle: 'italic',
-        opacity: 0.6,
-    };
-
-    return (
-        <Box>
-            {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
-                    {error}
-                </Alert>
-            )}
-            {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
-                    {success}
-                </Alert>
-            )}
-
-            <TableContainer
-                component={Paper}
-                elevation={0}
-                sx={tableContainerSx}
-            >
-                <Table>
-                    <TableHead>
-                        <TableRow>
-                            <TableCell sx={tableHeaderCellSx}>Name</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Metric</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Condition</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Severity</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
-                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
-                        </TableRow>
-                    </TableHead>
-                    <TableBody>
-                        {overrides.length > 0 ? (
-                            categories.map((category) => (
-                                <React.Fragment key={category}>
-                                    <TableRow>
-                                        <TableCell
-                                            colSpan={6}
-                                            sx={{
-                                                ...categoryLabelSx,
-                                                bgcolor: theme.palette.action.hover,
-                                                py: 0.75,
-                                            }}
-                                        >
-                                            {category}
-                                        </TableCell>
-                                    </TableRow>
-                                    {overrides
-                                        .filter((r) => r.category === category)
-                                        .map((item) => {
-                                            const display = getDisplayValues(item);
-                                            const cellSx = item.has_override ? {} : inheritedCellSx;
-
-                                            return (
-                                                <TableRow
-                                                    key={item.rule_id}
-                                                    hover
-                                                >
-                                                    <TableCell sx={cellSx}>{item.name}</TableCell>
-                                                    <TableCell sx={cellSx}>{item.metric_name}</TableCell>
-                                                    <TableCell sx={cellSx}>
-                                                        {display.operator} {display.threshold}
-                                                        {item.metric_unit ? ` ${item.metric_unit}` : ''}
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <Chip
-                                                            label={display.severity}
-                                                            size="small"
-                                                            color={severityColor(display.severity)}
-                                                            sx={
-                                                                !item.has_override
-                                                                    ? { opacity: 0.6 }
-                                                                    : undefined
-                                                            }
-                                                        />
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <Switch
-                                                            checked={display.enabled}
-                                                            size="small"
-                                                            disabled
-                                                            sx={
-                                                                !item.has_override
-                                                                    ? { opacity: 0.6 }
-                                                                    : undefined
-                                                            }
-                                                        />
-                                                    </TableCell>
-                                                    <TableCell align="right">
-                                                        <Tooltip title="Edit override">
-                                                            <IconButton
-                                                                size="small"
-                                                                onClick={(e) => { handleEditOverride(item, e); }}
-                                                                aria-label="edit override"
-                                                            >
-                                                                <EditIcon fontSize="small" />
-                                                            </IconButton>
-                                                        </Tooltip>
-                                                        {item.has_override && (
-                                                            <Tooltip title="Reset to default">
-                                                                <IconButton
-                                                                    size="small"
-                                                                    onClick={(e) => handleResetOverride(item, e)}
-                                                                    aria-label="reset override to default"
-                                                                >
-                                                                    <ResetIcon fontSize="small" />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        )}
-                                                    </TableCell>
-                                                </TableRow>
-                                            );
-                                        })}
-                                </React.Fragment>
-                            ))
-                        ) : (
-                            <TableRow>
-                                <TableCell colSpan={6} align="center" sx={emptyRowSx}>
-                                    <Typography color="text.secondary" sx={emptyRowTextSx}>
-                                        No alert rules found.
-                                    </Typography>
-                                </TableCell>
-                            </TableRow>
-                        )}
-                    </TableBody>
-                </Table>
-            </TableContainer>
-
-            {/* Edit Override Dialog */}
+        return (
             <Dialog
                 open={editOpen}
-                onClose={() => void (!saving && setEditOpen(false))}
+                onClose={() => {
+                    if (!saving) {
+                        setEditOpen(false);
+                    }
+                }}
                 maxWidth="xs"
                 fullWidth
             >
@@ -385,11 +249,20 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                     Edit override: {editOverride?.name}
                 </DialogTitle>
                 <DialogContent>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, mb: 2 }}>
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            mt: 1,
+                            mb: 2,
+                        }}
+                    >
                         <Typography sx={{ flex: 1 }}>Enabled</Typography>
                         <Switch
                             checked={editEnabled}
-                            onChange={(e) => { setEditEnabled(e.target.checked); }}
+                            onChange={(e) => {
+                                setEditEnabled(e.target.checked);
+                            }}
                             disabled={saving}
                         />
                     </Box>
@@ -398,14 +271,18 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         label="Operator"
                         value={editOperator}
-                        onChange={(e) => { setEditOperator(e.target.value); }}
+                        onChange={(e) => {
+                            setEditOperator(e.target.value);
+                        }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_DEFAULT_BG_SX}
                     >
                         {OPERATORS.map((op) => (
-                            <MenuItem key={op} value={op}>{op}</MenuItem>
+                            <MenuItem key={op} value={op}>
+                                {op}
+                            </MenuItem>
                         ))}
                     </TextField>
                     <TextField
@@ -414,7 +291,9 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         margin="dense"
                         value={editThreshold}
-                        onChange={(e) => { setEditThreshold(e.target.value); }}
+                        onChange={(e) => {
+                            setEditThreshold(e.target.value);
+                        }}
                         disabled={saving}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
@@ -424,32 +303,69 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         label="Severity"
                         value={editSeverity}
-                        onChange={(e) => { setEditSeverity(e.target.value); }}
+                        onChange={(e) => {
+                            setEditSeverity(e.target.value);
+                        }}
                         disabled={saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_DEFAULT_BG_SX}
                     >
                         {SEVERITIES.map((s) => (
-                            <MenuItem key={s} value={s}>{s}</MenuItem>
+                            <MenuItem key={s} value={s}>
+                                {s}
+                            </MenuItem>
                         ))}
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => { setEditOpen(false); }} disabled={saving}>
+                    <Button
+                        onClick={() => {
+                            setEditOpen(false);
+                        }}
+                        disabled={saving}
+                    >
                         Cancel
                     </Button>
                     <Button
-                        onClick={handleSaveOverride}
+                        onClick={() => {
+                            void handleSaveOverride();
+                        }}
                         variant="contained"
                         disabled={saving}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
+                        {saving ? (
+                            <CircularProgress
+                                size={20}
+                                color="inherit"
+                                aria-label="Saving"
+                            />
+                        ) : (
+                            'Save'
+                        )}
                     </Button>
                 </DialogActions>
             </Dialog>
-        </Box>
+        );
+    };
+
+    return (
+        <ScopedOverridesPanel<AlertOverride>
+            scope={scope}
+            scopeId={scopeId}
+            apiBasePath={`${API_BASE_URL}/alert-overrides`}
+            itemKey={(item) => item.rule_id}
+            itemDisplayName={(item) => item.name}
+            hasOverride={(item) => item.has_override}
+            columns={ALERT_COLUMNS}
+            renderRowCells={renderRowCells}
+            groupBy={(item) => item.category}
+            emptyMessage="No alert rules found."
+            loadingLabel="Loading alert overrides"
+            onEditRequested={handleEditRequested}
+            renderEditDialog={renderEditDialog}
+        />
     );
 };
 

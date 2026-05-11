@@ -8,47 +8,41 @@
  *-------------------------------------------------------------------------
  */
 
+/**
+ * ProbeOverridesPanel renders and manages per-scope overrides for
+ * collector probes. The cross-cutting list, fetch, banner, reset and
+ * scaffolding behaviour is delegated to ScopedOverridesPanel; this
+ * file owns only the probe-specific row projection and edit dialog.
+ */
+
 import type React from 'react';
-import { useState, useEffect, useCallback } from 'react';
-import { apiGet, apiPut, apiDelete } from '../utils/apiClient';
+import { useState } from 'react';
 import {
     Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    Paper,
     Button,
-    IconButton,
-    Switch,
-    TextField,
     CircularProgress,
-    Alert,
     Dialog,
-    DialogTitle,
-    DialogContent,
     DialogActions,
-    Tooltip,
+    DialogContent,
+    DialogTitle,
+    Switch,
+    TableCell,
+    TextField,
+    Typography,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import {
-    Edit as EditIcon,
-    RestartAlt as ResetIcon,
-} from '@mui/icons-material';
+import { apiPut } from '../utils/apiClient';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 import {
-    tableHeaderCellSx,
-    dialogTitleSx,
     dialogActionsSx,
-    loadingContainerSx,
-    emptyRowSx,
-    emptyRowTextSx,
+    dialogTitleSx,
     getContainedButtonSx,
-    getTableContainerSx,
+    inheritedCellSx,
 } from './AdminPanel/styles';
+import ScopedOverridesPanel, {
+    type ScopedOverridesColumn,
+    type ScopedOverridesEditHelpers,
+} from './shared/ScopedOverridesPanel';
 
 const API_BASE_URL = '/api/v1';
 
@@ -69,15 +63,46 @@ interface ProbeOverridesPanelProps {
     scopeId: number;
 }
 
-const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeId }) => {
+/** Column definitions for the probe overrides table. */
+const PROBE_COLUMNS: ScopedOverridesColumn[] = [
+    { label: 'Name' },
+    { label: 'Description' },
+    { label: 'Enabled' },
+    { label: 'Interval' },
+    { label: 'Retention' },
+];
+
+/**
+ * Resolve the effective values for a probe row. When no override is
+ * present the defaults flow through unchanged; when an override is
+ * present any null fields fall back to the corresponding default.
+ */
+const getDisplayValues = (item: ProbeOverride) => {
+    if (item.has_override) {
+        return {
+            enabled: item.override_enabled ?? item.default_enabled,
+            interval:
+                item.override_interval_seconds ?? item.default_interval_seconds,
+            retention:
+                item.override_retention_days ?? item.default_retention_days,
+        };
+    }
+    return {
+        enabled: item.default_enabled,
+        interval: item.default_interval_seconds,
+        retention: item.default_retention_days,
+    };
+};
+
+const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({
+    scope,
+    scopeId,
+}) => {
     const theme = useTheme();
 
-    const [overrides, setOverrides] = useState<ProbeOverride[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
-
-    // Edit override dialog
+    // The shared scaffold owns the list, alerts, and reset action;
+    // the dialog and its form state remain local because the field
+    // set is probe-specific.
     const [editOpen, setEditOpen] = useState(false);
     const [editOverride, setEditOverride] = useState<ProbeOverride | null>(null);
     const [editEnabled, setEditEnabled] = useState(false);
@@ -85,231 +110,128 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
     const [editRetention, setEditRetention] = useState('');
     const [saving, setSaving] = useState(false);
 
-    const fetchOverrides = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data = await apiGet<ProbeOverride[]>(
-                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}`
-            );
-            setOverrides(data || []);
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [scope, scopeId]);
-
-    useEffect(() => {
-        fetchOverrides();
-    }, [fetchOverrides]);
-
-    const handleEditOverride = (override: ProbeOverride, e: React.MouseEvent) => {
-        e.stopPropagation();
+    /**
+     * Pre-populate the edit dialog with the row's effective values
+     * so the user starts from "current state" rather than blanks.
+     */
+    const handleEditRequested = (override: ProbeOverride) => {
         const display = getDisplayValues(override);
         setEditOverride(override);
         setEditEnabled(display.enabled);
         setEditInterval(String(display.interval));
         setEditRetention(String(display.retention));
-        setError(null);
         setEditOpen(true);
     };
 
-    const handleSaveOverride = async () => {
-        if (!editOverride) {
-            return;
-        }
-        const intervalNum = parseInt(editInterval, 10);
-        if (Number.isNaN(intervalNum) || intervalNum < 1) {
-            setError('Collection interval must be a positive integer.');
-            return;
-        }
-        const retentionNum = parseInt(editRetention, 10);
-        if (Number.isNaN(retentionNum) || retentionNum < 1) {
-            setError('Retention days must be a positive integer.');
-            return;
-        }
-        try {
-            setSaving(true);
-            setError(null);
-            await apiPut(
-                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}/${editOverride.name}`,
-                {
-                    is_enabled: editEnabled,
-                    collection_interval_seconds: intervalNum,
-                    retention_days: retentionNum,
-                }
-            );
-            setEditOpen(false);
-            setSuccess(`Override for "${editOverride.name}" saved successfully.`);
-            fetchOverrides();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleResetOverride = async (override: ProbeOverride, e: React.MouseEvent) => {
-        e.stopPropagation();
-        try {
-            setError(null);
-            await apiDelete(
-                `${API_BASE_URL}/probe-overrides/${scope}/${scopeId}/${override.name}`
-            );
-            setSuccess(`Override for "${override.name}" reset to default.`);
-            fetchOverrides();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        }
-    };
-
-    if (loading) {
+    const renderRowCells = (item: ProbeOverride) => {
+        const display = getDisplayValues(item);
+        const cellSx = item.has_override ? {} : inheritedCellSx;
         return (
-            <Box sx={loadingContainerSx}>
-                <CircularProgress aria-label="Loading probe overrides" />
-            </Box>
+            <>
+                <TableCell sx={cellSx}>{item.name}</TableCell>
+                <TableCell sx={cellSx}>{item.description}</TableCell>
+                <TableCell>
+                    <Switch
+                        checked={display.enabled}
+                        size="small"
+                        disabled
+                        sx={!item.has_override ? { opacity: 0.6 } : undefined}
+                    />
+                </TableCell>
+                <TableCell sx={cellSx}>{display.interval}s</TableCell>
+                <TableCell sx={cellSx}>{display.retention} days</TableCell>
+            </>
         );
-    }
+    };
 
     const containedButtonSx = getContainedButtonSx(theme);
-    const tableContainerSx = getTableContainerSx(theme);
 
-    /** Return the effective display values for a probe row. */
-    const getDisplayValues = (item: ProbeOverride) => {
-        if (item.has_override) {
-            return {
-                enabled: item.override_enabled ?? item.default_enabled,
-                interval: item.override_interval_seconds ?? item.default_interval_seconds,
-                retention: item.override_retention_days ?? item.default_retention_days,
-            };
-        }
-        return {
-            enabled: item.default_enabled,
-            interval: item.default_interval_seconds,
-            retention: item.default_retention_days,
+    /**
+     * Render the probe-specific edit dialog. Saving wires success
+     * and failure outcomes back through the helpers from the shared
+     * panel so the user sees a single error/success banner row.
+     */
+    const renderEditDialog = (helpers: ScopedOverridesEditHelpers) => {
+        const handleSaveOverride = async () => {
+            if (!editOverride) {
+                return;
+            }
+            // Trim first so we can distinguish "user left the field
+            // empty" from "user typed an invalid number". Without the
+            // pre-trim, Number('   ') returns 0 and the user would get
+            // the misleading "must be a positive integer" message for
+            // what is really a missing value.
+            const intervalTrimmed = editInterval.trim();
+            if (intervalTrimmed === '') {
+                helpers.onSaveError(
+                    new Error('Collection interval is required.'),
+                );
+                return;
+            }
+            // parseInt would silently accept fractional or scientific
+            // notation inputs (for example "1.5" -> 1, "1e2" -> 100),
+            // so the saved value could differ from what the user typed.
+            // Number() + Number.isInteger() rejects anything that is
+            // not a finite integer outright.
+            const intervalNum = Number(intervalTrimmed);
+            if (!Number.isInteger(intervalNum) || intervalNum < 1) {
+                helpers.onSaveError(
+                    new Error('Collection interval must be a positive integer.'),
+                );
+                return;
+            }
+            const retentionTrimmed = editRetention.trim();
+            if (retentionTrimmed === '') {
+                helpers.onSaveError(
+                    new Error('Retention days is required.'),
+                );
+                return;
+            }
+            const retentionNum = Number(retentionTrimmed);
+            if (!Number.isInteger(retentionNum) || retentionNum < 1) {
+                helpers.onSaveError(
+                    new Error('Retention days must be a positive integer.'),
+                );
+                return;
+            }
+            try {
+                setSaving(true);
+                // Encode the probe name in case it ever contains URL
+                // path characters (for example "/", "+", "#", or
+                // whitespace). Today's probe names look like safe
+                // identifiers, but encoding is a no-op on those and
+                // future-proofs the call against breakage.
+                const encodedName = encodeURIComponent(editOverride.name);
+                await apiPut(
+                    `${API_BASE_URL}/probe-overrides/${scope}/${String(scopeId)}/${encodedName}`,
+                    {
+                        is_enabled: editEnabled,
+                        collection_interval_seconds: intervalNum,
+                        retention_days: retentionNum,
+                    },
+                );
+                setEditOpen(false);
+                helpers.onSaveSuccess(
+                    `Override for "${editOverride.name}" saved successfully.`,
+                );
+                helpers.refresh();
+            } catch (err: unknown) {
+                // Surface the failure on the shared banner so the
+                // user sees it even after the dialog closes.
+                helpers.onSaveError(err);
+            } finally {
+                setSaving(false);
+            }
         };
-    };
 
-    /** Style applied to cells that display inherited default values. */
-    const inheritedCellSx = {
-        fontStyle: 'italic',
-        opacity: 0.6,
-    };
-
-    return (
-        <Box>
-            {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
-                    {error}
-                </Alert>
-            )}
-            {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
-                    {success}
-                </Alert>
-            )}
-
-            <TableContainer
-                component={Paper}
-                elevation={0}
-                sx={tableContainerSx}
-            >
-                <Table>
-                    <TableHead>
-                        <TableRow>
-                            <TableCell sx={tableHeaderCellSx}>Name</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Description</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Interval</TableCell>
-                            <TableCell sx={tableHeaderCellSx}>Retention</TableCell>
-                            <TableCell sx={tableHeaderCellSx} align="right">Actions</TableCell>
-                        </TableRow>
-                    </TableHead>
-                    <TableBody>
-                        {overrides.length > 0 ? (
-                            overrides.map((item) => {
-                                const display = getDisplayValues(item);
-                                const cellSx = item.has_override ? {} : inheritedCellSx;
-
-                                return (
-                                    <TableRow
-                                        key={item.name}
-                                        hover
-                                    >
-                                        <TableCell sx={cellSx}>{item.name}</TableCell>
-                                        <TableCell sx={cellSx}>{item.description}</TableCell>
-                                        <TableCell>
-                                            <Switch
-                                                checked={display.enabled}
-                                                size="small"
-                                                disabled
-                                                sx={
-                                                    !item.has_override
-                                                        ? { opacity: 0.6 }
-                                                        : undefined
-                                                }
-                                            />
-                                        </TableCell>
-                                        <TableCell sx={cellSx}>
-                                            {display.interval}s
-                                        </TableCell>
-                                        <TableCell sx={cellSx}>
-                                            {display.retention} days
-                                        </TableCell>
-                                        <TableCell align="right">
-                                            <Tooltip title="Edit override">
-                                                <IconButton
-                                                    size="small"
-                                                    onClick={(e) => { handleEditOverride(item, e); }}
-                                                    aria-label="edit override"
-                                                >
-                                                    <EditIcon fontSize="small" />
-                                                </IconButton>
-                                            </Tooltip>
-                                            {item.has_override && (
-                                                <Tooltip title="Reset to default">
-                                                    <IconButton
-                                                        size="small"
-                                                        onClick={(e) => handleResetOverride(item, e)}
-                                                        aria-label="reset override to default"
-                                                    >
-                                                        <ResetIcon fontSize="small" />
-                                                    </IconButton>
-                                                </Tooltip>
-                                            )}
-                                        </TableCell>
-                                    </TableRow>
-                                );
-                            })
-                        ) : (
-                            <TableRow>
-                                <TableCell colSpan={6} align="center" sx={emptyRowSx}>
-                                    <Typography color="text.secondary" sx={emptyRowTextSx}>
-                                        No probe configurations found.
-                                    </Typography>
-                                </TableCell>
-                            </TableRow>
-                        )}
-                    </TableBody>
-                </Table>
-            </TableContainer>
-
-            {/* Edit Override Dialog */}
+        return (
             <Dialog
                 open={editOpen}
-                onClose={() => void (!saving && setEditOpen(false))}
+                onClose={() => {
+                    if (!saving) {
+                        setEditOpen(false);
+                    }
+                }}
                 maxWidth="xs"
                 fullWidth
             >
@@ -321,7 +243,9 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         <Typography sx={{ flex: 1 }}>Enabled</Typography>
                         <Switch
                             checked={editEnabled}
-                            onChange={(e) => { setEditEnabled(e.target.checked); }}
+                            onChange={(e) => {
+                                setEditEnabled(e.target.checked);
+                            }}
                             disabled={saving}
                         />
                     </Box>
@@ -331,7 +255,9 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         margin="dense"
                         value={editInterval}
-                        onChange={(e) => { setEditInterval(e.target.value); }}
+                        onChange={(e) => {
+                            setEditInterval(e.target.value);
+                        }}
                         disabled={saving}
                         inputProps={{ min: 1 }}
                         InputLabelProps={{ shrink: true }}
@@ -343,7 +269,9 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                         fullWidth
                         margin="dense"
                         value={editRetention}
-                        onChange={(e) => { setEditRetention(e.target.value); }}
+                        onChange={(e) => {
+                            setEditRetention(e.target.value);
+                        }}
                         disabled={saving}
                         inputProps={{ min: 1 }}
                         InputLabelProps={{ shrink: true }}
@@ -351,20 +279,52 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({ scope, scopeI
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => { setEditOpen(false); }} disabled={saving}>
+                    <Button
+                        onClick={() => {
+                            setEditOpen(false);
+                        }}
+                        disabled={saving}
+                    >
                         Cancel
                     </Button>
                     <Button
-                        onClick={handleSaveOverride}
+                        onClick={() => {
+                            void handleSaveOverride();
+                        }}
                         variant="contained"
                         disabled={saving}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
+                        {saving ? (
+                            <CircularProgress
+                                size={20}
+                                color="inherit"
+                                aria-label="Saving"
+                            />
+                        ) : (
+                            'Save'
+                        )}
                     </Button>
                 </DialogActions>
             </Dialog>
-        </Box>
+        );
+    };
+
+    return (
+        <ScopedOverridesPanel<ProbeOverride>
+            scope={scope}
+            scopeId={scopeId}
+            apiBasePath={`${API_BASE_URL}/probe-overrides`}
+            itemKey={(item) => item.name}
+            itemDisplayName={(item) => item.name}
+            hasOverride={(item) => item.has_override}
+            columns={PROBE_COLUMNS}
+            renderRowCells={renderRowCells}
+            emptyMessage="No probe configurations found."
+            loadingLabel="Loading probe overrides"
+            onEditRequested={handleEditRequested}
+            renderEditDialog={renderEditDialog}
+        />
     );
 };
 

@@ -38,7 +38,7 @@ before returning.
 
 Reach for `scanAll` any time you have the canonical shape:
 
-```
+```text
 pool.Query -> for rows.Next() { rows.Scan ... } -> return []T
 ```
 

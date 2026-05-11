@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
     Box,
     Typography,
@@ -51,6 +51,7 @@ import {
 } from './styles';
 import { apiGet, apiPut } from '../../utils/apiClient';
 import { getFriendlyTitle } from '../../utils/friendlyNames';
+import { useCrudPanel } from './_shared';
 
 const OPERATORS = ['>', '>=', '<', '<=', '==', '!='];
 const SEVERITIES = ['info', 'warning', 'critical'];
@@ -75,91 +76,80 @@ const severityColor = (severity: string): 'default' | 'info' | 'warning' | 'erro
     }
 };
 
+/**
+ * Fetches the alert-rule list from the server. The endpoint historically
+ * returned a bare array and was later wrapped in `{ alert_rules: [...] }`;
+ * both shapes are accepted so older deployments keep working.
+ */
+const fetchAlertRules = async (): Promise<AlertRule[]> => {
+    const data = await apiGet<{ alert_rules?: AlertRule[] } | AlertRule[]>(
+        '/api/v1/alert-rules',
+    );
+    if (Array.isArray(data)) {
+        return data;
+    }
+    return data.alert_rules ?? [];
+};
+
 const AdminAlertRules: React.FC = () => {
     const theme = useTheme();
 
-    const [rules, setRules] = useState<AlertRule[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
+    // The shared hook owns list state, dialog/edit state, success/error
+    // toasts, and the mutation try/catch boilerplate. The component is
+    // left with the form fields and the render tree.
+    const crud = useCrudPanel<AlertRule>({
+        fetchItems: useCallback(() => fetchAlertRules(), []),
+    });
 
-    // Edit rule dialog
-    const [editOpen, setEditOpen] = useState(false);
-    const [editRule, setEditRule] = useState<AlertRule | null>(null);
+    // Per-form fields for the edit dialog. The shared hook exposes
+    // `editingItem` and the open/close lifecycle; the field-level state
+    // remains here because it is rule-shape specific.
     const [editEnabled, setEditEnabled] = useState(false);
     const [editOperator, setEditOperator] = useState('');
     const [editThreshold, setEditThreshold] = useState('');
     const [editSeverity, setEditSeverity] = useState('');
-    const [saving, setSaving] = useState(false);
-
-    const fetchRules = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data = await apiGet<{ alert_rules?: AlertRule[] } | AlertRule[]>(
-                '/api/v1/alert-rules',
-            );
-            if (Array.isArray(data)) {
-                setRules(data);
-            } else {
-                setRules(data.alert_rules ?? []);
-            }
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        void fetchRules();
-    }, [fetchRules]);
 
     const handleEditRule = (rule: AlertRule, e: React.MouseEvent) => {
         e.stopPropagation();
-        setEditRule(rule);
         setEditEnabled(rule.default_enabled);
         setEditOperator(rule.default_operator);
         setEditThreshold(String(rule.default_threshold));
         setEditSeverity(rule.default_severity);
-        setError(null);
-        setEditOpen(true);
+        // Clear any stale page-level error so the validation error from
+        // the previous attempt does not bleed into a fresh edit.
+        crud.setError(null);
+        crud.openEdit(rule);
     };
 
     const handleSaveRule = async () => {
-        if (!editRule) {return;}
+        const editRule = crud.editingItem;
+        if (!editRule) { return; }
         const thresholdNum = parseFloat(editThreshold);
         if (Number.isNaN(thresholdNum)) {
-            setError('Threshold must be a valid number.');
+            // Validation must surface as a page-level error to preserve
+            // the historical UX where it appears above the table.
+            crud.setError('Threshold must be a valid number.');
             return;
         }
-        try {
-            setSaving(true);
-            setError(null);
-            await apiPut(`/api/v1/alert-rules/${editRule.id}`, {
-                default_enabled: editEnabled,
-                default_operator: editOperator,
-                default_threshold: thresholdNum,
-                default_severity: editSeverity,
-            });
-            setEditOpen(false);
-            setSuccess(`Alert rule "${getFriendlyTitle(editRule.name)}" updated successfully.`);
-            fetchRules();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setSaving(false);
+        const result = await crud.runMutation(
+            () =>
+                apiPut(`/api/v1/alert-rules/${editRule.id}`, {
+                    default_enabled: editEnabled,
+                    default_operator: editOperator,
+                    default_threshold: thresholdNum,
+                    default_severity: editSeverity,
+                }),
+            {
+                errorTarget: 'page',
+                successMessage: `Alert rule "${getFriendlyTitle(editRule.name)}" updated successfully.`,
+            },
+        );
+        if (result !== undefined) {
+            crud.closeDialog();
         }
     };
 
-    if (loading) {
+    if (crud.loading) {
         return (
             <Box sx={loadingContainerSx}>
                 <CircularProgress aria-label="Loading alert rules" />
@@ -171,7 +161,8 @@ const AdminAlertRules: React.FC = () => {
     const tableContainerSx = getTableContainerSx(theme);
 
     // Group rules by category
-    const categories = Array.from(new Set(rules.map((r) => r.category))).sort();
+    const categories = Array.from(new Set(crud.items.map((r) => r.category))).sort();
+    const editRule = crud.editingItem;
 
     return (
         <Box>
@@ -179,14 +170,14 @@ const AdminAlertRules: React.FC = () => {
                 Alert defaults
             </Typography>
 
-            {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
-                    {error}
+            {crud.error && (
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { crud.setError(null); }}>
+                    {crud.error}
                 </Alert>
             )}
-            {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
-                    {success}
+            {crud.success && (
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { crud.setSuccess(null); }}>
+                    {crud.success}
                 </Alert>
             )}
 
@@ -199,7 +190,7 @@ const AdminAlertRules: React.FC = () => {
                     <TableHead>
                         <TableRow>
                             <TableCell sx={tableHeaderCellSx}>Name</TableCell>
-<TableCell sx={tableHeaderCellSx}>Metric</TableCell>
+                            <TableCell sx={tableHeaderCellSx}>Metric</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Condition</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Severity</TableCell>
                             <TableCell sx={tableHeaderCellSx}>Enabled</TableCell>
@@ -207,7 +198,7 @@ const AdminAlertRules: React.FC = () => {
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {rules.length > 0 ? (
+                        {crud.items.length > 0 ? (
                             categories.map((category) => (
                                 <React.Fragment key={category}>
                                     <TableRow>
@@ -222,7 +213,7 @@ const AdminAlertRules: React.FC = () => {
                                             {category}
                                         </TableCell>
                                     </TableRow>
-                                    {rules
+                                    {crud.items
                                         .filter((r) => r.category === category)
                                         .map((rule) => (
                                             <TableRow
@@ -281,8 +272,8 @@ const AdminAlertRules: React.FC = () => {
 
             {/* Edit Rule Dialog */}
             <Dialog
-                open={editOpen}
-                onClose={() => void (!saving && setEditOpen(false))}
+                open={crud.dialogOpen}
+                onClose={() => { crud.closeDialog(); }}
                 maxWidth="xs"
                 fullWidth
             >
@@ -295,7 +286,7 @@ const AdminAlertRules: React.FC = () => {
                         <Switch
                             checked={editEnabled}
                             onChange={(e) => { setEditEnabled(e.target.checked); }}
-                            disabled={saving}
+                            disabled={crud.saving}
                             inputProps={{ 'aria-label': 'Enabled' }}
                         />
                     </Box>
@@ -305,7 +296,7 @@ const AdminAlertRules: React.FC = () => {
                         label="Operator"
                         value={editOperator}
                         onChange={(e) => { setEditOperator(e.target.value); }}
-                        disabled={saving}
+                        disabled={crud.saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
@@ -321,7 +312,7 @@ const AdminAlertRules: React.FC = () => {
                         margin="dense"
                         value={editThreshold}
                         onChange={(e) => { setEditThreshold(e.target.value); }}
-                        disabled={saving}
+                        disabled={crud.saving}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
                     />
@@ -331,7 +322,7 @@ const AdminAlertRules: React.FC = () => {
                         label="Severity"
                         value={editSeverity}
                         onChange={(e) => { setEditSeverity(e.target.value); }}
-                        disabled={saving}
+                        disabled={crud.saving}
                         margin="dense"
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
@@ -342,16 +333,16 @@ const AdminAlertRules: React.FC = () => {
                     </TextField>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => { setEditOpen(false); }} disabled={saving}>
+                    <Button onClick={() => { crud.closeDialog(); }} disabled={crud.saving}>
                         Cancel
                     </Button>
                     <Button
                         onClick={handleSaveRule}
                         variant="contained"
-                        disabled={saving}
+                        disabled={crud.saving}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
+                        {crud.saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>

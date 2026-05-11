@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import {
     Box,
     Typography,
@@ -55,6 +55,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
+import { useCrudPanel } from './_shared';
 
 /**
  * Configuration that varies between messaging platforms (Slack,
@@ -108,71 +109,48 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     const theme = useTheme();
     const { channelType, platformName, webhookUrlLabel } = config;
 
-    const [channels, setChannels] = useState<MessagingChannel[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
-
-    // Create/Edit dialog state
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [editingChannel, setEditingChannel] = useState<MessagingChannel | null>(null);
-    const [form, setForm] = useState<ChannelFormState>(DEFAULT_FORM_STATE);
-    const [saving, setSaving] = useState(false);
-    const [dialogError, setDialogError] = useState<string | null>(null);
-
-    // Test channel state
-    const [testingChannelId, setTestingChannelId] = useState<number | null>(null);
-
-    // Delete channel confirmation
-    const [deleteOpen, setDeleteOpen] = useState(false);
-    const [deleteChannel, setDeleteChannel] = useState<MessagingChannel | null>(null);
-    const [deleteLoading, setDeleteLoading] = useState(false);
-
-    // --- Data fetching ---
-
-    const fetchChannels = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
-            const allChannels = (data.notification_channels || data || []) as Array<Record<string, unknown>>;
-            const filtered: MessagingChannel[] = allChannels
-                .filter((ch: Record<string, unknown>) => ch.channel_type === channelType)
-                .map((ch: Record<string, unknown>) => ({
-                    id: ch.id as number,
-                    name: ch.name as string,
-                    description: (ch.description as string) || '',
-                    enabled: ch.enabled as boolean,
-                    is_estate_default: ch.is_estate_default as boolean,
-                    webhook_url_set: Boolean(ch.webhook_url_set),
-                }));
-            setChannels(filtered);
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setLoading(false);
-        }
+    // Fetch and filter to this channel type. The endpoint returns every
+    // channel type; we narrow by `channel_type` and normalise the raw
+    // record into our typed shape.
+    const fetchChannels = useCallback(async (): Promise<MessagingChannel[]> => {
+        const data = await apiGet<Record<string, unknown>>('/api/v1/notification-channels');
+        const allChannels = (data.notification_channels || data || []) as Array<Record<string, unknown>>;
+        return allChannels
+            .filter((ch) => ch.channel_type === channelType)
+            .map((ch) => ({
+                id: ch.id as number,
+                name: ch.name as string,
+                description: (ch.description as string) || '',
+                enabled: ch.enabled as boolean,
+                is_estate_default: ch.is_estate_default as boolean,
+                webhook_url_set: Boolean(ch.webhook_url_set),
+            }));
     }, [channelType]);
 
-    useEffect(() => {
-        fetchChannels();
-    }, [fetchChannels]);
+    const crud = useCrudPanel<MessagingChannel>({
+        fetchItems: fetchChannels,
+        deps: [channelType],
+    });
+
+    // Per-form fields for the create/edit dialog. Kept here because the
+    // shape is channel-specific (name + description + webhook URL +
+    // toggle pair).
+    const [form, setForm] = useState<ChannelFormState>(DEFAULT_FORM_STATE);
+
+    // Test-notification button uses its own per-row spinner; tracked
+    // separately from the shared `saving` flag since it is a non-CRUD
+    // action that does not refresh the list.
+    const [testingChannelId, setTestingChannelId] = useState<number | null>(null);
 
     // --- Create / Edit dialog ---
 
     const handleOpenCreate = () => {
-        setEditingChannel(null);
         setForm(DEFAULT_FORM_STATE);
-        setDialogError(null);
-        setDialogOpen(true);
+        crud.openCreate();
     };
 
     const handleOpenEdit = (e: React.MouseEvent, channel: MessagingChannel) => {
         e.stopPropagation();
-        setEditingChannel(channel);
         // The webhook URL is a redacted secret on the server; never
         // pre-populate it. An empty value at save time means "leave the
         // existing URL unchanged".
@@ -183,14 +161,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             enabled: channel.enabled,
             is_estate_default: channel.is_estate_default,
         });
-        setDialogError(null);
-        setDialogOpen(true);
-    };
-
-    const handleCloseDialog = () => {
-        if (saving) {return;}
-        setDialogOpen(false);
-        setEditingChannel(null);
+        crud.openEdit(channel);
     };
 
     const handleFormChange = (field: keyof ChannelFormState, value: string | boolean) => {
@@ -198,8 +169,9 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     };
 
     const handleSaveChannel = async () => {
+        const editingChannel = crud.editingItem;
         if (!form.name.trim()) {
-            setDialogError('Name is required.');
+            crud.setDialogError('Name is required.');
             return;
         }
         // On create, the URL is required. On edit, an empty URL means
@@ -207,67 +179,57 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
         // server already has one configured.
         const trimmedUrl = form.webhook_url.trim();
         if (!editingChannel && !trimmedUrl) {
-            setDialogError('Webhook URL is required.');
+            crud.setDialogError('Webhook URL is required.');
             return;
         }
         if (editingChannel && !trimmedUrl && !editingChannel.webhook_url_set) {
-            setDialogError('Webhook URL is required.');
+            crud.setDialogError('Webhook URL is required.');
             return;
         }
 
-        try {
-            setSaving(true);
-            setDialogError(null);
-
-            if (editingChannel) {
-                // Update - send only changed fields. For the webhook URL,
-                // omit it entirely when the user left the form blank;
-                // the server preserves the stored value when the field
-                // is absent from the request body.
-                const body: Record<string, unknown> = {};
-                if (form.name.trim() !== editingChannel.name) {
-                    body.name = form.name.trim();
-                }
-                if (form.description.trim() !== editingChannel.description) {
-                    body.description = form.description.trim();
-                }
-                if (form.enabled !== editingChannel.enabled) {
-                    body.enabled = form.enabled;
-                }
-                if (form.is_estate_default !== editingChannel.is_estate_default) {
-                    body.is_estate_default = form.is_estate_default;
-                }
-                if (trimmedUrl) {
-                    body.webhook_url = trimmedUrl;
-                }
-
-                await apiPut(`/api/v1/notification-channels/${editingChannel.id}`, body);
-                setSuccess(`Channel "${form.name.trim()}" updated successfully.`);
-            } else {
-                // Create
-                const body = {
+        const successName = form.name.trim();
+        let request: () => Promise<unknown>;
+        if (editingChannel) {
+            // Update — send only changed fields. For the webhook URL,
+            // omit it entirely when the user left the form blank; the
+            // server preserves the stored value when the field is
+            // absent from the request body.
+            const body: Record<string, unknown> = {};
+            if (form.name.trim() !== editingChannel.name) {
+                body.name = form.name.trim();
+            }
+            if (form.description.trim() !== editingChannel.description) {
+                body.description = form.description.trim();
+            }
+            if (form.enabled !== editingChannel.enabled) {
+                body.enabled = form.enabled;
+            }
+            if (form.is_estate_default !== editingChannel.is_estate_default) {
+                body.is_estate_default = form.is_estate_default;
+            }
+            if (trimmedUrl) {
+                body.webhook_url = trimmedUrl;
+            }
+            request = () => apiPut(`/api/v1/notification-channels/${editingChannel.id}`, body);
+        } else {
+            request = () =>
+                apiPost('/api/v1/notification-channels', {
                     channel_type: channelType,
                     name: form.name.trim(),
                     description: form.description.trim(),
                     webhook_url: trimmedUrl,
                     enabled: form.enabled,
                     is_estate_default: form.is_estate_default,
-                };
-                await apiPost('/api/v1/notification-channels', body);
-                setSuccess(`Channel "${form.name.trim()}" created successfully.`);
-            }
+                });
+        }
 
-            setDialogOpen(false);
-            setEditingChannel(null);
-            fetchChannels();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setDialogError(err.message);
-            } else {
-                setDialogError('An unexpected error occurred');
-            }
-        } finally {
-            setSaving(false);
+        const result = await crud.runMutation(request, {
+            successMessage: editingChannel
+                ? `Channel "${successName}" updated successfully.`
+                : `Channel "${successName}" created successfully.`,
+        });
+        if (result !== undefined) {
+            crud.closeDialog();
         }
     };
 
@@ -275,60 +237,46 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
 
     const handleOpenDelete = (e: React.MouseEvent, channel: MessagingChannel) => {
         e.stopPropagation();
-        setDeleteChannel(channel);
-        setDeleteOpen(true);
+        crud.openDelete(channel);
     };
 
     const handleDeleteChannel = async () => {
-        if (!deleteChannel) {return;}
-        try {
-            setDeleteLoading(true);
-            await apiDelete(`/api/v1/notification-channels/${deleteChannel.id}`);
-            setDeleteOpen(false);
-            setDeleteChannel(null);
-            setSuccess(`Channel "${deleteChannel.name}" deleted successfully.`);
-            fetchChannels();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        } finally {
-            setDeleteLoading(false);
+        const target = crud.deleteItem;
+        if (!target) { return; }
+        const result = await crud.runMutation(
+            () => apiDelete(`/api/v1/notification-channels/${target.id}`),
+            {
+                errorTarget: 'page',
+                successMessage: `Channel "${target.name}" deleted successfully.`,
+            },
+        );
+        if (result !== undefined) {
+            crud.closeDelete();
         }
     };
 
     // --- Inline toggle enabled on main table ---
 
     const handleToggleEnabled = async (channel: MessagingChannel) => {
-        try {
-            await apiPut(`/api/v1/notification-channels/${channel.id}`, { enabled: !channel.enabled });
-            fetchChannels();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
-        }
+        await crud.runMutation(
+            () => apiPut(`/api/v1/notification-channels/${channel.id}`, { enabled: !channel.enabled }),
+            { errorTarget: 'page' },
+        );
     };
 
     // --- Test channel ---
 
     const handleTestChannel = async (e: React.MouseEvent, channel: MessagingChannel) => {
         e.stopPropagation();
+        setTestingChannelId(channel.id);
         try {
-            setTestingChannelId(channel.id);
-            setError(null);
+            crud.setError(null);
             await apiPost(`/api/v1/notification-channels/${channel.id}/test`);
-            setSuccess(`Test notification sent successfully for "${channel.name}".`);
+            crud.setSuccess(`Test notification sent successfully for "${channel.name}".`);
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('Failed to send test notification');
-            }
+            crud.setError(
+                err instanceof Error ? err.message : 'Failed to send test notification',
+            );
         } finally {
             setTestingChannelId(null);
         }
@@ -336,7 +284,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
 
     // --- Render ---
 
-    if (loading) {
+    if (crud.loading) {
         return (
             <Box sx={loadingContainerSx}>
                 <CircularProgress aria-label="Loading channels" />
@@ -347,6 +295,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
     const containedButtonSx = getContainedButtonSx(theme);
     const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
+    const editingChannel = crud.editingItem;
     const isEditing = editingChannel !== null;
     // When editing a channel that already has a URL configured, allow
     // saving without re-typing the URL. The empty value will be omitted
@@ -356,7 +305,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
         ? 'Leave blank to keep existing URL'
         : '';
     const submitDisabled =
-        saving
+        crud.saving
         || !form.name.trim()
         || (!form.webhook_url.trim() && !webhookUrlOptional);
 
@@ -376,14 +325,14 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                 </Button>
             </Box>
 
-            {error && (
-                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setError(null); }}>
-                    {error}
+            {crud.error && (
+                <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { crud.setError(null); }}>
+                    {crud.error}
                 </Alert>
             )}
-            {success && (
-                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { setSuccess(null); }}>
-                    {success}
+            {crud.success && (
+                <Alert severity="success" sx={{ mb: 2, borderRadius: 1 }} onClose={() => { crud.setSuccess(null); }}>
+                    {crud.success}
                 </Alert>
             )}
 
@@ -403,8 +352,8 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {channels.length > 0 ? (
-                            channels.map((channel) => (
+                        {crud.items.length > 0 ? (
+                            crud.items.map((channel) => (
                                 <TableRow key={channel.id} hover>
                                     <TableCell>
                                         {channel.name}
@@ -482,8 +431,8 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
 
             {/* Create / Edit Channel Dialog */}
             <Dialog
-                open={dialogOpen}
-                onClose={handleCloseDialog}
+                open={crud.dialogOpen}
+                onClose={() => { crud.closeDialog(); }}
                 maxWidth="sm"
                 fullWidth
             >
@@ -491,9 +440,9 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                     {isEditing ? `Edit channel: ${editingChannel.name}` : `Create ${platformName} channel`}
                 </DialogTitle>
                 <DialogContent>
-                    {dialogError && (
+                    {crud.dialogError && (
                         <Alert severity="error" sx={{ mb: 2, mt: 1, borderRadius: 1 }}>
-                            {dialogError}
+                            {crud.dialogError}
                         </Alert>
                     )}
                     <TextField
@@ -502,7 +451,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         label="Name"
                         value={form.name}
                         onChange={(e) => { handleFormChange('name', e.target.value); }}
-                        disabled={saving}
+                        disabled={crud.saving}
                         margin="dense"
                         required
                         InputLabelProps={{ shrink: true }}
@@ -512,7 +461,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         label="Description"
                         value={form.description}
                         onChange={(e) => { handleFormChange('description', e.target.value); }}
-                        disabled={saving}
+                        disabled={crud.saving}
                         margin="dense"
                         multiline
                         rows={2}
@@ -523,7 +472,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         label={webhookUrlLabel}
                         value={form.webhook_url}
                         onChange={(e) => { handleFormChange('webhook_url', e.target.value); }}
-                        disabled={saving}
+                        disabled={crud.saving}
                         margin="dense"
                         required={!webhookUrlOptional}
                         placeholder={webhookUrlPlaceholder}
@@ -541,7 +490,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                 <Switch
                                     checked={form.enabled}
                                     onChange={(e) => { handleFormChange('enabled', e.target.checked); }}
-                                    disabled={saving}
+                                    disabled={crud.saving}
                                     inputProps={{ 'aria-label': 'Toggle channel enabled' }}
                                 />
                             }
@@ -553,7 +502,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                                 <Switch
                                     checked={form.is_estate_default}
                                     onChange={(e) => { handleFormChange('is_estate_default', e.target.checked); }}
-                                    disabled={saving}
+                                    disabled={crud.saving}
                                     inputProps={{ 'aria-label': 'Toggle estate default' }}
                                 />
                             }
@@ -569,7 +518,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                     </Box>
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={handleCloseDialog} disabled={saving}>
+                    <Button onClick={() => { crud.closeDialog(); }} disabled={crud.saving}>
                         Cancel
                     </Button>
                     <Button
@@ -578,20 +527,20 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                         disabled={submitDisabled}
                         sx={containedButtonSx}
                     >
-                        {saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : (isEditing ? 'Save' : 'Create')}
+                        {crud.saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : (isEditing ? 'Save' : 'Create')}
                     </Button>
                 </DialogActions>
             </Dialog>
 
             {/* Delete Confirmation Dialog */}
             <DeleteConfirmationDialog
-                open={deleteOpen}
-                onClose={() => { setDeleteOpen(false); setDeleteChannel(null); }}
+                open={crud.deleteOpen}
+                onClose={() => { crud.closeDelete(); }}
                 onConfirm={handleDeleteChannel}
                 title={`Delete ${platformName} Channel`}
                 message={`Are you sure you want to delete the ${platformName} channel`}
-                itemName={deleteChannel?.name ? `"${deleteChannel.name}"?` : '?'}
-                loading={deleteLoading}
+                itemName={crud.deleteItem?.name ? `"${crud.deleteItem.name}"?` : '?'}
+                loading={crud.deleteLoading}
             />
         </Box>
     );

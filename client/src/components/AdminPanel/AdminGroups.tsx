@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
     Box,
     Typography,
@@ -65,6 +65,7 @@ import {
     getTableContainerSx,
     getRadioSx,
 } from './styles';
+import { useCrudPanel, extractErrorMessage } from './_shared';
 
 
 interface RbacGroup {
@@ -96,37 +97,45 @@ const AdminGroups: React.FC = () => {
     const isDark = theme.palette.mode === 'dark';
     const { user } = useAuth();
     const isSuperuser = !!user?.isSuperuser;
-    const [groups, setGroups] = useState<RbacGroup[]>([]);
+
+    // The connections lookup is fetched alongside the group list and
+    // feeds the effective-permissions panel. Keeping it outside the
+    // shared hook because it is a peer dataset, not a CRUD target.
     const [connections, setConnections] = useState<{ id: number; name: string }[]>([]);
-    const [loading, setLoading] = useState<boolean>(true);
-    const [error, setError] = useState<string | null>(null);
+
+    // Expandable row state — group detail and effective permissions are
+    // fetched on demand when a row is expanded.
     const [expandedGroup, setExpandedGroup] = useState<number | null>(null);
     const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState<boolean>(false);
     const [effectivePerms, setEffectivePerms] = useState<EffectivePermsData | null>(null);
     const [effectivePermsLoading, setEffectivePermsLoading] = useState<boolean>(false);
 
-    // Create group dialog
-    const [createOpen, setCreateOpen] = useState<boolean>(false);
-    const [createName, setCreateName] = useState<string>('');
-    const [createDesc, setCreateDesc] = useState<string>('');
-    const [createLoading, setCreateLoading] = useState<boolean>(false);
-    const [createError, setCreateError] = useState<string | null>(null);
+    const fetchGroupsAndConnections = useCallback(async (): Promise<RbacGroup[]> => {
+        const [groupsData, connResult] = await Promise.all([
+            apiGet<{ groups: RbacGroup[] }>('/api/v1/rbac/groups'),
+            apiGet<{ connections?: { id: number; name: string }[] }>('/api/v1/connections').catch(() => null),
+        ]);
+        if (connResult) {
+            setConnections(connResult.connections ?? []);
+        }
+        return groupsData.groups || [];
+    }, []);
 
-    // Edit group dialog
-    const [editOpen, setEditOpen] = useState<boolean>(false);
-    const [editGroup, setEditGroup] = useState<RbacGroup | null>(null);
-    const [editName, setEditName] = useState<string>('');
-    const [editDesc, setEditDesc] = useState<string>('');
-    const [editLoading, setEditLoading] = useState<boolean>(false);
-    const [editError, setEditError] = useState<string | null>(null);
+    const crud = useCrudPanel<RbacGroup>({
+        fetchItems: fetchGroupsAndConnections,
+    });
 
-    // Delete confirmation
-    const [deleteOpen, setDeleteOpen] = useState<boolean>(false);
-    const [deleteGroup, setDeleteGroup] = useState<RbacGroup | null>(null);
-    const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
+    // Two visual dialogs (Create + Edit) drive the same form fields.
+    // The shared hook treats them as the same dialog (`editingItem`
+    // === null implies create), but the markup remains two Dialog
+    // elements to preserve the historical UI shape one-for-one.
+    const [formName, setFormName] = useState<string>('');
+    const [formDesc, setFormDesc] = useState<string>('');
 
-    // Add member dialog
+    // Add-member dialog. Outside the shared hook because it is a
+    // group-detail child action, not a CRUD operation on the parent
+    // collection.
     const [addMemberOpen, setAddMemberOpen] = useState<boolean>(false);
     const [memberType, setMemberType] = useState<string>('user');
     const [selectedMemberId, setSelectedMemberId] = useState<string>('');
@@ -134,30 +143,6 @@ const AdminGroups: React.FC = () => {
     const [addMemberError, setAddMemberError] = useState<string | null>(null);
     const [availableUsers, setAvailableUsers] = useState<RbacUser[]>([]);
     const [availableGroups, setAvailableGroups] = useState<RbacGroup[]>([]);
-
-    const fetchGroups = useCallback(async () => {
-        try {
-            setLoading(true);
-            setError(null);
-            const [groupsData, connResult] = await Promise.all([
-                apiGet<{ groups: RbacGroup[] }>('/api/v1/rbac/groups'),
-                apiGet<{ connections?: { id: number; name: string }[] }>('/api/v1/connections').catch(() => null),
-            ]);
-            setGroups(groupsData.groups || []);
-            if (connResult) {
-                setConnections(connResult.connections ?? []);
-            }
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        void fetchGroups();
-    }, [fetchGroups]);
 
     const fetchGroupDetail = useCallback(async (groupId: number) => {
         try {
@@ -170,13 +155,12 @@ const AdminGroups: React.FC = () => {
             setGroupDetail(detailData);
             setEffectivePerms(effectiveResult);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            crud.setError(extractErrorMessage(err));
         } finally {
             setDetailLoading(false);
             setEffectivePermsLoading(false);
         }
-    }, []);
+    }, [crud]);
 
     const handleRowClick = (group: RbacGroup) => {
         if (expandedGroup === group.id) {
@@ -190,83 +174,81 @@ const AdminGroups: React.FC = () => {
     };
 
     // Create group
+    const handleOpenCreate = () => {
+        setFormName('');
+        setFormDesc('');
+        crud.openCreate();
+    };
+
     const handleCreateGroup = async () => {
-        if (!createName.trim()) {return;}
-        try {
-            setCreateLoading(true);
-            setCreateError(null);
-            await apiPost('/api/v1/rbac/groups', {
-                name: createName.trim(),
-                description: createDesc.trim(),
-            });
-            setCreateOpen(false);
-            setCreateName('');
-            setCreateDesc('');
-            fetchGroups();
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setCreateError(message);
-        } finally {
-            setCreateLoading(false);
+        if (!formName.trim()) { return; }
+        const result = await crud.runMutation(
+            () =>
+                apiPost('/api/v1/rbac/groups', {
+                    name: formName.trim(),
+                    description: formDesc.trim(),
+                }),
+        );
+        if (result !== undefined) {
+            crud.closeDialog();
         }
     };
 
     // Edit group
     const handleOpenEdit = (e: React.MouseEvent, group: RbacGroup) => {
         e.stopPropagation();
-        setEditGroup(group);
-        setEditName(group.name);
-        setEditDesc(group.description ?? '');
-        setEditError(null);
-        setEditOpen(true);
+        setFormName(group.name);
+        setFormDesc(group.description ?? '');
+        crud.openEdit(group);
     };
 
     const handleEditGroup = async () => {
-        if (!editName.trim() || !editGroup) {return;}
-        try {
-            setEditLoading(true);
-            setEditError(null);
-            await apiPut(`/api/v1/rbac/groups/${editGroup.id}`, {
-                name: editName.trim(),
-                description: editDesc.trim(),
-            });
-            setEditOpen(false);
-            fetchGroups();
-            if (expandedGroup === editGroup.id) {
-                void fetchGroupDetail(editGroup.id);
+        const target = crud.editingItem;
+        if (!formName.trim() || !target) { return; }
+        const result = await crud.runMutation(
+            () =>
+                apiPut(`/api/v1/rbac/groups/${target.id}`, {
+                    name: formName.trim(),
+                    description: formDesc.trim(),
+                }),
+        );
+        if (result !== undefined) {
+            crud.closeDialog();
+            if (expandedGroup === target.id) {
+                void fetchGroupDetail(target.id);
             }
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setEditError(message);
-        } finally {
-            setEditLoading(false);
         }
     };
 
     // Delete group
     const handleOpenDelete = (e: React.MouseEvent, group: RbacGroup) => {
         e.stopPropagation();
-        setDeleteGroup(group);
-        setDeleteOpen(true);
+        crud.openDelete(group);
     };
 
     const handleDeleteGroup = async () => {
-        if (!deleteGroup) {return;}
-        try {
-            setDeleteLoading(true);
-            await apiDelete(`/api/v1/rbac/groups/${deleteGroup.id}`);
-            setDeleteOpen(false);
-            setDeleteGroup(null);
-            if (expandedGroup === deleteGroup.id) {
+        const target = crud.deleteItem;
+        if (!target) { return; }
+        // The groups DELETE endpoint returns 204 No Content, which the
+        // API client surfaces as `undefined`. `runMutation` uses
+        // `undefined` as its failure sentinel, so a bare apiDelete call
+        // would make a successful delete indistinguishable from a
+        // failure and leave the confirm dialog open (see issue from
+        // PR #209 manual QA). Returning an explicit success token lets
+        // `result !== undefined` correctly gate the close + cleanup.
+        const result = await crud.runMutation(
+            async () => {
+                await apiDelete(`/api/v1/rbac/groups/${target.id}`);
+                return true as const;
+            },
+            { errorTarget: 'page' },
+        );
+        if (result !== undefined) {
+            if (expandedGroup === target.id) {
                 setExpandedGroup(null);
                 setGroupDetail(null);
             }
-            fetchGroups();
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
-        } finally {
-            setDeleteLoading(false);
+            crud.closeDelete();
         }
     };
 
@@ -296,7 +278,7 @@ const AdminGroups: React.FC = () => {
     };
 
     const handleAddMember = async () => {
-        if (!selectedMemberId || !expandedGroup) {return;}
+        if (!selectedMemberId || !expandedGroup) { return; }
         try {
             setAddMemberLoading(true);
             setAddMemberError(null);
@@ -317,53 +299,50 @@ const AdminGroups: React.FC = () => {
             }
             setAddMemberOpen(false);
             void fetchGroupDetail(expandedGroup);
-            fetchGroups();
+            void crud.refresh();
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setAddMemberError(message);
+            setAddMemberError(extractErrorMessage(err));
         } finally {
             setAddMemberLoading(false);
         }
     };
 
     const handleRemoveMember = async (memberId: number, mType: string) => {
-        if (!expandedGroup) {return;}
+        if (!expandedGroup) { return; }
         try {
             await apiDelete(`/api/v1/rbac/groups/${expandedGroup}/members/${mType}/${memberId}`);
-            fetchGroupDetail(expandedGroup);
-            fetchGroups();
+            void fetchGroupDetail(expandedGroup);
+            void crud.refresh();
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            crud.setError(extractErrorMessage(err));
         }
     };
 
     const handleRemoveMemberByName = async (name: string, mType: string) => {
-        if (!expandedGroup) {return;}
+        if (!expandedGroup) { return; }
         try {
             let memberId: number | undefined;
             if (mType === 'user') {
                 try {
                     const data = await apiGet<{ users?: { id: number; username: string }[] }>('/api/v1/rbac/users');
                     const foundUser = (data.users ?? []).find(u => u.username === name);
-                    if (foundUser) {memberId = foundUser.id;}
+                    if (foundUser) { memberId = foundUser.id; }
                 } catch { /* ignore */ }
             } else {
-                const found = groups.find(g => g.name === name);
-                if (found) {memberId = found.id;}
+                const found = crud.items.find(g => g.name === name);
+                if (found) { memberId = found.id; }
             }
             if (!memberId) {
-                setError(`Could not find ${mType} "${name}"`);
+                crud.setError(`Could not find ${mType} "${name}"`);
                 return;
             }
             await handleRemoveMember(memberId, mType);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            crud.setError(extractErrorMessage(err));
         }
     };
 
-    if (loading) {
+    if (crud.loading) {
         return (
             <Box sx={loadingContainerSx}>
                 <CircularProgress aria-label="Loading groups" />
@@ -371,8 +350,8 @@ const AdminGroups: React.FC = () => {
         );
     }
 
-    if (error) {
-        return <Alert severity="error" sx={{ borderRadius: 1 }}>{error}</Alert>;
+    if (crud.error) {
+        return <Alert severity="error" sx={{ borderRadius: 1 }}>{crud.error}</Alert>;
     }
 
     const containedButtonSx = getContainedButtonSx(theme);
@@ -380,6 +359,14 @@ const AdminGroups: React.FC = () => {
     const deleteIconSx = getDeleteIconSx(theme);
     const tableContainerSx = getTableContainerSx(theme);
     const radioSx = getRadioSx(theme);
+    const isEditMode = crud.editingItem !== null;
+    // For the unified hook, the create and edit dialogs share dialogOpen.
+    // We split them by inspecting whether an `editingItem` is present so
+    // the two existing visual dialogs (with their distinct titles and
+    // submit-button labels) keep rendering exactly as before.
+    const createDialogOpen = crud.dialogOpen && !isEditMode;
+    const editDialogOpen = crud.dialogOpen && isEditMode;
+
     return (
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -389,12 +376,7 @@ const AdminGroups: React.FC = () => {
                 <Button
                     variant="contained"
                     startIcon={<AddIcon />}
-                    onClick={() => {
-                        setCreateError(null);
-                        setCreateName('');
-                        setCreateDesc('');
-                        setCreateOpen(true);
-                    }}
+                    onClick={handleOpenCreate}
                     sx={containedButtonSx}
                 >
                     Create Group
@@ -417,7 +399,7 @@ const AdminGroups: React.FC = () => {
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {groups.map((group) => (
+                        {crud.items.map((group) => (
                             <React.Fragment key={group.id}>
                                 <TableRow
                                     hover
@@ -557,7 +539,7 @@ const AdminGroups: React.FC = () => {
                                 </TableRow>
                             </React.Fragment>
                         ))}
-                        {groups.length === 0 && (
+                        {crud.items.length === 0 && (
                             <TableRow>
                                 <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                                     <Typography color="text.secondary">No groups found.</Typography>
@@ -569,19 +551,19 @@ const AdminGroups: React.FC = () => {
             </TableContainer>
 
             {/* Create Group Dialog */}
-            <Dialog open={createOpen} onClose={() => void (!createLoading && setCreateOpen(false))} maxWidth="xs" fullWidth>
+            <Dialog open={createDialogOpen} onClose={() => { crud.closeDialog(); }} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Create group</DialogTitle>
                 <DialogContent>
-                    {createError && (
-                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{createError}</Alert>
+                    {crud.dialogError && (
+                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{crud.dialogError}</Alert>
                     )}
                     <TextField
                         autoFocus
                         fullWidth
                         label="Name"
-                        value={createName}
-                        onChange={(e) => { setCreateName(e.target.value); }}
-                        disabled={createLoading}
+                        value={formName}
+                        onChange={(e) => { setFormName(e.target.value); }}
+                        disabled={crud.saving}
                         margin="dense"
                         required
                         InputLabelProps={{ shrink: true }}
@@ -590,9 +572,9 @@ const AdminGroups: React.FC = () => {
                     <TextField
                         fullWidth
                         label="Description"
-                        value={createDesc}
-                        onChange={(e) => { setCreateDesc(e.target.value); }}
-                        disabled={createLoading}
+                        value={formDesc}
+                        onChange={(e) => { setFormDesc(e.target.value); }}
+                        disabled={crud.saving}
                         margin="dense"
                         multiline
                         rows={2}
@@ -601,34 +583,34 @@ const AdminGroups: React.FC = () => {
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => { setCreateOpen(false); }} disabled={createLoading}>
+                    <Button onClick={() => { crud.closeDialog(); }} disabled={crud.saving}>
                         Cancel
                     </Button>
                     <Button
                         onClick={handleCreateGroup}
                         variant="contained"
-                        disabled={createLoading || !createName.trim()}
+                        disabled={crud.saving || !formName.trim()}
                         sx={containedButtonSx}
                     >
-                        {createLoading ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
+                        {crud.saving ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
                     </Button>
                 </DialogActions>
             </Dialog>
 
             {/* Edit Group Dialog */}
-            <Dialog open={editOpen} onClose={() => void (!editLoading && setEditOpen(false))} maxWidth="xs" fullWidth>
+            <Dialog open={editDialogOpen} onClose={() => { crud.closeDialog(); }} maxWidth="xs" fullWidth>
                 <DialogTitle sx={dialogTitleSx}>Edit group</DialogTitle>
                 <DialogContent>
-                    {editError && (
-                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{editError}</Alert>
+                    {crud.dialogError && (
+                        <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>{crud.dialogError}</Alert>
                     )}
                     <TextField
                         autoFocus
                         fullWidth
                         label="Name"
-                        value={editName}
-                        onChange={(e) => { setEditName(e.target.value); }}
-                        disabled={editLoading}
+                        value={formName}
+                        onChange={(e) => { setFormName(e.target.value); }}
+                        disabled={crud.saving}
                         margin="dense"
                         required
                         InputLabelProps={{ shrink: true }}
@@ -637,9 +619,9 @@ const AdminGroups: React.FC = () => {
                     <TextField
                         fullWidth
                         label="Description"
-                        value={editDesc}
-                        onChange={(e) => { setEditDesc(e.target.value); }}
-                        disabled={editLoading}
+                        value={formDesc}
+                        onChange={(e) => { setFormDesc(e.target.value); }}
+                        disabled={crud.saving}
                         margin="dense"
                         multiline
                         rows={2}
@@ -648,29 +630,29 @@ const AdminGroups: React.FC = () => {
                     />
                 </DialogContent>
                 <DialogActions sx={dialogActionsSx}>
-                    <Button onClick={() => { setEditOpen(false); }} disabled={editLoading}>
+                    <Button onClick={() => { crud.closeDialog(); }} disabled={crud.saving}>
                         Cancel
                     </Button>
                     <Button
                         onClick={handleEditGroup}
                         variant="contained"
-                        disabled={editLoading || !editName.trim()}
+                        disabled={crud.saving || !formName.trim()}
                         sx={containedButtonSx}
                     >
-                        {editLoading ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
+                        {crud.saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}
                     </Button>
                 </DialogActions>
             </Dialog>
 
             {/* Delete Confirmation Dialog */}
             <DeleteConfirmationDialog
-                open={deleteOpen}
-                onClose={() => { setDeleteOpen(false); setDeleteGroup(null); }}
+                open={crud.deleteOpen}
+                onClose={() => { crud.closeDelete(); }}
                 onConfirm={handleDeleteGroup}
                 title="Delete Group"
                 message="Are you sure you want to delete the group"
-                itemName={deleteGroup?.name ? `"${deleteGroup.name}"?` : '?'}
-                loading={deleteLoading}
+                itemName={crud.deleteItem?.name ? `"${crud.deleteItem.name}"?` : '?'}
+                loading={crud.deleteLoading}
             />
 
             {/* Add Member Dialog */}

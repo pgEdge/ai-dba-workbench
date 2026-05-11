@@ -229,8 +229,18 @@ const AdminGroups: React.FC = () => {
     const handleDeleteGroup = async () => {
         const target = crud.deleteItem;
         if (!target) { return; }
+        // The groups DELETE endpoint returns 204 No Content, which the
+        // API client surfaces as `undefined`. `runMutation` uses
+        // `undefined` as its failure sentinel, so a bare apiDelete call
+        // would make a successful delete indistinguishable from a
+        // failure and leave the confirm dialog open (see issue from
+        // PR #209 manual QA). Returning an explicit success token lets
+        // `result !== undefined` correctly gate the close + cleanup.
         const result = await crud.runMutation(
-            () => apiDelete(`/api/v1/rbac/groups/${target.id}`),
+            async () => {
+                await apiDelete(`/api/v1/rbac/groups/${target.id}`);
+                return true as const;
+            },
             { errorTarget: 'page' },
         );
         if (result !== undefined) {

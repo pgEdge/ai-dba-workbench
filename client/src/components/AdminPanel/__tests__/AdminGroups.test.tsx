@@ -366,6 +366,58 @@ describe('AdminGroups', () => {
             });
         });
 
+        it('closes the confirmation dialog after a successful delete and does not re-issue the request', async () => {
+            // Regression test for the PR #209 bug: the rbac/groups DELETE
+            // endpoint returns 204 No Content, which apiClient surfaces
+            // as `undefined`. The earlier `runMutation` consumer keyed
+            // its `closeDelete()` call on `result !== undefined`, treating
+            // a 204 success identically to a thrown error. The dialog
+            // stayed open with the just-deleted target still selected, so
+            // a second confirm click 404'd the now-missing group and the
+            // user saw "Failed to delete group".
+            setupApiGetRouter({
+                '/api/v1/rbac/groups': { groups: GROUPS },
+            });
+            // Mirror the real apiClient behaviour for HTTP 204: a bare
+            // `undefined` return value.
+            mockApiDelete.mockResolvedValue(undefined);
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminGroups />);
+            await waitFor(() => {
+                expect(screen.getByText('eng')).toBeInTheDocument();
+            });
+
+            await user.click(
+                screen.getAllByRole('button', { name: /delete group/i })[0],
+            );
+            await waitFor(() => {
+                expect(screen.getByText('Delete Group')).toBeInTheDocument();
+            });
+            const dialog = screen.getByRole('dialog');
+            await user.click(
+                within(dialog).getByRole('button', { name: /Delete/i }),
+            );
+
+            // The delete API call should have been made exactly once.
+            await waitFor(() => {
+                expect(mockApiDelete).toHaveBeenCalledWith(
+                    '/api/v1/rbac/groups/1',
+                );
+            });
+
+            // The dialog must close after the successful delete.
+            await waitFor(() => {
+                expect(
+                    screen.queryByText('Delete Group'),
+                ).not.toBeInTheDocument();
+            });
+
+            // Critical: even though the dialog re-mounts when the refresh
+            // toggles `loading`, no second apiDelete call may fire.
+            expect(mockApiDelete).toHaveBeenCalledTimes(1);
+        });
+
         it('surfaces a page-level error when the delete API rejects', async () => {
             setupApiGetRouter();
             mockApiDelete.mockRejectedValue(new Error('delete failed'));

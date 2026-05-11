@@ -497,11 +497,35 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_OwnerAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to mark group as owned: %v", err)
 	}
+	// Seed a cluster + owner-visible connection inside the group so the
+	// post-gate visibility check in deleteClusterGroup
+	// (groupHasVisibleConnection) succeeds. Without a visible member
+	// connection the handler responds 404 even when the gate passes.
+	// The connection is unshared and owned by the caller, which mirrors
+	// the realistic owner-fallback scenario: an owner of an unshared
+	// group + connection can delete their own group.
+	var clusterID int
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO clusters (group_id, name) VALUES ($1, $2) RETURNING id`,
+		created.ID, "owner-cluster").Scan(&clusterID); err != nil {
+		t.Fatalf("Failed to seed cluster: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO connections (name, owner_username, is_shared, cluster_id)
+         VALUES ($1, $2, FALSE, $3)`,
+		"owner-conn", "issue207_owner", clusterID); err != nil {
+		t.Fatalf("Failed to seed connection: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), nil)
 	req = withBearer(req, token)
 	req = withUser(req, userID)
+	// VisibleConnectionIDs reads the username from the request context to
+	// apply the owner-visible rule for unshared connections. Production
+	// middleware populates UsernameContextKey from the same bearer token
+	// withBearer sets above; the test fixture must add it explicitly.
+	req = withUsername(req, "issue207_owner")
 	rec := httptest.NewRecorder()
 
 	handler.handleClusterGroupSubpath(rec, req)
@@ -521,7 +545,7 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_OwnerAllowed(t *testing.T) {
 // the positive admin path: a manage_connections grant lets a non-owner
 // delete a cluster group.
 func TestClusterHandler_DeleteClusterGroup_Issue207_AdminAllowed(t *testing.T) {
-	ds, _, cleanupDS := newTestDatastore(t)
+	ds, pool, cleanupDS := newTestDatastore(t)
 	defer cleanupDS()
 
 	_, store, cleanupStore := createTestRBACHandler(t)
@@ -539,6 +563,25 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_AdminAllowed(t *testing.T) {
 	created, err := ds.CreateClusterGroup(ctx, "Issue207 Admin Target", nil)
 	if err != nil {
 		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+	// Seed a cluster + shared connection inside the group so the
+	// post-gate visibility check in deleteClusterGroup succeeds for the
+	// admin caller. manage_connections is an admin permission and does
+	// NOT grant ConnectionIDAll visibility, so the visibility helper
+	// still applies the standard owner-or-shared rule. A shared
+	// connection authored by another user is enough to make the group
+	// visible to the admin caller without making them the owner.
+	var clusterID int
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO clusters (group_id, name) VALUES ($1, $2) RETURNING id`,
+		created.ID, "admin-cluster").Scan(&clusterID); err != nil {
+		t.Fatalf("Failed to seed cluster: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO connections (name, owner_username, is_shared, cluster_id)
+         VALUES ($1, $2, TRUE, $3)`,
+		"admin-conn", "someone_else", clusterID); err != nil {
+		t.Fatalf("Failed to seed connection: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodDelete,

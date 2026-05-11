@@ -983,8 +983,19 @@ func TestClusterHandler_UpdateAutoDetectedGroup_InvalidJSON(t *testing.T) {
 // cluster group operations touch. It is a trimmed copy of the collector
 // migration and is intentionally limited to the columns and constraints
 // referenced by GetClusterGroup, CreateClusterGroup, UpdateClusterGroup,
-// DeleteClusterGroup, GetDefaultGroupID, and UpsertGroupByAutoKey.
+// DeleteClusterGroup, GetDefaultGroupID, UpsertGroupByAutoKey, and the
+// RBAC visibility helpers that run as part of deleteClusterGroup
+// (resolveVisibleConnections -> GetAllConnections, and
+// groupHasVisibleConnection -> getConnectionIDsForGroup, which joins
+// connections to clusters). The clusters and connections tables are
+// created empty: the cluster_groups operations do not depend on rows in
+// either, and the visibility helpers tolerate an empty connections set
+// (allConnections=false, empty visible map). This keeps the schema
+// closed under the queries the handler actually issues without pulling
+// in the full collector migration.
 const clusterGroupsTestSchema = `
+DROP TABLE IF EXISTS connections CASCADE;
+DROP TABLE IF EXISTS clusters CASCADE;
 DROP TABLE IF EXISTS cluster_groups CASCADE;
 CREATE TABLE cluster_groups (
     id SERIAL PRIMARY KEY,
@@ -1001,6 +1012,33 @@ CREATE TABLE cluster_groups (
 );
 CREATE UNIQUE INDEX idx_cluster_groups_is_default
     ON cluster_groups (is_default) WHERE is_default = TRUE;
+CREATE TABLE clusters (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER REFERENCES cluster_groups(id) ON DELETE CASCADE,
+    auto_cluster_key VARCHAR(255) UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    replication_type VARCHAR(50),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT clusters_group_name_unique UNIQUE (group_id, name)
+);
+CREATE TABLE connections (
+    id SERIAL PRIMARY KEY,
+    owner_username VARCHAR(255),
+    owner_token VARCHAR(255),
+    is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+    is_monitored BOOLEAN NOT NULL DEFAULT FALSE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT DEFAULT '',
+    host VARCHAR(255) NOT NULL DEFAULT 'localhost',
+    port INTEGER NOT NULL DEFAULT 5432,
+    database_name VARCHAR(255) NOT NULL DEFAULT 'postgres',
+    cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
+    membership_source VARCHAR(20) NOT NULL DEFAULT 'auto',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 // newTestDatastore returns a *database.Datastore wired to the Postgres
@@ -1037,7 +1075,11 @@ func newTestDatastore(t *testing.T) (*database.Datastore, *pgxpool.Pool, func())
 	ds := database.NewTestDatastore(pool)
 
 	cleanup := func() {
-		// Best-effort teardown of the test schema.
+		// Best-effort teardown of the test schema. Drop in
+		// dependency order: connections -> clusters -> cluster_groups.
+		// CASCADE handles any auxiliary objects (indexes, FKs).
+		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS connections CASCADE")
+		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS clusters CASCADE")
 		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS cluster_groups CASCADE")
 		pool.Close()
 	}

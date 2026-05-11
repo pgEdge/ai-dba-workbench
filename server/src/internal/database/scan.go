@@ -48,7 +48,7 @@ import "github.com/jackc/pgx/v5"
 func scanAll[T any](rows pgx.Rows, scan func(pgx.Rows, *T) error) ([]T, error) {
 	defer rows.Close()
 
-	// Initialise as an empty (non-nil) slice so that empty result sets
+	// Initialize as an empty (non-nil) slice so that empty result sets
 	// produce a normal []T{} rather than nil. This keeps the helper's
 	// empty-result contract uniform across every caller and matches the
 	// JSON wire format ([]) most HTTP handlers expect.

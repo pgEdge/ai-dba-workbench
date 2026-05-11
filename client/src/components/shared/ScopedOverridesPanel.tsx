@@ -43,7 +43,7 @@
  */
 
 import type React from 'react';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Box,
@@ -179,21 +179,48 @@ function ScopedOverridesPanel<T>(
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
 
+    // Monotonic request token used to discard stale fetch responses.
+    // When scope / scopeId / apiBasePath change rapidly, an earlier
+    // request can resolve AFTER a newer one and overwrite its rows.
+    // Each fetch captures the token value at dispatch time and only
+    // commits its results if the ref still matches when the promise
+    // settles. This is preferred over AbortController here because
+    // apiGet does not currently accept an abort signal from the
+    // caller and the token approach is dependency-light.
+    const requestTokenRef = useRef(0);
+
     const fetchOverrides = useCallback(async () => {
+        const token = requestTokenRef.current + 1;
+        requestTokenRef.current = token;
         try {
             setLoading(true);
             const data = await apiGet<T[]>(
                 `${apiBasePath}/${scope}/${String(scopeId)}`,
             );
+            // Drop the response if a newer fetch has been issued
+            // while this one was in flight.
+            if (requestTokenRef.current !== token) {
+                return;
+            }
             setOverrides(data || []);
         } catch (err: unknown) {
+            // Same guard for the error path: a stale error should
+            // not clobber the newer scope's banner state.
+            if (requestTokenRef.current !== token) {
+                return;
+            }
             if (err instanceof Error) {
                 setError(err.message);
             } else {
                 setError('An unexpected error occurred');
             }
         } finally {
-            setLoading(false);
+            // Only the latest request controls the spinner; an older
+            // request finishing late must not flip loading=false on
+            // top of the newer in-flight request.
+            if (requestTokenRef.current === token) {
+                setLoading(false);
+            }
         }
     }, [apiBasePath, scope, scopeId]);
 
@@ -220,8 +247,17 @@ function ScopedOverridesPanel<T>(
             e.stopPropagation();
             try {
                 setError(null);
+                // itemKey returns string | number; callers may pass
+                // arbitrary identifiers (for example probe names).
+                // Encode the trailing segment so reserved characters
+                // such as "/", "+", "#", or whitespace cannot break
+                // the URL path. Numeric ids and ASCII identifiers
+                // round-trip unchanged.
+                const encodedKey = encodeURIComponent(
+                    String(itemKey(item)),
+                );
                 await apiDelete(
-                    `${apiBasePath}/${scope}/${String(scopeId)}/${String(itemKey(item))}`,
+                    `${apiBasePath}/${scope}/${String(scopeId)}/${encodedKey}`,
                 );
                 setSuccess(
                     `Override for "${itemDisplayName(item)}" reset to default.`,

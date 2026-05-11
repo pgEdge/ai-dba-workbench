@@ -161,15 +161,20 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({
             if (!editOverride) {
                 return;
             }
-            const intervalNum = parseInt(editInterval, 10);
-            if (Number.isNaN(intervalNum) || intervalNum < 1) {
+            // parseInt would silently accept fractional or scientific
+            // notation inputs (for example "1.5" -> 1, "1e2" -> 100),
+            // so the saved value could differ from what the user typed.
+            // Number() + Number.isInteger() rejects anything that is
+            // not a finite integer outright.
+            const intervalNum = Number(editInterval);
+            if (!Number.isInteger(intervalNum) || intervalNum < 1) {
                 helpers.onSaveError(
                     new Error('Collection interval must be a positive integer.'),
                 );
                 return;
             }
-            const retentionNum = parseInt(editRetention, 10);
-            if (Number.isNaN(retentionNum) || retentionNum < 1) {
+            const retentionNum = Number(editRetention);
+            if (!Number.isInteger(retentionNum) || retentionNum < 1) {
                 helpers.onSaveError(
                     new Error('Retention days must be a positive integer.'),
                 );
@@ -177,8 +182,14 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({
             }
             try {
                 setSaving(true);
+                // Encode the probe name in case it ever contains URL
+                // path characters (for example "/", "+", "#", or
+                // whitespace). Today's probe names look like safe
+                // identifiers, but encoding is a no-op on those and
+                // future-proofs the call against breakage.
+                const encodedName = encodeURIComponent(editOverride.name);
                 await apiPut(
-                    `${API_BASE_URL}/probe-overrides/${scope}/${String(scopeId)}/${editOverride.name}`,
+                    `${API_BASE_URL}/probe-overrides/${scope}/${String(scopeId)}/${encodedName}`,
                     {
                         is_enabled: editEnabled,
                         collection_interval_seconds: intervalNum,

@@ -630,6 +630,354 @@ describe('ProbeOverridesPanel', () => {
         });
     });
 
+    it('rejects fractional interval input on save', async () => {
+        // parseInt("1.5", 10) would silently produce 1 and save a
+        // different value than the user typed. The Number() +
+        // Number.isInteger() guard must reject the fractional input
+        // before any PUT fires.
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockOverrides,
+        });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('cpu_usage')).toBeInTheDocument();
+        });
+
+        const cpuRow = screen.getByText('cpu_usage').closest('tr');
+        const editButton = (cpuRow as HTMLElement).querySelector(
+            '[aria-label="edit override"]',
+        );
+        fireEvent.click(editButton as HTMLElement);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: cpu_usage/)).toBeInTheDocument();
+        });
+
+        const intervalInput = screen.getByLabelText(
+            'Collection Interval (seconds)',
+        );
+        fireEvent.change(intervalInput, { target: { value: '1.5' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    'Collection interval must be a positive integer.',
+                ),
+            ).toBeInTheDocument();
+        });
+
+        // No PUT should have fired; only the initial GET.
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects fractional retention input on save', async () => {
+        // Mirror coverage of the retention validator: "30.7" -> 30
+        // under parseInt would be a silent data corruption.
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockOverrides,
+        });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('cpu_usage')).toBeInTheDocument();
+        });
+
+        const cpuRow = screen.getByText('cpu_usage').closest('tr');
+        const editButton = (cpuRow as HTMLElement).querySelector(
+            '[aria-label="edit override"]',
+        );
+        fireEvent.click(editButton as HTMLElement);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: cpu_usage/)).toBeInTheDocument();
+        });
+
+        const retentionInput = screen.getByLabelText('Retention Days');
+        fireEvent.change(retentionInput, { target: { value: '30.7' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('Retention days must be a positive integer.'),
+            ).toBeInTheDocument();
+        });
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('encodes probe name with reserved characters in PUT URL', async () => {
+        // Probe names today look like safe identifiers, but if one
+        // ever contains "/" or "+" the URL path would break without
+        // encoding. The PUT URL must carry the encoded name.
+        const reservedNameOverrides = [
+            {
+                name: 'probe/with+reserved#chars',
+                description: 'Defensive encoding check',
+                default_enabled: true,
+                default_interval_seconds: 60,
+                default_retention_days: 30,
+                has_override: true,
+                override_enabled: false,
+                override_interval_seconds: 120,
+                override_retention_days: 14,
+            },
+        ];
+
+        mockFetch
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => reservedNameOverrides,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({}),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => reservedNameOverrides,
+            });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('probe/with+reserved#chars'),
+            ).toBeInTheDocument();
+        });
+
+        const editButton = screen.getByLabelText('edit override');
+        fireEvent.click(editButton);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(/Edit override: probe\/with\+reserved#chars/),
+            ).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            // The raw "/", "+", and "#" should be percent-encoded.
+            const expected =
+                '/api/v1/probe-overrides/server/1/' +
+                encodeURIComponent('probe/with+reserved#chars');
+            expect(mockFetch).toHaveBeenCalledWith(
+                expected,
+                expect.objectContaining({
+                    method: 'PUT',
+                    credentials: 'include',
+                }),
+            );
+        });
+    });
+
+    it('encodes itemKey with reserved characters in DELETE URL', async () => {
+        // The shared scaffold's reset handler also interpolates the
+        // item key into the URL. The encoding must cover that path
+        // too — caller-supplied identifiers may contain anything.
+        const reservedNameOverrides = [
+            {
+                name: 'probe with space/slash',
+                description: 'Defensive encoding check',
+                default_enabled: true,
+                default_interval_seconds: 60,
+                default_retention_days: 30,
+                has_override: true,
+                override_enabled: false,
+                override_interval_seconds: 120,
+                override_retention_days: 14,
+            },
+        ];
+
+        mockFetch
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => reservedNameOverrides,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({}),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => reservedNameOverrides,
+            });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('probe with space/slash'),
+            ).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByLabelText('reset override to default'));
+
+        await waitFor(() => {
+            const expected =
+                '/api/v1/probe-overrides/server/1/' +
+                encodeURIComponent('probe with space/slash');
+            expect(mockFetch).toHaveBeenCalledWith(
+                expected,
+                expect.objectContaining({
+                    method: 'DELETE',
+                    credentials: 'include',
+                }),
+            );
+        });
+    });
+
+    it('discards stale fetch responses when scope changes mid-flight', async () => {
+        // Setting up the race: the first GET (scope=server, id=1)
+        // returns a promise we resolve manually AFTER the second GET
+        // (scope=cluster, id=5) has already resolved. Without the
+        // request-token guard, the stale server response would land
+        // last and overwrite the cluster rows. With the guard in
+        // place, the stale response is dropped silently.
+
+        // First request: deferred. We'll resolve it explicitly later.
+        let resolveFirst: (value: {
+            ok: true;
+            json: () => Promise<typeof mockOverrides>;
+        }) => void = () => {};
+        const firstPromise = new Promise<{
+            ok: true;
+            json: () => Promise<typeof mockOverrides>;
+        }>((resolve) => {
+            resolveFirst = resolve;
+        });
+        mockFetch.mockReturnValueOnce(firstPromise);
+
+        // Second request: resolves immediately with a different,
+        // recognisable payload so we can assert it survives.
+        const clusterOverrides = [
+            {
+                name: 'cluster_only_probe',
+                description: 'Only visible after the rerender',
+                default_enabled: true,
+                default_interval_seconds: 15,
+                default_retention_days: 7,
+                has_override: false,
+                override_enabled: null,
+                override_interval_seconds: null,
+                override_retention_days: null,
+            },
+        ];
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => clusterOverrides,
+        });
+
+        const { rerender } = render(
+            <ThemeProvider theme={darkTheme}>
+                <ProbeOverridesPanel scope="server" scopeId={1} />
+            </ThemeProvider>,
+        );
+
+        // Force scope/scopeId to change while the first request is
+        // still pending. This triggers a second fetch with a new
+        // request token.
+        rerender(
+            <ThemeProvider theme={darkTheme}>
+                <ProbeOverridesPanel scope="cluster" scopeId={5} />
+            </ThemeProvider>,
+        );
+
+        // Wait for the second (newer) response to land.
+        await waitFor(() => {
+            expect(
+                screen.getByText('cluster_only_probe'),
+            ).toBeInTheDocument();
+        });
+
+        // Now resolve the stale first request. It must NOT replace
+        // the cluster rows we just rendered.
+        resolveFirst({
+            ok: true,
+            json: async () => mockOverrides,
+        });
+
+        // Give microtasks a chance to flush. Even after the stale
+        // response resolves, cluster_only_probe must remain and
+        // none of the server-scope probe names should appear.
+        await waitFor(() => {
+            expect(
+                screen.getByText('cluster_only_probe'),
+            ).toBeInTheDocument();
+            expect(screen.queryByText('cpu_usage')).not.toBeInTheDocument();
+            expect(screen.queryByText('disk_usage')).not.toBeInTheDocument();
+        });
+    });
+
+    it('discards stale fetch error responses when scope changes mid-flight', async () => {
+        // Mirror of the previous test but exercising the catch
+        // branch: the stale request rejects AFTER the newer request
+        // has succeeded. The error banner must NOT appear, because
+        // that error belongs to a discarded scope.
+        let rejectFirst: (reason: unknown) => void = () => {};
+        const firstPromise = new Promise((_, reject) => {
+            rejectFirst = reject;
+        });
+        mockFetch.mockReturnValueOnce(firstPromise);
+
+        const clusterOverrides = [
+            {
+                name: 'cluster_only_probe',
+                description: 'Only visible after the rerender',
+                default_enabled: true,
+                default_interval_seconds: 15,
+                default_retention_days: 7,
+                has_override: false,
+                override_enabled: null,
+                override_interval_seconds: null,
+                override_retention_days: null,
+            },
+        ];
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => clusterOverrides,
+        });
+
+        const { rerender } = render(
+            <ThemeProvider theme={darkTheme}>
+                <ProbeOverridesPanel scope="server" scopeId={1} />
+            </ThemeProvider>,
+        );
+
+        rerender(
+            <ThemeProvider theme={darkTheme}>
+                <ProbeOverridesPanel scope="cluster" scopeId={5} />
+            </ThemeProvider>,
+        );
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('cluster_only_probe'),
+            ).toBeInTheDocument();
+        });
+
+        // Reject the stale request with a recognisable message;
+        // the error banner must NOT surface this stale failure.
+        rejectFirst(new Error('stale request boom'));
+
+        // Allow microtasks to settle. cluster_only_probe should
+        // still be rendered and no stale error should be shown.
+        await waitFor(() => {
+            expect(
+                screen.getByText('cluster_only_probe'),
+            ).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByText('stale request boom'),
+        ).not.toBeInTheDocument();
+    });
+
     it('success banner can be dismissed after a reset', async () => {
         mockFetch
             .mockResolvedValueOnce({

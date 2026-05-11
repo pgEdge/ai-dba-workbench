@@ -153,10 +153,7 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 
 	connections, err := h.datastore.GetAllConnections(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to list connections: %v", err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to list connections")
+	if respondDBError(w, err, "list connections") {
 		return
 	}
 
@@ -282,10 +279,7 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	}
 
 	conn, err := h.datastore.CreateConnection(ctx, params)
-	if err != nil {
-		log.Printf("[ERROR] Failed to create connection: %v", err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to create connection")
+	if respondDBError(w, err, "create connection") {
 		return
 	}
 
@@ -658,10 +652,7 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 	}
 
 	// Save the selection
-	if err := h.authStore.SetConnectionSession(tokenHash, req.ConnectionID, req.DatabaseName); err != nil {
-		log.Printf("[ERROR] Failed to save connection selection: %v", err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to save connection selection")
+	if err := h.authStore.SetConnectionSession(tokenHash, req.ConnectionID, req.DatabaseName); respondDBError(w, err, "save connection selection") {
 		return
 	}
 
@@ -679,10 +670,7 @@ func (h *ConnectionHandler) setCurrentConnection(w http.ResponseWriter, r *http.
 
 // clearCurrentConnection handles DELETE /api/v1/connections/current
 func (h *ConnectionHandler) clearCurrentConnection(w http.ResponseWriter, r *http.Request, tokenHash string) {
-	if err := h.authStore.ClearConnectionSession(tokenHash); err != nil {
-		log.Printf("[ERROR] Failed to clear connection selection: %v", err)
-		RespondError(w, http.StatusInternalServerError,
-			"Failed to clear connection selection")
+	if err := h.authStore.ClearConnectionSession(tokenHash); respondDBError(w, err, "clear connection selection") {
 		return
 	}
 

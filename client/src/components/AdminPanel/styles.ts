@@ -79,6 +79,17 @@ export const emptyRowTextSx: SxProps<Theme> = {
     fontSize: '1rem',
 };
 
+/**
+ * Italic, dimmed style applied to cells displaying inherited
+ * default values in scoped override tables. Shared between
+ * ProbeOverridesPanel and AlertOverridesPanel so the two panels
+ * stay visually consistent when a row inherits its defaults.
+ */
+export const inheritedCellSx: SxProps<Theme> = {
+    fontStyle: 'italic',
+    opacity: 0.6,
+};
+
 // --- Theme-dependent style-getter functions ---
 
 /**

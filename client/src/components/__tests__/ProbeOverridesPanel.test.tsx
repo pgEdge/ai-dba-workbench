@@ -978,6 +978,164 @@ describe('ProbeOverridesPanel', () => {
         ).not.toBeInTheDocument();
     });
 
+    it('rejects whitespace-only interval input on save', async () => {
+        // Number('   ') is 0, which would otherwise fall through to
+        // the "must be a positive integer" message. Pre-trimming
+        // lets us surface a clearer "is required" message instead
+        // and no PUT must fire.
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockOverrides,
+        });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('cpu_usage')).toBeInTheDocument();
+        });
+
+        const cpuRow = screen.getByText('cpu_usage').closest('tr');
+        const editButton = (cpuRow as HTMLElement).querySelector(
+            '[aria-label="edit override"]',
+        );
+        fireEvent.click(editButton as HTMLElement);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: cpu_usage/)).toBeInTheDocument();
+        });
+
+        const intervalInput = screen.getByLabelText(
+            'Collection Interval (seconds)',
+        );
+        fireEvent.change(intervalInput, { target: { value: '   ' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('Collection interval is required.'),
+            ).toBeInTheDocument();
+        });
+
+        // Only the initial GET should have fired; no PUT yet.
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects whitespace-only retention input on save', async () => {
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockOverrides,
+        });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('cpu_usage')).toBeInTheDocument();
+        });
+
+        const cpuRow = screen.getByText('cpu_usage').closest('tr');
+        const editButton = (cpuRow as HTMLElement).querySelector(
+            '[aria-label="edit override"]',
+        );
+        fireEvent.click(editButton as HTMLElement);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: cpu_usage/)).toBeInTheDocument();
+        });
+
+        const retentionInput = screen.getByLabelText('Retention Days');
+        fireEvent.change(retentionInput, { target: { value: '   ' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('Retention days is required.'),
+            ).toBeInTheDocument();
+        });
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears stale success banner when a subsequent save fails', async () => {
+        // Sequence:
+        //  1) initial GET returns rows
+        //  2) PUT succeeds -> green success banner appears
+        //  3) refresh GET after save returns rows again
+        //  4) re-open edit dialog, type an invalid value, Save
+        //  5) red error banner must appear AND the green banner must be gone
+        mockFetch
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => mockOverrides,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({}),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => mockOverrides,
+            });
+
+        renderWithTheme(<ProbeOverridesPanel scope="server" scopeId={1} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('cpu_usage')).toBeInTheDocument();
+        });
+
+        const openEditor = () => {
+            const cpuRow = screen.getByText('cpu_usage').closest('tr');
+            const editButton = (cpuRow as HTMLElement).querySelector(
+                '[aria-label="edit override"]',
+            );
+            fireEvent.click(editButton as HTMLElement);
+        };
+
+        openEditor();
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: cpu_usage/)).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    'Override for "cpu_usage" saved successfully.',
+                ),
+            ).toBeInTheDocument();
+        });
+
+        // Re-open the dialog and submit an invalid interval. The
+        // validation error must surface AND the prior success banner
+        // must vanish so the user is not left with conflicting state.
+        openEditor();
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: cpu_usage/)).toBeInTheDocument();
+        });
+
+        const intervalInput = screen.getByLabelText(
+            'Collection Interval (seconds)',
+        );
+        fireEvent.change(intervalInput, { target: { value: '0' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    'Collection interval must be a positive integer.',
+                ),
+            ).toBeInTheDocument();
+        });
+
+        expect(
+            screen.queryByText(
+                'Override for "cpu_usage" saved successfully.',
+            ),
+        ).not.toBeInTheDocument();
+    });
+
     it('success banner can be dismissed after a reset', async () => {
         mockFetch
             .mockResolvedValueOnce({

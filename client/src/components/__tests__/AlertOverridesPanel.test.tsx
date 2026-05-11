@@ -682,4 +682,228 @@ describe('AlertOverridesPanel', () => {
             ).toBeInTheDocument();
         });
     });
+
+    it('renders chip with default color for unknown severity', async () => {
+        // An unrecognised severity string falls through to the
+        // `default` branch of severityColor. Real backends should
+        // never emit one, but the defensive branch must be covered
+        // so a future schema drift cannot crash the chip render.
+        const unknownSeverityOverrides = [
+            {
+                rule_id: 77,
+                name: 'Unknown Sev Rule',
+                description: 'Defensive coverage',
+                category: 'Misc',
+                metric_name: 'some_metric',
+                metric_unit: null,
+                default_operator: '>',
+                default_threshold: 1,
+                default_severity: 'mystery',
+                default_enabled: true,
+                has_override: false,
+                override_operator: null,
+                override_threshold: null,
+                override_severity: null,
+                override_enabled: null,
+            },
+        ];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => unknownSeverityOverrides,
+        });
+
+        renderWithTheme(
+            <AlertOverridesPanel scope="server" scopeId={1} />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('Unknown Sev Rule')).toBeInTheDocument();
+        });
+
+        // The chip label renders the raw severity value verbatim;
+        // the colour falls through to MUI's 'default' grey variant.
+        expect(screen.getByText('mystery')).toBeInTheDocument();
+    });
+
+    it('exercises operator and severity dropdown change handlers', async () => {
+        // Cover the onChange handlers for the Operator and Severity
+        // <TextField select> controls in the edit dialog, plus the
+        // severityColor 'info' branch that is not hit by the other
+        // mock rows (all of which use 'warning' or 'critical').
+        // MUI's <TextField select> renders an MUI <Select> internally,
+        // which does NOT respond to fireEvent.change on the displayed
+        // element. Open the menu by clicking the combobox button, then
+        // click the desired option from the popover.
+        const infoRowOverrides = [
+            {
+                rule_id: 99,
+                name: 'Slow Query',
+                description: 'Query took too long',
+                category: 'Performance',
+                metric_name: 'query_latency_ms',
+                metric_unit: 'ms',
+                default_operator: '>',
+                default_threshold: 500,
+                default_severity: 'info',
+                default_enabled: true,
+                has_override: false,
+                override_operator: null,
+                override_threshold: null,
+                override_severity: null,
+                override_enabled: null,
+            },
+        ];
+
+        mockFetch
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => infoRowOverrides,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({}),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => infoRowOverrides,
+            });
+
+        renderWithTheme(
+            <AlertOverridesPanel scope="server" scopeId={1} />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('Slow Query')).toBeInTheDocument();
+        });
+
+        // The info-severity chip must render with its standard color
+        // via the 'info' case of severityColor.
+        expect(screen.getByText('info')).toBeInTheDocument();
+
+        const slowRow = screen.getByText('Slow Query').closest('tr');
+        const editButton = (slowRow as HTMLElement).querySelector(
+            '[aria-label="edit override"]'
+        );
+        fireEvent.click(editButton as HTMLElement);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: Slow Query/)).toBeInTheDocument();
+        });
+
+        // Open the Operator dropdown and pick a new value.
+        const operatorCombo = screen.getByLabelText('Operator');
+        fireEvent.mouseDown(operatorCombo);
+        const operatorOption = await screen.findByRole('option', {
+            name: '>=',
+        });
+        fireEvent.click(operatorOption);
+
+        // Then open the Severity dropdown and pick critical.
+        const severityCombo = screen.getByLabelText('Severity');
+        fireEvent.mouseDown(severityCombo);
+        const severityOption = await screen.findByRole('option', {
+            name: 'critical',
+        });
+        fireEvent.click(severityOption);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(mockFetch).toHaveBeenCalledWith(
+                '/api/v1/alert-overrides/server/1/99',
+                expect.objectContaining({
+                    method: 'PUT',
+                    body: expect.stringContaining('"operator":">="'),
+                })
+            );
+        });
+        // And the severity update also lands.
+        expect(mockFetch).toHaveBeenCalledWith(
+            '/api/v1/alert-overrides/server/1/99',
+            expect.objectContaining({
+                method: 'PUT',
+                body: expect.stringContaining('"severity":"critical"'),
+            })
+        );
+    });
+
+    it('clears stale success banner when a subsequent save fails', async () => {
+        // Save once successfully so the green banner appears, then
+        // re-open the dialog and force a backend 500. The red error
+        // banner must appear AND the green success banner must be
+        // gone, so the user never sees conflicting feedback.
+        mockFetch
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => mockOverrides,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({}),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => mockOverrides,
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 500,
+                text: async () =>
+                    JSON.stringify({ error: 'second save failed' }),
+            });
+
+        renderWithTheme(
+            <AlertOverridesPanel scope="server" scopeId={1} />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
+        });
+
+        const openEditor = () => {
+            const cpuRow = screen.getByText('High CPU Usage').closest('tr');
+            const editButton = (cpuRow as HTMLElement).querySelector(
+                '[aria-label="edit override"]'
+            );
+            fireEvent.click(editButton as HTMLElement);
+        };
+
+        openEditor();
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: High CPU Usage/)).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    'Override for "High CPU Usage" saved successfully.'
+                )
+            ).toBeInTheDocument();
+        });
+
+        // Re-open the dialog and submit again — this Save fails.
+        openEditor();
+
+        await waitFor(() => {
+            expect(screen.getByText(/Edit override: High CPU Usage/)).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('second save failed')
+            ).toBeInTheDocument();
+        });
+
+        expect(
+            screen.queryByText(
+                'Override for "High CPU Usage" saved successfully.'
+            )
+        ).not.toBeInTheDocument();
+    });
 });

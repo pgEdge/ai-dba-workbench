@@ -37,6 +37,7 @@ import {
     dialogActionsSx,
     dialogTitleSx,
     getContainedButtonSx,
+    inheritedCellSx,
 } from './AdminPanel/styles';
 import ScopedOverridesPanel, {
     type ScopedOverridesColumn,
@@ -70,12 +71,6 @@ const PROBE_COLUMNS: ScopedOverridesColumn[] = [
     { label: 'Interval' },
     { label: 'Retention' },
 ];
-
-/** Italic, dimmed style applied to cells displaying inherited defaults. */
-const inheritedCellSx = {
-    fontStyle: 'italic',
-    opacity: 0.6,
-};
 
 /**
  * Resolve the effective values for a probe row. When no override is
@@ -161,19 +156,38 @@ const ProbeOverridesPanel: React.FC<ProbeOverridesPanelProps> = ({
             if (!editOverride) {
                 return;
             }
+            // Trim first so we can distinguish "user left the field
+            // empty" from "user typed an invalid number". Without the
+            // pre-trim, Number('   ') returns 0 and the user would get
+            // the misleading "must be a positive integer" message for
+            // what is really a missing value.
+            const intervalTrimmed = editInterval.trim();
+            if (intervalTrimmed === '') {
+                helpers.onSaveError(
+                    new Error('Collection interval is required.'),
+                );
+                return;
+            }
             // parseInt would silently accept fractional or scientific
             // notation inputs (for example "1.5" -> 1, "1e2" -> 100),
             // so the saved value could differ from what the user typed.
             // Number() + Number.isInteger() rejects anything that is
             // not a finite integer outright.
-            const intervalNum = Number(editInterval);
+            const intervalNum = Number(intervalTrimmed);
             if (!Number.isInteger(intervalNum) || intervalNum < 1) {
                 helpers.onSaveError(
                     new Error('Collection interval must be a positive integer.'),
                 );
                 return;
             }
-            const retentionNum = Number(editRetention);
+            const retentionTrimmed = editRetention.trim();
+            if (retentionTrimmed === '') {
+                helpers.onSaveError(
+                    new Error('Retention days is required.'),
+                );
+                return;
+            }
+            const retentionNum = Number(retentionTrimmed);
             if (!Number.isInteger(retentionNum) || retentionNum < 1) {
                 helpers.onSaveError(
                     new Error('Retention days must be a positive integer.'),

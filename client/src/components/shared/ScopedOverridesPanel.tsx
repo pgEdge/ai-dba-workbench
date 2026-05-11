@@ -43,7 +43,14 @@
  */
 
 import type React from 'react';
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import {
+    Fragment,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
 import {
     Alert,
     Box,
@@ -232,9 +239,12 @@ function ScopedOverridesPanel<T>(
      * Centralised error projection used by both the reset action
      * and the dialog's onSaveError helper. Anything `Error`-shaped
      * surfaces its message; everything else falls back to a generic
-     * label so the user is never left staring at nothing.
+     * label so the user is never left staring at nothing. The
+     * previous success banner is cleared at the same time so a
+     * stale "saved" message never appears alongside a fresh error.
      */
     const projectError = useCallback((err: unknown) => {
+        setSuccess(null);
         if (err instanceof Error) {
             setError(err.message);
         } else {
@@ -289,6 +299,32 @@ function ScopedOverridesPanel<T>(
             onEditRequested(item);
         },
         [onEditRequested],
+    );
+
+    // Memoise the helpers object so the caller's `renderEditDialog`
+    // receives a stable reference across renders. Without this the
+    // dialog render prop would see a new helpers identity every render,
+    // which defeats any memoisation the caller may apply downstream.
+    // Dependencies cover every value the object closes over: the two
+    // state setters (stable by React contract but listed for the
+    // exhaustive-deps lint rule), `projectError` (a stable useCallback),
+    // and `fetchOverrides` (a stable useCallback keyed off the API
+    // inputs, so it only changes when a new fetch is genuinely needed).
+    // This hook MUST sit above the early-return for `loading` below;
+    // moving it after the conditional return would change the hook
+    // count between renders and break the Rules of Hooks.
+    const editHelpers = useMemo<ScopedOverridesEditHelpers>(
+        () => ({
+            onSaveSuccess: (message) => {
+                setSuccess(message);
+                setError(null);
+            },
+            onSaveError: projectError,
+            refresh: () => {
+                void fetchOverrides();
+            },
+        }),
+        [fetchOverrides, projectError],
     );
 
     if (loading) {
@@ -388,17 +424,6 @@ function ScopedOverridesPanel<T>(
                     .map(renderItemRow)}
             </Fragment>
         ));
-    };
-
-    const editHelpers: ScopedOverridesEditHelpers = {
-        onSaveSuccess: (message) => {
-            setSuccess(message);
-            setError(null);
-        },
-        onSaveError: projectError,
-        refresh: () => {
-            void fetchOverrides();
-        },
     };
 
     return (

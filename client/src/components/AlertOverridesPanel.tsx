@@ -43,6 +43,7 @@ import {
     dialogActionsSx,
     dialogTitleSx,
     getContainedButtonSx,
+    inheritedCellSx,
 } from './AdminPanel/styles';
 import ScopedOverridesPanel, {
     type ScopedOverridesColumn,
@@ -102,12 +103,6 @@ const ALERT_COLUMNS: ScopedOverridesColumn[] = [
     { label: 'Enabled' },
 ];
 
-/** Italic, dimmed style applied to cells displaying inherited defaults. */
-const inheritedCellSx = {
-    fontStyle: 'italic',
-    opacity: 0.6,
-};
-
 /**
  * Resolve the effective values for an alert rule row. Mirrors the
  * server-side resolution: explicit override fields win, anything
@@ -152,25 +147,17 @@ const AlertOverridesPanel: React.FC<AlertOverridesPanelProps> = ({
     /**
      * Pre-populate the edit dialog with the row's effective values
      * so the user starts from "current state" rather than blanks.
+     * Delegates the override-vs-default resolution to the shared
+     * `getDisplayValues` helper so the dialog and the table row stay
+     * in lockstep.
      */
     const handleEditRequested = (override: AlertOverride) => {
+        const display = getDisplayValues(override);
         setEditOverride(override);
-        const enabledValue = override.has_override
-            ? override.override_enabled ?? override.default_enabled
-            : override.default_enabled;
-        setEditEnabled(enabledValue);
-        const operatorValue = override.has_override
-            ? override.override_operator ?? override.default_operator
-            : override.default_operator;
-        setEditOperator(operatorValue);
-        const thresholdValue = override.has_override
-            ? override.override_threshold ?? override.default_threshold
-            : override.default_threshold;
-        setEditThreshold(String(thresholdValue));
-        const severityValue = override.has_override
-            ? override.override_severity ?? override.default_severity
-            : override.default_severity;
-        setEditSeverity(severityValue);
+        setEditEnabled(display.enabled);
+        setEditOperator(display.operator);
+        setEditThreshold(String(display.threshold));
+        setEditSeverity(display.severity);
         setEditOpen(true);
     };
 

@@ -471,8 +471,8 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	var req BlackoutUpdateRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutUpdateRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -686,8 +686,8 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req BlackoutScheduleRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutScheduleRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -756,8 +756,8 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req BlackoutScheduleRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutScheduleRequest](w, r)
+	if !ok {
 		return
 	}
 

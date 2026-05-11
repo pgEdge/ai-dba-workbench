@@ -126,7 +126,7 @@ func TestScanAll(t *testing.T) {
 		}
 	})
 
-	t.Run("empty result returns nil slice", func(t *testing.T) {
+	t.Run("empty result returns non-nil zero-length slice", func(t *testing.T) {
 		rows := &fakeRows{rows: nil}
 		got, err := scanAll(rows, func(r pgx.Rows, out *scanRow) error {
 			return r.Scan(&out.ID, &out.Name)
@@ -134,8 +134,14 @@ func TestScanAll(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != nil {
-			t.Errorf("expected nil slice for empty result, got %v", got)
+		// The helper guarantees a non-nil empty slice so callers do not
+		// have to normalize the result and JSON encoders emit `[]`
+		// rather than `null` for empty result sets.
+		if got == nil {
+			t.Fatal("expected non-nil slice for empty result, got nil")
+		}
+		if len(got) != 0 {
+			t.Errorf("expected zero-length slice for empty result, got %v", got)
 		}
 		if !rows.closed {
 			t.Error("rows.Close was not called on empty path")

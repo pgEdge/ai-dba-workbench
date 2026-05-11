@@ -118,9 +118,8 @@ func (d *Datastore) GetTimelineEvents(ctx context.Context, filter TimelineFilter
 		return nil, fmt.Errorf("failed to read timeline events: %w", err)
 	}
 
-	if events == nil {
-		events = []TimelineEvent{}
-	}
+	// scanAll guarantees a non-nil zero-length slice on empty result
+	// sets, so no manual normalization is needed here.
 
 	// Get total count (without limit)
 	countQuery := buildCountQuery(connCondition, timeCondition, "", filter)

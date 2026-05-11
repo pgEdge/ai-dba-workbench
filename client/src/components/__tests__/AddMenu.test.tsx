@@ -132,6 +132,7 @@ describe('AddMenu', () => {
             expect(
                 screen.queryByText('Add Cluster Group'),
             ).not.toBeInTheDocument();
+            expect(screen.queryByRole('separator')).not.toBeInTheDocument();
         });
 
         it('still allows Add Server to fire its callback', () => {
@@ -160,6 +161,7 @@ describe('AddMenu', () => {
             expect(
                 screen.queryByText('Add Cluster Group'),
             ).not.toBeInTheDocument();
+            expect(screen.queryByRole('separator')).not.toBeInTheDocument();
         });
     });
 

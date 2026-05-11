@@ -187,21 +187,19 @@ func scanFullConnection(scanner interface{ Scan(...any) error }) (*MonitoredConn
 	return &conn, nil
 }
 
-// scanConnectionListItem scans a row into a ConnectionListItem struct.
-// The row must contain columns in this order:
-// id, name, description, host, port, database_name, is_monitored, is_shared,
-// owner_username, cluster_id, membership_source
-func scanConnectionListItem(scanner interface{ Scan(...any) error }) (*ConnectionListItem, error) {
-	var conn ConnectionListItem
-	err := scanner.Scan(
+// scanConnectionListItem scans a row into the supplied ConnectionListItem
+// in place. The caller owns the destination struct so the helper does
+// no heap allocation per row; this matters in the scanAll callback used
+// by GetAllConnections where the closure is invoked once per scanned
+// row. The row must contain columns in this order: id, name, description,
+// host, port, database_name, is_monitored, is_shared, owner_username,
+// cluster_id, membership_source.
+func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(...any) error }) error {
+	return scanner.Scan(
 		&conn.ID, &conn.Name, &conn.Description, &conn.Host, &conn.Port,
 		&conn.DatabaseName, &conn.IsMonitored, &conn.IsShared, &conn.OwnerUsername,
 		&conn.ClusterID, &conn.MembershipSource,
 	)
-	if err != nil {
-		return nil, err
-	}
-	return &conn, nil
 }
 
 // NewDatastore creates a new datastore connection
@@ -285,12 +283,10 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 		return nil, fmt.Errorf("failed to query connections: %w", err)
 	}
 	connections, err := scanAll(rows, func(r pgx.Rows, conn *ConnectionListItem) error {
-		scanned, err := scanConnectionListItem(r)
-		if err != nil {
-			return err
-		}
-		*conn = *scanned
-		return nil
+		// Scan directly into the destination scanAll provides; this
+		// avoids the per-row *ConnectionListItem heap allocation the
+		// old (*ConnectionListItem, error) signature required.
+		return scanConnectionListItem(conn, r)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read connections: %w", err)

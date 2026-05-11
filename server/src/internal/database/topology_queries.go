@@ -691,10 +691,11 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 	if err != nil {
 		return nil, fmt.Errorf("failed to query manual cluster groups: %w", err)
 	}
-	// We materialize the manual-group rows into a local slice first so
-	// the cursor can be released before we recursively call into other
-	// query methods further down (those acquire the pool too and would
-	// deadlock against a still-open cursor on a single-conn pool).
+	// scanAll closes the cursor via defer rows.Close before returning,
+	// so the recursive getClustersInGroupInternal calls below run with
+	// no cursor held. Holding one here would deadlock against any pool
+	// configured with a single connection, because those calls also
+	// acquire the pool.
 	type groupInfo struct {
 		id   int
 		name string

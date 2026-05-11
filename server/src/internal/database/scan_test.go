@@ -91,7 +91,9 @@ func (f *fakeRows) Values() ([]any, error) {
 func (f *fakeRows) RawValues() [][]byte {
 	panic("RawValues not implemented by fakeRows")
 }
-func (f *fakeRows) Conn() *pgx.Conn { return nil }
+func (f *fakeRows) Conn() *pgx.Conn {
+	panic("Conn not implemented by fakeRows")
+}
 
 type scanRow struct {
 	ID   int

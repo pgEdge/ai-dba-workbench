@@ -2281,7 +2281,7 @@
       },
       "post": {
         "summary": "Create a cluster group",
-        "description": "Creates a new cluster group",
+        "description": "Creates a new cluster group. Requires manage_connections permission.",
         "operationId": "createClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2320,6 +2320,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -2482,7 +2492,7 @@
       },
       "delete": {
         "summary": "Delete a cluster group",
-        "description": "Deletes a cluster group",
+        "description": "Deletes a cluster group. Requires manage_connections permission.",
         "operationId": "deleteClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2513,7 +2523,7 @@
             }
           },
           "403": {
-            "description": "Cannot delete default group",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -2602,7 +2612,7 @@
       },
       "post": {
         "summary": "Create a cluster in a group",
-        "description": "Creates a new cluster within a group",
+        "description": "Creates a new cluster within a group. Requires manage_connections permission.",
         "operationId": "createClusterInGroup",
         "tags": [
           "Cluster Groups"
@@ -2652,6 +2662,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -2716,7 +2736,7 @@
       },
       "post": {
         "summary": "Create a cluster",
-        "description": "Creates a new cluster, optionally assigned to a group",
+        "description": "Creates a new cluster, optionally assigned to a group. Requires manage_connections permission.",
         "operationId": "createCluster",
         "tags": [
           "Clusters"
@@ -2764,7 +2784,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -2880,7 +2900,7 @@
       },
       "put": {
         "summary": "Update a cluster",
-        "description": "Updates cluster name, description, or group assignment",
+        "description": "Updates cluster name, description, or group assignment. Requires manage_connections permission.",
         "operationId": "updateCluster",
         "tags": [
           "Clusters"
@@ -2939,7 +2959,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -2967,7 +2987,7 @@
       },
       "delete": {
         "summary": "Delete a cluster",
-        "description": "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}).",
+        "description": "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission.",
         "operationId": "deleteCluster",
         "tags": [
           "Clusters"
@@ -2998,7 +3018,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -3009,6 +3029,175 @@
           },
           "404": {
             "description": "Cluster not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/clusters/{id}/connections/{connId}/relationships": {
+      "put": {
+        "summary": "Set connection relationships",
+        "description": "Replaces the replication relationships for a connection within a cluster. Requires manage_connections permission.",
+        "operationId": "setConnectionRelationships",
+        "tags": [
+          "Clusters"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Cluster ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "connId",
+            "in": "path",
+            "description": "Source connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Relationship definitions",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRelationshipsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Relationships updated"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_connections permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cluster or connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Clear connection relationships",
+        "description": "Removes all replication relationships for a connection within a cluster. Requires manage_connections permission.",
+        "operationId": "clearConnectionRelationships",
+        "tags": [
+          "Clusters"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Cluster ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "connId",
+            "in": "path",
+            "description": "Source connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Relationships cleared"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_connections permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cluster or connection not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -3079,7 +3268,7 @@
     "/clusters/{id}/relationships/{relationshipId}": {
       "delete": {
         "summary": "Delete cluster relationship",
-        "description": "Deletes a specific cluster relationship",
+        "description": "Deletes a specific cluster relationship. Requires manage_connections permission.",
         "operationId": "deleteClusterRelationship",
         "tags": [
           "Clusters"
@@ -3120,6 +3309,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -3198,7 +3397,7 @@
       },
       "post": {
         "summary": "Add server to cluster",
-        "description": "Assigns a server connection to a cluster with an optional role",
+        "description": "Assigns a server connection to a cluster with an optional role. Requires manage_connections permission.",
         "operationId": "addServerToCluster",
         "tags": [
           "Clusters"
@@ -3250,7 +3449,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -3270,7 +3469,7 @@
     "/clusters/{id}/servers/{connectionId}": {
       "delete": {
         "summary": "Remove server from cluster",
-        "description": "Removes a server connection from a cluster",
+        "description": "Removes a server connection from a cluster. Requires manage_connections permission.",
         "operationId": "removeServerFromCluster",
         "tags": [
           "Clusters"
@@ -3320,7 +3519,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -11141,6 +11340,23 @@
           }
         }
       },
+      "RelationshipInput": {
+        "type": "object",
+        "properties": {
+          "relationship_type": {
+            "type": "string",
+            "description": "Relationship type"
+          },
+          "target_connection_id": {
+            "type": "integer",
+            "description": "Target connection ID"
+          }
+        },
+        "required": [
+          "target_connection_id",
+          "relationship_type"
+        ]
+      },
       "SaveAnalysisRequest": {
         "type": "object",
         "properties": {
@@ -11245,6 +11461,21 @@
             "description": "System information (OS, CPU, memory, disks)"
           }
         }
+      },
+      "SetRelationshipsRequest": {
+        "type": "object",
+        "properties": {
+          "relationships": {
+            "type": "array",
+            "description": "Relationship definitions from the source connection",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipInput"
+            }
+          }
+        },
+        "required": [
+          "relationships"
+        ]
       },
       "StatusResponse": {
         "type": "object",

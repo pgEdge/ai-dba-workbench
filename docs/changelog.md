@@ -300,6 +300,32 @@ project adheres to
   regression tests cover every affected handler.
   (#67)
 
+- Require the `manage_connections` permission on all
+  cluster and cluster-group mutating endpoints; users
+  without the permission previously could create
+  cluster groups and clusters through the REST API,
+  and the server silently committed the rows and
+  returned a success status even though the resulting
+  records were invisible to the creator while remaining
+  visible to administrators. A follow-up audit found
+  the same gap on additional mutating routes, so the
+  fix now gates eleven endpoints in total: creating
+  and deleting cluster groups, adding clusters to a
+  group, creating, updating, and deleting clusters,
+  adding and removing cluster servers, and creating,
+  updating, and deleting cluster relationships.
+  Unauthorized callers now receive a `403 Forbidden`
+  response with a clear authorization error instead of
+  a misleading success, and the group owner can still
+  delete a group they own even without the permission.
+  The web client's Add menu now hides the "Add Cluster
+  Group" and "Add Cluster" entries from users who lack
+  `manage_connections`, and the OpenAPI specification
+  and static `docs/admin-guide/api/openapi.json`
+  document the `403 Forbidden` response on the
+  affected paths. Administrators see no functional
+  change. (#207)
+
 ### Fixed
 
 - Fix the `Chart.test.tsx` regression introduced in

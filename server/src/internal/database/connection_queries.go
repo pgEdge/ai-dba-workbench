@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -283,21 +284,17 @@ func (d *Datastore) GetAllConnections(ctx context.Context) ([]ConnectionListItem
 	if err != nil {
 		return nil, fmt.Errorf("failed to query connections: %w", err)
 	}
-	defer rows.Close()
-
-	var connections []ConnectionListItem
-	for rows.Next() {
-		conn, err := scanConnectionListItem(rows)
+	connections, err := scanAll(rows, func(r pgx.Rows, conn *ConnectionListItem) error {
+		scanned, err := scanConnectionListItem(r)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan connection: %w", err)
+			return err
 		}
-		connections = append(connections, *conn)
+		*conn = *scanned
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read connections: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating connections: %w", err)
-	}
-
 	return connections, nil
 }
 
@@ -647,21 +644,12 @@ func (d *Datastore) ListDatabases(ctx context.Context, connectionID int) ([]Data
 	if err != nil {
 		return nil, fmt.Errorf("failed to query databases: %w", err)
 	}
-	defer rows.Close()
-
-	var databases []DatabaseInfo
-	for rows.Next() {
-		var db DatabaseInfo
-		if err := rows.Scan(&db.Name, &db.Owner, &db.Encoding, &db.Size); err != nil {
-			return nil, fmt.Errorf("failed to scan database: %w", err)
-		}
-		databases = append(databases, db)
+	databases, err := scanAll(rows, func(r pgx.Rows, db *DatabaseInfo) error {
+		return r.Scan(&db.Name, &db.Owner, &db.Encoding, &db.Size)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read databases: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating databases: %w", err)
-	}
-
 	return databases, nil
 }
 

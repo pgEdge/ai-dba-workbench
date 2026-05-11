@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/logger"
 )
 
@@ -690,22 +691,19 @@ func (d *Datastore) buildManualGroupsTopology(ctx context.Context, autoDetectedC
 	if err != nil {
 		return nil, fmt.Errorf("failed to query manual cluster groups: %w", err)
 	}
-	defer rows.Close()
-
+	// We materialize the manual-group rows into a local slice first so
+	// the cursor can be released before we recursively call into other
+	// query methods further down (those acquire the pool too and would
+	// deadlock against a still-open cursor on a single-conn pool).
 	type groupInfo struct {
 		id   int
 		name string
 	}
-	var groups []groupInfo
-	for rows.Next() {
-		var g groupInfo
-		if err := rows.Scan(&g.id, &g.name); err != nil {
-			return nil, fmt.Errorf("failed to scan cluster group: %w", err)
-		}
-		groups = append(groups, g)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating cluster groups: %w", err)
+	groups, err := scanAll(rows, func(r pgx.Rows, g *groupInfo) error {
+		return r.Scan(&g.id, &g.name)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manual cluster groups: %w", err)
 	}
 
 	result := make([]TopologyGroup, 0, len(groups))
@@ -844,16 +842,12 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 	if err != nil {
 		return nil, fmt.Errorf("failed to query servers: %w", err)
 	}
-	defer rows.Close()
-
-	var servers []TopologyServerInfo
-	for rows.Next() {
-		var s TopologyServerInfo
+	servers, err := scanAll(rows, func(r pgx.Rows, s *TopologyServerInfo) error {
 		var ownerUsername, description, role, version, osName, spockNodeName sql.NullString
-		if err := rows.Scan(&s.ID, &s.Name, &description, &s.Host, &s.Port, &ownerUsername, &role,
+		if err := r.Scan(&s.ID, &s.Name, &description, &s.Host, &s.Port, &ownerUsername, &role,
 			&s.DatabaseName, &s.Username, &version, &osName, &spockNodeName,
 			&s.PrimaryRole, &s.Status, &s.ActiveAlertCount, &s.MembershipSource); err != nil {
-			return nil, fmt.Errorf("failed to scan server: %w", err)
+			return err
 		}
 		if ownerUsername.Valid {
 			s.OwnerUsername = ownerUsername.String
@@ -876,13 +870,11 @@ func (d *Datastore) getServersInClusterWithRolesInternal(ctx context.Context, cl
 			s.SpockNodeName = spockNodeName.String
 		}
 		s.IsExpandable = false
-		servers = append(servers, s)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read servers: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating servers: %w", err)
-	}
-
 	return servers, nil
 }
 

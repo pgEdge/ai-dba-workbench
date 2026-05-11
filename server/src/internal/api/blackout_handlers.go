@@ -11,7 +11,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -270,9 +269,7 @@ func (h *BlackoutHandler) listBlackouts(w http.ResponseWriter, r *http.Request) 
 		filter.Limit = reqLimit
 		filter.Offset = reqOffset
 		result, err := h.datastore.ListBlackouts(r.Context(), filter)
-		if err != nil {
-			log.Printf("[ERROR] Failed to fetch blackouts: %v", err)
-			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+		if respondDBError(w, err, "fetch blackouts") {
 			return
 		}
 		RespondJSON(w, http.StatusOK, result)
@@ -285,9 +282,7 @@ func (h *BlackoutHandler) listBlackouts(w http.ResponseWriter, r *http.Request) 
 	filter.Limit = visibilityFilterFetchLimit
 	filter.Offset = 0
 	result, err := h.datastore.ListBlackouts(r.Context(), filter)
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch blackouts: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackouts")
+	if respondDBError(w, err, "fetch blackouts") {
 		return
 	}
 	if result == nil {
@@ -356,13 +351,8 @@ func paginateSchedules(in []database.BlackoutSchedule, offset, limit int) []data
 // getBlackout handles GET /api/v1/blackouts/{id}
 func (h *BlackoutHandler) getBlackout(w http.ResponseWriter, r *http.Request, id int64) {
 	blackout, err := h.datastore.GetBlackout(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, database.ErrBlackoutNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to fetch blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout")
+	if respondDBError(w, err, "fetch blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return
 	}
 
@@ -418,8 +408,8 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req BlackoutCreateRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutCreateRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -464,9 +454,7 @@ func (h *BlackoutHandler) createBlackout(w http.ResponseWriter, r *http.Request)
 		CreatedBy:    username,
 	}
 
-	if err := h.datastore.CreateBlackout(r.Context(), blackout); err != nil {
-		log.Printf("[ERROR] Failed to create blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to create blackout")
+	if err := h.datastore.CreateBlackout(r.Context(), blackout); respondDBError(w, err, "create blackout") {
 		return
 	}
 
@@ -483,20 +471,15 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	var req BlackoutUpdateRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutUpdateRequest](w, r)
+	if !ok {
 		return
 	}
 
 	// Fetch existing blackout
 	existing, err := h.datastore.GetBlackout(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, database.ErrBlackoutNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to fetch blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout")
+	if respondDBError(w, err, "fetch blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return
 	}
 
@@ -519,21 +502,14 @@ func (h *BlackoutHandler) updateBlackout(w http.ResponseWriter, r *http.Request,
 		endTime = parsed
 	}
 
-	if err := h.datastore.UpdateBlackout(r.Context(), id, reason, endTime); err != nil {
-		if errors.Is(err, database.ErrBlackoutNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to update blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to update blackout")
+	if err := h.datastore.UpdateBlackout(r.Context(), id, reason, endTime); respondDBError(w, err, "update blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return
 	}
 
 	// Return updated blackout
 	updated, err := h.datastore.GetBlackout(r.Context(), id)
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch updated blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch updated blackout")
+	if respondDBError(w, err, "fetch updated blackout") {
 		return
 	}
 
@@ -546,13 +522,8 @@ func (h *BlackoutHandler) deleteBlackout(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if err := h.datastore.DeleteBlackout(r.Context(), id); err != nil {
-		if errors.Is(err, database.ErrBlackoutNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to delete blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to delete blackout")
+	if err := h.datastore.DeleteBlackout(r.Context(), id); respondDBError(w, err, "delete blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found")) {
 		return
 	}
 
@@ -565,21 +536,14 @@ func (h *BlackoutHandler) stopBlackout(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 
-	if err := h.datastore.StopBlackout(r.Context(), id); err != nil {
-		if errors.Is(err, database.ErrBlackoutNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout not found or not currently active")
-			return
-		}
-		log.Printf("[ERROR] Failed to stop blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to stop blackout")
+	if err := h.datastore.StopBlackout(r.Context(), id); respondDBError(w, err, "stop blackout",
+		notFound(database.ErrBlackoutNotFound, "Blackout not found or not currently active")) {
 		return
 	}
 
 	// Return the stopped blackout
 	stopped, err := h.datastore.GetBlackout(r.Context(), id)
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch stopped blackout: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch stopped blackout")
+	if respondDBError(w, err, "fetch stopped blackout") {
 		return
 	}
 
@@ -625,9 +589,7 @@ func (h *BlackoutHandler) listBlackoutSchedules(w http.ResponseWriter, r *http.R
 		filter.Limit = reqLimit
 		filter.Offset = reqOffset
 		result, err := h.datastore.ListBlackoutSchedules(r.Context(), filter)
-		if err != nil {
-			log.Printf("[ERROR] Failed to fetch blackout schedules: %v", err)
-			RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+		if respondDBError(w, err, "fetch blackout schedules") {
 			return
 		}
 		RespondJSON(w, http.StatusOK, result)
@@ -637,9 +599,7 @@ func (h *BlackoutHandler) listBlackoutSchedules(w http.ResponseWriter, r *http.R
 	filter.Limit = visibilityFilterFetchLimit
 	filter.Offset = 0
 	result, err := h.datastore.ListBlackoutSchedules(r.Context(), filter)
-	if err != nil {
-		log.Printf("[ERROR] Failed to fetch blackout schedules: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedules")
+	if respondDBError(w, err, "fetch blackout schedules") {
 		return
 	}
 	if result == nil {
@@ -668,13 +628,8 @@ func (h *BlackoutHandler) listBlackoutSchedules(w http.ResponseWriter, r *http.R
 // getBlackoutSchedule handles GET /api/v1/blackout-schedules/{id}
 func (h *BlackoutHandler) getBlackoutSchedule(w http.ResponseWriter, r *http.Request, id int64) {
 	schedule, err := h.datastore.GetBlackoutSchedule(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, database.ErrBlackoutScheduleNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to fetch blackout schedule: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to fetch blackout schedule")
+	if respondDBError(w, err, "fetch blackout schedule",
+		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found")) {
 		return
 	}
 
@@ -731,8 +686,8 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req BlackoutScheduleRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutScheduleRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -788,9 +743,7 @@ func (h *BlackoutHandler) createBlackoutSchedule(w http.ResponseWriter, r *http.
 		CreatedBy:       username,
 	}
 
-	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); err != nil {
-		log.Printf("[ERROR] Failed to create blackout schedule: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to create blackout schedule")
+	if err := h.datastore.CreateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "create blackout schedule") {
 		return
 	}
 
@@ -803,8 +756,8 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req BlackoutScheduleRequest
-	if !DecodeJSONBody(w, r, &req) {
+	req, ok := decodeBody[BlackoutScheduleRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -854,13 +807,8 @@ func (h *BlackoutHandler) updateBlackoutSchedule(w http.ResponseWriter, r *http.
 		Enabled:         enabled,
 	}
 
-	if err := h.datastore.UpdateBlackoutSchedule(r.Context(), schedule); err != nil {
-		if errors.Is(err, database.ErrBlackoutScheduleNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to update blackout schedule: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to update blackout schedule")
+	if err := h.datastore.UpdateBlackoutSchedule(r.Context(), schedule); respondDBError(w, err, "update blackout schedule",
+		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found")) {
 		return
 	}
 
@@ -873,13 +821,8 @@ func (h *BlackoutHandler) deleteBlackoutSchedule(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if err := h.datastore.DeleteBlackoutSchedule(r.Context(), id); err != nil {
-		if errors.Is(err, database.ErrBlackoutScheduleNotFound) {
-			RespondError(w, http.StatusNotFound, "Blackout schedule not found")
-			return
-		}
-		log.Printf("[ERROR] Failed to delete blackout schedule: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to delete blackout schedule")
+	if err := h.datastore.DeleteBlackoutSchedule(r.Context(), id); respondDBError(w, err, "delete blackout schedule",
+		notFound(database.ErrBlackoutScheduleNotFound, "Blackout schedule not found")) {
 		return
 	}
 

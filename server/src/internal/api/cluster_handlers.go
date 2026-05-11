@@ -145,9 +145,7 @@ func (h *ClusterHandler) getClusterTopology(w http.ResponseWriter, r *http.Reque
 		filterIDs = visibleIDs
 	}
 	topology, err := h.datastore.GetClusterTopology(ctx, filterIDs)
-	if err != nil {
-		log.Printf("[ERROR] Failed to get cluster topology: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to get cluster topology")
+	if respondDBError(w, err, "get cluster topology") {
 		return
 	}
 
@@ -458,9 +456,7 @@ func (h *ClusterHandler) listClusterGroups(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 
 	groups, err := h.datastore.GetClusterGroups(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to list cluster groups: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to list cluster groups")
+	if respondDBError(w, err, "list cluster groups") {
 		return
 	}
 
@@ -1182,9 +1178,7 @@ func (h *ClusterHandler) handleListClusters(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 
 	clusters, err := h.datastore.ListClustersForAutocomplete(ctx)
-	if err != nil {
-		log.Printf("[ERROR] Failed to list clusters: %v", err)
-		RespondError(w, http.StatusInternalServerError, "Failed to list clusters")
+	if respondDBError(w, err, "list clusters") {
 		return
 	}
 

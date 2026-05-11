@@ -115,6 +115,10 @@ export interface UseCrudPanelOptions<T> {
      * Optional list of values whose change forces a refresh. The
      * fetcher itself is always tracked, so consumers usually wrap it
      * in `useCallback` and put cross-cutting deps inside the closure.
+     *
+     * `deps` must have a stable length across renders; React throws
+     * "The final argument passed to useEffect changed size between
+     * renders" if a caller passes a variable-length array.
      */
     deps?: ReadonlyArray<unknown>;
 }
@@ -172,9 +176,9 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
     }, [fetchItems]);
 
     // Run refresh once on mount and whenever the caller's `deps` change.
-    // We intentionally do not include `refresh` in this effect's deps —
-    // the consumer drives invalidation via the `deps` array, which lets
-    // them wrap `fetchItems` in a stable `useCallback`.
+    // `refresh` is included in the deps array; the eslint-disable below
+    // is required because we spread caller-supplied `deps`, which the
+    // exhaustive-deps rule cannot statically verify.
     useEffect(() => {
         void refresh();
         // eslint-disable-next-line react-hooks/exhaustive-deps

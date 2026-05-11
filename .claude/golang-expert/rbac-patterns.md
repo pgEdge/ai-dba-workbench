@@ -110,6 +110,16 @@ do not own the row and lack `PermManageConnections` cannot distinguish
 the 404 happens before the 403 check. That matches the existing
 issue-#35 visibility contract.
 
+Note on handler comments: the Variant 2 implementation must call
+`Get<Resource>` to read `owner_username` before it can decide
+ownership, so the authorization check is NOT strictly "before any
+datastore read". Describe the property as "authorization enforced
+early (before request decoding and any response body write)" rather
+than "before any datastore read". The OpenAPI description for a
+Variant 2 endpoint must reflect the owner fallback, e.g. "Requires
+manage_connections permission or ownership of the &lt;resource&gt;",
+and the 403 response wording in the spec must match.
+
 ## Variant 3: Plain Admin Gate (visibility-stake reasoning)
 
 Use this for per-object cluster mutations (`updateCluster`,
@@ -164,6 +174,30 @@ The handler is built with a nil datastore so the test asserts that
 the 403 happens BEFORE any datastore call. A panic from a nil
 datastore is a regression: it means the gate was placed after the
 datastore call.
+
+`assertForbiddenWithMessage` checks that the 403 response body
+contains the canonical substring `"Permission denied"`, which is the
+stable prefix of the plain admin gate (Variant 1/3). New plain-admin
+handlers MUST emit the canonical wording
+(`"Permission denied: requires manage_connections permission"`) so
+the helper continues to lock in a regression to an empty or
+differently-worded message. Variant 2 handlers use a different,
+resource-specific wording (e.g.
+`"You do not have permission to delete this cluster group"`) and
+their tests should assert their own canonical substring inline
+rather than reuse `assertForbiddenWithMessage`.
+
+`assertGatePassed` rejects both `403 Forbidden` and `401
+Unauthorized` so a regression where the auth lookup itself starts
+denying a previously valid request also surfaces as a test failure.
+Mirror the same shape in any inline "allowed caller" assertion:
+
+```go
+if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+    t.Fatalf("Permitted caller failed auth (status %d): %s",
+        rec.Code, rec.Body.String())
+}
+```
 
 ### "Denied skips decode" test
 

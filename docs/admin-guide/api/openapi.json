@@ -2492,7 +2492,7 @@
       },
       "delete": {
         "summary": "Delete a cluster group",
-        "description": "Deletes a cluster group. Requires manage_connections permission.",
+        "description": "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group.",
         "operationId": "deleteClusterGroup",
         "tags": [
           "Cluster Groups"
@@ -2523,7 +2523,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_connections permission",
+            "description": "Requires manage_connections permission or ownership of the cluster group",
             "content": {
               "application/json": {
                 "schema": {

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -89,6 +90,10 @@ func newIssue207UnprivilegedUser(t *testing.T, store *auth.AuthStore, name strin
 
 // assertForbiddenWithMessage fails the test if the recorded response is
 // not a 403 carrying the canonical permission-denied error message.
+// The substring "Permission denied" is the stable prefix of the plain
+// admin gate response (see cluster_handlers.go); locking on it ensures
+// a future change to an empty or differently-worded message surfaces as
+// a test failure rather than a silent regression.
 func assertForbiddenWithMessage(t *testing.T, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	if rec.Code != http.StatusForbidden {
@@ -99,8 +104,9 @@ func assertForbiddenWithMessage(t *testing.T, rec *httptest.ResponseRecorder) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to decode response body: %v", err)
 	}
-	if resp.Error == "" {
-		t.Error("Expected non-empty error message in 403 response")
+	if !strings.Contains(resp.Error, "Permission denied") {
+		t.Errorf("Expected error message to contain %q, got %q",
+			"Permission denied", resp.Error)
 	}
 }
 
@@ -175,9 +181,9 @@ func TestClusterHandler_CreateClusterGroup_Issue207_SuperuserAllowed(t *testing.
 	}()
 	handler.createClusterGroup(rec, req)
 
-	if rec.Code == http.StatusForbidden {
-		t.Fatalf("Superuser must not be blocked by the gate; got 403: %s",
-			rec.Body.String())
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+		t.Fatalf("Superuser failed auth (status %d): %s",
+			rec.Code, rec.Body.String())
 	}
 }
 
@@ -628,16 +634,18 @@ func TestClusterHandler_DeleteClusterGroup_Issue207_MissingAuth(t *testing.T) {
 // =============================================================================
 
 // assertGatePassed runs the supplied call and asserts that the recorded
-// response is not a 403. A panic from the nil datastore is recovered
-// silently; the only way the test fails is if the gate rejects the
-// caller.
+// response is neither a 403 nor a 401. A panic from the nil datastore
+// is recovered silently; the test fails only if the gate rejected the
+// caller. Treating 401 as a failure too catches regressions where the
+// auth lookup itself starts rejecting a context that previously
+// satisfied the gate.
 func assertGatePassed(t *testing.T, rec *httptest.ResponseRecorder, call func()) {
 	t.Helper()
 	defer func() {
 		_ = recover()
-		if rec.Code == http.StatusForbidden {
-			t.Fatalf("Permitted caller was blocked by the gate: %s",
-				rec.Body.String())
+		if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+			t.Fatalf("Permitted caller failed auth (status %d): %s",
+				rec.Code, rec.Body.String())
 		}
 	}()
 	call()
@@ -813,8 +821,9 @@ func TestClusterHandler_UpdateCluster_Issue207_AdminAllowed(t *testing.T) {
 
 	handler.updateCluster(rec, req, 1)
 
-	if rec.Code == http.StatusForbidden {
-		t.Fatalf("Admin caller was blocked by the gate: %s", rec.Body.String())
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+		t.Fatalf("Admin caller failed auth (status %d): %s",
+			rec.Code, rec.Body.String())
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Expected 400 after gate passes (empty body), got %d: %s",

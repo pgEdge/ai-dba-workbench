@@ -199,13 +199,20 @@ func TestAssignServerRequest_JSON(t *testing.T) {
 	}
 }
 
+// permissionSatisfiedHandler returns a ClusterHandler with no datastore,
+// suitable for tests that only need to verify the auth gate accepts the
+// caller. The RBACChecker is built from a nil auth store, whose
+// HasAdminPermission returns true for every call; the issue #207
+// admin-permission gates therefore pass and the body-validation or
+// decode-error path remains the unit under test. Any post-gate
+// datastore call will panic, which the tests recover from via
+// assertGatePassed or by exercising only pre-datastore paths.
+func permissionSatisfiedHandler() *ClusterHandler {
+	return NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+}
+
 func TestClusterHandler_CreateClusterGroup_InvalidRequest(t *testing.T) {
-	// Issue #207 added an admin-permission gate at the top of
-	// createClusterGroup. Using auth.NewRBACChecker(nil) gives a checker
-	// whose HasAdminPermission returns true for every call (nil store =
-	// full access), so the gate is satisfied and the decode-error path
-	// remains the unit under test.
-	handler := NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+	handler := permissionSatisfiedHandler()
 
 	// Test with invalid JSON
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups", bytes.NewBufferString("invalid json"))
@@ -228,10 +235,7 @@ func TestClusterHandler_CreateClusterGroup_InvalidRequest(t *testing.T) {
 }
 
 func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
-	// Use auth.NewRBACChecker(nil) so the issue #207 admin gate at the
-	// top of createClusterGroup is satisfied; the unit under test is the
-	// "Name is required" validation downstream.
-	handler := NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+	handler := permissionSatisfiedHandler()
 
 	// Test with missing name
 	body := `{"description": "Test group"}`
@@ -256,10 +260,7 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 }
 
 func TestClusterHandler_UpdateCluster_MissingBothNameAndGroupID(t *testing.T) {
-	// Issue #207 added an admin gate at the top of updateCluster. A
-	// nil-store checker satisfies the gate so the unit under test
-	// remains the "at least one field required" validation.
-	handler := NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+	handler := permissionSatisfiedHandler()
 
 	// Test with missing both name and group_id
 	body := `{}`
@@ -473,10 +474,7 @@ func TestClusterHandler_HandleGroupClusters_MethodNotAllowed(t *testing.T) {
 }
 
 func TestClusterHandler_CreateClusterInGroup_MissingName(t *testing.T) {
-	// Issue #207 added an admin gate at the top of createClusterInGroup;
-	// a nil-store checker satisfies the gate so the body-validation path
-	// remains exercised.
-	handler := NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+	handler := permissionSatisfiedHandler()
 
 	body := `{"description": "Test"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
@@ -623,10 +621,7 @@ func TestClusterHandler_HandleDeleteRelationship_MethodNotAllowed(t *testing.T) 
 }
 
 func TestClusterHandler_SetRelationships_InvalidJSON(t *testing.T) {
-	// Issue #207 added an admin gate at the top of
-	// setConnectionRelationships; a nil-store checker satisfies the gate
-	// so the JSON-decoding path remains the unit under test.
-	handler := NewClusterHandler(nil, nil, auth.NewRBACChecker(nil))
+	handler := permissionSatisfiedHandler()
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1/connections/2/relationships",
 		bytes.NewBufferString("invalid json"))

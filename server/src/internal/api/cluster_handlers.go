@@ -597,9 +597,11 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
 	// Issue #207: owner-fallback authorization. Admins with
 	// manage_connections can delete any group; the group's owner can
-	// delete their own group. Anyone else gets 403 before any datastore
-	// read so denied callers cannot probe group existence via timing or
-	// error wording.
+	// delete their own group. Authorization is enforced early (before
+	// request decoding and any response body write). GetClusterGroup is
+	// necessarily called to verify ownership, so a callable user can
+	// still distinguish 404 vs 403, but unauthenticated and clearly
+	// unauthorized callers are rejected up front.
 	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized,

@@ -1694,7 +1694,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster group",
-				Description: "Deletes a cluster group. Requires manage_connections permission.",
+				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group.",
 				OperationID: "deleteClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -1702,7 +1702,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group"),
 					"404": jsonResponse("ErrorResponse", "Group not found"),
 				},
 			},

@@ -83,7 +83,7 @@ The helper makes three guarantees that affect callers:
 
 ## When NOT To Use It
 
-Five categories of caller stay on the hand-written loop:
+Three categories of caller stay on the hand-written loop:
 
 - Map accumulators (`map[K]V`, not `[]T`). Examples include
   `getClusterOverridesInternal`, `getGroupOverridesInternal`, and

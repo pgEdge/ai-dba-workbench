@@ -9,6 +9,9 @@
 # Git
 .worktrees/
 
+# Devcontainer
+.devcontainer/devcontainer-lock.json
+
 # Build output directory (including runtime configs copied there)
 bin/
 

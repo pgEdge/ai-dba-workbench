@@ -145,6 +145,67 @@ existing instances do not need to be fixed in unrelated changes.
 - [ ] Edge cases covered (empty, error, loading).
 - [ ] Accessibility tested.
 
+## Permission-Gated UI
+
+Hide actions a user cannot perform; do not render disabled
+placeholders. Read permissions from the `useAuth` context hook at
+`client/src/contexts/useAuth.ts`. The hook returns
+`hasPermission(perm: string)`, which already accounts for the
+`isSuperuser` flag and the `*` wildcard in `adminPermissions`, so
+call sites only need to ask for the specific permission they
+require.
+
+In the following example, the menu item only renders when the user
+holds `manage_connections`:
+
+```tsx
+import { useAuth } from '../contexts/useAuth';
+
+const { hasPermission } = useAuth();
+const canManageConnections = hasPermission('manage_connections');
+
+return (
+    <Menu>
+        <MenuItem>Always visible</MenuItem>
+        {canManageConnections && (
+            <MenuItem onClick={onAddCluster}>Add Cluster</MenuItem>
+        )}
+    </Menu>
+);
+```
+
+Reference implementations:
+
+- `client/src/components/AdminPanel/index.tsx` filters whole nav
+  sections by `hasPermission(item.permission)`.
+- `client/src/components/AddMenu.tsx` hides Add Cluster and Add
+  Cluster Group when the user lacks `manage_connections`.
+
+Permission strings must match the server-side constants exactly;
+see `server/src/internal/auth/token_scope.go` for the canonical
+list (for example, `auth.PermManageConnections` maps to the string
+`"manage_connections"`).
+
+Tests for gated UI should cover three states:
+
+- User with the permission renders the gated items.
+- User without the permission renders neither the items nor any
+  divider or affordance that only exists to separate them, but
+  every ungated item still renders.
+- The unauthenticated or still-loading state (where
+  `hasPermission` returns `false` for everything) renders the
+  same safe default as the "without permission" case.
+
+Mock `useAuth` per test file rather than the full `AuthProvider`
+so the permission shape is explicit at the call site:
+
+```ts
+const mockHasPermission = vi.fn<(perm: string) => boolean>(() => true);
+vi.mock('../../contexts/useAuth', () => ({
+    useAuth: () => ({ hasPermission: mockHasPermission }),
+}));
+```
+
 ## New Feature Review Checklist
 
 ### Code Quality

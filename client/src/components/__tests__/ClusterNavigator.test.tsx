@@ -39,7 +39,13 @@ const {
     mockDeleteGroup: vi.fn(),
     mockMoveClusterToGroup: vi.fn(),
     mockFetchClusterData: vi.fn(),
-    mockUseAuth: vi.fn(() => ({ user: { isSuperuser: false } })),
+    mockUseAuth: vi.fn((): {
+        user: { isSuperuser: boolean };
+        hasPermission: (perm: string) => boolean;
+    } => ({
+        user: { isSuperuser: false },
+        hasPermission: () => false,
+    })),
 }));
 
 // Mock the AuthContext
@@ -181,6 +187,7 @@ describe('ClusterNavigator', () => {
         mockFetchClusterData.mockReset().mockResolvedValue(undefined);
         mockUseAuth.mockReset().mockReturnValue({
             user: { isSuperuser: false },
+            hasPermission: () => false,
         });
     });
 
@@ -497,7 +504,10 @@ describe('ClusterNavigator', () => {
 
         it('passes the unchanged "group-{id}" string from configure to updateGroupName', async () => {
             // Superuser is required to see the settings (configure) button
-            mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
+            mockUseAuth.mockReturnValue({
+                user: { isSuperuser: true },
+                hasPermission: () => true,
+            });
 
             renderWithTheme(
                 <ClusterNavigator
@@ -559,7 +569,10 @@ describe('ClusterNavigator', () => {
         }, 20000);
 
         it('calls createGroup (not updateGroupName) when saving from the Add Group flow', async () => {
-            mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
+            mockUseAuth.mockReturnValue({
+                user: { isSuperuser: true },
+                hasPermission: () => true,
+            });
 
             renderWithTheme(
                 <ClusterNavigator
@@ -613,7 +626,10 @@ describe('ClusterNavigator', () => {
         }, 20000);
 
         it('renders the Alert overrides panel with a numeric scopeId extracted from "group-{id}"', async () => {
-            mockUseAuth.mockReturnValue({ user: { isSuperuser: true } });
+            mockUseAuth.mockReturnValue({
+                user: { isSuperuser: true },
+                hasPermission: () => true,
+            });
 
             renderWithTheme(
                 <ClusterNavigator

@@ -513,6 +513,15 @@ func (h *ClusterHandler) getClusterGroup(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Request) {
+	// Issue #207: gate cluster-group creation on manage_connections.
+	// Check before decoding the body so denied callers cannot probe payload
+	// shape via validation error messages.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req ClusterGroupRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -586,8 +595,40 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *ClusterHandler) deleteClusterGroup(w http.ResponseWriter, r *http.Request, id int) {
+	// Issue #207: owner-fallback authorization. Admins with
+	// manage_connections can delete any group; the group's owner can
+	// delete their own group. Authorization is enforced early (before
+	// request decoding and any response body write). GetClusterGroup is
+	// necessarily called to verify ownership, so a callable user can
+	// still distinguish 404 vs 403, but unauthenticated and clearly
+	// unauthorized callers are rejected up front.
+	username, _, err := getUserInfoCompat(r, h.authStore)
+	if err != nil {
+		RespondError(w, http.StatusUnauthorized,
+			"Invalid or missing authentication token")
+		return
+	}
+
+	hasManageConns := h.rbacChecker.HasAdminPermission(r.Context(),
+		auth.PermManageConnections)
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+
+	existingGroup, err := h.datastore.GetClusterGroup(ctx, id)
+	if err != nil {
+		log.Printf("[ERROR] Cluster group not found for delete (id=%d): %v", id, err)
+		RespondError(w, http.StatusNotFound, "Cluster group not found")
+		return
+	}
+
+	isOwner := existingGroup.OwnerUsername.Valid &&
+		existingGroup.OwnerUsername.String == username
+	if !hasManageConns && !isOwner {
+		RespondError(w, http.StatusForbidden,
+			"You do not have permission to delete this cluster group")
+		return
+	}
 
 	visible, allConnections, err := h.resolveVisibleConnections(ctx)
 	if err != nil {
@@ -698,6 +739,13 @@ func (h *ClusterHandler) listClustersInGroup(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Request, groupID int) {
+	// Issue #207: gate cluster creation under a group on manage_connections.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req ClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -755,6 +803,19 @@ func (h *ClusterHandler) getCluster(w http.ResponseWriter, r *http.Request, id i
 }
 
 func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, id int) {
+	// Issue #207: gate cluster mutations on manage_connections. The
+	// spec asked for an owner-fallback variant, but the clusters table
+	// (see collector/src/database/schema.go) has no owner_username
+	// column, so no literal owner check is possible without a schema
+	// change. Apply the plain admin gate; the visibility check farther
+	// down still returns 404 for callers who cannot see the cluster, so
+	// the gate is layered on top of existing visibility filtering.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req ClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -799,6 +860,17 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 }
 
 func (h *ClusterHandler) deleteCluster(w http.ResponseWriter, r *http.Request, id int) {
+	// Issue #207: plain admin gate. Same rationale as updateCluster: the
+	// clusters table has no owner_username column, so the spec's
+	// "owner-fallback" cannot be applied literally. Admins with
+	// manage_connections can delete; everyone else is rejected before
+	// any datastore read.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -1055,6 +1127,14 @@ func (h *ClusterHandler) listServersInCluster(w http.ResponseWriter, r *http.Req
 
 // addServerToCluster handles POST /api/v1/clusters/{id}/servers
 func (h *ClusterHandler) addServerToCluster(w http.ResponseWriter, r *http.Request, clusterID int) {
+	// Issue #207: server-attach is a system-topology mutation with no
+	// clear owner concept; apply the plain admin gate.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req AddServerToClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -1118,6 +1198,14 @@ func (h *ClusterHandler) handleRemoveServerFromCluster(w http.ResponseWriter, r 
 	if r.Method != http.MethodDelete {
 		w.Header().Set("Allow", "DELETE")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Issue #207: server-detach is a system-topology mutation with no
+	// clear owner concept; apply the plain admin gate.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
 		return
 	}
 
@@ -1213,6 +1301,14 @@ func (h *ClusterHandler) handleListClusters(w http.ResponseWriter, r *http.Reque
 
 // handleCreateCluster handles POST /api/v1/clusters
 func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Request) {
+	// Issue #207: cluster creation has no notion of owner before
+	// creation, so apply the plain admin gate.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req ManualClusterRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -1294,6 +1390,14 @@ func (h *ClusterHandler) handleConnectionRelationships(w http.ResponseWriter, r 
 // setConnectionRelationships handles PUT
 // /api/v1/clusters/{id}/connections/{connId}/relationships
 func (h *ClusterHandler) setConnectionRelationships(w http.ResponseWriter, r *http.Request, clusterID int, connID int) {
+	// Issue #207: topology relationships are a system-wide concern with
+	// no per-object owner; apply the plain admin gate.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req SetRelationshipsRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return
@@ -1409,6 +1513,14 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Issue #207: topology relationships are a system-wide concern with
+	// no per-object owner; apply the plain admin gate.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -1424,6 +1536,14 @@ func (h *ClusterHandler) handleDeleteRelationship(w http.ResponseWriter, r *http
 // clearConnectionRelationships handles DELETE
 // /api/v1/clusters/{id}/connections/{connId}/relationships
 func (h *ClusterHandler) clearConnectionRelationships(w http.ResponseWriter, r *http.Request, clusterID int, connID int) {
+	// Issue #207: topology relationships are a system-wide concern with
+	// no per-object owner; apply the plain admin gate.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 

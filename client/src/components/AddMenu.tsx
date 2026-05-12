@@ -21,6 +21,7 @@ import {
     Folder as FolderIcon,
     Hub as HubIcon,
 } from '@mui/icons-material';
+import { useAuth } from '../contexts/useAuth';
 
 interface AddMenuProps {
     anchorEl: HTMLElement | null;
@@ -33,6 +34,12 @@ interface AddMenuProps {
 
 /**
  * A dropdown menu for adding servers or cluster groups.
+ *
+ * The "Add Cluster" and "Add Cluster Group" entries require the
+ * `manage_connections` admin permission and are omitted entirely for
+ * users that lack it. The server enforces the same restriction with a
+ * 403 response, so hiding the menu items keeps unauthorized users from
+ * seeing actions they cannot perform.
  */
 const AddMenu: React.FC<AddMenuProps> = ({
     anchorEl,
@@ -42,6 +49,9 @@ const AddMenu: React.FC<AddMenuProps> = ({
     onAddCluster,
     onAddGroup,
 }) => {
+    const { hasPermission } = useAuth();
+    const canManageConnections = hasPermission('manage_connections');
+
     const handleAddServer = () => {
         if (onAddServer) {
             onAddServer();
@@ -89,19 +99,23 @@ const AddMenu: React.FC<AddMenuProps> = ({
                 </ListItemIcon>
                 <ListItemText primary="Add Server" />
             </MenuItem>
-            <MenuItem onClick={handleAddCluster}>
-                <ListItemIcon>
-                    <HubIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText primary="Add Cluster" />
-            </MenuItem>
-            <Divider />
-            <MenuItem onClick={handleAddGroup}>
-                <ListItemIcon>
-                    <FolderIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText primary="Add Cluster Group" />
-            </MenuItem>
+            {canManageConnections && (
+                <MenuItem onClick={handleAddCluster}>
+                    <ListItemIcon>
+                        <HubIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="Add Cluster" />
+                </MenuItem>
+            )}
+            {canManageConnections && <Divider />}
+            {canManageConnections && (
+                <MenuItem onClick={handleAddGroup}>
+                    <ListItemIcon>
+                        <FolderIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="Add Cluster Group" />
+                </MenuItem>
+            )}
         </Menu>
     );
 };

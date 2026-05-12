@@ -776,6 +776,25 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"metric_value": {Type: "number", Description: "Metric value at time of analysis"},
 			},
 		},
+		"RelationshipInput": {
+			Type:     "object",
+			Required: []string{"target_connection_id", "relationship_type"},
+			Properties: map[string]*OpenAPISchema{
+				"target_connection_id": {Type: "integer", Description: "Target connection ID"},
+				"relationship_type":    {Type: "string", Description: "Relationship type"},
+			},
+		},
+		"SetRelationshipsRequest": {
+			Type:     "object",
+			Required: []string{"relationships"},
+			Properties: map[string]*OpenAPISchema{
+				"relationships": {
+					Type:        "array",
+					Description: "Relationship definitions from the source connection",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/RelationshipInput"},
+				},
+			},
+		},
 		"AddServerToClusterRequest": {
 			Type:     "object",
 			Required: []string{"connection_id"},
@@ -1522,7 +1541,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a cluster",
-				Description: "Creates a new cluster, optionally assigned to a group",
+				Description: "Creates a new cluster, optionally assigned to a group. Requires manage_connections permission.",
 				OperationID: "createCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -1531,7 +1550,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Cluster", "Cluster created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 				},
 			},
 		},
@@ -1552,7 +1571,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Update a cluster",
-				Description: "Updates cluster name, description, or group assignment",
+				Description: "Updates cluster name, description, or group assignment. Requires manage_connections permission.",
 				OperationID: "updateCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -1562,13 +1581,13 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"200": jsonResponse("Cluster", "Updated cluster"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 					"404": jsonResponse("ErrorResponse", "Cluster not found"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster",
-				Description: "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}).",
+				Description: "Deletes a cluster. Manually created clusters are hard-deleted. Auto-detected clusters are soft-deleted by setting dismissed=true so they do not reappear in topology. This applies to persisted auto-detected clusters addressed by numeric ID and to transient auto-detected IDs (server-{id} or cluster-spock-{prefix}). Requires manage_connections permission.",
 				OperationID: "deleteCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -1576,7 +1595,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Cluster deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 					"404": jsonResponse("ErrorResponse", "Cluster not found"),
 				},
 			},
@@ -1598,7 +1617,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Add server to cluster",
-				Description: "Assigns a server connection to a cluster with an optional role",
+				Description: "Assigns a server connection to a cluster with an optional role. Requires manage_connections permission.",
 				OperationID: "addServerToCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -1608,7 +1627,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Server added to cluster"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 				},
 			},
 		},
@@ -1629,7 +1648,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a cluster group",
-				Description: "Creates a new cluster group",
+				Description: "Creates a new cluster group. Requires manage_connections permission.",
 				OperationID: "createClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -1638,6 +1657,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("ClusterGroup", "Group created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 				},
 			},
 		},
@@ -1674,7 +1694,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete a cluster group",
-				Description: "Deletes a cluster group",
+				Description: "Deletes a cluster group. Requires manage_connections permission or ownership of the cluster group.",
 				OperationID: "deleteClusterGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -1682,7 +1702,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Group deleted"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Cannot delete default group"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission or ownership of the cluster group"),
 					"404": jsonResponse("ErrorResponse", "Group not found"),
 				},
 			},
@@ -1704,7 +1724,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a cluster in a group",
-				Description: "Creates a new cluster within a group",
+				Description: "Creates a new cluster within a group. Requires manage_connections permission.",
 				OperationID: "createClusterInGroup",
 				Tags:        []string{"Cluster Groups"},
 				Security:    bearerAuth,
@@ -1714,6 +1734,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Cluster", "Cluster created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 				},
 			},
 		},
@@ -2137,7 +2158,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/clusters/{id}/servers/{connectionId}": {
 			Delete: &OpenAPIOperation{
 				Summary:     "Remove server from cluster",
-				Description: "Removes a server connection from a cluster",
+				Description: "Removes a server connection from a cluster. Requires manage_connections permission.",
 				OperationID: "removeServerFromCluster",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2149,7 +2170,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Server removed from cluster"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 				},
 			},
 		},
@@ -2178,7 +2199,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/clusters/{id}/relationships/{relationshipId}": {
 			Delete: &OpenAPIOperation{
 				Summary:     "Delete cluster relationship",
-				Description: "Deletes a specific cluster relationship",
+				Description: "Deletes a specific cluster relationship. Requires manage_connections permission.",
 				OperationID: "deleteClusterRelationship",
 				Tags:        []string{"Clusters"},
 				Security:    bearerAuth,
@@ -2190,6 +2211,48 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Relationship deleted"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+				},
+			},
+		},
+
+		// Clusters - per-connection relationships (Issue #207)
+		"/clusters/{id}/connections/{connId}/relationships": {
+			Put: &OpenAPIOperation{
+				Summary:     "Set connection relationships",
+				Description: "Replaces the replication relationships for a connection within a cluster. Requires manage_connections permission.",
+				OperationID: "setConnectionRelationships",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Cluster ID"),
+					pathParamInt("connId", "Source connection ID"),
+				},
+				RequestBody: jsonRequestBody("SetRelationshipsRequest", "Relationship definitions", true),
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Relationships updated"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"404": jsonResponse("ErrorResponse", "Cluster or connection not found"),
+				},
+			},
+			Delete: &OpenAPIOperation{
+				Summary:     "Clear connection relationships",
+				Description: "Removes all replication relationships for a connection within a cluster. Requires manage_connections permission.",
+				OperationID: "clearConnectionRelationships",
+				Tags:        []string{"Clusters"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					pathParamInt("id", "Cluster ID"),
+					pathParamInt("connId", "Source connection ID"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"204": {Description: "Relationships cleared"},
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
+					"404": jsonResponse("ErrorResponse", "Cluster or connection not found"),
 				},
 			},
 		},

@@ -367,14 +367,17 @@ describe('AdminGroups', () => {
         });
 
         it('closes the confirmation dialog after a successful delete and does not re-issue the request', async () => {
-            // Regression test for the PR #209 bug: the rbac/groups DELETE
-            // endpoint returns 204 No Content, which apiClient surfaces
-            // as `undefined`. The earlier `runMutation` consumer keyed
-            // its `closeDelete()` call on `result !== undefined`, treating
+            // Regression test for the PR #209 bug, retained after the
+            // issue #214 fix: the rbac/groups DELETE endpoint returns
+            // 204 No Content, which apiClient surfaces as `undefined`.
+            // The original `runMutation` consumer keyed its
+            // `closeDelete()` call on `result !== undefined`, treating
             // a 204 success identically to a thrown error. The dialog
-            // stayed open with the just-deleted target still selected, so
-            // a second confirm click 404'd the now-missing group and the
-            // user saw "Failed to delete group".
+            // stayed open with the just-deleted target still selected,
+            // so a second confirm click 404'd the now-missing group and
+            // the user saw "Failed to delete group". `runMutation` now
+            // returns a tagged `{ ok: true | false }` result, so the
+            // void-success / failure distinction is unambiguous.
             setupApiGetRouter({
                 '/api/v1/rbac/groups': { groups: GROUPS },
             });

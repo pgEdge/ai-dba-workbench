@@ -35,6 +35,20 @@ import { extractErrorMessage } from './errors';
  */
 
 /**
+ * Tagged result returned by {@link CrudPanelApi.runMutation}.
+ *
+ * Callers must inspect the `ok` discriminant before reading `value`,
+ * which is only present on the success branch. The discriminated union
+ * prevents the "void success vs. failure" ambiguity that existed when
+ * `runMutation` returned `R | undefined`: an `apiDelete` that resolves
+ * to `undefined` on HTTP 204 is now unambiguously distinguishable from
+ * a rejection, regardless of the value of `R`.
+ */
+export type RunMutationResult<R> =
+    | { ok: true; value: R }
+    | { ok: false };
+
+/**
  * Options for a single mutation invocation.
  */
 export interface RunMutationOptions {
@@ -98,7 +112,10 @@ export interface CrudPanelApi<T> {
     closeDelete: () => void;
 
     // --- Mutation helper ---
-    runMutation: <R>(fn: () => Promise<R>, options?: RunMutationOptions) => Promise<R | undefined>;
+    runMutation: <R>(
+        fn: () => Promise<R>,
+        options?: RunMutationOptions,
+    ) => Promise<RunMutationResult<R>>;
 }
 
 /**
@@ -136,11 +153,13 @@ export interface UseCrudPanelOptions<T> {
  *   });
  *
  *   const handleSave = async () => {
- *       await crud.runMutation(
+ *       const result = await crud.runMutation(
  *           () => apiPost('/api/v1/things', body),
  *           { successMessage: 'Created!' },
  *       );
- *       crud.closeDialog();
+ *       if (result.ok) {
+ *           crud.closeDialog();
+ *       }
  *   };
  */
 export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T> {
@@ -265,7 +284,7 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
     const runMutation = useCallback(async function runMutationInner<R>(
         fn: () => Promise<R>,
         opts: RunMutationOptions = {},
-    ): Promise<R | undefined> {
+    ): Promise<RunMutationResult<R>> {
         const {
             successMessage,
             errorTarget = 'dialog',
@@ -284,20 +303,23 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
             } else {
                 setError(null);
             }
-            const result = await fn();
+            const value = await fn();
             if (successMessage) {
                 setSuccess(successMessage);
             }
             if (shouldRefresh) {
                 await refresh();
             }
-            return result;
+            // Wrap the success value in the tagged result so callers can
+            // distinguish a void-returning success (`apiDelete` on HTTP
+            // 204) from a failure without inspecting `value` at all.
+            return { ok: true, value };
         } catch (err: unknown) {
             const message = mapError
                 ? mapError(err)
                 : extractErrorMessage(err, errorFallback);
             writeError(message);
-            return undefined;
+            return { ok: false };
         } finally {
             setBusy(false);
         }

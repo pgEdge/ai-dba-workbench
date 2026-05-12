@@ -282,7 +282,7 @@ describe('useCrudPanel', () => {
                     successMessage: 'created',
                 });
             });
-            expect(returned).toBe('ok');
+            expect(returned).toEqual({ ok: true, value: 'ok' });
             expect(result.current.success).toBe('created');
             expect(fetchItems).toHaveBeenCalledTimes(1);
         });
@@ -375,7 +375,7 @@ describe('useCrudPanel', () => {
             expect(result.current.dialogError).toBe('Already exists.');
         });
 
-        it('returns undefined when the mutation fails', async () => {
+        it('returns { ok: false } when the mutation fails', async () => {
             const fetchItems = vi.fn().mockResolvedValue(ITEMS);
             const { result } = renderHook(() =>
                 useCrudPanel<Item>({ fetchItems }),
@@ -387,8 +387,38 @@ describe('useCrudPanel', () => {
             await act(async () => {
                 returned = await result.current.runMutation(fn);
             });
-            expect(returned).toBeUndefined();
+            expect(returned).toEqual({ ok: false });
         });
+
+        it(
+            'returns { ok: true, value: undefined } for a void-returning success',
+            async () => {
+                // Regression guard for issue #214: an `apiDelete` that
+                // resolves to `undefined` on HTTP 204 must be reported
+                // as a success, NOT a failure. With the previous
+                // `R | undefined` return type, callers could not tell
+                // the two cases apart and the AdminGroups delete dialog
+                // never closed. The tagged result removes the ambiguity
+                // at the type level, and this test pins the runtime
+                // behaviour so a future refactor cannot regress it.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+                fetchItems.mockClear();
+
+                const fn = vi.fn().mockResolvedValue(undefined);
+                let returned: unknown;
+                await act(async () => {
+                    returned = await result.current.runMutation(fn);
+                });
+                expect(returned).toEqual({ ok: true, value: undefined });
+                // The success branch must still trigger a refresh by
+                // default, just like any other successful mutation.
+                expect(fetchItems).toHaveBeenCalledTimes(1);
+            },
+        );
 
         it('clears prior dialog error before each mutation', async () => {
             const fetchItems = vi.fn().mockResolvedValue(ITEMS);

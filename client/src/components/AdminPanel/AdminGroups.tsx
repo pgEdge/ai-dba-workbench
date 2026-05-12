@@ -189,7 +189,7 @@ const AdminGroups: React.FC = () => {
                     description: formDesc.trim(),
                 }),
         );
-        if (result !== undefined) {
+        if (result.ok) {
             crud.closeDialog();
         }
     };
@@ -212,7 +212,7 @@ const AdminGroups: React.FC = () => {
                     description: formDesc.trim(),
                 }),
         );
-        if (result !== undefined) {
+        if (result.ok) {
             crud.closeDialog();
             if (expandedGroup === target.id) {
                 void fetchGroupDetail(target.id);
@@ -230,20 +230,15 @@ const AdminGroups: React.FC = () => {
         const target = crud.deleteItem;
         if (!target) { return; }
         // The groups DELETE endpoint returns 204 No Content, which the
-        // API client surfaces as `undefined`. `runMutation` uses
-        // `undefined` as its failure sentinel, so a bare apiDelete call
-        // would make a successful delete indistinguishable from a
-        // failure and leave the confirm dialog open (see issue from
-        // PR #209 manual QA). Returning an explicit success token lets
-        // `result !== undefined` correctly gate the close + cleanup.
+        // API client surfaces as `undefined`. `runMutation` now returns
+        // a tagged `{ ok: true | false }` result, so a successful void
+        // mutation is unambiguously distinguishable from a failure
+        // (see issue #214). The bare apiDelete call is therefore safe.
         const result = await crud.runMutation(
-            async () => {
-                await apiDelete(`/api/v1/rbac/groups/${target.id}`);
-                return true as const;
-            },
+            () => apiDelete(`/api/v1/rbac/groups/${target.id}`),
             { errorTarget: 'page' },
         );
-        if (result !== undefined) {
+        if (result.ok) {
             if (expandedGroup === target.id) {
                 setExpandedGroup(null);
                 setGroupDetail(null);

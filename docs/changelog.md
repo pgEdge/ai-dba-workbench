@@ -336,8 +336,8 @@ project adheres to
   `AdminMessagingChannels`, and `AdminGroups` panels, along
   with the `useChannelCRUD` hook, now route non-`Error`
   throws through the shared `extractErrorMessage` helper in
-  `client/src/components/AdminPanel/_shared/errors.ts`. The
-  helper returns the generic `'An unexpected error
+  [`client/src/components/AdminPanel/_shared/errors.ts`](https://github.com/pgEdge/ai-dba-workbench/blob/main/client/src/components/AdminPanel/_shared/errors.ts).
+  The helper returns the generic `'An unexpected error
   occurred'` message instead of leaking output such as
   `[object Object]` produced by `String(err)`. Panels that
   pass a contextual fallback (for example, "Failed to add

@@ -92,7 +92,18 @@ export interface CrudPanelApi<T> {
     setError: (value: string | null) => void;
     success: string | null;
     setSuccess: (value: string | null) => void;
-    refresh: () => Promise<void>;
+    /**
+     * Re-fetch the list. Resolves to `true` when the fetch produced a
+     * fresh result (or was superseded by a newer generation; see the
+     * implementation note below). Resolves to `false` when the fetch
+     * rejected and the hook wrote the message to {@link CrudPanelApi.error}.
+     *
+     * Callers that do not care about the outcome (page mount, manual
+     * reload button) may discard the boolean. {@link runMutation} uses
+     * it to suppress a stale success toast when the follow-on refresh
+     * fails — see issue #215.
+     */
+    refresh: () => Promise<boolean>;
 
     // --- Edit/create dialog state ---
     dialogOpen: boolean;
@@ -194,7 +205,7 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
     // unmounted component" dev-mode warning.
     const isMountedRef = useRef<boolean>(true);
 
-    const refresh = useCallback(async () => {
+    const refresh = useCallback(async (): Promise<boolean> => {
         const generation = fetchGenerationRef.current + 1;
         fetchGenerationRef.current = generation;
         setLoading(true);
@@ -202,21 +213,35 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
             const next = await fetchItems();
             // Drop the result if a newer fetch started, or if the
             // component unmounted while this request was in flight.
+            // A superseded fetch is treated as a clean outcome from
+            // *this* caller's perspective: the newer generation will
+            // report its own success or failure, and the success toast
+            // that gated on us belongs to a mutation whose intent has
+            // not been contradicted. Returning `true` here means
+            // runMutation does NOT suppress its success toast on a
+            // stale-but-still-pending refresh; the newer refresh owns
+            // that decision.
             if (
                 !isMountedRef.current
                 || fetchGenerationRef.current !== generation
             ) {
-                return;
+                return true;
             }
             setItems(next);
+            return true;
         } catch (err: unknown) {
+            // Same rule as the success branch: an error from a
+            // superseded fetch is dropped entirely (not written to
+            // `error`, not reported to the caller). The newer
+            // generation is authoritative.
             if (
                 !isMountedRef.current
                 || fetchGenerationRef.current !== generation
             ) {
-                return;
+                return true;
             }
             setError(extractErrorMessage(err));
+            return false;
         } finally {
             // Only the latest in-flight generation owns the loading
             // flag; earlier generations must not flip it back to
@@ -304,15 +329,24 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
                 setError(null);
             }
             const value = await fn();
-            if (successMessage) {
-                setSuccess(successMessage);
-            }
+            // Defer the success toast until we know whether the
+            // follow-on refresh succeeded. Setting it now and clearing
+            // it on refresh failure would briefly flash "Saved" before
+            // "Failed to load…" replaces it; gating instead avoids the
+            // flash entirely. See issue #215.
+            let refreshClean = true;
             if (shouldRefresh) {
-                await refresh();
+                refreshClean = await refresh();
+            }
+            if (successMessage && refreshClean) {
+                setSuccess(successMessage);
             }
             // Wrap the success value in the tagged result so callers can
             // distinguish a void-returning success (`apiDelete` on HTTP
             // 204) from a failure without inspecting `value` at all.
+            // Note: the mutation itself succeeded even if the refresh
+            // didn't, so we still return ok=true here. The refresh
+            // error is surfaced via `error`, not via this return value.
             return { ok: true, value };
         } catch (err: unknown) {
             const message = mapError

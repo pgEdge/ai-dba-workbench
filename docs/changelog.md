@@ -328,6 +328,13 @@ project adheres to
 
 ### Fixed
 
+- Fix the Admin panels showing a success toast alongside a
+  page-level refresh error when a save succeeded but the
+  follow-on reload failed; the shared `useCrudPanel` hook
+  now suppresses the success toast when the post-mutation
+  refresh fails, so the user sees only the actionable
+  refresh error. (#215)
+
 - Fix the divergent error fallback wording shown by the
   Admin panels when a thrown value is not an `Error`
   instance. The `AdminUsers`, `AdminMemories`,

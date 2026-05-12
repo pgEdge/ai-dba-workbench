@@ -436,6 +436,136 @@ describe('useCrudPanel', () => {
             expect(result.current.dialogError).toBeNull();
         });
 
+        it(
+            'suppresses success toast when the follow-on refresh fails',
+            async () => {
+                // Regression guard for issue #215: a mutation that
+                // succeeds but whose refresh fetch fails must NOT leave
+                // a success toast on screen alongside the refresh
+                // error. The user-facing outcome is "the data on screen
+                // is stale and we could not reload" — showing "Saved"
+                // beside "Failed to load …" is contradictory.
+                const fetchItems = vi.fn<() => Promise<Item[]>>()
+                    .mockResolvedValueOnce(ITEMS)
+                    .mockRejectedValueOnce(new Error('Failed to load groups'));
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                const fn = vi.fn().mockResolvedValue('saved-id');
+                let returned: unknown;
+                await act(async () => {
+                    returned = await result.current.runMutation(fn, {
+                        successMessage: 'Saved',
+                    });
+                });
+
+                // The mutation itself succeeded, so the tagged result
+                // must report ok=true with the mutation's value.
+                expect(returned).toEqual({ ok: true, value: 'saved-id' });
+                // No stale success toast: the page-level refresh error
+                // is the only thing the user should see.
+                expect(result.current.success).toBeNull();
+                expect(result.current.error).toBe('Failed to load groups');
+                // The follow-on refresh did run.
+                expect(fetchItems).toHaveBeenCalledTimes(2);
+            },
+        );
+
+        it(
+            'keeps the success toast when refresh succeeds (issue #215 control)',
+            async () => {
+                // Control case for the suppression test above: a
+                // healthy refresh path must NOT swallow the success
+                // toast. Without this guard, a buggy "always suppress"
+                // implementation could pass the failing-refresh test
+                // while breaking every happy-path mutation in the app.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                const fn = vi.fn().mockResolvedValue('saved-id');
+                await act(async () => {
+                    await result.current.runMutation(fn, {
+                        successMessage: 'Saved',
+                    });
+                });
+                expect(result.current.success).toBe('Saved');
+                expect(result.current.error).toBeNull();
+            },
+        );
+
+        it(
+            'keeps the success toast when refresh: false skips the refresh',
+            async () => {
+                // When the caller opts out of refresh entirely, there
+                // is no fetch that could fail, so the success toast
+                // must always fire if `successMessage` is provided.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+                fetchItems.mockClear();
+
+                await act(async () => {
+                    await result.current.runMutation(
+                        () => Promise.resolve('ok'),
+                        { successMessage: 'Saved', refresh: false },
+                    );
+                });
+                expect(result.current.success).toBe('Saved');
+                expect(fetchItems).not.toHaveBeenCalled();
+            },
+        );
+
+        it(
+            'returns true from refresh() on the happy path',
+            async () => {
+                // The new Promise<boolean> contract: a clean refresh
+                // resolves to `true`. Callers (notably runMutation) use
+                // this to decide whether to surface the success toast.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                let outcome: boolean | undefined;
+                await act(async () => {
+                    outcome = await result.current.refresh();
+                });
+                expect(outcome).toBe(true);
+            },
+        );
+
+        it(
+            'returns false from refresh() when the fetch rejects',
+            async () => {
+                // Mirror of the happy-path control: a failing refresh
+                // resolves to `false` so runMutation can suppress its
+                // success toast. The error message is also written to
+                // the page-level error slot, matching pre-#215 behaviour.
+                const fetchItems = vi.fn<() => Promise<Item[]>>()
+                    .mockResolvedValueOnce(ITEMS)
+                    .mockRejectedValueOnce(new Error('boom'));
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                let outcome: boolean | undefined;
+                await act(async () => {
+                    outcome = await result.current.refresh();
+                });
+                expect(outcome).toBe(false);
+                expect(result.current.error).toBe('boom');
+            },
+        );
+
         it('clears prior page error before page-target mutations', async () => {
             const fetchItems = vi.fn().mockResolvedValue(ITEMS);
             const { result } = renderHook(() =>
@@ -554,6 +684,127 @@ describe('useCrudPanel', () => {
             expect(result.current.items).toEqual(['fresh']);
             expect(result.current.loading).toBe(false);
         });
+
+        it(
+            'a superseded refresh reports outcome=true so callers do not suppress success',
+            async () => {
+                // Deliberate design choice (see issue #215 thread):
+                // when a refresh is superseded by a newer generation,
+                // it is no longer authoritative for *any* observable
+                // state, including the runMutation success-toast gate.
+                // Returning `true` from the superseded path means
+                // runMutation will surface its success toast and let
+                // the newer generation, which IS authoritative, decide
+                // whether to overwrite the page with an error.
+                //
+                // Treating "superseded" as "failed" instead would let
+                // a user-triggered manual refresh that lost a race
+                // silently swallow the previous mutation's success
+                // toast, which is the opposite of what we want.
+                const slow = deferred<Item[]>();
+                const fast = deferred<Item[]>();
+                const fetchItems = vi.fn<() => Promise<Item[]>>()
+                    // Initial mount fetch.
+                    .mockResolvedValueOnce(ITEMS)
+                    // Slow refresh kicked off by the mutation.
+                    .mockImplementationOnce(() => slow.promise)
+                    // Fast refresh kicked off by an external caller
+                    // (e.g. a deps change in the parent component).
+                    .mockImplementationOnce(() => fast.promise);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                // Drive the mutation. Its refresh awaits `slow`.
+                const mutationFn = vi.fn().mockResolvedValue('id');
+                let mutation: Promise<unknown> | undefined;
+                act(() => {
+                    mutation = result.current.runMutation(mutationFn, {
+                        successMessage: 'Saved',
+                    });
+                });
+                // Wait until the mutation's refresh is in flight.
+                await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(2));
+
+                // Now kick off a second, fresher refresh from outside
+                // the mutation. It bumps the generation counter.
+                let externalRefresh: Promise<boolean> | undefined;
+                act(() => {
+                    externalRefresh = result.current.refresh();
+                });
+                await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(3));
+
+                // Resolve the fast (newer) refresh first.
+                await act(async () => {
+                    fast.resolve(ITEMS);
+                    await externalRefresh;
+                });
+
+                // Now resolve the slow (superseded) refresh. Its
+                // return value flows back into runMutation.
+                await act(async () => {
+                    slow.resolve(ITEMS);
+                    await mutation;
+                });
+
+                // The superseded refresh returned true, so the
+                // success toast is set.
+                expect(result.current.success).toBe('Saved');
+                expect(result.current.error).toBeNull();
+            },
+        );
+
+        it(
+            'a superseded refresh error is dropped, not surfaced',
+            async () => {
+                // Companion to the test above: when the superseded
+                // fetch *rejects*, the error must be swallowed.
+                // Writing it to `setError` would let a stale failure
+                // overwrite the page state owned by the newer
+                // generation. The boolean return is also `true` so
+                // runMutation does not suppress its success toast.
+                const slow = deferred<Item[]>();
+                const fast = deferred<Item[]>();
+                const fetchItems = vi.fn<() => Promise<Item[]>>()
+                    .mockResolvedValueOnce(ITEMS)
+                    .mockImplementationOnce(() => slow.promise)
+                    .mockImplementationOnce(() => fast.promise);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                const mutationFn = vi.fn().mockResolvedValue('id');
+                let mutation: Promise<unknown> | undefined;
+                act(() => {
+                    mutation = result.current.runMutation(mutationFn, {
+                        successMessage: 'Saved',
+                    });
+                });
+                await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(2));
+
+                let externalRefresh: Promise<boolean> | undefined;
+                act(() => {
+                    externalRefresh = result.current.refresh();
+                });
+                await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(3));
+
+                await act(async () => {
+                    fast.resolve(ITEMS);
+                    await externalRefresh;
+                });
+
+                await act(async () => {
+                    slow.reject(new Error('stale failure'));
+                    await mutation;
+                });
+
+                // Success toast survives; the stale error is dropped.
+                expect(result.current.success).toBe('Saved');
+                expect(result.current.error).toBeNull();
+            },
+        );
 
         it('drops a stale fetch error that arrives after a successful refresh', async () => {
             // Same shape as the success-race test, but the older fetch

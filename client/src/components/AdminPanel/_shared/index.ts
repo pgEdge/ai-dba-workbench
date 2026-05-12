@@ -21,6 +21,7 @@ export {
     useCrudPanel,
     type CrudPanelApi,
     type RunMutationOptions,
+    type RunMutationResult,
     type UseCrudPanelOptions,
 } from './useCrudPanel';
 export { extractErrorMessage, DEFAULT_ERROR_MESSAGE } from './errors';

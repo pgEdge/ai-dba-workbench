@@ -228,7 +228,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                 ? `Channel "${successName}" updated successfully.`
                 : `Channel "${successName}" created successfully.`,
         });
-        if (result !== undefined) {
+        if (result.ok) {
             crud.closeDialog();
         }
     };
@@ -250,7 +250,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
                 successMessage: `Channel "${target.name}" deleted successfully.`,
             },
         );
-        if (result !== undefined) {
+        if (result.ok) {
             crud.closeDelete();
         }
     };

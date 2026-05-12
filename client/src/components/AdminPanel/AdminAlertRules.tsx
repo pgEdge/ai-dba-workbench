@@ -144,7 +144,7 @@ const AdminAlertRules: React.FC = () => {
                 successMessage: `Alert rule "${getFriendlyTitle(editRule.name)}" updated successfully.`,
             },
         );
-        if (result !== undefined) {
+        if (result.ok) {
             crud.closeDialog();
         }
     };

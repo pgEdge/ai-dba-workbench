@@ -55,7 +55,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
-import { useCrudPanel } from './_shared';
+import { useCrudPanel, extractErrorMessage } from './_shared';
 
 /**
  * Configuration that varies between messaging platforms (Slack,
@@ -274,9 +274,7 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
             await apiPost(`/api/v1/notification-channels/${channel.id}/test`);
             crud.setSuccess(`Test notification sent successfully for "${channel.name}".`);
         } catch (err: unknown) {
-            crud.setError(
-                err instanceof Error ? err.message : 'Failed to send test notification',
-            );
+            crud.setError(extractErrorMessage(err, 'Failed to send test notification'));
         } finally {
             setTestingChannelId(null);
         }

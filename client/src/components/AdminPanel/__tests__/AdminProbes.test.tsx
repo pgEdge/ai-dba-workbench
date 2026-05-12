@@ -295,6 +295,45 @@ describe('AdminProbes', () => {
         });
     });
 
+    it('shows the unified fallback when fetch throws a non-Error', async () => {
+        mockApiGet.mockRejectedValue('plain string reject');
+
+        renderWithTheme(<AdminProbes />);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('An unexpected error occurred'),
+            ).toBeInTheDocument();
+        });
+    });
+
+    it('shows the unified fallback when save throws a non-Error', async () => {
+        mockApiGet.mockResolvedValue({ probe_configs: MOCK_PROBES });
+        mockApiPut.mockRejectedValue('plain string reject');
+        const user = userEvent.setup({ delay: null });
+
+        renderWithTheme(<AdminProbes />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Database Activity')).toBeInTheDocument();
+        });
+
+        const editButtons = screen.getAllByRole('button', { name: /edit probe/i });
+        await user.click(editButtons[0]);
+
+        await waitFor(() => {
+            expect(screen.getByLabelText(/Collection Interval/i)).toBeInTheDocument();
+        });
+
+        await user.click(screen.getByRole('button', { name: /Save/i }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('An unexpected error occurred'),
+            ).toBeInTheDocument();
+        });
+    });
+
     it('displays success message after successful save', async () => {
         mockApiGet.mockResolvedValue({ probe_configs: MOCK_PROBES });
         mockApiPut.mockResolvedValue({});

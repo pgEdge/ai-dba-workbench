@@ -290,7 +290,7 @@ const AdminGroups: React.FC = () => {
                         : { group_id: parseInt(selectedMemberId, 10) }
                 );
             } catch (apiErr: unknown) {
-                const errorMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
+                const errorMsg = extractErrorMessage(apiErr);
                 throw new Error(
                     errorMsg.includes('UNIQUE constraint')
                         ? 'This member is already in the group.'

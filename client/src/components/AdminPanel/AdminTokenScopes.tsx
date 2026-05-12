@@ -17,6 +17,7 @@ import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import { copyToClipboard } from '../../utils/clipboard';
 import { loadingContainerSx, pageHeadingSx, getContainedButtonSx } from './styles';
+import { extractErrorMessage } from './_shared';
 import {
     TokensTable,
     CreateTokenDialog,
@@ -126,7 +127,7 @@ const AdminTokenScopes: React.FC = () => {
                 setUsers(usersResult.users ?? []);
             }
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(extractErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -234,7 +235,7 @@ const AdminTokenScopes: React.FC = () => {
             setCreatedDialogOpen(true);
             fetchData();
         } catch (err: unknown) {
-            setCreateError(err instanceof Error ? err.message : String(err));
+            setCreateError(extractErrorMessage(err));
         } finally {
             setCreateLoading(false);
         }
@@ -356,7 +357,7 @@ const AdminTokenScopes: React.FC = () => {
             setEditOpen(false);
             fetchData();
         } catch (err: unknown) {
-            setEditError(err instanceof Error ? err.message : String(err));
+            setEditError(extractErrorMessage(err));
         } finally {
             setEditLoading(false);
         }
@@ -379,7 +380,7 @@ const AdminTokenScopes: React.FC = () => {
             setDeleteToken(null);
             fetchData();
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(extractErrorMessage(err));
         } finally {
             setDeleteLoading(false);
         }

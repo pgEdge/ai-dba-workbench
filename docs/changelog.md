@@ -328,6 +328,21 @@ project adheres to
 
 ### Fixed
 
+- Fix the divergent error fallback wording shown by the
+  Admin panels when a thrown value is not an `Error`
+  instance. The `AdminUsers`, `AdminMemories`,
+  `AdminTokenScopes`, `AdminPermissions`, `AdminProbes`,
+  `AdminEmailChannels`, `AdminWebhookChannels`,
+  `AdminMessagingChannels`, and `AdminGroups` panels, along
+  with the `useChannelCRUD` hook, now route non-`Error`
+  throws through the shared `extractErrorMessage` helper in
+  [`client/src/components/AdminPanel/_shared/errors.ts`](https://github.com/pgEdge/ai-dba-workbench/blob/main/client/src/components/AdminPanel/_shared/errors.ts).
+  The helper returns the generic `'An unexpected error
+  occurred'` message instead of leaking output such as
+  `[object Object]` produced by `String(err)`. Panels that
+  pass a contextual fallback (for example, "Failed to add
+  recipient") to the helper's second argument retain that
+  context-specific wording. (#212)
 - Fix the `Chart.test.tsx` regression introduced in
   commit `aa28aa8` that has been failing the CI -
   Client workflow on every commit since; the

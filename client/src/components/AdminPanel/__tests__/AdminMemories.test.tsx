@@ -165,6 +165,18 @@ describe('AdminMemories', () => {
         });
     });
 
+    it('shows the unified fallback when fetch throws a non-Error', async () => {
+        mockApiGet.mockRejectedValue('plain string reject');
+
+        renderWithTheme(<AdminMemories />);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('An unexpected error occurred'),
+            ).toBeInTheDocument();
+        });
+    });
+
     it('toggles pinned state optimistically', async () => {
         mockApiGet.mockResolvedValue({ memories: MOCK_MEMORIES });
         mockApiPatch.mockResolvedValue({});
@@ -207,6 +219,27 @@ describe('AdminMemories', () => {
         // Error message should be displayed
         await waitFor(() => {
             expect(screen.getByText('Patch failed')).toBeInTheDocument();
+        });
+    });
+
+    it('shows the unified fallback when pin toggle throws a non-Error', async () => {
+        mockApiGet.mockResolvedValue({ memories: MOCK_MEMORIES });
+        mockApiPatch.mockRejectedValue('plain string reject');
+        const user = userEvent.setup({ delay: null });
+
+        renderWithTheme(<AdminMemories />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Always use EXPLAIN ANALYZE/)).toBeInTheDocument();
+        });
+
+        const pinnedSwitches = screen.getAllByRole('checkbox', { name: /toggle pinned/i });
+        await user.click(pinnedSwitches[0]);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('An unexpected error occurred'),
+            ).toBeInTheDocument();
         });
     });
 
@@ -301,6 +334,33 @@ describe('AdminMemories', () => {
 
         await waitFor(() => {
             expect(screen.getByText('Delete failed')).toBeInTheDocument();
+        });
+    });
+
+    it('shows the unified fallback when delete throws a non-Error', async () => {
+        mockApiGet.mockResolvedValue({ memories: MOCK_MEMORIES });
+        mockApiDelete.mockRejectedValue('plain string reject');
+        const user = userEvent.setup({ delay: null });
+
+        renderWithTheme(<AdminMemories />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Always use EXPLAIN ANALYZE/)).toBeInTheDocument();
+        });
+
+        const deleteButtons = screen.getAllByRole('button', { name: /delete memory/i });
+        await user.click(deleteButtons[0]);
+
+        await waitFor(() => {
+            expect(screen.getByText('Delete Memory')).toBeInTheDocument();
+        });
+
+        await user.click(screen.getByRole('button', { name: /^Delete$/i }));
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('An unexpected error occurred'),
+            ).toBeInTheDocument();
         });
     });
 

@@ -1402,6 +1402,38 @@ describe('AdminEmailChannels', () => {
                 expect(screen.getByText('Failed to delete recipient')).toBeInTheDocument();
             });
         });
+
+        it('shows the contextual fallback when fetchRecipients throws a non-Error', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/notification-channels') {
+                    return Promise.resolve({ notification_channels: mockEmailChannels });
+                }
+                if (url.includes('/recipients')) {
+                    return Promise.reject('plain string reject');
+                }
+                return Promise.resolve({});
+            });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminEmailChannels />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Test Email')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', { name: /edit channel/i });
+            await user.click(editButtons[0]);
+
+            await waitFor(() => {
+                expect(screen.getByText('Edit channel: Test Email')).toBeInTheDocument();
+            });
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Failed to load recipients'),
+                ).toBeInTheDocument();
+            });
+        });
     });
 
     describe('Close Dialog', () => {

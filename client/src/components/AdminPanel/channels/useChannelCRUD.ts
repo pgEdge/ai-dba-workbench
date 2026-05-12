@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../../utils/apiClient';
+import { extractErrorMessage } from '../_shared';
 import type { BaseChannel } from './channelTypes';
 
 /**
@@ -135,11 +136,7 @@ export function useChannelCRUD<T extends BaseChannel>(
             }
         } catch (err: unknown) {
             if (requestId === fetchRequestIdRef.current) {
-                if (err instanceof Error) {
-                    setError(err.message);
-                } else {
-                    setError('An unexpected error occurred');
-                }
+                setError(extractErrorMessage(err));
             }
         } finally {
             if (requestId === fetchRequestIdRef.current) {
@@ -161,11 +158,7 @@ export function useChannelCRUD<T extends BaseChannel>(
             });
             await fetchChannels();
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
+            setError(extractErrorMessage(err));
         }
     }, [fetchChannels]);
 
@@ -179,11 +172,7 @@ export function useChannelCRUD<T extends BaseChannel>(
             await apiPost(`/api/v1/notification-channels/${channel.id}/test`);
             setSuccess(`Test notification sent successfully for "${channel.name}".`);
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('Failed to send test notification');
-            }
+            setError(extractErrorMessage(err, 'Failed to send test notification'));
         } finally {
             setTestingChannelId(null);
         }
@@ -207,11 +196,7 @@ export function useChannelCRUD<T extends BaseChannel>(
             setDeleteChannel(null);
             await fetchChannels();
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
+            setError(extractErrorMessage(err));
         } finally {
             setDeleteLoading(false);
         }

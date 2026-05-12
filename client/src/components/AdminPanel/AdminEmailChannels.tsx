@@ -27,6 +27,7 @@ import {
     EmailSettingsTab,
     EmailRecipientsTab,
 } from './email';
+import { extractErrorMessage } from './_shared';
 
 /**
  * Map raw API response to EmailChannel type.
@@ -104,11 +105,7 @@ const AdminEmailChannels: React.FC = () => {
         } catch (err: unknown) {
             // Only show error if still editing the same channel
             if (editingChannelIdRef.current !== channelId) { return; }
-            if (err instanceof Error) {
-                crud.setDialogError(err.message);
-            } else {
-                crud.setDialogError('Failed to load recipients');
-            }
+            crud.setDialogError(extractErrorMessage(err, 'Failed to load recipients'));
         } finally {
             // Only clear loading if still editing the same channel
             if (editingChannelIdRef.current === channelId) {
@@ -305,11 +302,7 @@ const AdminEmailChannels: React.FC = () => {
             setPendingRecipients([]);
             crud.fetchChannels();
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                crud.setDialogError(err.message);
-            } else {
-                crud.setDialogError('An unexpected error occurred');
-            }
+            crud.setDialogError(extractErrorMessage(err));
         } finally {
             crud.setSaving(false);
         }
@@ -344,11 +337,7 @@ const AdminEmailChannels: React.FC = () => {
         } catch (err: unknown) {
             // Only show error if still editing the same channel
             if (editingChannelIdRef.current === channelId) {
-                if (err instanceof Error) {
-                    crud.setDialogError(err.message);
-                } else {
-                    crud.setDialogError('Failed to add recipient');
-                }
+                crud.setDialogError(extractErrorMessage(err, 'Failed to add recipient'));
             }
         } finally {
             setRecipientSaving(false);
@@ -371,11 +360,7 @@ const AdminEmailChannels: React.FC = () => {
         } catch (err: unknown) {
             // Only show error if still editing the same channel
             if (editingChannelIdRef.current === channelId) {
-                if (err instanceof Error) {
-                    crud.setDialogError(err.message);
-                } else {
-                    crud.setDialogError('Failed to update recipient');
-                }
+                crud.setDialogError(extractErrorMessage(err, 'Failed to update recipient'));
             }
         } finally {
             setRecipientSaving(false);
@@ -397,11 +382,7 @@ const AdminEmailChannels: React.FC = () => {
         } catch (err: unknown) {
             // Only show error if still editing the same channel
             if (editingChannelIdRef.current === channelId) {
-                if (err instanceof Error) {
-                    crud.setDialogError(err.message);
-                } else {
-                    crud.setDialogError('Failed to delete recipient');
-                }
+                crud.setDialogError(extractErrorMessage(err, 'Failed to delete recipient'));
             }
         } finally {
             setRecipientSaving(false);

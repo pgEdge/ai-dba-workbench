@@ -71,6 +71,63 @@ existing instances do not need to be fixed in unrelated changes.
   `instanceof Error`.
 - Missing error boundaries around component subtrees.
 
+## AdminPanel Error Handling
+
+AdminPanel components must use the shared `extractErrorMessage`
+helper from `client/src/components/AdminPanel/_shared/errors.ts`
+for every catch block that surfaces an error string to the user.
+Do not reintroduce ad-hoc patterns; the helper guarantees a
+uniform fallback wording for non-`Error` throws.
+
+Banned patterns in AdminPanel catch blocks:
+
+- `String(err)` or `String(apiErr)` — produces unfriendly
+  `[object Object]`-style output for non-`Error` rejections.
+- Inline `err instanceof Error ? err.message : '...'` ternaries
+  that hard-code a divergent fallback wording.
+- Verbose `if (err instanceof Error) { setError(err.message) }
+  else { setError('An unexpected error occurred') }` blocks.
+
+Required pattern for the generic case:
+
+```ts
+try {
+    await apiPost('/api/v1/something', body);
+} catch (err: unknown) {
+    setError(extractErrorMessage(err));
+}
+```
+
+When the call site needs a more descriptive fallback (for
+example, a recipient-add handler), pass the context as the
+second argument; the helper still returns the `Error.message`
+when available:
+
+```ts
+crud.setDialogError(
+    extractErrorMessage(err, 'Failed to add recipient'),
+);
+```
+
+Reference implementations:
+
+- `client/src/components/AdminPanel/_shared/errors.ts` defines
+  the helper and the `DEFAULT_ERROR_MESSAGE` constant.
+- `client/src/components/AdminPanel/AdminUsers.tsx`,
+  `AdminPermissions.tsx`, `AdminMemories.tsx`, `AdminProbes.tsx`,
+  `AdminTokenScopes.tsx`, `AdminEmailChannels.tsx`,
+  `AdminWebhookChannels.tsx`, `AdminMessagingChannels.tsx`,
+  `AdminAlertRules.tsx`, `AdminGroups.tsx`, and
+  `channels/useChannelCRUD.ts` all route their catch blocks
+  through `extractErrorMessage`.
+
+Tests for AdminPanel mutation paths must cover both the
+`Error`-instance branch and the non-`Error` fallback. Reject a
+mock with a plain string and assert that
+`'An unexpected error occurred'` (or the contextual fallback
+passed at the call site) renders in the appropriate alert or
+dialog.
+
 ## TypeScript Standards
 
 ### Naming Conventions

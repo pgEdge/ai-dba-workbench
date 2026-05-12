@@ -38,6 +38,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
+import { extractErrorMessage } from './_shared';
 
 interface Memory {
     id: number;
@@ -103,8 +104,7 @@ const AdminMemories: React.FC = () => {
             );
             setMemories(data.memories || []);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -136,8 +136,7 @@ const AdminMemories: React.FC = () => {
                     m.id === mem.id ? { ...m, pinned: mem.pinned } : m,
                 ),
             );
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         }
     };
 
@@ -158,8 +157,7 @@ const AdminMemories: React.FC = () => {
             setDeleteMemory(null);
             fetchMemories();
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         } finally {
             setDeleteLoading(false);
         }

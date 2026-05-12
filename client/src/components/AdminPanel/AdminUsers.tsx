@@ -59,6 +59,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
+import { extractErrorMessage } from './_shared';
 
 
 interface RbacUser {
@@ -154,8 +155,7 @@ const AdminUsers: React.FC = () => {
                 setConnections(connResult.connections || []);
             }
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -179,8 +179,7 @@ const AdminUsers: React.FC = () => {
             const data = await apiGet<UserPermissions>(`/api/v1/rbac/users/${rowUser.id}/privileges`);
             setPermissions(data);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setPermissionsError(message);
+            setPermissionsError(extractErrorMessage(err));
         } finally {
             setPermissionsLoading(false);
         }
@@ -227,8 +226,7 @@ const AdminUsers: React.FC = () => {
             setCreateSuperuser(false);
             fetchUsers();
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setCreateError(message);
+            setCreateError(extractErrorMessage(err));
         } finally {
             setCreateLoading(false);
         }
@@ -281,8 +279,7 @@ const AdminUsers: React.FC = () => {
             setEditOpen(false);
             fetchUsers();
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setEditError(message);
+            setEditError(extractErrorMessage(err));
         } finally {
             setEditLoading(false);
         }
@@ -304,8 +301,7 @@ const AdminUsers: React.FC = () => {
             setDeleteUser(null);
             fetchUsers();
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         } finally {
             setDeleteLoading(false);
         }
@@ -324,8 +320,7 @@ const AdminUsers: React.FC = () => {
                 setPermissions(data);
             }
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         }
     };
 
@@ -341,8 +336,7 @@ const AdminUsers: React.FC = () => {
                 setPermissions(data);
             }
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         }
     };
 

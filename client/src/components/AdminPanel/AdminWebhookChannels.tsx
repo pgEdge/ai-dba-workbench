@@ -13,6 +13,7 @@ import { useState, useCallback } from 'react';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { apiPost, apiPut } from '../../utils/apiClient';
 import { useChannelCRUD, ChannelTable, ChannelDialogShell } from './channels';
+import { extractErrorMessage } from './_shared';
 import {
     type WebhookChannel,
     type WebhookFormState,
@@ -380,11 +381,7 @@ const AdminWebhookChannels: React.FC = () => {
             crud.closeDialog();
             crud.fetchChannels();
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                crud.setDialogError(err.message);
-            } else {
-                crud.setDialogError('An unexpected error occurred');
-            }
+            crud.setDialogError(extractErrorMessage(err));
         } finally {
             crud.setSaving(false);
         }

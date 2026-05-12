@@ -198,6 +198,21 @@ describe('AdminUsers', () => {
                 expect(screen.getByText('list failed')).toBeInTheDocument();
             });
         });
+
+        it('shows the unified fallback when the list fetch throws a non-Error', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/rbac/users') {
+                    return Promise.reject('plain string reject');
+                }
+                return Promise.resolve({});
+            });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(
+                    screen.getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
+            });
+        });
     });
 
     describe('Create user dialog', () => {
@@ -389,6 +404,35 @@ describe('AdminUsers', () => {
                     within(dialog).getByText(
                         /password is too common/i
                     )
+                ).toBeInTheDocument();
+            });
+        }, 15000);
+
+        it('shows the unified fallback when create throws a non-Error', async () => {
+            installListMocks();
+            mockApiPost.mockRejectedValue('plain string reject');
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                'charlie'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'StrongPassword123!' },
+            });
+            await user.click(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            );
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText('An unexpected error occurred'),
                 ).toBeInTheDocument();
             });
         }, 15000);
@@ -595,6 +639,28 @@ describe('AdminUsers', () => {
             });
         }, 15000);
 
+        it('shows the unified fallback when edit throws a non-Error', async () => {
+            installListMocks();
+            mockApiPut.mockRejectedValue('plain string reject');
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            await user.click(screen.getAllByLabelText('edit user')[1]);
+            const dialog = await screen.findByRole('dialog');
+            const notesInput = findFieldByLabel(dialog, 'Notes');
+            fireEvent.change(notesInput, { target: { value: 'change' } });
+            await user.click(
+                within(dialog).getByRole('button', { name: /^save$/i })
+            );
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
+            });
+        }, 15000);
+
         it('submits non-password edits without the password field', async () => {
             installListMocks();
             mockApiPut.mockResolvedValue({});
@@ -721,6 +787,32 @@ describe('AdminUsers', () => {
             });
         });
 
+        it('shows the unified fallback when permissions load throws a non-Error', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/v1/rbac/users') {
+                    return Promise.resolve({ users: mockUsers });
+                }
+                if (url === '/api/v1/connections') {
+                    return Promise.resolve({ connections: [] });
+                }
+                if (/^\/api\/v1\/rbac\/users\/\d+\/privileges$/.test(url)) {
+                    return Promise.reject('plain string reject');
+                }
+                return Promise.resolve({});
+            });
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            await user.click(screen.getByText('bob'));
+            await waitFor(() => {
+                expect(
+                    screen.getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
+            });
+        });
+
         it('toggles superuser via the inline switch', async () => {
             installListMocks();
             mockApiPut.mockResolvedValue({});
@@ -775,6 +867,40 @@ describe('AdminUsers', () => {
                 expect(screen.getByText('toggle fail')).toBeInTheDocument();
             });
         });
+
+        it('shows the unified fallback when superuser toggle throws a non-Error', async () => {
+            installListMocks();
+            mockApiPut.mockRejectedValue('plain string reject');
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            const supSwitches = screen.getAllByLabelText('Toggle superuser');
+            await user.click(supSwitches[1]);
+            await waitFor(() => {
+                expect(
+                    screen.getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('shows the unified fallback when enabled toggle throws a non-Error', async () => {
+            installListMocks();
+            mockApiPut.mockRejectedValue('plain string reject');
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            const enabledSwitches = screen.getAllByLabelText('Toggle enabled');
+            await user.click(enabledSwitches[1]);
+            await waitFor(() => {
+                expect(
+                    screen.getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
+            });
+        });
     });
 
     describe('Delete user', () => {
@@ -813,6 +939,26 @@ describe('AdminUsers', () => {
             );
             await waitFor(() => {
                 expect(screen.getByText('delete fail')).toBeInTheDocument();
+            });
+        });
+
+        it('shows the unified fallback when delete throws a non-Error', async () => {
+            installListMocks();
+            mockApiDelete.mockRejectedValue('plain string reject');
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            await user.click(screen.getAllByLabelText('delete user')[1]);
+            const dialog = await screen.findByRole('dialog');
+            await user.click(
+                within(dialog).getByRole('button', { name: /delete/i })
+            );
+            await waitFor(() => {
+                expect(
+                    screen.getByText('An unexpected error occurred'),
+                ).toBeInTheDocument();
             });
         });
     });

@@ -49,6 +49,7 @@ import {
     getContainedButtonSx,
     getTableContainerSx,
 } from './styles';
+import { extractErrorMessage } from './_shared';
 
 interface ProbeConfig {
     id: number;
@@ -82,11 +83,7 @@ const AdminProbes: React.FC = () => {
             const data = await apiGet<Record<string, unknown>>('/api/v1/probe-configs');
             setProbes((data.probe_configs || data || []) as ProbeConfig[]);
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
+            setError(extractErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -119,11 +116,7 @@ const AdminProbes: React.FC = () => {
             setSuccess(`Probe "${getFriendlyProbeName(editProbe.name)}" updated successfully.`);
             fetchProbes();
         } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('An unexpected error occurred');
-            }
+            setError(extractErrorMessage(err));
         } finally {
             setSaving(false);
         }

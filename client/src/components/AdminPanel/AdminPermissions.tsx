@@ -55,6 +55,7 @@ import {
     getDeleteIconSx,
     getTableContainerSx,
 } from './styles';
+import { extractErrorMessage } from './_shared';
 
 const API_BASE_URL = '/api/v1';
 
@@ -159,8 +160,7 @@ const AdminPermissions: React.FC = () => {
                 const data = await apiGet<{ groups?: RbacGroup[] }>(`${API_BASE_URL}/rbac/groups`);
                 setGroups(data.groups ?? []);
             } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err);
-                setError(message);
+                setError(extractErrorMessage(err));
             } finally {
                 setLoading(false);
             }
@@ -192,8 +192,7 @@ const AdminPermissions: React.FC = () => {
                 }
             }
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         } finally {
             setMcpLoading(false);
             setConnLoading(false);
@@ -210,8 +209,7 @@ const AdminPermissions: React.FC = () => {
             );
             setAdminPermissions(data.permissions ?? []);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         } finally {
             setAdminPermsLoading(false);
         }
@@ -267,8 +265,7 @@ const AdminPermissions: React.FC = () => {
             setGrantMcpOpen(false);
             fetchPermissions(selectedGroupId);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setGrantMcpError(message);
+            setGrantMcpError(extractErrorMessage(err));
         } finally {
             setGrantMcpLoading(false);
         }
@@ -282,8 +279,7 @@ const AdminPermissions: React.FC = () => {
             );
             fetchPermissions(selectedGroupId);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         }
     };
 
@@ -317,8 +313,7 @@ const AdminPermissions: React.FC = () => {
             setGrantConnOpen(false);
             fetchPermissions(selectedGroupId);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setGrantConnError(message);
+            setGrantConnError(extractErrorMessage(err));
         } finally {
             setGrantConnLoading(false);
         }
@@ -331,8 +326,7 @@ const AdminPermissions: React.FC = () => {
             );
             fetchPermissions(selectedGroupId);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         }
     };
 
@@ -349,8 +343,7 @@ const AdminPermissions: React.FC = () => {
             setGrantAdminOpen(false);
             fetchAdminPermissions(selectedGroupId);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setGrantAdminError(message);
+            setGrantAdminError(extractErrorMessage(err));
         } finally {
             setGrantAdminLoading(false);
         }
@@ -363,8 +356,7 @@ const AdminPermissions: React.FC = () => {
             );
             fetchAdminPermissions(selectedGroupId);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
+            setError(extractErrorMessage(err));
         }
     };
 

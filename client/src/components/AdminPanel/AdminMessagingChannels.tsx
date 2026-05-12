@@ -257,10 +257,16 @@ const AdminMessagingChannels: React.FC<AdminMessagingChannelsProps> = ({ config 
 
     // --- Inline toggle enabled on main table ---
 
+    // The inline switch is not a delete and not a dialog save, so it
+    // must not flip `deleteLoading` (which would flicker any global
+    // delete spinner wired to it). We keep `errorTarget: 'page'` so a
+    // toggle failure still surfaces in the existing page-level banner,
+    // but pair it with `busyTarget: 'inline'` to decouple busy state.
+    // See issue #216.
     const handleToggleEnabled = async (channel: MessagingChannel) => {
         await crud.runMutation(
             () => apiPut(`/api/v1/notification-channels/${channel.id}`, { enabled: !channel.enabled }),
-            { errorTarget: 'page' },
+            { errorTarget: 'page', busyTarget: 'inline' },
         );
     };
 

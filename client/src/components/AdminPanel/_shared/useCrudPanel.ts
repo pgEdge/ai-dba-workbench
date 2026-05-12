@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractErrorMessage } from './errors';
 
 /**
@@ -163,24 +163,67 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
     const [deleteItem, setDeleteItem] = useState<T | null>(null);
     const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
 
+    // Generation counter for `refresh()`. Each invocation captures its
+    // own generation; only the most recent generation is allowed to
+    // commit results to state. This prevents an earlier, slower fetch
+    // from overwriting a later, faster one when `deps` change while a
+    // request is in flight.
+    const fetchGenerationRef = useRef<number>(0);
+
+    // Tracks whether the component is still mounted. State writes after
+    // unmount are silently dropped to avoid React's "setState on an
+    // unmounted component" dev-mode warning.
+    const isMountedRef = useRef<boolean>(true);
+
     const refresh = useCallback(async () => {
+        const generation = fetchGenerationRef.current + 1;
+        fetchGenerationRef.current = generation;
+        setLoading(true);
         try {
-            setLoading(true);
             const next = await fetchItems();
+            // Drop the result if a newer fetch started, or if the
+            // component unmounted while this request was in flight.
+            if (
+                !isMountedRef.current
+                || fetchGenerationRef.current !== generation
+            ) {
+                return;
+            }
             setItems(next);
         } catch (err: unknown) {
+            if (
+                !isMountedRef.current
+                || fetchGenerationRef.current !== generation
+            ) {
+                return;
+            }
             setError(extractErrorMessage(err));
         } finally {
-            setLoading(false);
+            // Only the latest in-flight generation owns the loading
+            // flag; earlier generations must not flip it back to
+            // false while a fresh request is still pending.
+            if (
+                isMountedRef.current
+                && fetchGenerationRef.current === generation
+            ) {
+                setLoading(false);
+            }
         }
     }, [fetchItems]);
 
     // Run refresh once on mount and whenever the caller's `deps` change.
     // `refresh` is included in the deps array; the eslint-disable below
     // is required because we spread caller-supplied `deps`, which the
-    // exhaustive-deps rule cannot statically verify.
+    // exhaustive-deps rule cannot statically verify. The cleanup hook
+    // flips `isMountedRef` so any in-flight fetch that resolves after
+    // unmount becomes a no-op. A deps-change does not unmount the
+    // component, so we also re-arm the ref each time the effect runs.
     useEffect(() => {
+        isMountedRef.current = true;
         void refresh();
+        return () => {
+            isMountedRef.current = false;
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [refresh, ...(deps ?? [])]);
 

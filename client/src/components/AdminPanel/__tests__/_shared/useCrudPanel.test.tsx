@@ -8,9 +8,27 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useCrudPanel } from '../../_shared/useCrudPanel';
+
+/**
+ * Build an externally-resolvable promise. Useful for ordering multiple
+ * in-flight fetches in tests that exercise the stale-result race.
+ */
+function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (reason?: unknown) => void;
+} {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
 
 interface Item {
     id: number;
@@ -450,6 +468,155 @@ describe('useCrudPanel', () => {
             await waitFor(() =>
                 expect(result.current.deleteLoading).toBe(false),
             );
+        });
+    });
+
+    describe('stale-result protection', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it('drops a stale fetch that resolves after a newer one (deps change)', async () => {
+            // The hook should only commit results from the most recent
+            // refresh. Here the first fetch (triggered by mount) is slow
+            // and returns ['stale']; the deps change kicks off a second
+            // fetch that resolves immediately with ['fresh']. The final
+            // `items` must be ['fresh'].
+            const slow = deferred<string[]>();
+            const fast = deferred<string[]>();
+            const fetchItems = vi.fn<() => Promise<string[]>>()
+                .mockImplementationOnce(() => slow.promise)
+                .mockImplementationOnce(() => fast.promise);
+
+            let dep = 'a';
+            const { result, rerender } = renderHook(
+                () => useCrudPanel<string>({ fetchItems, deps: [dep] }),
+            );
+
+            // First fetch is in flight; loading must be true and no items
+            // committed yet.
+            expect(result.current.loading).toBe(true);
+            expect(result.current.items).toEqual([]);
+            await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(1));
+
+            // Change deps; this triggers a second fetch with the next
+            // generation. Both fetches are now in flight.
+            dep = 'b';
+            rerender();
+            await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(2));
+
+            // Resolve the fast (newer) fetch first.
+            await act(async () => {
+                fast.resolve(['fresh']);
+                await fast.promise;
+            });
+            await waitFor(() => expect(result.current.items).toEqual(['fresh']));
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            // Now resolve the slow (older) fetch. It must NOT overwrite
+            // the fresh result, and must NOT flip `loading` back to true
+            // or anything else.
+            await act(async () => {
+                slow.resolve(['stale']);
+                await slow.promise;
+            });
+
+            expect(result.current.items).toEqual(['fresh']);
+            expect(result.current.loading).toBe(false);
+        });
+
+        it('drops a stale fetch error that arrives after a successful refresh', async () => {
+            // Same shape as the success-race test, but the older fetch
+            // rejects after a newer fetch resolves. The error must not
+            // leak onto the page-level error slot.
+            const slow = deferred<string[]>();
+            const fast = deferred<string[]>();
+            const fetchItems = vi.fn<() => Promise<string[]>>()
+                .mockImplementationOnce(() => slow.promise)
+                .mockImplementationOnce(() => fast.promise);
+
+            let dep = 'a';
+            const { result, rerender } = renderHook(
+                () => useCrudPanel<string>({ fetchItems, deps: [dep] }),
+            );
+
+            await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(1));
+
+            dep = 'b';
+            rerender();
+            await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(2));
+
+            await act(async () => {
+                fast.resolve(['fresh']);
+                await fast.promise;
+            });
+            await waitFor(() => expect(result.current.items).toEqual(['fresh']));
+
+            await act(async () => {
+                slow.reject(new Error('stale failure'));
+                await slow.promise.catch(() => {});
+            });
+
+            expect(result.current.error).toBeNull();
+            expect(result.current.items).toEqual(['fresh']);
+            expect(result.current.loading).toBe(false);
+        });
+
+        it('does not write state after unmount and logs no warning', async () => {
+            const consoleError = vi
+                .spyOn(console, 'error')
+                .mockImplementation(() => {});
+
+            const pending = deferred<string[]>();
+            const fetchItems = vi.fn<() => Promise<string[]>>(
+                () => pending.promise,
+            );
+
+            const { result, unmount } = renderHook(
+                () => useCrudPanel<string>({ fetchItems }),
+            );
+
+            // The initial fetch is in flight.
+            await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(1));
+            expect(result.current.loading).toBe(true);
+
+            // Unmount before the fetch resolves.
+            unmount();
+
+            // Resolve the pending fetch. The hook must drop the result;
+            // no setState-after-unmount warnings should appear.
+            await act(async () => {
+                pending.resolve(['after-unmount']);
+                await pending.promise;
+            });
+
+            const warnings = consoleError.mock.calls
+                .map((args) => String(args[0] ?? ''))
+                .filter((msg) =>
+                    msg.includes('unmounted')
+                    || msg.includes('memory leak'),
+                );
+            expect(warnings).toEqual([]);
+        });
+
+        it('still completes the loading transition on the happy path', async () => {
+            // Regression guard: with the generation/mount guards in place,
+            // a plain refresh() must still flip loading false and commit
+            // the result.
+            const fetchItems = vi.fn().mockResolvedValue(['only']);
+            const { result } = renderHook(() =>
+                useCrudPanel<string>({ fetchItems }),
+            );
+
+            await waitFor(() => expect(result.current.loading).toBe(false));
+            expect(result.current.items).toEqual(['only']);
+
+            fetchItems.mockResolvedValueOnce(['again']);
+            await act(async () => {
+                await result.current.refresh();
+            });
+            expect(result.current.items).toEqual(['again']);
+            expect(result.current.loading).toBe(false);
         });
     });
 });

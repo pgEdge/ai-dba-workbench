@@ -240,6 +240,8 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
             ) {
                 return true;
             }
+            // Clear any lingering success toast so the refresh error is alone (see #215).
+            setSuccess(null);
             setError(extractErrorMessage(err));
             return false;
         } finally {

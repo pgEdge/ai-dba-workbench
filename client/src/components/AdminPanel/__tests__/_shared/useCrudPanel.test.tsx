@@ -566,6 +566,121 @@ describe('useCrudPanel', () => {
             },
         );
 
+        it(
+            'clears a prior success toast when a later refresh fails',
+            async () => {
+                // Regression guard for the residual issue #215 gap that
+                // CodeRabbit flagged on PR #226: even after the
+                // suppress-on-failed-refresh fix, a successful mutation
+                // followed by an *independent* failing refresh would
+                // leave both toasts on screen — "Saved" from the prior
+                // mutation and "Failed to load …" from the new error.
+                // The authoritative-failure branch in refresh() must
+                // clear success before writing error.
+                const fetchItems = vi.fn<() => Promise<Item[]>>()
+                    // Initial mount.
+                    .mockResolvedValueOnce(ITEMS)
+                    // Refresh kicked off by the mutation — succeeds.
+                    .mockResolvedValueOnce(ITEMS)
+                    // Later, independent refresh — rejects.
+                    .mockRejectedValueOnce(new Error('Failed to load groups'));
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                // Step 1: mutation A succeeds AND its refresh succeeds,
+                // so the success toast lands.
+                const fn = vi.fn().mockResolvedValue('saved-id');
+                await act(async () => {
+                    await result.current.runMutation(fn, {
+                        successMessage: 'Saved',
+                    });
+                });
+                expect(result.current.success).toBe('Saved');
+                expect(result.current.error).toBeNull();
+
+                // Step 2: a later refresh (manual reload, deps change,
+                // follow-on refresh from a different mutation, etc.)
+                // fails. The old "Saved" toast must be cleared so it
+                // doesn't sit on screen next to the new error.
+                let outcome: boolean | undefined;
+                await act(async () => {
+                    outcome = await result.current.refresh();
+                });
+                expect(outcome).toBe(false);
+                expect(result.current.success).toBeNull();
+                expect(result.current.error).toBe('Failed to load groups');
+            },
+        );
+
+        it(
+            'does not clear success when a superseded refresh fails',
+            async () => {
+                // Companion guard: only the *authoritative* failure
+                // branch in refresh() clears success. A superseded
+                // failure (one whose generation was already overtaken)
+                // returns early before reaching the setSuccess(null)
+                // call, so a stale rejection cannot wipe out a success
+                // toast that legitimately belongs to the newer
+                // generation. This pins the "do nothing on stale
+                // failure" half of the refresh contract.
+                const slow = deferred<Item[]>();
+                const fast = deferred<Item[]>();
+                const fetchItems = vi.fn<() => Promise<Item[]>>()
+                    // Initial mount fetch — resolves immediately.
+                    .mockResolvedValueOnce(ITEMS)
+                    // Slow refresh that will eventually REJECT after
+                    // being superseded by a newer generation.
+                    .mockImplementationOnce(() => slow.promise)
+                    // Fast refresh that wins the race.
+                    .mockImplementationOnce(() => fast.promise);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() => expect(result.current.loading).toBe(false));
+
+                // Manually seed a success toast (as if a prior
+                // successful mutation left one behind).
+                act(() => {
+                    result.current.setSuccess('Saved');
+                });
+
+                // Start the slow refresh; it is now the latest
+                // generation in flight.
+                let slowRefresh: Promise<boolean> | undefined;
+                act(() => {
+                    slowRefresh = result.current.refresh();
+                });
+                await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(2));
+
+                // Start the fast refresh; it bumps the generation, so
+                // the slow refresh is now superseded.
+                let fastRefresh: Promise<boolean> | undefined;
+                act(() => {
+                    fastRefresh = result.current.refresh();
+                });
+                await waitFor(() => expect(fetchItems).toHaveBeenCalledTimes(3));
+
+                // Resolve fast (newer) refresh successfully.
+                await act(async () => {
+                    fast.resolve(ITEMS);
+                    await fastRefresh;
+                });
+
+                // Now reject the slow (superseded) refresh. Because the
+                // catch handler hits the superseded-guard early, it
+                // must NOT clear the success toast.
+                await act(async () => {
+                    slow.reject(new Error('stale failure'));
+                    await slowRefresh;
+                });
+
+                expect(result.current.success).toBe('Saved');
+                expect(result.current.error).toBeNull();
+            },
+        );
+
         it('clears prior page error before page-target mutations', async () => {
             const fetchItems = vi.fn().mockResolvedValue(ITEMS);
             const { result } = renderHook(() =>

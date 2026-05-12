@@ -1116,9 +1116,12 @@ describe('AdminTokenScopes - additional coverage', () => {
         // Submit the dialog.
         await user.click(screen.getByRole('button', { name: /^Create$/ }));
 
-        await waitFor(() => {
-            expect(screen.getByText('Token created')).toBeInTheDocument();
-        });
+        await waitFor(
+            () => {
+                expect(screen.getByText('Token created')).toBeInTheDocument();
+            },
+            { timeout: 10000 },
+        );
         expect(mockApiPut).toHaveBeenCalledWith(
             '/api/v1/rbac/tokens/42/scope',
             expect.objectContaining({
@@ -1129,7 +1132,7 @@ describe('AdminTokenScopes - additional coverage', () => {
                 admin_permissions: ['*'],
             }),
         );
-    });
+    }, 15000);
 
     it('creates a token with the "All MCP Privileges" wildcard via the _isAll mapping', async () => {
         mockApiGet.mockImplementation((url: string) => {

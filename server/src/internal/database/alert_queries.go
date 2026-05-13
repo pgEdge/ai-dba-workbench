@@ -23,6 +23,13 @@ import (
 // ErrAlertNotFound is returned when an alert is not found
 var ErrAlertNotFound = errors.New("alert not found")
 
+// ErrAlertNotAcknowledged is returned when a caller asks to unacknowledge
+// an alert that exists but is not currently in 'acknowledged' state (for
+// example, an alert that has already been restored or cleared). Handlers
+// inspect this sentinel with errors.Is to surface a 409 Conflict response
+// rather than the generic 500 the previous implementation produced.
+var ErrAlertNotAcknowledged = errors.New("alert is not currently acknowledged")
+
 // Alert represents an alert from the alerter
 type Alert struct {
 	ID             int64      `json:"id"`
@@ -419,13 +426,20 @@ func (d *Datastore) AcknowledgeAlert(ctx context.Context, req AcknowledgeAlertRe
 // acknowledged. Both statements run in a single transaction so the alert
 // cannot end up with status = 'active' while a stale acknowledgment row
 // still exists (or the reverse).
+//
+// The function distinguishes "alert missing" from "alert exists but is
+// not acknowledged" with two sentinel errors so the HTTP handler can map
+// each case to the right status code: ErrAlertNotFound -> 404 and
+// ErrAlertNotAcknowledged -> 409. Every other failure path wraps the
+// underlying error with %w plus the alert ID so the server log entry is
+// self-contained.
 func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("unacknowledge alert %d: begin transaction: %w", alertID, err)
 	}
 	//nolint:errcheck // Rollback is a no-op if the tx was already committed.
 	defer tx.Rollback(ctx)
@@ -437,11 +451,29 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 		WHERE id = $1 AND status = 'acknowledged'
 	`, alertID)
 	if err != nil {
-		return fmt.Errorf("failed to update alert status: %w", err)
+		return fmt.Errorf("unacknowledge alert %d: update status: %w", alertID, err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("alert not found or not acknowledged")
+		// The UPDATE matched no rows. Either the alert no longer
+		// exists (cascade delete, manual removal) or it exists but is
+		// not in the 'acknowledged' state any more. Look up the
+		// current status to pick the right sentinel; this also avoids
+		// reporting "not acknowledged" for an alert that was never
+		// there.
+		var status string
+		row := tx.QueryRow(ctx,
+			`SELECT status FROM alerts WHERE id = $1`, alertID)
+		switch err := row.Scan(&status); {
+		case err == nil:
+			return fmt.Errorf("unacknowledge alert %d (status=%q): %w",
+				alertID, status, ErrAlertNotAcknowledged)
+		case errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("unacknowledge alert %d: %w", alertID, ErrAlertNotFound)
+		default:
+			return fmt.Errorf("unacknowledge alert %d: look up status: %w",
+				alertID, err)
+		}
 	}
 
 	// Clear acknowledgment rows so the LATERAL join in GetAlerts no
@@ -449,11 +481,11 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM alert_acknowledgments WHERE alert_id = $1
 	`, alertID); err != nil {
-		return fmt.Errorf("failed to clear alert acknowledgments: %w", err)
+		return fmt.Errorf("unacknowledge alert %d: clear acknowledgments: %w", alertID, err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("unacknowledge alert %d: commit: %w", alertID, err)
 	}
 
 	return nil

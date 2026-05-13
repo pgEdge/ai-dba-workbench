@@ -11,11 +11,15 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
@@ -36,9 +40,10 @@ func TestNewAlertHandler(t *testing.T) {
 }
 
 // TestNewAlertHandler_WiresResolver verifies that when the datastore is
-// non-nil the constructor installs it as the alertResolver. The
-// resolver unblocks RBAC-first mutation flows without needing tests to
-// call setAlertResolver explicitly.
+// non-nil the constructor installs it as the alertResolver and the
+// alertUnacknowledger. Wiring both fields up front unblocks the
+// RBAC-first mutation flows without needing tests to call the setter
+// helpers explicitly.
 func TestNewAlertHandler_WiresResolver(t *testing.T) {
 	ds := &database.Datastore{}
 	handler := NewAlertHandler(ds, nil, nil)
@@ -47,6 +52,9 @@ func TestNewAlertHandler_WiresResolver(t *testing.T) {
 	}
 	if handler.alertResolver == nil {
 		t.Error("Expected alertResolver to be wired to the datastore")
+	}
+	if handler.unacknowledgeFn == nil {
+		t.Error("Expected unacknowledgeFn to be wired to the datastore")
 	}
 }
 
@@ -222,6 +230,216 @@ func TestAlertHandler_UnacknowledgeAlert_InvalidAlertID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
 	}
+}
+
+// fakeUnacknowledger lets unacknowledgeAlert handler tests inject an
+// arbitrary error from the datastore boundary. The handler maps three
+// outcomes to three HTTP codes (200, 404 for ErrAlertNotFound, 409 for
+// ErrAlertNotAcknowledged, 500 for anything else) and these tests cover
+// every branch without touching a real database.
+type fakeUnacknowledger struct {
+	err   error
+	calls int
+}
+
+func (f *fakeUnacknowledger) UnacknowledgeAlert(_ context.Context, _ int64) error {
+	f.calls++
+	return f.err
+}
+
+// TestAlertHandler_UnacknowledgeAlert_Happy verifies the success path
+// where the datastore returns nil. The handler must respond 200 with
+// {"status":"active"}.
+func TestAlertHandler_UnacknowledgeAlert_Happy(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	aliceID := newTestUser(t, store, "alice")
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	fake := &fakeUnacknowledger{}
+	handler.setUnacknowledgeFn(fake)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/alerts/acknowledge?alert_id=7", nil)
+	req = withUser(req, aliceID)
+	req = withUsername(req, "alice")
+	rec := httptest.NewRecorder()
+	handler.unacknowledgeAlert(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if fake.calls != 1 {
+		t.Errorf("expected fake.calls=1, got %d", fake.calls)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp["status"] != "active" {
+		t.Errorf("status field = %q, want active", resp["status"])
+	}
+}
+
+// TestAlertHandler_UnacknowledgeAlert_NotFound_Maps404 verifies that
+// ErrAlertNotFound from the datastore produces HTTP 404, not the 500
+// the pre-fix code returned for every datastore error.
+func TestAlertHandler_UnacknowledgeAlert_NotFound_Maps404(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	aliceID := newTestUser(t, store, "alice")
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	fake := &fakeUnacknowledger{err: fmt.Errorf("wrapped: %w", database.ErrAlertNotFound)}
+	handler.setUnacknowledgeFn(fake)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/alerts/acknowledge?alert_id=42", nil)
+	req = withUser(req, aliceID)
+	req = withUsername(req, "alice")
+	rec := httptest.NewRecorder()
+	handler.unacknowledgeAlert(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body=%s",
+			rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp.Error != "Alert not found" {
+		t.Errorf("error = %q, want %q", resp.Error, "Alert not found")
+	}
+}
+
+// TestAlertHandler_UnacknowledgeAlert_NotAcknowledged_Maps409 verifies
+// that the new sentinel ErrAlertNotAcknowledged produces HTTP 409, which
+// is the precise status code for "the resource is in a state that
+// prevents the requested transition." A 500 here (the pre-fix behavior)
+// would suggest a server problem when in reality the request is racing
+// the alerter or arriving from a stale UI.
+func TestAlertHandler_UnacknowledgeAlert_NotAcknowledged_Maps409(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	aliceID := newTestUser(t, store, "alice")
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	fake := &fakeUnacknowledger{
+		err: fmt.Errorf("unacknowledge alert 42 (status=%q): %w",
+			"active", database.ErrAlertNotAcknowledged),
+	}
+	handler.setUnacknowledgeFn(fake)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/alerts/acknowledge?alert_id=42", nil)
+	req = withUser(req, aliceID)
+	req = withUsername(req, "alice")
+	rec := httptest.NewRecorder()
+	handler.unacknowledgeAlert(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body=%s",
+			rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp.Error != "Alert is not currently acknowledged" {
+		t.Errorf("error = %q, want %q",
+			resp.Error, "Alert is not currently acknowledged")
+	}
+}
+
+// TestAlertHandler_UnacknowledgeAlert_OtherError_Maps500 verifies that
+// arbitrary datastore errors (transaction begin failure, commit failure,
+// etc.) still produce HTTP 500. The handler must NOT misclassify
+// internal failures as 404 or 409.
+func TestAlertHandler_UnacknowledgeAlert_OtherError_Maps500(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	aliceID := newTestUser(t, store, "alice")
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	fake := &fakeUnacknowledger{err: errors.New("commit failed: connection reset")}
+	handler.setUnacknowledgeFn(fake)
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/alerts/acknowledge?alert_id=99", nil)
+	req = withUser(req, aliceID)
+	req = withUsername(req, "alice")
+	rec := httptest.NewRecorder()
+	handler.unacknowledgeAlert(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body=%s",
+			rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp.Error != "Failed to unacknowledge alert" {
+		t.Errorf("error = %q, want %q",
+			resp.Error, "Failed to unacknowledge alert")
+	}
+}
+
+// TestAlertHandler_UnacknowledgeAlert_MissingUnackFn_Maps500 makes sure
+// the explicit nil-check on the unacknowledge function returns 500
+// rather than panicking. The nil-resolver case has the same shape and is
+// already covered in rbac_issue35_test.go; this test mirrors it for the
+// new injected dependency.
+func TestAlertHandler_UnacknowledgeAlert_MissingUnackFn_Maps500(t *testing.T) {
+	_, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	aliceID := newTestUser(t, store, "alice")
+	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
+	handler := NewAlertHandler(nil, store, checker)
+	handler.setAlertResolver(&fakeAlertResolver{connID: rbacUnsharedConnID})
+	// Intentionally do NOT call setUnacknowledgeFn.
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/alerts/acknowledge?alert_id=99", nil)
+	req = withUser(req, aliceID)
+	req = withUsername(req, "alice")
+	rec := httptest.NewRecorder()
+	handler.unacknowledgeAlert(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body=%s",
+			rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+}
+
+// TestAlertHandler_SetUnacknowledgeFn_OverridesDefault verifies the
+// test-only injection point installs a custom unacknowledger. The
+// default constructor wires the datastore as the unacknowledger; tests
+// override it to drive the sentinel-error paths.
+func TestAlertHandler_SetUnacknowledgeFn_OverridesDefault(t *testing.T) {
+	handler := NewAlertHandler(nil, nil, nil)
+	if handler.unacknowledgeFn != nil {
+		t.Fatalf("expected nil unacknowledgeFn for nil-datastore constructor")
+	}
+	fake := &fakeUnacknowledger{}
+	handler.setUnacknowledgeFn(fake)
+	if handler.unacknowledgeFn == nil {
+		t.Errorf("setUnacknowledgeFn did not install the fake")
+	}
+	// The wired-up datastore case is covered by
+	// TestNewAlertHandler_WiresResolver; this test focuses on the
+	// override entry point.
+	_ = auth.UsernameContextKey
 }
 
 func TestAlertHandler_RegisterRoutes_NotConfigured(t *testing.T) {

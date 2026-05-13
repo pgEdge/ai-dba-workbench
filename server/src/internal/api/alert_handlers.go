@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 
@@ -27,12 +28,23 @@ type alertConnectionResolver interface {
 	GetAlertConnectionID(ctx context.Context, alertID int64) (int, error)
 }
 
+// alertUnacknowledger is the narrow contract used by the
+// DELETE /api/v1/alerts/acknowledge handler. Keeping the surface this
+// small lets tests inject a fake that returns canned sentinel errors so
+// the handler's HTTP-status-code mapping can be exercised without a real
+// database. The production *database.Datastore satisfies the interface
+// via UnacknowledgeAlert.
+type alertUnacknowledger interface {
+	UnacknowledgeAlert(ctx context.Context, alertID int64) error
+}
+
 // AlertHandler handles REST API requests for alerts
 type AlertHandler struct {
-	datastore     *database.Datastore
-	authStore     *auth.AuthStore
-	rbacChecker   *auth.RBACChecker
-	alertResolver alertConnectionResolver
+	datastore       *database.Datastore
+	authStore       *auth.AuthStore
+	rbacChecker     *auth.RBACChecker
+	alertResolver   alertConnectionResolver
+	unacknowledgeFn alertUnacknowledger
 }
 
 // NewAlertHandler creates a new alert handler
@@ -44,6 +56,7 @@ func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore, r
 	}
 	if datastore != nil {
 		h.alertResolver = datastore
+		h.unacknowledgeFn = datastore
 	}
 	return h
 }
@@ -54,6 +67,14 @@ func NewAlertHandler(datastore *database.Datastore, authStore *auth.AuthStore, r
 // database.
 func (h *AlertHandler) setAlertResolver(r alertConnectionResolver) {
 	h.alertResolver = r
+}
+
+// setUnacknowledgeFn overrides the unacknowledge implementation for
+// tests so the handler's sentinel-error to HTTP-status-code mapping can
+// be exercised without standing up a real database. Production code
+// keeps the datastore that NewAlertHandler installs.
+func (h *AlertHandler) setUnacknowledgeFn(u alertUnacknowledger) {
+	h.unacknowledgeFn = u
 }
 
 // RegisterRoutes registers alert management routes on the mux
@@ -343,10 +364,29 @@ func (h *AlertHandler) unacknowledgeAlert(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Unacknowledge the alert
-	if err := h.datastore.UnacknowledgeAlert(r.Context(), alertID); err != nil {
-		log.Printf("[ERROR] Failed to unacknowledge alert: %v", err)
+	// Unacknowledge the alert. The datastore distinguishes "alert
+	// missing" from "alert not in acknowledged state" with two sentinel
+	// errors so each maps to a precise HTTP status code rather than the
+	// generic 500 the previous implementation produced. Every log entry
+	// includes the alert ID and the wrapped error chain so operators can
+	// trace which alert failed without correlating two log lines.
+	if h.unacknowledgeFn == nil {
+		log.Printf("[ERROR] unacknowledgeAlert: unacknowledge function is not configured")
 		RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert")
+		return
+	}
+	if err := h.unacknowledgeFn.UnacknowledgeAlert(r.Context(), alertID); err != nil {
+		switch {
+		case errors.Is(err, database.ErrAlertNotFound):
+			log.Printf("[INFO] Unacknowledge alert %d: alert not found: %v", alertID, err) //nolint:gosec // G706: alertID is an integer, cannot contain newlines; err is a wrapped DB error
+			RespondError(w, http.StatusNotFound, "Alert not found")
+		case errors.Is(err, database.ErrAlertNotAcknowledged):
+			log.Printf("[INFO] Unacknowledge alert %d: not currently acknowledged: %v", alertID, err) //nolint:gosec // G706: alertID is an integer, cannot contain newlines; err is a wrapped DB error
+			RespondError(w, http.StatusConflict, "Alert is not currently acknowledged")
+		default:
+			log.Printf("[ERROR] Unacknowledge alert %d: %v", alertID, err) //nolint:gosec // G706: alertID is an integer, cannot contain newlines; err is a wrapped DB error
+			RespondError(w, http.StatusInternalServerError, "Failed to unacknowledge alert")
+		}
 		return
 	}
 

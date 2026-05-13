@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -242,7 +243,9 @@ func TestUnacknowledgeAlert_ClearsAcknowledgment(t *testing.T) {
 // TestUnacknowledgeAlert_NotAcknowledgedErrors verifies
 // UnacknowledgeAlert rejects alerts that aren't in the acknowledged
 // state, so we don't clobber ack history for alerts in unrelated
-// states.
+// states. The error returned must wrap ErrAlertNotAcknowledged so the
+// HTTP handler can map it to 409 Conflict instead of the previous
+// generic 500.
 func TestUnacknowledgeAlert_NotAcknowledgedErrors(t *testing.T) {
 	ds, pool, cleanup := newUnackAlertTestDatastore(t)
 	defer cleanup()
@@ -264,7 +267,99 @@ func TestUnacknowledgeAlert_NotAcknowledgedErrors(t *testing.T) {
 		t.Fatalf("Failed to insert alert: %v", err)
 	}
 
-	if err := ds.UnacknowledgeAlert(ctx, alertID); err == nil {
-		t.Errorf("UnacknowledgeAlert on already-active alert returned nil; want error")
+	err = ds.UnacknowledgeAlert(ctx, alertID)
+	if err == nil {
+		t.Fatalf("UnacknowledgeAlert on already-active alert returned nil; want error")
+	}
+	if !errors.Is(err, ErrAlertNotAcknowledged) {
+		t.Errorf("UnacknowledgeAlert error = %v, want errors.Is ErrAlertNotAcknowledged", err)
+	}
+	if errors.Is(err, ErrAlertNotFound) {
+		t.Errorf("UnacknowledgeAlert reported ErrAlertNotFound for an existing active alert")
+	}
+}
+
+// TestUnacknowledgeAlert_NonexistentAlertReturnsErrAlertNotFound covers
+// the case where the caller asks to unacknowledge an ID that does not
+// match any row. The datastore must surface ErrAlertNotFound so the
+// handler answers with HTTP 404 rather than 409 or 500.
+func TestUnacknowledgeAlert_NonexistentAlertReturnsErrAlertNotFound(t *testing.T) {
+	ds, _, cleanup := newUnackAlertTestDatastore(t)
+	defer cleanup()
+
+	err := ds.UnacknowledgeAlert(context.Background(), 999999)
+	if err == nil {
+		t.Fatalf("UnacknowledgeAlert on missing alert returned nil; want error")
+	}
+	if !errors.Is(err, ErrAlertNotFound) {
+		t.Errorf("UnacknowledgeAlert error = %v, want errors.Is ErrAlertNotFound", err)
+	}
+	if errors.Is(err, ErrAlertNotAcknowledged) {
+		t.Errorf("UnacknowledgeAlert reported ErrAlertNotAcknowledged for a missing alert")
+	}
+}
+
+// TestUnacknowledgeAlert_ClosedPoolReturnsWrappedError exercises the
+// begin-transaction failure path. Closing the pool before the call
+// forces tx.Begin to error so the function returns the wrapped
+// "begin transaction" message rather than panicking. Neither sentinel
+// must match so the handler maps the error to 500.
+func TestUnacknowledgeAlert_ClosedPoolReturnsWrappedError(t *testing.T) {
+	ds, pool, cleanup := newUnackAlertTestDatastore(t)
+	// Drop the schema before closing the pool so the deferred teardown
+	// doesn't error when the pool is already gone.
+	defer func() {
+		// pool is closed by this point; teardown skipped.
+		_ = cleanup
+	}()
+	if _, err := pool.Exec(context.Background(), unackAlertTestTeardown); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	pool.Close()
+
+	err := ds.UnacknowledgeAlert(context.Background(), 1)
+	if err == nil {
+		t.Fatalf("UnacknowledgeAlert against closed pool returned nil; want error")
+	}
+	if errors.Is(err, ErrAlertNotFound) {
+		t.Errorf("closed-pool error should not match ErrAlertNotFound: %v", err)
+	}
+	if errors.Is(err, ErrAlertNotAcknowledged) {
+		t.Errorf("closed-pool error should not match ErrAlertNotAcknowledged: %v", err)
+	}
+}
+
+// TestUnacknowledgeAlert_ClearedAlertReturnsConflict ensures the 409
+// path also fires for cleared alerts. An alert can transition through
+// 'cleared' without going through 'acknowledged', and the user might
+// still press Restore from a stale UI. The datastore must return
+// ErrAlertNotAcknowledged so the handler answers with 409 rather than
+// 500.
+func TestUnacknowledgeAlert_ClearedAlertReturnsConflict(t *testing.T) {
+	ds, pool, cleanup := newUnackAlertTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertUnackTestConnection(t, pool, "cleared-conn")
+
+	var alertID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO alerts (
+			alert_type, connection_id, severity, title, description,
+			status, triggered_at, cleared_at
+		) VALUES (
+			'threshold', $1, 'warning', 'cleared alert',
+			'description', 'cleared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		) RETURNING id
+	`, connID).Scan(&alertID); err != nil {
+		t.Fatalf("Failed to insert cleared alert: %v", err)
+	}
+
+	err := ds.UnacknowledgeAlert(ctx, alertID)
+	if err == nil {
+		t.Fatalf("UnacknowledgeAlert on cleared alert returned nil; want error")
+	}
+	if !errors.Is(err, ErrAlertNotAcknowledged) {
+		t.Errorf("UnacknowledgeAlert error = %v, want errors.Is ErrAlertNotAcknowledged", err)
 	}
 }

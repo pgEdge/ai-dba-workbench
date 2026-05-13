@@ -334,6 +334,60 @@ project adheres to
   reserve right-side padding on each code block sized to the
   number of overlaid action buttons, so the SQL text never
   collides with the icons. (#221)
+- Fix the Active Alerts Restore button returning HTTP 500
+  "Failed to unacknowledge alert" for alerts that were
+  already non-acknowledged (for example after the alerter
+  reactivated them following a severity change); the server
+  now maps a missing alert to 404, an alert that is not
+  currently acknowledged to 409 Conflict, and wraps every
+  failure path with the alert ID for actionable logs. The
+  alerter's auto-reactivation path is also hardened against
+  panicking on alerts with a NULL `metric_value` column and
+  captures the previous severity before the database write
+  so the in-memory comparison cannot drift from the
+  acknowledged state. (#227)
+
+- Fix the alerter's `replication_slot_inactive` critical
+  alert never firing because its metric query selected
+  from a non-existent `metrics.pg_stat_replication_slots`
+  table; the `pg_replication_slots.inactive` metric now
+  reads directly from `metrics.pg_replication_slots` (the
+  table the collector probe writes to) and derives the
+  inactive state from the `active` column. New integration
+  tests cover the happy path, the no-row case when every
+  slot is active, slot deduplication per connection, and
+  the 5-minute freshness cutoff. (#224)
+
+- Fix Ask Ellie incorrectly reporting missing Spock
+  replication slots on healthy Spock 6.x clusters; the
+  assistant previously generated
+  `WHERE plugin = 'spock'` against
+  `pg_replication_slots`, but current Spock releases name
+  the output plugin `spock_output`. The chat system prompt
+  in `server/src/internal/chat/llm.go` now instructs Ellie
+  to use `plugin LIKE 'spock%'` for cross-version
+  compatibility. (#220)
+
+- Fix three datastore schema and probe inefficiencies
+  identified during a production performance review.
+  Collector migration v4 adds a partial index on
+  `anomaly_candidates(detected_at)` filtered to
+  `processed_at IS NULL AND tier1_pass = TRUE` so the
+  alerter sweeper stops sequential-scanning the full
+  table on every poll, and drops the redundant
+  `idx_pg_stat_all_indexes_conn_db_time` and
+  `idx_pg_stat_statements_conn_db_time` indexes (along
+  with their attached child indexes on every existing
+  weekly partition) which were duplicated by the more
+  specific `_object` indexes. The change-detection probes
+  (`pg_settings`, `pg_extension`, `pg_hba_file_rules`,
+  `pg_ident_file_mappings`) now strip the
+  `ai_dba_wb_probe` marker column injected by
+  `WrapQuery` before hashing, so the live snapshot hash
+  matches the stored snapshot hash; previously the marker
+  caused every hourly collection to look "changed" and
+  write a fresh snapshot, inflating the `pg_settings`
+  partitions by roughly an order of magnitude. (#219)
 
 - Fix the Admin panels showing a success toast alongside a
   page-level refresh error when a save succeeded but the

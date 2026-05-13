@@ -328,6 +328,13 @@ project adheres to
 
 ### Fixed
 
+- Fix long, non-wrapping SQL queries flowing underneath the
+  copy and run icons in the Remediation Steps panel of the
+  alert AI analysis view; the shared markdown styles now
+  reserve right-side padding on each code block sized to the
+  number of overlaid action buttons, so the SQL text never
+  collides with the icons. (#221)
+
 - Fix the Admin panels showing a success toast alongside a
   page-level refresh error when a save succeeded but the
   follow-on reload failed; the shared `useCrudPanel` hook

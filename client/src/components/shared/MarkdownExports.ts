@@ -41,6 +41,7 @@ export {
     getInlineCodeSx,
     getCodeBlockWrapperSx,
     getCodeBlockCustomStyle,
+    getCodeBlockRightPadding,
     getLinkSx,
     getBlockquoteSx,
     getTableSx,

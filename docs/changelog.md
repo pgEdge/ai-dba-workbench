@@ -328,6 +328,19 @@ project adheres to
 
 ### Fixed
 
+- Fix the Active Alerts Restore button returning HTTP 500
+  "Failed to unacknowledge alert" for alerts that were
+  already non-acknowledged (for example after the alerter
+  reactivated them following a severity change); the server
+  now maps a missing alert to 404, an alert that is not
+  currently acknowledged to 409 Conflict, and wraps every
+  failure path with the alert ID for actionable logs. The
+  alerter's auto-reactivation path is also hardened against
+  panicking on alerts with a NULL `metric_value` column and
+  captures the previous severity before the database write
+  so the in-memory comparison cannot drift from the
+  acknowledged state. (#227)
+
 - Fix the Admin panels showing a success toast alongside a
   page-level refresh error when a save succeeded but the
   follow-on reload failed; the shared `useCrudPanel` hook

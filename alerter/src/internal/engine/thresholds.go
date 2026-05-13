@@ -84,6 +84,18 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 	}
 }
 
+// formatMetricValue renders an alert's metric_value safely for logging.
+// MetricValue is a *float64 because the database column is nullable, so a
+// raw dereference would panic on rows where the value is NULL. Returning
+// a placeholder for nil preserves the diagnostic message without aborting
+// triggerThresholdAlert and skipping its auto-reactivation logic.
+func formatMetricValue(v *float64) string {
+	if v == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%.2f", *v)
+}
+
 // checkThreshold checks if a value violates a threshold
 func (e *Engine) checkThreshold(value float64, operator string, threshold float64) bool {
 	switch operator {
@@ -111,20 +123,46 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 	// Check if there's already an active or acknowledged alert for this rule/connection
 	existing, err := e.datastore.GetActiveThresholdAlert(ctx, rule.ID, connectionID, dbName)
 	if err == nil && existing != nil {
+		// Capture the previous state BEFORE any database write. The
+		// auto-reactivation check below must compare the new severity
+		// against the severity that was visible to the user (i.e. the
+		// value stored when the alert was acknowledged), so reading the
+		// in-memory copy before UpdateAlertValues runs decouples the
+		// check from the order of the writes. UpdateAlertValues
+		// overwrites the severity column unconditionally, so without
+		// this capture a future refactor that re-reads `existing` after
+		// the write could silently break the reactivation path.
+		previousStatus := existing.Status
+		previousSeverity := existing.Severity
+		needsReactivation := previousStatus == "acknowledged" && previousSeverity != severity
+
 		// Alert already exists - update metric_value, threshold, operator, severity, and last_updated timestamp
 		if err := e.datastore.UpdateAlertValues(ctx, existing.ID, value, threshold, operator, severity); err != nil {
-			e.log("ERROR: Failed to update alert values: %v", err)
+			e.log("ERROR: Failed to update alert values for alert %d: %v", existing.ID, err)
 		} else {
-			e.debugLog("Updated metric value for existing alert %s: %.2f -> %.2f", rule.Name, *existing.MetricValue, value)
+			e.debugLog("Updated metric value for existing alert %s: %s -> %.2f",
+				rule.Name, formatMetricValue(existing.MetricValue), value)
 		}
 
 		// If the alert was acknowledged but the severity has changed,
 		// reactivate it so the user sees the severity change.
-		if existing.Status == "acknowledged" && existing.Severity != severity {
+		if needsReactivation {
 			if err := e.datastore.ReactivateAlert(ctx, existing.ID); err != nil {
 				e.log("ERROR: Failed to reactivate alert %d after severity change: %v", existing.ID, err)
 			} else {
-				e.debugLog("Reactivated acknowledged alert %d: severity changed from %s to %s", existing.ID, existing.Severity, severity)
+				e.log("Reactivated acknowledged alert %d: severity changed from %s to %s",
+					existing.ID, previousSeverity, severity)
+				// Mirror the database mutation onto the in-memory
+				// struct so the queued notification reflects the new
+				// severity and active status. Re-reading the alert via
+				// GetAlert here would add a database round-trip whose
+				// only failure mode is rare pool errors and whose
+				// success case returns the values we already know;
+				// trusting the in-memory state keeps the path simple
+				// and fully covered by unit tests.
+				existing.Severity = severity
+				existing.Status = "active"
+				e.queueNotification(existing, database.NotificationTypeAlertFire)
 			}
 		}
 		return

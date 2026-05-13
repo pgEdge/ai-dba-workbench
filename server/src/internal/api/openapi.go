@@ -1834,6 +1834,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Access denied"),
+					"404": jsonResponse("ErrorResponse", "Alert not found"),
+					"409": jsonResponse("ErrorResponse", "Alert is not currently acknowledged"),
 					"500": jsonResponse("ErrorResponse", "Failed to unacknowledge"),
 				},
 			},

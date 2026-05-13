@@ -328,6 +328,19 @@ project adheres to
 
 ### Fixed
 
+- Fix the Active Alerts Restore button returning HTTP 500
+  "Failed to unacknowledge alert" for alerts that were
+  already non-acknowledged (for example after the alerter
+  reactivated them following a severity change); the server
+  now maps a missing alert to 404, an alert that is not
+  currently acknowledged to 409 Conflict, and wraps every
+  failure path with the alert ID for actionable logs. The
+  alerter's auto-reactivation path is also hardened against
+  panicking on alerts with a NULL `metric_value` column and
+  captures the previous severity before the database write
+  so the in-memory comparison cannot drift from the
+  acknowledged state. (#227)
+
 - Fix the alerter's `replication_slot_inactive` critical
   alert never firing because its metric query selected
   from a non-existent `metrics.pg_stat_replication_slots`
@@ -338,6 +351,7 @@ project adheres to
   tests cover the happy path, the no-row case when every
   slot is active, slot deduplication per connection, and
   the 5-minute freshness cutoff. (#224)
+
 - Fix Ask Ellie incorrectly reporting missing Spock
   replication slots on healthy Spock 6.x clusters; the
   assistant previously generated

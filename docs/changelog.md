@@ -338,6 +338,15 @@ project adheres to
   tests cover the happy path, the no-row case when every
   slot is active, slot deduplication per connection, and
   the 5-minute freshness cutoff. (#224)
+- Fix Ask Ellie incorrectly reporting missing Spock
+  replication slots on healthy Spock 6.x clusters; the
+  assistant previously generated
+  `WHERE plugin = 'spock'` against
+  `pg_replication_slots`, but current Spock releases name
+  the output plugin `spock_output`. The chat system prompt
+  in `server/src/internal/chat/llm.go` now instructs Ellie
+  to use `plugin LIKE 'spock%'` for cross-version
+  compatibility. (#220)
 
 - Fix the Admin panels showing a success toast alongside a
   page-level refresh error when a save succeeded but the

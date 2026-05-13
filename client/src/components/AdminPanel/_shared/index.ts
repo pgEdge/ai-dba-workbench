@@ -19,7 +19,9 @@
 
 export {
     useCrudPanel,
+    type BusyTarget,
     type CrudPanelApi,
+    type ErrorTarget,
     type RunMutationOptions,
     type RunMutationResult,
     type UseCrudPanelOptions,

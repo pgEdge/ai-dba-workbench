@@ -136,8 +136,16 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 		previousSeverity := existing.Severity
 		needsReactivation := previousStatus == "acknowledged" && previousSeverity != severity
 
-		// Alert already exists - update metric_value, threshold, operator, severity, and last_updated timestamp
+		// Alert already exists - update metric_value, threshold, operator,
+		// severity, and last_updated timestamp. Track whether the write
+		// succeeded so that the reactivation step below can be skipped if
+		// the persisted severity is still the old value. Reactivating an
+		// alert whose UPDATE failed would leave the database holding the
+		// previous severity while the queued notification advertised the
+		// new one, drifting state away from what users see.
+		updated := true
 		if err := e.datastore.UpdateAlertValues(ctx, existing.ID, value, threshold, operator, severity); err != nil {
+			updated = false
 			e.log("ERROR: Failed to update alert values for alert %d: %v", existing.ID, err)
 		} else {
 			e.debugLog("Updated metric value for existing alert %s: %s -> %.2f",
@@ -145,8 +153,12 @@ func (e *Engine) triggerThresholdAlert(ctx context.Context, rule *database.Alert
 		}
 
 		// If the alert was acknowledged but the severity has changed,
-		// reactivate it so the user sees the severity change.
-		if needsReactivation {
+		// reactivate it so the user sees the severity change. Skip this
+		// when the UpdateAlertValues call above failed: the database
+		// still has the previous severity, so reactivating would queue a
+		// notification with a severity that does not match the persisted
+		// row.
+		if needsReactivation && updated {
 			if err := e.datastore.ReactivateAlert(ctx, existing.ID); err != nil {
 				e.log("ERROR: Failed to reactivate alert %d after severity change: %v", existing.ID, err)
 			} else {

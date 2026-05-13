@@ -374,3 +374,73 @@ func TestEngine_AcknowledgedAlert_AutoReactivatesAfterOverrideAddsSeverity(t *te
 		t.Errorf("acknowledgments after reactivation = %d, want 0", n)
 	}
 }
+
+// TestEngine_TriggerThresholdAlert_SkipsReactivationWhenUpdateFails proves
+// the bug-2 follow-up fix: when UpdateAlertValues fails, ReactivateAlert
+// must not run. Otherwise the database would still hold the previous
+// severity while the queued notification advertised the new one, drifting
+// the user-visible state away from the persisted row.
+//
+// The test forces UpdateAlertValues to fail by passing a severity that
+// violates the alerts.severity CHECK constraint. ReactivateAlert itself
+// would succeed against this row (it only writes status and last_updated,
+// neither of which are constrained by the bad input), so any reactivation
+// observed after the run came from the buggy unconditional path. The
+// assertions therefore prove ReactivateAlert was skipped: status stays
+// acknowledged, severity stays warning, and the acknowledgment row stays.
+func TestEngine_TriggerThresholdAlert_SkipsReactivationWhenUpdateFails(t *testing.T) {
+	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	ruleID := insertTestAlertRule(t, pool, "skip_reactivate_on_update_fail",
+		"spock_exception_log.recent_count", ">=", 1.0, "warning")
+	connID := insertTestConnection(t, pool, "skip-reactivate-update-fail-conn")
+
+	value, threshold := 1.0, 1.0
+	operator := ">="
+	alert := &database.Alert{
+		AlertType:      "threshold",
+		RuleID:         &ruleID,
+		ConnectionID:   connID,
+		MetricName:     strPtr("spock_exception_log.recent_count"),
+		MetricValue:    &value,
+		ThresholdValue: &threshold,
+		Operator:       &operator,
+		Severity:       "warning",
+		Title:          "skip_reactivate_on_update_fail",
+		Description:    "test",
+		Status:         "acknowledged",
+		TriggeredAt:    time.Now(),
+	}
+	if err := ds.CreateAlert(ctx, alert); err != nil {
+		t.Fatalf("create alert: %v", err)
+	}
+	insertTestAcknowledgment(t, pool, alert.ID, "acknowledge", false)
+
+	rule := &database.AlertRule{
+		ID:         ruleID,
+		Name:       "skip_reactivate_on_update_fail",
+		MetricName: "spock_exception_log.recent_count",
+	}
+
+	// "bogus_severity" differs from "warning" so needsReactivation is true,
+	// but it violates the severity CHECK constraint so UpdateAlertValues
+	// returns an error. The fix must therefore skip ReactivateAlert.
+	engine.triggerThresholdAlert(ctx, rule, value, threshold, operator,
+		"bogus_severity", connID, nil, nil)
+
+	if status := getAlertStatus(t, pool, alert.ID); status != "acknowledged" {
+		t.Errorf("alert status = %q, want acknowledged (ReactivateAlert ran despite failed UpdateAlertValues)", status)
+	}
+	var sev string
+	if err := pool.QueryRow(ctx, `SELECT severity FROM alerts WHERE id=$1`, alert.ID).Scan(&sev); err != nil {
+		t.Fatalf("read severity: %v", err)
+	}
+	if sev != "warning" {
+		t.Errorf("alert severity = %q, want warning (UpdateAlertValues should have failed)", sev)
+	}
+	if n := countAcknowledgments(t, pool, alert.ID); n != 1 {
+		t.Errorf("acknowledgments count = %d, want 1 (ReactivateAlert ran despite failed UpdateAlertValues)", n)
+	}
+}

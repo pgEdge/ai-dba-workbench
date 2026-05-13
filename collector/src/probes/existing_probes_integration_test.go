@@ -76,17 +76,67 @@ func TestPgSettingsProbe_ExecuteAndStore(t *testing.T) {
 	if len(metrics) == 0 {
 		t.Fatal("expected pg_settings rows")
 	}
-	// First Store: writes; second Store: change detection skips.
-	if err := p.Store(ctx, conn, 1, time.Now().UTC(),
+	// Create an isolated fixture connection row and use its real id.
+	// This avoids hard-coding a connection_id that has no matching row
+	// in connections (which would break FK validation in the
+	// production schema) and lets Postgres assign the id, so parallel
+	// runs of this test do not collide on a single fixed value.
+	var connID int
+	if err := conn.QueryRow(ctx, `
+		INSERT INTO connections
+			(owner_username, name, host, port, database_name, username)
+		VALUES
+			('itest-user', 'pg-settings-itest', 'localhost', 5432, 'postgres', 'postgres')
+		RETURNING id
+	`).Scan(&connID); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	t.Cleanup(func() {
+		// Remove the metric rows first so the FK CASCADE behavior in
+		// production schemas is mirrored even though the test schema
+		// is FK-free; the explicit DELETE keeps the test
+		// self-contained when other tests share the same pool.
+		cleanupCtx := context.Background()
+		if _, err := conn.Exec(cleanupCtx,
+			"DELETE FROM metrics.pg_settings WHERE connection_id=$1",
+			connID); err != nil {
+			t.Logf("cleanup metrics.pg_settings: %v", err)
+		}
+		if _, err := conn.Exec(cleanupCtx,
+			"DELETE FROM connections WHERE id=$1", connID); err != nil {
+			t.Logf("cleanup connections: %v", err)
+		}
+	})
+
+	// First Store: writes; second Store: change detection must skip.
+	// This is the regression test for issue #219: prior to the fix,
+	// WrapQuery's marker column caused every collection to look
+	// changed, producing one snapshot per call instead of one snapshot
+	// per actual settings change.
+	if err := p.Store(ctx, conn, connID, time.Now().UTC(),
 		metrics); err != nil {
 		t.Fatalf("Store first call: %v", err)
 	}
-	if err := p.Store(ctx, conn, 1, time.Now().UTC().Add(time.Minute),
+	if err := p.Store(ctx, conn, connID, time.Now().UTC().Add(time.Minute),
 		metrics); err != nil {
 		t.Fatalf("Store unchanged: %v", err)
 	}
-	// Empty Store path
-	if err := p.Store(ctx, nil, 1, time.Now(),
+
+	var distinctTimes int
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT collected_at)
+		FROM metrics.pg_settings
+		WHERE connection_id=$1
+	`, connID).Scan(&distinctTimes); err != nil {
+		t.Fatalf("count distinct times: %v", err)
+	}
+	if distinctTimes != 1 {
+		t.Errorf("expected 1 distinct collected_at after two stores of identical metrics, got %d",
+			distinctTimes)
+	}
+
+	// Empty Store path.
+	if err := p.Store(ctx, nil, connID, time.Now(),
 		nil); err != nil {
 		t.Errorf("Store(nil) = %v", err)
 	}

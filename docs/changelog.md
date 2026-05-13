@@ -362,6 +362,27 @@ project adheres to
   to use `plugin LIKE 'spock%'` for cross-version
   compatibility. (#220)
 
+- Fix three datastore schema and probe inefficiencies
+  identified during a production performance review.
+  Collector migration v4 adds a partial index on
+  `anomaly_candidates(detected_at)` filtered to
+  `processed_at IS NULL AND tier1_pass = TRUE` so the
+  alerter sweeper stops sequential-scanning the full
+  table on every poll, and drops the redundant
+  `idx_pg_stat_all_indexes_conn_db_time` and
+  `idx_pg_stat_statements_conn_db_time` indexes (along
+  with their attached child indexes on every existing
+  weekly partition) which were duplicated by the more
+  specific `_object` indexes. The change-detection probes
+  (`pg_settings`, `pg_extension`, `pg_hba_file_rules`,
+  `pg_ident_file_mappings`) now strip the
+  `ai_dba_wb_probe` marker column injected by
+  `WrapQuery` before hashing, so the live snapshot hash
+  matches the stored snapshot hash; previously the marker
+  caused every hourly collection to look "changed" and
+  write a fresh snapshot, inflating the `pg_settings`
+  partitions by roughly an order of magnitude. (#219)
+
 - Fix the Admin panels showing a success toast alongside a
   page-level refresh error when a save succeeded but the
   follow-on reload failed; the shared `useCrudPanel` hook

@@ -10,6 +10,8 @@
 package probes
 
 import (
+	"context"
+	"strings"
 	"testing"
 )
 
@@ -362,4 +364,267 @@ func TestComputeMetricsHashDirect(t *testing.T) {
 			t.Errorf("empty metrics should produce same hash:\n  hash1: %s\n  hash2: %s", hash1, hash2)
 		}
 	})
+}
+
+// TestStripProbeMarker_RemovesMarkerColumn documents the contract of
+// stripProbeMarker for change-detection probes. The function must
+// remove the wrapper column injected by WrapQuery from every row so
+// the resulting hash matches the stored snapshot, which does not
+// include that column.
+func TestStripProbeMarker_RemovesMarkerColumn(t *testing.T) {
+	t.Run("strips marker from every row", func(t *testing.T) {
+		input := []map[string]any{
+			{"ai_dba_wb_probe": "pg_settings", "name": "max_connections", "setting": "100"},
+			{"ai_dba_wb_probe": "pg_settings", "name": "shared_buffers", "setting": "128MB"},
+		}
+		out := stripProbeMarker(input)
+		if len(out) != 2 {
+			t.Fatalf("expected 2 rows, got %d", len(out))
+		}
+		for i, row := range out {
+			if _, present := row["ai_dba_wb_probe"]; present {
+				t.Errorf("row %d still contains ai_dba_wb_probe", i)
+			}
+		}
+		// Other keys must be preserved verbatim.
+		if out[0]["name"] != "max_connections" {
+			t.Errorf("row 0 name mutated: %v", out[0]["name"])
+		}
+		if out[1]["setting"] != "128MB" {
+			t.Errorf("row 1 setting mutated: %v", out[1]["setting"])
+		}
+	})
+
+	t.Run("does not modify original input", func(t *testing.T) {
+		input := []map[string]any{
+			{"ai_dba_wb_probe": "pg_settings", "name": "x"},
+		}
+		_ = stripProbeMarker(input)
+		if _, present := input[0]["ai_dba_wb_probe"]; !present {
+			t.Error("stripProbeMarker mutated its input")
+		}
+	})
+
+	t.Run("returns same slice when no marker present", func(t *testing.T) {
+		input := []map[string]any{
+			{"name": "x", "setting": "y"},
+		}
+		out := stripProbeMarker(input)
+		// The function returns the original slice when no row has the
+		// marker; this is a cheap allocation-avoidance optimization.
+		if len(out) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(out))
+		}
+		if out[0]["name"] != "x" {
+			t.Errorf("row 0 mutated: %v", out[0])
+		}
+		// Identity check guarantees the optimization actually
+		// short-circuits: if a future refactor accidentally introduces
+		// a copy, this comparison fires even though the values still
+		// match.
+		if &out[0] != &input[0] {
+			t.Error("expected the original slice to be returned when no marker is present")
+		}
+	})
+
+	t.Run("handles empty slice", func(t *testing.T) {
+		out := stripProbeMarker([]map[string]any{})
+		if len(out) != 0 {
+			t.Errorf("expected empty slice, got %d rows", len(out))
+		}
+	})
+
+	t.Run("handles nil input", func(t *testing.T) {
+		out := stripProbeMarker(nil)
+		if len(out) != 0 {
+			t.Errorf("expected empty result, got %d rows", len(out))
+		}
+	})
+}
+
+// TestHasDataChanged_HashFailsCurrent reaches the otherwise-defensive
+// branch where ComputeMetricsHash returns an error for the live
+// metrics. We trigger it by injecting a Go channel — json.Marshal,
+// which ComputeMetricsHash uses internally, rejects channel values.
+// The integration pool is needed because HasDataChanged signature
+// requires a real *pgxpool.Conn, but the connection is never touched
+// because the hash failure short-circuits first.
+func TestHasDataChanged_HashFailsCurrent(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+
+	bad := []map[string]any{{"name": "x", "unsupported": make(chan int)}}
+	_, err := HasDataChanged(ctx, conn, 1, "fixture", bad,
+		"SELECT 1 WHERE FALSE", nil)
+	if err == nil {
+		t.Fatal("expected hash failure for current metrics")
+	}
+	if !strings.Contains(err.Error(), "failed to compute current metrics hash") {
+		t.Errorf("error did not include expected wrapper: %v", err)
+	}
+}
+
+// TestHasDataChanged_QueryError exercises the error-return branch of
+// HasDataChanged when the supplied fetch query fails. The integration
+// pool is required because pgxpool.Conn cannot be constructed by
+// hand; deliberately broken SQL surfaces a Query error without
+// needing a fake driver.
+func TestHasDataChanged_QueryError(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+
+	// Syntactically invalid query so pgx returns an error from Query;
+	// no parameter substitution can rescue this. The function should
+	// wrap and propagate the error rather than panicking or treating
+	// it as "no change".
+	_, err := HasDataChanged(ctx, conn, 1, "fixture",
+		[]map[string]any{{"k": "v"}},
+		"SELECT not a valid query at all",
+		nil)
+	if err == nil {
+		t.Fatal("expected HasDataChanged to surface query error")
+	}
+	if !strings.Contains(err.Error(), "failed to query most recent data") {
+		t.Errorf("error did not include expected wrapper: %v", err)
+	}
+}
+
+// TestHasDataChanged_NormalizerInvoked verifies that the optional
+// normalizer is applied AFTER the marker is stripped, so probes that
+// supply a normalizer (e.g. pg_extension renaming _database_name) do
+// not have to also strip the marker themselves.
+func TestHasDataChanged_NormalizerInvoked(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+
+	// Run against a known-empty subset of the datastore so the stored
+	// side returns zero rows and the comparison only depends on the
+	// live-side metric shape. metrics.pg_extension has the right
+	// schema; using a unique synthetic connection_id keeps the
+	// fixture isolated from any other test data.
+	const fixtureConnID = 9876543
+
+	// Sanity wipe.
+	if _, err := conn.Exec(ctx,
+		"DELETE FROM metrics.pg_extension WHERE connection_id=$1",
+		fixtureConnID); err != nil {
+		t.Fatalf("clean fixture: %v", err)
+	}
+
+	// Track whether the normalizer was called. The marker has already
+	// been stripped by stripProbeMarker before we see it here.
+	called := false
+	normalizer := func(in []map[string]any) []map[string]any {
+		called = true
+		for _, m := range in {
+			if _, present := m["ai_dba_wb_probe"]; present {
+				t.Error("normalizer saw marker column; strip should run first")
+			}
+		}
+		return in
+	}
+
+	_, err := HasDataChanged(ctx, conn, fixtureConnID, "pg_extension",
+		[]map[string]any{
+			{"ai_dba_wb_probe": "pg_extension", "extname": "plpgsql"},
+		},
+		`SELECT database_name, extname, extversion, extrelocatable, schema_name
+		 FROM metrics.pg_extension
+		 WHERE connection_id = $1
+		   AND collected_at = (
+		       SELECT MAX(collected_at)
+		       FROM metrics.pg_extension
+		       WHERE connection_id = $1
+		   )
+		 ORDER BY extname`,
+		normalizer)
+	if err != nil {
+		t.Fatalf("HasDataChanged: %v", err)
+	}
+	if !called {
+		t.Error("normalizer was not invoked")
+	}
+}
+
+// TestStripProbeMarker_FixesOverCollectionHashMismatch is the
+// regression test for the pg_settings over-collection bug reported in
+// issue #219. Live probe metrics produced via WrapQuery +
+// ScanRowsToMaps carry an extra ai_dba_wb_probe column that stored
+// snapshots do not; without stripping, every hourly collection
+// produced a fresh snapshot. The test reproduces that mismatch and
+// verifies stripProbeMarker eliminates it.
+func TestStripProbeMarker_FixesOverCollectionHashMismatch(t *testing.T) {
+	// What the live probe returns through ScanRowsToMaps.
+	liveMetrics := []map[string]any{
+		{
+			"ai_dba_wb_probe": "pg_settings",
+			"name":            "max_connections",
+			"setting":         "100",
+			"unit":            nil,
+			"category":        "Connections",
+			"context":         "postmaster",
+			"vartype":         "integer",
+			"source":          "default",
+			"min_val":         "1",
+			"max_val":         "262143",
+			"enumvals":        nil,
+			"boot_val":        "100",
+			"reset_val":       "100",
+			"sourcefile":      nil,
+			"sourceline":      nil,
+			"pending_restart": false,
+			"short_desc":      "max conns",
+			"extra_desc":      "",
+		},
+	}
+
+	// What the stored snapshot query returns; same columns minus the
+	// synthetic ai_dba_wb_probe marker.
+	storedMetrics := []map[string]any{
+		{
+			"name":            "max_connections",
+			"setting":         "100",
+			"unit":            nil,
+			"category":        "Connections",
+			"context":         "postmaster",
+			"vartype":         "integer",
+			"source":          "default",
+			"min_val":         "1",
+			"max_val":         "262143",
+			"enumvals":        nil,
+			"boot_val":        "100",
+			"reset_val":       "100",
+			"sourcefile":      nil,
+			"sourceline":      nil,
+			"pending_restart": false,
+			"short_desc":      "max conns",
+			"extra_desc":      "",
+		},
+	}
+
+	// Without stripping, the hashes differ; this is the bug.
+	rawLiveHash, err := ComputeMetricsHash(liveMetrics)
+	if err != nil {
+		t.Fatalf("hash live: %v", err)
+	}
+	storedHash, err := ComputeMetricsHash(storedMetrics)
+	if err != nil {
+		t.Fatalf("hash stored: %v", err)
+	}
+	if rawLiveHash == storedHash {
+		t.Fatal("test fixture invalid: unstripped live and stored hashes should differ")
+	}
+
+	// With stripping, the hashes match; this is the fix.
+	strippedHash, err := ComputeMetricsHash(stripProbeMarker(liveMetrics))
+	if err != nil {
+		t.Fatalf("hash stripped: %v", err)
+	}
+	if strippedHash != storedHash {
+		t.Errorf("stripped live hash should match stored hash:\n  stripped: %s\n  stored:   %s",
+			strippedHash, storedHash)
+	}
 }

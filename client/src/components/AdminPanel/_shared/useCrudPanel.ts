@@ -35,6 +35,27 @@ import { extractErrorMessage } from './errors';
  */
 
 /**
+ * Where {@link runMutation} routes a mutation's error message.
+ *
+ * - `'page'`   writes to `crud.error` (page-level Alert above the table).
+ * - `'dialog'` writes to `crud.dialogError` (Alert inside the dialog).
+ * - `'inline'` writes nowhere; the caller reads the returned error
+ *   from {@link RunMutationResult} and surfaces it itself (toast, row
+ *   highlight, local state, etc.).
+ */
+export type ErrorTarget = 'page' | 'dialog' | 'inline';
+
+/**
+ * Which busy flag {@link runMutation} toggles while the mutation runs.
+ *
+ * - `'save'`   toggles `crud.saving` (dialog spinner / disabled state).
+ * - `'delete'` toggles `crud.deleteLoading` (delete dialog spinner).
+ * - `'inline'` toggles neither. The caller owns inline busy state, so
+ *   an inline toggle never flickers a global delete or save indicator.
+ */
+export type BusyTarget = 'save' | 'delete' | 'inline';
+
+/**
  * Tagged result returned by {@link CrudPanelApi.runMutation}.
  *
  * Callers must inspect the `ok` discriminant before reading `value`,
@@ -43,40 +64,40 @@ import { extractErrorMessage } from './errors';
  * `runMutation` returned `R | undefined`: an `apiDelete` that resolves
  * to `undefined` on HTTP 204 is now unambiguously distinguishable from
  * a rejection, regardless of the value of `R`.
+ *
+ * The failure branch carries the user-facing `error` message (after
+ * `mapError` / `errorFallback` are applied) so callers using
+ * `errorTarget: 'inline'` can surface it locally without re-deriving
+ * the message themselves.
  */
 export type RunMutationResult<R> =
     | { ok: true; value: R }
-    | { ok: false };
+    | { ok: false; error: string };
 
 /**
  * Options for a single mutation invocation.
+ *
+ * `errorTarget` and `busyTarget` are intentionally split: where the
+ * error message is shown is independent of which busy flag the hook
+ * toggles. When `busyTarget` is omitted it defaults from `errorTarget`
+ * for back-compat with the previous coupled API:
+ *
+ *   - `errorTarget: 'page'`   -> default `busyTarget: 'delete'`
+ *   - `errorTarget: 'dialog'` -> default `busyTarget: 'save'`
+ *   - `errorTarget: 'inline'` -> default `busyTarget: 'inline'`
  */
 export interface RunMutationOptions {
-    /**
-     * Toast to show on success. Omit to leave success state untouched.
-     */
+    /** Toast to show on success. Omit to leave success state untouched. */
     successMessage?: string;
-    /**
-     * Where to report errors. The default reports to the dialog-level
-     * `dialogError` slot, which matches the create/edit flow. Page-level
-     * mutations (delete, inline toggles, etc.) should pass `'page'`.
-     */
-    errorTarget?: 'page' | 'dialog';
-    /**
-     * Whether to refresh the list after a successful mutation. Defaults
-     * to `true` because the vast majority of mutations need it.
-     */
+    /** Where to route the error message. Defaults to `'dialog'`. */
+    errorTarget?: ErrorTarget;
+    /** Which busy flag to toggle. Defaults from `errorTarget`. */
+    busyTarget?: BusyTarget;
+    /** Whether to refresh the list on success. Defaults to `true`. */
     refresh?: boolean;
-    /**
-     * Custom fallback message for non-Error throws. Defaults to the
-     * shared {@link extractErrorMessage} fallback.
-     */
+    /** Fallback message for non-Error throws. */
     errorFallback?: string;
-    /**
-     * Maps the thrown value to a user-facing message before display.
-     * Useful for translating server constraint errors into friendlier
-     * wording (e.g. UNIQUE constraint -> "already exists").
-     */
+    /** Maps the thrown value to a user-facing message before display. */
     mapError?: (err: unknown) => string;
 }
 
@@ -315,19 +336,37 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
         const {
             successMessage,
             errorTarget = 'dialog',
+            busyTarget,
             refresh: shouldRefresh = true,
             errorFallback,
             mapError,
         } = opts;
 
-        const setBusy = errorTarget === 'dialog' ? setSaving : setDeleteLoading;
-        const writeError = errorTarget === 'dialog' ? setDialogError : setError;
+        // Default `busyTarget` from `errorTarget` so callers that
+        // pre-date the split keep their previous coupled behaviour.
+        const resolvedBusyTarget: BusyTarget = busyTarget
+            ?? (errorTarget === 'dialog'
+                ? 'save'
+                : errorTarget === 'page'
+                    ? 'delete'
+                    : 'inline');
+
+        // Inline mutations toggle no shared busy flag; the caller owns
+        // any local spinner. This prevents inline actions (e.g. a row
+        // toggle) from flickering a global delete or save indicator.
+        const setBusy: ((value: boolean) => void) | null = (() => {
+            if (resolvedBusyTarget === 'save') { return setSaving; }
+            if (resolvedBusyTarget === 'delete') { return setDeleteLoading; }
+            return null;
+        })();
 
         try {
-            setBusy(true);
+            setBusy?.(true);
+            // Clear only the slot we're about to write into. Inline
+            // targets write nowhere, so nothing to clear pre-emptively.
             if (errorTarget === 'dialog') {
                 setDialogError(null);
-            } else {
+            } else if (errorTarget === 'page') {
                 setError(null);
             }
             const value = await fn();
@@ -354,10 +393,17 @@ export function useCrudPanel<T>(options: UseCrudPanelOptions<T>): CrudPanelApi<T
             const message = mapError
                 ? mapError(err)
                 : extractErrorMessage(err, errorFallback);
-            writeError(message);
-            return { ok: false };
+            // Route the message based on `errorTarget`. Inline targets
+            // do NOT write to either shared slot; the caller reads the
+            // message from the returned result and surfaces it itself.
+            if (errorTarget === 'dialog') {
+                setDialogError(message);
+            } else if (errorTarget === 'page') {
+                setError(message);
+            }
+            return { ok: false, error: message };
         } finally {
-            setBusy(false);
+            setBusy?.(false);
         }
     }, [refresh]);
 

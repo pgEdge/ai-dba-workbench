@@ -335,6 +335,19 @@ project adheres to
   refresh fails, so the user sees only the actionable
   refresh error. (#215)
 
+- Fix the `AdminMessagingChannels` panel flipping the
+  `deleteLoading` busy flag when a user toggled a
+  channel's enabled state; the shared
+  `useCrudPanel.runMutation` helper gained an
+  independent `busyTarget` option
+  (`'save' | 'delete' | 'inline'`) that decouples the
+  busy-state flag from the `errorTarget`, and a new
+  `'inline'` error target routes errors only to the
+  caller through the returned result rather than to
+  `crud.error` or `crud.dialogError`. Defaults preserve
+  the previous behavior so existing call sites are
+  unchanged, and `handleToggleEnabled` now uses
+  `busyTarget: 'inline'`. (#216)
 - Fix the divergent error fallback wording shown by the
   Admin panels when a thrown value is not an `Error`
   instance. The `AdminUsers`, `AdminMemories`,

@@ -375,7 +375,7 @@ describe('useCrudPanel', () => {
             expect(result.current.dialogError).toBe('Already exists.');
         });
 
-        it('returns { ok: false } when the mutation fails', async () => {
+        it('returns { ok: false, error } when the mutation fails', async () => {
             const fetchItems = vi.fn().mockResolvedValue(ITEMS);
             const { result } = renderHook(() =>
                 useCrudPanel<Item>({ fetchItems }),
@@ -387,7 +387,9 @@ describe('useCrudPanel', () => {
             await act(async () => {
                 returned = await result.current.runMutation(fn);
             });
-            expect(returned).toEqual({ ok: false });
+            // The failure branch carries the user-facing error message
+            // so inline callers can surface it without re-deriving it.
+            expect(returned).toEqual({ ok: false, error: 'nope' });
         });
 
         it(
@@ -744,6 +746,333 @@ describe('useCrudPanel', () => {
                 expect(result.current.deleteLoading).toBe(false),
             );
         });
+
+        // --- Issue #216: decouple errorTarget from busyTarget ---
+
+        it('inline errorTarget routes nowhere and returns the error', async () => {
+            // The inline target must not write to either shared error
+            // slot. The caller reads the message from the returned
+            // result and surfaces it itself (toast, row highlight, etc.).
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            const fn = vi.fn().mockRejectedValue(new Error('inline boom'));
+            let returned: unknown = 'sentinel';
+            await act(async () => {
+                returned = await result.current.runMutation(fn, {
+                    errorTarget: 'inline',
+                });
+            });
+            expect(returned).toEqual({ ok: false, error: 'inline boom' });
+            expect(result.current.error).toBeNull();
+            expect(result.current.dialogError).toBeNull();
+        });
+
+        it(
+            'inline errorTarget preserves an existing page error',
+            async () => {
+                // Regression guard: inline runMutation must not stomp on
+                // the page-level error slot. A prior page error stays
+                // untouched even when the inline mutation fails.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() =>
+                    expect(result.current.loading).toBe(false),
+                );
+
+                act(() => {
+                    result.current.setError('keep me');
+                });
+                const fn = vi.fn().mockRejectedValue(new Error('inline boom'));
+                await act(async () => {
+                    await result.current.runMutation(fn, {
+                        errorTarget: 'inline',
+                    });
+                });
+                expect(result.current.error).toBe('keep me');
+                expect(result.current.dialogError).toBeNull();
+            },
+        );
+
+        it('inline busyTarget leaves saving and deleteLoading false', async () => {
+            // The inline busy target must NOT toggle either of the two
+            // shared spinners, even while the mutation is mid-flight.
+            // A global indicator wired to `deleteLoading` would otherwise
+            // flicker on every inline toggle.
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            let resolver: ((value: string) => void) | null = null;
+            const fn = vi.fn(
+                () => new Promise<string>((res) => { resolver = res; }),
+            );
+            let mutationPromise: Promise<unknown> | undefined;
+            act(() => {
+                mutationPromise = result.current.runMutation(fn, {
+                    busyTarget: 'inline',
+                });
+            });
+            // Yield once so the mutation kicks off. With no busy flag
+            // toggled, there is nothing observable to wait on; instead
+            // assert both flags stay false across a microtask boundary.
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(result.current.saving).toBe(false);
+            expect(result.current.deleteLoading).toBe(false);
+
+            act(() => resolver?.('done'));
+            await mutationPromise;
+            expect(result.current.saving).toBe(false);
+            expect(result.current.deleteLoading).toBe(false);
+        });
+
+        it('busyTarget save toggles saving only', async () => {
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            let resolver: ((value: string) => void) | null = null;
+            const fn = vi.fn(
+                () => new Promise<string>((res) => { resolver = res; }),
+            );
+            let mutationPromise: Promise<unknown> | undefined;
+            act(() => {
+                mutationPromise = result.current.runMutation(fn, {
+                    errorTarget: 'inline',
+                    busyTarget: 'save',
+                });
+            });
+            await waitFor(() => expect(result.current.saving).toBe(true));
+            expect(result.current.deleteLoading).toBe(false);
+
+            act(() => resolver?.('done'));
+            await mutationPromise;
+            await waitFor(() => expect(result.current.saving).toBe(false));
+            expect(result.current.deleteLoading).toBe(false);
+        });
+
+        it('busyTarget delete toggles deleteLoading only', async () => {
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            let resolver: ((value: string) => void) | null = null;
+            const fn = vi.fn(
+                () => new Promise<string>((res) => { resolver = res; }),
+            );
+            let mutationPromise: Promise<unknown> | undefined;
+            act(() => {
+                mutationPromise = result.current.runMutation(fn, {
+                    errorTarget: 'inline',
+                    busyTarget: 'delete',
+                });
+            });
+            await waitFor(() =>
+                expect(result.current.deleteLoading).toBe(true),
+            );
+            expect(result.current.saving).toBe(false);
+
+            act(() => resolver?.('done'));
+            await mutationPromise;
+            await waitFor(() =>
+                expect(result.current.deleteLoading).toBe(false),
+            );
+            expect(result.current.saving).toBe(false);
+        });
+
+        it('defaults busyTarget=save when errorTarget=dialog (back-compat)', async () => {
+            // The previous coupled API toggled `saving` for dialog
+            // mutations; the default must preserve that.
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            let resolver: ((value: string) => void) | null = null;
+            const fn = vi.fn(
+                () => new Promise<string>((res) => { resolver = res; }),
+            );
+            let mutationPromise: Promise<unknown> | undefined;
+            act(() => {
+                mutationPromise = result.current.runMutation(fn, {
+                    errorTarget: 'dialog',
+                });
+            });
+            await waitFor(() => expect(result.current.saving).toBe(true));
+            expect(result.current.deleteLoading).toBe(false);
+
+            act(() => resolver?.('done'));
+            await mutationPromise;
+        });
+
+        it('defaults busyTarget=delete when errorTarget=page (back-compat)', async () => {
+            // The previous coupled API toggled `deleteLoading` for page
+            // mutations; the default must preserve that.
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            let resolver: ((value: string) => void) | null = null;
+            const fn = vi.fn(
+                () => new Promise<string>((res) => { resolver = res; }),
+            );
+            let mutationPromise: Promise<unknown> | undefined;
+            act(() => {
+                mutationPromise = result.current.runMutation(fn, {
+                    errorTarget: 'page',
+                });
+            });
+            await waitFor(() =>
+                expect(result.current.deleteLoading).toBe(true),
+            );
+            expect(result.current.saving).toBe(false);
+
+            act(() => resolver?.('done'));
+            await mutationPromise;
+        });
+
+        it('defaults busyTarget=inline when errorTarget=inline', async () => {
+            // Inline errorTarget with no busyTarget must default to
+            // inline busy, i.e. toggle nothing.
+            const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+            const { result } = renderHook(() =>
+                useCrudPanel<Item>({ fetchItems }),
+            );
+            await waitFor(() => expect(result.current.loading).toBe(false));
+
+            let resolver: ((value: string) => void) | null = null;
+            const fn = vi.fn(
+                () => new Promise<string>((res) => { resolver = res; }),
+            );
+            let mutationPromise: Promise<unknown> | undefined;
+            act(() => {
+                mutationPromise = result.current.runMutation(fn, {
+                    errorTarget: 'inline',
+                });
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(result.current.saving).toBe(false);
+            expect(result.current.deleteLoading).toBe(false);
+
+            act(() => resolver?.('done'));
+            await mutationPromise;
+            expect(result.current.saving).toBe(false);
+            expect(result.current.deleteLoading).toBe(false);
+        });
+
+        it(
+            'explicit busyTarget overrides the default from errorTarget',
+            async () => {
+                // errorTarget=page would default busyTarget=delete; the
+                // explicit busyTarget=inline must win and leave both
+                // shared busy flags untouched.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() =>
+                    expect(result.current.loading).toBe(false),
+                );
+
+                let resolver: ((value: string) => void) | null = null;
+                const fn = vi.fn(
+                    () => new Promise<string>((res) => { resolver = res; }),
+                );
+                let mutationPromise: Promise<unknown> | undefined;
+                act(() => {
+                    mutationPromise = result.current.runMutation(fn, {
+                        errorTarget: 'page',
+                        busyTarget: 'inline',
+                    });
+                });
+                await act(async () => {
+                    await Promise.resolve();
+                });
+                expect(result.current.saving).toBe(false);
+                expect(result.current.deleteLoading).toBe(false);
+
+                act(() => resolver?.('done'));
+                await mutationPromise;
+            },
+        );
+
+        it(
+            'errorTarget=page with busyTarget=inline still routes errors to the page',
+            async () => {
+                // The decoupling preserves error-routing: the failure
+                // message lands on the page banner even though the busy
+                // flag stays inline.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() =>
+                    expect(result.current.loading).toBe(false),
+                );
+
+                const fn = vi.fn().mockRejectedValue(new Error('toggle fail'));
+                let returned: unknown;
+                await act(async () => {
+                    returned = await result.current.runMutation(fn, {
+                        errorTarget: 'page',
+                        busyTarget: 'inline',
+                    });
+                });
+                expect(returned).toEqual({
+                    ok: false,
+                    error: 'toggle fail',
+                });
+                expect(result.current.error).toBe('toggle fail');
+                expect(result.current.deleteLoading).toBe(false);
+                expect(result.current.saving).toBe(false);
+            },
+        );
+
+        it(
+            'inline errorTarget uses errorFallback for non-Error rejections',
+            async () => {
+                // The fallback message path runs even when the target
+                // is inline; it surfaces via the returned result.
+                const fetchItems = vi.fn().mockResolvedValue(ITEMS);
+                const { result } = renderHook(() =>
+                    useCrudPanel<Item>({ fetchItems }),
+                );
+                await waitFor(() =>
+                    expect(result.current.loading).toBe(false),
+                );
+
+                const fn = vi.fn().mockRejectedValue('weird');
+                let returned: unknown;
+                await act(async () => {
+                    returned = await result.current.runMutation(fn, {
+                        errorTarget: 'inline',
+                        errorFallback: 'fallback msg',
+                    });
+                });
+                expect(returned).toEqual({
+                    ok: false,
+                    error: 'fallback msg',
+                });
+            },
+        );
     });
 
     describe('stale-result protection', () => {

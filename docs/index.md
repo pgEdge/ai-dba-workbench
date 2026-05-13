@@ -1,114 +1,76 @@
 # pgEdge AI DBA Workbench
 
-An AI-powered environment for monitoring, managing, and
-troubleshooting PostgreSQL systems.
+The pgEdge AI DBA Workbench is an AI-powered environment for monitoring,
+managing, and troubleshooting PostgreSQL systems. The pgEdge AI DBA Workbench combines a Model Context Protocol (MCP) server
+with a web-based user interface, a data collector, and an alert monitoring
+service. The Workbench lets you query, analyze, and manage distributed
+PostgreSQL clusters using natural language and intelligent automation. The
+Workbench exposes pgEdge tools and data sources to both cloud-connected and
+locally hosted language models; this design ensures full functionality in
+air-gapped or secure environments.
 
-## Overview
+## Supported Installation Methods
 
-The pgEdge AI DBA Workbench combines a Model Context
-Protocol (MCP) server with a web-based user interface,
-data collector, and alert monitoring service. The Workbench
-enables users to query, analyze, and manage distributed
-PostgreSQL clusters using natural language and intelligent
-automation. The system exposes pgEdge tools and data
-sources to both cloud-connected and locally hosted language
-models, ensuring full functionality in air-gapped or
-secure environments.
+The Workbench supports three deployment methods: 
 
-## Architecture
+* [Installation with pre-built binary files](/getting-started/quick-start.md).
+* [Installation with source code from GitHub](/getting-started/installation.md).
+* [Installation via Docker using RPM/DEB packages from pgEdge](/getting-started/docker.md).
 
-The AI DBA Workbench consists of four components that
-work together to provide monitoring, alerting, and
-AI-powered database management.
+Each installation method places files in different locations. The following table
+summarizes the locations for each deployment method.
 
-### Data Collection Layer
+| Resource | GitHub Release | Docker | RPM/DEB Package |
+|----------|---------------|--------|-----------------|
+| Binaries | `/opt/ai-workbench/` | `/usr/local/bin/` | `/usr/bin/` |
+| Config | `/etc/pgedge/` | `/etc/pgedge/` (mounted) | `/etc/pgedge/` |
+| Data | user-chosen | `/data/` | `/var/lib/pgedge/<service>/` |
+| Logs | `stderr` | `stderr` | `/var/log/pgedge/<service>/` |
+| Client files | `/opt/ai-workbench/client/` | container-served | `/usr/share/pgedge/ai-dba-client/` |
+| systemd units | `pgedge-ai-dba-*.service` | N/A | `pgedge-ai-dba-*.service` |
+| Run-as user | user-chosen | container user | `pgedge` |
 
-The Collector continuously monitors PostgreSQL servers
-and collects metrics into a centralized datastore. The
-Collector provides the following features:
+!!! note
+    RPM and DEB packages are available from the
+    [pgEdge Enterprise Repository](https://docs.pgedge.com/enterprise/).
+    Contact pgEdge for access details.
 
-- The Collector supports multi-server monitoring with
-  independent connection pools.
-- 34 built-in probes cover PostgreSQL system views.
-- Automated data management handles partitioning and
-  retention policies.
-- Secure connections use encryption and SSL/TLS support.
-
-### Intelligence Layer
-
-The MCP Server implements the Model Context Protocol and
-provides AI assistants with standardized access to
-PostgreSQL systems. The MCP Server provides the following
-features:
-
-- The server uses HTTP/HTTPS transport with JSON-RPC 2.0.
-- SQLite-based authentication supports users and tokens.
-- Role-based access control manages groups and privileges.
-- Database tools enable queries, schema introspection,
-  and analysis.
-- The LLM proxy supports Anthropic, OpenAI, Gemini, and
-  Ollama providers.
-- Conversation history management preserves chat context.
-
-### Alert Monitoring Layer
-
-The Alerter evaluates collected metrics against thresholds
-and uses AI-powered anomaly detection to generate alerts.
-The Alerter provides the following features:
-
-- Threshold-based alerting supports configurable rules.
-- Tiered anomaly detection uses statistical analysis,
-  embeddings, and LLM classification.
-- Blackout scheduling accommodates maintenance windows.
-- Notification delivery integrates with email, Slack,
-  Mattermost, and webhooks.
-
-### Presentation Layer
-
-The Client provides a web-based user interface for cluster
-monitoring and management. The Client provides the
-following features:
-
-- Hierarchical dashboards display estate, cluster, and
-  server metrics.
-- Cluster topology visualization shows replication edges.
-- The AI-powered chat interface supports natural language
-  queries.
-- The administration panel manages users, groups, and
-  tokens.
-
-## Where to Start
-
-Choose a section based on your role and goals.
-
-- The [Quick Start](getting-started/quick-start.md) guide
-  helps new users set up the Workbench for the first time.
-- The [User Guide](user-guide/index.md) covers dashboards,
-  alerts, and AI features for day-to-day usage.
-- The [Administrator's Guide](admin-guide/index.md)
-  explains authentication, connections, and system
-  configuration.
-- The [Developer's Guide](developer-guide/index.md)
-  provides architecture details and contribution
-  guidelines for each component.
 
 ## System Requirements
 
-The Workbench requires the following software and
-resources.
+The following minimum requirements apply to all deployment environments.
 
-- [PostgreSQL 14](https://www.postgresql.org/download/)
-  or later is required for the datastore.
-- [Go 1.24](https://go.dev/doc/install) or later is
-  required to build server-side components from source.
-- [Node.js 18](https://nodejs.org/) or later is required
-  to build the web client from source.
-- Network connectivity must exist between all components.
-- Database credentials must have appropriate permissions.
+The collector, server, and alerter components share the following
+hardware requirements:
 
-## License
+- A minimum of 4 CPU cores is required.
+- The system requires at least 16 GB of RAM.
+- The installation requires 120 GB of disk space for binaries and
+  the datastore.
 
-Copyright (c) 2025 - 2026, pgEdge, Inc.
+Before installing the Workbench with binary files or building the
+project from source, you'll need to install the following software:
 
-This software is released under the
-[PostgreSQL License](LICENSE.md).
+- [Go 1.24](https://go.dev/doc/install) or later is required for
+  building server-side components.
+- [Node.js 18](https://nodejs.org/) or later is required for building
+  the web client.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or later is
+  required for the datastore.
+- [Make](https://www.gnu.org/software/make/) is required for build
+  automation.
+- [nginx](https://nginx.org/en/docs/) is required to serve the client.
+- All components require network connectivity to one another.
+- Database credentials must carry appropriate permissions.
+
+Each component requires specific network access to operate correctly:
+
+- The collector requires network access to each monitored PostgreSQL
+  server.
+- The alerter requires network access to the datastore.
+- The server requires network access to the datastore and must be
+  reachable by web client users.
+- Database credentials for the datastore and each monitored PostgreSQL
+  server are required.
+
+

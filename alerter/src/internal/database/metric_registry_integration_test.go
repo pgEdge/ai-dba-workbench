@@ -582,6 +582,127 @@ func TestMetricRegistry_PgReplicationSlotsInactive_StaleSampleExcluded(t *testin
 	}
 }
 
+// TestMetricRegistry_PgReplicationSlotsInactive_RecoveryClears verifies
+// that the metric stops emitting a row for a slot once the most recent
+// sample reports active=true, even if an older sample inside the
+// freshness window is still inactive. This is the alert-recovery
+// scenario: without the latest-sample-per-slot reduction, the older
+// active=false row would keep the `==` alert firing after the slot
+// reconnected and the operator would never see the alert clear.
+//
+// A second "still-inactive" connection is seeded so the query exercises
+// the success path of GetLatestMetricValues (which returns a sentinel
+// error when the entire result set is empty). The recovered connection
+// must be absent and the still-inactive connection must appear with
+// value=1.
+func TestMetricRegistry_PgReplicationSlotsInactive_RecoveryClears(t *testing.T) {
+	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	recoveredConnID := insertConnection(t, pool, "slot-inactive-recovered")
+	stillInactiveConnID := insertConnection(t, pool, "slot-inactive-stillinactive")
+
+	older := time.Now().UTC().Add(-3 * time.Minute)
+	newer := time.Now().UTC().Add(-1 * time.Minute)
+
+	// Recovered slot: older sample is inactive, newer sample is active.
+	// The new query must evaluate inactivity only against the newer
+	// sample and therefore emit no row for this connection.
+	insertReplicationSlotRow(t, pool, recoveredConnID, older, "slot_a", false, 100)
+	insertReplicationSlotRow(t, pool, recoveredConnID, newer, "slot_a", true, 100)
+
+	// Still-inactive slot: only sample is inactive.
+	insertReplicationSlotRow(t, pool, stillInactiveConnID, newer, "slot_a", false, 100)
+
+	results, err := ds.GetLatestMetricValues(ctx, "pg_replication_slots.inactive")
+	if err != nil {
+		t.Fatalf("GetLatestMetricValues(pg_replication_slots.inactive) "+
+			"returned unexpected error: %v", err)
+	}
+
+	var sawStillInactive bool
+	for _, mv := range results {
+		switch mv.ConnectionID {
+		case recoveredConnID:
+			t.Errorf("pg_replication_slots.inactive emitted a row for "+
+				"connection %d whose slot recovered (latest sample at %s "+
+				"has active=true); the metric must evaluate inactivity "+
+				"only against the most recent sample per slot so the "+
+				"alert clears after recovery (got value=%v)",
+				recoveredConnID, newer.Format(time.RFC3339), mv.Value)
+		case stillInactiveConnID:
+			sawStillInactive = true
+			if mv.Value != 1 {
+				t.Errorf("pg_replication_slots.inactive value for "+
+					"still-inactive connection %d = %v; want 1",
+					stillInactiveConnID, mv.Value)
+			}
+		}
+	}
+	if !sawStillInactive {
+		t.Errorf("pg_replication_slots.inactive did not return the "+
+			"still-inactive connection %d; results=%+v",
+			stillInactiveConnID, results)
+	}
+}
+
+// TestMetricRegistry_PgReplicationSlotsInactive_PerSlotLatest verifies
+// that the metric evaluates inactivity per slot, not per connection.
+// When a connection has two slots whose most recent samples were
+// collected at different times, the query must inspect each slot's
+// latest sample independently before deciding whether any slot is
+// currently inactive.
+//
+// Slot A: older sample active, newer sample inactive (latest = inactive).
+// Slot B: only one sample, active (latest = active).
+//
+// The expected output is a single row with value=1 because at least one
+// slot (slot A) is currently inactive. A query that collapsed samples
+// per connection rather than per slot would either miss slot A's most
+// recent state entirely (because slot B's sample is newer overall) or
+// pick the wrong slot's active flag.
+func TestMetricRegistry_PgReplicationSlotsInactive_PerSlotLatest(t *testing.T) {
+	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertConnection(t, pool, "slot-inactive-perslot")
+
+	earliest := time.Now().UTC().Add(-4 * time.Minute)
+	middle := time.Now().UTC().Add(-2 * time.Minute)
+	latest := time.Now().UTC().Add(-1 * time.Minute)
+
+	// slot_a: older active, newer inactive -> latest sample is inactive.
+	insertReplicationSlotRow(t, pool, connID, earliest, "slot_a", true, 100)
+	insertReplicationSlotRow(t, pool, connID, middle, "slot_a", false, 100)
+	// slot_b: single sample, active, collected after slot_a's last sample.
+	insertReplicationSlotRow(t, pool, connID, latest, "slot_b", true, 200)
+
+	results, err := ds.GetLatestMetricValues(ctx, "pg_replication_slots.inactive")
+	if err != nil {
+		t.Fatalf("GetLatestMetricValues(pg_replication_slots.inactive) failed: %v", err)
+	}
+
+	var matches int
+	for _, mv := range results {
+		if mv.ConnectionID == connID {
+			matches++
+			if mv.Value != 1 {
+				t.Errorf("pg_replication_slots.inactive value for "+
+					"connection %d with one inactive slot and one "+
+					"active slot = %v; want 1", connID, mv.Value)
+			}
+		}
+	}
+	if matches != 1 {
+		t.Errorf("pg_replication_slots.inactive emitted %d rows for "+
+			"connection %d; want exactly 1 (one row per connection "+
+			"because at least one slot's latest sample is inactive)",
+			matches, connID)
+	}
+}
+
 // TestMetricRegistry_PgReplicationSlotsMaxRetainedBytes verifies that the
 // pg_replication_slots.max_retained_bytes metric returns the maximum
 // retained_bytes value across slots in the latest sample.

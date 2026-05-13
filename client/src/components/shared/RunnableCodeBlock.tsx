@@ -247,7 +247,10 @@ const RunnableCodeBlock: React.FC<RunnableCodeBlockProps> = ({
                     style={syntaxTheme}
                     language={language || 'sql'}
                     PreTag="div"
-                    customStyle={getCodeBlockCustomStyle(customBackground)}
+                    customStyle={getCodeBlockCustomStyle(
+                        customBackground,
+                        isSql ? 2 : 1,
+                    )}
                     {...props}
                 >
                     {codeContent}

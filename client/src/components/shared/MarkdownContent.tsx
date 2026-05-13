@@ -202,7 +202,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                         style={cleanTheme}
                         language={language || 'sql'}
                         PreTag="div"
-                        customStyle={getCodeBlockCustomStyle(customBackground)}
+                        customStyle={getCodeBlockCustomStyle(customBackground, 1)}
                         {...props}
                     >
                         {codeString}

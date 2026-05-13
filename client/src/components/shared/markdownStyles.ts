@@ -130,9 +130,37 @@ export const getCodeBlockWrapperSx = (theme: Theme) => ({
     },
 });
 
-export const getCodeBlockCustomStyle = (customBackground) => ({
+// Width allowance reserved on the right of the code area so the action
+// buttons (copy, run) do not overlap long, non-wrapping SQL lines (see
+// issue #221). The button group is absolutely positioned at top: 6px /
+// right: 6px with 28px buttons separated by a 4px gap, so for `n`
+// buttons the minimum clearance is 6 + n * 28 + (n - 1) * 4. We add a
+// small visual gutter on top of that so glyphs never touch the icons.
+const CODE_BLOCK_BUTTON_WIDTH = 28;
+const CODE_BLOCK_BUTTON_GAP = 4;
+const CODE_BLOCK_BUTTON_OFFSET = 6;
+const CODE_BLOCK_BUTTON_GUTTER = 8;
+
+export const getCodeBlockRightPadding = (buttonCount: number): string => {
+    const count = Math.max(0, buttonCount);
+    if (count === 0) {
+        return '1rem';
+    }
+    const px =
+        CODE_BLOCK_BUTTON_OFFSET +
+        count * CODE_BLOCK_BUTTON_WIDTH +
+        Math.max(0, count - 1) * CODE_BLOCK_BUTTON_GAP +
+        CODE_BLOCK_BUTTON_GUTTER;
+    return `${px}px`;
+};
+
+export const getCodeBlockCustomStyle = (
+    customBackground: string,
+    buttonCount: number = 0,
+) => ({
     margin: 0,
     padding: '1rem',
+    paddingRight: getCodeBlockRightPadding(buttonCount),
     fontSize: '1rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
     background: customBackground,
@@ -213,16 +241,16 @@ export const getTableSx = (theme: Theme) => ({
 
 export const getCodeBlockButtonGroupSx = () => ({
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: CODE_BLOCK_BUTTON_OFFSET,
+    right: CODE_BLOCK_BUTTON_OFFSET,
     display: 'flex',
-    gap: 0.5,
+    gap: `${CODE_BLOCK_BUTTON_GAP}px`,
 });
 
 const getCodeBlockActionButtonSx = (theme: Theme) => ({
     minWidth: 0,
-    width: 28,
-    height: 28,
+    width: CODE_BLOCK_BUTTON_WIDTH,
+    height: CODE_BLOCK_BUTTON_WIDTH,
     p: 0,
     borderRadius: 0.75,
     bgcolor: alpha(
@@ -249,8 +277,8 @@ export const getCopyButtonSx = (theme: Theme) => ({
 export const getRunButtonSx = (theme: Theme) => ({
     ...getCodeBlockActionButtonSx(theme),
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: CODE_BLOCK_BUTTON_OFFSET,
+    right: CODE_BLOCK_BUTTON_OFFSET,
 });
 
 export const getQueryResultWrapperSx = (theme: Theme) => ({

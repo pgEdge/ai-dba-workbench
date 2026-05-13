@@ -328,6 +328,12 @@ project adheres to
 
 ### Fixed
 
+- Fix long, non-wrapping SQL queries flowing underneath the
+  copy and run icons in the Remediation Steps panel of the
+  alert AI analysis view; the shared markdown styles now
+  reserve right-side padding on each code block sized to the
+  number of overlaid action buttons, so the SQL text never
+  collides with the icons. (#221)
 - Fix the Active Alerts Restore button returning HTTP 500
   "Failed to unacknowledge alert" for alerts that were
   already non-acknowledged (for example after the alerter

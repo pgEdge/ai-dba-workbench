@@ -283,7 +283,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify all migrations are registered
-	expectedVersions := []int{1, 2, 3}
+	expectedVersions := []int{1, 2, 3, 4}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}

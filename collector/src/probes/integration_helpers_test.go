@@ -294,6 +294,27 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	stmts := []string{
 		`CREATE SCHEMA IF NOT EXISTS metrics`,
 
+		// Minimal connections table so tests can insert a fixture row
+		// and use its returned id rather than hard-coding a value. The
+		// columns mirror the production schema in
+		// collector/src/database/schema.go, but the NOT NULL columns
+		// have defaults so other tests that pre-existed this helper
+		// (for example TestEnsureProbeConfig) can still INSERT with
+		// just (id, cluster_id) without violating constraints. FKs from
+		// metrics.* back to connections are intentionally omitted; the
+		// probe schema in this helper is FK-free for test isolation.
+		`CREATE TABLE IF NOT EXISTS connections (
+			id SERIAL PRIMARY KEY,
+			owner_username VARCHAR(255),
+			owner_token VARCHAR(255),
+			name VARCHAR(255) NOT NULL DEFAULT '',
+			host VARCHAR(255) NOT NULL DEFAULT '',
+			port INTEGER NOT NULL DEFAULT 5432,
+			database_name VARCHAR(255) NOT NULL DEFAULT '',
+			username VARCHAR(255) NOT NULL DEFAULT '',
+			cluster_id INTEGER
+		)`,
+
 		// Server-scoped probe tables.
 		`CREATE TABLE IF NOT EXISTS metrics.pg_stat_activity (
 			connection_id INTEGER NOT NULL,

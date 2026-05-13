@@ -556,8 +556,10 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_all_indexes_conn_time
 					ON metrics.pg_stat_all_indexes(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_all_indexes_conn_db_time
-					ON metrics.pg_stat_all_indexes(connection_id, database_name, collected_at DESC);
+				-- idx_pg_stat_all_indexes_conn_db_time was previously created here
+				-- but was redundant with idx_pg_stat_all_indexes_object (which leads
+				-- with the same columns) and the composite primary key. Migration
+				-- #4 drops it; fresh installs skip the creation.
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_all_indexes_object
 					ON metrics.pg_stat_all_indexes(connection_id, database_name, schemaname, indexrelname, collected_at DESC);
 			`)
@@ -605,8 +607,10 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_conn_time
 					ON metrics.pg_stat_statements(connection_id, collected_at DESC);
-				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_conn_db_time
-					ON metrics.pg_stat_statements(connection_id, database_name, collected_at DESC);
+				-- idx_pg_stat_statements_conn_db_time was previously created here
+				-- but was redundant with idx_pg_stat_statements_object (which leads
+				-- with the same columns) and the composite primary key. Migration
+				-- #4 drops it; fresh installs skip the creation.
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_object
 					ON metrics.pg_stat_statements(connection_id, database_name, queryid, collected_at DESC);
 			`)
@@ -2752,6 +2756,79 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to seed Spock and slot retention alert rules: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #4: Datastore schema performance improvements.
+	//
+	// Two independent changes bundled into one migration:
+	//
+	//   1. Add a partial index on anomaly_candidates that matches the
+	//      alerter's hot "unprocessed candidates" predicate, so the
+	//      sweeper stops sequential-scanning the full ~2M-row table on
+	//      every poll. The index only covers rows where
+	//      processed_at IS NULL AND tier1_pass = TRUE, so it stays tiny.
+	//
+	//   2. Drop two redundant secondary indexes on the partitioned
+	//      metrics tables (pg_stat_all_indexes and pg_stat_statements).
+	//      Each redundant index leads with (connection_id, database_name,
+	//      collected_at DESC) and is covered by the more specific
+	//      "_object" index that already exists on each table. Dropping
+	//      the partitioned parent index cascades to every attached
+	//      child-partition index automatically (child indexes are
+	//      "owned" by the partitioned parent, not standalone), so no
+	//      pg_inherits walk is required.
+	//
+	// A plain CREATE INDEX (not CONCURRENTLY) is used for (1). The
+	// table is on the order of ~2M rows and the partial WHERE clause
+	// keeps the index very small, so a brief AccessExclusive lock is
+	// acceptable and keeps the migration transactional. DROP INDEX in
+	// (2) is fast and safe inside the same transaction.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     4,
+		Description: "Add anomaly_candidates unprocessed partial index and drop redundant metrics indexes",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			// (1) Partial index for the alerter's hot
+			// GetUnprocessedAnomalyCandidates query. The predicate
+			// matches exactly so the planner can use the index, and
+			// the leading column (detected_at ASC) matches the query's
+			// ORDER BY for an index-only sort.
+			//
+			// Plain CREATE INDEX takes a brief AccessExclusive lock
+			// but is transactional; CREATE INDEX CONCURRENTLY cannot
+			// run inside a transaction. The table is ~2M rows and the
+			// partial WHERE leaves only a small queue behind, so the
+			// lock window is short.
+			_, err := tx.Exec(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_anomaly_candidates_unprocessed
+					ON anomaly_candidates (detected_at ASC)
+					WHERE processed_at IS NULL AND tier1_pass = TRUE;
+
+				COMMENT ON INDEX idx_anomaly_candidates_unprocessed IS
+					'Hot path index for the alerter sweeper query that pulls unprocessed tier-1 candidates ordered by detected_at; partial WHERE keeps the index tiny because it only covers rows still in the queue';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create idx_anomaly_candidates_unprocessed: %w", err)
+			}
+
+			// (2) Drop the redundant partitioned indexes. On databases
+			// originally migrated under v1..v3 these indexes will
+			// exist on the parent partitioned table with attached
+			// child indexes on every weekly partition; DROP INDEX on
+			// the parent cascades to those children. On fresh v4
+			// installs the indexes were never created, so the
+			// IF EXISTS clause keeps the migration idempotent.
+			_, err = tx.Exec(ctx, `
+				DROP INDEX IF EXISTS metrics.idx_pg_stat_all_indexes_conn_db_time;
+				DROP INDEX IF EXISTS metrics.idx_pg_stat_statements_conn_db_time;
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to drop redundant metrics indexes: %w", err)
 			}
 
 			return nil

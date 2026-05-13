@@ -5,6 +5,7 @@
 .claude/worktrees/
 .claude/*.lock
 .playwright-cli/
+.playwright-mcp/
 
 # Git
 .worktrees/

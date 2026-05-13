@@ -17,9 +17,13 @@
 // and the customStyle shape that feeds SyntaxHighlighter.
 
 import { describe, it, expect } from 'vitest';
+import { createTheme } from '@mui/material/styles';
 import {
     getCodeBlockRightPadding,
     getCodeBlockCustomStyle,
+    getCodeBlockButtonGroupSx,
+    getCopyButtonSx,
+    getRunButtonSx,
 } from '../markdownStyles';
 
 describe('getCodeBlockRightPadding (issue #221)', () => {
@@ -88,5 +92,45 @@ describe('getCodeBlockCustomStyle (issue #221)', () => {
         // the padding logic.
         const style = getCodeBlockCustomStyle('rgb(10, 20, 30)', 2);
         expect(style.background).toBe('rgb(10, 20, 30)');
+    });
+});
+
+describe('code block button geometry (issue #221)', () => {
+    // The button group is absolutely positioned in the top-right of the
+    // code block and its geometry must agree with getCodeBlockRightPadding
+    // so long SQL lines never slide under the copy/run icons. These tests
+    // pin down the constants the padding helper relies on; if they change,
+    // getCodeBlockRightPadding's expected values change with them.
+    it('positions the button group 6px from the top-right corner', () => {
+        const sx = getCodeBlockButtonGroupSx();
+        expect(sx.position).toBe('absolute');
+        expect(sx.top).toBe(6);
+        expect(sx.right).toBe(6);
+        expect(sx.display).toBe('flex');
+    });
+
+    it('separates buttons with the 4px gap assumed by the padding helper', () => {
+        // Use an explicit pixel string instead of a theme-spacing unit so a
+        // future change to theme.spacing cannot drift the gap away from
+        // CODE_BLOCK_BUTTON_GAP and reintroduce the issue #221 overlap.
+        const sx = getCodeBlockButtonGroupSx();
+        expect(sx.gap).toBe('4px');
+    });
+
+    it('sizes the copy button to the 28px square that padding reserves for it', () => {
+        const theme = createTheme();
+        const sx = getCopyButtonSx(theme);
+        expect(sx.width).toBe(28);
+        expect(sx.height).toBe(28);
+    });
+
+    it('sizes the run button to the 28px square and anchors it top-right', () => {
+        const theme = createTheme();
+        const sx = getRunButtonSx(theme);
+        expect(sx.width).toBe(28);
+        expect(sx.height).toBe(28);
+        expect(sx.position).toBe('absolute');
+        expect(sx.top).toBe(6);
+        expect(sx.right).toBe(6);
     });
 });

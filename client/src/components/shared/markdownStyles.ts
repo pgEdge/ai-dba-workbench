@@ -241,16 +241,16 @@ export const getTableSx = (theme: Theme) => ({
 
 export const getCodeBlockButtonGroupSx = () => ({
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: CODE_BLOCK_BUTTON_OFFSET,
+    right: CODE_BLOCK_BUTTON_OFFSET,
     display: 'flex',
-    gap: 0.5,
+    gap: `${CODE_BLOCK_BUTTON_GAP}px`,
 });
 
 const getCodeBlockActionButtonSx = (theme: Theme) => ({
     minWidth: 0,
-    width: 28,
-    height: 28,
+    width: CODE_BLOCK_BUTTON_WIDTH,
+    height: CODE_BLOCK_BUTTON_WIDTH,
     p: 0,
     borderRadius: 0.75,
     bgcolor: alpha(
@@ -277,8 +277,8 @@ export const getCopyButtonSx = (theme: Theme) => ({
 export const getRunButtonSx = (theme: Theme) => ({
     ...getCodeBlockActionButtonSx(theme),
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: CODE_BLOCK_BUTTON_OFFSET,
+    right: CODE_BLOCK_BUTTON_OFFSET,
 });
 
 export const getQueryResultWrapperSx = (theme: Theme) => ({

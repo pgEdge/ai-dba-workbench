@@ -64,16 +64,18 @@ repo_url: https://github.com/pgEdge/ai-dba-workbench
 
 nav:
   - Overview: index.md
+  - Architecture: architecture.md
 
   - Installing and Configuring pgEdge AI DBA Workbench:
-    - Installation: getting-started/installation.md
     - Quick Start: getting-started/quick-start.md
+    - Building from Source Code: getting-started/installation.md
     - Docker Deployment: getting-started/docker.md
-    - Configuration:
+    - Configuration Details:
       - Server: getting-started/configuration/server.md
       - Collector: getting-started/configuration/collector.md
       - Alerter: getting-started/configuration/alerter.md
       - Web Client: getting-started/configuration/client.md
+    - Verifying Component Health: getting-started/verify_health.md
 
   - User Guide:
     - Using the Workbench: user-guide/index.md

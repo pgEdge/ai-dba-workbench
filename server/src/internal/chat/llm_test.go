@@ -1466,3 +1466,20 @@ func TestSystemPrompt_NotEmpty(t *testing.T) {
 		t.Error("SystemPrompt should mention Ellie")
 	}
 }
+
+// TestSystemPrompt_MentionsSpockOutputPlugin guards the Spock replication
+// slot guidance added for issue #220. Spock 6.x renamed the output plugin
+// from 'spock' to 'spock_output'; without this guidance the LLM writes
+// pg_replication_slots queries that return zero rows on healthy clusters
+// and incorrectly reports replication as broken.
+func TestSystemPrompt_MentionsSpockOutputPlugin(t *testing.T) {
+	if !strings.Contains(SystemPrompt, "spock_output") {
+		t.Errorf("SystemPrompt should mention the 'spock_output' plugin name " +
+			"so the LLM writes correct pg_replication_slots queries")
+	}
+
+	if !strings.Contains(SystemPrompt, "plugin LIKE 'spock%'") {
+		t.Errorf("SystemPrompt should recommend filtering with " +
+			"plugin LIKE 'spock%%' for cross-version Spock compatibility")
+	}
+}

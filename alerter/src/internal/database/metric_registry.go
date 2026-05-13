@@ -208,23 +208,42 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// pg_replication_slots.inactive emits a single row per connection with
+	// value=1 whenever the most recent sample for at least one replication
+	// slot recorded in the last five minutes has active=false. No row is
+	// emitted for connections whose slots are all currently active, which
+	// clears the matching `==` alert as soon as every slot recovers.
+	//
+	// The latest-sample-per-slot reduction is essential: without it, a slot
+	// that was inactive at t-4m but active at t-1m would still match the
+	// active=false predicate against its older row and keep the alert
+	// firing after recovery. DISTINCT ON (connection_id, slot_name) ordered
+	// by collected_at DESC inside the freshness window selects exactly the
+	// most recent sample for every slot, and a single connection with N
+	// slots is reduced to one row regardless of how many of those slots
+	// are inactive (the alert engine consumes one row per connection_id).
+	//
+	// The earlier implementation read from metrics.pg_stat_replication_slots
+	// (a table that no migration creates) and inferred inactivity by an
+	// application_name join against metrics.pg_stat_replication. That join
+	// is unnecessary because metrics.pg_replication_slots.active mirrors
+	// the source pg_replication_slots.active column directly, so the query
+	// can decide inactivity from a single table.
 	"pg_replication_slots.inactive": {
 		latestSQL: `
-			WITH slot_status AS (
-				SELECT DISTINCT connection_id, 1 as has_inactive
-				FROM metrics.pg_stat_replication_slots s
-				WHERE s.collected_at > NOW() - INTERVAL '5 minutes'
-				  AND NOT EXISTS (
-				      SELECT 1 FROM metrics.pg_stat_replication r
-				      WHERE r.connection_id = s.connection_id
-				        AND r.collected_at > NOW() - INTERVAL '5 minutes'
-				        AND r.application_name = s.slot_name
-				  )
+			WITH latest_per_slot AS (
+				SELECT DISTINCT ON (connection_id, slot_name)
+				       connection_id, slot_name, active, collected_at
+				FROM metrics.pg_replication_slots
+				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				ORDER BY connection_id, slot_name, collected_at DESC
 			)
 			SELECT connection_id,
-			       has_inactive::float as value,
-			       NOW() as collected_at
-			FROM slot_status
+			       1::float AS value,
+			       MAX(collected_at) AS collected_at
+			FROM latest_per_slot
+			WHERE active = false
+			GROUP BY connection_id
 		`,
 		historicalSQL:  "",
 		scan:           scanBasic,

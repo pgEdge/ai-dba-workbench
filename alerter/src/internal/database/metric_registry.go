@@ -208,22 +208,28 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// pg_replication_slots.inactive emits a single row per connection with
+	// value=1 whenever at least one replication slot recorded in the last
+	// five minutes has active=false. No row is emitted for connections
+	// whose slots are all active, which clears the matching `==` alert.
+	//
+	// The earlier implementation read from metrics.pg_stat_replication_slots
+	// (a table that no migration creates) and inferred inactivity by an
+	// application_name join against metrics.pg_stat_replication. That join
+	// is unnecessary because metrics.pg_replication_slots.active mirrors
+	// the source pg_replication_slots.active column directly, so the query
+	// can decide inactivity from a single table.
 	"pg_replication_slots.inactive": {
 		latestSQL: `
 			WITH slot_status AS (
-				SELECT DISTINCT connection_id, 1 as has_inactive
-				FROM metrics.pg_stat_replication_slots s
+				SELECT DISTINCT connection_id, 1 AS has_inactive
+				FROM metrics.pg_replication_slots s
 				WHERE s.collected_at > NOW() - INTERVAL '5 minutes'
-				  AND NOT EXISTS (
-				      SELECT 1 FROM metrics.pg_stat_replication r
-				      WHERE r.connection_id = s.connection_id
-				        AND r.collected_at > NOW() - INTERVAL '5 minutes'
-				        AND r.application_name = s.slot_name
-				  )
+				  AND s.active = false
 			)
 			SELECT connection_id,
-			       has_inactive::float as value,
-			       NOW() as collected_at
+			       has_inactive::float AS value,
+			       NOW() AS collected_at
 			FROM slot_status
 		`,
 		historicalSQL:  "",

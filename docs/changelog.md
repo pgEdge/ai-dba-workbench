@@ -328,6 +328,17 @@ project adheres to
 
 ### Fixed
 
+- Fix the alerter's `replication_slot_inactive` critical
+  alert never firing because its metric query selected
+  from a non-existent `metrics.pg_stat_replication_slots`
+  table; the `pg_replication_slots.inactive` metric now
+  reads directly from `metrics.pg_replication_slots` (the
+  table the collector probe writes to) and derives the
+  inactive state from the `active` column. New integration
+  tests cover the happy path, the no-row case when every
+  slot is active, slot deduplication per connection, and
+  the 5-minute freshness cutoff. (#224)
+
 - Fix the Admin panels showing a success toast alongside a
   page-level refresh error when a save succeeded but the
   follow-on reload failed; the shared `useCrudPanel` hook

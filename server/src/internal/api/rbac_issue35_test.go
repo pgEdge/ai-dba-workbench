@@ -131,10 +131,11 @@ func requireNotForbidden(t *testing.T, rec *httptest.ResponseRecorder, label str
 // pre-check but, as a follow-up to issue #233, also requires
 // HasAdminPermission(manage_connections) after the visibility check.
 // Visibility-only "NotDenied" assertions therefore do not apply to it;
-// its admin-gate behavior is exercised separately in
-// rbac_issue233_connections_test.go and the negative path is covered
-// inline below (NonOwnerUnshared_403_UpdateConnectionCluster and
-// NoDatastoreSideEffect tests).
+// its admin-gate behavior is exercised in
+// TestConnectionHandler_UpdateConnectionCluster_Issue233 (in
+// rbac_issue233_connections_test.go), and the visibility-denial
+// negative path is covered inline below by
+// TestConnectionHandler_UpdateConnectionCluster_NoDatastoreSideEffect.
 // =============================================================================
 
 // connResourceInvoker is the minimal shape of a per-connection handler

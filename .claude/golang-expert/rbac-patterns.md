@@ -93,7 +93,7 @@ visible caller could re-home or rewrite the resource. The
 reference is `handleUpdateConnectionCluster` in
 `server/src/internal/api/connection_handlers.go` (PUT
 `/api/v1/connections/{id}/cluster`), gated as part of the issue
-#233 follow-up audit. The order is: visibility check, admin gate,
+`#233` follow-up audit. The order is: visibility check, admin gate,
 decode, then the datastore mutation.
 
 ## Variant 2: Owner-Fallback Gate

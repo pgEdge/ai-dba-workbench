@@ -43,7 +43,6 @@ jobs:
               run: npm test
 
             - name: Run tests with coverage
-              if: matrix.node-version == '22'
               run: npm run test:coverage
 
             # Codacy coverage upload.

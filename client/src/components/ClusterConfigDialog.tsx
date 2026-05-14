@@ -30,6 +30,7 @@ import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
 import TopologyPanel from './TopologyPanel';
+import { deriveReplicationType } from './topology';
 import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
 import SlideTransition from './shared/SlideTransition';
 
@@ -79,7 +80,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     const [name, setName] = useState(clusterName);
     const [description, setDescription] = useState(clusterDescription || '');
     const [selectedReplicationType, setSelectedReplicationType] = useState(
-        replicationType || '',
+        deriveReplicationType(replicationType ?? null, autoClusterKey) || '',
     );
     const [nameError, setNameError] = useState('');
     const [replicationTypeError, setReplicationTypeError] = useState('');
@@ -97,15 +98,25 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
     // or the one returned after creation (create mode)
     const effectiveNumericId = numericClusterId ?? createdClusterId;
 
-    // The effective replication type for the topology panel
-    const effectiveReplicationType = selectedReplicationType || replicationType || null;
+    // The effective replication type for the topology panel. The user's
+    // current selection wins; otherwise fall back to the derived value
+    // (which prefers an explicit replication_type and only consults the
+    // auto_cluster_key prefix when no explicit value is set).
+    const effectiveReplicationType =
+        selectedReplicationType ||
+        deriveReplicationType(replicationType ?? null, autoClusterKey);
 
     // Reset form state only when the dialog opens (false -> true transition)
     useEffect(() => {
         if (open && !prevOpenRef.current) {
             setName(clusterName || '');
             setDescription(clusterDescription || '');
-            setSelectedReplicationType(replicationType || '');
+            setSelectedReplicationType(
+                deriveReplicationType(
+                    replicationType ?? null,
+                    autoClusterKey,
+                ) || '',
+            );
             setNameError('');
             setReplicationTypeError('');
             setSaveError('');
@@ -114,7 +125,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
             setCreatedClusterId(undefined);
         }
         prevOpenRef.current = open;
-    }, [open, clusterName, clusterDescription, replicationType]);
+    }, [open, clusterName, clusterDescription, replicationType, autoClusterKey]);
 
     const handleSave = async () => {
         const trimmed = name.trim();

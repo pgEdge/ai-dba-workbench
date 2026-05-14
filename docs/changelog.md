@@ -393,6 +393,12 @@ project adheres to
 
 ### Fixed
 
+- Fix the Replication Type select in the Cluster Settings
+  dialog rendering blank for auto-detected clusters whose
+  `replication_type` column is NULL; the dialog now derives
+  the value from the cluster's `auto_cluster_key` prefix when
+  no explicit replication type is set, mirroring the existing
+  behaviour of the Topology panel. (#235)
 - Fix long, non-wrapping SQL queries flowing underneath the
   copy and run icons in the Remediation Steps panel of the
   alert AI analysis view; the shared markdown styles now

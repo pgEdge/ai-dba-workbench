@@ -68,17 +68,17 @@ func TestFunctionName_Error(t *testing.T)        // Error case
 
 ```bash
 # Per sub-project
-cd collector && make test        # Unit tests
-cd collector && make coverage    # Tests with coverage
+cd collector && make test        # Fast unit tests (no coverage)
+cd collector && make coverage    # Verbose tests with coverage profile
 cd collector && make lint        # Linter
-cd collector && make test-all    # Test + coverage + lint
+cd collector && make test-all    # fmt-check + coverage + lint
 
-cd server && make test           # Unit + integration tests
+cd server && make test           # Fast unit + integration tests
 cd server && make coverage
 cd server && make lint
 cd server && make test-all
 
-cd alerter && make test          # Unit tests
+cd alerter && make test          # Fast unit tests
 cd alerter && make coverage
 cd alerter && make lint
 cd alerter && make test-all
@@ -86,6 +86,22 @@ cd alerter && make test-all
 # All projects from root
 make test-all
 ```
+
+`test-all` runs the full Go suite **once** with
+`go test -race -v -coverprofile=coverage.out ./...` (via the
+`coverage` target) and then runs `lint`; `fmt-check` runs first. An
+earlier shape ran the suite twice — once for `test`, once for
+`coverage` — which doubled CI wall-clock for no extra signal. Do
+not re-introduce a duplicate `test` step inside `test-all`.
+
+`make test` (without `-all`) remains as a fast developer-only loop:
+no coverage instrumentation, no HTML report. Use it for iterative
+TDD; use `make test-all` (or `make coverage` standalone) before
+handing work back.
+
+Both `test` and `coverage` bracket the test invocation with `killall`
+so stray probe/server processes from earlier runs cannot interfere
+with the next package's tests.
 
 ### Environment Variables
 
@@ -196,6 +212,50 @@ func TestUserRepository_GetUser(t *testing.T) {
     assert.Equal(t, "Test User", user.Name)
 }
 ```
+
+### HTTP Handler Tests: Never Point at Unreachable URLs
+
+Handlers in `internal/llmproxy/`, `internal/chat/`, and related
+packages issue real outbound HTTP requests when their configured
+endpoint is reachable. Pointing such a handler at an unreachable
+URL (for example `http://localhost:8080/v1` when nothing is
+listening) blocks for the duration of the shared HTTP client's
+timeout. The LLM client at `internal/chat/llm.go` uses a 120-second
+`defaultLLMHTTPTimeout` deliberately, to accommodate large-context
+chat completions; that 120 s applies to test code too, so a single
+hung handler test costs two minutes per `make test-all` run — and
+runs twice (once via the `test` target, once via `coverage`) on
+older Makefile shapes.
+
+The fix is to mock the endpoint with `httptest.NewServer` and
+return a minimal valid response. For OpenAI-compatible model
+listings, an empty `data` array is enough:
+
+```go
+server := httptest.NewServer(http.HandlerFunc(
+    func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        if _, err := w.Write([]byte(`{"data": []}`)); err != nil {
+            t.Errorf("mock server failed to write body: %v", err)
+        }
+    }))
+defer server.Close()
+
+config := &Config{
+    OpenAIBaseURL: server.URL,
+    Model:         "local-model",
+}
+HandleModels(w, req, config)
+```
+
+See `TestHandleModels_OpenAIBaseURLOnly` in
+`server/src/internal/llmproxy/proxy_test.go` for the canonical
+pattern, and the sibling tests in `server/src/internal/chat/llm_test.go`
+for other shapes (chat completion bodies, error responses).
+
+When auditing a slow test, grep for `OpenAIBaseURL` and
+`AnthropicAPIURL` set to literal `http://localhost:...` or
+`https://api.openai.com` strings; those are the smell.
 
 ### Testing Without Database
 
@@ -461,6 +521,26 @@ without panicking. It mutates the per-store `bcryptCost` field under
 `s.mu`, so the next `CreateUser`, `UpdateUser`, or `UpdateUserAtomic`
 call uses the override. Production behavior is unaffected; the default
 cost stays at `DefaultBcryptCost` unless a test explicitly lowers it.
+
+The helper also regenerates the per-store `dummyHash` (the
+timing-equalizer used in `AuthenticateUser` when a username is not
+found) at the lowered cost. Without this, every "nonexistent user"
+code path performs a cost-12 `bcrypt.CompareHashAndPassword` against
+the package-level `defaultDummyHash`, which costs ~250 ms in plain
+runs and ~1-2 s under the race detector — visible as
+multi-second `TestAuthenticateUserNonExistent` and
+`TestAuthHandler_HandleLogin` runtimes. Production AuthStores share
+`defaultDummyHash` (computed once at package load), so production
+timing equalization is unchanged.
+
+If you add a test that simulates a missing user and the runtime is
+still seconds rather than milliseconds, confirm
+`SetBcryptCostForTesting` ran *before* the AuthenticateUser call.
+The dummy hash is read from the store struct on every authenticate,
+so a later cost-lowering call would also work — but the test helper
+pattern in `createTestAuthStoreForStore` / `createTestRBACHandler`
+already does this immediately after `NewAuthStore`, and new helpers
+should follow the same order.
 
 The matching `AuthStore.Close()` method stops the session cleanup
 goroutine as well as closing the database, so pairing

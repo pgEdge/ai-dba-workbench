@@ -60,9 +60,15 @@ fmt-check:
 # Run tests with coverage
 # Use -p=1 to serialize per-package test binaries (see note on the test target).
 # -race enables the data-race detector; CI runs the same target.
-coverage:
+# -v emits per-test output so this single invocation can replace the
+# separate `test` target inside `test-all` and halve total test time.
+# killall brackets the run because the test suite may leave stray
+# processes that interfere with subsequent test binaries (same
+# rationale as the `test` target).
+coverage: killall
 	@echo "Running tests with coverage..."
-	cd src && go test -race -p=1 -coverprofile=coverage.out ./...
+	cd src && go test -race -p=1 -v -coverprofile=coverage.out ./...
+	@$(MAKE) --no-print-directory killall
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 
@@ -82,8 +88,11 @@ deps:
 check: fmt vet test lint
 	@echo "All checks passed!"
 
-# Run all tests (fmt-check, test, coverage, lint)
-test-all: fmt-check test coverage lint
+# Run all tests (fmt-check, coverage, lint)
+# coverage now emits verbose output and runs the full suite once, so
+# the separate `test` target is no longer included; this halves the
+# wall-clock time previously spent running every package twice.
+test-all: fmt-check coverage lint
 	@echo "All tests passed!"
 
 # Help target
@@ -97,7 +106,7 @@ help:
 	@echo "  fmt       - Format code with gofmt"
 	@echo "  fmt-check - Check code formatting (fails if not formatted)"
 	@echo "  coverage  - Generate test coverage report"
-	@echo "  test-all  - Run fmt-check, test, coverage, and lint"
+	@echo "  test-all  - Run fmt-check, coverage, and lint (verbose, single pass)"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"

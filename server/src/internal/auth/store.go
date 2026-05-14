@@ -46,13 +46,18 @@ const (
 	maxSessionsPerUser = 10
 )
 
-// dummyHash is a pre-computed bcrypt hash used during authentication
-// to prevent timing side-channel attacks that could reveal whether a
-// username exists. When a lookup returns no rows, we compare against
-// this hash so the response time is consistent with a real comparison.
+// defaultDummyHash is a pre-computed bcrypt hash used during
+// authentication to prevent timing side-channel attacks that could
+// reveal whether a username exists. When a user lookup returns no
+// rows, the AuthStore compares against this hash so the response
+// time is consistent with a real comparison. Production AuthStores
+// share this package-level hash to avoid recomputing the cost-12
+// hash on every NewAuthStore call. Test AuthStores get a per-store
+// hash at the lowered cost so they do not pay the production
+// timing cost on every "nonexistent user" code path.
 //
 //nolint:errcheck // bcrypt.GenerateFromPassword with a valid cost never fails
-var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-timing-equalizer"), DefaultBcryptCost)
+var defaultDummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-timing-equalizer"), DefaultBcryptCost)
 
 const (
 	// DefaultSessionExpiry is the default duration for session tokens
@@ -77,6 +82,14 @@ type AuthStore struct {
 	// SetBcryptCostForTesting to avoid dominating suite runtime with
 	// hashing work. Reads of this field are guarded by s.mu.
 	bcryptCost int
+	// dummyHash is the timing-equalizer hash this AuthStore compares
+	// against when a user lookup returns no rows. Production stores
+	// share the package-level defaultDummyHash (computed once at
+	// cost DefaultBcryptCost); SetBcryptCostForTesting replaces it
+	// with a cheaper per-store hash so the "nonexistent user" path
+	// runs in microseconds rather than the ~250 ms a cost-12 compare
+	// takes under the race detector. Guarded by s.mu.
+	dummyHash []byte
 	// Created indicates whether this AuthStore instance created a new
 	// auth.db file (true) or opened an existing one (false). Callers
 	// can use this to provide appropriate startup messages.
@@ -177,6 +190,7 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 		maxUserTokenDays:  maxUserTokenDays,
 		maxFailedAttempts: maxFailedAttempts,
 		bcryptCost:        DefaultBcryptCost,
+		dummyHash:         defaultDummyHash,
 		Created:           !dbExisted,
 	}
 
@@ -569,9 +583,22 @@ func (s *AuthStore) SetBcryptCostForTesting(t interface{ Helper() }, cost int) {
 			"this hook is test-only and must never run in production")
 	}
 	t.Helper()
+	// Regenerate the timing-equalizer hash at the lowered cost so the
+	// "nonexistent user" code path in AuthenticateUser no longer pays
+	// a cost-12 bcrypt compare on every call. Compute outside the
+	// store lock; the input is a constant string and the cost is
+	// already validated by the GenerateFromPassword call.
+	dummy, err := bcrypt.GenerateFromPassword([]byte("dummy-timing-equalizer"), cost)
+	if err != nil {
+		// An invalid cost is a programmer error in the test; surface
+		// it loudly rather than silently leaving the production
+		// dummy hash in place.
+		panic(fmt.Sprintf("SetBcryptCostForTesting: invalid bcrypt cost %d: %v", cost, err))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bcryptCost = cost
+	s.dummyHash = dummy
 }
 
 // =============================================================================
@@ -1152,9 +1179,11 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	if err == sql.ErrNoRows {
 		// Perform a dummy bcrypt comparison to ensure consistent response
 		// timing regardless of whether the username exists, preventing
-		// user enumeration via timing side-channel.
+		// user enumeration via timing side-channel. s.dummyHash is set
+		// in NewAuthStore (production cost) and may be lowered by
+		// SetBcryptCostForTesting; s.mu is held by AuthenticateUser.
 		//nolint:errcheck // Result is intentionally ignored
-		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		bcrypt.CompareHashAndPassword(s.dummyHash, []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 	if err != nil {

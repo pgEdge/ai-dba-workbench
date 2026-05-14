@@ -121,12 +121,21 @@ func requireNotForbidden(t *testing.T, rec *httptest.ResponseRecorder, label str
 // =============================================================================
 // ConnectionHandler per-connection handlers
 //
-// listDatabases, getConnectionContext, handleGetConnectionCluster, and
-// handleUpdateConnectionCluster all call rc.CanAccessConnection BEFORE
-// any datastore call. A nil datastore is therefore safe for both the 403
-// and positive paths: denial returns 403; a pass leaves the response
-// untouched and the test recovers from the nil-pointer panic that
-// follows.
+// listDatabases, getConnectionContext, and handleGetConnectionCluster
+// call rc.CanAccessConnection BEFORE any datastore call. A nil
+// datastore is therefore safe for both the 403 and positive paths:
+// denial returns 403; a pass leaves the response untouched and the
+// test recovers from the nil-pointer panic that follows.
+//
+// handleUpdateConnectionCluster has the same CanAccessConnection
+// pre-check but, as a follow-up to issue #233, also requires
+// HasAdminPermission(manage_connections) after the visibility check.
+// Visibility-only "NotDenied" assertions therefore do not apply to it;
+// its admin-gate behavior is exercised in
+// TestConnectionHandler_UpdateConnectionCluster_Issue233 (in
+// rbac_issue233_connections_test.go), and the visibility-denial
+// negative path is covered inline below by
+// TestConnectionHandler_UpdateConnectionCluster_NoDatastoreSideEffect.
 // =============================================================================
 
 // connResourceInvoker is the minimal shape of a per-connection handler
@@ -143,6 +152,12 @@ type connResourceCase struct {
 	invoker connResourceInvoker
 }
 
+// connResourceHandlers covers the visibility-only handlers: their RBAC
+// contract is solely "can the caller see this connection?". An owner,
+// shared-connection viewer, or group-granted caller must not receive a
+// 403 from these. handleUpdateConnectionCluster is intentionally NOT in
+// this table because issue #233 added an extra manage_connections gate
+// on top of the visibility check; see the comment above.
 var connResourceHandlers = []connResourceCase{
 	{
 		name:        "listDatabases",
@@ -168,16 +183,11 @@ var connResourceHandlers = []connResourceCase{
 			h.handleGetConnectionCluster(w, r, id)
 		},
 	},
-	{
-		name:        "handleUpdateConnectionCluster",
-		method:      http.MethodPut,
-		urlTemplate: "/api/v1/connections/%d/cluster",
-		body:        []byte(`{"cluster_id": 7, "membership_source": "manual"}`),
-		invoker: func(h *ConnectionHandler, w http.ResponseWriter, r *http.Request, id int) {
-			h.handleUpdateConnectionCluster(w, r, id)
-		},
-	},
 }
+
+// The visibility-denial case for handleUpdateConnectionCluster is
+// covered directly by TestConnectionHandler_UpdateConnectionCluster_NoDatastoreSideEffect
+// below; its admin-gate paths live in rbac_issue233_connections_test.go.
 
 // TestConnectionHandler_PerConnection_NonOwnerUnshared_403 verifies every
 // per-connection handler returns 403 when a non-owner user with no group

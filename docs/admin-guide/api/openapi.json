@@ -3607,7 +3607,7 @@
       },
       "post": {
         "summary": "Create a connection",
-        "description": "Creates a new database connection",
+        "description": "Creates a new database connection. Requires manage_connections permission.",
         "operationId": "createConnection",
         "tags": [
           "Connections"
@@ -3655,7 +3655,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -4021,6 +4021,171 @@
           },
           "404": {
             "description": "Connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/connections/{id}/cluster": {
+      "get": {
+        "summary": "Get connection cluster assignment",
+        "description": "Returns the current cluster assignment for the connection together with the list of available clusters and any node relationships involving this connection.",
+        "operationId": "getConnectionCluster",
+        "tags": [
+          "Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection cluster assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionClusterResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to list clusters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "Update connection cluster assignment",
+        "description": "Reassigns the connection to a different cluster or resets its membership source. Requires manage_connections permission.",
+        "operationId": "updateConnectionCluster",
+        "tags": [
+          "Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Cluster assignment update",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionClusterUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated cluster assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionClusterInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied: requires manage_connections permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to assign connection to cluster",
             "content": {
               "application/json": {
                 "schema": {
@@ -9893,6 +10058,81 @@
           "username": {
             "type": "string",
             "description": "Database username"
+          }
+        }
+      },
+      "ConnectionClusterInfo": {
+        "type": "object",
+        "properties": {
+          "auto_cluster_key": {
+            "type": "string",
+            "description": "Auto-detected cluster key",
+            "nullable": true
+          },
+          "cluster_id": {
+            "type": "integer",
+            "description": "Current cluster ID",
+            "nullable": true
+          },
+          "cluster_name": {
+            "type": "string",
+            "description": "Current cluster name",
+            "nullable": true
+          },
+          "membership_source": {
+            "type": "string",
+            "description": "How the connection is assigned: auto or manual"
+          },
+          "replication_type": {
+            "type": "string",
+            "description": "Cluster replication type",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "description": "Current cluster role",
+            "nullable": true
+          }
+        }
+      },
+      "ConnectionClusterResponse": {
+        "type": "object",
+        "properties": {
+          "clusters": {
+            "type": "array",
+            "description": "Available clusters for autocomplete",
+            "items": {
+              "type": "object"
+            }
+          },
+          "info": {
+            "$ref": "#/components/schemas/ConnectionClusterInfo"
+          },
+          "relationships": {
+            "type": "array",
+            "description": "Node relationships involving this connection",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "ConnectionClusterUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "integer",
+            "description": "Target cluster ID; null resets the connection to auto-detection",
+            "nullable": true
+          },
+          "membership_source": {
+            "type": "string",
+            "description": "How the connection is assigned: auto or manual"
+          },
+          "role": {
+            "type": "string",
+            "description": "Cluster role for the connection",
+            "nullable": true
           }
         }
       },

@@ -58,6 +58,44 @@ The reference implementation is `updateAutoDetectedCluster` in
 `server/src/internal/api/cluster_handlers.go`. Use the same error
 wording so the client-facing message stays uniform across endpoints.
 
+When a handler must stamp the caller's username onto the new row
+(e.g. `owner_username`), call `getUserInfoCompat` first to extract
+the username, then place the Variant 1 gate immediately afterward
+and BEFORE any request-body decoding. The 401 from
+`getUserInfoCompat` is authentication, not authorization: a missing
+or invalid bearer token must short-circuit before any permission
+check, but a valid token must still pass the gate before reaching
+`DecodeJSONBody` or any datastore call. The reference for this
+two-step pattern is `createConnection` in
+`server/src/internal/api/connection_handlers.go`, gated for
+GitHub issue #233 as the follow-up to #207.
+
+A regression-family caution: when issue #207 introduced this gate
+across cluster handlers, the audit missed the connection-create
+handler because that handler already had a gate on the IsShared
+branch. A partial gate is NOT a full gate; if a mutating endpoint
+performs writes regardless of an input flag, the gate must precede
+the branch on that flag, not sit inside it. When auditing a
+handler that has any existing `HasAdminPermission` call, verify the
+gate covers every write path, not just the "obviously sensitive"
+ones.
+
+When a mutating per-resource handler already calls
+`rc.CanAccessConnection` (or another visibility check) at the top to
+return 403 on non-visible callers, place the Variant 1 gate AFTER
+the visibility check and BEFORE `DecodeJSONBody`. The visibility
+check must run first so a non-visible caller still gets the
+existing "Access denied" response and learns nothing about the
+resource's existence (or absence). The admin gate then catches the
+distinct bug class where a caller who CAN see the resource (e.g.
+via a group share) tries to mutate it; without the gate, any
+visible caller could re-home or rewrite the resource. The
+reference is `handleUpdateConnectionCluster` in
+`server/src/internal/api/connection_handlers.go` (PUT
+`/api/v1/connections/{id}/cluster`), gated as part of the issue
+`#233` follow-up audit. The order is: visibility check, admin gate,
+decode, then the datastore mutation.
+
 ## Variant 2: Owner-Fallback Gate
 
 Use this for per-object mutations where the row has an

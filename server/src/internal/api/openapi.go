@@ -244,6 +244,33 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"is_monitored":       {Type: "boolean", Description: "Whether the connection is monitored"},
 			},
 		},
+		"ConnectionClusterUpdateRequest": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"cluster_id":        {Type: "integer", Description: "Target cluster ID; null resets the connection to auto-detection", Nullable: true},
+				"role":              {Type: "string", Description: "Cluster role for the connection", Nullable: true},
+				"membership_source": {Type: "string", Description: "How the connection is assigned: auto or manual"},
+			},
+		},
+		"ConnectionClusterInfo": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"cluster_id":        {Type: "integer", Description: "Current cluster ID", Nullable: true},
+				"role":              {Type: "string", Description: "Current cluster role", Nullable: true},
+				"membership_source": {Type: "string", Description: "How the connection is assigned: auto or manual"},
+				"cluster_name":      {Type: "string", Description: "Current cluster name", Nullable: true},
+				"replication_type":  {Type: "string", Description: "Cluster replication type", Nullable: true},
+				"auto_cluster_key":  {Type: "string", Description: "Auto-detected cluster key", Nullable: true},
+			},
+		},
+		"ConnectionClusterResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"info":          {Ref: "#/components/schemas/ConnectionClusterInfo"},
+				"clusters":      {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Available clusters for autocomplete"},
+				"relationships": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Node relationships involving this connection"},
+			},
+		},
 		"CurrentConnectionRequest": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
@@ -1405,7 +1432,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Post: &OpenAPIOperation{
 				Summary:     "Create a connection",
-				Description: "Creates a new database connection",
+				Description: "Creates a new database connection. Requires manage_connections permission.",
 				OperationID: "createConnection",
 				Tags:        []string{"Connections"},
 				Security:    bearerAuth,
@@ -1414,7 +1441,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"201": jsonResponse("Connection", "Connection created"),
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Forbidden"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_connections permission"),
 					"503": jsonResponse("ErrorResponse", "Datastore not configured"),
 				},
 			},
@@ -1463,6 +1490,40 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Forbidden"),
 					"404": jsonResponse("ErrorResponse", "Connection not found"),
+				},
+			},
+		},
+
+		"/connections/{id}/cluster": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get connection cluster assignment",
+				Description: "Returns the current cluster assignment for the connection together with the list of available clusters and any node relationships involving this connection.",
+				OperationID: "getConnectionCluster",
+				Tags:        []string{"Connections"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ConnectionClusterResponse", "Connection cluster assignment"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Access denied"),
+					"404": jsonResponse("ErrorResponse", "Connection not found"),
+					"500": jsonResponse("ErrorResponse", "Failed to list clusters"),
+				},
+			},
+			Put: &OpenAPIOperation{
+				Summary:     "Update connection cluster assignment",
+				Description: "Reassigns the connection to a different cluster or resets its membership source. Requires manage_connections permission.",
+				OperationID: "updateConnectionCluster",
+				Tags:        []string{"Connections"},
+				Security:    bearerAuth,
+				Parameters:  []OpenAPIParameter{pathParamInt("id", "Connection ID")},
+				RequestBody: jsonRequestBody("ConnectionClusterUpdateRequest", "Cluster assignment update", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ConnectionClusterInfo", "Updated cluster assignment"),
+					"400": jsonResponse("ErrorResponse", "Invalid request"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied: requires manage_connections permission"),
+					"500": jsonResponse("ErrorResponse", "Failed to assign connection to cluster"),
 				},
 			},
 		},

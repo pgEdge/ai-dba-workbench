@@ -9,18 +9,8 @@
  */
 
 import type React from 'react';
-import {
-    Menu,
-    MenuItem,
-    ListItemIcon,
-    ListItemText,
-    Divider,
-} from '@mui/material';
-import {
-    Storage as StorageIcon,
-    Folder as FolderIcon,
-    Hub as HubIcon,
-} from '@mui/icons-material';
+import { Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/material';
+import { Storage as StorageIcon, Folder as FolderIcon, Hub as HubIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/useAuth';
 
 interface AddMenuProps {
@@ -35,11 +25,11 @@ interface AddMenuProps {
 /**
  * A dropdown menu for adding servers or cluster groups.
  *
- * The "Add Cluster" and "Add Cluster Group" entries require the
- * `manage_connections` admin permission and are omitted entirely for
- * users that lack it. The server enforces the same restriction with a
- * 403 response, so hiding the menu items keeps unauthorized users from
- * seeing actions they cannot perform.
+ * The "Add Server", "Add Cluster", and "Add Cluster Group" entries
+ * require the `manage_connections` admin permission and are omitted
+ * entirely for users that lack it. The server enforces the same
+ * restriction with a 403 response, so hiding the menu items keeps
+ * unauthorized users from seeing actions they cannot perform.
  */
 const AddMenu: React.FC<AddMenuProps> = ({
     anchorEl,
@@ -93,12 +83,14 @@ const AddMenu: React.FC<AddMenuProps> = ({
                 },
             }}
         >
-            <MenuItem onClick={handleAddServer}>
-                <ListItemIcon>
-                    <StorageIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText primary="Add Server" />
-            </MenuItem>
+            {canManageConnections && (
+                <MenuItem onClick={handleAddServer}>
+                    <ListItemIcon>
+                        <StorageIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="Add Server" />
+                </MenuItem>
+            )}
             {canManageConnections && (
                 <MenuItem onClick={handleAddCluster}>
                     <ListItemIcon>

@@ -235,8 +235,8 @@ Reference implementations:
 
 - `client/src/components/AdminPanel/index.tsx` filters whole nav
   sections by `hasPermission(item.permission)`.
-- `client/src/components/AddMenu.tsx` hides Add Cluster and Add
-  Cluster Group when the user lacks `manage_connections`.
+- `client/src/components/AddMenu.tsx` hides Add Server, Add Cluster,
+  and Add Cluster Group when the user lacks `manage_connections`.
 
 Permission strings must match the server-side constants exactly;
 see `server/src/internal/auth/token_scope.go` for the canonical

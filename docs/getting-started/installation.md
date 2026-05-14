@@ -107,6 +107,17 @@ static file server such as Nginx. The web client
 consists of static HTML, CSS, and JavaScript files
 that require no server-side runtime.
 
+!!! warning "TLS is required"
+    Any network-accessible deployment must terminate
+    TLS in a reverse proxy in front of the server.
+    The reverse proxy is responsible for TLS
+    termination, HTTP-to-HTTPS redirection, and HSTS.
+    The Go server is API-only and does not serve the
+    static client bundle; the same reverse proxy that
+    terminates TLS also serves the SPA assets. See the
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
+
 !!! note
     To build the components from source instead,
     see the

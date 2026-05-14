@@ -19,6 +19,17 @@ npm run dev
 The application is available at
 `http://localhost:5173` after the server starts.
 
+!!! warning "Localhost only"
+    The Vite development server is a developer-only
+    tool that runs on plain HTTP and is supported only
+    on the loopback interface. Do not expose port
+    `5173` to any network; the development server
+    transmits credentials in cleartext and offers no
+    TLS option. For any network-accessible deployment,
+    build the production bundle and front it with a
+    TLS-terminating reverse proxy as described in the
+    [TLS and reverse proxy requirements](../../admin-guide/tls-and-reverse-proxy.md).
+
 ## API Proxy Configuration
 
 The development server proxies all API requests to the
@@ -110,6 +121,14 @@ For production deployments, serve the built files from
 the `dist` directory using a web server such as Nginx
 or Apache. The MCP server does not serve the web
 client files; a separate web server is required.
+
+!!! warning "TLS is required"
+    Any network-accessible deployment must terminate
+    TLS in front of the server. The reverse proxy is
+    responsible for TLS termination, HTTP-to-HTTPS
+    redirection, and HSTS. See the
+    [TLS and reverse proxy requirements](../../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
 
 ### Nginx Configuration
 

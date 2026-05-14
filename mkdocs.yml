@@ -97,6 +97,7 @@ nav:
 
   - Administrator's Guide:
     - Overview: admin-guide/index.md
+    - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md
     - Users & Authentication: admin-guide/authentication.md
     - Connection Management: admin-guide/connections.md
     - Alert Rules & Thresholds: admin-guide/alert-rules.md

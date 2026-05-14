@@ -3607,7 +3607,7 @@
       },
       "post": {
         "summary": "Create a connection",
-        "description": "Creates a new database connection",
+        "description": "Creates a new database connection. Requires manage_connections permission.",
         "operationId": "createConnection",
         "tags": [
           "Connections"
@@ -3655,7 +3655,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Requires manage_connections permission",
             "content": {
               "application/json": {
                 "schema": {

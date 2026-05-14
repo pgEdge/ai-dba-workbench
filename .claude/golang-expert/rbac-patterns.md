@@ -58,6 +58,28 @@ The reference implementation is `updateAutoDetectedCluster` in
 `server/src/internal/api/cluster_handlers.go`. Use the same error
 wording so the client-facing message stays uniform across endpoints.
 
+When a handler must stamp the caller's username onto the new row
+(e.g. `owner_username`), call `getUserInfoCompat` first to extract
+the username, then place the Variant 1 gate immediately afterward
+and BEFORE any request-body decoding. The 401 from
+`getUserInfoCompat` is authentication, not authorization: a missing
+or invalid bearer token must short-circuit before any permission
+check, but a valid token must still pass the gate before reaching
+`DecodeJSONBody` or any datastore call. The reference for this
+two-step pattern is `createConnection` in
+`server/src/internal/api/connection_handlers.go`, gated for
+GitHub issue #233 as the follow-up to #207.
+
+A regression-family caution: when issue #207 introduced this gate
+across cluster handlers, the audit missed the connection-create
+handler because that handler already had a gate on the IsShared
+branch. A partial gate is NOT a full gate; if a mutating endpoint
+performs writes regardless of an input flag, the gate must precede
+the branch on that flag, not sit inside it. When auditing a
+handler that has any existing `HasAdminPermission` call, verify the
+gate covers every write path, not just the "obviously sensitive"
+ones.
+
 ## Variant 2: Owner-Fallback Gate
 
 Use this for per-object mutations where the row has an

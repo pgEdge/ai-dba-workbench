@@ -330,6 +330,19 @@ project adheres to
   regression tests cover every affected handler.
   (#67)
 
+- Extend the `manage_connections` gate to the two
+  remaining connection-creation paths missed by the
+  earlier sweep under #207; the server's
+  `createConnection` handler now requires the permission
+  for every new connection rather than only for shared
+  connections, and the web client's Add menu hides the
+  "Add Server" entry from users who lack the permission.
+  Unauthorized callers receive a `403 Forbidden` response
+  with a clear authorization error, and the OpenAPI
+  specification and the static
+  `docs/admin-guide/api/openapi.json` document the new
+  response on the affected path. (#233)
+
 - Require the `manage_connections` permission on all
   cluster and cluster-group mutating endpoints; users
   without the permission previously could create

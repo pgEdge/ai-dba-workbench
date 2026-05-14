@@ -196,10 +196,23 @@ func (h *ConnectionHandler) listConnections(w http.ResponseWriter, r *http.Reque
 
 // createConnection handles POST /api/v1/connections
 func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Request) {
-	// Get current user info
+	// Get current user info. The username is stamped onto the row as
+	// owner_username, so we authenticate before the permission gate.
 	username, _, err := getUserInfoCompat(r, h.authStore)
 	if err != nil {
 		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
+		return
+	}
+
+	// Issue #233 (follow-up to #207): gate ALL connection creation on
+	// manage_connections, not only the shared branch. The previous gate
+	// only fired when req.IsShared was true, so any authenticated caller
+	// could create a non-shared server connection and silently expand
+	// their visible topology. Check before decoding the body so denied
+	// callers cannot probe payload shape via validation error messages.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
 		return
 	}
 
@@ -246,13 +259,6 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 	if err := h.hostValidator.ValidatePort(req.Port); err != nil {
 		log.Printf("[ERROR] Invalid port validation: %v", err)
 		RespondError(w, http.StatusBadRequest, "Invalid port")
-		return
-	}
-
-	// Only users with manage_connections permission can create shared connections
-	if req.IsShared && !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
-		RespondError(w, http.StatusForbidden,
-			"Permission denied: you do not have permission to create shared connections")
 		return
 	}
 

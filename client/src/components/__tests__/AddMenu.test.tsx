@@ -55,9 +55,7 @@ describe('AddMenu', () => {
 
     describe('with manage_connections permission', () => {
         beforeEach(() => {
-            mockHasPermission.mockImplementation(
-                (perm: string) => perm === 'manage_connections',
-            );
+            mockHasPermission.mockImplementation((perm: string) => perm === 'manage_connections');
         });
 
         it('renders Add Server, Add Cluster, and Add Cluster Group', () => {
@@ -66,6 +64,12 @@ describe('AddMenu', () => {
             expect(screen.getByText('Add Server')).toBeInTheDocument();
             expect(screen.getByText('Add Cluster')).toBeInTheDocument();
             expect(screen.getByText('Add Cluster Group')).toBeInTheDocument();
+        });
+
+        it('renders the divider that separates the cluster entries', () => {
+            renderAddMenu();
+
+            expect(screen.getByRole('separator')).toBeInTheDocument();
         });
 
         it('queries for the manage_connections permission', () => {
@@ -124,26 +128,23 @@ describe('AddMenu', () => {
             mockHasPermission.mockReturnValue(false);
         });
 
-        it('renders only Add Server', () => {
+        it('renders no menu items or dividers', () => {
             renderAddMenu();
 
-            expect(screen.getByText('Add Server')).toBeInTheDocument();
+            expect(screen.queryByText('Add Server')).not.toBeInTheDocument();
             expect(screen.queryByText('Add Cluster')).not.toBeInTheDocument();
-            expect(
-                screen.queryByText('Add Cluster Group'),
-            ).not.toBeInTheDocument();
+            expect(screen.queryByText('Add Cluster Group')).not.toBeInTheDocument();
             expect(screen.queryByRole('separator')).not.toBeInTheDocument();
         });
 
-        it('still allows Add Server to fire its callback', () => {
+        it('does not invoke onAddServer because Add Server is hidden', () => {
             const onAddServer = vi.fn();
             const onClose = vi.fn();
             renderAddMenu({ onAddServer, onClose });
 
-            fireEvent.click(screen.getByText('Add Server'));
-
-            expect(onAddServer).toHaveBeenCalledTimes(1);
-            expect(onClose).toHaveBeenCalledTimes(1);
+            expect(screen.queryByText('Add Server')).not.toBeInTheDocument();
+            expect(onAddServer).not.toHaveBeenCalled();
+            expect(onClose).not.toHaveBeenCalled();
         });
     });
 
@@ -156,11 +157,9 @@ describe('AddMenu', () => {
 
             renderAddMenu();
 
-            expect(screen.getByText('Add Server')).toBeInTheDocument();
+            expect(screen.queryByText('Add Server')).not.toBeInTheDocument();
             expect(screen.queryByText('Add Cluster')).not.toBeInTheDocument();
-            expect(
-                screen.queryByText('Add Cluster Group'),
-            ).not.toBeInTheDocument();
+            expect(screen.queryByText('Add Cluster Group')).not.toBeInTheDocument();
             expect(screen.queryByRole('separator')).not.toBeInTheDocument();
         });
     });
@@ -171,9 +170,7 @@ describe('AddMenu', () => {
 
             expect(screen.queryByText('Add Server')).not.toBeInTheDocument();
             expect(screen.queryByText('Add Cluster')).not.toBeInTheDocument();
-            expect(
-                screen.queryByText('Add Cluster Group'),
-            ).not.toBeInTheDocument();
+            expect(screen.queryByText('Add Cluster Group')).not.toBeInTheDocument();
         });
     });
 });

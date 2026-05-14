@@ -67,8 +67,9 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
         <Box sx={{ display: visible ? 'block' : 'none' }}>
             {configuredHelperText && (
                 <Typography
+                    variant="body2"
                     color="text.secondary"
-                    sx={{ fontSize: '0.875rem', mb: 2, mt: 1 }}
+                    sx={{ mb: 2, mt: 1 }}
                 >
                     {configuredHelperText}
                 </Typography>
@@ -117,7 +118,7 @@ const WebhookHeadersTab: React.FC<WebhookHeadersTabProps> = ({
                 !hasConfiguredNames && (
                     <Typography
                         color="text.secondary"
-                        sx={{ fontSize: '1rem', mb: 2, mt: 1 }}
+                        sx={{ mb: 2, mt: 1 }}
                     >
                         No custom headers configured.
                     </Typography>

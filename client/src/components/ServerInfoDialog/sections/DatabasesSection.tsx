@@ -61,7 +61,6 @@ const DatabasesSection: React.FC<DatabasesSectionProps> = ({
                             mb: 0.25,
                         }}>
                             <Typography sx={{
-                                fontSize: '1rem',
                                 fontWeight: 600,
                                 color: 'text.primary',
                                 ...sxMono,
@@ -110,7 +109,6 @@ const DatabasesSection: React.FC<DatabasesSectionProps> = ({
                                 {extsByDb[db.name].map((ext) => (
                                     <Box key={`${db.name}-${ext.name}`} sx={getExtChipSx(theme)}>
                                         <Typography component="span" sx={{
-                                            fontSize: '1rem',
                                             color: 'text.primary',
                                             fontWeight: 500,
                                             ...sxMono,
@@ -145,7 +143,6 @@ const DatabasesSection: React.FC<DatabasesSectionProps> = ({
                                         flexShrink: 0,
                                     }} />
                                     <Typography sx={{
-                                        fontSize: '1rem',
                                         color: 'text.secondary',
                                         lineHeight: 1.5,
                                     }}>

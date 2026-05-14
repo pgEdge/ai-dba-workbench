@@ -53,7 +53,6 @@ describe('helpPanelStyles', () => {
 
         it('has sectionTitleText style', () => {
             expect(styles.sectionTitleText).toEqual({
-                fontSize: '1rem',
                 fontWeight: 600,
                 color: 'text.primary',
             });
@@ -61,7 +60,6 @@ describe('helpPanelStyles', () => {
 
         it('has helpTipText style', () => {
             expect(styles.helpTipText).toEqual({
-                fontSize: '1rem',
                 color: 'text.secondary',
                 lineHeight: 1.5,
             });
@@ -70,7 +68,6 @@ describe('helpPanelStyles', () => {
         it('has featureTitle style', () => {
             expect(styles.featureTitle).toEqual({
                 fontWeight: 600,
-                fontSize: '1rem',
                 color: 'text.primary',
                 mb: 0.25,
             });
@@ -78,7 +75,6 @@ describe('helpPanelStyles', () => {
 
         it('has featureDescription style', () => {
             expect(styles.featureDescription).toEqual({
-                fontSize: '1rem',
                 color: 'text.secondary',
                 lineHeight: 1.5,
             });
@@ -112,7 +108,6 @@ describe('helpPanelStyles', () => {
 
         it('has shortcutDescription style', () => {
             expect(styles.shortcutDescription).toEqual({
-                fontSize: '1rem',
                 color: 'text.secondary',
             });
         });
@@ -140,14 +135,12 @@ describe('helpPanelStyles', () => {
         });
 
         it('has breadcrumbLink style', () => {
-            expect(styles.breadcrumbLink).toHaveProperty('fontSize');
             expect(styles.breadcrumbLink).toHaveProperty('color');
             expect(styles.breadcrumbLink).toHaveProperty('textDecoration');
         });
 
         it('has breadcrumbCurrent style', () => {
             expect(styles.breadcrumbCurrent).toEqual({
-                fontSize: '1rem',
                 fontWeight: 600,
                 color: 'text.primary',
             });
@@ -331,9 +324,9 @@ describe('helpPanelStyles', () => {
     });
 
     describe('getNavItemLabelProps', () => {
-        it('returns object with fontSize', () => {
+        it('returns object without explicit fontSize', () => {
             const result = getNavItemLabelProps(false);
-            expect(result).toHaveProperty('fontSize', '1rem');
+            expect(result).not.toHaveProperty('fontSize');
         });
 
         it('returns fontWeight 600 when active', () => {

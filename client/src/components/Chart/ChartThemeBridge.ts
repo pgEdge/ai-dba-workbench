@@ -10,6 +10,7 @@
 
 import { useMemo } from 'react';
 import { useTheme, alpha, type Theme } from '@mui/material/styles';
+import { CHART_AXIS_LABEL_FONTSIZE } from '../../theme';
 
 /**
  * Returns the default color palette for chart series, derived from the
@@ -97,7 +98,7 @@ export function useEChartsTheme() {
                 },
                 axisLabel: {
                     color: palette.text.secondary,
-                    fontSize: 14,
+                    fontSize: CHART_AXIS_LABEL_FONTSIZE,
                 },
                 splitLine: {
                     lineStyle: {
@@ -118,7 +119,7 @@ export function useEChartsTheme() {
                 },
                 axisLabel: {
                     color: palette.text.secondary,
-                    fontSize: 14,
+                    fontSize: CHART_AXIS_LABEL_FONTSIZE,
                 },
                 splitLine: {
                     lineStyle: {

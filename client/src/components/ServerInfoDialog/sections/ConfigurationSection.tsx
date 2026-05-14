@@ -54,7 +54,6 @@ const ConfigurationSection: React.FC<ConfigurationSectionProps> = ({
                     {catSettings.map((s) => (
                         <Box key={s.name} sx={getSettingRowSx(theme)}>
                             <Typography sx={{
-                                fontSize: '1rem',
                                 color: 'text.secondary',
                                 ...sxMono,
                                 flexShrink: 0,
@@ -62,7 +61,6 @@ const ConfigurationSection: React.FC<ConfigurationSectionProps> = ({
                                 {s.name}
                             </Typography>
                             <Typography sx={{
-                                fontSize: '1rem',
                                 color: 'text.primary',
                                 fontWeight: 500,
                                 ...sxMono,

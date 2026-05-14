@@ -297,7 +297,6 @@ const AIOverview: React.FC<AIOverviewProps> = ({ selection, onAnalyze, analysisC
     }), []);
 
     const labelSx = useMemo(() => ({
-        fontSize: '1rem',
         fontWeight: 600,
         color: 'text.primary',
         lineHeight: 1,

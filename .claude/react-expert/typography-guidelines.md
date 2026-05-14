@@ -47,11 +47,11 @@ Use MUI Typography variants exclusively. The canonical sizes are:
 | Card/panel heading   | 1.5rem (24px)    | h4          |                               |
 | Minor heading        | 1.375rem (22px)  | h5          |                               |
 | Small heading        | 1.25rem (20px)   | h6          | Dialog titles, tab labels     |
-| Default body text    | 1.125rem (18px)  | body1       | Standard for all readable text|
-| Secondary body text  | 1.125rem (18px)  | body2       | Same size, different weight   |
-| Subtitle             | 1.125rem (18px)  | subtitle1   |                               |
+| Subtitle             | 1.125rem (18px)  | subtitle1   | Emphasised body-adjacent text |
+| Default body text    | 1rem (16px)      | body1       | Standard for all readable text|
 | Small subtitle       | 1rem (16px)      | subtitle2   |                               |
 | Button text          | 1rem (16px)      | button      |                               |
+| Secondary body text  | 0.875rem (14px)  | body2       | Smaller, secondary content    |
 | Caption/label        | 0.875rem (14px)  | caption     | Smallest allowed size         |
 | Overline label       | 0.875rem (14px)  | overline    | Uppercase with letter-spacing |
 
@@ -62,27 +62,32 @@ Use MUI Typography variants exclusively. The canonical sizes are:
    these are known technical debt and do not need to be fixed in
    unrelated changes.
 
-2. **Default readable text must be 18px (1.125rem).** Do not use smaller
-   sizes for primary content.
+2. **Default readable text is 16px (1rem) via `body1`.** Do not use
+   smaller sizes for primary content. The previous 18px default was
+   reduced as part of the 2026 typography cleanup.
 
-3. **14px (0.875rem) is reserved for captions, labels, and decorative
-   text only.** Never use 14px for content the user needs to read as
-   primary information.
+3. **Secondary body text is 14px (0.875rem) via `body2`.** Use the
+   `body2` variant for less prominent prose, helper text, and
+   captions. Do not hand-wire `fontSize: '0.875rem'` on Typography
+   when `variant="body2"` produces the same result.
 
-4. **16px (1rem) may be used for subtitle2 and buttons.** This suits
-   secondary information that is less prominent than body text but more
-   prominent than captions.
-
-5. **Prefer MUI Typography variants from the theme.** Avoid arbitrary
+4. **Prefer MUI Typography variants from the theme.** Avoid arbitrary
    `fontSize` values in `sx` props or inline styles where a theme
    variant would suffice. If a new size is needed, consider adding it
    to the theme first.
 
-6. **Custom `fontSize` in sx props is discouraged** unless the value
+5. **Custom `fontSize` in sx props is discouraged** unless the value
    matches a theme variant or addresses a specific layout constraint
    (e.g., chart labels, dense data tables). Many existing components
-   use custom `fontSize` values; these are accepted as known
-   exceptions. New code should prefer theme variants when possible.
+   still carry custom `fontSize` values from the pre-cleanup era; new
+   code must prefer theme variants and tokens.
+
+6. **Use shared tokens for repeating patterns.** Chart axis labels use
+   `CHART_AXIS_LABEL_FONTSIZE` from `client/src/theme/tokens.ts`;
+   monospace caption rows use `MONO_CAPTION_SX`. Icon-size literals
+   should use `ICON_14_SX`, `ICON_16_SX`, or `ICON_10_SX` from the
+   same module. Add new tokens only when the same pattern repeats
+   three or more times.
 
 ## Header Capitalization Rules
 
@@ -190,11 +195,11 @@ const typography = {
         lineHeight: 1.5,
     },
     body1: {
-        fontSize: '1.125rem',
+        fontSize: '1rem',
         lineHeight: 1.6,
     },
     body2: {
-        fontSize: '1.125rem',
+        fontSize: '0.875rem',
         lineHeight: 1.6,
     },
     button: {
@@ -215,15 +220,22 @@ const typography = {
 };
 ```
 
-### Key Changes (2px Scale Bump)
+### Key Changes (2026 Cleanup)
 
-These changes bump most sizes up by 2px for improved readability:
+The 2026 typography cleanup restored MUI's standard 16/14 sizes for
+body text after user feedback that the previous 18/18 scale rendered
+the interface uniformly oversized:
 
-- Base minimum increased from 12px to 14px.
-- body1/body2 increased from 16px to 18px.
-- subtitle1 increased from 16px to 18px.
-- subtitle2 increased from 14px to 16px.
-- caption/overline increased from 12px to 14px.
-- h5 increased from 20px to 22px.
-- h6 increased from 18px to 20px.
-- h1-h4 and button unchanged.
+- body1 reduced from 18px to 16px (back to the MUI default).
+- body2 reduced from 18px to 14px (separated from body1 again).
+- subtitle1 stays at 18px and now exceeds body1, giving a real
+  visual hierarchy between subtitle and body.
+- subtitle2, button, h1-h6, caption, and overline are unchanged.
+- The minimum-allowed size remains 14px (0.875rem) for new code.
+
+When opening a file that still carries `fontSize: '1.125rem'`,
+`fontSize: '1rem'`, or `fontSize: '0.875rem'` overrides on a
+`<Typography>`, prefer the matching variant (`subtitle1`, `body1`,
+`body2`) and delete the override. Keep explicit numeric
+`fontSize` only on chart axis labels, Chips, MUI inputs, and
+non-Typography elements where variant inheritance does not apply.

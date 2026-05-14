@@ -44,7 +44,6 @@ export const SECTION_HEADER_SX: SxProps<Theme> = {
 export const SECTION_TITLE_SX: SxProps<Theme> = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '1rem',
 };
 
 /** KPI tile grid (similar to TILE_GRID_SX but more flexible) */
@@ -93,7 +92,6 @@ export const OVERLAY_HEADER_SX: SxProps<Theme> = {
 /** Overlay title */
 export const OVERLAY_TITLE_SX: SxProps<Theme> = {
     fontWeight: 600,
-    fontSize: '1.1rem',
     flex: 1,
 };
 

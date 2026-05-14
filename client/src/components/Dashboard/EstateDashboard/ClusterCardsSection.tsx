@@ -50,7 +50,6 @@ const CARD_HEADER_SX = {
 
 const CARD_NAME_SX = {
     fontWeight: 600,
-    fontSize: '1rem',
     color: 'text.primary',
     lineHeight: 1.2,
 };

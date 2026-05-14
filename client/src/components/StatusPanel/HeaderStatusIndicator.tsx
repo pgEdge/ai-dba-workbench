@@ -19,7 +19,7 @@ import {
     Error as ErrorIcon,
     CheckCircle as HealthyIcon,
 } from '@mui/icons-material';
-import { INDICATOR_SIZES } from './styles';
+import { INDICATOR_SIZES } from '../../theme';
 
 /**
  * HeaderStatusIndicator - Shows node health status with appropriate icon

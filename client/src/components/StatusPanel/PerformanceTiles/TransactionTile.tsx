@@ -20,6 +20,7 @@ import TileContainer from './TileContainer';
 import type { ConnectionPerformance, TransactionTimeSeries } from './types';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
+import { CHART_AXIS_LABEL_FONTSIZE } from '../../../theme';
 
 interface TransactionTileProps {
     connections: ConnectionPerformance[];
@@ -61,7 +62,7 @@ const TransactionTile: React.FC<TransactionTileProps> = ({
             ],
         };
 
-        const axisLabelStyle = { fontSize: 14, color: theme.palette.text.secondary };
+        const axisLabelStyle = { fontSize: CHART_AXIS_LABEL_FONTSIZE, color: theme.palette.text.secondary };
 
         const options = {
             grid: { top: 8, right: 4, bottom: 20, left: 4, containLabel: true },

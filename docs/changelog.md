@@ -212,6 +212,19 @@ project adheres to
   globs, were independently reviewed by the
   security-auditor agent, and mask no real
   vulnerabilities.
+- Reduce the web client's default `body1` and `body2`
+  typography sizes to the MUI standards of 16px and 14px,
+  and remove the roughly 80 inline `fontSize` overrides
+  that previously compensated for the oversized defaults;
+  body text across the application now renders smaller and
+  more consistently, while headings and subtitles are
+  unchanged.
+- Add a `CHART_AXIS_LABEL_FONTSIZE` token in
+  `client/src/theme/tokens.ts` so chart axis labels render
+  at a consistent 14px, and add a `MONO_CAPTION_SX` token
+  that deduplicates the monospace caption styling shared
+  by alert thresholds, Spock node info, and cron
+  schedules.
 - Consolidate four duplicated patterns in `server/src` as
   part of the codebase cleanup tracked in #77. The
   copy-pasted `getClient()` helper in

@@ -23,13 +23,15 @@ import {
 } from '@mui/icons-material';
 import {
     SERVER_INFO_WRAPPER_SX,
-    SERVER_INFO_LABEL_BASE_SX,
-    SERVER_INFO_VALUE_BASE_SX,
     SPOCK_DOT_SX,
     SPOCK_LABEL_BASE_SX,
     SPOCK_VERSION_SX,
     SPOCK_NODE_SX,
 } from './styles';
+import {
+    SERVER_INFO_LABEL_BASE_SX,
+    SERVER_INFO_VALUE_BASE_SX,
+} from '../../theme';
 import ServerInfoDialog from '../ServerInfoDialog';
 import type { ServerSelection } from '../../types/selection';
 

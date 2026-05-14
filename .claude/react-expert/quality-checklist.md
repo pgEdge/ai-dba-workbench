@@ -28,8 +28,12 @@ Avoid `fontSize: 10`, `fontSize: 11`, `fontSize: 12`, or
 `fontSize: 13` in new code. These are below the target minimum
 defined in `typography-guidelines.md`.
 
-When configuring chart axis labels, prefer `fontSize: 14` over
-`fontSize: 10` or `fontSize: 12`.
+When configuring chart axis labels, use the shared
+`CHART_AXIS_LABEL_FONTSIZE` token from
+`client/src/theme/tokens.ts` (currently 14) rather than a bare
+numeric literal. Reach for the token directly inside ECharts or
+Recharts option objects; the chart libraries accept a plain
+number and do not pick up MUI Typography variants.
 
 Note: many existing components use 12px and smaller sizes. These
 are known technical debt. Do not introduce new violations, but

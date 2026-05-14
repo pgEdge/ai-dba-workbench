@@ -314,11 +314,10 @@ const MembersPanel: React.FC<MembersPanelProps> = ({
                 }}
             >
                 <Typography
-                    variant="subtitle2"
+                    variant="body2"
                     sx={{
                         color: 'text.secondary',
                         textTransform: 'uppercase',
-                        fontSize: '0.875rem',
                         letterSpacing: '0.05em',
                     }}
                 >

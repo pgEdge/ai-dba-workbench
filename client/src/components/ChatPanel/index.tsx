@@ -182,12 +182,10 @@ const emptyStateSx = {
 const emptyTitleSx = {
     fontWeight: 600,
     color: 'text.secondary',
-    fontSize: '1.125rem',
 };
 
 const emptySubtitleSx = {
     color: 'text.disabled',
-    fontSize: '1.125rem',
     textAlign: 'center',
     maxWidth: 280,
     lineHeight: 1.5,
@@ -205,7 +203,6 @@ const errorBannerSx = {
 };
 
 const errorBannerTextSx = {
-    fontSize: '1rem',
     color: 'error.main',
     lineHeight: 1.4,
 };
@@ -547,10 +544,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                         {/* Message list */}
                         {messages.length === 0 ? (
                             <Box sx={emptyStateSx}>
-                                <Typography sx={emptyTitleSx}>
+                                <Typography variant="subtitle1" sx={emptyTitleSx}>
                                     Ask Ellie
                                 </Typography>
-                                <Typography sx={emptySubtitleSx}>
+                                <Typography variant="subtitle1" sx={emptySubtitleSx}>
                                     Ask questions about your PostgreSQL
                                     databases, get performance advice, or
                                     troubleshoot issues.

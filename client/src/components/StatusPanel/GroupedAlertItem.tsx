@@ -39,19 +39,20 @@ import {
     CHIP_LABEL_SX,
     CHIP_LABEL_075_SX,
     EXPAND_BUTTON_SX,
-    ICON_16_SX,
-    ICON_14_SX,
-
-    SEVERITY_CHIP_BASE_SX,
-    ALERT_TYPE_CHIP_BASE_SX,
     getAlertTypeColor,
     INSTANCE_TIME_SX,
     INSTANCE_THRESHOLD_SX,
-    ALERT_ACK_TEXT_SX,
-    ALERT_LAST_UPDATED_SX,
     GROUP_TITLE_SX,
     GROUP_INSTANCES_LIST_SX,
 } from './styles';
+import {
+    ICON_16_SX,
+    ICON_14_SX,
+    SEVERITY_CHIP_BASE_SX,
+    ALERT_TYPE_CHIP_BASE_SX,
+    ALERT_ACK_TEXT_SX,
+    ALERT_LAST_UPDATED_SX,
+} from '../../theme';
 
 /**
  * GroupedAlertInstance - A single instance row within a grouped alert panel

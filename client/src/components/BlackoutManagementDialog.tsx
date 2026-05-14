@@ -47,12 +47,11 @@ import type { Selection } from '../types/selection';
 import BlackoutDialog from './BlackoutDialog';
 import BlackoutScheduleDialog from './BlackoutScheduleDialog';
 import DeleteConfirmationDialog from './DeleteConfirmationDialog';
+import { ICON_14_SX, ICON_16_SX, MONO_CAPTION_SX } from '../theme';
 
 // ---- Static style constants ----
 
 const CHIP_LABEL_SX = { px: 0.5 };
-const ICON_16_SX = { fontSize: 16 };
-const ICON_14_SX = { fontSize: 14 };
 
 const LIST_SX = {
     display: 'flex',
@@ -62,26 +61,22 @@ const LIST_SX = {
 
 const BANNER_TITLE_SX = {
     fontWeight: 600,
-    fontSize: '1rem',
     lineHeight: 1.2,
 };
 
 const BANNER_REASON_SX = {
-    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
 
 const ITEM_REASON_SX = {
     color: 'text.secondary',
-    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
 
 const ITEM_META_SX = {
     color: 'text.disabled',
-    fontSize: '0.875rem',
     display: 'flex',
     alignItems: 'center',
     gap: 0.25,
@@ -89,24 +84,20 @@ const ITEM_META_SX = {
 
 const SCHEDULE_NAME_SX = {
     fontWeight: 600,
-    fontSize: '1rem',
     lineHeight: 1.2,
     color: 'text.primary',
 };
 
 const SCHEDULE_CRON_SX = {
-    fontSize: '0.875rem',
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    ...MONO_CAPTION_SX,
     color: 'text.secondary',
 };
 
 const SCHEDULE_DETAIL_SX = {
     color: 'text.secondary',
-    fontSize: '0.875rem',
 };
 
 const SECTION_LABEL_SX = {
-    fontSize: '0.875rem',
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
@@ -294,7 +285,6 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
     }), [theme]);
 
     const splitButtonSx = useMemo(() => ({
-        fontSize: '1rem',
         textTransform: 'none',
         fontWeight: 600,
     }), []);
@@ -350,9 +340,9 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                 <DialogContent dividers>
                     {isEmpty ? (
                         <Typography
+                            variant="body2"
                             sx={{
                                 color: 'text.disabled',
-                                fontSize: '0.875rem',
                                 py: 4,
                                 textAlign: 'center',
                             }}
@@ -364,7 +354,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                             {/* Active blackouts */}
                             {activeList.length > 0 && (
                                 <Box>
-                                    <Typography sx={SECTION_LABEL_SX}>Active</Typography>
+                                    <Typography variant="body2" sx={SECTION_LABEL_SX}>Active</Typography>
                                     <Box sx={LIST_SX}>
                                         {activeList.map((blackout) => {
                                             const ScopeIcon = getScopeIcon(blackout.scope);
@@ -389,7 +379,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                             />
                                                         </Box>
                                                         {blackout.reason && (
-                                                            <Typography sx={{ ...BANNER_REASON_SX, color: alpha(amberColor, 0.85) }}>
+                                                            <Typography variant="body2" sx={{ ...BANNER_REASON_SX, color: alpha(amberColor, 0.85) }}>
                                                                 {blackout.reason}
                                                             </Typography>
                                                         )}
@@ -413,7 +403,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                             {/* Non-active blackouts */}
                             {nonActiveBlackouts.length > 0 && (
                                 <Box>
-                                    <Typography sx={SECTION_LABEL_SX}>Blackouts</Typography>
+                                    <Typography variant="body2" sx={SECTION_LABEL_SX}>Blackouts</Typography>
                                     <Box sx={LIST_SX}>
                                         {nonActiveBlackouts.map((blackout) => {
                                             const ScopeIcon = getScopeIcon(blackout.scope);
@@ -428,18 +418,18 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                                 size="small"
                                                                 sx={itemScopeChipSx}
                                                             />
-                                                            <Typography sx={ITEM_META_SX}>
+                                                            <Typography variant="body2" sx={ITEM_META_SX}>
                                                                 <ClockIcon sx={{ fontSize: 10 }} />
                                                                 {formatTimeRange(blackout.start_time, blackout.end_time)}
                                                             </Typography>
                                                         </Box>
                                                         {blackout.reason && (
-                                                            <Typography sx={ITEM_REASON_SX}>
+                                                            <Typography variant="body2" sx={ITEM_REASON_SX}>
                                                                 {blackout.reason}
                                                             </Typography>
                                                         )}
                                                         {blackout.created_by && (
-                                                            <Typography sx={ITEM_META_SX}>
+                                                            <Typography variant="body2" sx={ITEM_META_SX}>
                                                                 <PersonIcon sx={{ fontSize: 10 }} />
                                                                 {blackout.created_by}
                                                             </Typography>
@@ -464,7 +454,7 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                             {/* Schedules */}
                             {scheduleList.length > 0 && (
                                 <Box>
-                                    <Typography sx={SECTION_LABEL_SX}>Schedules</Typography>
+                                    <Typography variant="body2" sx={SECTION_LABEL_SX}>Schedules</Typography>
                                     <Box sx={LIST_SX}>
                                         {scheduleList.map((schedule) => {
                                             const durationMinutes = schedule.duration_minutes || 0;
@@ -490,10 +480,10 @@ const BlackoutManagementDialog: React.FC<BlackoutManagementDialogProps> = ({
                                                         <Typography sx={SCHEDULE_NAME_SX}>
                                                             {schedule.name}
                                                         </Typography>
-                                                        <Typography sx={SCHEDULE_CRON_SX}>
+                                                        <Typography variant="body2" sx={SCHEDULE_CRON_SX}>
                                                             {schedule.cron_expression}
                                                         </Typography>
-                                                        <Typography sx={SCHEDULE_DETAIL_SX}>
+                                                        <Typography variant="body2" sx={SCHEDULE_DETAIL_SX}>
                                                             {durationLabel} duration
                                                             {schedule.timezone ? ` (${schedule.timezone})` : ''}
                                                         </Typography>

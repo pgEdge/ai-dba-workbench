@@ -128,7 +128,7 @@ ${analysis}
     const toolbarContent = (
         <>
             {/* Metric description */}
-            <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                 {analysisContext.metricDescription || 'Chart'}
             </Typography>
 
@@ -152,7 +152,7 @@ ${analysis}
 
             {/* Time range */}
             {analysisContext.timeRange && (
-                <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                     {analysisContext.timeRange}
                 </Typography>
             )}

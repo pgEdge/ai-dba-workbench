@@ -9,12 +9,19 @@
  */
 
 /**
- * Shared style constants for StatusPanel sub-components
+ * Shared style constants for StatusPanel sub-components.
+ *
+ * Global, app-wide design tokens (icon sizes, metric label/value
+ * typography, server-info label/value typography, alert text variants,
+ * etc.) live in `client/src/theme/tokens.ts` and should be imported
+ * from `'../../theme'`. This file contains only StatusPanel-specific
+ * layout and helpers.
  */
 
 import type { Theme } from '@mui/material/styles';
 import { alpha } from '@mui/material';
 import { getFriendlyTitle } from '../../utils/friendlyNames';
+import { MONO_CAPTION_SX } from '../../theme';
 
 // Re-export so existing imports from this module continue to work
 export { getFriendlyTitle } from '../../utils/friendlyNames';
@@ -75,58 +82,17 @@ export const getSectionPanelSx = (theme: Theme) => ({
 export const CHIP_LABEL_SX = { px: 0.5 };
 export const CHIP_LABEL_075_SX = { px: 0.75 };
 
-// HeaderStatusIndicator sizes
-export const INDICATOR_SIZES = {
-    small: 14,
-    medium: 18,
-    large: 22,
-};
-
 // Static layout styles
 export const FLEX_1_MIN0_SX = { flex: 1, minWidth: 0 };
 export const EXPAND_BUTTON_SX = { p: 0.25 };
-export const ICON_16_SX = { fontSize: 16 };
-export const ICON_14_SX = { fontSize: 14 };
-export const ICON_10_SX = { fontSize: 10 };
 
 // MetricCard static styles
-export const METRIC_LABEL_SX = {
-    color: 'text.secondary',
-    fontSize: '0.875rem',
-    fontWeight: 500,
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-};
-
-export const METRIC_VALUE_BASE_SX = {
-    fontWeight: 700,
-    fontSize: '1.75rem',
-    lineHeight: 1,
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-};
-
 export const METRIC_TREND_CONTAINER_SX = { display: 'flex', alignItems: 'center', gap: 0.25 };
 
 // ServerInfoCard static styles
 export const SERVER_INFO_WRAPPER_SX = {
     display: 'flex',
     flexWrap: 'wrap',
-};
-
-export const SERVER_INFO_LABEL_BASE_SX = {
-    fontSize: '0.875rem',
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.1em',
-    lineHeight: 1,
-};
-
-export const SERVER_INFO_VALUE_BASE_SX = {
-    color: 'text.primary',
-    fontSize: '1rem',
-    fontWeight: 500,
-    lineHeight: 1.2,
-    whiteSpace: 'nowrap',
 };
 
 export const SPOCK_DOT_SX = {
@@ -143,73 +109,14 @@ export const SPOCK_LABEL_BASE_SX = {
 };
 
 export const SPOCK_VERSION_SX = {
-    fontSize: '0.875rem',
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    ...MONO_CAPTION_SX,
     color: 'text.secondary',
 };
 
 export const SPOCK_NODE_SX = {
-    fontSize: '0.875rem',
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    ...MONO_CAPTION_SX,
     color: 'text.primary',
     fontWeight: 500,
-};
-
-// AlertItem static styles
-export const ALERT_TITLE_BASE_SX = {
-    fontWeight: 600,
-    fontSize: '1rem',
-    lineHeight: 1.2,
-};
-
-export const ALERT_THRESHOLD_SX = {
-    color: 'text.secondary',
-    fontSize: '0.875rem',
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-    mt: 0.25,
-};
-
-export const ALERT_DESCRIPTION_SX = {
-    color: 'text.secondary',
-    fontSize: '0.875rem',
-    mt: 0.25,
-    wordBreak: 'break-word',
-};
-
-export const ALERT_ACK_TEXT_SX = {
-    color: 'text.secondary',
-    fontSize: '0.875rem',
-    fontStyle: 'italic',
-};
-
-export const ALERT_TIME_SX = {
-    color: 'text.disabled',
-    fontSize: '0.875rem',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 0.25,
-};
-
-// "Last updated" line style, used when an alert's last_updated
-// timestamp differs from its triggered_at timestamp (e.g. after
-// reactivation).
-export const ALERT_LAST_UPDATED_SX = {
-    color: 'text.secondary',
-    fontSize: '0.875rem',
-};
-
-export const SEVERITY_CHIP_BASE_SX = {
-    height: 16,
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-};
-
-export const ALERT_TYPE_CHIP_BASE_SX = {
-    height: 16,
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    textTransform: 'capitalize',
 };
 
 // GroupedAlertInstance static styles
@@ -223,16 +130,14 @@ export const INSTANCE_TIME_SX = {
 };
 
 export const INSTANCE_THRESHOLD_SX = {
+    ...MONO_CAPTION_SX,
     color: 'text.secondary',
-    fontSize: '0.875rem',
-    fontFamily: '"JetBrains Mono", "SF Mono", monospace',
 };
 
 // GroupedAlertItem static styles
 export const GROUP_TITLE_SX = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '1rem',
     lineHeight: 1.2,
     flex: 1,
 };
@@ -248,7 +153,7 @@ export const GROUP_INSTANCES_LIST_SX = {
 // AcknowledgeDialog static styles
 export const ACK_DIALOG_TITLE_SX = { pb: 1 };
 export const ACK_DIALOG_ACTIONS_SX = { px: 3, pb: 2 };
-export const ACK_FALSE_POSITIVE_TITLE_SX = { fontSize: '1rem', fontWeight: 500, color: 'text.primary' };
+export const ACK_FALSE_POSITIVE_TITLE_SX = { fontWeight: 500, color: 'text.primary' };
 export const ACK_FALSE_POSITIVE_DESC_SX = { fontSize: '0.875rem', color: 'text.secondary' };
 
 // AlertsSection static styles
@@ -265,7 +170,6 @@ export const ALERTS_HEADER_SX = {
 export const ALERTS_TITLE_SX = {
     fontWeight: 600,
     color: 'text.primary',
-    fontSize: '1rem',
 };
 
 export const ALERTS_TYPE_COUNT_SX = {
@@ -282,7 +186,6 @@ export const ACTIVE_LIST_SX = {
 
 export const NO_ALERTS_TEXT_BASE_SX = {
     fontWeight: 500,
-    fontSize: '1rem',
 };
 
 export const ACK_HEADER_BASE_SX = {
@@ -298,7 +201,6 @@ export const ACK_HEADER_BASE_SX = {
 export const ACK_TITLE_SX = {
     fontWeight: 500,
     color: 'text.secondary',
-    fontSize: '0.875rem',
 };
 
 export const ACK_LIST_SX = {

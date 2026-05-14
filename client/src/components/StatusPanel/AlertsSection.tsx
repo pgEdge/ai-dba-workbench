@@ -34,7 +34,6 @@ import {
     groupAlertsByTitleAndSeverity,
     CHIP_LABEL_SX,
     EXPAND_BUTTON_SX,
-    ICON_16_SX,
     ALERTS_HEADER_SX,
     ALERTS_TITLE_SX,
     ALERTS_TYPE_COUNT_SX,
@@ -44,6 +43,7 @@ import {
     ACK_TITLE_SX,
     ACK_LIST_SX,
 } from './styles';
+import { ICON_16_SX } from '../../theme';
 
 /**
  * AlertsSection - Collapsible alerts list with active/acknowledged separation
@@ -233,7 +233,7 @@ const AlertsSection = ({
                 <>
                     <Box onClick={() => { setAckExpanded(!ackExpanded); }} sx={ACK_HEADER_BASE_SX}>
                         <AckIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-                        <Typography sx={ACK_TITLE_SX}>
+                        <Typography variant="body2" sx={ACK_TITLE_SX}>
                             Acknowledged
                         </Typography>
                         <Chip label={acknowledgedAlerts.length} size="small" sx={ackCountChipSx} />

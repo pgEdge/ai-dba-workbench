@@ -99,7 +99,6 @@ const SystemSection: React.FC<SystemSectionProps> = ({ system: sys }) => {
                             <Box key={idx} sx={{ mb: idx < sys.disks!.length - 1 ? 1 : 0 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.25 }}>
                                     <Typography sx={{
-                                        fontSize: '1rem',
                                         ...sxMono,
                                         color: 'text.primary',
                                         fontWeight: 500,

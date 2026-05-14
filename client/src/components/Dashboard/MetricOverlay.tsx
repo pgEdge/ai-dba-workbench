@@ -80,7 +80,7 @@ const MetricOverlay: React.FC<MetricOverlayProps> = ({ children }) => {
                                 <ArrowBackIcon fontSize="small" />
                             </IconButton>
                         )}
-                        <Typography sx={OVERLAY_TITLE_SX}>
+                        <Typography variant="subtitle1" sx={OVERLAY_TITLE_SX}>
                             {currentOverlay.title}
                         </Typography>
                         <IconButton

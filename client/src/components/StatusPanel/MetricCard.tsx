@@ -20,11 +20,8 @@ import {
     TrendingUp as TrendingUpIcon,
     TrendingDown as TrendingDownIcon,
 } from '@mui/icons-material';
-import {
-    METRIC_LABEL_SX,
-    METRIC_VALUE_BASE_SX,
-    METRIC_TREND_CONTAINER_SX,
-} from './styles';
+import { METRIC_TREND_CONTAINER_SX } from './styles';
+import { METRIC_LABEL_SX, METRIC_VALUE_BASE_SX } from '../../theme';
 
 /**
  * MetricCard - Display a key metric with trend indicator

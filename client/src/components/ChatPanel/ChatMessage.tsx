@@ -51,7 +51,6 @@ const sxMonoFont = {
 };
 
 const sxTimestamp = {
-    fontSize: '0.875rem',
     color: 'text.disabled',
     mt: 0.5,
 };
@@ -124,21 +123,18 @@ const getErrorBubbleSx = (theme: Theme) => ({
 });
 
 const getUserTextSx = {
-    fontSize: '1rem',
     lineHeight: 1.6,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
 };
 
 const getSystemTextSx = (theme: Theme) => ({
-    fontSize: '1.125rem',
     fontStyle: 'italic',
     color: theme.palette.text.secondary,
     lineHeight: 1.5,
 });
 
 const getErrorTextSx = (theme: Theme) => ({
-    fontSize: '1rem',
     lineHeight: 1.6,
     color: theme.palette.mode === 'dark'
         ? theme.palette.error.light
@@ -184,7 +180,6 @@ const sxMdH3 = {
 
 const sxMdParagraph = {
     color: 'text.primary',
-    fontSize: '1.125rem',
     lineHeight: 1.7,
     my: 0.75,
 };
@@ -194,7 +189,6 @@ const sxMdList = {
     my: 1,
     '& li': {
         mb: 0.5,
-        fontSize: '1.125rem',
         lineHeight: 1.6,
         color: 'text.primary',
     },
@@ -291,7 +285,6 @@ const getMdTableSx = (theme: Theme) => ({
     borderCollapse: 'collapse',
     // Spacing lives on the container so the scrollbar tracks with the table.
     my: 0,
-    fontSize: '1.125rem',
     '& th, & td': {
         border: '1px solid',
         borderColor: theme.palette.mode === 'dark'
@@ -539,7 +532,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                     </Typography>
                 </Box>
                 {message.timestamp && (
-                    <Typography sx={sxTimestamp}>
+                    <Typography variant="body2" sx={sxTimestamp}>
                         {formatTimestamp(message.timestamp)}
                     </Typography>
                 )}
@@ -568,7 +561,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                     <Typography sx={getUserTextSx}>{textContent}</Typography>
                 </Box>
                 {message.timestamp && (
-                    <Typography sx={sxTimestamp}>
+                    <Typography variant="body2" sx={sxTimestamp}>
                         {formatTimestamp(message.timestamp)}
                     </Typography>
                 )}
@@ -589,7 +582,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode }) => {
                 {renderToolActivity()}
             </Box>
             {message.timestamp && (
-                <Typography sx={sxTimestamp}>
+                <Typography variant="body2" sx={sxTimestamp}>
                     {formatTimestamp(message.timestamp)}
                 </Typography>
             )}

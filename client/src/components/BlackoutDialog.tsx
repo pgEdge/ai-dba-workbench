@@ -411,7 +411,6 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
     const modeToggleSx = useMemo(() => ({
         '& .MuiToggleButton-root': {
             textTransform: 'none',
-            fontSize: '1rem',
             fontWeight: 500,
             px: 2,
             py: 0.5,
@@ -469,7 +468,7 @@ const BlackoutDialog: React.FC<BlackoutDialogProps> = ({
                                     label={
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                                             <Icon sx={{ fontSize: 16, color: available ? 'text.secondary' : 'text.disabled' }} />
-                                            <Typography sx={{ fontSize: '1rem', color: available ? 'text.primary' : 'text.disabled' }}>
+                                            <Typography sx={{ color: available ? 'text.primary' : 'text.disabled' }}>
                                                 {opt.label}
                                             </Typography>
                                         </Box>

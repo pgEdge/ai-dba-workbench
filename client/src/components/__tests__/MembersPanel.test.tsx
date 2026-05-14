@@ -252,21 +252,20 @@ describe('MembersPanel', () => {
         // Open add form
         await user.click(screen.getByText('Add server'));
 
-        // Type in the autocomplete
+        // Open the autocomplete dropdown. Clicking the input opens
+        // the listbox and renders every available option without
+        // requiring per-character typing, which keeps the test fast
+        // enough to stay under the default 5s budget when the
+        // suite is running under heavy parallel load.
         const serverInput = screen.getByPlaceholderText(
             'Search unassigned servers...',
         );
         await user.click(serverInput);
-        await user.type(serverInput, 'Unassigned');
 
         // Select the option from the dropdown
-        await waitFor(() => {
-            expect(
-                screen.getByText(/Unassigned Server/),
-            ).toBeInTheDocument();
+        const option = await screen.findByRole('option', {
+            name: /Unassigned Server/,
         });
-
-        const option = screen.getByText(/Unassigned Server/);
         await user.click(option);
 
         // Click Add button
@@ -345,25 +344,20 @@ describe('MembersPanel', () => {
         // Open add form
         await user.click(screen.getByText('Add server'));
 
-        // Type in the autocomplete
+        // Open the autocomplete dropdown. Clicking the input opens
+        // the listbox and renders every available option without
+        // requiring per-character typing, which keeps the test fast
+        // enough to stay under the default 5s budget when the
+        // suite is running under heavy parallel load.
         const serverInput = screen.getByPlaceholderText(
             'Search unassigned servers...',
         );
         await user.click(serverInput);
-        await user.type(serverInput, 'Unassigned');
 
         // Select the option from the dropdown
-        await waitFor(() => {
-            expect(
-                screen.getByText(
-                    /Unassigned Server/,
-                ),
-            ).toBeInTheDocument();
+        const option = await screen.findByRole('option', {
+            name: /Unassigned Server/,
         });
-
-        const option = screen.getByText(
-            /Unassigned Server/,
-        );
         await user.click(option);
 
         // Click Add button

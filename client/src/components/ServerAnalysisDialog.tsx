@@ -129,7 +129,7 @@ const ServerAnalysisDialog: React.FC<ServerAnalysisDialogProps> = ({
 
             {/* Server count for clusters */}
             {isCluster && selection?.servers && (
-                <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                     {selection.servers.length} server{selection.servers.length !== 1 ? 's' : ''}
                 </Typography>
             )}

@@ -20,6 +20,7 @@ import type { ConnectionPerformance, DatabaseCacheHitData } from './types';
 import { TILE_VALUE_SX, getCacheColor } from './styles';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
+import { CHART_AXIS_LABEL_FONTSIZE } from '../../../theme';
 
 interface CacheHitTileProps {
     connections: ConnectionPerformance[];
@@ -266,7 +267,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                             xAxis: {
                                 boundaryGap: false,
                                 axisLabel: {
-                                    fontSize: 14,
+                                    fontSize: CHART_AXIS_LABEL_FONTSIZE,
                                     color: theme.palette.text.secondary,
                                     interval: 'auto',
                                     hideOverlap: true,
@@ -280,7 +281,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
                                 scale: true,
                                 splitNumber: 3,
                                 axisLabel: {
-                                    fontSize: 14,
+                                    fontSize: CHART_AXIS_LABEL_FONTSIZE,
                                     color: theme.palette.text.secondary,
                                     formatter: (value: number) => `${Math.round(value)}%`,
                                 },

@@ -161,7 +161,6 @@ const BaseAnalysisDialog: React.FC<BaseAnalysisDialogProps> = ({
                         variant="h6"
                         sx={{
                             fontWeight: 600,
-                            fontSize: '1.125rem',
                             color: 'text.primary',
                             whiteSpace: 'nowrap',
                         }}
@@ -295,7 +294,6 @@ const BaseAnalysisDialog: React.FC<BaseAnalysisDialogProps> = ({
                                         <Typography
                                             sx={{
                                                 color: 'text.secondary',
-                                                fontSize: '1rem',
                                             }}
                                         >
                                             {error}

@@ -561,11 +561,11 @@ const typography = {
         lineHeight: 1.5,
     },
     body1: {
-        fontSize: '1.125rem',
+        fontSize: '1rem',
         lineHeight: 1.6,
     },
     body2: {
-        fontSize: '1.125rem',
+        fontSize: '0.875rem',
         lineHeight: 1.6,
     },
     button: {

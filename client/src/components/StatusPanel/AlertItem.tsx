@@ -35,8 +35,10 @@ import {
     hasDistinctLastUpdated,
     CHIP_LABEL_SX,
     FLEX_1_MIN0_SX,
+    getAlertTypeColor,
+} from './styles';
+import {
     ICON_16_SX,
-
     ALERT_TITLE_BASE_SX,
     ALERT_THRESHOLD_SX,
     ALERT_DESCRIPTION_SX,
@@ -45,8 +47,7 @@ import {
     ALERT_TIME_SX,
     SEVERITY_CHIP_BASE_SX,
     ALERT_TYPE_CHIP_BASE_SX,
-    getAlertTypeColor,
-} from './styles';
+} from '../../theme';
 
 /**
  * AlertItem - Compact alert entry with severity indicator and ack functionality

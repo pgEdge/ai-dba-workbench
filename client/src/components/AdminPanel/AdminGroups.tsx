@@ -461,8 +461,6 @@ const AdminGroups: React.FC = () => {
                                                                         <ListItemText
                                                                             primary={username}
                                                                             secondary="user"
-                                                                            primaryTypographyProps={{ fontSize: '1rem' }}
-                                                                            secondaryTypographyProps={{ fontSize: '0.875rem' }}
                                                                         />
                                                                         <ListItemSecondaryAction>
                                                                             <IconButton
@@ -482,8 +480,6 @@ const AdminGroups: React.FC = () => {
                                                                         <ListItemText
                                                                             primary={groupName}
                                                                             secondary="group"
-                                                                            primaryTypographyProps={{ fontSize: '1rem' }}
-                                                                            secondaryTypographyProps={{ fontSize: '0.875rem' }}
                                                                         />
                                                                         <ListItemSecondaryAction>
                                                                             <IconButton
@@ -500,7 +496,7 @@ const AdminGroups: React.FC = () => {
                                                                 ))}
                                                             </List>
                                                         ) : (
-                                                            <Typography color="text.secondary" sx={{ fontSize: '1rem', py: 1 }}>
+                                                            <Typography color="text.secondary" sx={{ py: 1 }}>
                                                                 No members in this group.
                                                             </Typography>
                                                         )}

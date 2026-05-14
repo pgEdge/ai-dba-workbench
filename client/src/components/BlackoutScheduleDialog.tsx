@@ -513,7 +513,6 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
         '& .MuiOutlinedInput-root': {
             ...textFieldSx['& .MuiOutlinedInput-root'],
             fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-            fontSize: '1rem',
         },
     }), []);
 
@@ -560,7 +559,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                                     label={
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                                             <Icon sx={{ fontSize: 16, color: available ? 'text.secondary' : 'text.disabled' }} />
-                                            <Typography sx={{ fontSize: '1rem', color: available ? 'text.primary' : 'text.disabled' }}>
+                                            <Typography sx={{ color: available ? 'text.primary' : 'text.disabled' }}>
                                                 {opt.label}
                                             </Typography>
                                         </Box>
@@ -668,7 +667,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     sx={{ ...cronFieldSx, ...SELECT_FIELD_SX }}
                 />
                 {cronDescription && (
-                    <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled', mt: 0.5 }}>
+                    <Typography variant="body2" sx={{ color: 'text.disabled', mt: 0.5 }}>
                         {cronDescription}
                     </Typography>
                 )}
@@ -747,7 +746,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                         disabled={isSaving}
                         size="small"
                     />
-                    <Typography sx={{ fontSize: '1rem', color: 'text.primary' }}>
+                    <Typography sx={{ color: 'text.primary' }}>
                         {enabled ? 'Enabled' : 'Disabled'}
                     </Typography>
                 </Box>

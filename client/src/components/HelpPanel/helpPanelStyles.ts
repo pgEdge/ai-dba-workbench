@@ -26,23 +26,19 @@ export const styles = {
     },
     sectionTitleIcon: { fontSize: 18, color: 'primary.main' },
     sectionTitleText: {
-        fontSize: '1rem',
         fontWeight: 600,
         color: 'text.primary',
     },
     helpTipText: {
-        fontSize: '1rem',
         color: 'text.secondary',
         lineHeight: 1.5,
     },
     featureTitle: {
         fontWeight: 600,
-        fontSize: '1rem',
         color: 'text.primary',
         mb: 0.25,
     },
     featureDescription: {
-        fontSize: '1rem',
         color: 'text.secondary',
         lineHeight: 1.5,
     },
@@ -59,7 +55,7 @@ export const styles = {
     },
     shortcutRow: { display: 'flex', alignItems: 'center', gap: 1, mb: 1 },
     shortcutKeysRow: { display: 'flex', gap: 0.5 },
-    shortcutDescription: { fontSize: '1rem', color: 'text.secondary' },
+    shortcutDescription: { color: 'text.secondary' },
     drawerContent: {
         display: 'flex',
         flexDirection: 'column',
@@ -78,13 +74,11 @@ export const styles = {
         '& .MuiBreadcrumbs-ol': { flexWrap: 'nowrap' },
     },
     breadcrumbLink: {
-        fontSize: '1rem',
         color: 'text.secondary',
         textDecoration: 'none',
         '&:hover': { textDecoration: 'underline' },
     },
     breadcrumbCurrent: {
-        fontSize: '1rem',
         fontWeight: 600,
         color: 'text.primary',
     },
@@ -153,7 +147,6 @@ export const getNavItemIconColor = (isActive: boolean): string =>
     isActive ? 'primary.main' : 'text.secondary';
 
 export const getNavItemLabelProps = (isActive: boolean) => ({
-    fontSize: '1rem',
     fontWeight: isActive ? 600 : 500,
     color: isActive ? 'primary.main' : 'text.primary',
 });

@@ -30,20 +30,18 @@ import {
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/useBlackouts';
 import type { Selection } from '../types/selection';
+import { ICON_14_SX } from '../theme';
 
 // ---- Static style constants ----
 
 const CHIP_LABEL_SX = { px: 0.5 };
-const ICON_14_SX = { fontSize: 14 };
 
 const BANNER_TITLE_SX = {
     fontWeight: 600,
-    fontSize: '1rem',
     lineHeight: 1.2,
 };
 
 const BANNER_REASON_SX = {
-    fontSize: '0.875rem',
     mt: 0.25,
     wordBreak: 'break-word',
 };
@@ -167,7 +165,7 @@ const ActiveBlackoutBanner = ({ blackout, onStop }) => {
                     />
                 </Box>
                 {blackout.reason && (
-                    <Typography sx={{ ...BANNER_REASON_SX, color: alpha(amberColor, 0.85) }}>
+                    <Typography variant="body2" sx={{ ...BANNER_REASON_SX, color: alpha(amberColor, 0.85) }}>
                         {blackout.reason}
                     </Typography>
                 )}

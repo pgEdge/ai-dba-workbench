@@ -75,7 +75,6 @@ const overlayContainerBase = {
 
 const overlayClusterNameSx = {
     fontWeight: 500,
-    fontSize: '1rem',
     color: 'text.primary',
 };
 
@@ -243,7 +242,7 @@ export const DragOverlayContent: React.FC<DragOverlayContentProps> = ({ cluster,
             <DragIcon sx={overlayDragIconSx} />
             <ClusterIcon sx={overlayClusterIconSx} />
             <Typography
-                variant="body2"
+                variant="body1"
                 sx={overlayClusterNameSx}
             >
                 {cluster.name}

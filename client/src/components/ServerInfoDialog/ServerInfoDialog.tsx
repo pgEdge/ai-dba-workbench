@@ -240,7 +240,6 @@ const ServerInfoDialog: React.FC<ServerInfoDialogProps> = ({
                     <Box sx={{ p: 3 }}>
                         <Typography sx={{
                             color: theme.palette.error.main,
-                            fontSize: '1rem',
                         }}>
                             {error}
                         </Typography>

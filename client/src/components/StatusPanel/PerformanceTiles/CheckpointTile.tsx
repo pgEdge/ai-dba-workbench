@@ -20,6 +20,7 @@ import TileContainer from './TileContainer';
 import type { ConnectionPerformance, CheckpointTimeSeries } from './types';
 import { useAICapabilities } from '../../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../../hooks/useChartAnalysis';
+import { CHART_AXIS_LABEL_FONTSIZE } from '../../../theme';
 
 interface CheckpointTileProps {
     connections: ConnectionPerformance[];
@@ -116,7 +117,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                             xAxis: {
                                 boundaryGap: false,
                                 axisLabel: {
-                                    fontSize: 14,
+                                    fontSize: CHART_AXIS_LABEL_FONTSIZE,
                                     color: theme.palette.text.secondary,
                                     interval: 'auto',
                                     hideOverlap: true,
@@ -129,7 +130,7 @@ const CheckpointTile: React.FC<CheckpointTileProps> = ({
                             yAxis: {
                                 splitNumber: 3,
                                 axisLabel: {
-                                    fontSize: 14,
+                                    fontSize: CHART_AXIS_LABEL_FONTSIZE,
                                     color: theme.palette.text.secondary,
                                     formatter: (value: number) => Math.round(value).toLocaleString(),
                                 },

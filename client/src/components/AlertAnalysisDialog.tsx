@@ -204,7 +204,6 @@ ${analysis}
                 <SeverityIcon sx={{ fontSize: 14, color: severityColor }} />
                 <Typography
                     sx={{
-                        fontSize: '1rem',
                         color: severityColor,
                         fontWeight: 500,
                         textTransform: 'capitalize',
@@ -215,7 +214,7 @@ ${analysis}
             </Box>
 
             {/* Alert title */}
-            <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                 {(alert?.title as string) || 'Alert'}
             </Typography>
 
@@ -259,7 +258,7 @@ ${analysis}
 
             {/* Time text */}
             {alert?.time && (
-                <Typography sx={{ fontSize: '0.875rem', color: 'text.disabled' }}>
+                <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                     {alert.time as string}
                 </Typography>
             )}

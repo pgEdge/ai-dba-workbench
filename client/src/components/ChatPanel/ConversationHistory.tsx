@@ -78,7 +78,6 @@ const headerSx = {
 };
 
 const headerTitleSx = {
-    fontSize: '1rem',
     fontWeight: 600,
     color: 'text.secondary',
     textTransform: 'uppercase',
@@ -122,7 +121,6 @@ const getConvItemSx = (isActive: boolean) => (theme: Theme) => ({
 });
 
 const convTitleSx = {
-    fontSize: '1.125rem',
     fontWeight: 500,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -130,7 +128,6 @@ const convTitleSx = {
 };
 
 const convPreviewSx = {
-    fontSize: '1rem',
     color: 'text.secondary',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -146,14 +143,13 @@ const emptyStateSx = {
 };
 
 const emptyTextSx = {
-    fontSize: '1rem',
     color: 'text.disabled',
     textAlign: 'center',
 };
 
 const moreMenuIconSx = { fontSize: 18 };
 
-const menuItemTextSx = { fontSize: '1.125rem' };
+const menuItemTextSx = {};
 
 const getDeleteMenuItemSx = (theme: Theme) => ({
     color: theme.palette.error.main,
@@ -169,7 +165,6 @@ const footerSx = {
 };
 
 const getClearAllButtonSx = (theme: Theme) => ({
-    fontSize: '1rem',
     color: theme.palette.text.secondary,
     textTransform: 'none',
     justifyContent: 'flex-start',
@@ -181,9 +176,6 @@ const getClearAllButtonSx = (theme: Theme) => ({
 });
 
 const renameFieldSx = {
-    '& .MuiOutlinedInput-root': {
-        fontSize: '1.125rem',
-    },
     '& .MuiOutlinedInput-input': {
         py: 0.5,
         px: 0.75,

@@ -153,7 +153,6 @@ const getLogoutMenuItemSx = (theme: Theme) => ({
 const listItemIconSx = { color: 'inherit' };
 
 const signOutTypographyProps = {
-    fontSize: '1rem',
     fontWeight: 500,
 };
 

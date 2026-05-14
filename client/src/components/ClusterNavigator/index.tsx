@@ -78,7 +78,6 @@ const headerRowSx = {
 
 const headerTitleSx = {
     color: 'text.primary',
-    fontSize: '1rem',
     fontWeight: 700,
     letterSpacing: '0.08em',
     whiteSpace: 'nowrap',

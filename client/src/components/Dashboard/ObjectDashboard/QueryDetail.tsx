@@ -411,7 +411,6 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             color: 'primary.main',
                         }} />
                         <Typography sx={{
-                            fontSize: '1rem',
                             fontWeight: 600,
                             color: 'text.primary',
                             lineHeight: 1,

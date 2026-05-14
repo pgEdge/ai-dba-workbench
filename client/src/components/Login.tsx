@@ -276,7 +276,6 @@ const getSubmitButtonSx = (theme: Theme) => ({
     py: 1.5,
     borderRadius: 1,
     fontWeight: 600,
-    fontSize: '1rem',
     textTransform: 'none',
     background: theme.palette.primary.main,
     boxShadow: '0 4px 14px 0 rgba(14, 165, 233, 0.39)',

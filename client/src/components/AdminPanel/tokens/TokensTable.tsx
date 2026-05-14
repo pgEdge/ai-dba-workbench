@@ -270,7 +270,6 @@ const TokensTable: React.FC<TokensTableProps> = ({
                                                     ) : (
                                                         <Typography
                                                             color="text.secondary"
-                                                            sx={{ fontSize: '1rem' }}
                                                         >
                                                             Unrestricted - this token
                                                             has access to all

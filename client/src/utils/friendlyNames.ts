@@ -103,6 +103,8 @@ export const FRIENDLY_ALERT_TITLES: Record<string, string> = {
     'replication_lag_bytes': 'Replication Lag',
     'replication_slot_inactive': 'Replication Slot Inactive',
     'replication_standby_disconnected': 'Standby Disconnected',
+    'replication_slot_retention_warn': 'Replication Slot WAL Retention (Warning)',
+    'replication_slot_retention_high': 'Replication Slot WAL Retention (Critical)',
     'subscription_worker_down': 'Subscription Worker Down',
 
     // Resource alerts
@@ -135,6 +137,12 @@ export const FRIENDLY_ALERT_TITLES: Record<string, string> = {
     'cache_hit_ratio_low': 'Low Cache Hit Ratio',
     'temp_files_created': 'Temporary Files Created',
 
+    // Spock replication alerts
+    'spock_recent_exceptions_present': 'Spock Exceptions (Warning)',
+    'spock_recent_exceptions_high': 'Spock Exceptions (Critical)',
+    'spock_recent_resolutions_present': 'Spock Conflict Resolutions (Warning)',
+    'spock_recent_resolutions_high': 'Spock Conflict Resolutions (Critical)',
+
     // Staleness and anomaly alerts
     'metric_staleness': 'Metric Staleness',
     'session_count_anomaly': 'Session Count Anomaly',
@@ -144,12 +152,27 @@ export const FRIENDLY_ALERT_TITLES: Record<string, string> = {
     'pg_stat_activity.idle_in_transaction_seconds': 'Idle in Transaction',
     'pg_stat_activity.max_query_duration_seconds': 'Long Running Query',
     'pg_stat_activity.max_xact_duration_seconds': 'Long Running Transaction',
+    'pg_stat_activity.blocked_count': 'Blocked Queries',
+    'pg_stat_activity.max_lock_wait_seconds': 'Lock Wait Time',
     'pg_stat_all_tables.dead_tuple_percent': 'Dead Tuple Ratio',
+    'pg_stat_archiver.failed_count_delta': 'WAL Archive Failures',
+    'pg_stat_checkpointer.checkpoints_req_delta': 'Checkpoint Requests',
     'pg_stat_database.cache_hit_ratio': 'Cache Hit Ratio',
     'pg_stat_database.deadlocks_delta': 'Deadlocks',
     'pg_stat_database.temp_files_delta': 'Temporary Files',
+    'pg_stat_replication.lag_bytes': 'Replication Lag',
+    'pg_stat_replication.standby_disconnected': 'Standby Disconnected',
+    'pg_replication_slots.max_retained_bytes': 'Replication Slot WAL Retention',
+    'pg_replication_slots.retained_bytes': 'Replication Slot WAL Retention',
+    'pg_replication_slots.inactive_count': 'Inactive Replication Slots',
+    'pg_replication_slots.inactive': 'Replication Slot Inactive',
+    'pg_settings.max_connections': 'Max Connections',
+    'pg_sys_cpu_usage_info.processor_time_percent': 'CPU Usage',
+    'pg_sys_load_avg_info.load_avg_fifteen_minutes': 'Load Average',
     'pg_sys_memory_info.used_percent': 'Memory Usage',
     'pg_sys_disk_info.used_percent': 'Disk Usage',
+    'spock_exception_log.recent_count': 'Spock Exceptions',
+    'spock_resolutions.recent_count': 'Spock Conflict Resolutions',
 };
 
 /**

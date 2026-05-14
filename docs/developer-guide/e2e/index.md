@@ -1,11 +1,11 @@
 # End-to-End Smoke Tests
 
 The pgEdge AI DBA Workbench includes a Playwright-based
-end-to-end smoke-test suite that exercises the production client
-bundle in a real browser. The suite catches the class of bug that
-component-level unit tests cannot, such as ESM-resolution
-differences between Vite's production build and Vitest's jsdom
-environment.
+end-to-end smoke-test suite that exercises the production
+client bundle in a real browser. The suite catches bugs that
+component-level unit tests cannot detect, such as
+ESM-resolution differences between Vite's production build
+and Vitest's jsdom environment.
 
 ## Overview
 
@@ -98,8 +98,11 @@ to tear the stack down manually.
 
 ## Running in CI
 
-The `.github/workflows/ci-e2e.yml` workflow runs the suite on
-every pull request against `main` and on every push to `main`.
+The [`.github/workflows/ci-e2e.yml`][ci-e2e-yml] workflow
+runs the suite on every pull request against `main` and on
+every push to `main`.
+
+[ci-e2e-yml]: https://github.com/pgEdge/ai-dba-workbench/blob/main/.github/workflows/ci-e2e.yml
 The workflow uses a Postgres service container and a three-way
 browser matrix that runs Chromium, Firefox, and WebKit in
 parallel.
@@ -121,10 +124,12 @@ unit-test partial so total Go coverage reflects both sources.
 
 ## Stack Bring-Up
 
-The `e2e/scripts/start-stack.sh` script brings the test stack
-up in the correct order; both `run-local.sh` and the CI
-workflow delegate to it. The script performs the following
-steps:
+The [`e2e/scripts/start-stack.sh`][start-stack-sh] script
+brings the test stack up in the correct order; both
+`run-local.sh` and the CI workflow delegate to it. The
+script performs the following steps:
+
+[start-stack-sh]: https://github.com/pgEdge/ai-dba-workbench/blob/main/e2e/scripts/start-stack.sh
 
 1. The script waits for Postgres to accept connections.
 2. The script renders the server configuration and a random
@@ -153,11 +158,11 @@ captures spurious console errors.
 
 The server binary used in the suite is built with
 `go build -cover -covermode=atomic -coverpkg=./...`. The
-`-coverpkg=./...` flag instruments every package in the server
-module, not just the `cmd/mcp-server` entry point; without it
-the integration-coverage signal is near-zero because handler
-packages such as `internal/api` are not in the default
-instrumentation set.
+`-coverpkg=./...` flag instruments every package in the
+server module, not just the `cmd/mcp-server` entry point;
+without the flag the integration-coverage signal is near-zero
+because handler packages such as `internal/api` are not in
+the default instrumentation set.
 
 The server installs a SIGTERM and SIGINT handler in
 `cmd/mcp-server` that calls `coverage.WriteCountersDir` before
@@ -177,8 +182,9 @@ single Go coverage figure that reflects both sources.
 
 ## Adding a New Test
 
-The suite source lives in `e2e/tests/`. Each spec file
-follows the existing pattern: import `test` and `expect` from
+The suite source lives in [`e2e/tests/`][e2e-tests]. Each
+spec file follows the existing pattern: import `test` and
+`expect` from
 the shared `../fixtures/error-boundary` fixture, declare
 `test.use({ storageState: '.auth/admin.json' })` if the test
 requires a logged-in session, and exercise the application
@@ -221,8 +227,12 @@ test('alert panel opens without crashing', async ({
 });
 ```
 
-See `e2e/tests/admin-panel.spec.ts` for a parameterised
-example that iterates over every admin section.
+See [`e2e/tests/admin-panel.spec.ts`][admin-panel-spec] for
+a parameterised example that iterates over every admin
+section.
+
+[e2e-tests]: https://github.com/pgEdge/ai-dba-workbench/tree/main/e2e/tests
+[admin-panel-spec]: https://github.com/pgEdge/ai-dba-workbench/blob/main/e2e/tests/admin-panel.spec.ts
 
 ## Troubleshooting
 

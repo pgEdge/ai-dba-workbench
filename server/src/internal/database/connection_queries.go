@@ -435,39 +435,31 @@ func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin delete connection transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+	// Roll back with a non-cancelable context so a canceled request
+	// context cannot trigger the pgx v5 close-of-closed-channel panic
+	// described in jackc/pgx#2470, which would leak the pooled
+	// connection in an aborted-transaction state.
+	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback is no-op if already committed
 
-	// Step 1: capture the connection's cluster_id (may be NULL) so
-	// we can decide whether the parent cluster needs to be cleaned
-	// up after the delete.
+	// Delete the connection row and capture its cluster_id in one
+	// statement. Doing both atomically avoids a TOCTOU window in
+	// which a concurrent transaction could reassign the connection
+	// to a different cluster between a separate SELECT and DELETE,
+	// causing us to dismiss the wrong cluster.
 	var clusterID sql.NullInt64
 	err = tx.QueryRow(ctx,
-		`SELECT cluster_id FROM connections WHERE id = $1`,
+		`DELETE FROM connections WHERE id = $1 RETURNING cluster_id`,
 		id,
 	).Scan(&clusterID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConnectionNotFound
 		}
-		return fmt.Errorf("failed to look up connection: %w", err)
-	}
-
-	// Step 2: delete the connection row. The FK uses ON DELETE SET
-	// NULL on cluster_id, but in this case the row itself is going
-	// away so the FK does not fire.
-	result, err := tx.Exec(ctx, `DELETE FROM connections WHERE id = $1`, id)
-	if err != nil {
 		return fmt.Errorf("failed to delete connection: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		// Lost a race with a concurrent delete between the SELECT
-		// and the DELETE; treat the same as "not found" so callers
-		// see a consistent error.
-		return ErrConnectionNotFound
-	}
 
-	// Step 3: if the connection belonged to an auto-detected cluster
-	// and that cluster is now empty, soft-dismiss the cluster so it
+	// If the connection belonged to an auto-detected cluster and
+	// that cluster is now empty, soft-dismiss the cluster so it
 	// disappears from autocomplete results. We perform the check
 	// inside the transaction to keep the decision and the UPDATE
 	// consistent against concurrent inserts.

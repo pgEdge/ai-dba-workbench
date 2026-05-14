@@ -258,13 +258,13 @@ func TestDeleteConnection_NotFoundReturnsError(t *testing.T) {
 	}
 }
 
-// TestDeleteConnection_CanceledContextDuringLookup exercises the
-// non-ErrNoRows error branch of the initial SELECT. A context that
+// TestDeleteConnection_CanceledContext exercises the non-ErrNoRows
+// error branch of the combined DELETE ... RETURNING. A context that
 // is canceled before the call enters DeleteConnection causes the
 // QueryRow scan to fail with a wrapped context.Canceled, not with
-// pgx.ErrNoRows, so the function must surface a wrapped lookup
+// pgx.ErrNoRows, so the function must surface a wrapped delete
 // error rather than ErrConnectionNotFound.
-func TestDeleteConnection_CanceledContextDuringLookup(t *testing.T) {
+func TestDeleteConnection_CanceledContext(t *testing.T) {
 	ds, pool, cleanup := newClusterDismissTestDatastore(t)
 	defer cleanup()
 
@@ -341,43 +341,11 @@ func TestDeleteConnection_ClosedPoolReturnsError(t *testing.T) {
 	}
 }
 
-// TestDeleteConnection_LookupTypeMismatch exercises the
-// non-ErrNoRows error branch of the initial SELECT. By temporarily
-// dropping the cluster_id column we force the SELECT to fail with
-// an undefined-column error, which is not pgx.ErrNoRows, so
-// DeleteConnection must surface a wrapped lookup error.
-func TestDeleteConnection_LookupTypeMismatch(t *testing.T) {
-	ds, pool, cleanup := newClusterDismissTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	_ = insertClusterDismissTestGroup(t, pool)
-
-	// Insert a real connection so that ErrNoRows is NOT the
-	// failure mode; the SELECT instead fails on the missing column.
-	_ = insertConnectionDeleteTestConnection(t, pool, "doomed", nil)
-
-	if _, err := pool.Exec(ctx, `ALTER TABLE connections DROP COLUMN cluster_id`); err != nil {
-		t.Fatalf("failed to drop cluster_id: %v", err)
-	}
-
-	err := ds.DeleteConnection(ctx, 1)
-	if err == nil {
-		t.Fatal("DeleteConnection with broken schema returned nil error")
-	}
-	if errors.Is(err, ErrConnectionNotFound) {
-		t.Fatalf("DeleteConnection with broken schema returned ErrConnectionNotFound; "+
-			"expected a lookup-failure wrap, got %v", err)
-	}
-}
-
-// TestDeleteConnection_DeleteStepFails exercises the error
-// branch where the DELETE statement itself fails after the
-// initial lookup succeeds. We install a BEFORE DELETE trigger
-// that unconditionally raises an exception; the SELECT step
-// scans the row normally, but the subsequent DELETE aborts and
-// must be surfaced as a wrapped "failed to delete connection"
-// error.
+// TestDeleteConnection_DeleteStepFails exercises the non-ErrNoRows
+// error branch of the combined DELETE ... RETURNING. We install a
+// BEFORE DELETE trigger that unconditionally raises an exception so
+// the QueryRow scan fails with a SQL error (not pgx.ErrNoRows), and
+// DeleteConnection must surface a wrapped delete error.
 func TestDeleteConnection_DeleteStepFails(t *testing.T) {
 	ds, pool, cleanup := newClusterDismissTestDatastore(t)
 	defer cleanup()
@@ -423,20 +391,12 @@ func TestDeleteConnection_DeleteStepFails(t *testing.T) {
 }
 
 // TestDeleteConnection_DismissUpdateFails exercises the error
-// branch where the UPDATE clusters statement fails. We drop the
-// dismissed column on the clusters table after the SELECT and
-// DELETE would have succeeded against a freshly inserted row; the
-// follow-up UPDATE then fails with an undefined-column error,
-// which must be surfaced as a wrapped "failed to dismiss" error.
-//
-// Implementation note: we cannot drop a column mid-transaction, so
-// we exploit a different misuse: we insert a connection whose
-// cluster_id points to a clusters row that we then delete out from
-// under the foreign key by disabling the constraint. With no
-// referenced clusters row, the UPDATE simply matches zero rows
-// (no error). To force a real UPDATE error we instead poison the
-// dismissed column by altering its type to one the UPDATE cannot
-// satisfy.
+// branch where the follow-up UPDATE clusters statement fails. We
+// drop the dismissed column on the clusters table after inserting
+// a row referencing an auto-detected cluster; the DELETE then
+// succeeds inside the transaction but the UPDATE fails with an
+// undefined-column error, which must be surfaced as a wrapped
+// "failed to dismiss" error.
 func TestDeleteConnection_DismissUpdateFails(t *testing.T) {
 	ds, pool, cleanup := newClusterDismissTestDatastore(t)
 	defer cleanup()

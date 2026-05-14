@@ -61,7 +61,10 @@ export interface ClusterEntry {
 export interface ClusterGroup {
     id: string;
     name: string;
-    clusters: ClusterEntry[];
+    // The server's GET /api/v1/clusters response can encode an empty
+    // group as `clusters: null` (Go nil-slice JSON marshaling). All
+    // consumers must guard against null; see issue #242.
+    clusters: ClusterEntry[] | null;
     [key: string]: unknown;
 }
 

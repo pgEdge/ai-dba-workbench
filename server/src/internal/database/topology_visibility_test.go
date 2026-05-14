@@ -11,6 +11,8 @@ package database
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -339,5 +341,269 @@ func TestGetClusterTopology_EmptyFilterShortCircuits(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("Expected empty topology, got %d groups", len(result))
+	}
+}
+
+// TestGetClusterTopology_EmptyFilterReturnsNonNilSlice is the regression
+// test for issue #242. The empty-filter short-circuit must return a
+// non-nil []TopologyGroup so that the JSON encoding is "[]" rather than
+// "null"; the web client crashes when the topology comes back as null.
+func TestGetClusterTopology_EmptyFilterReturnsNonNilSlice(t *testing.T) {
+	d := &Datastore{}
+	result, err := d.GetClusterTopology(context.Background(), []int{})
+	if err != nil {
+		t.Fatalf("GetClusterTopology: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil slice for empty filter; nil marshals to JSON null and crashes the client")
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if string(encoded) != "[]" {
+		t.Errorf("Expected JSON \"[]\", got %q", string(encoded))
+	}
+}
+
+// TestNormalizeTopologyGroups_ReplacesNilClustersWithEmpty is the unit
+// regression for issue #242. A TopologyGroup whose Clusters is nil must
+// be normalized to a non-nil empty slice so JSON encoding emits
+// "clusters": [] rather than "clusters": null. This is the exact bug the
+// web client crashed on after the only cluster in a group was deleted.
+func TestNormalizeTopologyGroups_ReplacesNilClustersWithEmpty(t *testing.T) {
+	groups := []TopologyGroup{
+		{
+			ID:       "g-empty",
+			Name:     "Default",
+			Clusters: nil, // The bug shape: nil after deletion.
+		},
+	}
+
+	normalizeTopologyGroups(groups)
+
+	if groups[0].Clusters == nil {
+		t.Fatal("Expected non-nil Clusters slice after normalization")
+	}
+	if len(groups[0].Clusters) != 0 {
+		t.Errorf("Expected empty Clusters slice, got %d", len(groups[0].Clusters))
+	}
+
+	encoded, err := json.Marshal(groups[0])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"clusters":[]`) {
+		t.Errorf("Expected JSON to contain \"clusters\":[], got %s", string(encoded))
+	}
+	if strings.Contains(string(encoded), `"clusters":null`) {
+		t.Errorf("Expected JSON not to contain \"clusters\":null, got %s", string(encoded))
+	}
+}
+
+// TestNormalizeTopologyGroups_ReplacesNilServersWithEmpty verifies the
+// same nil-slice contract applies to TopologyCluster.Servers. A cluster
+// whose Servers field is nil must marshal to "servers": [] rather than
+// "servers": null.
+func TestNormalizeTopologyGroups_ReplacesNilServersWithEmpty(t *testing.T) {
+	groups := []TopologyGroup{
+		{
+			ID:   "g1",
+			Name: "Default",
+			Clusters: []TopologyCluster{
+				{
+					ID:          "c-empty",
+					Name:        "Empty Cluster",
+					ClusterType: "manual",
+					Servers:     nil,
+				},
+			},
+		},
+	}
+
+	normalizeTopologyGroups(groups)
+
+	if groups[0].Clusters[0].Servers == nil {
+		t.Fatal("Expected non-nil Servers slice after normalization")
+	}
+	if len(groups[0].Clusters[0].Servers) != 0 {
+		t.Errorf("Expected empty Servers slice, got %d", len(groups[0].Clusters[0].Servers))
+	}
+
+	encoded, err := json.Marshal(groups[0].Clusters[0])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"servers":[]`) {
+		t.Errorf("Expected JSON to contain \"servers\":[], got %s", string(encoded))
+	}
+	if strings.Contains(string(encoded), `"servers":null`) {
+		t.Errorf("Expected JSON not to contain \"servers\":null, got %s", string(encoded))
+	}
+}
+
+// TestNormalizeTopologyGroups_PreservesNonNilSlices verifies that
+// normalization leaves already-initialized slices untouched. The function
+// must only replace nil slices, never overwrite existing data.
+func TestNormalizeTopologyGroups_PreservesNonNilSlices(t *testing.T) {
+	groups := []TopologyGroup{
+		{
+			ID:   "g1",
+			Name: "Group",
+			Clusters: []TopologyCluster{
+				{
+					ID:   "c1",
+					Name: "Cluster",
+					Servers: []TopologyServerInfo{
+						{ID: 42, Name: "node"},
+					},
+				},
+			},
+		},
+	}
+
+	normalizeTopologyGroups(groups)
+
+	if len(groups[0].Clusters) != 1 {
+		t.Fatalf("Expected 1 cluster preserved, got %d", len(groups[0].Clusters))
+	}
+	if len(groups[0].Clusters[0].Servers) != 1 {
+		t.Fatalf("Expected 1 server preserved, got %d", len(groups[0].Clusters[0].Servers))
+	}
+	if groups[0].Clusters[0].Servers[0].ID != 42 {
+		t.Errorf("Expected server ID 42, got %d", groups[0].Clusters[0].Servers[0].ID)
+	}
+}
+
+// TestNormalizeTopologyGroups_HandlesEmptyAndNilInput verifies the helper
+// is safe to call on edge inputs: a nil slice and an empty slice. Both
+// must return without panicking; the function has no return value, so
+// the assertion is simply that the call completes without panicking and
+// that the empty slice remains empty.
+func TestNormalizeTopologyGroups_HandlesEmptyAndNilInput(t *testing.T) {
+	// nil input: must not panic. There is nothing to assert on the
+	// returned slice because the function takes the slice by value;
+	// callers that need the nil-preserving guarantee can rely on the
+	// fact that the empty for-loop body never runs.
+	var nilGroups []TopologyGroup
+	normalizeTopologyGroups(nilGroups)
+
+	// empty input
+	emptyGroups := []TopologyGroup{}
+	normalizeTopologyGroups(emptyGroups)
+	if len(emptyGroups) != 0 {
+		t.Errorf("Expected empty input preserved, got %d groups", len(emptyGroups))
+	}
+}
+
+// TestBuildTopologyHierarchy_EmptyConnections_ReturnsNonNilClusters is
+// the producer-side regression for issue #242. When the connection list
+// is empty, buildTopologyHierarchy must still return a default group
+// whose Clusters slice is non-nil so that the topology marshals to JSON
+// with "clusters": [] rather than "clusters": null. This covers the
+// "after the only cluster is deleted" scenario that caused the bug.
+func TestBuildTopologyHierarchy_EmptyConnections_ReturnsNonNilClusters(t *testing.T) {
+	ds := &Datastore{}
+	defaultGroup := &defaultGroupInfo{ID: 1, Name: "Servers/Clusters"}
+
+	groups := ds.buildTopologyHierarchy(
+		nil, // no connections at all
+		make(map[string]clusterOverride),
+		make(map[string]bool),
+		make(map[string]bool),
+		defaultGroup,
+	)
+
+	if len(groups) != 1 {
+		t.Fatalf("Expected 1 default group, got %d", len(groups))
+	}
+	if groups[0].Clusters == nil {
+		t.Fatal("Expected non-nil Clusters slice; nil marshals to JSON null and crashes the client")
+	}
+	if len(groups[0].Clusters) != 0 {
+		t.Errorf("Expected empty Clusters slice for no-connections case, got %d",
+			len(groups[0].Clusters))
+	}
+
+	// Confirm the JSON wire shape.
+	encoded, err := json.Marshal(groups[0])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"clusters":[]`) {
+		t.Errorf("Expected JSON to contain \"clusters\":[], got %s", string(encoded))
+	}
+	if strings.Contains(string(encoded), `"clusters":null`) {
+		t.Errorf("Expected JSON not to contain \"clusters\":null, got %s", string(encoded))
+	}
+}
+
+// TestNormalizeTopologyGroups_MixedNilAndNonNilSlices is a comprehensive
+// regression test that mixes the nil-clusters case (the issue #242 bug
+// shape) with adjacent groups whose Clusters slice is already populated.
+// Normalization must touch only the nil ones and leave the rest intact.
+func TestNormalizeTopologyGroups_MixedNilAndNonNilSlices(t *testing.T) {
+	groups := []TopologyGroup{
+		{
+			ID:       "g-empty",
+			Name:     "Empty Group",
+			Clusters: nil,
+		},
+		{
+			ID:   "g-populated",
+			Name: "Populated Group",
+			Clusters: []TopologyCluster{
+				{
+					ID:          "c1",
+					Name:        "With Servers",
+					ClusterType: "manual",
+					Servers: []TopologyServerInfo{
+						{ID: 1, Name: "n1"},
+					},
+				},
+				{
+					ID:          "c2",
+					Name:        "Empty Servers",
+					ClusterType: "manual",
+					Servers:     nil,
+				},
+			},
+		},
+	}
+
+	normalizeTopologyGroups(groups)
+
+	if groups[0].Clusters == nil {
+		t.Fatal("Expected first group's Clusters to be non-nil after normalization")
+	}
+	if len(groups[0].Clusters) != 0 {
+		t.Errorf("Expected first group's Clusters to be empty, got %d", len(groups[0].Clusters))
+	}
+
+	if len(groups[1].Clusters) != 2 {
+		t.Fatalf("Expected second group to have 2 clusters preserved, got %d", len(groups[1].Clusters))
+	}
+	if len(groups[1].Clusters[0].Servers) != 1 {
+		t.Errorf("Expected populated cluster's Servers preserved, got %d",
+			len(groups[1].Clusters[0].Servers))
+	}
+	if groups[1].Clusters[1].Servers == nil {
+		t.Fatal("Expected empty-servers cluster to be normalized to non-nil")
+	}
+	if len(groups[1].Clusters[1].Servers) != 0 {
+		t.Errorf("Expected empty-servers cluster Servers to be empty, got %d",
+			len(groups[1].Clusters[1].Servers))
+	}
+
+	// Encode the whole tree and confirm no "clusters":null / "servers":null leaks.
+	encoded, err := json.Marshal(groups)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), `"clusters":null`) {
+		t.Errorf("Expected no \"clusters\":null in JSON, got %s", string(encoded))
+	}
+	if strings.Contains(string(encoded), `"servers":null`) {
+		t.Errorf("Expected no \"servers\":null in JSON, got %s", string(encoded))
 	}
 }

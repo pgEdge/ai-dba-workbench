@@ -121,7 +121,10 @@ interface GroupData {
     name: string;
     auto_group_key?: string;
     is_default?: boolean;
-    clusters?: (Cluster & { cluster_type?: string; replication_type?: string | null })[];
+    // The server may emit `clusters: null` for an empty group (Go
+    // nil-slice JSON marshaling). All consumers must tolerate null;
+    // see issue #242.
+    clusters?: (Cluster & { cluster_type?: string; replication_type?: string | null })[] | null;
 }
 
 interface GroupItemProps {

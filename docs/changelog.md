@@ -8,6 +8,26 @@ The format is based on
 project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta3] - Unreleased
+
+### Fixed
+
+- Fix the web client crashing into the "Something
+  went wrong" error boundary after the user deleted
+  an empty cluster. The server marshaled an empty
+  `clusters` list (and the nested `servers` list
+  inside each cluster) as JSON `null` rather than
+  `[]`, and `MainLayout`'s selection `useMemo` then
+  called `.some` on the null value without a guard.
+  The server's `GetClusterTopology` now normalises
+  both lists to a non-nil empty array, and the
+  client's selection logic guards every read of
+  `group.clusters` through a new `buildSelection`
+  helper. The `ClusterGroup.clusters` TypeScript
+  type is also tightened to `ClusterEntry[] | null`
+  so this regression class is caught by the type
+  system. (#242)
+
 ## [1.0.0-beta2] - 2026-05-14
 
 ### Added

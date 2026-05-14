@@ -116,7 +116,8 @@ describe('ClusterContext', () => {
 
             // Data should be updated since fingerprint changed
             expect(result.current.clusterData).not.toBe(initialData);
-            expect(result.current.clusterData[0].clusters[0].servers[0].status).toBe('warning');
+            const clusters = result.current.clusterData[0].clusters ?? [];
+            expect(clusters[0].servers[0].status).toBe('warning');
         });
 
         it('updates lastRefresh even when data is unchanged', async () => {

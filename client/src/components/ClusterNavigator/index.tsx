@@ -253,7 +253,10 @@ const getSpinnerSx = (loading: boolean) => ({
 interface GroupData {
     id: string;
     name: string;
-    clusters?: Array<Cluster & { cluster_type?: string; replication_type?: string | null }>;
+    // The server may emit `clusters: null` for an empty group (Go
+    // nil-slice JSON marshaling). All consumers must tolerate null;
+    // see issue #242.
+    clusters?: Array<Cluster & { cluster_type?: string; replication_type?: string | null }> | null;
     [key: string]: unknown;
 }
 

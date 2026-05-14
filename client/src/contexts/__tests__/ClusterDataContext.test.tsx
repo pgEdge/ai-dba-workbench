@@ -141,8 +141,9 @@ describe('ClusterDataContext', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0].name).toBe('prod');
-            expect(result[0].clusters).toHaveLength(1);
-            expect(result[0].clusters[0].servers).toHaveLength(2);
+            const clusters = result[0].clusters ?? [];
+            expect(clusters).toHaveLength(1);
+            expect(clusters[0].servers).toHaveLength(2);
         });
 
         it('creates standalone clusters for connections without cluster_name', () => {
@@ -154,8 +155,9 @@ describe('ClusterDataContext', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0].name).toBe('Ungrouped');
-            expect(result[0].clusters[0].isStandalone).toBe(true);
-            expect(result[0].clusters[0].servers[0].id).toBe(1);
+            const clusters = result[0].clusters ?? [];
+            expect(clusters[0].isStandalone).toBe(true);
+            expect(clusters[0].servers[0].id).toBe(1);
         });
 
         it('uses Ungrouped when cluster_group is missing', () => {

@@ -301,12 +301,14 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 // already owned by the caller at this point.
 func normalizeTopologyGroups(groups []TopologyGroup) {
 	for i := range groups {
-		if groups[i].Clusters == nil {
-			groups[i].Clusters = make([]TopologyCluster, 0)
+		group := &groups[i]
+		if group.Clusters == nil {
+			group.Clusters = make([]TopologyCluster, 0)
 		}
-		for j := range groups[i].Clusters {
-			if groups[i].Clusters[j].Servers == nil {
-				groups[i].Clusters[j].Servers = make([]TopologyServerInfo, 0)
+		for j := range group.Clusters {
+			cluster := &group.Clusters[j]
+			if cluster.Servers == nil {
+				cluster.Servers = make([]TopologyServerInfo, 0)
 			}
 		}
 	}

@@ -5,6 +5,7 @@
 [![CI - Collector](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-collector.yml)
 [![CI - Docker](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docker.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docker.yml)
 [![CI - Docs](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-docs.yml)
+[![CI - E2E](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-e2e.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-e2e.yml)
 [![CI - Server](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml/badge.svg)](https://github.com/pgEdge/ai-dba-workbench/actions/workflows/ci-server.yml)
 
 The pgEdge AI DBA Workbench is a unified environment for monitoring 
@@ -123,6 +124,22 @@ make test-all
 cd collector && make test
 ```
 
+### Run End-to-End Smoke Tests
+
+The repository ships with a Playwright suite that drives the
+production client bundle in a real browser against a real server
+and Postgres database. The suite requires Docker, because it
+launches an ephemeral Postgres container as part of stack
+bring-up. Run the suite from the top-level directory with
+`make test-e2e`; this target is intentionally not part of
+`test-all` because the suite is slow and depends on Docker. See
+[End-to-End Smoke Tests](docs/developer-guide/e2e/index.md) for
+architecture, coverage scope, and troubleshooting.
+
+```bash
+make test-e2e
+```
+
 ### Environment Variables for Testing
 
 - `TEST_AI_WORKBENCH_SERVER` specifies the PostgreSQL
@@ -141,6 +158,8 @@ the following targets:
 - `coverage` runs tests with a coverage report.
 - `lint` runs the linter.
 - `test-all` runs tests, coverage, and the linter.
+- `test-e2e` runs the Playwright end-to-end smoke-test suite
+  against a Docker-managed stack.
 - `clean` removes build artifacts.
 - `killall` kills any running processes.
 - `help` shows the available targets.

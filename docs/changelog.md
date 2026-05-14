@@ -12,6 +12,19 @@ project adheres to
 
 ### Added
 
+- Add a Playwright-based end-to-end smoke-test suite
+  that drives the production client bundle in a real
+  browser against a real server and Postgres on every
+  pull request; the suite runs across a
+  Chromium/Firefox/WebKit matrix and is invoked
+  locally with `make test-e2e`. See
+  `docs/developer-guide/e2e/index.md` for details.
+  (#236)
+- Capture Go integration coverage from the running
+  server during the end-to-end suite and merge it into
+  the existing Codacy partial-upload pipeline, so unit
+  and integration coverage combine into a single
+  reported figure. (#236)
 - Add the `spock_exception_log` and `spock_resolutions`
   collector probes; both probes capture a rolling
   15-minute window of the Spock extension's

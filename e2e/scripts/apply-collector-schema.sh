@@ -58,6 +58,26 @@ echo "==> Running collector to apply datastore schema"
     > "${COLLECTOR_LOG}" 2>&1 &
 COLLECTOR_PID=$!
 
+# Install a signal trap so an interrupted script (Ctrl+C, kill, or
+# an unexpected `set -e` exit between here and the explicit shutdown
+# below) does not leave an orphaned collector running against the
+# ephemeral datastore. The explicit shutdown below clears the trap
+# so EXIT does not double-handle the cleanup on the happy path.
+cleanup_collector() {
+    if [ -n "${COLLECTOR_PID:-}" ] \
+        && kill -0 "${COLLECTOR_PID}" 2>/dev/null; then
+        kill -TERM "${COLLECTOR_PID}" 2>/dev/null || true
+        # Give the collector 5s grace to flush cleanly, then SIGKILL.
+        for _ in $(seq 1 5); do
+            kill -0 "${COLLECTOR_PID}" 2>/dev/null || break
+            sleep 1
+        done
+        kill -KILL "${COLLECTOR_PID}" 2>/dev/null || true
+        wait "${COLLECTOR_PID}" 2>/dev/null || true
+    fi
+}
+trap cleanup_collector EXIT INT TERM
+
 # The migration is synchronous inside NewDatastore(); waiting until a
 # schema_version row exists confirms the migration committed.
 export PGPASSWORD="${E2E_DB_PASSWORD}"
@@ -117,5 +137,9 @@ fi
 # does not leave a zombie. `wait` after a signal returns 143/137
 # which we deliberately ignore.
 wait "${COLLECTOR_PID}" 2>/dev/null || true
+
+# Explicit shutdown succeeded; clear the safety-net trap so the EXIT
+# handler does not attempt to kill an already-reaped PID.
+trap - EXIT INT TERM
 
 echo "==> Datastore schema applied"

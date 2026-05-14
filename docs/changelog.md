@@ -12,6 +12,23 @@ project adheres to
 
 ### Added
 
+- Document the TLS and reverse-proxy requirements for
+  any network-accessible deployment in a new
+  Administrator's Guide page at
+  `docs/admin-guide/tls-and-reverse-proxy.md`; the
+  page states explicitly that TLS termination, HTTP
+  to HTTPS redirection, and HSTS are operator
+  responsibilities at the reverse proxy layer, calls
+  out the Vite dev server on port 5173 as
+  localhost-only and unsupported for any
+  network-accessible use, notes that the server's
+  built-in TLS support remains available for
+  operators who choose to terminate at the
+  application, and enumerates the credential-exposure
+  risks of running the workbench over plain HTTP.
+  Cross-reference callouts now appear in the
+  installation, quick-start, Docker, and web-client
+  configuration pages. (#234)
 - Add a Playwright-based end-to-end smoke-test suite
   that drives the production client bundle in a real
   browser against a real server and Postgres on every

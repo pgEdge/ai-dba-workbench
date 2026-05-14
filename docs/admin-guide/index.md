@@ -10,6 +10,9 @@ access.
 
 The Administrator's Guide includes the following topics:
 
+- [TLS and Reverse Proxy Requirements](tls-and-reverse-proxy.md)
+  documents the mandatory TLS topology for any
+  network-accessible deployment.
 - [Authentication](authentication.md) covers user
   accounts, service accounts, API tokens, and
   role-based access control.

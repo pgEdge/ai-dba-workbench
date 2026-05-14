@@ -111,6 +111,21 @@ the GitHub Container Registry.
     [installation paths table](installation.md#installation-paths-by-method)
     for details.
 
+!!! warning "Add TLS before exposing the deployment"
+    The default Compose configuration publishes the
+    client container on plain HTTP at
+    `http://localhost:3000` for first-run convenience.
+    Any deployment that is reachable from a network
+    other than the loopback interface of the host must
+    terminate TLS in front of the client container.
+    Place an external reverse proxy (or a TLS sidecar)
+    in front of the published port, configure
+    HTTP-to-HTTPS redirection and HSTS on the proxy,
+    and restrict the published port to the proxy. See
+    the
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
+
 ## Image Variants
 
 Pre-built images are published to the GitHub Container

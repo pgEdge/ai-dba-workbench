@@ -237,6 +237,15 @@ client files from `/opt/ai-workbench/client` using
 a web server such as Nginx. Configure the web server
 to proxy API requests to the server on port 8080.
 
+!!! warning "TLS is required"
+    Any network-accessible deployment must terminate
+    TLS in the reverse proxy that fronts the server.
+    The reverse proxy is responsible for TLS
+    termination, HTTP-to-HTTPS redirection, and HSTS.
+    See the
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
+
 ## Verify the Setup
 
 After starting all components, follow these steps to

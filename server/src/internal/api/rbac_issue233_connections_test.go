@@ -253,3 +253,181 @@ func TestConnectionHandler_CreateConnection_Issue233_SuperuserAllowed(t *testing
 		handler.createConnection(rec, req)
 	})
 }
+
+// =============================================================================
+// Regression Test Coverage for handleUpdateConnectionCluster (#233 follow-up)
+//
+// PUT /api/v1/connections/{id}/cluster previously gated only on
+// CanAccessConnection, which is a visibility check. Any caller who
+// could see the connection (e.g. via a group share) could re-home it
+// between clusters; this is the same bug-class as #207 / #233 (a
+// mutating handler missing the admin gate).
+//
+// The fix places HasAdminPermission(manage_connections) AFTER the
+// existing CanAccessConnection check (so non-visible callers still
+// learn nothing about the connection's existence) and BEFORE
+// DecodeJSONBody (so denied callers cannot probe payload shape via
+// validation error messages). The gate uses the same canonical 403
+// wording used elsewhere in connection_handlers.go and
+// cluster_handlers.go: "Permission denied: requires manage_connections
+// permission".
+//
+// The tests below exercise:
+//
+//   - Denied: a non-admin caller with visibility on the connection
+//     (the nil sharing lookup fn means the visibility check returns
+//     true) cannot reassign the connection; the response is 403 with
+//     the canonical wording.
+//   - Denied-skips-decode: an invalid JSON body still returns 403
+//     (not 400) because the gate fires before DecodeJSONBody.
+//   - Admin allowed: a caller with manage_connections passes the gate;
+//     the nil datastore panics post-gate and the test recovers.
+//   - Superuser allowed: same shape as admin allowed but via the
+//     superuser bypass.
+// =============================================================================
+
+// setupIssue233UpdateConnectionCluster builds a ConnectionHandler with a
+// real RBACChecker and a real auth store, then registers a user with
+// the caller-supplied permission set. The visibility check
+// (CanAccessConnection) is configured to pass: the auth store has no
+// group assignments for the test connection ID and the sharing lookup
+// function is nil, so the visibility check returns true. The gate is
+// the only protection between the caller and the datastore mutation.
+func setupIssue233UpdateConnectionCluster(
+	t *testing.T,
+	username string,
+	permissions []string,
+) (*ConnectionHandler, int64, string, func()) {
+	t.Helper()
+
+	_, store, cleanup := createTestRBACHandler(t)
+	var userID int64
+	if len(permissions) == 0 {
+		userID = newIssue207UnprivilegedUser(t, store, username)
+	} else {
+		userID = setupUserWithPermissions(t, store, username, permissions)
+	}
+
+	token, _, err := store.AuthenticateUser(username, "Password1234")
+	if err != nil {
+		cleanup()
+		t.Fatalf("Failed to authenticate test user %s: %v", username, err)
+	}
+
+	checker := auth.NewRBACChecker(store)
+	handler := NewConnectionHandler(nil, store, checker)
+
+	return handler, userID, token, cleanup
+}
+
+// TestConnectionHandler_UpdateConnectionCluster_Issue233 groups the
+// regression cases for the PUT /api/v1/connections/{id}/cluster gate
+// added as a follow-up to #233.
+func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
+	const testConnectionID = 4242
+
+	t.Run("DeniedVisibleButNotAdmin", func(t *testing.T) {
+		handler, userID, token, cleanup := setupIssue233UpdateConnectionCluster(
+			t, "issue233_updatecluster_denied", nil)
+		defer cleanup()
+
+		clusterID := 1
+		body, _ := json.Marshal(ConnectionClusterUpdateRequest{
+			ClusterID:        &clusterID,
+			MembershipSource: "manual",
+		})
+		req := httptest.NewRequest(http.MethodPut,
+			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = withBearer(req, token)
+		req = withUser(req, userID)
+		rec := httptest.NewRecorder()
+
+		handler.handleUpdateConnectionCluster(rec, req, testConnectionID)
+
+		assertForbiddenWithMessage(t, rec)
+	})
+
+	t.Run("DeniedSkipsDecode", func(t *testing.T) {
+		handler, userID, token, cleanup := setupIssue233UpdateConnectionCluster(
+			t, "issue233_updatecluster_baddecode", nil)
+		defer cleanup()
+
+		req := httptest.NewRequest(http.MethodPut,
+			"/api/v1/connections/4242/cluster",
+			bytes.NewBufferString("not json"))
+		req.Header.Set("Content-Type", "application/json")
+		req = withBearer(req, token)
+		req = withUser(req, userID)
+		rec := httptest.NewRecorder()
+
+		handler.handleUpdateConnectionCluster(rec, req, testConnectionID)
+
+		assertForbiddenWithMessage(t, rec)
+	})
+
+	t.Run("AdminAllowed", func(t *testing.T) {
+		handler, userID, token, cleanup := setupIssue233UpdateConnectionCluster(
+			t, "issue233_updatecluster_admin",
+			[]string{auth.PermManageConnections})
+		defer cleanup()
+
+		clusterID := 1
+		body, _ := json.Marshal(ConnectionClusterUpdateRequest{
+			ClusterID:        &clusterID,
+			MembershipSource: "manual",
+		})
+		req := httptest.NewRequest(http.MethodPut,
+			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = withBearer(req, token)
+		req = withUser(req, userID)
+		rec := httptest.NewRecorder()
+
+		assertGatePassed(t, rec, func() {
+			handler.handleUpdateConnectionCluster(rec, req, testConnectionID)
+		})
+	})
+
+	t.Run("SuperuserAllowed", func(t *testing.T) {
+		// Superuser bypass requires both a valid bearer token (so the
+		// auth path through getUserInfoCompat succeeds when invoked)
+		// and the superuser flag on the request context (so
+		// HasAdminPermission returns true).
+		_, store, cleanup := createTestRBACHandler(t)
+		defer cleanup()
+
+		if err := store.CreateUser("issue233_updatecluster_super",
+			"Password1234", "", "", ""); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := store.SetUserSuperuser(
+			"issue233_updatecluster_super", true); err != nil {
+			t.Fatalf("SetUserSuperuser: %v", err)
+		}
+		token, _, err := store.AuthenticateUser(
+			"issue233_updatecluster_super", "Password1234")
+		if err != nil {
+			t.Fatalf("AuthenticateUser: %v", err)
+		}
+
+		checker := auth.NewRBACChecker(store)
+		handler := NewConnectionHandler(nil, store, checker)
+
+		clusterID := 1
+		body, _ := json.Marshal(ConnectionClusterUpdateRequest{
+			ClusterID:        &clusterID,
+			MembershipSource: "manual",
+		})
+		req := httptest.NewRequest(http.MethodPut,
+			"/api/v1/connections/4242/cluster", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = withBearer(req, token)
+		req = withSuperuser(req)
+		rec := httptest.NewRecorder()
+
+		assertGatePassed(t, rec, func() {
+			handler.handleUpdateConnectionCluster(rec, req, testConnectionID)
+		})
+	})
+}

@@ -330,18 +330,27 @@ project adheres to
   regression tests cover every affected handler.
   (#67)
 
-- Extend the `manage_connections` gate to the two
-  remaining connection-creation paths missed by the
-  earlier sweep under #207; the server's
-  `createConnection` handler now requires the permission
-  for every new connection rather than only for shared
-  connections, and the web client's Add menu hides the
-  "Add Server" entry from users who lack the permission.
-  Unauthorized callers receive a `403 Forbidden` response
-  with a clear authorization error, and the OpenAPI
-  specification and the static
+- Extend the `manage_connections` gate to the remaining
+  connection paths missed by the earlier sweep under
+  #207; the server's `createConnection` handler now
+  requires the permission for every new connection
+  rather than only for shared connections, the
+  `handleUpdateConnectionCluster` handler behind
+  `PUT /api/v1/connections/{id}/cluster` now also
+  requires the permission so that a user with only
+  read-visibility on a connection can no longer re-home
+  it between clusters, and the web client's Add menu
+  hides the "Add Server" entry from users who lack the
+  permission. The new server-side gate sits after the
+  existing visibility check and before any body decode
+  or datastore mutation. Unauthorized callers receive a
+  `403 Forbidden` response with a clear authorization
+  error, and the OpenAPI specification and the static
   `docs/admin-guide/api/openapi.json` document the new
-  response on the affected path. (#233)
+  response on the affected paths; the previously
+  undocumented `/connections/{id}/cluster` path is now
+  present in the specification with both its GET and
+  PUT methods. (#233)
 
 - Require the `manage_connections` permission on all
   cluster and cluster-group mutating endpoints; users

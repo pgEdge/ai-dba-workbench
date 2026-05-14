@@ -779,6 +779,22 @@ func (h *ConnectionHandler) handleUpdateConnectionCluster(w http.ResponseWriter,
 		return
 	}
 
+	// Issue #233 (follow-up to #207): reassigning a connection between
+	// clusters mutates the topology, so it must require
+	// manage_connections in addition to the visibility check above. The
+	// previous gate stopped at CanAccessConnection, which permits any
+	// user with read access to the connection (including via a group
+	// share) to re-home it between clusters. Place the admin gate
+	// AFTER the visibility check (so non-visible callers still see the
+	// same 403 as before and learn nothing about the connection's
+	// existence) but BEFORE DecodeJSONBody, so denied callers cannot
+	// probe payload shape via validation error messages.
+	if !h.rbacChecker.HasAdminPermission(r.Context(), auth.PermManageConnections) {
+		RespondError(w, http.StatusForbidden,
+			"Permission denied: requires manage_connections permission")
+		return
+	}
+
 	var req ConnectionClusterUpdateRequest
 	if !DecodeJSONBody(w, r, &req) {
 		return

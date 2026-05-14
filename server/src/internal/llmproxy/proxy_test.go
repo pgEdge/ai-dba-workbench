@@ -276,8 +276,28 @@ func TestHandleModels_GeminiNotConfigured(t *testing.T) {
 }
 
 func TestHandleModels_OpenAIBaseURLOnly(t *testing.T) {
+	// Use httptest.NewServer to mock the OpenAI-compatible models
+	// endpoint. Without this the handler issues a real outbound HTTP
+	// request and blocks waiting for the OS-level TCP connect timeout
+	// (~120s on macOS), which dominates `make test-all` wall clock.
+	// The purpose of this test is only to confirm that the "OpenAI
+	// API key not configured" gate is passed when OpenAIBaseURL is
+	// set; the request must reach the network layer, but we do not
+	// care about the network response itself.
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			// Return an empty data array so ListModels parses
+			// successfully and the handler returns 200. The body shape
+			// matches the OpenAI /v1/models response contract.
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`{"data": []}`)); err != nil {
+				t.Errorf("mock server failed to write body: %v", err)
+			}
+		}))
+	defer server.Close()
+
 	config := &Config{
-		OpenAIBaseURL: "http://localhost:8080/v1",
+		OpenAIBaseURL: server.URL,
 		Model:         "local-model",
 	}
 
@@ -286,9 +306,8 @@ func TestHandleModels_OpenAIBaseURLOnly(t *testing.T) {
 
 	HandleModels(w, req, config)
 
-	// Should not get a 400 "not configured" error; it will fail at
-	// the actual API call level (500) since the URL is not real,
-	// but the configuration check should pass.
+	// Must not return the 400 "not configured" gate; reaching the
+	// mock server means the configuration check passed.
 	if w.Code == http.StatusBadRequest {
 		body := w.Body.String()
 		if body == "OpenAI API key not configured\n" {

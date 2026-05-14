@@ -1,6 +1,6 @@
 {
     "name": "ai-dba-workbench-e2e",
-    "version": "1.0.0-beta1",
+    "version": "1.0.0-beta2",
     "description": "End-to-end smoke tests for AI DBA Workbench",
     "private": true,
     "type": "module",

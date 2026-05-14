@@ -8,7 +8,7 @@ The format is based on
 project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0-beta2] - 2026-05-14
 
 ### Added
 
@@ -399,6 +399,26 @@ project adheres to
   the value from the cluster's `auto_cluster_key` prefix when
   no explicit replication type is set, mirroring the existing
   behaviour of the Topology panel. (#235)
+- Fix auto-detected clusters lingering in the cluster
+  autocomplete dropdown after their last member connection
+  was deleted; `DeleteConnection` now runs in a single
+  transaction that marks the parent cluster `dismissed=TRUE`
+  when the cluster was auto-detected (`auto_cluster_key IS
+  NOT NULL`) and no connections still reference it. The
+  delete itself uses `DELETE ... RETURNING cluster_id` to
+  close a TOCTOU window between the lookup and the delete,
+  and the rollback path uses `context.Background()` to avoid
+  a pgx v5 close-of-closed-channel panic when the request
+  context is canceled mid-transaction. User-created clusters
+  and connections without a cluster assignment are
+  unaffected. (#245)
+- Fix anomaly alerts displaying raw dotted metric names such
+  as `pg_replication_slots.max_retained_bytes` in the Status
+  Panel, and six alert rules seeded by collector migration v3
+  rendering as auto-title-cased fallbacks in the Admin Alert
+  Rules panel; the `FRIENDLY_ALERT_TITLES` map now includes
+  curated labels for 15 dotted anomaly metric names and the 6
+  v3 rule names, with full test coverage of the map. (#244)
 - Fix long, non-wrapping SQL queries flowing underneath the
   copy and run icons in the Remediation Steps panel of the
   alert AI analysis view; the shared markdown styles now

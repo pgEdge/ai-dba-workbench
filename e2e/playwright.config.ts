@@ -30,29 +30,41 @@ export default defineConfig({
         navigationTimeout: 15_000,
     },
     projects: [
-        // The setup project runs once and writes
-        // `.auth/admin.json`, which the app-shell and admin-panel
-        // specs reuse via `test.use({ storageState: ... })`. Each
-        // browser project depends on it so the storage file always
-        // exists before any spec that loads it runs.
+        // One setup project per browser. The matching browser
+        // project depends on its setup, so the storage state is
+        // written using the same browser the dependent specs use.
+        // The CI matrix installs only one browser per leg, so a
+        // single chromium-pinned setup would 404 on firefox/webkit
+        // legs.
         {
-            name: 'setup',
+            name: 'setup-chromium',
             testMatch: /.*\.setup\.ts/,
+            use: { ...devices['Desktop Chrome'] },
+        },
+        {
+            name: 'setup-firefox',
+            testMatch: /.*\.setup\.ts/,
+            use: { ...devices['Desktop Firefox'] },
+        },
+        {
+            name: 'setup-webkit',
+            testMatch: /.*\.setup\.ts/,
+            use: { ...devices['Desktop Safari'] },
         },
         {
             name: 'chromium',
             use: { ...devices['Desktop Chrome'] },
-            dependencies: ['setup'],
+            dependencies: ['setup-chromium'],
         },
         {
             name: 'firefox',
             use: { ...devices['Desktop Firefox'] },
-            dependencies: ['setup'],
+            dependencies: ['setup-firefox'],
         },
         {
             name: 'webkit',
             use: { ...devices['Desktop Safari'] },
-            dependencies: ['setup'],
+            dependencies: ['setup-webkit'],
         },
     ],
 });

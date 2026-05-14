@@ -109,7 +109,7 @@ jobs:
               run: npm ci
 
             - name: Cache Playwright browsers
-              uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
               with:
                   path: ~/.cache/ms-playwright
                   key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('e2e/package-lock.json') }}

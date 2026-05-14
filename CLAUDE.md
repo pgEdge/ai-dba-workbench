@@ -190,6 +190,57 @@ Store all plans in the `.claude/plans/` directory. Store all design
 specs in the `.claude/specs/` directory. Use descriptive filenames
 that reflect the task or feature being planned.
 
+## Development Worktrees
+
+All development work is performed in a dedicated git worktree by
+default. The worktree keeps the main checkout clean and isolates
+concurrent tasks from one another; this prevents in-flight changes
+from one task contaminating another.
+
+The default applies to every task unless the developer explicitly
+requests that the work happen in the main checkout or otherwise
+overrides the default. The primary agent should confirm any such
+override before proceeding.
+
+When dispatching sub-agents that perform implementation work, invoke
+them with worktree isolation where the Agent tool supports it; for
+example, pass `isolation: "worktree"` so each sub-agent operates in
+its own isolated tree. Advisory and research sub-agents that do not
+modify files do not require worktree isolation.
+
+## Pull Request Workflow
+
+Before pushing any PR branch, Claude must check whether the branch is
+behind `main` and rebase onto the latest `main` if it is. This rule
+applies both when opening a new pull request and when pushing further
+commits to an existing one; the goal is to keep the PR history linear,
+ensure CI runs against the current `main`, and avoid merge-conflict
+surprises at review time.
+
+The required pre-push procedure is as follows:
+
+- Fetch the latest `main` from the remote with `git fetch origin main`.
+
+- Compare the PR branch against `origin/main` to determine whether the
+  branch is behind; for example, inspect `git rev-list --left-right
+  --count origin/main...HEAD`.
+
+- If the branch is behind, rebase it onto the latest `main` with
+  `git rebase origin/main` before pushing.
+
+- Resolve any conflicts that arise during the rebase rather than
+  aborting the rebase or force-overwriting the conflicting files; only
+  ask the developer for guidance when the conflicts cannot be resolved
+  cleanly.
+
+- After a successful rebase, push the rebased branch with
+  `git push --force-with-lease`; never use a plain `git push --force`,
+  because `--force-with-lease` refuses to overwrite remote work that
+  Claude has not seen.
+
+- Never force-push to `main` itself, regardless of circumstance; the
+  force-push allowance applies only to the PR branch.
+
 ## Task Workflow
 
 The primary agent follows this workflow for all tasks:

@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -417,22 +418,78 @@ func (d *Datastore) CreateConnection(ctx context.Context, params ConnectionCreat
 	return conn, nil
 }
 
-// DeleteConnection deletes a connection by ID
+// DeleteConnection deletes a connection by ID. When the deleted
+// connection was the last member of an auto-detected cluster, that
+// cluster is soft-dismissed in the same transaction so it stops
+// appearing in autocomplete results (issue #238). User-created
+// clusters (auto_cluster_key IS NULL) are left untouched; the
+// soft-dismiss path is reserved for auto-detected rows which would
+// otherwise persist forever once their last connection is removed
+// because auto-detection only inserts new rows for unseen
+// auto_cluster_key values.
 func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	query := `DELETE FROM connections WHERE id = $1`
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin delete connection transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
 
-	result, err := d.pool.Exec(ctx, query, id)
+	// Step 1: capture the connection's cluster_id (may be NULL) so
+	// we can decide whether the parent cluster needs to be cleaned
+	// up after the delete.
+	var clusterID sql.NullInt64
+	err = tx.QueryRow(ctx,
+		`SELECT cluster_id FROM connections WHERE id = $1`,
+		id,
+	).Scan(&clusterID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConnectionNotFound
+		}
+		return fmt.Errorf("failed to look up connection: %w", err)
+	}
+
+	// Step 2: delete the connection row. The FK uses ON DELETE SET
+	// NULL on cluster_id, but in this case the row itself is going
+	// away so the FK does not fire.
+	result, err := tx.Exec(ctx, `DELETE FROM connections WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete connection: %w", err)
 	}
-
 	if result.RowsAffected() == 0 {
+		// Lost a race with a concurrent delete between the SELECT
+		// and the DELETE; treat the same as "not found" so callers
+		// see a consistent error.
 		return ErrConnectionNotFound
 	}
 
+	// Step 3: if the connection belonged to an auto-detected cluster
+	// and that cluster is now empty, soft-dismiss the cluster so it
+	// disappears from autocomplete results. We perform the check
+	// inside the transaction to keep the decision and the UPDATE
+	// consistent against concurrent inserts.
+	if clusterID.Valid {
+		_, err = tx.Exec(ctx, `
+            UPDATE clusters
+            SET dismissed = TRUE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+              AND auto_cluster_key IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM connections WHERE cluster_id = $1
+              )
+        `, clusterID.Int64)
+		if err != nil {
+			return fmt.Errorf("failed to dismiss empty auto-detected cluster: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit delete connection transaction: %w", err)
+	}
 	return nil
 }
 

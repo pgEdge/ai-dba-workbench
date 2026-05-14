@@ -7,31 +7,35 @@
  *
  *-------------------------------------------------------------------------
  */
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
+
+const apiTarget = process.env.E2E_SERVER_URL ?? 'http://localhost:8080';
+
+const apiProxy: Record<string, ProxyOptions> = {
+    '/api': {
+        target: apiTarget,
+        changeOrigin: true,
+        cookieDomainRewrite: '',
+        configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq, req) => {
+                if (req.headers.cookie) {
+                    proxyReq.setHeader('Cookie', req.headers.cookie);
+                }
+            });
+        },
+    },
+};
 
 export default defineConfig({
     plugins: [react()],
     server: {
         port: 5173,
-        proxy: {
-            // Proxy API endpoints to the server
-            '/api': {
-                target: 'http://localhost:8080',
-                changeOrigin: true,
-                // Ensure cookies are forwarded through the proxy
-                cookieDomainRewrite: '',
-                // Configure proxy to handle credentials
-                configure: (proxy) => {
-                    proxy.on('proxyReq', (proxyReq, req) => {
-                        // Forward cookies from browser to server
-                        if (req.headers.cookie) {
-                            proxyReq.setHeader('Cookie', req.headers.cookie);
-                        }
-                    });
-                },
-            },
-        },
+        proxy: apiProxy,
+    },
+    preview: {
+        port: 4173,
+        proxy: apiProxy,
     },
     build: {
         outDir: 'dist',

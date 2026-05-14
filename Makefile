@@ -7,7 +7,7 @@
 #
 #-------------------------------------------------------------------------
 
-.PHONY: all test coverage lint test-all clean killall help
+.PHONY: all test coverage lint test-all test-e2e clean killall help
 
 # Binary output directory
 BIN_DIR := bin
@@ -77,6 +77,13 @@ test-all:
 	@cd client && $(MAKE) test-all
 	@echo "All tests passed!"
 
+# Run E2E smoke tests (requires Docker for Postgres)
+# Intentionally NOT a dependency of test-all: E2E is slow and needs Docker,
+# so it is kept separate from the default per-sub-project test sweep.
+test-e2e:
+	@echo "Running E2E smoke tests (requires Docker for Postgres)..."
+	$(MAKE) -C e2e test-local
+
 # Clean all sub-projects
 clean:
 	@echo "Cleaning all sub-projects..."
@@ -111,6 +118,7 @@ help:
 	@echo "  coverage         - Run coverage for all sub-projects"
 	@echo "  lint             - Run linter for all sub-projects"
 	@echo "  test-all         - Run test-all for all sub-projects"
+	@echo "  test-e2e         - Run E2E smoke tests (requires Docker)"
 	@echo "  clean            - Clean all sub-projects"
 	@echo "  killall          - Kill all running processes"
 	@echo "  help             - Show this help message"

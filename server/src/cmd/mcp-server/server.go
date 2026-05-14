@@ -489,6 +489,10 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 	// Setup SIGHUP handler for configuration reload
 	s.setupSIGHUP(flags, configPath)
 
+	// Setup SIGTERM/SIGINT handler for graceful shutdown and Go
+	// coverage-counter flush.
+	s.setupShutdownHandler()
+
 	// Run the server
 	return s.mcpServer.RunHTTP(httpConfig)
 }
@@ -525,6 +529,29 @@ func (s *Server) logStartupInfo() {
 	if s.debug {
 		fmt.Fprintf(os.Stderr, "Debug logging: ENABLED\n")
 	}
+}
+
+// setupShutdownHandler registers a SIGTERM/SIGINT handler that drains
+// the active HTTP server and, when the binary was built with -cover,
+// flushes coverage counters to $GOCOVERDIR before exit.
+//
+// Without this, the Go runtime kills the process on SIGTERM without
+// running the -cover atexit hook, so E2E coverage reports come back
+// empty for the long-running server. The CLI subcommand path does
+// not call this helper; its short-lived os.Exit(0) already triggers
+// the runtime's normal counter flush.
+//
+// The closer slot is intentionally left nil: main.go already defers
+// s.Close on a clean RunHTTP return, and racing that defer against
+// a goroutine-driven Close has caused double-close panics in past
+// graceful-shutdown implementations. Flushing coverage and forcing
+// exit(0) is the only thing the runtime cannot do on its own.
+func (s *Server) setupShutdownHandler() {
+	installShutdownHandler(shutdownDeps{
+		server:      s.mcpServer,
+		gocoverdir:  os.Getenv("GOCOVERDIR"),
+		writeCounts: realCoverageWriter,
+	})
 }
 
 // setupSIGHUP sets up the SIGHUP handler for configuration reload

@@ -14,7 +14,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"sync"
 
 	"github.com/pgedge/ai-workbench/pkg/mcp"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -54,6 +56,36 @@ type Server struct {
 	prompts     PromptProvider
 	debug       bool              // Enable debug logging for HTTP mode
 	ipExtractor *auth.IPExtractor // Secure IP extraction from requests
+
+	// httpMu guards httpServer so Shutdown and RunHTTP can race safely
+	// when a signal arrives during early HTTP startup.
+	httpMu     sync.Mutex
+	httpServer *http.Server // Active HTTP server in HTTP mode; nil otherwise
+}
+
+// Shutdown gracefully stops the active HTTP server, if one is running.
+// It is safe to call before RunHTTP has installed a server (no-op) and
+// safe to call concurrently from a signal handler. The provided
+// context bounds how long Shutdown will wait for in-flight requests to
+// drain before returning. Callers should treat a non-nil error as
+// informational; on SIGTERM the server typically exits regardless.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.httpMu.Lock()
+	srv := s.httpServer
+	s.httpMu.Unlock()
+	if srv == nil {
+		return nil
+	}
+	return srv.Shutdown(ctx)
+}
+
+// setHTTPServer records the active HTTP server so Shutdown can reach
+// it. Calling with a nil argument clears the reference, which
+// callers do in a defer after RunHTTP returns.
+func (s *Server) setHTTPServer(srv *http.Server) {
+	s.httpMu.Lock()
+	s.httpServer = srv
+	s.httpMu.Unlock()
 }
 
 // NewServer creates a new MCP server

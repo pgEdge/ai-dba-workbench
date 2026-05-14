@@ -14,6 +14,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -115,7 +116,17 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 		IdleTimeout:  120 * time.Second, // Limits keep-alive connection duration
 	}
 
-	// Start server with or without TLS
+	// Publish the server so callers (notably the SIGTERM handler in
+	// cmd/mcp-server) can invoke Shutdown. Clear the reference on the
+	// way out so a subsequent Shutdown call is a harmless no-op once
+	// the listener has already stopped.
+	s.setHTTPServer(httpServer)
+	defer s.setHTTPServer(nil)
+
+	// Start server with or without TLS. Treat http.ErrServerClosed as a
+	// clean exit so a graceful Shutdown (e.g. from the SIGTERM handler)
+	// surfaces as a nil error rather than a spurious failure.
+	var serveErr error
 	if config.TLSEnable {
 		// Load TLS configuration
 		tlsConfig, err := s.loadTLSConfig(config)
@@ -124,10 +135,15 @@ func (s *Server) RunHTTP(config *HTTPConfig) error {
 		}
 		httpServer.TLSConfig = tlsConfig
 
-		return httpServer.ListenAndServeTLS(config.CertFile, config.KeyFile)
+		serveErr = httpServer.ListenAndServeTLS(config.CertFile, config.KeyFile)
+	} else {
+		serveErr = httpServer.ListenAndServe()
 	}
 
-	return httpServer.ListenAndServe()
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		return nil
+	}
+	return serveErr
 }
 
 // loadTLSConfig loads TLS certificates and creates a TLS configuration

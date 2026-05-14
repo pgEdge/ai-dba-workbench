@@ -131,6 +131,8 @@ nav:
       - Architecture: developer-guide/server/architecture.md
     - Client:
       - Architecture: developer-guide/client/architecture.md
+    - End-to-End Testing:
+      - Overview: developer-guide/e2e/index.md
     - Design:
       - Node Role Probe: developer-guide/design/node-role-probe.md
 

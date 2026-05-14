@@ -220,3 +220,28 @@ describe('ErrorBoundary', () => {
         });
     });
 });
+
+const Boom = () => {
+    throw new Error('boom');
+};
+
+describe('ErrorBoundary fallback testid', () => {
+    it('marks the fallback container with a stable testid', () => {
+        // Suppress React's expected error log for this test. Wrap the
+        // render+assert in try/finally so the spy is always restored,
+        // even if the render or the assertion throws.
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            render(
+                <ErrorBoundary>
+                    <Boom />
+                </ErrorBoundary>,
+            );
+            expect(
+                screen.getByTestId('error-boundary-fallback'),
+            ).toBeInTheDocument();
+        } finally {
+            spy.mockRestore();
+        }
+    });
+});

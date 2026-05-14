@@ -396,6 +396,7 @@ const Login = () => {
                             <Alert
                                 severity="error"
                                 sx={alertSx}
+                                data-testid="login-error"
                             >
                                 {error}
                             </Alert>
@@ -416,6 +417,7 @@ const Login = () => {
                                 disabled={loading}
                                 inputProps={{
                                     autoComplete: 'off',
+                                    'data-testid': 'login-username-input',
                                 }}
                                 InputLabelProps={{ shrink: true }}
                                 sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
@@ -433,6 +435,7 @@ const Login = () => {
                                 disabled={loading}
                                 inputProps={{
                                     autoComplete: 'current-password',
+                                    'data-testid': 'login-password-input',
                                 }}
                                 InputLabelProps={{ shrink: true }}
                                 sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
@@ -445,6 +448,7 @@ const Login = () => {
                                 size="large"
                                 disabled={loading}
                                 sx={getSubmitButtonSx}
+                                data-testid="login-submit"
                             >
                                 {loading ? 'Signing in...' : 'Sign In'}
                             </Button>

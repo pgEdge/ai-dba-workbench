@@ -251,7 +251,7 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 // EmbeddingConfig holds embedding generation settings
 type EmbeddingConfig struct {
 	Enabled          bool   `yaml:"enabled"`             // Whether embedding generation is enabled (default: false)
-	Provider         string `yaml:"provider"`            // "voyage", "openai", or "ollama"
+	Provider         string `yaml:"provider"`            // "voyage", "openai", "gemini", or "ollama"
 	Model            string `yaml:"model"`               // Provider-specific model name
 	VoyageAPIKey     string `yaml:"-"`                   // API key for Voyage AI (loaded from file, not config)
 	VoyageAPIKeyFile string `yaml:"voyage_api_key_file"` // Path to file containing Voyage API key
@@ -259,6 +259,9 @@ type EmbeddingConfig struct {
 	OpenAIAPIKey     string `yaml:"-"`                   // API key for OpenAI (loaded from file, not config)
 	OpenAIAPIKeyFile string `yaml:"openai_api_key_file"` // Path to file containing OpenAI API key
 	OpenAIBaseURL    string `yaml:"openai_base_url"`     // Base URL for OpenAI API (default: https://api.openai.com/v1)
+	GeminiAPIKey     string `yaml:"-"`                   // API key for Gemini (loaded from file, not config)
+	GeminiAPIKeyFile string `yaml:"gemini_api_key_file"` // Path to file containing Gemini API key
+	GeminiBaseURL    string `yaml:"gemini_base_url"`     // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
 	OllamaURL        string `yaml:"ollama_url"`          // URL for Ollama service (default: http://localhost:11434)
 }
 
@@ -379,7 +382,7 @@ type KnowledgebaseConfig struct {
 	DatabasePath string `yaml:"database_path"` // Path to SQLite knowledgebase database
 
 	// Embedding provider configuration for KB similarity search (independent of generate_embeddings tool)
-	EmbeddingProvider         string `yaml:"embedding_provider"`            // "voyage", "openai", or "ollama"
+	EmbeddingProvider         string `yaml:"embedding_provider"`            // "voyage", "openai", "gemini", or "ollama"
 	EmbeddingModel            string `yaml:"embedding_model"`               // Provider-specific model name
 	EmbeddingVoyageAPIKey     string `yaml:"-"`                             // API key for Voyage AI (loaded from file, not config)
 	EmbeddingVoyageAPIKeyFile string `yaml:"embedding_voyage_api_key_file"` // Path to file containing Voyage API key
@@ -387,6 +390,9 @@ type KnowledgebaseConfig struct {
 	EmbeddingOpenAIAPIKey     string `yaml:"-"`                             // API key for OpenAI (loaded from file, not config)
 	EmbeddingOpenAIAPIKeyFile string `yaml:"embedding_openai_api_key_file"` // Path to file containing OpenAI API key
 	EmbeddingOpenAIBaseURL    string `yaml:"embedding_openai_base_url"`     // Base URL for OpenAI API (default: https://api.openai.com/v1)
+	EmbeddingGeminiAPIKey     string `yaml:"-"`                             // API key for Gemini (loaded from file, not config)
+	EmbeddingGeminiAPIKeyFile string `yaml:"embedding_gemini_api_key_file"` // Path to file containing Gemini API key
+	EmbeddingGeminiBaseURL    string `yaml:"embedding_gemini_base_url"`     // Base URL for Gemini API (default: https://generativelanguage.googleapis.com)
 	EmbeddingOllamaURL        string `yaml:"embedding_ollama_url"`          // URL for Ollama service (default: http://localhost:11434)
 }
 
@@ -643,6 +649,15 @@ func mergeConfig(dest, src *Config) {
 		if src.Embedding.OpenAIBaseURL != "" {
 			dest.Embedding.OpenAIBaseURL = src.Embedding.OpenAIBaseURL
 		}
+		if src.Embedding.GeminiAPIKey != "" {
+			dest.Embedding.GeminiAPIKey = src.Embedding.GeminiAPIKey
+		}
+		if src.Embedding.GeminiAPIKeyFile != "" {
+			dest.Embedding.GeminiAPIKeyFile = src.Embedding.GeminiAPIKeyFile
+		}
+		if src.Embedding.GeminiBaseURL != "" {
+			dest.Embedding.GeminiBaseURL = src.Embedding.GeminiBaseURL
+		}
 		if src.Embedding.OllamaURL != "" {
 			dest.Embedding.OllamaURL = src.Embedding.OllamaURL
 		}
@@ -730,6 +745,15 @@ func mergeConfig(dest, src *Config) {
 		}
 		if src.Knowledgebase.EmbeddingOpenAIBaseURL != "" {
 			dest.Knowledgebase.EmbeddingOpenAIBaseURL = src.Knowledgebase.EmbeddingOpenAIBaseURL
+		}
+		if src.Knowledgebase.EmbeddingGeminiAPIKey != "" {
+			dest.Knowledgebase.EmbeddingGeminiAPIKey = src.Knowledgebase.EmbeddingGeminiAPIKey
+		}
+		if src.Knowledgebase.EmbeddingGeminiAPIKeyFile != "" {
+			dest.Knowledgebase.EmbeddingGeminiAPIKeyFile = src.Knowledgebase.EmbeddingGeminiAPIKeyFile
+		}
+		if src.Knowledgebase.EmbeddingGeminiBaseURL != "" {
+			dest.Knowledgebase.EmbeddingGeminiBaseURL = src.Knowledgebase.EmbeddingGeminiBaseURL
 		}
 		if src.Knowledgebase.EmbeddingOllamaURL != "" {
 			dest.Knowledgebase.EmbeddingOllamaURL = src.Knowledgebase.EmbeddingOllamaURL
@@ -836,6 +860,11 @@ func loadAPIKeysFromFiles(cfg *Config) {
 			cfg.Embedding.OpenAIAPIKey = key
 		}
 	}
+	if cfg.Embedding.GeminiAPIKey == "" && cfg.Embedding.GeminiAPIKeyFile != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.GeminiAPIKeyFile); err == nil && key != "" {
+			cfg.Embedding.GeminiAPIKey = key
+		}
+	}
 
 	// LLM API keys
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
@@ -863,6 +892,11 @@ func loadAPIKeysFromFiles(cfg *Config) {
 	if cfg.Knowledgebase.EmbeddingOpenAIAPIKey == "" && cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile != "" {
 		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
 			cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
+		}
+	}
+	if cfg.Knowledgebase.EmbeddingGeminiAPIKey == "" && cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile != "" {
+		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile); err == nil && key != "" {
+			cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
 		}
 	}
 }

@@ -128,6 +128,8 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 					VoyageBaseURL: cfg.Embedding.VoyageBaseURL,
 					OpenAIAPIKey:  cfg.Embedding.OpenAIAPIKey,
 					OpenAIBaseURL: cfg.Embedding.OpenAIBaseURL,
+					GeminiAPIKey:  cfg.Embedding.GeminiAPIKey,
+					GeminiBaseURL: cfg.Embedding.GeminiBaseURL,
 					OllamaURL:     cfg.Embedding.OllamaURL,
 				}
 

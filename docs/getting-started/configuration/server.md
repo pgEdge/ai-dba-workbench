@@ -114,6 +114,7 @@ embedding:
   ollama_url: "http://localhost:11434"
   # voyage_api_key_file: "~/.voyage-api-key"
   # openai_api_key_file: "~/.openai-api-key"
+  # gemini_api_key_file: "~/.gemini-api-key"
 
 #=====================================================
 # LLM CONFIGURATION (Web Client Chat Proxy)
@@ -364,6 +365,12 @@ protection for user-created database connections.
 
 ### Embedding (`embedding`)
 
+The `provider` option accepts `voyage`, `openai`, `gemini`, or
+`ollama`. The Gemini provider supports `text-embedding-004` (default,
+768 dimensions) and `embedding-001` (768 dimensions). Model
+availability varies by Gemini API key tier; run ListModels to verify
+which embedding models a given key can access.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable embeddings |
@@ -372,8 +379,10 @@ protection for user-created database connections.
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `voyage_api_key_file` | string | | Voyage API key path |
 | `openai_api_key_file` | string | | OpenAI API key path |
+| `gemini_api_key_file` | string | | Gemini API key path |
 | `voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Voyage base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
+| `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 
 ### LLM Proxy (`llm`)
 
@@ -499,6 +508,12 @@ llm:
 
 ### Knowledgebase (`knowledgebase`)
 
+The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
+or `ollama`. The Gemini provider supports `text-embedding-004`
+(default, 768 dimensions) and `embedding-001` (768 dimensions). Model
+availability varies by Gemini API key tier; run ListModels to verify
+which embedding models a given key can access.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable knowledgebase |
@@ -508,8 +523,10 @@ llm:
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |
 | `embedding_voyage_api_key_file` | string | | Voyage API key path |
 | `embedding_openai_api_key_file` | string | | OpenAI key path |
+| `embedding_gemini_api_key_file` | string | | Gemini key path |
 | `embedding_voyage_base_url` | string | `https://api.voyageai.com/v1/embeddings` | Voyage base URL |
 | `embedding_openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
+| `embedding_gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 
 ### Memory (`memory`)
 

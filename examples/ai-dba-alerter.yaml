@@ -344,8 +344,10 @@ llm:
     # base_url: https://generativelanguage.googleapis.com
 
     # Model to use for reasoning/classification
-    # Default: gemini-2.0-flash
-    reasoning_model: gemini-2.0-flash
+    # Model availability varies by Gemini API key tier; run
+    # ListModels to verify which models a given key can access.
+    # Default: gemini-2.5-flash
+    reasoning_model: gemini-2.5-flash
 
   #-------------------------------------------------------------------------
   # Voyage Settings (for embeddings only)

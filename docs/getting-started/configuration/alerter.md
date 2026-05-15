@@ -284,13 +284,15 @@ provider.
 #### Gemini Configuration
 
 The `llm.gemini` section configures the Google Gemini
-provider.
+provider. Model availability varies by Gemini API key
+tier; run ListModels to verify which models a given
+key can access.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
-| `reasoning_model` | string | `gemini-2.0-flash` | Reasoning model |
+| `reasoning_model` | string | `gemini-2.5-flash` | Reasoning model |
 
 #### Voyage Configuration
 

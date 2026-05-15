@@ -256,7 +256,7 @@ func NewConfig() *Config {
 				EmbeddingModel: "voyage-3-lite",
 			},
 			Gemini: GeminiConfig{
-				ReasoningModel: "gemini-2.0-flash",
+				ReasoningModel: "gemini-2.5-flash",
 			},
 		},
 	}

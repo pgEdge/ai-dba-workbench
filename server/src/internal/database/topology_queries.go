@@ -155,6 +155,11 @@ type ClusterSummary struct {
 // groups with no visible clusters are dropped. A nil slice means the
 // caller has unrestricted visibility (superuser or wildcard scope) and
 // the full topology is returned.
+//
+// Every returned TopologyGroup is guaranteed to have a non-nil Clusters
+// slice and every TopologyCluster a non-nil Servers slice, so the JSON
+// wire format is consistently "clusters": [] / "servers": [] rather than
+// null. Issue #242.
 func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs []int) ([]TopologyGroup, error) {
 	// An explicit empty allow-list means no connections are visible;
 	// short-circuit before any datastore work.
@@ -165,7 +170,7 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	var result []TopologyGroup
+	result := make([]TopologyGroup, 0)
 
 	// Step 1: Get the default group info (database-backed since migration 16)
 	defaultGroup, err := d.getDefaultGroupInternal(ctx)
@@ -277,7 +282,36 @@ func (d *Datastore) GetClusterTopology(ctx context.Context, visibleConnectionIDs
 		result = pruneTopologyByVisibility(result, visibleConnectionIDs)
 	}
 
+	// Step 10: Normalize nil slices in the response tree so JSON encoding
+	// produces "clusters": [] / "servers": [] instead of null. This is
+	// the contract owned by the datastore: every TopologyGroup must carry
+	// a non-nil Clusters slice and every TopologyCluster a non-nil
+	// Servers slice. Issue #242.
+	normalizeTopologyGroups(result)
+
 	return result, nil
+}
+
+// normalizeTopologyGroups walks the topology tree and replaces any nil
+// Clusters slice on a TopologyGroup, and any nil Servers slice on a
+// TopologyCluster, with a non-nil empty slice. This guarantees the JSON
+// wire format never contains "clusters": null or "servers": null, which
+// the web client cannot defend against without per-call defensive
+// guards. The function mutates in place because the topology tree is
+// already owned by the caller at this point.
+func normalizeTopologyGroups(groups []TopologyGroup) {
+	for i := range groups {
+		group := &groups[i]
+		if group.Clusters == nil {
+			group.Clusters = make([]TopologyCluster, 0)
+		}
+		for j := range group.Clusters {
+			cluster := &group.Clusters[j]
+			if cluster.Servers == nil {
+				cluster.Servers = make([]TopologyServerInfo, 0)
+			}
+		}
+	}
 }
 
 // pruneTopologyByVisibility removes servers, clusters, and groups that
@@ -554,8 +588,11 @@ func (d *Datastore) buildTopologyHierarchy(connections []connectionWithRole, clu
 	// pg18-spock1, pg18-spock2 -> another cluster
 	spockClusters := d.groupSpockNodesByClusters(spockNodes, childrenMap, connByID, assignedConnections, clusterOverrides)
 
-	// Build clusters list, filtering out claimed and dismissed clusters
-	var clusters []TopologyCluster
+	// Build clusters list, filtering out claimed and dismissed clusters.
+	// The slice is initialized non-nil so the default group always
+	// marshals to "clusters": [] when empty rather than "clusters":
+	// null. Issue #242.
+	clusters := make([]TopologyCluster, 0)
 	for _, cluster := range spockClusters {
 		// Skip clusters that have been moved to manual groups or dismissed
 		if cluster.AutoClusterKey != "" && (claimedKeys[cluster.AutoClusterKey] || dismissedKeys[cluster.AutoClusterKey]) {

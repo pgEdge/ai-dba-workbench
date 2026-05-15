@@ -32,7 +32,7 @@ import StatusPanel from './components/StatusPanel';
 import ChatPanel from './components/ChatPanel';
 import ChatFAB from './components/ChatPanel/ChatFAB';
 import { createPgedgeTheme, loginTheme } from './theme/pgedgeTheme';
-import { collectServers } from './utils/clusterHelpers';
+import { buildSelection } from './utils/buildSelection';
 import type { Selection } from './types/selection';
 
 // Style constants
@@ -168,96 +168,20 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
 
     // Build selection object based on current selection type.
     // Parent IDs are resolved from clusterData for blackout scope. #33
-    const selection = useMemo((): Selection | null => {
-        if (selectionType === 'server' && selectedServer) {
-            let clusterId: string | undefined;
-            let clusterName: string | undefined;
-            let isStandalone: boolean | undefined;
-            let groupId: string | undefined;
-            let groupName: string | undefined;
-
-            for (const group of clusterData) {
-                for (const cluster of group.clusters) {
-                    const allServers = collectServers(cluster.servers || []);
-                    if (allServers.some(s => s.id === selectedServer.id)) {
-                        clusterId = cluster.id;
-                        clusterName = cluster.name;
-                        isStandalone = cluster.isStandalone;
-                        groupId = group.id;
-                        groupName = group.name;
-                        break;
-                    }
-                }
-                if (groupId) {break;}
-            }
-
-            return {
-                type: 'server',
-                id: selectedServer.id,
-                name: selectedServer.name,
-                description: selectedServer.description ?? '',
-                status: selectedServer.status || 'unknown',
-                host: selectedServer.host ?? '',
-                port: selectedServer.port || 0,
-                role: selectedServer.role || '',
-                version: selectedServer.version || '',
-                database: selectedServer.database_name || selectedServer.database || '',
-                username: selectedServer.username ?? '',
-                os: selectedServer.os ?? '',
-                platform: selectedServer.platform ?? '',
-                spockNodeName: selectedServer.spock_node_name,
-                spockVersion: selectedServer.spock_version,
-                clusterId,
-                clusterName,
-                isStandalone,
-                groupId,
-                groupName,
-            };
-        }
-
-        if (selectionType === 'cluster' && selectedCluster) {
-            const servers = selectedCluster.servers ? collectServers(selectedCluster.servers) : [];
-            const serverIds = servers.map(s => s.id);
-
-            let groupId: string | undefined;
-            let groupName: string | undefined;
-
-            for (const group of clusterData) {
-                if (group.clusters.some(c => c.id === selectedCluster.id)) {
-                    groupId = group.id;
-                    groupName = group.name;
-                    break;
-                }
-            }
-
-            return {
-                type: 'cluster',
-                id: selectedCluster.id,
-                name: selectedCluster.name,
-                description: selectedCluster.description ?? '',
-                servers: servers,
-                serverIds: serverIds,
-                status: servers.every(s => s.status === 'offline') && servers.length > 0
-                    ? 'offline'
-                    : servers.some(s => s.status === 'offline' || s.status === 'warning')
-                        ? 'warning'
-                        : 'online',
-                groupId,
-                groupName,
-            };
-        }
-
-        if (selectionType === 'estate') {
-            return {
-                type: 'estate',
-                name: 'All Servers',
-                groups: clusterData,
-                status: 'online', // Will be calculated by StatusPanel
-            };
-        }
-
-        return null;
-    }, [selectionType, selectedServer, selectedCluster, clusterData]);
+    // The actual logic lives in buildSelection so it can be unit
+    // tested without rendering the full layout; the helper is also
+    // defensive about a group's clusters field being null (the server
+    // can emit `null` for an empty group, which would otherwise crash
+    // the layout into the ErrorBoundary, see issue #242).
+    const selection = useMemo<Selection | null>(
+        () => buildSelection(
+            selectionType,
+            selectedServer,
+            selectedCluster,
+            clusterData,
+        ),
+        [selectionType, selectedServer, selectedCluster, clusterData],
+    );
 
     return (
         <BlackoutProvider selection={selection}>

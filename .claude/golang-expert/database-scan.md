@@ -81,6 +81,27 @@ The helper makes three guarantees that affect callers:
   for example
   `fmt.Errorf("failed to read cluster groups: %w", err)`.
 
+## Topology Response Slices
+
+The topology response tree built by `GetClusterTopology` in
+`topology_queries.go` carries the same non-nil-slice contract for
+fields encoded without `omitempty`:
+
+- `TopologyGroup.Clusters` must never be nil on the wire; a group
+  with zero clusters must marshal to `"clusters": []`, not
+  `"clusters": null`. The web client crashes on a JSON null here.
+- `TopologyCluster.Servers` follows the same rule.
+- `TopologyServerInfo.Children` and
+  `TopologyServerInfo.Relationships` use `omitempty`; nil is fine
+  there because it is omitted from JSON entirely.
+
+`GetClusterTopology` runs `normalizeTopologyGroups` as the final
+step before returning. The helper walks the tree and replaces nil
+`Clusters` or `Servers` slices with `make([]T, 0)`. New code paths
+that mutate the topology after that step must preserve the
+non-nil contract themselves, or feed back through the
+normalisation helper. Issue #242.
+
 ## When NOT To Use It
 
 Three categories of caller stay on the hand-written loop:

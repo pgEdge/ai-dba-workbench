@@ -11,7 +11,8 @@
 import { test, expect } from '@playwright/test';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
-import { navigateToAdminTokens } from '../helpers/browser.helper';
+import { AdminPage } from '../pages/AdminPage';
+import { TokenManagementPage } from '../pages/TokenManagementPage';
 import {
     ADMIN_USER,
     API_URL,
@@ -171,60 +172,37 @@ test.describe('Token Management', () => {
     // 7. Token UI creation
     // -------------------------------------------------------
     test('create token via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const tokenPage = new TokenManagementPage(page);
         const username = makeTestUsername('token-ui');
 
-        // Create a service account (tokens are associated with
-        // users). Use admin to create the token via UI.
-        await api.createUser(adminCookie, {
-            username,
-            password: TEST_USER_PASSWORD,
-            display_name: `Token UI ${username}`,
-            email: `${username}@e2e.test`,
-            is_service_account: true,
+        await test.step('Create service account via API', async () => {
+            await api.createUser(adminCookie, {
+                username,
+                password: TEST_USER_PASSWORD,
+                display_name: `Token UI ${username}`,
+                email: `${username}@e2e.test`,
+                is_service_account: true,
+            });
         });
 
-        await page.goto('/');
-        // storageState provides the admin session cookie, so the
-        // app renders the main layout directly. Wait for the
-        // header to confirm the session is active.
-        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
+        await test.step('Navigate to Admin > Tokens', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToTokens();
+        });
 
-        // Navigate to Admin > Tokens.
-        await navigateToAdminTokens(page);
+        await test.step('Create token via dialog', async () => {
+            await tokenPage.createToken(
+                username,
+                `${TEST_USER_PREFIX}ui-token`,
+            );
+        });
 
-        // Click "Add Token" or "Add".
-        await page.getByRole('button', { name: /create token/i }).click();
-
-        // Fill the token creation dialog.
-        const dialog = page.getByRole('dialog');
-        await expect(dialog).toBeVisible({ timeout: 5_000 });
-
-        // Select the owner user if a dropdown is present.
-        const ownerSelect = dialog.getByLabel(/owner|user/i);
-        if (await ownerSelect.isVisible().catch(() => false)) {
-            await ownerSelect.fill(username);
-            // Select from the dropdown if autocomplete.
-            const option = page.getByRole('option', { name: new RegExp(username) });
-            if (await option.isVisible().catch(() => false)) {
-                await option.click();
-            }
-        }
-
-        // Fill annotation.
-        const annotationField = dialog.getByLabel(/annotation|name|description/i);
-        if (await annotationField.isVisible().catch(() => false)) {
-            await annotationField.fill(`${TEST_USER_PREFIX}ui-token`);
-        }
-
-        // Submit.
-        await dialog.getByRole('button', { name: /create|save/i }).click();
-
-        // Verify the token appears in the list (either a snackbar
-        // shows the raw token or the table updates).
-        await expect(
-            page.getByText(/token created|save this token/i).or(
-                page.getByRole('row', { name: new RegExp(TEST_USER_PREFIX) }),
-            ).first(),
-        ).toBeVisible({ timeout: 10_000 });
+        await test.step('Verify token creation', async () => {
+            await tokenPage.expectTokenCreated(
+                new RegExp(TEST_USER_PREFIX),
+            );
+        });
     });
 });

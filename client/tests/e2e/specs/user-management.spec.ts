@@ -11,16 +11,8 @@
 import { test, expect } from '@playwright/test';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
-import {
-    navigateToAdminUsers,
-    waitForUsersTable,
-    clickAddUser,
-    fillUserForm,
-    submitUserForm,
-    clickEditUser,
-    clickDeleteUser,
-    confirmDelete,
-} from '../helpers/browser.helper';
+import { AdminPage } from '../pages/AdminPage';
+import { UserManagementPage } from '../pages/UserManagementPage';
 import {
     API_URL,
     TEST_USER_PASSWORD,
@@ -76,22 +68,27 @@ test.describe('User Management', () => {
     // 2. Create user via UI
     // -------------------------------------------------------
     test('create user via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const userPage = new UserManagementPage(page);
         const username = makeTestUsername('ui-create');
 
-        await page.goto('/');
-        // storageState provides the admin session; wait for the
-        // main layout header to confirm the session is active.
-        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
-        await navigateToAdminUsers(page);
+        await test.step('Navigate to Admin > Users', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToUsers();
+        });
 
-        await clickAddUser(page);
-        await fillUserForm(page, username, TEST_USER_PASSWORD, `E2E ${username}`);
-        await submitUserForm(page);
+        await test.step('Create user via dialog', async () => {
+            await userPage.createUser(
+                username,
+                TEST_USER_PASSWORD,
+                `E2E ${username}`,
+            );
+        });
 
-        // Wait for table to refresh and verify the new user row.
-        await waitForUsersTable(page);
-        await expect(page.getByRole('row', { name: new RegExp(username) })).toBeVisible({
-            timeout: 10_000,
+        await test.step('Verify new user in table', async () => {
+            await userPage.waitForUsersTable();
+            await userPage.expectUserInTable(username);
         });
     });
 
@@ -125,37 +122,36 @@ test.describe('User Management', () => {
     // 4. Update user via UI
     // -------------------------------------------------------
     test('update user via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const userPage = new UserManagementPage(page);
         const username = makeTestUsername('ui-update');
 
-        await api.createUser(adminCookie, {
-            username,
-            password: TEST_USER_PASSWORD,
-            display_name: 'UI Before',
-            email: `${username}@e2e.test`,
+        await test.step('Create test user via API', async () => {
+            await api.createUser(adminCookie, {
+                username,
+                password: TEST_USER_PASSWORD,
+                display_name: 'UI Before',
+                email: `${username}@e2e.test`,
+            });
         });
 
-        await page.goto('/');
-        // storageState provides the admin session; wait for the
-        // main layout header to confirm the session is active.
-        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
-        await navigateToAdminUsers(page);
-        await waitForUsersTable(page);
+        await test.step('Navigate to Admin > Users', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToUsers();
+            await userPage.waitForUsersTable();
+        });
 
-        await clickEditUser(page, username);
+        await test.step('Edit user display name via dialog', async () => {
+            await userPage.clickEditUser(username);
+            await userPage.updateDisplayName('UI After');
+        });
 
-        // Update display name in the edit dialog.
-        const dialog = page.locator('.MuiDialog-paper:not(.MuiDialog-paperFullScreen)').first();
-        await expect(dialog).toBeVisible();
-        const nameField = dialog.getByLabel('Display Name');
-        await nameField.clear();
-        await nameField.fill('UI After');
-        await dialog.getByRole('button', { name: /save|update/i }).click();
-        await expect(dialog).toBeHidden({ timeout: 10_000 });
-
-        // Verify via API.
-        const { users } = await api.listUsers(adminCookie);
-        const updated = users.find((u) => u.username === username)!;
-        expect(updated.display_name).toBe('UI After');
+        await test.step('Verify via API', async () => {
+            const { users } = await api.listUsers(adminCookie);
+            const updated = users.find((u) => u.username === username)!;
+            expect(updated.display_name).toBe('UI After');
+        });
     });
 
     // -------------------------------------------------------
@@ -187,29 +183,33 @@ test.describe('User Management', () => {
     // 6. Delete user via UI
     // -------------------------------------------------------
     test('delete user via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const userPage = new UserManagementPage(page);
         const username = makeTestUsername('ui-delete');
 
-        await api.createUser(adminCookie, {
-            username,
-            password: TEST_USER_PASSWORD,
-            display_name: 'UI Delete',
-            email: `${username}@e2e.test`,
+        await test.step('Create test user via API', async () => {
+            await api.createUser(adminCookie, {
+                username,
+                password: TEST_USER_PASSWORD,
+                display_name: 'UI Delete',
+                email: `${username}@e2e.test`,
+            });
         });
 
-        await page.goto('/');
-        // storageState provides the admin session; wait for the
-        // main layout header to confirm the session is active.
-        await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
-        await navigateToAdminUsers(page);
-        await waitForUsersTable(page);
+        await test.step('Navigate to Admin > Users', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToUsers();
+            await userPage.waitForUsersTable();
+        });
 
-        await clickDeleteUser(page, username);
-        await confirmDelete(page);
+        await test.step('Delete user via dialog', async () => {
+            await userPage.deleteUser(username);
+        });
 
-        // Verify the row is gone.
-        await expect(
-            page.getByRole('row', { name: new RegExp(username) }),
-        ).toBeHidden({ timeout: 10_000 });
+        await test.step('Verify row is gone', async () => {
+            await userPage.expectUserNotInTable(username);
+        });
     });
 
     // -------------------------------------------------------

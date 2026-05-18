@@ -66,7 +66,7 @@ export class AdminPage extends BasePage {
         await expect(this.adminButton).toBeVisible({ timeout: 60_000 });
         await this.adminButton.click();
         await expect(
-            this.page.getByRole('heading', { name: 'Administration' }),
+            this.page.getByText('Administration', { exact: true }),
         ).toBeVisible({ timeout: 5_000 });
     }
 

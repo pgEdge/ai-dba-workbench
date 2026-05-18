@@ -78,7 +78,7 @@ export class AlertManagementPage extends BasePage {
             .click();
         await this.page
             .getByRole('option', { name: operator, exact: true })
-            .click();
+            .click({ force: true });
     }
 
     /**
@@ -102,8 +102,8 @@ export class AlertManagementPage extends BasePage {
             .getByRole('combobox', { name: /Severity/ })
             .click();
         await this.page
-            .getByRole('option', { name: severity })
-            .click();
+            .getByRole('option', { name: severity, exact: true })
+            .click({ force: true });
     }
 
     /**

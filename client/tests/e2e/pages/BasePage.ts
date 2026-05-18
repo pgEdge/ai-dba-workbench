@@ -66,6 +66,16 @@ export class BasePage {
     // ---------------------------------------------------------------
 
     /**
+     * Locator scoped to non-fullscreen dialogs only.
+     * Excludes the Admin Panel full-screen dialog wrapper so that
+     * assertions targeting inner (edit/delete/create) dialogs do not
+     * accidentally match the always-open Admin Panel.
+     */
+    protected get innerDialog(): Locator {
+        return this.page.locator('[role="dialog"]:not(.MuiDialog-paperFullScreen)');
+    }
+
+    /**
      * Wait for a dialog to become visible. Returns a locator scoped
      * to the MUI Dialog paper element.
      *
@@ -91,7 +101,7 @@ export class BasePage {
     async waitForDialogToClose(
         timeout: number = 10_000,
     ): Promise<void> {
-        await expect(this.page.getByRole('dialog')).toBeHidden({
+        await expect(this.innerDialog).toBeHidden({
             timeout,
         });
     }
@@ -103,7 +113,7 @@ export class BasePage {
     async confirmDeleteDialog(
         timeout: number = 10_000,
     ): Promise<void> {
-        const dialog = this.page.getByRole('dialog');
+        const dialog = this.innerDialog;
         await expect(dialog).toBeVisible({ timeout: 5_000 });
         await dialog
             .getByRole('button', { name: /^delete$/i })

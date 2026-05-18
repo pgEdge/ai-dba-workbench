@@ -99,8 +99,8 @@ export class UserManagementPage extends BasePage {
         displayName?: string,
     ): Promise<void> {
         // The create dialog renders inside a MUI Dialog; scope to
-        // the dialog so label matches are unambiguous.
-        const dialog = this.page.getByRole('dialog');
+        // the inner dialog so label matches are unambiguous.
+        const dialog = this.innerDialog;
 
         await dialog.getByLabel('Username').fill(username);
         await dialog.getByLabel('Password').fill(password);
@@ -113,7 +113,7 @@ export class UserManagementPage extends BasePage {
      * Submit the create-user dialog by clicking the "Create" button.
      */
     async submitCreateForm(): Promise<void> {
-        const dialog = this.page.getByRole('dialog');
+        const dialog = this.innerDialog;
         await dialog
             .getByRole('button', { name: /^create$/i })
             .click();
@@ -148,7 +148,7 @@ export class UserManagementPage extends BasePage {
      * scoped to the dialog.
      */
     async waitForEditDialog(): Promise<Locator> {
-        const dialog = this.page.getByRole('dialog');
+        const dialog = this.innerDialog;
         await expect(dialog).toBeVisible({ timeout: 5_000 });
         return dialog;
     }

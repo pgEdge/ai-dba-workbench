@@ -6,8 +6,9 @@
 #
 # Quick start:
 #
-#   bash client/tests/e2e/scripts/setup-secrets.sh
-#   POSTGRES_PASSWORD=postgres docker compose -f client/tests/e2e/docker/docker-compose.yml up -d
+#   cd client/tests/e2e
+#   bash scripts/setup-secrets.sh
+#   POSTGRES_PASSWORD=postgres docker compose -f docker/docker-compose.yml up -d
 #
 
 services:
@@ -36,8 +37,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ${E2E_CONFIG_DIR:-./config}/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
-      - ${E2E_SECRET_DIR:-./secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ${E2E_CONFIG_DIR:-../config}/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
+      - ${E2E_SECRET_DIR:-../secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
       - server-data:/data
     ports:
       - "8080:8080"
@@ -53,9 +54,9 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ${E2E_CONFIG_DIR:-./config}/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
-      - ${E2E_SECRET_DIR:-./secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
-      - ${E2E_SECRET_DIR:-./secret}/pg-password:/etc/pgedge/pg-password:ro
+      - ${E2E_CONFIG_DIR:-../config}/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
+      - ${E2E_SECRET_DIR:-../secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ${E2E_SECRET_DIR:-../secret}/pg-password:/etc/pgedge/pg-password:ro
     networks:
       - e2e-network
     restart: unless-stopped
@@ -68,9 +69,9 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ${E2E_CONFIG_DIR:-./config}/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
-      - ${E2E_SECRET_DIR:-./secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
-      - ${E2E_SECRET_DIR:-./secret}/pg-password:/etc/pgedge/pg-password:ro
+      - ${E2E_CONFIG_DIR:-../config}/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
+      - ${E2E_SECRET_DIR:-../secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ${E2E_SECRET_DIR:-../secret}/pg-password:/etc/pgedge/pg-password:ro
     networks:
       - e2e-network
     restart: unless-stopped

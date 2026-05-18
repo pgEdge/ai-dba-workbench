@@ -9,6 +9,7 @@
  */
 
 import { test } from '@playwright/test';
+import { label } from 'allure-js-commons';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
 import { AdminPage } from '../pages/AdminPage';
@@ -36,6 +37,10 @@ test.describe('Group Management', () => {
     test.use({ storageState: '.auth/admin.json' });
 
     let adminCookie: string;
+
+    test.beforeEach(async () => {
+        await label('package', 'Group Management');
+    });
 
     test.beforeAll(async () => {
         adminCookie = await auth.loginAsAdmin();

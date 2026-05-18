@@ -8,7 +8,7 @@
         "test:headed": "npx playwright test --headed",
         "test:ui": "npx playwright test --ui",
         "report": "npx playwright show-report",
-        "allure:generate": "allure generate ./allure-results --clean",
+        "allure:generate": "cp categories.json allure-results/ 2>/dev/null; allure generate ./allure-results --clean",
         "allure:open": "allure open",
         "allure:report": "npm test && allure generate ./allure-results --clean && allure open"
     },

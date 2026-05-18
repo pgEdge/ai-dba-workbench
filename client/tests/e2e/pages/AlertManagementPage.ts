@@ -75,7 +75,7 @@ export class AlertManagementPage extends BasePage {
     async selectOperator(operator: string): Promise<void> {
         await this.innerDialog
             .getByRole('combobox', { name: /Operator/ })
-            .click();
+            .click({ force: true });
         await this.page
             .getByRole('option', { name: operator, exact: true })
             .click({ force: true });
@@ -88,7 +88,7 @@ export class AlertManagementPage extends BasePage {
         const field = this.innerDialog.getByRole('spinbutton', {
             name: 'Threshold',
         });
-        await field.click();
+        await field.click({ force: true });
         await field.fill(value);
     }
 
@@ -100,7 +100,7 @@ export class AlertManagementPage extends BasePage {
     async selectSeverity(severity: string): Promise<void> {
         await this.innerDialog
             .getByRole('combobox', { name: /Severity/ })
-            .click();
+            .click({ force: true });
         await this.page
             .getByRole('option', { name: severity, exact: true })
             .click({ force: true });
@@ -113,7 +113,7 @@ export class AlertManagementPage extends BasePage {
     async saveEdit(): Promise<void> {
         await this.innerDialog
             .getByRole('button', { name: /^save$/i })
-            .click();
+            .click({ force: true });
         await this.waitForDialogToClose();
     }
 

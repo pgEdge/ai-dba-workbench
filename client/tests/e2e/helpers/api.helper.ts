@@ -309,6 +309,53 @@ export class ApiHelper {
     }
 
     // -----------------------------------------------------------
+    // Groups
+    // -----------------------------------------------------------
+
+    async createGroup(
+        cookie: string,
+        payload: { name: string; description?: string },
+    ): Promise<{ id: number; name: string; description?: string }> {
+        return this.request<{
+            id: number;
+            name: string;
+            description?: string;
+        }>('POST', '/api/v1/rbac/groups', payload, { cookie });
+    }
+
+    async listGroups(
+        cookie: string,
+    ): Promise<{
+        groups: Array<{
+            id: number;
+            name: string;
+            description?: string;
+            member_count?: number;
+        }>;
+    }> {
+        return this.request<{
+            groups: Array<{
+                id: number;
+                name: string;
+                description?: string;
+                member_count?: number;
+            }>;
+        }>('GET', '/api/v1/rbac/groups', undefined, { cookie });
+    }
+
+    async deleteGroup(
+        cookie: string,
+        groupId: number,
+    ): Promise<void> {
+        return this.request<void>(
+            'DELETE',
+            `/api/v1/rbac/groups/${groupId}`,
+            undefined,
+            { cookie },
+        );
+    }
+
+    // -----------------------------------------------------------
     // Connections (for RBAC scope tests)
     // -----------------------------------------------------------
 

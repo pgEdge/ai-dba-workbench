@@ -104,6 +104,18 @@ export class AdminPage extends BasePage {
         await this.waitForLoadingToFinish();
     }
 
+    /**
+     * Navigate to the Admin > Groups section. Opens the admin panel
+     * if not already open, clicks "Groups", and waits for the groups
+     * table to load.
+     */
+    async navigateToGroups(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Groups');
+        await this.waitForLoadingToFinish();
+        await this.waitForTable();
+    }
+
     // ---------------------------------------------------------------
     // User menu actions
     // ---------------------------------------------------------------

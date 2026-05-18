@@ -13,3 +13,4 @@ export { LoginPage } from './LoginPage';
 export { AdminPage } from './AdminPage';
 export { UserManagementPage } from './UserManagementPage';
 export { TokenManagementPage } from './TokenManagementPage';
+export { GroupManagementPage } from './GroupManagementPage';

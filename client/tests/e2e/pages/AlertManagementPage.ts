@@ -78,9 +78,12 @@ export class AlertManagementPage extends BasePage {
             .click();
         const listbox = this.page.getByRole('listbox');
         await expect(listbox).toBeVisible({ timeout: 5_000 });
-        await listbox
-            .getByRole('option', { name: operator, exact: true })
-            .click();
+        const option = listbox.getByRole('option', {
+            name: operator,
+            exact: true,
+        });
+        await option.waitFor({ state: 'visible', timeout: 5_000 });
+        await option.evaluate((el) => (el as HTMLElement).click());
         await expect(listbox).toBeHidden({ timeout: 5_000 });
     }
 
@@ -106,9 +109,12 @@ export class AlertManagementPage extends BasePage {
             .click();
         const listbox = this.page.getByRole('listbox');
         await expect(listbox).toBeVisible({ timeout: 5_000 });
-        await listbox
-            .getByRole('option', { name: severity, exact: true })
-            .click();
+        const option = listbox.getByRole('option', {
+            name: severity,
+            exact: true,
+        });
+        await option.waitFor({ state: 'visible', timeout: 5_000 });
+        await option.evaluate((el) => (el as HTMLElement).click());
         await expect(listbox).toBeHidden({ timeout: 5_000 });
     }
 

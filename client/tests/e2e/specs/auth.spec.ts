@@ -9,193 +9,191 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { ADMIN_USER, BASE_URL, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
+import { ADMIN_USER, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
 import { AuthHelper } from '../helpers/auth.helper';
 import { ApiHelper } from '../helpers/api.helper';
-import { loginViaUI } from '../helpers/browser.helper';
+import { LoginPage } from '../pages/LoginPage';
+import { AdminPage } from '../pages/AdminPage';
 
 test.describe('Authentication & Login', () => {
-  const apiHelper = new ApiHelper();
-  const authHelper = new AuthHelper(apiHelper);
+    const apiHelper = new ApiHelper();
+    const authHelper = new AuthHelper(apiHelper);
 
-  test('Admin can login via web GUI', async ({ page }) => {
-    // Navigate to login page
-    await page.goto(`${BASE_URL}/login`);
+    test('Admin can login via web GUI', async ({ page }) => {
+        const loginPage = new LoginPage(page);
 
-    // Fill login form and submit
-    await page.fill('input[name="username"]', ADMIN_USER.username);
-    await page.fill('input[name="password"]', ADMIN_USER.password);
-    await page.click('button[type="submit"]');
+        await test.step('Navigate to login page', async () => {
+            await loginPage.goto();
+        });
 
-    // The app is a SPA without URL routing; after login the Login
-    // component is replaced by the main layout. Wait for the header
-    // to appear instead of checking the URL.
-    const header = page.locator('header');
-    await expect(header).toBeVisible({ timeout: 15_000 });
+        await test.step('Fill login form and submit', async () => {
+            await loginPage.loginAndWaitForApp(
+                ADMIN_USER.username,
+                ADMIN_USER.password,
+            );
+        });
 
-    // Verify admin username appears in the rendered page
-    const pageContent = await page.content();
-    expect(pageContent).toContain(ADMIN_USER.username);
-  });
-
-  test('Admin can access admin panel after login', async ({ page }) => {
-    // Login
-    await page.goto(`${BASE_URL}/login`);
-    await page.fill('input[name="username"]', ADMIN_USER.username);
-    await page.fill('input[name="password"]', ADMIN_USER.password);
-    await page.click('button[type="submit"]');
-    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
-
-    // Navigate to admin panel
-    const adminButton = page.locator('button:has-text("Admin"), button[aria-label*="admin"], button[aria-label*="Admin"]').first();
-    if (await adminButton.isVisible()) {
-      await adminButton.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Or try settings icon
-    const settingsIcon = page.locator('button[aria-label*="settings"], button[aria-label*="Settings"]').first();
-    if (await settingsIcon.isVisible()) {
-      await settingsIcon.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Verify some admin content is visible (adjust selector based on actual UI)
-    const pageContent = await page.content();
-    expect(pageContent.toLowerCase()).toMatch(/admin|settings|users|tokens/);
-  });
-
-  test('Created user can login via web GUI', async ({ page }) => {
-    // Create a test user via API
-    const testUsername = makeTestUsername('login-test');
-    const testPassword = TEST_USER_PASSWORD;
-
-    const cookie = await authHelper.loginAsAdmin();
-    await apiHelper.createUser(cookie, {
-      username: testUsername,
-      password: testPassword,
-      display_name: 'Login Test User',
-      email: 'login-test@e2e.test',
+        await test.step('Verify admin username appears in page', async () => {
+            const pageContent = await page.content();
+            expect(pageContent).toContain(ADMIN_USER.username);
+        });
     });
 
-    // Ensure a fresh browser context: navigate to the base URL so
-    // the SPA loads without an active session (the browser context
-    // has no cookies since this test does not use storageState).
+    test('Admin can access admin panel after login', async ({ page }) => {
+        const loginPage = new LoginPage(page);
+        const adminPage = new AdminPage(page);
 
-    // Login as new user
-    await page.goto(`${BASE_URL}/login`);
-    await loginViaUI(page, testUsername, testPassword);
+        await test.step('Login as admin', async () => {
+            await loginPage.goto();
+            await loginPage.loginAndWaitForApp(
+                ADMIN_USER.username,
+                ADMIN_USER.password,
+            );
+        });
 
-    // loginViaUI already waits for the header to appear; verify
-    // the main application UI is visible (header present).
-    const header = page.locator('header');
-    await expect(header).toBeVisible();
-  });
+        await test.step('Open admin panel', async () => {
+            // The admin button may render as "open administration"
+            // or a settings icon. Try the admin panel method which
+            // handles both variants.
+            const adminBtn = adminPage.adminButton;
+            if (await adminBtn.isVisible().catch(() => false)) {
+                await adminPage.openAdminPanel();
+            }
+        });
 
-  test('Invalid login shows error message', async ({ page }) => {
-    await page.goto(`${BASE_URL}/login`);
+        await test.step('Verify admin content is visible', async () => {
+            await adminPage.expectAdminContentVisible();
+        });
+    });
 
-    // Fill with wrong credentials
-    await page.fill('input[name="username"]', 'nonexistent-user');
-    await page.fill('input[name="password"]', 'wrong-password');
-    await page.click('button[type="submit"]');
+    test('Created user can login via web GUI', async ({ page }) => {
+        const loginPage = new LoginPage(page);
+        const testUsername = makeTestUsername('login-test');
+        const testPassword = TEST_USER_PASSWORD;
 
-    // Wait a moment for error to appear
-    await page.waitForTimeout(1000);
+        await test.step('Create a test user via API', async () => {
+            const cookie = await authHelper.loginAsAdmin();
+            await apiHelper.createUser(cookie, {
+                username: testUsername,
+                password: testPassword,
+                display_name: 'Login Test User',
+                email: 'login-test@e2e.test',
+            });
+        });
 
-    // Check for error message
-    const errorMessage = page.locator(
-      'text=/invalid|incorrect|failed|error/i, [role="alert"], .error'
-    ).first();
+        await test.step('Login as new user via UI', async () => {
+            await loginPage.goto();
+            await loginPage.loginAndWaitForApp(testUsername, testPassword);
+        });
 
-    // Either error message or still on login page
-    const isOnLoginPage = page.url().includes('/login');
-    const hasErrorVisible = await errorMessage.isVisible().catch(() => false);
+        await test.step('Verify main application UI is visible', async () => {
+            await expect(page.locator('header')).toBeVisible();
+        });
+    });
 
-    expect(isOnLoginPage || hasErrorVisible).toBeTruthy();
-  });
+    test('Invalid login shows error message', async ({ page }) => {
+        const loginPage = new LoginPage(page);
 
-  test('Logout clears session', async ({ page }) => {
-    // Login
-    await page.goto(`${BASE_URL}/login`);
-    await page.fill('input[name="username"]', ADMIN_USER.username);
-    await page.fill('input[name="password"]', ADMIN_USER.password);
-    await page.click('button[type="submit"]');
-    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
+        await test.step('Navigate to login page', async () => {
+            await loginPage.goto();
+        });
 
-    // Verify logged in
-    const header = page.locator('header');
-    await expect(header).toBeVisible();
+        await test.step('Submit invalid credentials', async () => {
+            await loginPage.fillAndSubmit('nonexistent-user', 'wrong-password');
+        });
 
-    // Open the user menu by clicking the avatar button
-    const userMenuButton = page.getByRole('button', { name: /user menu/i });
-    await expect(userMenuButton).toBeVisible({ timeout: 5_000 });
-    await userMenuButton.click();
+        await test.step('Verify error or still on login page', async () => {
+            // Wait for the error alert to appear or confirm we are
+            // still on the login screen.
+            const hasError = await loginPage.errorAlert
+                .isVisible()
+                .catch(() => false);
+            const isOnLoginPage = page.url().includes('/login');
 
-    // Wait for the dropdown menu to appear
-    const signOutItem = page.getByRole('menuitem', { name: /sign out/i });
-    await expect(signOutItem).toBeVisible({ timeout: 5_000 });
+            expect(isOnLoginPage || hasError).toBeTruthy();
+        });
+    });
 
-    // Click Sign out
-    await signOutItem.click();
+    test('Logout clears session', async ({ page }) => {
+        const loginPage = new LoginPage(page);
+        const adminPage = new AdminPage(page);
 
-    // Wait for the login form to fully render after logout
-    await expect(page.locator('input[name="username"]')).toBeVisible({ timeout: 10_000 });
+        await test.step('Login as admin', async () => {
+            await loginPage.goto();
+            await loginPage.loginAndWaitForApp(
+                ADMIN_USER.username,
+                ADMIN_USER.password,
+            );
+        });
 
-    // Verify the app is back on the login screen
-    await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible();
-    await expect(page.locator('header')).not.toBeVisible();
-  });
+        await test.step('Verify logged in', async () => {
+            await expect(page.locator('header')).toBeVisible();
+        });
 
-  test('Session persists across page refresh', async ({ page }) => {
-    // Login
-    await page.goto(`${BASE_URL}/login`);
-    await page.fill('input[name="username"]', ADMIN_USER.username);
-    await page.fill('input[name="password"]', ADMIN_USER.password);
-    await page.click('button[type="submit"]');
-    await expect(page.locator('header')).toBeVisible({ timeout: 15_000 });
+        await test.step('Sign out via user menu', async () => {
+            await adminPage.signOut();
+        });
 
-    // Verify logged in
-    const header = page.locator('header');
-    await expect(header).toBeVisible();
+        await test.step('Verify back on login screen', async () => {
+            await loginPage.expectOnLoginScreen();
+        });
+    });
 
-    // Refresh page and wait for the network to settle and the
-    // page to fully load before checking session state.
-    await page.reload({ waitUntil: 'networkidle' });
+    test('Session persists across page refresh', async ({ page }) => {
+        const loginPage = new LoginPage(page);
 
-    // Give the client-side router time to evaluate the session
-    // cookie and decide whether to redirect to /login.
-    await page.waitForTimeout(2_000);
+        await test.step('Login as admin', async () => {
+            await loginPage.goto();
+            await loginPage.loginAndWaitForApp(
+                ADMIN_USER.username,
+                ADMIN_USER.password,
+            );
+        });
 
-    // Should still be logged in (header still visible after refresh)
-    const stillLoggedIn = await header.isVisible().catch(() => false);
-    expect(stillLoggedIn).toBeTruthy();
-  });
+        await test.step('Verify logged in', async () => {
+            await expect(page.locator('header')).toBeVisible();
+        });
 
-  test('Rate limiting prevents brute force login attempts', async ({ page }) => {
-    test.slow(); // Allow extra time for rate limiting
+        await test.step('Refresh and verify session persists', async () => {
+            await page.reload({ waitUntil: 'networkidle' });
 
-    // Attempt multiple failed logins
-    const attempts = 12;
-    let rateLimited = false;
+            // Wait for the SPA to evaluate the session cookie and
+            // render the appropriate view (header for logged-in,
+            // login form for logged-out).
+            const header = page.locator('header');
+            await expect(header).toBeVisible({ timeout: 10_000 });
 
-    for (let i = 0; i < attempts; i++) {
-      await page.goto(`${BASE_URL}/login`);
-      await page.fill('input[name="username"]', 'test-user');
-      await page.fill('input[name="password"]', `wrong-password-${i}`);
-      await page.click('button[type="submit"]');
+            const stillLoggedIn = await header.isVisible().catch(() => false);
+            expect(stillLoggedIn).toBeTruthy();
+        });
+    });
 
-      // Check for rate limit message
-      const errorText = await page.content();
-      if (errorText.includes('rate limit') || errorText.includes('too many')) {
-        rateLimited = true;
-        break;
-      }
+    test('Rate limiting prevents brute force login attempts', async ({ page }) => {
+        test.slow(); // Allow extra time for rate limiting
 
-      await page.waitForTimeout(100);
-    }
+        const loginPage = new LoginPage(page);
 
-    // Should either be rate limited or see consistent error
-    expect(rateLimited || attempts >= 10).toBeTruthy();
-  });
+        // Attempt multiple failed logins
+        const attempts = 12;
+        let rateLimited = false;
+
+        for (let i = 0; i < attempts; i++) {
+            await loginPage.goto();
+            await loginPage.fillAndSubmit('test-user', `wrong-password-${i}`);
+
+            // Check for rate limit message
+            const errorText = await page.content();
+            if (errorText.includes('rate limit') || errorText.includes('too many')) {
+                rateLimited = true;
+                break;
+            }
+
+            // Brief wait between attempts to avoid overwhelming the
+            // page navigation.
+            await page.waitForTimeout(100);
+        }
+
+        // Should either be rate limited or see consistent error
+        expect(rateLimited || attempts >= 10).toBeTruthy();
+    });
 });

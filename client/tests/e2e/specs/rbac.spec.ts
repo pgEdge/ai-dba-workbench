@@ -12,7 +12,6 @@ import { test, expect } from '@playwright/test';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
 import {
-    ADMIN_USER,
     API_URL,
     TEST_USER_PASSWORD,
     makeTestUsername,
@@ -59,11 +58,14 @@ test.describe('RBAC Enforcement', () => {
     // -------------------------------------------------------
     test('scoped token restricts connection visibility', async () => {
         const username = makeTestUsername('scope-conn');
-        await api.createUser(adminCookie, {
-            username,
-            password: TEST_USER_PASSWORD,
-            display_name: `Scope ${username}`,
-            email: `${username}@e2e.test`,
+
+        await test.step('Create user and scoped token', async () => {
+            await api.createUser(adminCookie, {
+                username,
+                password: TEST_USER_PASSWORD,
+                display_name: `Scope ${username}`,
+                email: `${username}@e2e.test`,
+            });
         });
 
         const { tokenId, rawToken } = await auth.createBearerToken(
@@ -71,26 +73,23 @@ test.describe('RBAC Enforcement', () => {
             username,
         );
 
-        // Scope the token to connection ID 99999 (which should not
-        // exist). Any real connections should be excluded.
-        await api.setTokenScope(adminCookie, tokenId, {
-            connections: [{ connection_id: 99999, access_level: 'read' }],
+        await test.step('Scope token to non-existent connection', async () => {
+            await api.setTokenScope(adminCookie, tokenId, {
+                connections: [{ connection_id: 99999, access_level: 'read' }],
+            });
         });
 
-        // Attempt to list connections with the scoped token. The
-        // response should not include connections outside the scope.
-        const result = await api.rawGet('/api/v1/connections', {
-            Authorization: `Bearer ${rawToken}`,
-        });
+        await test.step('Verify scoped response', async () => {
+            const result = await api.rawGet('/api/v1/connections', {
+                Authorization: `Bearer ${rawToken}`,
+            });
 
-        // The request should succeed (the token itself is valid),
-        // but the connections list should be empty or filtered.
-        expect(result.status).toBe(200);
-        const body = result.body as { connections?: unknown[] } | null;
-        if (body && body.connections) {
-            // Each returned connection should only be the scoped one.
-            expect(body.connections.length).toBe(0);
-        }
+            expect(result.status).toBe(200);
+            const body = result.body as { connections?: unknown[] } | null;
+            if (body && body.connections) {
+                expect(body.connections.length).toBe(0);
+            }
+        });
     });
 
     // -------------------------------------------------------
@@ -116,16 +115,19 @@ test.describe('RBAC Enforcement', () => {
     // 5. Superuser can access all endpoints
     // -------------------------------------------------------
     test('superuser can access all endpoints', async () => {
-        // The admin user is a superuser by bootstrap.
-        const result = await api.rawGet('/api/v1/rbac/users', {
-            Cookie: adminCookie,
+        await test.step('Access users endpoint', async () => {
+            const result = await api.rawGet('/api/v1/rbac/users', {
+                Cookie: adminCookie,
+            });
+            expect(result.status).toBe(200);
         });
-        expect(result.status).toBe(200);
 
-        const tokenResult = await api.rawGet('/api/v1/rbac/tokens', {
-            Cookie: adminCookie,
+        await test.step('Access tokens endpoint', async () => {
+            const tokenResult = await api.rawGet('/api/v1/rbac/tokens', {
+                Cookie: adminCookie,
+            });
+            expect(tokenResult.status).toBe(200);
         });
-        expect(tokenResult.status).toBe(200);
     });
 
     // -------------------------------------------------------
@@ -135,20 +137,23 @@ test.describe('RBAC Enforcement', () => {
         const username = makeTestUsername('cookie-lifecycle');
         const { cookie } = await auth.createAndLoginUser(username);
 
-        // Cookie works before logout.
-        const before = await api.rawGet('/api/v1/connections', {
-            Cookie: cookie,
+        await test.step('Cookie works before logout', async () => {
+            const before = await api.rawGet('/api/v1/connections', {
+                Cookie: cookie,
+            });
+            expect(before.status).toBe(200);
         });
-        expect(before.status).toBe(200);
 
-        // Logout.
-        await api.logout(cookie);
-
-        // Cookie should no longer work.
-        const after = await api.rawGet('/api/v1/connections', {
-            Cookie: cookie,
+        await test.step('Logout', async () => {
+            await api.logout(cookie);
         });
-        expect(after.status).toBe(401);
+
+        await test.step('Cookie fails after logout', async () => {
+            const after = await api.rawGet('/api/v1/connections', {
+                Cookie: cookie,
+            });
+            expect(after.status).toBe(401);
+        });
     });
 
     // -------------------------------------------------------
@@ -156,11 +161,14 @@ test.describe('RBAC Enforcement', () => {
     // -------------------------------------------------------
     test('revoked bearer token returns 401', async () => {
         const username = makeTestUsername('revoked-bearer');
-        await api.createUser(adminCookie, {
-            username,
-            password: TEST_USER_PASSWORD,
-            display_name: `Revoked ${username}`,
-            email: `${username}@e2e.test`,
+
+        await test.step('Create user', async () => {
+            await api.createUser(adminCookie, {
+                username,
+                password: TEST_USER_PASSWORD,
+                display_name: `Revoked ${username}`,
+                email: `${username}@e2e.test`,
+            });
         });
 
         const { tokenId, rawToken } = await auth.createBearerToken(
@@ -168,19 +176,22 @@ test.describe('RBAC Enforcement', () => {
             username,
         );
 
-        // Verify token works.
-        const before = await api.rawGet('/api/v1/connections', {
-            Authorization: `Bearer ${rawToken}`,
+        await test.step('Verify token works', async () => {
+            const before = await api.rawGet('/api/v1/connections', {
+                Authorization: `Bearer ${rawToken}`,
+            });
+            expect(before.status).toBe(200);
         });
-        expect(before.status).toBe(200);
 
-        // Revoke.
-        await auth.revokeToken(adminCookie, tokenId);
-
-        // Token should fail.
-        const after = await api.rawGet('/api/v1/connections', {
-            Authorization: `Bearer ${rawToken}`,
+        await test.step('Revoke token', async () => {
+            await auth.revokeToken(adminCookie, tokenId);
         });
-        expect(after.status).toBe(401);
+
+        await test.step('Token fails after revocation', async () => {
+            const after = await api.rawGet('/api/v1/connections', {
+                Authorization: `Bearer ${rawToken}`,
+            });
+            expect(after.status).toBe(401);
+        });
     });
 });

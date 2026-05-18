@@ -17,9 +17,7 @@ import {
     ADMIN_USER,
     API_URL,
     TEST_USER_PREFIX,
-    TEST_USER_PASSWORD,
     PERMISSIONS,
-    makeTestUsername,
 } from '../fixtures/test-data';
 
 // ---------------------------------------------------------------
@@ -174,16 +172,63 @@ test.describe('Token Management', () => {
     test('create token via UI', async ({ page }) => {
         const adminPage = new AdminPage(page);
         const tokenPage = new TokenManagementPage(page);
-        const username = makeTestUsername('token-ui');
+        const tokenName = `${TEST_USER_PREFIX}ui-token-${Date.now()}`;
 
-        await test.step('Create service account via API', async () => {
-            await api.createUser(adminCookie, {
-                username,
-                password: TEST_USER_PASSWORD,
-                display_name: `Token UI ${username}`,
-                email: `${username}@e2e.test`,
-                is_service_account: true,
-            });
+        await test.step('Navigate to Admin > Tokens', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToTokens();
+        });
+
+        await test.step('Create token with scope via dialog', async () => {
+            await tokenPage.openCreateDialog();
+            await tokenPage.fillAnnotation(tokenName);
+            await tokenPage.selectOwner(ADMIN_USER.username);
+            await tokenPage.selectMcpPrivilege('count_rows');
+            await tokenPage.selectAdminPermission('Manage Groups');
+            await tokenPage.submitCreateForm();
+        });
+
+        await test.step('Verify Token created dialog', async () => {
+            await expect(
+                page.getByRole('heading', { name: 'Token created' }),
+            ).toBeVisible();
+            await expect(
+                page.getByText(/save this token securely/i),
+            ).toBeVisible();
+            await expect(
+                page.getByRole('button', { name: /copy token/i }),
+            ).toBeVisible();
+            await tokenPage.closeCreatedTokenDialog();
+        });
+
+        await test.step('Verify token appears in table', async () => {
+            await tokenPage.expectTokenInTable(tokenName);
+        });
+
+        await test.step('Verify MCP and admin permissions in expanded scope', async () => {
+            await tokenPage.expandTokenRow(tokenName);
+            await expect(
+                page.locator('[data-testid="mcp-privileges-section"]')
+                    .getByText('count rows'),
+            ).toBeVisible();
+            await expect(
+                page.locator('[data-testid="admin-permissions-section"]')
+                    .getByText('Manage Groups'),
+            ).toBeVisible();
+        });
+    });
+
+    // -------------------------------------------------------
+    // 8. Token UI update
+    // -------------------------------------------------------
+    test('update token scope via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const tokenPage = new TokenManagementPage(page);
+        const tokenName = `${TEST_USER_PREFIX}ui-update-token-${Date.now()}`;
+
+        await test.step('Create token via API', async () => {
+            await api.createToken(adminCookie, ADMIN_USER.username, tokenName);
         });
 
         await test.step('Navigate to Admin > Tokens', async () => {
@@ -192,17 +237,51 @@ test.describe('Token Management', () => {
             await adminPage.navigateToTokens();
         });
 
-        await test.step('Create token via dialog', async () => {
-            await tokenPage.createToken(
-                username,
-                `${TEST_USER_PREFIX}ui-token`,
-            );
+        await test.step('Edit token scope via dialog', async () => {
+            await tokenPage.clickEditToken(tokenName);
+            await tokenPage.selectMcpPrivilege('list_connections');
+            await tokenPage.selectAdminPermission('Manage Users');
+            await tokenPage.saveEditDialog();
         });
 
-        await test.step('Verify token creation', async () => {
-            await tokenPage.expectTokenCreated(
-                new RegExp(TEST_USER_PREFIX),
-            );
+        await test.step('Verify updated permissions in expanded scope', async () => {
+            await tokenPage.expandTokenRow(tokenName);
+            await expect(
+                page.locator('[data-testid="mcp-privileges-section"]')
+                    .getByText('list connections'),
+            ).toBeVisible();
+            await expect(
+                page.locator('[data-testid="admin-permissions-section"]')
+                    .getByText('Manage Users'),
+            ).toBeVisible();
+        });
+    });
+
+    // -------------------------------------------------------
+    // 9. Token UI deletion
+    // -------------------------------------------------------
+    test('delete token via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const tokenPage = new TokenManagementPage(page);
+        const tokenName = `${TEST_USER_PREFIX}ui-delete-token-${Date.now()}`;
+
+        await test.step('Create token via API', async () => {
+            await api.createToken(adminCookie, ADMIN_USER.username, tokenName);
+        });
+
+        await test.step('Navigate to Admin > Tokens', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToTokens();
+        });
+
+        await test.step('Delete token via confirmation dialog', async () => {
+            await tokenPage.clickDeleteToken(tokenName);
+            await tokenPage.confirmDeleteDialog();
+        });
+
+        await test.step('Verify token is removed from table', async () => {
+            await tokenPage.expectTokenNotInTable(tokenName);
         });
     });
 });

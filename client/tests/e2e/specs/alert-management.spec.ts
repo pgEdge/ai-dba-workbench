@@ -1,0 +1,82 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+
+import { test } from '@playwright/test';
+import { label } from 'allure-js-commons';
+import { AdminPage } from '../pages/AdminPage';
+import { AlertManagementPage } from '../pages/AlertManagementPage';
+
+// ---------------------------------------------------------------
+// Alert Management Tests
+// ---------------------------------------------------------------
+
+test.describe('Alert Management', () => {
+    // Apply admin storage state to all browser-based tests in this
+    // describe block so the UI tests skip the manual login flow.
+    test.use({ storageState: '.auth/admin.json' });
+
+    test.beforeEach(async () => {
+        await label('package', 'Alert Management');
+    });
+
+    // -------------------------------------------------------
+    // 1. Edit alert rule via UI
+    // -------------------------------------------------------
+    test('edit alert rule via UI', async ({ page }) => {
+        const adminPage = new AdminPage(page);
+        const alertPage = new AlertManagementPage(page);
+        const alertName = 'Connection Utilization';
+
+        await test.step('Navigate to Admin > Alert Rules', async () => {
+            await page.goto('/');
+            await adminPage.waitForAppLoad();
+            await adminPage.navigateToAlertRules();
+        });
+
+        await test.step('Edit alert: disable and change operator/threshold/severity', async () => {
+            await alertPage.clickEditAlert(alertName);
+            await alertPage.waitForEditDialog();
+            await alertPage.setEnabled(false);
+            await alertPage.selectOperator('>=');
+            await alertPage.fillThreshold('2');
+            await alertPage.selectSeverity('info');
+            await alertPage.saveEdit();
+        });
+
+        await test.step('Verify first update in table', async () => {
+            await alertPage.expectOperatorThresholdInTable(alertName, '>= 2');
+            await alertPage.expectSeverityInTable(alertName, 'info');
+            await alertPage.expectEnabledInTable(alertName, false);
+        });
+
+        await test.step('Edit alert: enable and change severity to critical', async () => {
+            await alertPage.clickEditAlert(alertName);
+            await alertPage.waitForEditDialog();
+            await alertPage.setEnabled(true);
+            await alertPage.selectSeverity('critical');
+            await alertPage.saveEdit();
+        });
+
+        await test.step('Verify second update in table', async () => {
+            await alertPage.expectSeverityInTable(alertName, 'critical');
+            await alertPage.expectEnabledInTable(alertName, true);
+            await alertPage.expectOperatorThresholdInTable(alertName, '>= 2');
+        });
+
+        await test.step('Restore alert to original state', async () => {
+            await alertPage.clickEditAlert(alertName);
+            await alertPage.waitForEditDialog();
+            await alertPage.selectOperator('>');
+            await alertPage.fillThreshold('90');
+            await alertPage.selectSeverity('warning');
+            await alertPage.saveEdit();
+        });
+    });
+});

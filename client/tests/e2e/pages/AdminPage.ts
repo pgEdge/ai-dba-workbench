@@ -127,6 +127,18 @@ export class AdminPage extends BasePage {
         await this.waitForLoadingToFinish();
     }
 
+    /**
+     * Navigate to the Admin > Alert Rules section. Opens the
+     * admin panel if not already open, clicks "Alert Rules",
+     * and waits for the alert rules table to load.
+     */
+    async navigateToAlertRules(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Alert Defaults');
+        await this.waitForLoadingToFinish();
+        await this.waitForTable();
+    }
+
     // ---------------------------------------------------------------
     // User menu actions
     // ---------------------------------------------------------------

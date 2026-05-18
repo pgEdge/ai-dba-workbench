@@ -9,6 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { label } from 'allure-js-commons';
 import { ADMIN_USER, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
 import { AuthHelper } from '../helpers/auth.helper';
 import { ApiHelper } from '../helpers/api.helper';
@@ -18,6 +19,10 @@ import { AdminPage } from '../pages/AdminPage';
 test.describe('Authentication & Login', () => {
     const apiHelper = new ApiHelper();
     const authHelper = new AuthHelper(apiHelper);
+
+    test.beforeEach(async () => {
+        await label('package', 'Authentication');
+    });
 
     test('Admin can login via web GUI', async ({ page }) => {
         const loginPage = new LoginPage(page);

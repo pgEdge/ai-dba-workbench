@@ -21,8 +21,8 @@ export default defineConfig({
     globalSetup: './fixtures/global.setup.ts',
     globalTeardown: './fixtures/global.teardown.ts',
     reporter: process.env.CI
-        ? [['html', { open: 'never' }], ['junit', { outputFile: 'test-results/junit.xml' }], ['allure-playwright']]
-        : [['html'], ['list'], ['allure-playwright']],
+        ? [['html', { open: 'never' }], ['junit', { outputFile: 'test-results/junit.xml' }], ['allure-playwright', { suiteTitle: false }]]
+        : [['html'], ['list'], ['allure-playwright', { suiteTitle: false }]],
     use: {
         baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
         trace: 'on-first-retry',

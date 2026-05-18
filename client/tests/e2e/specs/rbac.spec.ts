@@ -9,6 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { label } from 'allure-js-commons';
 import { ApiHelper } from '../helpers/api.helper';
 import { AuthHelper } from '../helpers/auth.helper';
 import {
@@ -30,6 +31,10 @@ const auth = new AuthHelper(api);
 
 test.describe('RBAC Enforcement', () => {
     let adminCookie: string;
+
+    test.beforeEach(async () => {
+        await label('package', 'RBAC Enforcement');
+    });
 
     test.beforeAll(async () => {
         adminCookie = await auth.loginAsAdmin();

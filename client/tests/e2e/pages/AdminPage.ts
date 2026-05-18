@@ -116,6 +116,17 @@ export class AdminPage extends BasePage {
         await this.waitForTable();
     }
 
+    /**
+     * Navigate to the Admin > Probe Defaults section. Opens the
+     * admin panel if not already open, clicks "Probe Defaults",
+     * and waits for loading to finish.
+     */
+    async navigateToProbes(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Probe Defaults');
+        await this.waitForLoadingToFinish();
+    }
+
     // ---------------------------------------------------------------
     // User menu actions
     // ---------------------------------------------------------------

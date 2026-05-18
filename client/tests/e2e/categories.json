@@ -1,0 +1,21 @@
+[
+    {
+        "name": "Product Defects",
+        "matchedStatuses": ["failed"],
+        "messageRegex": ".*expect.*|.*assertion.*|.*AssertionError.*"
+    },
+    {
+        "name": "Test Defects",
+        "matchedStatuses": ["broken"],
+        "messageRegex": ".*Error.*|.*Exception.*|.*timeout.*"
+    },
+    {
+        "name": "Ignored Tests",
+        "matchedStatuses": ["skipped"]
+    },
+    {
+        "name": "Infrastructure Problems",
+        "matchedStatuses": ["broken", "failed"],
+        "messageRegex": ".*ECONNREFUSED.*|.*net::ERR.*|.*browserType.launch.*|.*page.goto.*"
+    }
+]

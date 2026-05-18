@@ -121,6 +121,9 @@ jobs:
               working-directory: client/tests/e2e
               run: npm ci
 
+            - name: Install Allure CLI
+              run: npm install -g allure-commandline --save-dev
+
             - name: Cache Playwright browsers
               id: playwright-cache
               uses: actions/cache@v4
@@ -148,6 +151,11 @@ jobs:
                   CI: "true"
               run: npm test
 
+            - name: Generate Allure report
+              if: always()
+              working-directory: client/tests/e2e
+              run: allure generate ./allure-results --clean -o ./allure-report || true
+
             - name: Upload test artifacts
               if: always()
               uses: actions/upload-artifact@v4
@@ -156,6 +164,8 @@ jobs:
                   path: |
                       client/tests/e2e/playwright-report/
                       client/tests/e2e/test-results/
+                      client/tests/e2e/allure-results/
+                      client/tests/e2e/allure-report/
                   retention-days: 14
 
             - name: Dump service logs on failure

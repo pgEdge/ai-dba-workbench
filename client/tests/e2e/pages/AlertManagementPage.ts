@@ -75,10 +75,13 @@ export class AlertManagementPage extends BasePage {
     async selectOperator(operator: string): Promise<void> {
         await this.innerDialog
             .getByRole('combobox', { name: /Operator/ })
-            .click({ force: true });
-        await this.page
+            .click();
+        const listbox = this.page.getByRole('listbox');
+        await expect(listbox).toBeVisible({ timeout: 5_000 });
+        await listbox
             .getByRole('option', { name: operator, exact: true })
-            .click({ force: true });
+            .click();
+        await expect(listbox).toBeHidden({ timeout: 5_000 });
     }
 
     /**
@@ -88,7 +91,7 @@ export class AlertManagementPage extends BasePage {
         const field = this.innerDialog.getByRole('spinbutton', {
             name: 'Threshold',
         });
-        await field.click({ force: true });
+        await field.click();
         await field.fill(value);
     }
 
@@ -100,10 +103,13 @@ export class AlertManagementPage extends BasePage {
     async selectSeverity(severity: string): Promise<void> {
         await this.innerDialog
             .getByRole('combobox', { name: /Severity/ })
-            .click({ force: true });
-        await this.page
+            .click();
+        const listbox = this.page.getByRole('listbox');
+        await expect(listbox).toBeVisible({ timeout: 5_000 });
+        await listbox
             .getByRole('option', { name: severity, exact: true })
-            .click({ force: true });
+            .click();
+        await expect(listbox).toBeHidden({ timeout: 5_000 });
     }
 
     /**
@@ -113,7 +119,7 @@ export class AlertManagementPage extends BasePage {
     async saveEdit(): Promise<void> {
         await this.innerDialog
             .getByRole('button', { name: /^save$/i })
-            .click({ force: true });
+            .click();
         await this.waitForDialogToClose();
     }
 

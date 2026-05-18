@@ -6,6 +6,7 @@ http:
     enabled: true
     rate_limit_max_attempts: 100
     rate_limit_window_minutes: 1
+    total_rate_limit_max_attempts: 200
 
 connection_security:
   allow_internal_networks: true

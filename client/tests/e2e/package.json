@@ -7,11 +7,15 @@
         "test": "npx playwright test",
         "test:headed": "npx playwright test --headed",
         "test:ui": "npx playwright test --ui",
-        "report": "npx playwright show-report"
+        "report": "npx playwright show-report",
+        "allure:generate": "allure generate ./allure-results --clean",
+        "allure:open": "allure open",
+        "allure:report": "npm test && allure generate ./allure-results --clean && allure open"
     },
     "devDependencies": {
         "@playwright/test": "^1.50.0",
-        "typescript": "^5.7.0",
-        "ts-node": "^10.9.0"
+        "allure-playwright": "^3.8.0",
+        "ts-node": "^10.9.0",
+        "typescript": "^5.7.0"
     }
 }

@@ -120,6 +120,32 @@ client/tests/e2e/
 - `npm run test:debug` — Run tests in debug mode
 - `npm run test:ui` — Run tests with interactive UI
 - `npm run report` — Open HTML test report
+- `npm run allure:generate` — Generate Allure report from results
+- `npm run allure:open` — Open the generated Allure report
+- `npm run allure:report` — Run tests, generate, and open the report
+
+## Allure Report
+
+Allure provides a detailed interactive report with test results,
+screenshots on failure, videos on failure, and traces on first
+retry.
+
+To run tests and generate the report:
+
+```bash
+npm test
+npm run allure:generate
+npm run allure:open
+```
+
+The `allure-results/` directory is generated automatically after
+`npm test` completes. The `allure:generate` script converts the
+raw results into an HTML report in `allure-report/`.
+
+The Allure CLI must be installed separately:
+
+- macOS: `brew install allure`
+- Other platforms: `npm install -g allure-commandline`
 
 ## Environment Variables
 

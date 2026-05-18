@@ -40,6 +40,29 @@ async function globalTeardown(_config: FullConfig): Promise<void> {
     }
 
     // -------------------------------------------------------
+    // Clean up test groups
+    // -------------------------------------------------------
+    try {
+        const { groups } = await api.listGroups(cookie);
+        for (const group of groups) {
+            if (
+                group.name &&
+                group.name.startsWith(TEST_USER_PREFIX)
+            ) {
+                try {
+                    await api.deleteGroup(cookie, group.id);
+                } catch {
+                    console.warn(
+                        `[E2E teardown] Failed to delete group ${group.name}`,
+                    );
+                }
+            }
+        }
+    } catch {
+        console.warn('[E2E teardown] Could not list groups for cleanup.');
+    }
+
+    // -------------------------------------------------------
     // Clean up test tokens
     // -------------------------------------------------------
     try {

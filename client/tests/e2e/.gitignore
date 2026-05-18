@@ -3,3 +3,5 @@ test-results/
 node_modules/
 .auth/
 .playwright/
+allure-results/
+allure-report/

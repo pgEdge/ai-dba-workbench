@@ -73,7 +73,7 @@ echo ""
 
 # Step 4: Build Docker images
 echo -e "${BLUE}Step 4: Building Docker images (this may take a few minutes)...${NC}"
-docker compose -f "${COMPOSE_FILE}" build --parallel
+docker compose -f "${COMPOSE_FILE}" build
 echo -e "${GREEN}✓ Docker images built${NC}"
 echo ""
 
@@ -130,13 +130,13 @@ docker compose -f "${COMPOSE_FILE}" exec -T server \
   -config /etc/pgedge/ai-dba-server.yaml \
   -data-dir /data \
   -add-user -username admin -password "E2ETestPass123!" \
-  -full-name "E2E Admin" -email "admin@e2e.test" 2>&1 | grep -i "user\|error" || true
+  -full-name "E2E Admin" -email "admin@e2e.test" < /dev/null 2>&1 | grep -i "user\|error" || true
 
 docker compose -f "${COMPOSE_FILE}" exec -T server \
   /usr/local/bin/ai-dba-server \
   -config /etc/pgedge/ai-dba-server.yaml \
   -data-dir /data \
-  -set-superuser -username admin 2>&1 | grep -i "superuser\|error" || true
+  -set-superuser -username admin < /dev/null 2>&1 | grep -i "superuser\|error" || true
 
 echo -e "${GREEN}✓ Admin user created${NC}"
 echo ""

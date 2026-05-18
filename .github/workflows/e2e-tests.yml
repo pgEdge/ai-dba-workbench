@@ -131,12 +131,12 @@ jobs:
             - name: Install Playwright browsers
               if: steps.playwright-cache.outputs.cache-hit != 'true'
               working-directory: client/tests/e2e
-              run: npx playwright install --with-deps chromium
+              run: npx playwright install --with-deps chromium firefox webkit
 
             - name: Install Playwright system dependencies
               if: steps.playwright-cache.outputs.cache-hit == 'true'
               working-directory: client/tests/e2e
-              run: npx playwright install-deps chromium
+              run: npx playwright install-deps chromium firefox webkit
 
             - name: Run E2E tests
               working-directory: client/tests/e2e

@@ -139,6 +139,50 @@ export class AdminPage extends BasePage {
         await this.waitForTable();
     }
 
+    /**
+     * Navigate to the Admin > Email Channels section. Opens the
+     * admin panel if not already open, clicks "Email Channels",
+     * and waits for loading to finish.
+     */
+    async navigateToEmailChannels(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Email Channels');
+        await this.waitForLoadingToFinish();
+    }
+
+    /**
+     * Navigate to the Admin > Slack Channels section. Opens the
+     * admin panel if not already open, clicks "Slack Channels",
+     * and waits for loading to finish.
+     */
+    async navigateToSlackChannels(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Slack Channels');
+        await this.waitForLoadingToFinish();
+    }
+
+    /**
+     * Navigate to the Admin > Mattermost Channels section. Opens
+     * the admin panel if not already open, clicks "Mattermost
+     * Channels", and waits for loading to finish.
+     */
+    async navigateToMattermostChannels(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Mattermost Channels');
+        await this.waitForLoadingToFinish();
+    }
+
+    /**
+     * Navigate to the Admin > Webhook Channels section. Opens the
+     * admin panel if not already open, clicks "Webhook Channels",
+     * and waits for loading to finish.
+     */
+    async navigateToWebhookChannels(): Promise<void> {
+        await this.openAdminPanel();
+        await this.selectSection('Webhook Channels');
+        await this.waitForLoadingToFinish();
+    }
+
     // ---------------------------------------------------------------
     // User menu actions
     // ---------------------------------------------------------------

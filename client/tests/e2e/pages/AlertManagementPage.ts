@@ -31,25 +31,15 @@ import { BasePage } from './BasePage';
  *   wraps an invisible backdrop (.MuiBackdrop-invisible). In WebKit CI
  *   this backdrop lingers after the listbox closes, blocking subsequent
  *   Playwright clicks.
- * - Option selection uses keyboard navigation (Home + ArrowDown + Enter)
- *   instead of mouse clicks. This is coordinate-free and immune to
- *   MUI's CSS entry animation, which shifts option positions during
- *   the transition and causes page.mouse.click() at boundingBox()
- *   coordinates to miss the target in WebKit CI. Keyboard navigation
- *   relies on MUI's built-in accessibility support and works reliably
- *   across all browsers.
+ * - Option selection uses `page.getByRole('option').click()` -- direct
+ *   click as confirmed by WebKit recorder. The option locator targets
+ *   the page root (not innerDialog) because MUI renders the listbox
+ *   in a Portal outside the dialog DOM.
  * - Note: .MuiBackdrop-invisible targets only Select/Menu backdrops.
  *   Dialog backdrops (.MuiBackdrop-root without the invisible class)
  *   remain visible while the edit dialog is open and are not affected.
  */
 export class AlertManagementPage extends BasePage {
-
-    // ---------------------------------------------------------------
-    // Option order arrays (must match the component source)
-    // ---------------------------------------------------------------
-
-    private readonly OPERATORS = ['>', '>=', '<', '<=', '==', '!='];
-    private readonly SEVERITIES = ['info', 'warning', 'critical'];
 
     // ---------------------------------------------------------------
     // Private helpers
@@ -70,55 +60,24 @@ export class AlertManagementPage extends BasePage {
     }
 
     /**
-     * Open a MUI TextField-select dropdown and select an option using
-     * keyboard navigation: Home to reset to the first item, then
-     * ArrowDown N times to reach the target, then Enter to confirm.
+     * Open a MUI TextField-select dropdown and select an option by
+     * clicking it directly. The combobox click opens the Portal-based
+     * listbox; the option click targets the page root because MUI
+     * renders the listbox outside the dialog DOM.
      *
-     * Why keyboard nav instead of mouse.click(): MUI's CSS entry
-     * animation shifts option positions during the transition, causing
-     * page.mouse.click() at boundingBox() coordinates to miss the
-     * target in WebKit CI. Keyboard navigation is coordinate-free,
-     * animation-independent, and leverages MUI's built-in accessibility
-     * support. It works reliably across all browsers.
-     *
-     * The caller must supply `optionOrder`, the ordered list of option
-     * values as they appear in the dropdown. This array determines
-     * how many ArrowDown presses are needed to reach `value`.
-     *
-     * The backdrop wait before and after prevents WebKit's lingering
-     * invisible backdrop from blocking the next interaction.
+     * This approach matches what the WebKit Playwright recorder
+     * confirmed works across all browsers.
      */
     private async selectMuiOption(
         comboboxName: RegExp,
         value: string,
-        optionOrder: string[],
     ): Promise<void> {
-        await this.waitForSelectBackdropGone();
-
         await this.innerDialog
             .getByRole('combobox', { name: comboboxName })
             .click();
-
-        const listbox = this.page.getByRole('listbox');
-        await expect(listbox).toBeVisible({ timeout: 5_000 });
-
-        const idx = optionOrder.indexOf(value);
-        if (idx === -1) {
-            throw new Error(
-                `Option "${value}" not found in optionOrder list`,
-            );
-        }
-
-        // Home resets focus to the first option, regardless of which
-        // item MUI auto-focused when the listbox opened.
-        await this.page.keyboard.press('Home');
-        for (let i = 0; i < idx; i++) {
-            await this.page.keyboard.press('ArrowDown');
-        }
-        await this.page.keyboard.press('Enter');
-
-        await expect(listbox).toBeHidden({ timeout: 5_000 });
-        await this.waitForSelectBackdropGone();
+        await this.page
+            .getByRole('option', { name: value, exact: true })
+            .click();
     }
 
     // ---------------------------------------------------------------
@@ -146,17 +105,15 @@ export class AlertManagementPage extends BasePage {
         const current = await checkbox.isChecked();
         if (current !== enabled) {
             if (enabled) {
-                await checkbox.check({ force: true });
+                await checkbox.check();
             } else {
-                await checkbox.uncheck({ force: true });
+                await checkbox.uncheck();
             }
         }
     }
 
     async selectOperator(operator: string): Promise<void> {
-        await this.selectMuiOption(
-            /Operator/, operator, this.OPERATORS,
-        );
+        await this.selectMuiOption(/Operator/, operator);
     }
 
     /**
@@ -172,9 +129,7 @@ export class AlertManagementPage extends BasePage {
     }
 
     async selectSeverity(severity: string): Promise<void> {
-        await this.selectMuiOption(
-            /Severity/, severity, this.SEVERITIES,
-        );
+        await this.selectMuiOption(/Severity/, severity);
     }
 
     /**

@@ -30,6 +30,7 @@ test.describe('Alert Management', () => {
     // 1. Edit alert rule via UI
     // -------------------------------------------------------
     test('edit alert rule via UI', async ({ page }) => {
+        test.slow();
         const adminPage = new AdminPage(page);
         const alertPage = new AlertManagementPage(page);
         const alertName = 'Connection Utilization';

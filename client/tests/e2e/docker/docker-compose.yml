@@ -88,6 +88,32 @@ services:
       - e2e-network
     restart: unless-stopped
 
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    networks:
+      - e2e-network
+
+  wiremock:
+    image: wiremock/wiremock:latest
+    ports:
+      - "9090:8080"
+    command: ["--global-response-templating", "--verbose"]
+    networks:
+      - e2e-network
+
+  mockserver:
+    image: mockserver/mockserver:latest
+    ports:
+      - "1080:1080"
+    networks:
+      - e2e-network
+
 volumes:
   server-data:
 

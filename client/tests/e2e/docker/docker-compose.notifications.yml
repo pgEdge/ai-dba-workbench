@@ -1,0 +1,34 @@
+# pgEdge AI DBA Workbench - Notification Mock Services
+#
+# Lightweight compose file for the three mock containers used by
+# notification channel E2E tests. Started and stopped automatically
+# by notification-channels.spec.ts — no credentials required.
+#
+# Services:
+#   mailpit    — fake SMTP server + REST API (email validation)
+#   wiremock   — HTTP request capture (Slack + webhook validation)
+#   mockserver — HTTP request capture (Mattermost validation)
+
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    networks:
+      - notifications-network
+
+  wiremock:
+    image: wiremock/wiremock:latest
+    ports:
+      - "9090:8080"
+    command: ["--global-response-templating", "--verbose"]
+    networks:
+      - notifications-network
+
+networks:
+  notifications-network:
+    driver: bridge

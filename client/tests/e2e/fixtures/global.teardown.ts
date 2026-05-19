@@ -9,6 +9,8 @@
  */
 
 import type { FullConfig } from '@playwright/test';
+import { execSync } from 'child_process';
+import * as path from 'path';
 import { ApiHelper } from '../helpers/api.helper';
 import { ADMIN_USER, API_URL, TEST_USER_PREFIX } from './test-data';
 
@@ -103,6 +105,18 @@ async function globalTeardown(_config: FullConfig): Promise<void> {
         }
     } catch {
         console.warn('[E2E teardown] Could not list users for cleanup.');
+    }
+
+    // -------------------------------------------------------
+    // Stop notification mock services
+    // -------------------------------------------------------
+    try {
+        const NOTIFICATIONS_COMPOSE = path.join(
+            __dirname, '..', 'docker', 'docker-compose.notifications.yml',
+        );
+        execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} down`, { stdio: 'pipe' });
+    } catch {
+        // best-effort cleanup
     }
 }
 

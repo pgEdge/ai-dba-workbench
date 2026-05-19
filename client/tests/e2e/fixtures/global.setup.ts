@@ -9,6 +9,7 @@
  */
 
 import { chromium, type FullConfig } from '@playwright/test';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ApiHelper } from '../helpers/api.helper';
@@ -105,10 +106,50 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     await context.storageState({ path: statePath });
 
     await browser.close();
+
+    // -------------------------------------------------------
+    // 4. Start notification mock services
+    // -------------------------------------------------------
+    const NOTIFICATIONS_COMPOSE = path.join(
+        __dirname, '..', 'docker', 'docker-compose.notifications.yml',
+    );
+    execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} pull`, { stdio: 'pipe' });
+    execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} up -d`, { stdio: 'pipe' });
+    await waitForHttpService('http://localhost:8025/api/v1/messages');  // Mailpit
+    await waitForHttpService('http://localhost:9090/__admin/requests'); // WireMock
+    const wireMockUrl = 'http://localhost:9090';
+    for (const p of ['/slack', '/mattermost', '/webhook']) {
+        await registerWireMockStub(wireMockUrl, p);
+    }
 }
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForHttpService(url: string, timeoutMs = 60_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const res = await fetch(url);
+            if (res.status < 500) return;
+        } catch {
+            // not yet reachable
+        }
+        await sleep(1_000);
+    }
+    throw new Error(`Service at ${url} did not become ready within ${timeoutMs}ms`);
+}
+
+async function registerWireMockStub(baseUrl: string, stubPath: string): Promise<void> {
+    await fetch(`${baseUrl}/__admin/mappings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            request: { method: 'ANY', url: stubPath },
+            response: { status: 200, body: 'ok' },
+        }),
+    });
 }
 
 export default globalSetup;

@@ -146,9 +146,9 @@ export class AlertManagementPage extends BasePage {
         const current = await checkbox.isChecked();
         if (current !== enabled) {
             if (enabled) {
-                await checkbox.check();
+                await checkbox.check({ force: true });
             } else {
-                await checkbox.uncheck();
+                await checkbox.uncheck({ force: true });
             }
         }
     }

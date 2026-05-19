@@ -17,7 +17,7 @@ export default defineConfig({
     fullyParallel: false,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
-    workers: 3,
+    workers: 1,
     globalSetup: './fixtures/global.setup.ts',
     globalTeardown: './fixtures/global.teardown.ts',
     reporter: process.env.CI
@@ -43,10 +43,4 @@ export default defineConfig({
             use: { ...devices['Desktop Safari'] },
         },
     ],
-    webServer: process.env.CI ? undefined : {
-        command: 'docker compose -f ./docker/docker-compose.yml up -d',
-        url: 'http://localhost:3000',
-        reuseExistingServer: true,
-        timeout: 120_000,
-    },
 });

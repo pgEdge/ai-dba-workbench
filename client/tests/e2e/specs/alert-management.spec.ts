@@ -40,40 +40,50 @@ test.describe('Alert Management', () => {
             await adminPage.navigateToAlertRules();
         });
 
-        await test.step('Edit alert: disable and change operator/threshold/severity', async () => {
+        await test.step('First edit: change operator, threshold, severity', async () => {
             await alertPage.clickEditAlert(alertName);
             await alertPage.waitForEditDialog();
-            await alertPage.setEnabled(false);
             await alertPage.selectOperator('>=');
             await alertPage.fillThreshold('2');
             await alertPage.selectSeverity('info');
             await alertPage.saveEdit();
         });
 
-        await test.step('Verify first update in table', async () => {
+        await test.step('Verify first edit in table', async () => {
             await alertPage.expectOperatorThresholdInTable(alertName, '>= 2');
             await alertPage.expectSeverityInTable(alertName, 'info');
+            await alertPage.expectEnabledInTable(alertName, true);
+        });
+
+        await test.step('Second edit: disable alert', async () => {
+            await alertPage.clickEditAlert(alertName);
+            await alertPage.waitForEditDialog();
+            await alertPage.setEnabled(false);
+            await alertPage.saveEdit();
+        });
+
+        await test.step('Verify alert is disabled', async () => {
             await alertPage.expectEnabledInTable(alertName, false);
         });
 
-        await test.step('Edit alert: enable and change severity to critical', async () => {
+        await test.step('Third edit: enable, restore operator, change severity', async () => {
             await alertPage.clickEditAlert(alertName);
             await alertPage.waitForEditDialog();
             await alertPage.setEnabled(true);
+            await alertPage.selectOperator('>');
             await alertPage.selectSeverity('critical');
             await alertPage.saveEdit();
         });
 
-        await test.step('Verify second update in table', async () => {
-            await alertPage.expectSeverityInTable(alertName, 'critical');
+        await test.step('Verify third edit in table', async () => {
             await alertPage.expectEnabledInTable(alertName, true);
-            await alertPage.expectOperatorThresholdInTable(alertName, '>= 2');
+            await alertPage.expectSeverityInTable(alertName, 'critical');
+            await alertPage.expectOperatorThresholdInTable(alertName, '> 2');
         });
 
-        await test.step('Restore alert to original state', async () => {
+        await test.step('Restore to original state', async () => {
             await alertPage.clickEditAlert(alertName);
             await alertPage.waitForEditDialog();
-            await alertPage.selectOperator('>');
             await alertPage.fillThreshold('90');
             await alertPage.selectSeverity('warning');
             await alertPage.saveEdit();

@@ -30,11 +30,13 @@ import { BasePage } from './BasePage';
  * - MUI TextField-select renders a Portal-based Menu. The Menu's Modal
  *   wraps an invisible backdrop (.MuiBackdrop-invisible). In WebKit CI
  *   this backdrop lingers after the listbox closes, blocking subsequent
- *   Playwright clicks. The fix is to wait for .MuiBackdrop-invisible to
- *   be hidden before each combobox/field click.
- * - Option clicks use element.click() via evaluate() to bypass
- *   Playwright's "stable" actionability check, which WebKit fails during
- *   MUI's CSS entry transition.
+ *   Playwright clicks.
+ * - Option clicks use page.mouse.click() at real viewport coordinates
+ *   obtained from boundingBox(). This fires a genuine isTrusted:true
+ *   MouseEvent that bypasses Playwright's actionability checks
+ *   (visibility, stability, pointer-events) while still triggering
+ *   React's event delegation and MUI's selection logic. This is the
+ *   only approach that works reliably across all browsers in CI.
  * - Note: .MuiBackdrop-invisible targets only Select/Menu backdrops.
  *   Dialog backdrops (.MuiBackdrop-root without the invisible class)
  *   remain visible while the edit dialog is open and are not affected.
@@ -46,29 +48,36 @@ export class AlertManagementPage extends BasePage {
     // ---------------------------------------------------------------
 
     /**
-     * Wait for the MUI Select/Menu invisible backdrop to be fully
-     * removed before interacting with the next element. Required in
-     * WebKit CI where the backdrop lingers after the listbox closes.
+     * Wait for any MUI Select/Menu invisible backdrop to clear.
+     * The invisible backdrop (.MuiBackdrop-invisible) is created by
+     * MUI's Portal-based Menu when a Select opens. In WebKit CI it
+     * lingers after the dropdown closes, blocking all pointer events.
+     * Using 'hidden' state: resolves immediately if no backdrop exists.
      */
     private async waitForSelectBackdropGone(): Promise<void> {
         await this.page
             .locator('.MuiBackdrop-invisible')
             .waitFor({ state: 'hidden', timeout: 5_000 })
-            .catch(() => {
-                // No invisible backdrop present — nothing to wait for.
-            });
+            .catch(() => {});
     }
 
     /**
-     * Open an MUI TextField-select dropdown and click the named option.
-     * Waits for the invisible backdrop to clear both before opening and
-     * after closing to avoid WebKit pointer-event blocking.
+     * Open a MUI TextField-select dropdown and click the named option
+     * using page.mouse.click() at the element's viewport coordinates.
+     *
+     * Why mouse.click(): this fires a genuine isTrusted:true MouseEvent
+     * at real coordinates, bypassing Playwright's actionability checks
+     * (visibility, stability, pointer-events) while still triggering
+     * React's event delegation and MUI's selection logic. This is the
+     * only approach that works reliably across all browsers in CI.
+     *
+     * The backdrop wait before and after prevents WebKit's lingering
+     * invisible backdrop from blocking the next interaction.
      */
     private async selectMuiOption(
         comboboxName: RegExp,
         value: string,
     ): Promise<void> {
-        // Ensure no lingering Select backdrop blocks the combobox click.
         await this.waitForSelectBackdropGone();
 
         await this.innerDialog
@@ -78,19 +87,24 @@ export class AlertManagementPage extends BasePage {
         const listbox = this.page.getByRole('listbox');
         await expect(listbox).toBeVisible({ timeout: 5_000 });
 
-        // Use evaluate click to bypass WebKit's "stable" check during
-        // MUI's CSS entry transition on the option items.
         const option = listbox.getByRole('option', {
             name: value,
             exact: true,
         });
         await option.waitFor({ state: 'visible', timeout: 5_000 });
-        await option.evaluate((el) => (el as HTMLElement).click());
+
+        // Use raw mouse coordinates — bypasses actionability while firing
+        // a trusted event that properly triggers MUI's React handlers.
+        const box = await option.boundingBox();
+        if (!box) {
+            throw new Error(`Option "${value}" has no bounding box`);
+        }
+        await this.page.mouse.click(
+            box.x + box.width / 2,
+            box.y + box.height / 2,
+        );
 
         await expect(listbox).toBeHidden({ timeout: 5_000 });
-
-        // Wait for the invisible backdrop to be removed before any
-        // subsequent interaction.
         await this.waitForSelectBackdropGone();
     }
 
@@ -108,10 +122,11 @@ export class AlertManagementPage extends BasePage {
     }
 
     /**
-     * Set the Enabled checkbox inside the edit dialog. Only toggles
-     * if the current state does not match the desired state.
+     * Toggle the Enabled switch. Waits for any Select backdrop to clear
+     * first — in WebKit CI a lingering backdrop blocks checkbox events.
      */
     async setEnabled(enabled: boolean): Promise<void> {
+        await this.waitForSelectBackdropGone();
         const checkbox = this.innerDialog.getByRole('checkbox', {
             name: 'Enabled',
         });
@@ -130,8 +145,7 @@ export class AlertManagementPage extends BasePage {
     }
 
     /**
-     * Fill the Threshold field. Waits for any Select backdrop to clear
-     * first so WebKit does not block the click.
+     * Fill the Threshold spinbutton. Waits for backdrop before clicking.
      */
     async fillThreshold(value: string): Promise<void> {
         await this.waitForSelectBackdropGone();
@@ -147,8 +161,7 @@ export class AlertManagementPage extends BasePage {
     }
 
     /**
-     * Click Save and wait for the dialog to close. Waits for any
-     * Select backdrop to clear first.
+     * Click Save and wait for dialog to close. Waits for backdrop first.
      */
     async saveEdit(): Promise<void> {
         await this.waitForSelectBackdropGone();

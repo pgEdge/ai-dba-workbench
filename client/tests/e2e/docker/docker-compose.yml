@@ -79,7 +79,7 @@ services:
   client:
     build:
       context: ../../../..
-      dockerfile: client/Dockerfile
+      dockerfile: client/tests/e2e/docker/Dockerfile.client
     depends_on:
       - server
     ports:

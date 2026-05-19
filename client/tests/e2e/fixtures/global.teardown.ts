@@ -118,6 +118,24 @@ async function globalTeardown(_config: FullConfig): Promise<void> {
     } catch {
         // best-effort cleanup
     }
+
+    // -------------------------------------------------------
+    // Tear down main stack (only if started by this run)
+    // -------------------------------------------------------
+    // We do not tear down unconditionally because developers
+    // often keep the stack running between test runs for speed.
+    // Teardown is opt-in via the E2E_TEARDOWN env variable.
+    if (process.env.E2E_TEARDOWN === 'true') {
+        try {
+            const e2eDir = path.join(__dirname, '..');
+            execSync(
+                'docker compose -f ./docker/docker-compose.yml down',
+                { cwd: e2eDir, stdio: 'pipe' },
+            );
+        } catch {
+            // best-effort
+        }
+    }
 }
 
 export default globalTeardown;

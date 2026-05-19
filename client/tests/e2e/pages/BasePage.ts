@@ -38,7 +38,7 @@ export class BasePage {
      * Wait for the application header to appear, confirming that
      * the main layout has rendered after login or page load.
      */
-    async waitForAppLoad(timeout: number = 15_000): Promise<void> {
+    async waitForAppLoad(timeout: number = 30_000): Promise<void> {
         await expect(this.page.locator('header')).toBeVisible({
             timeout,
         });

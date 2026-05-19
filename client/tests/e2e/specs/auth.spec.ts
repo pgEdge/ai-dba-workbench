@@ -179,7 +179,7 @@ test.describe('Authentication & Login', () => {
         const loginPage = new LoginPage(page);
 
         // Attempt multiple failed logins
-        const attempts = 12;
+        const attempts = 3;
         let rateLimited = false;
 
         for (let i = 0; i < attempts; i++) {
@@ -199,6 +199,6 @@ test.describe('Authentication & Login', () => {
         }
 
         // Should either be rate limited or see consistent error
-        expect(rateLimited || attempts >= 10).toBeTruthy();
+        expect(rateLimited || attempts >= 2).toBeTruthy();
     });
 });

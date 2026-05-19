@@ -42,6 +42,8 @@ services:
       - server-data:/data
     ports:
       - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - e2e-network
     restart: unless-stopped

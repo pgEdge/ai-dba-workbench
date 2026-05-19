@@ -196,11 +196,19 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     // -------------------------------------------------------
     // 5. Start notification mock services
     // -------------------------------------------------------
-    const NOTIFICATIONS_COMPOSE = path.join(
-        __dirname, '..', 'docker', 'docker-compose.notifications.yml',
-    );
-    execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} pull`, { stdio: 'pipe' });
-    execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} up -d`, { stdio: 'pipe' });
+    // In CI the main docker-compose.yml already starts mailpit and
+    // wiremock. Attempting to start them again via the notifications
+    // compose would cause a port conflict and abort setup. Only start
+    // them when they are not already reachable.
+    const mailpitReady = await isHttpServiceReady('http://localhost:8025/api/v1/messages');
+    const wiremockReady = await isHttpServiceReady('http://localhost:9090/__admin/requests');
+    if (!mailpitReady || !wiremockReady) {
+        const NOTIFICATIONS_COMPOSE = path.join(
+            __dirname, '..', 'docker', 'docker-compose.notifications.yml',
+        );
+        execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} pull`, { stdio: 'pipe' });
+        execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} up -d`, { stdio: 'pipe' });
+    }
     await waitForHttpService('http://localhost:8025/api/v1/messages');  // Mailpit
     await waitForHttpService('http://localhost:9090/__admin/requests'); // WireMock
     const wireMockUrl = 'http://localhost:9090';
@@ -211,6 +219,15 @@ async function globalSetup(_config: FullConfig): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function isHttpServiceReady(url: string): Promise<boolean> {
+    try {
+        const res = await fetch(url);
+        return res.status < 500;
+    } catch {
+        return false;
+    }
 }
 
 async function waitForHttpService(url: string, timeoutMs = 60_000): Promise<void> {

@@ -46,6 +46,7 @@ test.describe('Alert Management', () => {
             await alertPage.selectOperator('>=');
             await alertPage.fillThreshold('2');
             await alertPage.selectSeverity('info');
+            await alertPage.setEnabled(true);
             await alertPage.saveEdit();
         });
 
@@ -84,6 +85,7 @@ test.describe('Alert Management', () => {
         await test.step('Restore to original state', async () => {
             await alertPage.clickEditAlert(alertName);
             await alertPage.waitForEditDialog();
+            await alertPage.setEnabled(true);
             await alertPage.fillThreshold('90');
             await alertPage.selectSeverity('warning');
             await alertPage.saveEdit();

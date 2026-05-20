@@ -56,10 +56,12 @@ management. The Client provides the following features:
 
 The following sections provide starting points based on role and goals.
 
-- The [Quick Start](getting-started/quick-start.md) guide helps new users
-  set up the Workbench for the first time.
-- The [User Guide](user-guide/index.md) covers dashboards, alerts, and AI
-  features for day-to-day usage.
+- [Installation with Binary Files](getting-started/binary_install.md) is
+  the easiest way to set up the Workbench for the first time.
+- [Building from Source](getting-started/build_from_source.md) deploys
+  the latest Workbench features for experienced users.
+- [Docker Deployment](getting-started/docker.md) is available for Docker
+  users.
 - The [Administrator's Guide](admin-guide/index.md) explains authentication,
   connections, and system configuration.
 - The [Developer's Guide](developer-guide/index.md) provides architecture

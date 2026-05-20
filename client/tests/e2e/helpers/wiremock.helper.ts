@@ -26,13 +26,6 @@ interface WireMockRequestsResponse {
     }>;
 }
 
-export interface MockServerRequest {
-    path: string;
-    method: string;
-    body?: { string?: string; type?: string };
-    headers?: Record<string, string[]>;
-}
-
 // ---------------------------------------------------------------
 // WireMockHelper
 // ---------------------------------------------------------------
@@ -139,96 +132,6 @@ export class WireMockHelper {
         }
         throw new Error(
             `WireMock: no request to ${path} within ${timeout}ms`,
-        );
-    }
-}
-
-// ---------------------------------------------------------------
-// MockServerHelper
-// ---------------------------------------------------------------
-
-/**
- * Thin fetch-based wrapper around the MockServer admin API for
- * verifying Mattermost notification delivery in E2E tests.
- *
- * MockServer captures HTTP requests and exposes them via its
- * retrieval API, enabling assertions on request content without
- * a real Mattermost instance.
- */
-export class MockServerHelper {
-    private readonly baseUrl: string;
-
-    constructor(baseUrl?: string) {
-        this.baseUrl = (
-            baseUrl ??
-            process.env.MOCKSERVER_URL ??
-            'http://mockserver:1080'
-        ).replace(/\/+$/, '');
-    }
-
-    /**
-     * Fetch all recorded requests from MockServer.
-     */
-    async getRequests(): Promise<MockServerRequest[]> {
-        const res = await fetch(
-            `${this.baseUrl}/mockserver/retrieve?type=REQUESTS`,
-            {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}),
-            },
-        );
-        if (!res.ok) {
-            throw new Error(
-                `MockServer retrieve requests failed: ${res.status}`,
-            );
-        }
-        return (await res.json()) as MockServerRequest[];
-    }
-
-    /**
-     * Return only requests whose path matches the given value.
-     */
-    async getRequestsByPath(
-        path: string,
-    ): Promise<MockServerRequest[]> {
-        const all = await this.getRequests();
-        return all.filter((r) => r.path === path);
-    }
-
-    /**
-     * Reset all expectations and recorded requests.
-     */
-    async resetRequests(): Promise<void> {
-        const res = await fetch(
-            `${this.baseUrl}/mockserver/reset`,
-            { method: 'PUT' },
-        );
-        if (!res.ok) {
-            throw new Error(
-                `MockServer reset failed: ${res.status}`,
-            );
-        }
-    }
-
-    /**
-     * Poll MockServer until a request to `path` appears, or throw
-     * after `timeout` milliseconds.
-     */
-    async waitForRequest(
-        path: string,
-        timeout: number = 30_000,
-    ): Promise<MockServerRequest> {
-        const start = Date.now();
-        while (Date.now() - start < timeout) {
-            const matches = await this.getRequestsByPath(path);
-            if (matches.length > 0) {
-                return matches[0];
-            }
-            await new Promise((r) => setTimeout(r, 500));
-        }
-        throw new Error(
-            `MockServer: no request to ${path} within ${timeout}ms`,
         );
     }
 }

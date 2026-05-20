@@ -109,13 +109,6 @@ services:
     networks:
       - e2e-network
 
-  mockserver:
-    image: mockserver/mockserver:latest
-    ports:
-      - "1080:1080"
-    networks:
-      - e2e-network
-
 volumes:
   server-data:
 

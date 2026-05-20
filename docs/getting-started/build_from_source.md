@@ -1,19 +1,30 @@
-
 # Building AI DBA Workbench from Source Code
 
-You can find the AI DBA Workbench source code and configuration examples in
-the [Github repository](https://github.com/pgEdge/ai-dba-workbench). The 
-project uses Makefiles for building and testing; you can build all of the 
-components from the top-level directory.
+The AI DBA Workbench collects metrics from PostgreSQL servers, evaluates
+alert rules, and displays results in a web interface. You can find the
+source code and configuration examples in the
+[GitHub repository](https://github.com/pgEdge/ai-dba-workbench).
 
-Use the following `make` command to build all of the components:
+Before you deploy the Workbench, confirm the following prerequisites are
+in place:
+
+- [PostgreSQL 14](https://www.postgresql.org/download/) or later is
+  installed for the Workbench datastore.
+- The database credentials for the datastore database are available.
+- Network access exists between each monitored PostgreSQL server and the
+  system hosting the Workbench.
+- A Linux x86_64 system is available to host the server-side components.
+
+The project uses Makefiles for building and testing; build all components
+from the top-level directory. In the following example, the `make all`
+command builds all components:
 
 ```bash
 make all
 ```
 
-Or, specify a component name with the `make` command to build a component
-individually.  For example, the following command builds the collector:
+In the following example, the `make build` command builds the collector
+component individually:
 
 ```bash
 cd collector && make build
@@ -28,23 +39,23 @@ configuration files from the
   describes datastore and connection pool settings. The `collector.yaml`
   file must include the location of:
 
-    * [The secret_file](configuration/collector.md#security-options)
-    * [The password_file](configuration/collector.md#datastorepassword_file)
+    - [The secret_file](configuration/collector.md#security-options)
+    - [The password_file](configuration/collector.md#datastorepassword_file)
 
 - The [Server Configuration](configuration/server.md) file describes
   authentication, TLS, and LLM settings. The `server.yaml` file must
   include:
 
-    * [The secret_file](configuration/collector.md#security-options)
-    * The password associated with the user that owns the
+    - [The secret_file](configuration/collector.md#security-options)
+    - The password associated with the user that owns the
       `/opt/ai-workbench/data` directory (under the `database:` section).
 
 - The [Alerter Configuration](configuration/alerter.md) file describes
   threshold and anomaly detection settings. The `alerter.yaml` file
   must include:
 
-    * [The secret_file](configuration/collector.md#security-options)
-    * [The password_file](configuration/collector.md#datastorepassword_file)
+    - [The secret_file](configuration/collector.md#security-options)
+    - [The password_file](configuration/collector.md#datastorepassword_file)
 
 - The [Client Configuration](configuration/client.md) file describes
   proxy and build settings.
@@ -60,10 +71,11 @@ files to run each component as a background service.
 The collector service file configures the collector to start
 automatically and restart on failure.
 
-Create the service file at
-`/etc/systemd/system/pgedge-ai-dba-collector.service`; replace the
-`user_name` placeholder with the name of the operating system user
-account that owns the `/opt/ai-workbench/data` directory:
+In the following example, the collector service file starts the
+collector automatically and restarts the service on failure; replace
+`user_name` with the name of the operating system user account that
+owns the `/opt/ai-workbench/data` directory. Create the service file
+at `/etc/systemd/system/pgedge-ai-dba-collector.service`:
 
 ```ini
 [Unit]
@@ -88,10 +100,11 @@ WantedBy=multi-user.target
 The server service file configures the server to start automatically
 and restart on failure.
 
-Create the service file at
-`/etc/systemd/system/pgedge-ai-dba-server.service`; replace the `user_name`
-placeholder with the name of the operating system user account that owns the
-`/opt/ai-workbench/data` directory:
+In the following example, the server service file starts the server
+automatically and restarts the service on failure; replace `user_name`
+with the name of the operating system user account that owns the
+`/opt/ai-workbench/data` directory. Create the service file at
+`/etc/systemd/system/pgedge-ai-dba-server.service`:
 
 ```ini
 [Unit]
@@ -116,10 +129,11 @@ WantedBy=multi-user.target
 The alerter service file configures the alerter to start automatically
 and restart if the process exits.
 
-Create the service file at
-`/etc/systemd/system/pgedge-ai-dba-alerter.service`; replace the `user_name`
-placeholder with the name of the operating system user account that owns the 
-`/opt/ai-workbench/data` directory:
+In the following example, the alerter service file starts the alerter
+automatically and restarts the service when the process exits; replace
+`user_name` with the name of the operating system user account that
+owns the `/opt/ai-workbench/data` directory. Create the service file
+at `/etc/systemd/system/pgedge-ai-dba-alerter.service`:
 
 ```ini
 [Unit]
@@ -201,8 +215,6 @@ Status:   Enabled
 ======================================================================
 ```
 
-Copy the client files to the appropriate directory.
-
 In the following example, the `cp` command copies the client files to
 the installation directory:
 
@@ -211,17 +223,23 @@ sudo mkdir -p /opt/ai-workbench/client
 sudo cp -r assets index.html favicon.ico /opt/ai-workbench/client/
 ```
 
-Install and configure nginx to serve the client files and proxy API
-requests to the server.
-
-In the following example, the `apt` command installs nginx:
+Install and configure [nginx](https://nginx.org/en/docs/) to serve the
+client files and proxy API requests to the server. In the following
+example, the `apt` command installs nginx:
 
 ```bash
 sudo apt install nginx
 ```
 
-Create the nginx configuration file at
-`/etc/nginx/sites-available/ai-dba-workbench`:
+In the following example, the `nano` command creates the nginx
+configuration file:
+
+```bash
+sudo nano /etc/nginx/sites-available/ai-dba-workbench
+```
+
+In the following example, the nginx configuration file sets the proxy
+rules and file root for the installation:
 
 ```nginx
 server {
@@ -260,8 +278,8 @@ server {
 }
 ```
 
-In the following example, the `ln` and `systemctl` commands enable the
-configuration and restart nginx:
+In the following example, the `ln`, `nginx`, and `systemctl` commands
+enable the configuration and restart nginx:
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/ai-dba-workbench /etc/nginx/sites-enabled/ai-dba-workbench
@@ -276,7 +294,8 @@ authentication details when the Workbench opens.
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
 
 After logging in, select the `+` next to the DATABASE SERVERS heading
-in the left navigation panel to add a server definition.
+in the left navigation panel. The Workbench adds a new server definition
+entry.
 
 ![Adding a server definition](../images/add_server.png)
 
@@ -294,8 +313,8 @@ configuration file for editing:
 sudo vi /etc/pgedge/ai-dba-server.yaml
 ```
 
-Locate the `connection_security` section and set `allow_internal_networks`
-to `true`:
+In the following example, the `connection_security` section in
+`server.yaml` enables internal network connections:
 
 ```yaml
 connection_security:
@@ -313,5 +332,3 @@ When adding a server definition, provide the connection details and
 specify `localhost` in the host name field before selecting `Save`.
 
 ![Connected to a Local Server](../images/connected_server.png)
-
-

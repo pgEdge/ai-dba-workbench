@@ -15,6 +15,13 @@ import { NotificationChannelPage } from '../pages/NotificationChannelPage';
 import { MailpitHelper } from '../helpers/mailpit.helper';
 import { WireMockHelper } from '../helpers/wiremock.helper';
 
+// In RPM mode the server runs inside the Docker e2e-network and can reach
+// mailpit/wiremock directly by service name. In docker mode it uses the
+// host gateway to reach ports mapped to the host.
+const isRPM = process.env['INSTALL_MODE'] === 'rpm';
+const smtpHost = isRPM ? 'mailpit' : 'host.docker.internal';
+const wiremockServerBase = isRPM ? 'http://wiremock:8080' : 'http://host.docker.internal:9090';
+
 // ---------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------
@@ -82,10 +89,7 @@ test.describe('Notification Channels', () => {
                 await channelPage.fillChannelName(channelName);
                 await channelPage.fillChannelDescription('E2E test email channel');
                 await channelPage.fillEmailSettings({
-                    // host.docker.internal resolves to the host machine
-                    // from inside the server container, reaching Mailpit
-                    // which is mapped to host port 1025.
-                    smtpHost: 'host.docker.internal',
+                    smtpHost,
                     smtpPort: '1025',
                     fromAddress: 'test@e2e.local',
                     fromName: 'E2E Tester',
@@ -179,7 +183,7 @@ test.describe('Notification Channels', () => {
                 await channelPage.clickAddChannel();
                 await channelPage.fillChannelName(channelName);
                 await channelPage.fillChannelDescription('E2E test Slack channel');
-                await channelPage.fillWebhookUrl('http://host.docker.internal:9090/slack');
+                await channelPage.fillWebhookUrl(`${wiremockServerBase}/slack`);
                 await channelPage.saveChannel();
                 await channelPage.expectSuccessToast();
                 await channelPage.expectChannelInTable(channelName);
@@ -254,7 +258,7 @@ test.describe('Notification Channels', () => {
                 await channelPage.clickAddChannel();
                 await channelPage.fillChannelName(channelName);
                 await channelPage.fillChannelDescription('E2E test Mattermost channel');
-                await channelPage.fillWebhookUrl('http://host.docker.internal:9090/mattermost');
+                await channelPage.fillWebhookUrl(`${wiremockServerBase}/mattermost`);
                 await channelPage.saveChannel();
                 await channelPage.expectSuccessToast();
                 await channelPage.expectChannelInTable(channelName);
@@ -330,7 +334,7 @@ test.describe('Notification Channels', () => {
                 await channelPage.fillChannelName(channelName);
                 await channelPage.fillChannelDescription('E2E test webhook channel');
                 await channelPage.fillWebhookEndpointUrl(
-                    'http://host.docker.internal:9090/webhook',
+                    `${wiremockServerBase}/webhook`,
                 );
                 await channelPage.saveChannel();
                 await channelPage.expectSuccessToast();

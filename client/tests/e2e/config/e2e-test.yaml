@@ -1,0 +1,16 @@
+# E2E test suite configuration.
+#
+# Override any value at runtime via environment variable:
+#   INSTALL_MODE=rpm npm test
+#   INSTALL_MODE=rpm REPO_CHANNEL=staging PLATFORM_IMAGE=ubuntu22 npm test
+#
+# Note: Playwright intercepts unknown --flag=value arguments, so runtime
+# overrides must be passed as environment variables, not CLI flags.
+#
+# install_mode: docker | rpm
+# repo_channel: staging | release  (rpm mode only)
+# platform_image: rocky9 | rocky10 | rhel9 | rhel10 | debian12 | ubuntu22  (rpm mode only)
+
+install_mode: docker
+repo_channel: release
+platform_image: rocky9

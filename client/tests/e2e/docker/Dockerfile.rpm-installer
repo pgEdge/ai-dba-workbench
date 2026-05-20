@@ -1,0 +1,88 @@
+# pgEdge AI DBA Workbench - RPM Installer Container
+#
+# Builds a container image for a target OS platform, configures the
+# pgEdge repository, installs pgedge-ai* packages, and starts all
+# workbench services (server, collector, alerter, nginx client).
+#
+# Build args:
+#   BASE_IMAGE    - Target OS image (default: rockylinux:9)
+#   REPO_CHANNEL  - Repository channel: staging | release (default: release)
+#
+# Build example:
+#   docker build \
+#     --build-arg BASE_IMAGE=rockylinux:9 \
+#     --build-arg REPO_CHANNEL=staging \
+#     -t ai-dba-rpm-installer .
+
+ARG BASE_IMAGE=rockylinux:9
+FROM ${BASE_IMAGE}
+
+ARG REPO_CHANNEL=release
+
+# -----------------------------------------------------------------------
+# Install base tooling (curl, nginx, process utilities)
+# Handles both DNF (Rocky/RHEL) and APT (Debian/Ubuntu).
+# -----------------------------------------------------------------------
+RUN if command -v dnf >/dev/null 2>&1; then \
+        dnf install -y curl nginx procps-ng shadow-utils iputils bind-utils postgresql glibc-common && \
+        dnf clean all; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update && \
+        apt-get install -y curl nginx procps iputils-ping dnsutils postgresql-client libc-bin gnupg2 lsb-release && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# -----------------------------------------------------------------------
+# Configure pgEdge repository
+#
+# Always installs the release repo package, then rewrites the installed
+# repo config file to point at the staging channel when REPO_CHANNEL=staging.
+#
+# DNF (Rocky/RHEL): repo file lands in /etc/yum.repos.d/
+# APT (Debian/Ubuntu): repo file lands in /etc/apt/sources.list.d/
+# -----------------------------------------------------------------------
+RUN if command -v dnf >/dev/null 2>&1; then \
+        dnf install -y https://dnf.pgedge.com/reporpm/pgedge-release-latest.noarch.rpm; \
+        if [ "${REPO_CHANNEL}" = "staging" ]; then \
+            sed -i 's/release/staging/g' /etc/yum.repos.d/pgedge*.repo; \
+        fi; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        curl -fsSL https://apt.pgedge.com/repodeb/pgedge-release_latest_all.deb \
+             -o /tmp/pgedge-repo.deb && \
+        dpkg -i /tmp/pgedge-repo.deb && \
+        rm -f /tmp/pgedge-repo.deb; \
+        if [ "${REPO_CHANNEL}" = "staging" ]; then \
+            find /etc/apt/sources.list.d/ -name 'pgedge*' \
+                 -exec sed -i 's/release/staging/g' {} +; \
+        fi; \
+    fi
+
+# -----------------------------------------------------------------------
+# Install pgEdge AI DBA Workbench packages
+# -----------------------------------------------------------------------
+RUN if command -v dnf >/dev/null 2>&1; then \
+        dnf install -y 'pgedge-ai*' && dnf clean all; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update && \
+        apt-get install -y 'pgedge-ai*' && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Create data directory used by ai-dba-server.
+RUN mkdir -p /data && chmod 755 /data
+
+# Copy the database initialization script (applied after server migrations).
+COPY docker/init-db.sql /usr/local/share/init-db.sql
+
+# Expose server API port and nginx client port.
+EXPOSE 8080 80
+
+# Copy and install the container entrypoint.
+COPY scripts/rpm-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Copy the network connectivity preflight check script.
+COPY scripts/rpm-preflight.sh /usr/local/bin/rpm-preflight.sh
+RUN chmod +x /usr/local/bin/rpm-preflight.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

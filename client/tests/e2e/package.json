@@ -10,11 +10,18 @@
         "report": "npx playwright show-report",
         "allure:generate": "cp categories.json allure-results/ 2>/dev/null; allure generate ./allure-results --clean",
         "allure:open": "allure open",
-        "allure:report": "npm test && allure generate ./allure-results --clean && allure open"
+        "allure:report": "npm test && allure generate ./allure-results --clean && allure open",
+        "test:rpm": "INSTALL_MODE=rpm npx playwright test",
+        "test:rpm:staging": "INSTALL_MODE=rpm REPO_CHANNEL=staging npx playwright test",
+        "test:rpm:rocky9": "INSTALL_MODE=rpm PLATFORM_IMAGE=rocky9 npx playwright test",
+        "test:rpm:rocky10": "INSTALL_MODE=rpm PLATFORM_IMAGE=rocky10 npx playwright test",
+        "test:rpm:ubuntu22": "INSTALL_MODE=rpm PLATFORM_IMAGE=ubuntu22 npx playwright test"
     },
     "devDependencies": {
         "@playwright/test": "^1.50.0",
+        "@types/js-yaml": "^4.0.9",
         "allure-playwright": "^3.8.0",
+        "js-yaml": "^4.1.0",
         "ts-node": "^10.9.0",
         "typescript": "^5.7.0"
     }

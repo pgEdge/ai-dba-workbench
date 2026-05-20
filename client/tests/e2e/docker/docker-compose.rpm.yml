@@ -1,0 +1,85 @@
+# pgEdge AI DBA Workbench - RPM Installation E2E Test Compose
+#
+# Starts the full test stack using an RPM-installed workbench instead of
+# containers built from source. PostgreSQL, Mailpit, and WireMock are
+# identical to docker-compose.yml.
+#
+# Quick start:
+#
+#   cd client/tests/e2e
+#   POSTGRES_PASSWORD=postgres \
+#   RPM_PLATFORM_IMAGE=rockylinux:9 \
+#   REPO_CHANNEL=release \
+#   docker compose -f docker/docker-compose.rpm.yml up -d --build
+#
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ai_workbench
+      PGDATA: ${PGDATA_DIR:-/var/lib/postgresql/data}
+    command: ["postgres", "-c", "listen_addresses=*"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - e2e-network
+
+  workbench:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rpm-installer
+      args:
+        BASE_IMAGE: ${RPM_PLATFORM_IMAGE:-rockylinux:9}
+        REPO_CHANNEL: ${REPO_CHANNEL:-release}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - workbench-data:/data
+    ports:
+      - "8080:8443"
+      - "3000:8444"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - e2e-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    networks:
+      - e2e-network
+
+  wiremock:
+    image: wiremock/wiremock:latest
+    ports:
+      - "9090:8080"
+    command: ["--global-response-templating", "--verbose"]
+    networks:
+      - e2e-network
+
+volumes:
+  workbench-data:
+
+networks:
+  e2e-network:
+    driver: bridge

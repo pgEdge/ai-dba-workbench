@@ -1,4 +1,4 @@
-# Building AI DBA Workbench from Source Code
+# Building the Workbench from Source Code
 
 The AI DBA Workbench collects metrics from PostgreSQL servers, evaluates
 alert rules, and displays results in a web interface. You can find the

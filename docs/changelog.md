@@ -10,6 +10,22 @@ project adheres to
 
 ## [1.0.0-beta3] - Unreleased
 
+### Added
+
+- Add the `get_timeline_events` MCP tool, which exposes
+  the unified incident-investigation timeline that was
+  previously only reachable through the
+  `/api/v1/timeline/events` REST endpoint. The tool
+  returns configuration changes, HBA and ident edits,
+  server restarts, extension changes, alert
+  fired/cleared/acknowledged events, and blackout
+  start/end markers in a single TSV result ordered most
+  recent first. Ellie and other MCP clients can now
+  correlate alerts with the underlying changes that may
+  have caused them without falling back to direct REST
+  calls. The tool gates results through the same RBAC
+  checks as `get_alert_history`. (#250)
+
 ### Fixed
 
 - Fix the web client crashing into the "Something

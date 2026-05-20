@@ -165,6 +165,7 @@ builtins:
     get_alert_rules: true
     get_metric_baselines: true
     get_blackouts: true
+    get_timeline_events: true
     query_datastore: true
     generate_embedding: true
     search_knowledgebase: true
@@ -570,6 +571,7 @@ builtins:
     get_alert_rules: true
     get_metric_baselines: true
     get_blackouts: true
+    get_timeline_events: true
     query_datastore: true
     generate_embedding: true
     search_knowledgebase: true

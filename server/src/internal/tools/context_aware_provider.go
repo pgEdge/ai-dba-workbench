@@ -129,6 +129,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(datastorePool, p.rbacChecker, visibilityLister))
 		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_timeline_events") {
+			registry.Register("get_timeline_events", GetTimelineEventsTool(p.datastore, p.rbacChecker, visibilityLister))
+		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("store_memory") && p.memoryStore != nil {
 			registry.Register("store_memory", StoreMemoryTool(p.memoryStore, p.cfg, p.rbacChecker))
 		}
@@ -168,6 +171,9 @@ func (p *ContextAwareProvider) registerDatastoreTools(registry *Registry) {
 		}
 		if p.cfg.Builtins.Tools.IsToolEnabled("get_blackouts") {
 			registry.Register("get_blackouts", GetBlackoutsTool(nil, p.rbacChecker, nil))
+		}
+		if p.cfg.Builtins.Tools.IsToolEnabled("get_timeline_events") {
+			registry.Register("get_timeline_events", GetTimelineEventsTool(nil, p.rbacChecker, nil))
 		}
 	}
 }
@@ -456,6 +462,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_metric_baselines": true,                 // Datastore tool - uses shared datastore pool
 		"query_datastore":      true,                 // Datastore tool - uses shared datastore pool
 		"get_blackouts":        true,                 // Datastore tool - uses shared datastore pool
+		"get_timeline_events":  true,                 // Datastore tool - uses shared datastore pool
 		"store_memory":         p.memoryStore != nil, // Memory tool - requires memory store
 		"recall_memories":      p.memoryStore != nil, // Memory tool - requires memory store
 		"delete_memory":        p.memoryStore != nil, // Memory tool - requires memory store

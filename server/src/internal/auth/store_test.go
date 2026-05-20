@@ -10,7 +10,12 @@
 package auth
 
 import (
+	"bytes"
+	"log"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +132,350 @@ func TestNewAuthStore(t *testing.T) {
 		}
 	})
 }
+
+// TestNewAuthStore_FilePermissions is the regression test for GitHub
+// issue #249. The previous implementation called os.Chmod on auth.db
+// immediately after sql.Open, but the modernc.org/sqlite driver opens
+// the database lazily and does not create the file until the first
+// real query forces a connection. The chmod therefore fired against a
+// non-existent path, logged "Failed to set permissions on auth.db: no
+// such file or directory", and left the eventual file at the user's
+// default umask (typically 0644, which is world-readable). The fix
+// reorders NewAuthStore so the foreign-keys PRAGMA QueryRow runs first
+// and creates the file, then chmod runs against a file that is
+// guaranteed to exist.
+//
+// The test asserts both halves of the contract: the on-disk file is
+// 0600 after NewAuthStore returns, and no "Failed to set permissions"
+// warning was emitted to the package logger during startup.
+//
+// The test is skipped on Windows because Windows does not honor
+// POSIX permission bits; os.Chmod silently maps to the read-only flag
+// and the Mode().Perm() reported by os.Stat does not reflect 0600.
+func TestNewAuthStore_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not enforced on Windows")
+	}
+
+	// Redirect the standard logger to an in-memory buffer for the
+	// duration of the test so we can scan for the regression warning
+	// without polluting test output. Mirror the approach used by
+	// captureLog in server/src/internal/api/handle_test.go.
+	prevWriter := log.Writer()
+	prevFlags := log.Flags()
+	buf := &bytes.Buffer{}
+	log.SetOutput(buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
+
+	tmpDir := t.TempDir()
+
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("NewAuthStore returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		store.Close()
+	})
+
+	dbPath := filepath.Join(tmpDir, "auth.db")
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("Stat(%q) failed: %v", dbPath, err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("auth.db has mode %#o; expected 0600", perm)
+	}
+
+	// Regression guard: the original bug surfaced as a startup warning
+	// line beginning "[AUTH] WARNING: Failed to set permissions".
+	// Reviewers grep for that exact prefix when triaging packaging
+	// issues, so the test asserts on the same substring rather than a
+	// looser pattern.
+	if got := buf.String(); strings.Contains(got, "Failed to set permissions") {
+		t.Errorf("NewAuthStore logged a chmod warning; output was:\n%s", got)
+	}
+}
+
+// TestRestrictAuthDBPermissions exercises the helper that tightens
+// auth.db to 0600. Three of the four subtests cover scenarios where
+// the helper logs a WARNING and returns nil (happy path, chmod
+// failed, post-chmod stat failed); the fourth covers the silent-
+// ignore mode-mismatch case where the helper must fail closed by
+// returning a non-nil error so NewAuthStore can abort startup. The
+// cases share the same log-redirect plumbing as
+// TestNewAuthStore_FilePermissions and pin the WARNING prefix that
+// operators grep for in production logs.
+func TestRestrictAuthDBPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not enforced on Windows")
+	}
+
+	captureLog := func(t *testing.T) *bytes.Buffer {
+		t.Helper()
+		prevWriter := log.Writer()
+		prevFlags := log.Flags()
+		buf := &bytes.Buffer{}
+		log.SetOutput(buf)
+		log.SetFlags(0)
+		t.Cleanup(func() {
+			log.SetOutput(prevWriter)
+			log.SetFlags(prevFlags)
+		})
+		return buf
+	}
+
+	t.Run("tightens existing file to 0600", func(t *testing.T) {
+		buf := captureLog(t)
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "auth.db")
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		if err := restrictAuthDBPermissions(path); err != nil {
+			t.Fatalf("restrictAuthDBPermissions returned error on happy path: %v", err)
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Errorf("expected mode 0600, got %#o", perm)
+		}
+		if got := buf.String(); strings.Contains(got, "Failed to set permissions") {
+			t.Errorf("unexpected warning emitted: %q", got)
+		}
+	})
+
+	t.Run("warns when chmod fails on missing file", func(t *testing.T) {
+		buf := captureLog(t)
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "auth.db") // never created
+
+		// The chmod-failed branch logs a warning and returns nil; we
+		// keep WARN-and-continue here so that platforms which reject
+		// chmod (EROFS, EPERM, ENOSYS) do not refuse to boot.
+		if err := restrictAuthDBPermissions(path); err != nil {
+			t.Fatalf("expected nil error on chmod failure, got %v", err)
+		}
+
+		got := buf.String()
+		if !strings.Contains(got, "Failed to set permissions") {
+			t.Errorf("expected chmod failure warning, got %q", got)
+		}
+	})
+
+	t.Run("warns when post-chmod stat fails", func(t *testing.T) {
+		buf := captureLog(t)
+
+		// Swap the package-level stat seam so chmod succeeds but
+		// the verification stat returns an error. This simulates a
+		// race where the file is removed between chmod and stat, or
+		// a filesystem where stat fails for an inode that chmod
+		// accepted.
+		prev := authDBStat
+		authDBStat = func(string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		}
+		t.Cleanup(func() { authDBStat = prev })
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "auth.db")
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		// The stat-failed branch also logs a warning and returns nil;
+		// a transient stat failure should not refuse boot.
+		if err := restrictAuthDBPermissions(path); err != nil {
+			t.Fatalf("expected nil error on stat failure, got %v", err)
+		}
+
+		got := buf.String()
+		if !strings.Contains(got, "Failed to set permissions") ||
+			!strings.Contains(got, "post-chmod stat failed") {
+			t.Errorf("expected post-chmod stat-failure warning, got %q", got)
+		}
+	})
+
+	t.Run("errors when filesystem ignores chmod", func(t *testing.T) {
+		buf := captureLog(t)
+
+		// Swap both seams so chmod returns nil but the post-chmod
+		// stat reports a mode wider than 0600. This simulates the
+		// FAT/NTFS/fuse scenario described in the helper docstring:
+		// chmod succeeds while the filesystem silently keeps the
+		// original permissions. The helper must fail closed here,
+		// returning a non-nil error so NewAuthStore can abort.
+		prevChmod := authDBChmod
+		authDBChmod = func(string, os.FileMode) error { return nil }
+		t.Cleanup(func() { authDBChmod = prevChmod })
+
+		// Real os.Stat is left in place; the test file below keeps
+		// its 0644 bits because our stubbed chmod did not actually
+		// narrow them.
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "auth.db")
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		err := restrictAuthDBPermissions(path)
+		if err == nil {
+			t.Fatal("expected non-nil error on mode mismatch, got nil")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "0600") {
+			t.Errorf("expected error message to mention 0600, got %q", msg)
+		}
+		if !strings.Contains(msg, "0644") {
+			t.Errorf("expected error message to include actual mode 0644 in octal, got %q", msg)
+		}
+
+		got := buf.String()
+		if !strings.Contains(got, "Failed to set permissions") ||
+			!strings.Contains(got, "filesystem reported mode") {
+			t.Errorf("expected mode-mismatch warning to still be logged, got %q", got)
+		}
+	})
+}
+
+// TestNewAuthStore_UnsafePermissionsAbortStartup confirms the
+// fail-closed contract end-to-end: when restrictAuthDBPermissions
+// reports the silent-ignore mode-mismatch scenario, NewAuthStore must
+// surface a wrapped error, close the database handle it opened, and
+// not return a usable store. This is the regression guard for the
+// security-auditor finding on issue #249: a chmod that returns nil
+// without actually narrowing the mode used to be a WARN-and-continue,
+// which would have let the server boot and serve auth from a world-
+// readable bcrypt-hash store.
+//
+// We force the silent-ignore scenario via the authDBChmod and
+// authDBStat function-variable seams. The chmod stub returns nil
+// without touching the filesystem, and the stat stub returns a
+// FileInfo whose Mode() reports 0644. The seams are restored via
+// t.Cleanup so unrelated subsequent tests are unaffected.
+func TestNewAuthStore_UnsafePermissionsAbortStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not enforced on Windows")
+	}
+
+	// Redirect the package logger so the WARNING line emitted by the
+	// helper does not pollute test output, and so we can assert the
+	// helper still logs even when it now also fails closed.
+	prevWriter := log.Writer()
+	prevFlags := log.Flags()
+	buf := &bytes.Buffer{}
+	log.SetOutput(buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
+
+	// chmod stub: pretend the filesystem accepted the request.
+	prevChmod := authDBChmod
+	authDBChmod = func(string, os.FileMode) error { return nil }
+	t.Cleanup(func() { authDBChmod = prevChmod })
+
+	// stat stub: report a mode wider than 0600 (the silent-ignore
+	// scenario). We delegate to the real os.Stat for everything else
+	// so size/modtime fields stay realistic, and only override the
+	// mode bits via a wrapper FileInfo.
+	prevStat := authDBStat
+	authDBStat = func(name string) (os.FileInfo, error) {
+		real, err := os.Stat(name)
+		if err != nil {
+			return nil, err
+		}
+		return wideModeFileInfo{FileInfo: real, mode: 0644}, nil
+	}
+	t.Cleanup(func() { authDBStat = prevStat })
+
+	tmpDir := t.TempDir()
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if store != nil {
+		// Defensive cleanup so we do not leak a handle if the test
+		// fails to assert correctly; the contract is that store must
+		// be nil on this path.
+		t.Cleanup(func() { store.Close() })
+	}
+	if err == nil {
+		t.Fatal("expected NewAuthStore to return an error on unsafe permissions, got nil")
+	}
+	if store != nil {
+		t.Errorf("expected nil *AuthStore on unsafe permissions, got non-nil")
+	}
+
+	// The wrapped error from NewAuthStore should carry the helper
+	// message context so operators triaging a refused boot can tell
+	// what happened.
+	msg := err.Error()
+	if !strings.Contains(msg, "auth.db has unsafe file permissions") {
+		t.Errorf("expected wrapped NewAuthStore error to mention unsafe permissions, got %q", msg)
+	}
+	if !strings.Contains(msg, "0600") {
+		t.Errorf("expected wrapped error to reference target mode 0600, got %q", msg)
+	}
+
+	// The helper should still have logged the WARNING line so
+	// operators see both a structured error and a log entry.
+	if got := buf.String(); !strings.Contains(got, "Failed to set permissions") {
+		t.Errorf("expected helper to still log a WARNING on mode mismatch, got %q", got)
+	}
+
+	// auth.db should still exist on disk - the QueryRow that creates
+	// the file ran before restrictAuthDBPermissions - but the
+	// database handle must have been closed by NewAuthStore on the
+	// abort path. Asserting the file exists makes sure the abort
+	// happened after the file-creation QueryRow and not before it;
+	// that ordering is what guarantees the helper actually runs (a
+	// future refactor that moves the chmod earlier would silently
+	// regress).
+	dbPath := filepath.Join(tmpDir, "auth.db")
+	if _, statErr := os.Stat(dbPath); statErr != nil {
+		t.Errorf("expected auth.db to exist after aborted NewAuthStore, got Stat error: %v", statErr)
+	}
+
+	// Probe the closed-handle contract by restoring the real
+	// chmod/stat seams and re-opening the file with the same driver.
+	// modernc.org/sqlite uses fcntl POSIX locks on Linux, so a second
+	// sql.Open + initial QueryRow cycle would block or fail if
+	// NewAuthStore had leaked the SQLite handle on the abort path.
+	// Restoring the seams here (rather than waiting for t.Cleanup) is
+	// necessary because the second NewAuthStore would otherwise hit
+	// the same silent-ignore failure and we would not learn anything
+	// about handle hygiene.
+	authDBChmod = prevChmod
+	authDBStat = prevStat
+
+	store2, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("re-open after aborted NewAuthStore failed (handle may have leaked): %v", err)
+	}
+	t.Cleanup(func() { store2.Close() })
+}
+
+// wideModeFileInfo wraps an os.FileInfo and overrides Mode() so the
+// reported permission bits look wider than the underlying file. It
+// exists solely so TestNewAuthStore_UnsafePermissionsAbortStartup can
+// simulate the silent-ignore FAT/NTFS/fuse scenario without needing a
+// real such filesystem mounted under the test runner.
+type wideModeFileInfo struct {
+	os.FileInfo
+	mode os.FileMode
+}
+
+func (w wideModeFileInfo) Mode() os.FileMode { return w.mode }
 
 func TestAuthStorePath(t *testing.T) {
 	t.Run("returns correct database path", func(t *testing.T) {

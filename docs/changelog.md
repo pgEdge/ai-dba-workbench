@@ -48,6 +48,27 @@ project adheres to
 
 ### Fixed
 
+- Fix the collector entering a restart loop when its
+  consolidated schema migration ran against a partially
+  populated datastore. PostgreSQL has no
+  `ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS`, so a
+  re-run that found a pre-existing foreign key (such as
+  `fk_anomaly_candidates_embedding` on
+  `anomaly_candidates`) raised `duplicate_object`, aborted
+  the surrounding `pgx.Tx`, and the next statement
+  returned SQLSTATE 25P02 ("current transaction is
+  aborted, commands ignored until end of transaction
+  block") with a misleading error pointing at an
+  unrelated table. The migration now guards every
+  `ADD CONSTRAINT` with a catalog check against
+  `pg_constraint`, runs the optional pgvector blocks
+  inside SAVEPOINTs so a missing extension or schema
+  drift cannot poison the parent transaction, and
+  surfaces real failures with a `return` instead of
+  swallowing them through `logger.Infof`. Fresh installs
+  are unaffected; the change matters only for recovery
+  cases.
+
 - Fix the web client crashing into the "Something
   went wrong" error boundary after the user deleted
   an empty cluster. The server marshaled an empty

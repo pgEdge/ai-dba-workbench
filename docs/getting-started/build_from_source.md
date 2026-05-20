@@ -60,129 +60,15 @@ configuration files from the
 - The [Client Configuration](configuration/client.md) file describes
   proxy and build settings.
 
+- The [systemd configuration](configuration/configure_systemd.md) page 
+  provides details about setting up systemd service management for users that
+  did not use pgEdge packages when installing.
 
-## Configuring systemd Services
-
-The following sections provide details about creating systemd service
-files to run each component as a background service.
-
-### Configuring the Collector Service
-
-The collector service file configures the collector to start
-automatically and restart on failure.
-
-In the following example, the collector service file starts the
-collector automatically and restarts the service on failure; replace
-`user_name` with the name of the operating system user account that
-owns the `/opt/ai-workbench/data` directory. Create the service file
-at `/etc/systemd/system/pgedge-ai-dba-collector.service`:
-
-```ini
-[Unit]
-Description=pgEdge AI DBA Workbench Collector
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=user_name
-WorkingDirectory=/opt/ai-workbench
-ExecStart=/opt/ai-workbench/ai-dba-collector \
-    -config /etc/pgedge/ai-dba-collector.yaml
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Configuring the Server Service
-
-The server service file configures the server to start automatically
-and restart on failure.
-
-In the following example, the server service file starts the server
-automatically and restarts the service on failure; replace `user_name`
-with the name of the operating system user account that owns the
-`/opt/ai-workbench/data` directory. Create the service file at
-`/etc/systemd/system/pgedge-ai-dba-server.service`:
-
-```ini
-[Unit]
-Description=pgEdge AI DBA Workbench Server
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=user_name
-WorkingDirectory=/opt/ai-workbench
-ExecStart=/opt/ai-workbench/ai-dba-server \
-    -config /etc/pgedge/ai-dba-server.yaml
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Configuring the Alerter Service
-
-The alerter service file configures the alerter to start automatically
-and restart if the process exits.
-
-In the following example, the alerter service file starts the alerter
-automatically and restarts the service when the process exits; replace
-`user_name` with the name of the operating system user account that
-owns the `/opt/ai-workbench/data` directory. Create the service file
-at `/etc/systemd/system/pgedge-ai-dba-alerter.service`:
-
-```ini
-[Unit]
-Description=pgEdge AI DBA Workbench Alerter
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=user_name
-WorkingDirectory=/opt/ai-workbench
-ExecStart=/opt/ai-workbench/ai-dba-alerter \
-    -config /etc/pgedge/ai-dba-alerter.yaml
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Enable and Start the Services
-
-Use `systemctl` to reload the daemon and enable each service.
-
-In the following example, the `systemctl` commands reload the daemon,
-enable all services, and start each one:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable pgedge-ai-dba-collector
-sudo systemctl enable pgedge-ai-dba-server
-sudo systemctl enable pgedge-ai-dba-alerter
-sudo systemctl start pgedge-ai-dba-collector
-sudo systemctl start pgedge-ai-dba-server
-sudo systemctl start pgedge-ai-dba-alerter
-```
-
-In the following example, the `systemctl status` command checks the
-status of each service:
-
-```bash
-sudo systemctl status pgedge-ai-dba-collector
-sudo systemctl status pgedge-ai-dba-server
-sudo systemctl status pgedge-ai-dba-alerter
-```
 
 ## Running the Workbench
 
-Before running the Workbench, add a user to the `auth.db` file. The
-`auth.db` file is the server's own database for user credentials; the
+Before running the Workbench, you'll need to add a user to the `auth.db` file.
+The `auth.db` file is the server's own database for user credentials; the
 file stores authentication details only for the AI Workbench.
 
 In the following example, the `ai-dba-server` command adds a new user
@@ -223,23 +109,24 @@ sudo mkdir -p /opt/ai-workbench/client
 sudo cp -r assets index.html favicon.ico /opt/ai-workbench/client/
 ```
 
-Install and configure [nginx](https://nginx.org/en/docs/) to serve the
-client files and proxy API requests to the server. In the following
-example, the `apt` command installs nginx:
+The server does not include a static file service; install and configure
+[nginx](https://nginx.org/en/docs/) to serve the client files and proxy
+API requests to the server before running the Workbench. Use your choice of
+package manager to install nginx:
 
 ```bash
 sudo apt install nginx
 ```
 
-In the following example, the `nano` command creates the nginx
-configuration file:
+Then, create and open the nginx configuration file; for our example, we're
+using vi:
 
 ```bash
-sudo nano /etc/nginx/sites-available/ai-dba-workbench
+sudo vi /etc/nginx/sites-available/ai-dba-workbench
 ```
 
-In the following example, the nginx configuration file sets the proxy
-rules and file root for the installation:
+Add and modify the nginx configuration file to set the proxy rules and file
+root for your installation:
 
 ```nginx
 server {
@@ -278,8 +165,8 @@ server {
 }
 ```
 
-In the following example, the `ln`, `nginx`, and `systemctl` commands
-enable the configuration and restart nginx:
+Then, use the `ln`, `nginx`, and `systemctl` commands to enable the
+configuration and restart nginx:
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/ai-dba-workbench /etc/nginx/sites-enabled/ai-dba-workbench
@@ -288,8 +175,8 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-Open a browser and navigate to `http://<server-ip>`; provide
-authentication details when the Workbench opens.
+Open a browser and navigate to `http://<server-ip>`; provide authentication
+details when the Workbench opens.
 
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
 
@@ -298,6 +185,7 @@ in the left navigation panel. The Workbench adds a new server definition
 entry.
 
 ![Adding a server definition](../images/add_server.png)
+
 
 ### Connecting to a Local PostgreSQL Server
 
@@ -332,3 +220,20 @@ When adding a server definition, provide the connection details and
 specify `localhost` in the host name field before selecting `Save`.
 
 ![Connected to a Local Server](../images/connected_server.png)
+
+
+### Customizing your Configuration
+
+Consult the following guides for additional configuration information:
+
+- The [systemd configuration](configuration/configure_systemd.md) guide 
+  provides details about setting up systemd service management for users that
+  did not use pgEdge packages when installing.
+- The [collector](configuration/collector.md) guide covers tuned
+  connection pools and SSL.
+- The [server](configuration/server.md) guide covers TLS, authentication,
+  and LLM integration.
+- The [alerter](configuration/alerter.md) guide covers anomaly detection
+  and notification channels.
+- The [web client](configuration/client.md) guide covers proxy settings
+  and build options.

@@ -75,6 +75,7 @@ nav:
       - Collector: getting-started/configuration/collector.md
       - Alerter: getting-started/configuration/alerter.md
       - Web Client: getting-started/configuration/client.md
+      - Configuring systemd Services: getting-started/configuration/configure_systemd.md
 
   - User Guide:
     - Using the Workbench: user-guide/index.md
@@ -98,6 +99,7 @@ nav:
 
   - Administrator's Guide:
     - Overview: admin-guide/index.md
+    - Verifying the Health of Components: admin-guide/verify_health.md
     - Users & Authentication: admin-guide/authentication.md
     - Connection Management: admin-guide/connections.md
     - Alert Rules & Thresholds: admin-guide/alert-rules.md

@@ -47,15 +47,16 @@ sudo tar xzf ai-dba-client.tar.gz -C /opt/ai-workbench/client
 ## Creating the Datastore Database
 
 Use a PostgreSQL client to create a database for the datastore; the
-collector, server, and alerter share this database. In the following
-example, the `psql` command connects to the PostgreSQL server:
+collector, server, and alerter share this database. Connect to the PostgreSQL
+server with `psql`:
 
 ```bash
 psql -U postgres -h localhost
 ```
 
-In the following example, the `CREATE DATABASE` and `GRANT` statements
-create the `ai_workbench` database and `ai_workbench` user:
+Then, create the datastore database.  In the following example, the
+`CREATE DATABASE` and `GRANT` statements create the `ai_workbench` database
+and `ai_workbench` user:
 
 ```sql
 CREATE DATABASE ai_workbench;
@@ -67,7 +68,7 @@ The collector creates the required schema tables automatically on first
 startup.
 
 
-## Create a Server Secret and a Password File
+## Creating a Server Secret and a Password File
 
 The Workbench components use the server secret file and password file
 when connecting and authenticating with other components and the
@@ -94,9 +95,8 @@ sudo openssl rand -base64 32 \
 sudo chmod 600 /etc/ai-workbench/server.secret
 ```
 
-In the following example, the `echo` and `chmod` commands create the
-`password.txt` file in the `/etc/ai-workbench` directory and set its
-permissions:
+Then, use the `echo` and `chmod` commands to create the `password.txt` file
+in the `/etc/ai-workbench` directory and set the file permissions:
 
 ```bash
 sudo mkdir -p /etc/ai-workbench
@@ -106,11 +106,12 @@ sudo chmod 600 /etc/ai-workbench/password.txt
 
 !!! hint
 
-    Set the locations of `server.secret` and `password.txt` to the
+    When configuring your installation, you'll need to ensure that the
+    locations of the `server.secret` and `password.txt` files are set to the
     absolute file paths in the YAML configuration files.
 
 
-## Configure and Start the Collector
+## Configuring and Starting the Collector
 
 Copy the example configuration file to the system configuration directory
 before editing the settings. In the following example, the `cp` command
@@ -162,7 +163,7 @@ initialization; for example:
 The collector is running as a background service; press `Enter` to view your prompt.
 
 
-## Configure and Start the Server
+## Configuring and Starting the Server
 
 Copy the server configuration file to the system configuration directory
 before editing the settings. In the following example, the `cp` command
@@ -343,14 +344,14 @@ RBAC management: ENABLED
 The server is running as a background process; press `Enter` to view your prompt.
 
 
-## Configure and Start the Alerter
+## Configuring and Starting the Alerter
 
 The alerter connects to the same datastore database as the collector and
 server. Configure the alerter using a YAML configuration file or
 command-line flags; see the
-[alerter configuration](configuration/alerter.md) reference for all
+[alerter configuration](configuration/alerter.md) reference to review the
 available options. In the following example, the `cp` command copies the
-sample alerter configuration file to `/etc/pgedge`:
+sample alerter configuration file from the Downloads folder to `/etc/pgedge`:
 
 ```bash
 sudo cp ~/Downloads/examples/ai-dba-alerter.yaml /etc/pgedge/ai-dba-alerter.yaml
@@ -445,20 +446,20 @@ The server does not include a static file service; install and configure
 [nginx](https://nginx.org/en/docs/) to serve the client files and proxy
 API requests to the server before running the Workbench.
 
-In the following example, the `apt` command installs nginx:
+First, use your package manager to install nginx:
 
 ```bash
 sudo apt install nginx
 ```
 
-In the following example, the `nano` command creates the nginx
+Then, in the following example, we use `vi` to creates the nginx
 configuration file:
 
 ```bash
-sudo nano /etc/nginx/sites-available/ai-dba-workbench
+sudo vi /etc/nginx/sites-available/ai-dba-workbench
 ```
 
-In the following example, the nginx configuration file sets the proxy
+Add the following code to the nginx configuration file to set the proxy
 rules and file root for the installation:
 
 ```nginx
@@ -480,7 +481,7 @@ server {
 }
 ```
 
-In the following example, the `ln`, `nginx`, and `systemctl` commands
+Next, we'll use the `ln`, `nginx`, and `systemctl` commands to
 enable the configuration and restart nginx:
 
 ```bash
@@ -504,9 +505,11 @@ entry.
 
 ### Customizing your Configuration
 
-After verifying the basic setup, the following guides cover additional
-configuration topics:
+Consult the following guides for additional configuration information:
 
+- The [systemd configuration](configuration/configure_systemd.md) guide 
+  provides details about setting up systemd service management for users that
+  did not use pgEdge packages when installing.
 - The [collector](configuration/collector.md) guide covers tuned
   connection pools and SSL.
 - The [server](configuration/server.md) guide covers TLS, authentication,

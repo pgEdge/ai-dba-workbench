@@ -1,13 +1,12 @@
 # pgEdge AI DBA Workbench - Notification Mock Services
 #
-# Lightweight compose file for the three mock containers used by
+# Lightweight compose file for the two mock containers used by
 # notification channel E2E tests. Started and stopped automatically
 # by notification-channels.spec.ts — no credentials required.
 #
 # Services:
 #   mailpit    — fake SMTP server + REST API (email validation)
 #   wiremock   — HTTP request capture (Slack + webhook validation)
-#   mockserver — HTTP request capture (Mattermost validation)
 
 services:
   mailpit:

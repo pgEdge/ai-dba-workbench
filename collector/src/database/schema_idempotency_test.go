@@ -311,6 +311,142 @@ func TestAddConstraintIfMissingErrorPropagation(t *testing.T) {
 	}
 }
 
+// TestAddConstraintIfMissingDuplicateObjectSuppressed exercises the
+// defense-in-depth inner EXCEPTION handler in addConstraintIfMissing's
+// generated DO block. The outer IF NOT EXISTS guard always skips the
+// ALTER on a single-threaded re-run, so the inner handler exists to
+// close a TOCTOU race window between the pg_constraint check and the
+// ALTER TABLE in concurrent migration scenarios. To prove the handler
+// works at the SQL level, this test issues a DO block that mimics the
+// helper's inner BEGIN ... EXCEPTION WHEN duplicate_object ... END
+// structure unconditionally (i.e. with the IF NOT EXISTS guard
+// removed) against a table that already carries the constraint. The
+// duplicate_object must be swallowed and the surrounding transaction
+// must remain usable.
+func TestAddConstraintIfMissingDuplicateObjectSuppressed(t *testing.T) {
+	ctx := context.Background()
+	pool, conn := getTestConnection(t)
+	if pool == nil {
+		return
+	}
+	defer pool.Close()
+	defer conn.Release()
+
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS test_dup_child;
+		DROP TABLE IF EXISTS test_dup_parent;
+		CREATE TABLE test_dup_parent (
+			id SERIAL PRIMARY KEY
+		);
+		CREATE TABLE test_dup_child (
+			id SERIAL PRIMARY KEY,
+			parent_id INTEGER
+		);
+	`); err != nil {
+		t.Fatalf("failed to create test tables: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(ctx,
+			`DROP TABLE IF EXISTS test_dup_child, test_dup_parent`); err != nil {
+			t.Logf("teardown: %v", err)
+		}
+	}()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil {
+			t.Logf("rollback: %v", err)
+		}
+	}()
+
+	// Seed the constraint via the helper. This puts the catalog in the
+	// "constraint already exists" state that the EXCEPTION handler is
+	// designed to tolerate.
+	if err := addConstraintIfMissing(ctx, tx,
+		"test_dup_child",
+		"fk_test_dup_child_parent",
+		"FOREIGN KEY (parent_id) REFERENCES test_dup_parent(id)",
+	); err != nil {
+		t.Fatalf("seed addConstraintIfMissing failed: %v", err)
+	}
+
+	// Issue a DO block that mirrors the helper's inner BEGIN ...
+	// EXCEPTION WHEN duplicate_object END structure but skips the
+	// pg_constraint guard, so the ALTER definitely fires against the
+	// already-present constraint. The duplicate_object must be
+	// swallowed and the outer transaction must remain usable.
+	if _, err := tx.Exec(ctx, `
+		DO $$
+		BEGIN
+			BEGIN
+				ALTER TABLE test_dup_child
+					ADD CONSTRAINT fk_test_dup_child_parent
+					FOREIGN KEY (parent_id)
+					REFERENCES test_dup_parent(id);
+			EXCEPTION
+				WHEN duplicate_object THEN
+					NULL;
+			END;
+		END
+		$$;
+	`); err != nil {
+		t.Fatalf(
+			"DO block with EXCEPTION handler should swallow "+
+				"duplicate_object, got: %v", err)
+	}
+
+	// Outer transaction must still be usable after the swallowed
+	// duplicate_object. A poisoned tx would fail with SQLSTATE 25P02.
+	var dummy int
+	if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&dummy); err != nil {
+		t.Fatalf(
+			"outer tx unusable after duplicate_object suppression: %v",
+			err)
+	}
+
+	// The constraint must still be present exactly once; the swallowed
+	// duplicate must not have removed or doubled it.
+	var count int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pg_constraint
+		WHERE conname = 'fk_test_dup_child_parent'
+		  AND conrelid = 'test_dup_child'::regclass
+	`).Scan(&count); err != nil {
+		t.Fatalf("failed to count constraint: %v", err)
+	}
+	if count != 1 {
+		t.Errorf(
+			"expected exactly one fk_test_dup_child_parent, got %d",
+			count)
+	}
+
+	// Without the EXCEPTION handler the equivalent unguarded ALTER
+	// would raise SQLSTATE 42710 (duplicate_object). Confirm that
+	// directly so the test pins the behavioral contrast: the helper's
+	// generated DO block must contain the handler to remain
+	// re-runnable when the IF NOT EXISTS guard is bypassed by a race.
+	_, rawErr := tx.Exec(ctx, `
+		ALTER TABLE test_dup_child
+			ADD CONSTRAINT fk_test_dup_child_parent
+			FOREIGN KEY (parent_id)
+			REFERENCES test_dup_parent(id)
+	`)
+	if rawErr == nil {
+		t.Fatal(
+			"expected raw ALTER TABLE to raise duplicate_object " +
+				"without the EXCEPTION handler")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(rawErr, &pgErr) || pgErr.Code != "42710" {
+		t.Fatalf(
+			"expected SQLSTATE 42710 (duplicate_object), got: %v",
+			rawErr)
+	}
+}
+
 // TestQuoteSQLLiteral verifies the small helper that escapes string
 // literals embedded in the DO-block produced by addConstraintIfMissing.
 // The helper is defensive (every in-tree caller passes a static

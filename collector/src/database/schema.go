@@ -52,6 +52,16 @@ type SchemaManager struct {
 // deliberately: it briefly removes the foreign key, and any concurrent
 // writer would see a window with the parent unenforced. The DO block
 // below leaves an existing constraint completely untouched.
+//
+// The inner BEGIN ... EXCEPTION WHEN duplicate_object block is the
+// recommended PostgreSQL pattern for closing the TOCTOU race between
+// the pg_constraint pre-check and the ALTER TABLE: two concurrent
+// sessions could both pass the NOT EXISTS check before either
+// acquires the table lock, and the loser would otherwise abort with
+// SQLSTATE 42710. Catching the duplicate_object inside the DO block
+// turns that race into a no-op. The pre-check is kept because it
+// avoids touching the table at all on re-runs, which is the common
+// case.
 func addConstraintIfMissing(ctx context.Context, tx pgx.Tx, table, name, definition string) error {
 	stmt := fmt.Sprintf(`
 		DO $$
@@ -61,8 +71,13 @@ func addConstraintIfMissing(ctx context.Context, tx pgx.Tx, table, name, definit
 				WHERE conname = %s
 				  AND conrelid = %s::regclass
 			) THEN
-				ALTER TABLE %s
-					ADD CONSTRAINT %s %s;
+				BEGIN
+					ALTER TABLE %s
+						ADD CONSTRAINT %s %s;
+				EXCEPTION
+					WHEN duplicate_object THEN
+						NULL;
+				END;
 			END IF;
 		END
 		$$;

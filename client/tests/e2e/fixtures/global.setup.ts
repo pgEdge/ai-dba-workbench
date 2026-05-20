@@ -9,30 +9,33 @@
  */
 
 import { chromium, type FullConfig } from '@playwright/test';
-import { execSync, spawnSync } from 'child_process';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ApiHelper } from '../helpers/api.helper';
 import { ADMIN_USER, API_URL, BASE_URL } from './test-data';
+import { type E2EConfig, loadE2EConfig } from './e2e-config';
+import { setupWorkbenchDocker, createAdminUserDocker } from './setup/workbench-docker';
+import { setupWorkbenchRPM, createAdminUserRPM } from './setup/workbench-rpm';
 
 /**
  * Playwright global setup function.
  *
- * This runs once before all test files. It verifies the server is
- * reachable, authenticates as the admin user, and saves a browser
+ * This runs once before all test files. It starts the workbench stack
+ * in the configured install mode (Docker or RPM), verifies the server
+ * is reachable, authenticates as the admin user, and saves a browser
  * storage state file so that browser-based tests can skip the UI
  * login flow.
  */
 async function globalSetup(_config: FullConfig): Promise<void> {
+    const e2eConfig = loadE2EConfig();
     const api = new ApiHelper(API_URL);
 
     // -------------------------------------------------------
-    // 0. Start main stack if not already running
+    // 0. Generate secrets on first run
     // -------------------------------------------------------
     const e2eDir = path.join(__dirname, '..');
     const secretFile = path.join(e2eDir, 'secret', 'ai-dba.secret');
-
-    // Generate secrets on first run.
     if (!fs.existsSync(secretFile)) {
         console.log('[E2E setup] Generating secrets...');
         execSync('bash scripts/setup-secrets.sh', {
@@ -41,39 +44,13 @@ async function globalSetup(_config: FullConfig): Promise<void> {
         });
     }
 
-    // Start the stack only if the server is not already reachable.
-    let serverAlreadyUp = false;
-    try {
-        const probe = await fetch(`${API_URL}/health`);
-        serverAlreadyUp = probe.status < 500;
-    } catch {
-        serverAlreadyUp = false;
-    }
-
-    if (!serverAlreadyUp) {
-        console.log('[E2E setup] Starting main stack (this may take a while on first run)...');
-        // Tear down first to remove any stale volumes whose data was
-        // encrypted with a different secret (causes 401 on admin login).
-        execSync(
-            'docker compose -f ./docker/docker-compose.yml down --volumes',
-            {
-                cwd: e2eDir,
-                stdio: 'pipe',
-                env: { ...process.env, POSTGRES_PASSWORD: 'postgres' },
-            },
-        );
-        execSync(
-            'docker compose -f ./docker/docker-compose.yml up -d --build',
-            {
-                cwd: e2eDir,
-                stdio: 'inherit',
-                env: { ...process.env, POSTGRES_PASSWORD: 'postgres' },
-            },
-        );
-    }
+    // -------------------------------------------------------
+    // 1. Start workbench stack (mode-specific)
+    // -------------------------------------------------------
+    await setupWorkbench(e2eConfig);
 
     // -------------------------------------------------------
-    // 1. Health check
+    // 2. Health check
     // -------------------------------------------------------
     const maxAttempts = 30;
     const delayMs = 2_000;
@@ -93,40 +70,16 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     }
 
     // -------------------------------------------------------
-    // 2. Create admin user (idempotent — ignored if already exists)
+    // 3. Create admin user (mode-specific)
     // -------------------------------------------------------
-    // The server never auto-creates users on startup. Run the
-    // server CLI inside the container to seed the admin account.
-    // spawnSync avoids shell metacharacter issues with passwords.
-    const dockerComposeArgs = [
-        'compose', '-f', './docker/docker-compose.yml', 'exec', '-T', 'server',
-    ];
-    const serverBin = 'ai-dba-server';
-    const spawnOpts = {
-        cwd: e2eDir,
-        stdio: 'pipe' as const,
-        env: { ...process.env, POSTGRES_PASSWORD: 'postgres' },
-    };
-
-    // Create admin user (ignored if already exists).
-    spawnSync('docker', [
-        ...dockerComposeArgs, serverBin,
-        '-add-user',
-        '-username', ADMIN_USER.username,
-        '-password', ADMIN_USER.password,
-        '-data-dir', '/data',
-    ], spawnOpts);
-
-    // Grant superuser — bypasses all RBAC permission checks.
-    spawnSync('docker', [
-        ...dockerComposeArgs, serverBin,
-        '-set-superuser',
-        '-username', ADMIN_USER.username,
-        '-data-dir', '/data',
-    ], spawnOpts);
+    if (e2eConfig.installMode === 'docker') {
+        createAdminUserDocker();
+    } else {
+        createAdminUserRPM();
+    }
 
     // -------------------------------------------------------
-    // 3. Authenticate as admin via API
+    // 4. Authenticate as admin via API
     // -------------------------------------------------------
     // The health endpoint can return 200 before the server has
     // finished running migrations and creating the default admin
@@ -159,7 +112,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     process.env.E2E_ADMIN_COOKIE = cookie;
 
     // -------------------------------------------------------
-    // 4. Save browser storage state for Playwright contexts
+    // 5. Save browser storage state for Playwright contexts
     // -------------------------------------------------------
     const authDir = path.resolve(__dirname, '..', '.auth');
     if (!fs.existsSync(authDir)) {
@@ -194,7 +147,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     await browser.close();
 
     // -------------------------------------------------------
-    // 5. Start notification mock services
+    // 6. Start notification mock services
     // -------------------------------------------------------
     // In CI the main docker-compose.yml already starts mailpit and
     // wiremock. Attempting to start them again via the notifications
@@ -214,6 +167,15 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     const wireMockUrl = 'http://localhost:9090';
     for (const p of ['/slack', '/mattermost', '/webhook']) {
         await registerWireMockStub(wireMockUrl, p);
+    }
+}
+
+/** Route to the correct workbench setup based on install mode. */
+async function setupWorkbench(config: E2EConfig): Promise<void> {
+    if (config.installMode === 'docker') {
+        await setupWorkbenchDocker();
+    } else {
+        await setupWorkbenchRPM(config.repoChannel, config.platformImage);
     }
 }
 

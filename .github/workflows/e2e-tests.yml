@@ -3,11 +3,41 @@ name: E2E Tests
 on:
     push:
         branches: [automation_practice]
+    # workflow_dispatch is only visible in the GitHub UI when viewing the
+    # default branch or when the branch is explicitly selected in the
+    # Run workflow dropdown. Inputs below appear once a branch with this
+    # workflow is selected.
     workflow_dispatch:
+        inputs:
+            install_mode:
+                description: "Install mode"
+                type: choice
+                options:
+                    - docker
+                    - rpm
+                default: docker
+            platform_image:
+                description: "Platform / OS (RPM mode only)"
+                type: choice
+                options:
+                    - ubuntu22
+                    - debian12
+                    - rocky9
+                    - rocky10
+                    - rhel9
+                    - rhel10
+                default: ubuntu22
+            repo_channel:
+                description: "Repository channel (RPM mode only)"
+                type: choice
+                options:
+                    - staging
+                    - release
+                default: staging
 
 jobs:
     e2e:
-        name: E2E (PG ${{ matrix.postgres_version }})
+        name: "E2E (${{ inputs.install_mode == 'rpm' && format('RPM {0}/{1}', inputs.platform_image, inputs.repo_channel) || format('Docker PG{0}', matrix.postgres_version) }})"
         runs-on: ubuntu-latest
         timeout-minutes: 45
         strategy:
@@ -23,6 +53,19 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+            - name: Resolve install mode
+              id: resolve-mode
+              run: |
+                  if [ "${{ github.event_name }}" = "push" ]; then
+                    echo "install_mode=docker" >> "$GITHUB_OUTPUT"
+                    echo "repo_channel=staging" >> "$GITHUB_OUTPUT"
+                    echo "platform_image=ubuntu22" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "install_mode=${{ inputs.install_mode }}" >> "$GITHUB_OUTPUT"
+                    echo "repo_channel=${{ inputs.repo_channel }}" >> "$GITHUB_OUTPUT"
+                    echo "platform_image=${{ inputs.platform_image }}" >> "$GITHUB_OUTPUT"
+                  fi
+
             - name: Setup Node.js
               uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
               with:
@@ -33,12 +76,14 @@ jobs:
               uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
             - name: Create secret files
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
                   mkdir -p client/tests/e2e/secret
                   openssl rand -base64 32 > client/tests/e2e/secret/ai-dba.secret
                   echo "postgres" > client/tests/e2e/secret/pg-password
 
             - name: Set PostgreSQL image variables
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
                   case "${{ matrix.postgres_version }}" in
                     16)
@@ -56,13 +101,16 @@ jobs:
                   esac
 
             - name: Build Docker images
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml build --parallel
               timeout-minutes: 20
 
             - name: Start services
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml up -d
 
             - name: Wait for PostgreSQL to be healthy
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
                   echo "Waiting for PostgreSQL..."
                   attempts=0
@@ -83,6 +131,7 @@ jobs:
                   fi
 
             - name: Wait for server to respond
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
                   echo "Waiting for server health endpoint..."
                   attempts=0
@@ -103,6 +152,7 @@ jobs:
                   fi
 
             - name: Create admin user
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
                   docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml exec -T server \
                     /usr/local/bin/ai-dba-server \
@@ -149,6 +199,9 @@ jobs:
                   E2E_ADMIN_USER: admin
                   E2E_ADMIN_PASS: "E2ETestPass123!"
                   CI: "true"
+                  INSTALL_MODE: ${{ steps.resolve-mode.outputs.install_mode }}
+                  REPO_CHANNEL: ${{ steps.resolve-mode.outputs.repo_channel }}
+                  PLATFORM_IMAGE: ${{ steps.resolve-mode.outputs.platform_image }}
               run: npm test
 
             - name: Generate Allure report
@@ -158,11 +211,21 @@ jobs:
                   cp categories.json allure-results/ 2>/dev/null || true
                   allure generate ./allure-results --clean -o ./allure-report || true
 
+            - name: Set artifact name
+              id: artifact-name
+              if: always()
+              run: |
+                  if [ "${{ steps.resolve-mode.outputs.install_mode }}" = "rpm" ]; then
+                    echo "artifact_name=e2e-results-rpm-${{ steps.resolve-mode.outputs.platform_image }}-${{ steps.resolve-mode.outputs.repo_channel }}" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "artifact_name=e2e-results-docker-pg${{ matrix.postgres_version }}" >> "$GITHUB_OUTPUT"
+                  fi
+
             - name: Upload test artifacts
               if: always()
               uses: actions/upload-artifact@v4
               with:
-                  name: e2e-results-pg${{ matrix.postgres_version }}
+                  name: ${{ steps.artifact-name.outputs.artifact_name }}
                   path: |
                       client/tests/e2e/playwright-report/
                       client/tests/e2e/test-results/
@@ -170,8 +233,8 @@ jobs:
                       client/tests/e2e/allure-report/
                   retention-days: 14
 
-            - name: Dump service logs on failure
-              if: failure()
+            - name: Dump Docker mode logs
+              if: failure() && steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
                   echo "=== PostgreSQL Logs ==="
                   docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs postgres
@@ -188,6 +251,25 @@ jobs:
                   echo "=== Client Logs ==="
                   docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs client
 
-            - name: Cleanup
-              if: always()
+            - name: Dump RPM mode logs
+              if: failure() && steps.resolve-mode.outputs.install_mode == 'rpm'
+              run: |
+                  echo "=== Workbench Logs ==="
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.rpm.yml logs workbench
+                  echo ""
+                  echo "=== PostgreSQL Logs ==="
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.rpm.yml logs postgres
+                  echo ""
+                  echo "=== Mailpit Logs ==="
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.rpm.yml logs mailpit
+                  echo ""
+                  echo "=== WireMock Logs ==="
+                  docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.rpm.yml logs wiremock
+
+            - name: Cleanup Docker mode
+              if: always() && steps.resolve-mode.outputs.install_mode == 'docker'
               run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml down -v
+
+            - name: Cleanup RPM mode
+              if: always() && steps.resolve-mode.outputs.install_mode == 'rpm'
+              run: docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.rpm.yml down -v

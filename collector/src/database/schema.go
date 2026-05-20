@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,6 +33,61 @@ type Migration struct {
 // SchemaManager handles database schema migrations
 type SchemaManager struct {
 	migrations []Migration
+}
+
+// addConstraintIfMissing emits an idempotent ALTER TABLE ... ADD CONSTRAINT
+// block. PostgreSQL has no ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS,
+// so the migration must guard the call by checking pg_constraint first;
+// otherwise a re-run against a partially populated database (typical
+// recovery scenario) aborts the surrounding transaction with
+// duplicate_object and poisons every subsequent statement with
+// SQLSTATE 25P02 ("current transaction is aborted ...").
+//
+// The check is on conrelid + conname so a constraint with the same name
+// on a different table never masks a missing constraint here. The fully
+// qualified table name (e.g. metrics.pg_stat_database) is resolved via
+// regclass so callers pass the same identifier the surrounding DDL uses.
+//
+// The DROP CONSTRAINT IF EXISTS / ADD CONSTRAINT shortcut was rejected
+// deliberately: it briefly removes the foreign key, and any concurrent
+// writer would see a window with the parent unenforced. The DO block
+// below leaves an existing constraint completely untouched.
+func addConstraintIfMissing(ctx context.Context, tx pgx.Tx, table, name, definition string) error {
+	stmt := fmt.Sprintf(`
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conname = %s
+				  AND conrelid = %s::regclass
+			) THEN
+				ALTER TABLE %s
+					ADD CONSTRAINT %s %s;
+			END IF;
+		END
+		$$;
+	`,
+		quoteSQLLiteral(name),
+		quoteSQLLiteral(table),
+		table,
+		name,
+		definition,
+	)
+	if _, err := tx.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf(
+			"failed to add constraint %s on %s: %w", name, table, err)
+	}
+	return nil
+}
+
+// quoteSQLLiteral escapes a Go string for safe inclusion as a single-
+// quoted SQL string literal. Used by addConstraintIfMissing for the
+// catalog lookup; the table identifier itself is interpolated unquoted
+// because it must be a real PostgreSQL identifier. All callers in this
+// file pass static literals, so this is defensive rather than load-
+// bearing, but the helper still escapes single quotes correctly.
+func quoteSQLLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // NewSchemaManager creates a new schema manager
@@ -276,14 +332,21 @@ func (sm *SchemaManager) registerMigrations() {
 
 				CREATE INDEX IF NOT EXISTS idx_clusters_group_id ON clusters(group_id);
 				CREATE INDEX IF NOT EXISTS idx_clusters_name ON clusters(name);
-
-				-- Add foreign key from connections to clusters
-				ALTER TABLE connections
-					ADD CONSTRAINT fk_connections_cluster_id
-					FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE SET NULL;
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create clusters table: %w", err)
+			}
+
+			// Add foreign key from connections to clusters.
+			// Guarded with addConstraintIfMissing so a partial-state
+			// re-run does not raise duplicate_object and abort the
+			// migration transaction.
+			if err := addConstraintIfMissing(ctx, tx,
+				"connections",
+				"fk_connections_cluster_id",
+				"FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE SET NULL",
+			); err != nil {
+				return err
 			}
 
 			// Create probe_configs table
@@ -364,13 +427,19 @@ func (sm *SchemaManager) registerMigrations() {
 
 				COMMENT ON INDEX idx_probe_configs_enabled IS
 					'Index for efficiently finding enabled probes';
-
-				ALTER TABLE probe_configs
-					ADD CONSTRAINT probe_configs_connection_id_fkey
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create probe_configs table: %w", err)
+			}
+
+			// Idempotent FK so partial-state re-runs do not raise
+			// duplicate_object on the connection_id reference.
+			if err := addConstraintIfMissing(ctx, tx,
+				"probe_configs",
+				"probe_configs_connection_id_fkey",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// Insert default global probe configurations
@@ -550,10 +619,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_all_indexes IS
 					'Index access and I/O statistics for all databases';
 
-				ALTER TABLE metrics.pg_stat_all_indexes
-					ADD CONSTRAINT fk_pg_stat_all_indexes_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_all_indexes_conn_time
 					ON metrics.pg_stat_all_indexes(connection_id, collected_at DESC);
 				-- idx_pg_stat_all_indexes_conn_db_time was previously created here
@@ -565,6 +630,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_all_indexes table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_all_indexes",
+				"fk_pg_stat_all_indexes_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_statements
@@ -657,10 +729,6 @@ func (sm *SchemaManager) registerMigrations() {
 
 				COMMENT ON TABLE metrics.pg_stat_database IS 'Per-database statistics';
 
-				ALTER TABLE metrics.pg_stat_database
-					ADD CONSTRAINT fk_pg_stat_database_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_database_conn_time
 					ON metrics.pg_stat_database(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_database_conn_db_time
@@ -668,6 +736,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_database table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_database",
+				"fk_pg_stat_database_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_database_conflicts
@@ -690,10 +765,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_database_conflicts IS
 					'Database conflict statistics (standby servers)';
 
-				ALTER TABLE metrics.pg_stat_database_conflicts
-					ADD CONSTRAINT fk_pg_stat_database_conflicts_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_database_conflicts_conn_time
 					ON metrics.pg_stat_database_conflicts(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_database_conflicts_conn_db_time
@@ -701,6 +772,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_database_conflicts table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_database_conflicts",
+				"fk_pg_stat_database_conflicts_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_checkpointer (consolidated with pg_stat_bgwriter)
@@ -727,15 +805,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_checkpointer IS
 					'Checkpointer and background writer statistics';
 
-				ALTER TABLE metrics.pg_stat_checkpointer
-					ADD CONSTRAINT fk_pg_stat_checkpointer_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_checkpointer_conn_time
 					ON metrics.pg_stat_checkpointer(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_checkpointer table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_checkpointer",
+				"fk_pg_stat_checkpointer_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_wal (consolidated with pg_stat_archiver)
@@ -765,15 +846,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_wal IS
 					'WAL generation and archiver statistics';
 
-				ALTER TABLE metrics.pg_stat_wal
-					ADD CONSTRAINT fk_pg_stat_wal_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_wal_conn_time
 					ON metrics.pg_stat_wal(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_wal table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_wal",
+				"fk_pg_stat_wal_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_replication (consolidated with pg_stat_wal_receiver)
@@ -823,15 +907,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_replication IS
 					'Replication statistics for senders and receivers';
 
-				ALTER TABLE metrics.pg_stat_replication
-					ADD CONSTRAINT fk_pg_stat_replication_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_replication_conn_time
 					ON metrics.pg_stat_replication(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_replication table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_replication",
+				"fk_pg_stat_replication_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_replication_slots (consolidated with pg_stat_replication_slots)
@@ -861,10 +948,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_replication_slots IS
 					'Replication slot WAL retention and statistics metrics';
 
-				ALTER TABLE metrics.pg_replication_slots
-					ADD CONSTRAINT fk_pg_replication_slots_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_replication_slots_conn_time
 					ON metrics.pg_replication_slots(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_replication_slots_object
@@ -872,6 +955,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_replication_slots table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_replication_slots",
+				"fk_pg_replication_slots_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_subscription (consolidated with pg_stat_subscription_stats)
@@ -899,10 +989,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_subscription IS
 					'Logical replication subscription statistics';
 
-				ALTER TABLE metrics.pg_stat_subscription
-					ADD CONSTRAINT fk_pg_stat_subscription_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_subscription_conn_time
 					ON metrics.pg_stat_subscription(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_subscription_object
@@ -910,6 +996,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_subscription table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_subscription",
+				"fk_pg_stat_subscription_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_recovery_prefetch
@@ -933,15 +1026,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_recovery_prefetch IS
 					'Recovery prefetch statistics (PG 15+)';
 
-				ALTER TABLE metrics.pg_stat_recovery_prefetch
-					ADD CONSTRAINT fk_pg_stat_recovery_prefetch_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_recovery_prefetch_conn_time
 					ON metrics.pg_stat_recovery_prefetch(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_recovery_prefetch table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_recovery_prefetch",
+				"fk_pg_stat_recovery_prefetch_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_io
@@ -977,10 +1073,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_io IS
 					'I/O statistics by backend type and context. When backend_type is slru, the object column contains the SLRU cache name rather than an I/O object type';
 
-				ALTER TABLE metrics.pg_stat_io
-					ADD CONSTRAINT fk_pg_stat_io_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_io_conn_time
 					ON metrics.pg_stat_io(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_io_object
@@ -988,6 +1080,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_io table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_io",
+				"fk_pg_stat_io_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_connection_security (merged from pg_stat_ssl and pg_stat_gssapi)
@@ -1013,10 +1112,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_connection_security IS
 					'Combined SSL and GSSAPI connection security statistics';
 
-				ALTER TABLE metrics.pg_stat_connection_security
-					ADD CONSTRAINT fk_pg_stat_connection_security_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_connection_security_conn_time
 					ON metrics.pg_stat_connection_security(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_connection_security_object
@@ -1024,6 +1119,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_connection_security table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_connection_security",
+				"fk_pg_stat_connection_security_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_stat_user_functions
@@ -1044,10 +1146,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_stat_user_functions IS
 					'Statistics for user-defined functions';
 
-				ALTER TABLE metrics.pg_stat_user_functions
-					ADD CONSTRAINT fk_pg_stat_user_functions_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_user_functions_conn_time
 					ON metrics.pg_stat_user_functions(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_user_functions_conn_db_time
@@ -1057,6 +1155,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_user_functions table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_stat_user_functions",
+				"fk_pg_stat_user_functions_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_statio_all_sequences
@@ -1076,10 +1181,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_statio_all_sequences IS
 					'I/O statistics for all sequences';
 
-				ALTER TABLE metrics.pg_statio_all_sequences
-					ADD CONSTRAINT fk_pg_statio_all_sequences_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_sequences_conn_time
 					ON metrics.pg_statio_all_sequences(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_statio_all_sequences_conn_db_time
@@ -1087,6 +1188,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_statio_all_sequences table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_statio_all_sequences",
+				"fk_pg_statio_all_sequences_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_database
@@ -1113,10 +1221,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_database IS
 					'Stores pg_database catalog metrics including transaction ID wraparound indicators';
 
-				ALTER TABLE metrics.pg_database
-					ADD CONSTRAINT fk_pg_database_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_database_conn_time
 					ON metrics.pg_database(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_database_conn_db_time
@@ -1124,6 +1228,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_database table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_database",
+				"fk_pg_database_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_settings
@@ -1154,10 +1265,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_settings IS
 					'PostgreSQL configuration settings - only stores snapshots when changes are detected';
 
-				ALTER TABLE metrics.pg_settings
-					ADD CONSTRAINT fk_pg_settings_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_settings_conn_time
 					ON metrics.pg_settings(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_settings_object
@@ -1165,6 +1272,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_settings table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_settings",
+				"fk_pg_settings_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_hba_file_rules
@@ -1189,10 +1303,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_hba_file_rules IS
 					'PostgreSQL HBA configuration rules - only stores snapshots when changes are detected';
 
-				ALTER TABLE metrics.pg_hba_file_rules
-					ADD CONSTRAINT fk_pg_hba_file_rules_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_hba_file_rules_conn_time
 					ON metrics.pg_hba_file_rules(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_hba_file_rules_object
@@ -1200,6 +1310,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_hba_file_rules table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_hba_file_rules",
+				"fk_pg_hba_file_rules_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_ident_file_mappings
@@ -1220,10 +1337,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_ident_file_mappings IS
 					'PostgreSQL ident mapping configuration - only stores snapshots when changes are detected';
 
-				ALTER TABLE metrics.pg_ident_file_mappings
-					ADD CONSTRAINT fk_pg_ident_file_mappings_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_ident_file_mappings_conn_time
 					ON metrics.pg_ident_file_mappings(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_ident_file_mappings_object
@@ -1231,6 +1344,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_ident_file_mappings table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_ident_file_mappings",
+				"fk_pg_ident_file_mappings_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_server_info
@@ -1253,15 +1373,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_server_info IS
 					'Server identification and configuration - only stores snapshots when changes detected';
 
-				ALTER TABLE metrics.pg_server_info
-					ADD CONSTRAINT fk_pg_server_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_server_info_conn_time
 					ON metrics.pg_server_info(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_server_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_server_info",
+				"fk_pg_server_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_node_role
@@ -1299,10 +1422,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_node_role IS
 					'Node role detection for cluster topology analysis';
 
-				ALTER TABLE metrics.pg_node_role
-					ADD CONSTRAINT fk_pg_node_role_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				COMMENT ON COLUMN metrics.pg_node_role.postmaster_start_time IS
 					'PostgreSQL postmaster start time for restart detection';
 
@@ -1311,6 +1430,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_node_role table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_node_role",
+				"fk_pg_node_role_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_extension
@@ -1329,15 +1455,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_extension IS
 					'Installed PostgreSQL extensions and their versions per database';
 
-				ALTER TABLE metrics.pg_extension
-					ADD CONSTRAINT fk_pg_extension_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_extension_conn_time
 					ON metrics.pg_extension(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_extension table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_extension",
+				"fk_pg_extension_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_connectivity
@@ -1417,15 +1546,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_cpu_usage_info IS
 					'CPU usage statistics collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_cpu_usage_info
-					ADD CONSTRAINT fk_pg_sys_cpu_usage_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_usage_info_conn_time
 					ON metrics.pg_sys_cpu_usage_info(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_cpu_usage_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_cpu_usage_info",
+				"fk_pg_sys_cpu_usage_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_sys_cpu_memory_by_process
@@ -1445,10 +1577,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_cpu_memory_by_process IS
 					'Per-process CPU and memory usage collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_cpu_memory_by_process
-					ADD CONSTRAINT fk_pg_sys_cpu_memory_by_process_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_memory_by_process_conn_time
 					ON metrics.pg_sys_cpu_memory_by_process(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_cpu_memory_by_process_object
@@ -1456,6 +1584,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_cpu_memory_by_process table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_cpu_memory_by_process",
+				"fk_pg_sys_cpu_memory_by_process_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_sys_memory_info
@@ -1507,10 +1642,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_disk_info IS
 					'Disk information collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_disk_info
-					ADD CONSTRAINT fk_pg_sys_disk_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_disk_info_conn_time
 					ON metrics.pg_sys_disk_info(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_disk_info_object
@@ -1518,6 +1649,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_disk_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_disk_info",
+				"fk_pg_sys_disk_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_sys_io_analysis_info
@@ -1559,15 +1697,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_load_avg_info IS
 					'System load average collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_load_avg_info
-					ADD CONSTRAINT fk_pg_sys_load_avg_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_load_avg_info_conn_time
 					ON metrics.pg_sys_load_avg_info(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_load_avg_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_load_avg_info",
+				"fk_pg_sys_load_avg_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_sys_network_info
@@ -1592,10 +1733,6 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_network_info IS
 					'Network information collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_network_info
-					ADD CONSTRAINT fk_pg_sys_network_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_network_info_conn_time
 					ON metrics.pg_sys_network_info(connection_id, collected_at DESC);
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_network_info_object
@@ -1603,6 +1740,13 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_network_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_network_info",
+				"fk_pg_sys_network_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_sys_os_info
@@ -1626,15 +1770,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_os_info IS
 					'OS information collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_os_info
-					ADD CONSTRAINT fk_pg_sys_os_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_os_info_conn_time
 					ON metrics.pg_sys_os_info(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_os_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_os_info",
+				"fk_pg_sys_os_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.pg_sys_process_info
@@ -1653,15 +1800,18 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON TABLE metrics.pg_sys_process_info IS
 					'Process information collected via system_stats extension';
 
-				ALTER TABLE metrics.pg_sys_process_info
-					ADD CONSTRAINT fk_pg_sys_process_info_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_pg_sys_process_info_conn_time
 					ON metrics.pg_sys_process_info(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_sys_process_info table: %w", err)
+			}
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.pg_sys_process_info",
+				"fk_pg_sys_process_info_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// =====================================================================
@@ -2414,34 +2564,18 @@ func (sm *SchemaManager) registerMigrations() {
 			}
 
 			if vectorAvailable {
-				_, err = tx.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector;`)
-				if err != nil {
-					logger.Infof("Failed to create vector extension: %v", err)
-				} else {
-					// anomaly_embeddings table
-					_, err = tx.Exec(ctx, `
-						CREATE TABLE IF NOT EXISTS anomaly_embeddings (
-							id BIGSERIAL PRIMARY KEY,
-							candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-							embedding vector(1536),
-							model_name TEXT NOT NULL,
-							created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-							UNIQUE(candidate_id)
-						);
-
-						COMMENT ON TABLE anomaly_embeddings IS
-							'Embeddings for anomaly candidates used in Tier 2 similarity matching';
-
-						CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate ON anomaly_embeddings(candidate_id);
-						CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
-
-						ALTER TABLE anomaly_candidates
-							ADD CONSTRAINT fk_anomaly_candidates_embedding
-							FOREIGN KEY (embedding_id) REFERENCES anomaly_embeddings(id) ON DELETE SET NULL;
-					`)
-					if err != nil {
-						logger.Infof("Failed to create anomaly_embeddings table: %v", err)
-					}
+				// pgvector setup runs inside its own SAVEPOINT so a
+				// failure here (extension actually missing despite
+				// pg_available_extensions, HNSW operator not
+				// installed, etc.) only rolls back this block instead
+				// of poisoning the outer migration transaction. The
+				// previous shape ate the error with logger.Infof and
+				// left the surrounding tx aborted, so the next
+				// statement failed with SQLSTATE 25P02 and the user
+				// saw the wrong error.
+				if err := runPgVectorSetup(ctx, tx); err != nil {
+					logger.Infof("pgvector setup skipped: %v", err)
+					vectorAvailable = false
 				}
 			} else {
 				logger.Info("pgvector extension not available, skipping anomaly embeddings setup")
@@ -2494,20 +2628,15 @@ func (sm *SchemaManager) registerMigrations() {
 				return fmt.Errorf("failed to create chat_memories table: %w", err)
 			}
 
-			// Add vector embedding column to chat_memories when pgvector is available
+			// Add vector embedding column to chat_memories when
+			// pgvector is available. Same SAVEPOINT treatment as the
+			// anomaly_embeddings block above: an ALTER TABLE failure
+			// must not leave the outer transaction aborted, because
+			// the migration still has more statements to run after
+			// this point.
 			if vectorAvailable {
-				_, err = tx.Exec(ctx, `
-					ALTER TABLE chat_memories
-						ADD COLUMN IF NOT EXISTS embedding vector(1536);
-
-					COMMENT ON COLUMN chat_memories.embedding IS
-						'Vector embedding (1536 dimensions) for similarity search';
-
-					CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
-						ON chat_memories USING hnsw (embedding vector_cosine_ops);
-				`)
-				if err != nil {
-					logger.Infof("Failed to add chat_memories embedding column/index: %v", err)
+				if err := runChatMemoryEmbeddingSetup(ctx, tx); err != nil {
+					logger.Infof("chat_memories embedding setup skipped: %v", err)
 				}
 			}
 
@@ -2655,17 +2784,24 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON COLUMN metrics.spock_exception_log.database_name IS
 					'Source database the row was collected from; included in the primary key to disambiguate rows when Spock is installed in multiple databases on the same monitored connection';
 
-				ALTER TABLE metrics.spock_exception_log
-					DROP CONSTRAINT IF EXISTS fk_spock_exception_log_connection_id;
-				ALTER TABLE metrics.spock_exception_log
-					ADD CONSTRAINT fk_spock_exception_log_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_spock_exception_log_conn_time
 					ON metrics.spock_exception_log(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create metrics.spock_exception_log: %w", err)
+			}
+			// Use addConstraintIfMissing rather than the prior
+			// DROP CONSTRAINT IF EXISTS / ADD CONSTRAINT pair. The
+			// drop/add pattern is unsafe under concurrent writers
+			// because there is a window where the FK is absent; the
+			// catalog-check variant leaves an existing constraint
+			// completely untouched.
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.spock_exception_log",
+				"fk_spock_exception_log_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// metrics.spock_resolutions
@@ -2707,17 +2843,19 @@ func (sm *SchemaManager) registerMigrations() {
 				COMMENT ON COLUMN metrics.spock_resolutions.database_name IS
 					'Source database the row was collected from; included in the primary key to disambiguate rows because the spock.resolutions.id sequence is per-database, not per-connection';
 
-				ALTER TABLE metrics.spock_resolutions
-					DROP CONSTRAINT IF EXISTS fk_spock_resolutions_connection_id;
-				ALTER TABLE metrics.spock_resolutions
-					ADD CONSTRAINT fk_spock_resolutions_connection_id
-					FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE;
-
 				CREATE INDEX IF NOT EXISTS idx_spock_resolutions_conn_time
 					ON metrics.spock_resolutions(connection_id, collected_at DESC);
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create metrics.spock_resolutions: %w", err)
+			}
+			// See the note above the spock_exception_log helper call.
+			if err := addConstraintIfMissing(ctx, tx,
+				"metrics.spock_resolutions",
+				"fk_spock_resolutions_connection_id",
+				"FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+			); err != nil {
+				return err
 			}
 
 			// Seed global probe_configs for the two new probes. ON CONFLICT
@@ -3012,4 +3150,152 @@ type MigrationStatus struct {
 	Description string
 	Applied     bool
 	AppliedAt   *time.Time
+}
+
+// savepointExecer is the minimal contract runSavepointed needs from a
+// transaction. Narrowing the type from pgx.Tx keeps the helper unit-
+// testable with a tiny fake; every call site here passes a real
+// pgx.Tx so production behavior is unchanged.
+type savepointExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// runSavepointed executes body inside SAVEPOINT name. On success the
+// savepoint is released; on failure the savepoint is rolled back and
+// released so the surrounding transaction stays usable for any
+// follow-up statements.
+//
+// The pattern guards optional setup blocks (such as the pgvector and
+// chat_memories embedding paths in migration #1) from poisoning the
+// migration's outer transaction. The pre-fix code logged the inner
+// error and continued, but the failed statement had already aborted
+// the outer pgx.Tx; the next statement returned SQLSTATE 25P02 and
+// the user saw "current transaction is aborted, commands ignored
+// until end of transaction block" instead of the real error.
+//
+// If the rollback or release statements themselves fail (rare; the
+// connection is essentially broken at that point) the function joins
+// the inner failure with the cleanup failure via errors.Join so
+// callers can still see both causes.
+func runSavepointed(
+	ctx context.Context,
+	tx savepointExecer,
+	name string,
+	body func() error,
+) error {
+	if _, err := tx.Exec(ctx, "SAVEPOINT "+name); err != nil {
+		return fmt.Errorf("failed to set savepoint %s: %w", name, err)
+	}
+
+	if bodyErr := body(); bodyErr != nil {
+		if _, rbErr := tx.Exec(ctx,
+			"ROLLBACK TO SAVEPOINT "+name); rbErr != nil {
+			return errors.Join(
+				fmt.Errorf("savepoint %s body failed: %w", name, bodyErr),
+				fmt.Errorf("rollback to %s failed: %w", name, rbErr),
+			)
+		}
+		if _, relErr := tx.Exec(ctx,
+			"RELEASE SAVEPOINT "+name); relErr != nil {
+			return errors.Join(
+				fmt.Errorf("savepoint %s body failed: %w", name, bodyErr),
+				fmt.Errorf("release %s failed: %w", name, relErr),
+			)
+		}
+		return bodyErr
+	}
+
+	if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT "+name); err != nil {
+		return fmt.Errorf("failed to release savepoint %s: %w", name, err)
+	}
+	return nil
+}
+
+// runPgVectorSetup performs the pgvector-dependent half of migration #1
+// inside a SAVEPOINT. Three things can go wrong here, all of which the
+// migration must isolate so the outer transaction stays clean:
+//
+//   - pg_available_extensions said vector was available but
+//     CREATE EXTENSION still fails (permission denied, packaged libs
+//     missing, etc.).
+//   - The anomaly_embeddings table itself errors out for some unrelated
+//     reason (out of space, schema drift, etc.).
+//   - The fk_anomaly_candidates_embedding constraint already exists on
+//     a partially populated database. That was the regression that
+//     prompted this whole change: ADD CONSTRAINT has no IF NOT EXISTS
+//     in PostgreSQL, so a duplicate raises duplicate_object and the
+//     surrounding pgx.Tx becomes unusable.
+//
+// The runInSavepoint wrapper isolates failures here from the rest of
+// the migration; the caller logs and continues without anomaly
+// embeddings, which the alerter tolerates (Tier 2 similarity matching
+// just turns off).
+func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
+	return runSavepointed(ctx, tx, "pgvector_setup", func() error {
+		// CREATE EXTENSION IF NOT EXISTS, CREATE TABLE IF NOT
+		// EXISTS, the comment, and both indexes are issued in a
+		// single Exec so failures roll back atomically inside the
+		// SAVEPOINT. The error from any one of them propagates
+		// unchanged; the SAVEPOINT wrapper records the failure and
+		// the caller logs at Info level.
+		if _, err := tx.Exec(ctx, `
+			CREATE EXTENSION IF NOT EXISTS vector;
+
+			CREATE TABLE IF NOT EXISTS anomaly_embeddings (
+				id BIGSERIAL PRIMARY KEY,
+				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
+				embedding vector(1536),
+				model_name TEXT NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(candidate_id)
+			);
+
+			COMMENT ON TABLE anomaly_embeddings IS
+				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
+
+			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
+				ON anomaly_embeddings(candidate_id);
+			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
+				ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
+		`); err != nil {
+			return fmt.Errorf("pgvector schema setup: %w", err)
+		}
+
+		// fk_anomaly_candidates_embedding was the original failure
+		// mode: re-running migration #1 against a database where it
+		// already exists raised duplicate_object and aborted the
+		// migration. The idempotent helper checks pg_constraint first
+		// so the constraint is added once and re-runs become a no-op.
+		return addConstraintIfMissing(ctx, tx,
+			"anomaly_candidates",
+			"fk_anomaly_candidates_embedding",
+			"FOREIGN KEY (embedding_id) REFERENCES anomaly_embeddings(id) ON DELETE SET NULL",
+		)
+	})
+}
+
+// runChatMemoryEmbeddingSetup adds the embedding column and HNSW index
+// to chat_memories under its own SAVEPOINT. ADD COLUMN IF NOT EXISTS
+// is idempotent on its own, but the HNSW index creation can still fail
+// independently (the pgvector version installed by CREATE EXTENSION
+// might be old enough not to support HNSW); wrapping the whole block
+// keeps that failure from aborting the parent transaction.
+func runChatMemoryEmbeddingSetup(ctx context.Context, tx pgx.Tx) error {
+	return runSavepointed(ctx, tx, "chat_memories_embedding_setup", func() error {
+		_, err := tx.Exec(ctx, `
+			ALTER TABLE chat_memories
+				ADD COLUMN IF NOT EXISTS embedding vector(1536);
+
+			COMMENT ON COLUMN chat_memories.embedding IS
+				'Vector embedding (1536 dimensions) for similarity search';
+
+			CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
+				ON chat_memories USING hnsw (embedding vector_cosine_ops);
+		`)
+		if err != nil {
+			return fmt.Errorf(
+				"add chat_memories embedding column/index: %w", err)
+		}
+		return nil
+	})
 }

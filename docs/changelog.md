@@ -10,6 +10,27 @@ project adheres to
 
 ## [1.0.0-beta3] - Unreleased
 
+### Security
+
+- Fix the server creating the SQLite `auth.db` file with
+  world-readable mode `0644` on first start, exposing bcrypt
+  password hashes and token hashes to other local users on
+  the host. The previous `os.Chmod(0600)` call ran before the
+  `modernc.org/sqlite` driver had created the file on disk,
+  so the chmod silently failed with ENOENT and the file was
+  left at the operating system's umask default. The fix moves
+  the chmod after the `PRAGMA foreign_keys` query, which
+  forces the driver to round-trip and create the file, and
+  adds a post-chmod `os.Stat` verification that logs a
+  warning if the resulting mode is not `0600`. The server
+  applies the chmod unconditionally on every startup, so an
+  existing `auth.db` left at `0644` by an earlier release is
+  re-narrowed automatically and no manual operator action is
+  required. On filesystems that silently ignore chmod (for
+  example FAT or some FUSE mounts), the server now refuses to
+  start and operators should consult the WARNING log line that
+  reports the observed mode. (#249)
+
 ### Fixed
 
 - Fix the web client crashing into the "Something

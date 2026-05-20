@@ -52,6 +52,7 @@ These tools query alert data from the monitoring system.
 | `get_alert_rules` | Queries alert rules and their effective thresholds. |
 | `get_metric_baselines` | Queries statistical baselines for anomaly detection. |
 | `get_blackouts` | Queries blackout periods and recurring schedules for monitored connections. |
+| `get_timeline_events` | Queries the unified incident-investigation timeline of configuration changes, restarts, extension changes, alerts, and blackouts. |
 
 ## Memory Tools
 

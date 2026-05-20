@@ -54,6 +54,7 @@ You have access to TWO types of database connections:
    - list_probes: List available metrics probes being collected
    - describe_probe: Get column details for a specific probe
    - query_metrics: Query historical metrics with time-based aggregation
+   - get_timeline_events: Query the unified incident-investigation timeline of configuration changes, HBA/ident edits, restarts, extension changes, alerts (fired/cleared/acknowledged), and blackout start/end markers. Prefer this over get_alert_history and get_blackouts when investigating "what happened" or "what changed" around an incident, because it returns config/HBA/restart/extension events those other tools cannot see.
    The datastore contains metrics collected from monitored servers over time.
 
 2. MONITORED DATABASES (live connections) - Use these tools for live queries:

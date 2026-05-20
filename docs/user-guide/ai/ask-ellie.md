@@ -26,6 +26,9 @@ capabilities:
 - The assistant analyzes query execution plans.
 - The assistant reviews alert history and alert rule
   configuration.
+- The assistant correlates alerts with configuration
+  changes, restarts, HBA edits, extension changes, and
+  blackout windows through the unified event timeline.
 - The assistant stores and recalls persistent memories
   across conversations.
 
@@ -120,6 +123,7 @@ table describes the available tools:
 | `recall_memories` | Searches stored memories by semantic similarity. |
 | `delete_memory` | Removes a stored memory by its ID. |
 | `get_blackouts` | Queries blackout periods and recurring schedules. |
+| `get_timeline_events` | Queries the unified incident-investigation timeline of configuration changes, restarts, extension changes, alerts, and blackouts. |
 
 ## Chat Memory
 

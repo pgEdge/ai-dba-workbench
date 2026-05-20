@@ -360,6 +360,7 @@ func registerMCPPrivileges(store *auth.AuthStore) {
 		{"get_alert_history", "tool", "Query alert history for monitored connections", false},
 		{"get_alert_rules", "tool", "Query current alerting rules and effective thresholds", false},
 		{"get_metric_baselines", "tool", "Query statistical baselines for metrics used in anomaly detection", false},
+		{"get_timeline_events", "tool", "Query the incident-investigation timeline of significant events", false},
 
 		// Memory Tools - PUBLIC (have their own internal user-scoped authorization)
 		{"store_memory", "tool", "Store persistent memory", true},

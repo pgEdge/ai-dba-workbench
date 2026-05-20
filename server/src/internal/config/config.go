@@ -87,6 +87,7 @@ type ToolsConfig struct {
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
 	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
+	GetTimelineEvents   *bool `yaml:"get_timeline_events"`  // Query the incident-investigation timeline (default: true)
 	StoreMemory         *bool `yaml:"store_memory"`         // Store chat memories for future recall (default: true)
 	RecallMemories      *bool `yaml:"recall_memories"`      // Recall stored chat memories by similarity (default: true)
 	DeleteMemory        *bool `yaml:"delete_memory"`        // Delete a stored chat memory by ID (default: true)
@@ -138,6 +139,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	case "query_datastore":
 		return c.QueryDatastore == nil || *c.QueryDatastore
+	case "get_timeline_events":
+		return c.GetTimelineEvents == nil || *c.GetTimelineEvents
 	case "store_memory":
 		return c.StoreMemory == nil || *c.StoreMemory
 	case "recall_memories":

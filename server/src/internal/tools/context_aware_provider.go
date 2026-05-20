@@ -462,7 +462,7 @@ func (p *ContextAwareProvider) Execute(ctx context.Context, name string, args ma
 		"get_metric_baselines": true,                 // Datastore tool - uses shared datastore pool
 		"query_datastore":      true,                 // Datastore tool - uses shared datastore pool
 		"get_blackouts":        true,                 // Datastore tool - uses shared datastore pool
-		"get_timeline_events":  true,                 // Datastore tool - uses shared datastore pool
+		"get_timeline_events":  true,                 // Datastore tool - uses full Datastore for typed queries
 		"store_memory":         p.memoryStore != nil, // Memory tool - requires memory store
 		"recall_memories":      p.memoryStore != nil, // Memory tool - requires memory store
 		"delete_memory":        p.memoryStore != nil, // Memory tool - requires memory store

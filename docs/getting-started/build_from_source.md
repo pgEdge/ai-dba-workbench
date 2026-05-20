@@ -15,16 +15,19 @@ in place:
   system hosting the Workbench.
 - A Linux x86_64 system is available to host the server-side components.
 
-The project uses Makefiles for building and testing; build all components
-from the top-level directory. In the following example, the `make all`
-command builds all components:
+
+## Building from Source Code
+
+The project uses Makefiles for building and testing; after cloning the
+[repository](https://github.com/pgEdge/ai-dba-workbench), you can build all
+components from the top-level directory with the command:
 
 ```bash
 make all
 ```
 
-In the following example, the `make build` command builds the collector
-component individually:
+You can optionally build components individually.  In the following example,
+the `make build` command builds just the collector component:
 
 ```bash
 cd collector && make build
@@ -69,40 +72,42 @@ configuration files from the
 
 Before running the Workbench, you'll need to add a user to the `auth.db` file.
 The `auth.db` file is the server's own database for user credentials; the
-file stores authentication details only for the AI Workbench.
-
-In the following example, the `ai-dba-server` command adds a new user
-account to the Workbench:
+file stores authentication details only for the AI Workbench. Use the
+following command, providing the login user name in place of `user_name`:
 
 ```bash
 /opt/ai-workbench/ai-dba-server -add-user -username user_name
 ```
 
-The command prompts for a Workbench password and optional user details.
-In the following example, the command creates a login for the AI DBA
-Workbench server:
+When prompted, provide additional information for the login user. Note that
+complexity rules are applied to the password - the password must
+contain a capital letter, a special character, and a number to be accepted
+for login. 
+
+When the password and other information is accepted, the onscreen feedback
+confirms that the user is created successfully:
 
 ```bash
-/opt/ai-workbench/ai-dba-server -add-user -username susan
+/opt/ai-workbench/ai-dba-server -add-user -username alice
 Enter password: 
 Confirm password: 
-Enter full name (optional): Susan
-Enter email address (optional): susan@pgedge.com
+Enter full name (optional): Alice Baker
+Enter email address (optional): alice@pgedge.com
 Enter notes for this user (optional): 
 
 ======================================================================
 User created successfully!
 ======================================================================
 
-Username:  susan
-Full Name: Susan
-Email:    susan@pgedge.com
+Username:  alice
+Full Name: Alice
+Email:    alice@pgedge.com
 Status:   Enabled
 ======================================================================
 ```
 
-In the following example, the `cp` command copies the client files to
-the installation directory:
+Next, use the `cp` command to copy the client files to the installation
+directory:
 
 ```bash
 sudo mkdir -p /opt/ai-workbench/client
@@ -125,8 +130,8 @@ using vi:
 sudo vi /etc/nginx/sites-available/ai-dba-workbench
 ```
 
-Add and modify the nginx configuration file to set the proxy rules and file
-root for your installation:
+Update the nginx configuration file to set the proxy rules and file root for
+your installation:
 
 ```nginx
 server {

@@ -90,7 +90,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-## Enable and Start the Services
+## Enabling and Starting the Services
 
 Use `systemctl` to reload the daemon and enable each service.
 

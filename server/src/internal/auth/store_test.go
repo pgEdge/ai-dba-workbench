@@ -347,6 +347,42 @@ func TestRestrictAuthDBPermissions(t *testing.T) {
 			t.Errorf("expected mode-mismatch warning to still be logged, got %q", got)
 		}
 	})
+
+	t.Run("accepts modes narrower than 0600", func(t *testing.T) {
+		buf := captureLog(t)
+
+		// Lock in the "narrower modes are OK" guarantee that the
+		// mask-based check (perm &^ 0600 != 0) provides. A future
+		// refactor that reverts to strict equality with 0600 would
+		// reject 0400 and refuse boot on operator setups that have
+		// tightened the file further than this helper requests.
+		// Stub stat to report 0400; chmod is left untouched (the
+		// real os.Chmod will succeed harmlessly on the temp file)
+		// because we only care about the post-chmod mask check.
+		prevStat := authDBStat
+		authDBStat = func(name string) (os.FileInfo, error) {
+			real, err := os.Stat(name)
+			if err != nil {
+				return nil, err
+			}
+			return wideModeFileInfo{FileInfo: real, mode: 0400}, nil
+		}
+		t.Cleanup(func() { authDBStat = prevStat })
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "auth.db")
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		if err := restrictAuthDBPermissions(path); err != nil {
+			t.Fatalf("expected nil error for mode 0400, got %v", err)
+		}
+
+		if got := buf.String(); strings.Contains(got, "Failed to set permissions") {
+			t.Errorf("unexpected warning emitted for narrower mode: %q", got)
+		}
+	})
 }
 
 // TestNewAuthStore_UnsafePermissionsAbortStartup confirms the

@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -256,13 +257,14 @@ var (
 )
 
 // restrictAuthDBPermissions tightens the on-disk permissions of the
-// auth database file to 0600 so that other users on the system cannot
-// read password hashes or tokens. The function is split out from
-// NewAuthStore so that the chmod-failed, stat-failed, and
-// mode-mismatch branches are unit-testable; the caller is expected to
-// invoke this only after the SQLite driver has created the file on
-// disk (a fresh data directory needs at least one real query before
-// the file exists, since modernc.org/sqlite opens lazily).
+// auth database file to at most 0600 so that other users on the
+// system cannot read password hashes or tokens. The function is
+// split out from NewAuthStore so that the chmod-failed, stat-failed,
+// and mode-wider-than-0600 branches are unit-testable; the caller is
+// expected to invoke this only after the SQLite driver has created
+// the file on disk (a fresh data directory needs at least one real
+// query before the file exists, since modernc.org/sqlite opens
+// lazily).
 //
 // The chmod-failed and stat-failed branches log at WARNING and return
 // nil because some filesystems (FAT, NTFS, certain fuse mounts,
@@ -277,9 +279,26 @@ var (
 // ignore" scenario that issue #249 was filed to prevent. We must fail
 // closed there: continuing would serve auth from a world-readable
 // bcrypt-hash store, exactly the regression we are guarding against.
-// The function returns a non-nil error in that case so NewAuthStore
-// can abort startup, and it also keeps the WARNING log line so
-// operators see both a log entry and the startup failure.
+// The check uses a mask (perm &^ 0600 != 0) rather than strict
+// equality with 0600 because the property we actually require is "no
+// bits outside the owner-rw mask are set"; an operator who has
+// tightened the file further to 0400 (or 0000) is at least as safe
+// as 0600 and must not be rejected. The function returns a non-nil
+// error in the wider-than-0600 case so NewAuthStore can abort
+// startup, and it also keeps the WARNING log line so operators see
+// both a log entry and the startup failure.
+//
+// On Windows the mask check is skipped entirely. os.Chmod on Windows
+// only toggles the FILE_ATTRIBUTE_READONLY bit, so even a successful
+// chmod(0600) is followed by an os.Stat that reports approximately
+// 0666 (writable) or 0444 (read-only). The mask check has no useful
+// meaning under those semantics, and enforcing it would refuse boot
+// on every Windows build. Windows operators are expected to secure
+// confidentiality through ACLs on the data directory (which is
+// already created with mode 0700 and inherits whatever ACL semantics
+// the host applies); we still call chmod above to preserve the
+// cross-platform contract that auth.db is at minimum not writable by
+// other users where the OS honors POSIX-style modes at all.
 func restrictAuthDBPermissions(dbPath string) error {
 	if chmodErr := authDBChmod(dbPath, 0600); chmodErr != nil {
 		log.Printf("[AUTH] WARNING: Failed to set permissions on %s: %v", dbPath, chmodErr)
@@ -287,18 +306,23 @@ func restrictAuthDBPermissions(dbPath string) error {
 	}
 
 	// Belt-and-braces: re-stat the file and warn if the effective
-	// permissions are still wider than 0600. A chmod that returns
-	// nil but does not actually narrow the mode would otherwise
-	// leave auth.db world-readable with no observable signal until
-	// an operator noticed the file mode by hand.
+	// permissions are wider than 0600. A chmod that returns nil but
+	// does not actually narrow the mode would otherwise leave
+	// auth.db world-readable with no observable signal until an
+	// operator noticed the file mode by hand. The mask form
+	// "perm &^ 0600 != 0" accepts any mode no wider than 0600
+	// (including narrower modes such as 0400) and rejects any mode
+	// that has bits set outside the owner-rw pair.
 	info, statErr := authDBStat(dbPath)
 	if statErr != nil {
 		log.Printf("[AUTH] WARNING: Failed to set permissions on %s: post-chmod stat failed: %v", dbPath, statErr)
 		return nil
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
-		log.Printf("[AUTH] WARNING: Failed to set permissions on %s: filesystem reported mode %#o after chmod (expected 0600)", dbPath, perm)
-		return fmt.Errorf("file mode %#o on %s is wider than 0600 after chmod", perm, dbPath)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm&^0600 != 0 {
+			log.Printf("[AUTH] WARNING: Failed to set permissions on %s: filesystem reported mode %#o after chmod (expected at most 0600)", dbPath, perm)
+			return fmt.Errorf("file mode %#o on %s is wider than 0600 after chmod", perm, dbPath)
+		}
 	}
 	return nil
 }

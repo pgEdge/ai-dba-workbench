@@ -812,7 +812,17 @@ func buildAlertFiredCountQuery(whereClause string) string {
     `, tableWhere)
 }
 
-// buildAlertClearedQuery creates the subquery for cleared alerts
+// buildAlertClearedQuery creates the subquery for cleared alerts.
+//
+// The summary column is a self-contained record of resolution: a
+// reader who sees only the cleared row should know the alert has
+// been resolved AND what the original firing condition described.
+// The duration between triggered_at and cleared_at is rendered in
+// human-readable form ("Ns", "Nm Ms", "Nh Mm") so it reads naturally
+// in tool output and chat replies. The original a.description is
+// appended verbatim, preserving the historical alert text without
+// rewriting it. The corresponding alert_fired row continues to carry
+// a.description on its own as the historical record.
 func buildAlertClearedQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "cleared_at")
 
@@ -833,7 +843,7 @@ func buildAlertClearedQuery(whereClause string) string {
             a.cleared_at AS event_time,
             'info' AS severity,
             'Alert Cleared: ' || a.title AS title,
-            'Alert condition no longer active' AS summary,
+            'Resolved after ' || %s || '. Fired: ' || a.description AS summary,
             jsonb_build_object(
                 'alert_id', a.id,
                 'original_severity', a.severity,
@@ -843,7 +853,58 @@ func buildAlertClearedQuery(whereClause string) string {
         FROM alerts a
         JOIN connections c ON a.connection_id = c.id
         %s
-    `, EventTypeAlertCleared, tableWhere)
+    `, EventTypeAlertCleared, alertClearedDurationSQL, tableWhere)
+}
+
+// alertClearedDurationSQL renders the elapsed time between a fired
+// alert's triggered_at and cleared_at columns as a human-readable
+// string for use in the cleared-row summary.
+//
+// The expression uses GREATEST(...,0) to defend against clock skew or
+// out-of-order timestamps where cleared_at < triggered_at; in that
+// case the duration is treated as zero seconds rather than producing
+// a negative or oddly formatted string. The thresholds match the
+// Go-side helper formatAlertClearedDuration so unit-tested expectations
+// match SQL output exactly:
+//
+//   - diff < 60       -> "Ns"
+//   - diff < 3600     -> "Nm Ms"
+//   - diff >= 3600    -> "Nh Mm"
+const alertClearedDurationSQL = `
+            CASE
+                WHEN GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) < 60 THEN
+                    GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)::TEXT || 's'
+                WHEN GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) < 3600 THEN
+                    (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) / 60)::TEXT
+                    || 'm '
+                    || (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 60)::TEXT
+                    || 's'
+                ELSE
+                    (GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) / 3600)::TEXT
+                    || 'h '
+                    || ((GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0) % 3600) / 60)::TEXT
+                    || 'm'
+            END
+        `
+
+// formatAlertClearedDuration renders the same human-readable duration
+// string that alertClearedDurationSQL produces, but in Go. It exists
+// so unit tests can verify the SQL output without a live database and
+// so any future caller that needs to render the same string can share
+// a single definition. The two implementations must stay in sync.
+func formatAlertClearedDuration(d time.Duration) string {
+	secs := int64(d.Seconds())
+	if secs < 0 {
+		secs = 0
+	}
+	switch {
+	case secs < 60:
+		return fmt.Sprintf("%ds", secs)
+	case secs < 3600:
+		return fmt.Sprintf("%dm %ds", secs/60, secs%60)
+	default:
+		return fmt.Sprintf("%dh %dm", secs/3600, (secs%3600)/60)
+	}
 }
 
 // buildAlertClearedCountQuery creates the count query for cleared alerts

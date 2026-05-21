@@ -72,6 +72,12 @@ If NO connection is selected (connected: false):
 Use this tool when the user asks what changed before an incident, what
 restarts or config changes have occurred, or to correlate alerts with
 the underlying changes that may have caused them.
+
+When reporting on alerts from this timeline, always check whether an
+alert_fired row has a corresponding alert_cleared row before treating
+it as ongoing; two rows describe the same underlying alert when the
+cleared row's title equals 'Alert Cleared: ' followed by the fired
+row's title.
 </important_behavior>
 
 <parameters>
@@ -90,7 +96,7 @@ Returns TSV data ordered by event time (most recent first):
 - event_type: One of the timeline event types
 - severity: info, warning, or critical
 - title: Short human-readable title
-- summary: One-line description of the event
+- summary: One-line description of the event. For alert_fired rows the summary describes the condition AT THE MOMENT THE ALERT FIRED and is not a statement about the current state. For alert_cleared rows the summary begins with 'Resolved after <duration>. Fired: ...' so the resolution is explicit.
 - id: Event identifier (composite, unique per row)
 </output>
 

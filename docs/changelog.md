@@ -59,6 +59,29 @@ project adheres to
 
 ### Fixed
 
+- Fix the `get_timeline_events` MCP tool emitting a
+  flat "Alert condition no longer active" summary on
+  `alert_cleared` rows, which left a reviewer
+  scanning the timeline to read the vivid
+  `alert_fired` summary (carrying the alert's frozen
+  `description` text) and risk misreading an already
+  resolved alert as still active. Cleared rows now
+  carry a self-contained summary of the form
+  `Resolved after <duration>. Fired: <original alert
+  description>`, where `<duration>` renders as
+  `Ns`, `Nm Ms`, or `Nh Mm`; the underlying
+  `alerts.description` column is preserved unchanged,
+  so this is a presentation change in the timeline
+  tool rather than a rewrite of historical alert
+  text. The tool description visible to MCP clients
+  now also states that `alert_fired.summary`
+  describes the firing condition and not the current
+  state, and instructs clients to pair each
+  `alert_fired` row with its corresponding
+  `alert_cleared` row (matching title prefix
+  `'Alert Cleared: '`) before treating an alert as
+  ongoing.
+
 - Fix the collector entering a restart loop when its
   consolidated schema migration ran against a partially
   populated datastore. PostgreSQL has no

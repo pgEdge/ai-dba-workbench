@@ -1655,6 +1655,73 @@ func TestBuildAlertClearedQuery(t *testing.T) {
 	if !strings.Contains(query, "Alert Cleared:") {
 		t.Error("expected query to contain 'Alert Cleared:' in title")
 	}
+	// The enriched summary must reference both the resolution prefix
+	// and the original a.description so the cleared row is
+	// self-contained and the historical text is preserved verbatim.
+	if !strings.Contains(query, "'Resolved after '") {
+		t.Error("expected query summary to start with 'Resolved after '")
+	}
+	if !strings.Contains(query, "|| '. Fired: ' || a.description") {
+		t.Error("expected query summary to append '. Fired: ' || a.description")
+	}
+	if strings.Contains(query, "'Alert condition no longer active'") {
+		t.Error("legacy summary literal must no longer appear in cleared query")
+	}
+	// The duration expression must defend against negative diffs and
+	// branch on the documented thresholds (< 60, < 3600).
+	if !strings.Contains(query, "GREATEST(EXTRACT(EPOCH FROM (a.cleared_at - a.triggered_at))::BIGINT, 0)") {
+		t.Error("expected query to clamp negative durations to zero")
+	}
+	if !strings.Contains(query, "< 60 THEN") {
+		t.Error("expected query to branch on the < 60s threshold")
+	}
+	if !strings.Contains(query, "< 3600 THEN") {
+		t.Error("expected query to branch on the < 3600s threshold")
+	}
+}
+
+// TestBuildAlertFiredQuerySummaryUnchanged ensures the alert_fired
+// summary continues to carry a.description verbatim. The cleared row
+// summary was enriched; the fired row must not be touched because it
+// remains the historical record of the firing condition.
+func TestBuildAlertFiredQuerySummaryUnchanged(t *testing.T) {
+	query := buildAlertFiredQuery("")
+
+	if !strings.Contains(query, "a.description AS summary") {
+		t.Error("expected alert_fired summary to remain 'a.description AS summary' verbatim")
+	}
+	if strings.Contains(query, "'Resolved after '") {
+		t.Error("alert_fired query must not contain the cleared-row resolution prefix")
+	}
+}
+
+// TestFormatAlertClearedDuration exercises the boundary cases of the
+// duration formatter: short (< 60s), medium (< 1h), long (>= 1h), and
+// the negative/zero edges that the SQL companion expression clamps.
+func TestFormatAlertClearedDuration(t *testing.T) {
+	cases := []struct {
+		name string
+		in   time.Duration
+		want string
+	}{
+		{"zero", 0, "0s"},
+		{"one_second", time.Second, "1s"},
+		{"just_under_a_minute", 59 * time.Second, "59s"},
+		{"exact_minute", 60 * time.Second, "1m 0s"},
+		{"two_minutes_fifteen", 2*time.Minute + 15*time.Second, "2m 15s"},
+		{"just_under_an_hour", 59*time.Minute + 59*time.Second, "59m 59s"},
+		{"exact_hour", time.Hour, "1h 0m"},
+		{"one_hour_twenty_three", time.Hour + 23*time.Minute, "1h 23m"},
+		{"long_duration", 5*time.Hour + 7*time.Minute + 42*time.Second, "5h 7m"},
+		{"negative_clamped_to_zero", -3 * time.Second, "0s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatAlertClearedDuration(tc.in); got != tc.want {
+				t.Errorf("formatAlertClearedDuration(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestBuildAlertAcknowledgedQuery(t *testing.T) {

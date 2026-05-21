@@ -61,6 +61,40 @@ func TestGetTimelineEventsToolDefinition(t *testing.T) {
 	}
 }
 
+// TestGetTimelineEventsToolDescriptionMentionsAlertSemantics enforces the
+// long-form tool description includes the two pieces of guidance added
+// to prevent models from quoting historical alert text as live state.
+// The description ships on every tool listing, so future edits must keep
+// both of these signals in place for the model to interpret cleared
+// alerts correctly.
+func TestGetTimelineEventsToolDescriptionMentionsAlertSemantics(t *testing.T) {
+	desc := timelineToolDescription
+
+	// Output-section guidance: alert_fired summary describes the
+	// condition at firing time, and alert_cleared summary begins with
+	// 'Resolved after '.
+	wantOutputPhrases := []string{
+		"AT THE MOMENT THE ALERT FIRED",
+		"Resolved after <duration>. Fired:",
+	}
+	for _, want := range wantOutputPhrases {
+		if !strings.Contains(desc, want) {
+			t.Errorf("expected description to mention %q in <output> section", want)
+		}
+	}
+
+	// Behavior-section guidance: check for cleared-row pairing rule.
+	wantBehaviorPhrases := []string{
+		"alert_fired row has a corresponding alert_cleared row",
+		"'Alert Cleared: '",
+	}
+	for _, want := range wantBehaviorPhrases {
+		if !strings.Contains(desc, want) {
+			t.Errorf("expected description to mention %q in <important_behavior>", want)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // get_timeline_events nil datastore test
 // ---------------------------------------------------------------------------
@@ -455,6 +489,55 @@ func TestGetTimelineEventsIntegrationHappyPath(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected event type %q in output: %s", want, body)
 		}
+	}
+}
+
+// TestGetTimelineEventsIntegrationClearedSummaryEnrichment confirms that
+// the alert_cleared row emitted by the tool carries the enriched
+// "Resolved after <duration>. Fired: <description>" summary and that
+// the paired alert_fired row still carries the raw description. This is
+// the end-to-end version of the SQL-level coverage in
+// timeline_alert_cleared_integration_test.go.
+func TestGetTimelineEventsIntegrationClearedSummaryEnrichment(t *testing.T) {
+	pool, ds, cleanup := newTimelineTestEnv(t)
+	defer cleanup()
+
+	// Seed a single alert that fired and cleared 30 minutes later. The
+	// seedTimelineFixtures helper inserts the alert with description
+	// "cpu over threshold"; we re-use it so the expectations below
+	// mirror what the helper actually writes.
+	connID, base := seedTimelineFixtures(t, pool)
+
+	tool := GetTimelineEventsTool(ds, nil, nil)
+	resp, err := tool.Handler(map[string]any{
+		"connection_id": float64(connID),
+		"event_types":   "alert_fired,alert_cleared",
+	})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("unexpected error response: %s", resp.Content[0].Text)
+	}
+	body := resp.Content[0].Text
+
+	// Cleared row: 30-minute gap formats as "30m 0s" and the
+	// description is appended verbatim.
+	wantCleared := "Resolved after 30m 0s. Fired: cpu over threshold"
+	if !strings.Contains(body, wantCleared) {
+		t.Errorf("expected cleared-row summary %q, got: %s", wantCleared, body)
+	}
+	// Fired row: description still appears verbatim somewhere in the
+	// TSV output (the cleared row contains it after 'Fired: ', so the
+	// fired row's presence is asserted by counting occurrences).
+	if strings.Count(body, "cpu over threshold") < 2 {
+		t.Errorf("expected description to appear in both fired and cleared rows, got body: %s", body)
+	}
+	// Sanity check the base anchor was not somehow elided from the
+	// emitted window, which would suggest the time filter was broken
+	// by the new summary expression.
+	if !strings.Contains(body, base.Format("2006")) {
+		t.Errorf("expected event timestamps in body, got: %s", body)
 	}
 }
 

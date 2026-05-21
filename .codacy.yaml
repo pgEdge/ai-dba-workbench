@@ -41,15 +41,6 @@ engines:
       - 'client/src/components/Dashboard/__tests__/CollapsibleSection.test.tsx'
       - 'client/src/components/AdminPanel/__tests__/AdminTokenScopes.test.tsx'
       - 'client/src/components/AdminPanel/tokens/__tests__/CreatedTokenDialog.test.tsx'
-      # Test fixture - intentionally constructs identifier-driven
-      # DDL/DML against a hardcoded victim list to exercise the
-      # schema health check's partial-drop failure path. Semgrep
-      # cannot follow the dataflow from the criticalRelations
-      # slice into the test's DROP/INSERT statements and reports
-      # the parameterised INSERT and the Sprintf-built DROP as
-      # SQL injection. Production code in health.go uses static
-      # query strings and remains under semgrep scrutiny.
-      - 'server/src/internal/database/health_test.go'
 
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and
   # eslint-plugin-security-node, which are not part of the project's

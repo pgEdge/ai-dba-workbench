@@ -68,10 +68,11 @@ type criticalRelation struct {
 // detect partial drops, and probing more relations would only slow
 // startup without adding signal.
 //
-// One entry is schema-qualified (metrics.pg_settings); the rest are
-// resolved through the search_path. Each probeSQL pre-quotes the
-// identifiers so the relation resolves verbatim regardless of the
-// caller's search_path.
+// One entry is schema-qualified (metrics.pg_settings) and resolves
+// independently of search_path; the others are unqualified and
+// therefore still resolve through search_path. Quoting preserves
+// identifier text and case but does not bypass schema resolution
+// for unqualified relations.
 var criticalRelations = []criticalRelation{
 	{
 		name:     "cluster_groups",

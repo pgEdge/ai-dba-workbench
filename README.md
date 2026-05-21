@@ -17,15 +17,17 @@
   - [Building AI DBA Workbench from Source Code](#building-ai-dba-workbench-from-source-code)
 - [Running the AI DBA Workbench Tests](#running-the-ai-dba-workbench-tests)
   - [Using Environment Variables for Testing](#using-environment-variables-for-testing)
-- Installation and Configuration:
-  - [Quick Start Guide](docs/getting-started/quick-start.md)
-  - [Installation](docs/getting-started/installation.md)
-  - [Docker Deployment](docs/getting-started/docker.md)
-  - Configuring the Workbench:
-    - [Configuring the Server](docs/getting-started/configuration/server.md)
-    - [Configuring the Collector](docs/getting-started/configuration/collector.md)
-    - [Configuring the Alerter](docs/getting-started/configuration/alerter.md)
-    - [Configuring the Web Client](docs/getting-started/configuration/client.md)
+- Installing and Configuring pgEdge AI DBA Workbench:
+  - [Installation Overview](docs/getting-started/installation_overview.md)
+  - [Quick Start - Installing with Binaries](docs/getting-started/binary_install.md)
+  - [Building from Source Code](docs/getting-started/build_from_source.md)
+  - [Deploying with Docker](docs/getting-started/docker.md)
+  - Configuration Details:
+    - [Server](docs/getting-started/configuration/server.md)
+    - [Collector](docs/getting-started/configuration/collector.md)
+    - [Alerter](docs/getting-started/configuration/alerter.md)
+    - [Web Client](docs/getting-started/configuration/client.md)
+    - [Configuring systemd Services](docs/getting-started/configuration/configure_systemd.md)
 - User Guide:
   - [Using the Workbench](docs/user-guide/index.md)
   - Monitoring Dashboards:
@@ -47,6 +49,7 @@
   - [MCP Tools](docs/user-guide/mcp-tools.md)
 - Administrator's Guide:
   - [Overview](docs/admin-guide/index.md)
+  - [Verifying the Health of Components](docs/admin-guide/verify_health.md)
   - [Users & Authentication](docs/admin-guide/authentication.md)
   - [Connection Management](docs/admin-guide/connections.md)
   - [Alert Rules & Thresholds](docs/admin-guide/alert-rules.md)
@@ -60,7 +63,7 @@
 - Developer's Guide:
   - [Overview](docs/developer-guide/index.md)
   - [Contributing](docs/developer-guide/contributing.md)
-  - Collector Architecture:
+  - Collector:
     - [Architecture](docs/developer-guide/collector/architecture.md)
     - [Schema Design](docs/developer-guide/collector/schema.md)
     - [Schema Management](docs/developer-guide/collector/schema-management.md)
@@ -70,15 +73,15 @@
     - [Probe Reference](docs/developer-guide/collector/probe-reference.md)
     - [pg_settings Usage](docs/developer-guide/collector/pg-settings-usage.md)
     - [Testing](docs/developer-guide/collector/testing.md)
-  - Alerter Architecture:
+  - Alerter:
     - [Architecture](docs/developer-guide/alerter/architecture.md)
     - [Anomaly Detection](docs/developer-guide/alerter/anomaly-detection.md)
     - [Adding Rules](docs/developer-guide/alerter/adding-rules.md)
     - [Cron Expressions](docs/developer-guide/alerter/cron-expressions.md)
     - [Testing](docs/developer-guide/alerter/testing.md)
-  - Server Architecture:
+  - Server:
     - [Architecture](docs/developer-guide/server/architecture.md)
-  - Client Architecture:
+  - Client:
     - [Architecture](docs/developer-guide/client/architecture.md)
   - Design:
     - [Node Role Probe](docs/developer-guide/design/node-role-probe.md)
@@ -139,9 +142,9 @@ source, install the following software:
 Pre-built binary files for Workbench are available from the pgEdge repo at:
 [https://github.com/pgEdge/ai-dba-workbench/releases](https://github.com/pgEdge/ai-dba-workbench/releases).
 
-The Quick Start Guide contains detailed instructions for using the binary
-files to install and configure 
-[the Workbench](docs/getting-started/quick-start.md). 
+The Quick Start - Installing with Binaries guide contains detailed
+instructions for using the binary files to install and configure
+[the Workbench](docs/getting-started/binary_install.md).
 
 
 ### Building AI DBA Workbench from Source Code

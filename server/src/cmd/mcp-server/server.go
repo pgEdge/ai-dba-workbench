@@ -577,6 +577,22 @@ func (s *Server) setupSIGHUP(flags *Flags, configPath string) {
 	}()
 }
 
+// VerifySchemaHealth delegates to the underlying datastore's schema
+// health check. The caller (main) is expected to log the returned
+// error and exit non-zero so a server with a missing, partial, or
+// out-of-date collector schema never comes up.
+//
+// The method returns nil immediately when the datastore is not
+// configured, because the rest of NewServer would already have
+// failed in that case; this keeps the helper safe to call
+// unconditionally from main.
+func (s *Server) VerifySchemaHealth(ctx context.Context) error {
+	if s == nil || s.datastore == nil {
+		return nil
+	}
+	return s.datastore.VerifySchemaHealth(ctx)
+}
+
 // Close cleans up all server resources
 func (s *Server) Close() {
 	// Stop background goroutines

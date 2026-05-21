@@ -10,13 +10,17 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/config"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
 // newServerWithSecretFile builds a minimal Server fixture wired up
@@ -122,6 +126,69 @@ func TestLoadServerSecret_EmptyFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is empty") {
 		t.Errorf("err = %v, want it to mention 'is empty'", err)
+	}
+}
+
+// TestVerifySchemaHealth_NoDatastore exercises the Server wrapper
+// around the datastore's schema health check. With no datastore
+// configured the wrapper must return nil immediately so callers
+// (main.go) can invoke it unconditionally; without this guard the
+// wrapper would panic before the underlying check could surface a
+// useful error. The nil-receiver case proves the same guard applies
+// before the field dereference.
+func TestVerifySchemaHealth_NoDatastore(t *testing.T) {
+	s := &Server{}
+	if err := s.VerifySchemaHealth(context.Background()); err != nil {
+		t.Errorf("expected nil error with no datastore, got %v", err)
+	}
+
+	var nilServer *Server
+	if err := nilServer.VerifySchemaHealth(context.Background()); err != nil {
+		t.Errorf("expected nil error for nil Server, got %v", err)
+	}
+}
+
+// TestVerifySchemaHealth_DelegatesToDatastore confirms that when a
+// datastore is configured the Server wrapper forwards the call
+// through to it; the underlying datastore probe is exercised
+// directly by tests in the database package, so the assertion here
+// is limited to "we reached the datastore and got something back",
+// which is enough to lift the wrapper's coverage above the project
+// floor without re-testing the substantive check.
+func TestVerifySchemaHealth_DelegatesToDatastore(t *testing.T) {
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping delegation test")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Skipf("Test database ping failed: %v", err)
+	}
+
+	// Aggressively drop schema_version so the delegated call deflects
+	// to the missing-table branch; we only care that the wrapper
+	// reached the datastore, not which branch it took.
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS schema_version CASCADE`); err != nil {
+		t.Fatalf("failed to drop schema_version: %v", err)
+	}
+
+	srv := &Server{datastore: database.NewTestDatastore(pool)}
+	err = srv.VerifySchemaHealth(ctx)
+	if err == nil {
+		t.Fatal("expected error from delegated datastore probe")
+	}
+	if !strings.Contains(err.Error(), "schema_version") {
+		t.Errorf("expected delegated error to mention schema_version, got %v", err)
 	}
 }
 

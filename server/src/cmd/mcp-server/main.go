@@ -10,13 +10,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/api"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
+
+// schemaHealthCheckTimeout bounds the startup datastore health probe
+// so a hung or unreachable datastore does not block startup
+// indefinitely. The probe issues only short metadata queries, so a
+// generous timeout still surfaces real failures quickly.
+const schemaHealthCheckTimeout = 30 * time.Second
 
 func main() {
 	// Get default paths based on executable location
@@ -119,6 +127,19 @@ func main() {
 		os.Exit(1)
 	}
 	defer server.Close()
+
+	// Verify the collector-owned datastore schema before wiring any
+	// handlers. A missing or partial schema would otherwise let the
+	// server come up and 500 on every dashboard endpoint, which is
+	// strictly worse than failing fast here with an actionable
+	// message that names the affected datastore.
+	healthCtx, healthCancel := context.WithTimeout(context.Background(), schemaHealthCheckTimeout)
+	if err := server.VerifySchemaHealth(healthCtx); err != nil {
+		healthCancel()
+		fmt.Fprintf(os.Stderr, "[ERROR] datastore schema health check failed: %v\n", err)
+		os.Exit(1)
+	}
+	healthCancel()
 
 	// Run the server (blocks until shutdown)
 	if err := server.Run(flags, configPath); err != nil {

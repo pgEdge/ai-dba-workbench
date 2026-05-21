@@ -12,6 +12,17 @@ project adheres to
 
 ### Added
 
+- Add a startup datastore schema health check to the MCP
+  server. The server now reads the collector-owned
+  `schema_version` table and probes a small set of critical
+  dashboard tables before wiring any handlers; a missing or
+  pre-v4 collector schema, or a partial drop of any probed
+  relation, surfaces an operator-actionable error that
+  names the affected datastore and the recommended action,
+  then exits non-zero. This replaces the previous silent
+  failure mode where the server would come up against an
+  empty database and 500 on every dashboard endpoint.
+
 - Add the `get_timeline_events` MCP tool, which exposes
   the unified incident-investigation timeline that was
   previously only reachable through the

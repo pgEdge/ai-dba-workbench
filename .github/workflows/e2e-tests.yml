@@ -34,16 +34,22 @@ on:
                     - staging
                     - release
                 default: staging
+            postgres_version:
+                description: "PostgreSQL version"
+                type: choice
+                options:
+                    - "18"
+                    - "17"
+                    - "16"
+                default: "18"
 
 jobs:
     e2e:
-        name: "E2E (${{ inputs.install_mode == 'rpm' && format('RPM {0}/{1}', inputs.platform_image, inputs.repo_channel) || format('Docker PG{0}', matrix.postgres_version) }})"
+        name: "E2E (${{ inputs.install_mode == 'rpm' && format('RPM {0}/{1}', inputs.platform_image, inputs.repo_channel) || format('Docker PG{0}', inputs.postgres_version || '18') }})"
         runs-on: ubuntu-latest
         timeout-minutes: 45
         strategy:
             fail-fast: false
-            matrix:
-                postgres_version: [18]
         env:
             POSTGRES_PASSWORD: postgres
             E2E_CONFIG_DIR: ${{ github.workspace }}/client/tests/e2e/config
@@ -60,10 +66,12 @@ jobs:
                     echo "install_mode=docker" >> "$GITHUB_OUTPUT"
                     echo "repo_channel=staging" >> "$GITHUB_OUTPUT"
                     echo "platform_image=ubuntu22" >> "$GITHUB_OUTPUT"
+                    echo "postgres_version=18" >> "$GITHUB_OUTPUT"
                   else
                     echo "install_mode=${{ inputs.install_mode }}" >> "$GITHUB_OUTPUT"
                     echo "repo_channel=${{ inputs.repo_channel }}" >> "$GITHUB_OUTPUT"
                     echo "platform_image=${{ inputs.platform_image }}" >> "$GITHUB_OUTPUT"
+                    echo "postgres_version=${{ inputs.postgres_version }}" >> "$GITHUB_OUTPUT"
                   fi
 
             - name: Setup Node.js
@@ -83,15 +91,14 @@ jobs:
                   echo "postgres" > client/tests/e2e/secret/pg-password
 
             - name: Set PostgreSQL image variables
-              if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |
-                  case "${{ matrix.postgres_version }}" in
+                  case "${{ steps.resolve-mode.outputs.postgres_version }}" in
                     16)
-                      echo "POSTGRES_IMAGE=postgres:16-alpine" >> "$GITHUB_ENV"
+                      echo "POSTGRES_IMAGE=pgvector/pgvector:pg16" >> "$GITHUB_ENV"
                       echo "PGDATA_DIR=/var/lib/postgresql/data" >> "$GITHUB_ENV"
                       ;;
                     17)
-                      echo "POSTGRES_IMAGE=postgres:17-alpine" >> "$GITHUB_ENV"
+                      echo "POSTGRES_IMAGE=pgvector/pgvector:pg17" >> "$GITHUB_ENV"
                       echo "PGDATA_DIR=/var/lib/postgresql/data" >> "$GITHUB_ENV"
                       ;;
                     18)
@@ -202,6 +209,8 @@ jobs:
                   INSTALL_MODE: ${{ steps.resolve-mode.outputs.install_mode }}
                   REPO_CHANNEL: ${{ steps.resolve-mode.outputs.repo_channel }}
                   PLATFORM_IMAGE: ${{ steps.resolve-mode.outputs.platform_image }}
+                  POSTGRES_IMAGE: ${{ env.POSTGRES_IMAGE }}
+                  PGDATA_DIR: ${{ env.PGDATA_DIR }}
               run: npm test
 
             - name: Generate Allure report
@@ -216,9 +225,9 @@ jobs:
               if: always()
               run: |
                   if [ "${{ steps.resolve-mode.outputs.install_mode }}" = "rpm" ]; then
-                    echo "artifact_name=e2e-results-rpm-${{ steps.resolve-mode.outputs.platform_image }}-${{ steps.resolve-mode.outputs.repo_channel }}" >> "$GITHUB_OUTPUT"
+                    echo "artifact_name=e2e-results-rpm-${{ steps.resolve-mode.outputs.platform_image }}-${{ steps.resolve-mode.outputs.repo_channel }}-pg${{ steps.resolve-mode.outputs.postgres_version }}" >> "$GITHUB_OUTPUT"
                   else
-                    echo "artifact_name=e2e-results-docker-pg${{ matrix.postgres_version }}" >> "$GITHUB_OUTPUT"
+                    echo "artifact_name=e2e-results-docker-pg${{ steps.resolve-mode.outputs.postgres_version }}" >> "$GITHUB_OUTPUT"
                   fi
 
             - name: Upload test artifacts

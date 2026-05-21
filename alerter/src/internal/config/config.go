@@ -71,6 +71,45 @@ type Tier1Config struct {
 	Enabled                   bool    `yaml:"enabled"`
 	DefaultSensitivity        float64 `yaml:"default_sensitivity"`
 	EvaluationIntervalSeconds int     `yaml:"evaluation_interval_seconds"`
+
+	// MaxZScore clamps |z_score| to this value before the
+	// sensitivity comparison. 0 disables the cap.
+	MaxZScore float64 `yaml:"max_z_score"`
+
+	// VarianceFloor applies a hybrid floor to the baseline
+	// standard deviation before computing the z-score.
+	VarianceFloor VarianceFloorConfig `yaml:"variance_floor"`
+
+	// Warmup suppresses anomaly detection on baselines that
+	// have not seen enough samples or wall-clock time to be
+	// trustworthy.
+	Warmup WarmupConfig `yaml:"warmup"`
+}
+
+// VarianceFloorConfig parameterises the hybrid variance floor.
+// effective_stddev = max(raw_stddev,
+//
+//	max(|mean| * RelativePct,
+//	     AbsoluteFloor))
+type VarianceFloorConfig struct {
+	RelativePct   float64 `yaml:"relative_pct"`
+	AbsoluteFloor float64 `yaml:"absolute_floor"`
+}
+
+// WarmupConfig holds per-period_type warmup thresholds for
+// tier-1 anomaly detection.
+type WarmupConfig struct {
+	All    PerPeriodWarmupConfig `yaml:"all"`
+	Hourly PerPeriodWarmupConfig `yaml:"hourly"`
+	Daily  PerPeriodWarmupConfig `yaml:"daily"`
+}
+
+// PerPeriodWarmupConfig gates a single period_type. Both checks
+// must pass for detection to proceed; either threshold at 0
+// disables that half of the gate.
+type PerPeriodWarmupConfig struct {
+	MinSamples   int `yaml:"min_samples"`
+	MinSpanHours int `yaml:"min_span_hours"`
 }
 
 // Tier2Config holds Tier 2 embedding similarity settings
@@ -213,6 +252,25 @@ func NewConfig() *Config {
 				Enabled:                   true,
 				DefaultSensitivity:        3.0,
 				EvaluationIntervalSeconds: 60,
+				MaxZScore:                 100.0,
+				VarianceFloor: VarianceFloorConfig{
+					RelativePct:   0.05,
+					AbsoluteFloor: 0.001,
+				},
+				Warmup: WarmupConfig{
+					All: PerPeriodWarmupConfig{
+						MinSamples:   100,
+						MinSpanHours: 24,
+					},
+					Hourly: PerPeriodWarmupConfig{
+						MinSamples:   5,
+						MinSpanHours: 120,
+					},
+					Daily: PerPeriodWarmupConfig{
+						MinSamples:   3,
+						MinSpanHours: 336,
+					},
+				},
 			},
 			Tier2: Tier2Config{
 				Enabled:              true,

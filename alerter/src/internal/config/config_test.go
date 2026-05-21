@@ -59,6 +59,57 @@ func TestNewConfig(t *testing.T) {
 	}
 }
 
+// TestNewConfigAnomalyDefaults verifies the defaults for the new
+// anomaly knobs introduced for the tier-1 warmup gate and the
+// hybrid variance floor. Every newly added field is asserted so
+// the test naturally covers the new types in full.
+func TestNewConfigAnomalyDefaults(t *testing.T) {
+	cfg := NewConfig()
+
+	tests := []struct {
+		name     string
+		got      any
+		expected any
+	}{
+		// Existing default - sanity check we did not regress.
+		{"tier1 default_sensitivity",
+			cfg.Anomaly.Tier1.DefaultSensitivity, 3.0},
+
+		// New: z-score cap.
+		{"tier1 max_z_score",
+			cfg.Anomaly.Tier1.MaxZScore, 100.0},
+
+		// New: hybrid variance floor.
+		{"tier1 variance_floor.relative_pct",
+			cfg.Anomaly.Tier1.VarianceFloor.RelativePct, 0.05},
+		{"tier1 variance_floor.absolute_floor",
+			cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor, 0.001},
+
+		// New: warmup, indexed per period_type.
+		{"tier1 warmup.all.min_samples",
+			cfg.Anomaly.Tier1.Warmup.All.MinSamples, 100},
+		{"tier1 warmup.all.min_span_hours",
+			cfg.Anomaly.Tier1.Warmup.All.MinSpanHours, 24},
+		{"tier1 warmup.hourly.min_samples",
+			cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples, 5},
+		{"tier1 warmup.hourly.min_span_hours",
+			cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours, 120},
+		{"tier1 warmup.daily.min_samples",
+			cfg.Anomaly.Tier1.Warmup.Daily.MinSamples, 3},
+		{"tier1 warmup.daily.min_span_hours",
+			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, 336},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.expected {
+				t.Errorf("%s = %v, expected %v",
+					tt.name, tt.got, tt.expected)
+			}
+		})
+	}
+}
+
 // TestConfigValidate tests the Validate method
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {

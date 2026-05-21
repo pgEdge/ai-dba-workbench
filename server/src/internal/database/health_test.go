@@ -281,7 +281,7 @@ func TestVerifySchemaHealth_RelationMissing(t *testing.T) {
 	ds := NewTestDatastore(pool)
 
 	for _, victim := range criticalRelations {
-		t.Run(victim, func(t *testing.T) {
+		t.Run(victim.name, func(t *testing.T) {
 			// Each sub-case starts from a known-clean fixture, then
 			// recreates everything and drops exactly the victim.
 			resetHealthFixture(t, pool)
@@ -290,20 +290,23 @@ func TestVerifySchemaHealth_RelationMissing(t *testing.T) {
 
 			// Drop the victim. Schema-qualified names go through as-is;
 			// unqualified names get dropped from the search_path schema.
-			dropStmt := fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE`, victim)
+			// The victim name comes from the hardcoded
+			// criticalRelations slice; the fmt.Sprintf here is fixture
+			// scaffolding, not user-driven SQL.
+			dropStmt := fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE`, victim.name)
 			if _, err := pool.Exec(context.Background(), dropStmt); err != nil {
-				t.Fatalf("Failed to drop %s: %v", victim, err)
+				t.Fatalf("Failed to drop %s: %v", victim.name, err)
 			}
 
 			err := ds.VerifySchemaHealth(context.Background())
 			if err == nil {
-				t.Fatalf("expected error after dropping %s", victim)
+				t.Fatalf("expected error after dropping %s", victim.name)
 			}
 			if !errors.Is(err, ErrCriticalRelationMissing) {
 				t.Errorf("expected ErrCriticalRelationMissing, got %v", err)
 			}
-			if !strings.Contains(err.Error(), victim) {
-				t.Errorf("error must name the missing relation %q: %v", victim, err)
+			if !strings.Contains(err.Error(), victim.name) {
+				t.Errorf("error must name the missing relation %q: %v", victim.name, err)
 			}
 			if !strings.Contains(err.Error(), "partially") {
 				t.Errorf("error must hint at partial drop: %v", err)
@@ -386,10 +389,12 @@ func TestVerifySchemaHealth_ProbeError(t *testing.T) {
 	applyHealthRelations(t, pool)
 
 	// Direct probe with a canceled context: must return the
-	// underlying error, not ErrCriticalRelationMissing.
+	// underlying error, not ErrCriticalRelationMissing. The probe
+	// target is the first entry in criticalRelations, which carries
+	// a static probe query string.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := ds.probeRelation(ctx, "cluster_groups")
+	err := ds.probeRelation(ctx, criticalRelations[0])
 	if err == nil {
 		t.Fatal("expected probeRelation to fail on a canceled context")
 	}

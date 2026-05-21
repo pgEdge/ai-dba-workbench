@@ -13,9 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -39,21 +37,62 @@ const MinCollectorSchemaVersion = 4
 // a relation referenced in a query does not exist.
 const pgErrCodeUndefinedTable = "42P01"
 
+// criticalRelation pairs an operator-facing relation name with a
+// pre-built, static probe query. Every probeSQL is a compile-time
+// constant: there is no runtime identifier quoting, no fmt.Sprintf
+// around SQL, and no dataflow from external input into the query
+// text. This shape keeps Semgrep's SQL-injection rule satisfied
+// while preserving the original signal (a missing critical table
+// surfaces as 42P01 and is normalised to
+// ErrCriticalRelationMissing).
+//
+// To add or remove a relation, edit the criticalRelations slice
+// below: both fields are required and the probeSQL must reference
+// the same relation as name.
+type criticalRelation struct {
+	// name is the operator-facing relation identifier, embedded
+	// verbatim in error messages so the operator can map the
+	// failure to a row in their schema.
+	name string
+
+	// probeSQL is the static SELECT used for the zero-row probe.
+	// LIMIT 0 keeps the probe metadata-only: PostgreSQL still
+	// resolves the relation (so a missing table surfaces
+	// immediately with 42P01) but no rows are read or transferred.
+	probeSQL string
+}
+
 // criticalRelations enumerates a small canonical set of dashboard
 // tables the server must be able to read. The set is intentionally
 // minimal: covering one relation per major feature area is enough to
 // detect partial drops, and probing more relations would only slow
 // startup without adding signal.
 //
-// The list mixes unqualified names (resolved through the search_path)
-// with one schema-qualified name (metrics.pg_settings); probeRelation
-// handles the quoting accordingly.
-var criticalRelations = []string{
-	"cluster_groups",
-	"alerts",
-	"blackouts",
-	"blackout_schedules",
-	"metrics.pg_settings",
+// One entry is schema-qualified (metrics.pg_settings); the rest are
+// resolved through the search_path. Each probeSQL pre-quotes the
+// identifiers so the relation resolves verbatim regardless of the
+// caller's search_path.
+var criticalRelations = []criticalRelation{
+	{
+		name:     "cluster_groups",
+		probeSQL: `SELECT 1 FROM "cluster_groups" LIMIT 0`,
+	},
+	{
+		name:     "alerts",
+		probeSQL: `SELECT 1 FROM "alerts" LIMIT 0`,
+	},
+	{
+		name:     "blackouts",
+		probeSQL: `SELECT 1 FROM "blackouts" LIMIT 0`,
+	},
+	{
+		name:     "blackout_schedules",
+		probeSQL: `SELECT 1 FROM "blackout_schedules" LIMIT 0`,
+	},
+	{
+		name:     "metrics.pg_settings",
+		probeSQL: `SELECT 1 FROM "metrics"."pg_settings" LIMIT 0`,
+	},
 }
 
 // Sentinel errors for schema health verification. Callers may inspect
@@ -145,12 +184,12 @@ func (d *Datastore) VerifySchemaHealth(ctx context.Context) error {
 						"missing; the datastore looks partially "+
 						"dropped -- re-run the collector to "+
 						"restore the dashboard schema: %w",
-					target, rel, ErrCriticalRelationMissing,
+					target, rel.name, ErrCriticalRelationMissing,
 				)
 			}
 			return fmt.Errorf(
 				"datastore at %s: probe of %q failed: %w",
-				target, rel, err,
+				target, rel.name, err,
 			)
 		}
 	}
@@ -180,27 +219,17 @@ func (d *Datastore) readSchemaVersion(ctx context.Context) (int, error) {
 	return version, nil
 }
 
-// probeRelation executes a zero-row probe against the given relation.
-// The relation may be schema-qualified (for example "metrics.pg_settings")
-// or unqualified ("alerts"); the function quotes each segment with
-// pgx.Identifier.Sanitize so a dotted name does not get rendered as a
-// single identifier.
+// probeRelation executes the given relation's pre-built static probe
+// query. The query string is a compile-time constant carried on the
+// criticalRelation value, so there is no dynamic SQL construction at
+// the call site -- the pool receives a fixed string literal.
 //
 // On a successful probe the returned error is nil. A 42P01 from
-// PostgreSQL is normalised to ErrCriticalRelationMissing so callers can
-// distinguish "table missing" from arbitrary transport errors with
-// errors.Is.
-func (d *Datastore) probeRelation(ctx context.Context, rel string) error {
-	parts := strings.Split(rel, ".")
-	quoted := pgx.Identifier(parts).Sanitize()
-
-	// LIMIT 0 keeps the probe metadata-only: PostgreSQL still
-	// resolves the relation (so a missing table surfaces immediately
-	// with 42P01) but no rows are read or transferred. Exec rather
-	// than Query so any error from the round-trip is returned
-	// directly without a separate rows.Err() second-chance check.
-	_, err := d.pool.Exec(ctx,
-		fmt.Sprintf(`SELECT 1 FROM %s LIMIT 0`, quoted))
+// PostgreSQL is normalised to ErrCriticalRelationMissing so callers
+// can distinguish "table missing" from arbitrary transport errors
+// with errors.Is.
+func (d *Datastore) probeRelation(ctx context.Context, rel criticalRelation) error {
+	_, err := d.pool.Exec(ctx, rel.probeSQL)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgErrCodeUndefinedTable {

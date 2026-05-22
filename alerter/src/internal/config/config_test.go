@@ -331,6 +331,28 @@ func TestLoadAPIKeys(t *testing.T) {
 		}
 	})
 
+	t.Run("load gemini key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		keyFile := filepath.Join(tmpDir, "gemini.key")
+		err := os.WriteFile(keyFile, []byte("gemini-test-key\n"), 0600)
+		if err != nil {
+			t.Fatalf("failed to create key file: %v", err)
+		}
+
+		cfg := NewConfig()
+		cfg.LLM.Gemini.APIKeyFile = keyFile
+
+		err = cfg.LoadAPIKeys()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if cfg.GetGeminiAPIKey() != "gemini-test-key" {
+			t.Errorf("Gemini API key = %q, expected %q",
+				cfg.GetGeminiAPIKey(), "gemini-test-key")
+		}
+	})
+
 	t.Run("load voyage key", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		keyFile := filepath.Join(tmpDir, "voyage.key")
@@ -437,6 +459,67 @@ threshold:
 			t.Error("expected error for invalid yaml, got nil")
 		}
 	})
+}
+
+// TestExampleConfigsParse loads each of the shipped example
+// alerter YAML files and confirms that the tier-1 anomaly knobs
+// added for the warmup gate, variance floor, and z-score cap
+// round-trip correctly through LoadFromFile. This catches drift
+// between the live config schema in this package and the
+// annotated examples that operators copy from.
+func TestExampleConfigsParse(t *testing.T) {
+	paths := []string{
+		"../../../../examples/ai-dba-alerter.yaml",
+		"../../../../examples/walkthrough/config/ai-dba-alerter.yaml",
+		"../../../../docker/config/ai-dba-alerter.yaml",
+	}
+
+	for _, p := range paths {
+		p := p
+		t.Run(p, func(t *testing.T) {
+			cfg := NewConfig()
+			if err := cfg.LoadFromFile(p); err != nil {
+				t.Fatalf("failed to parse %s: %v", p, err)
+			}
+
+			if cfg.Anomaly.Tier1.MaxZScore != 100.0 {
+				t.Errorf("%s: MaxZScore = %v, want 100.0",
+					p, cfg.Anomaly.Tier1.MaxZScore)
+			}
+			if cfg.Anomaly.Tier1.VarianceFloor.RelativePct != 0.05 {
+				t.Errorf("%s: VarianceFloor.RelativePct = %v, want 0.05",
+					p, cfg.Anomaly.Tier1.VarianceFloor.RelativePct)
+			}
+			if cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor != 0.001 {
+				t.Errorf("%s: VarianceFloor.AbsoluteFloor = %v, want 0.001",
+					p, cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor)
+			}
+			if cfg.Anomaly.Tier1.Warmup.All.MinSamples != 100 {
+				t.Errorf("%s: Warmup.All.MinSamples = %d, want 100",
+					p, cfg.Anomaly.Tier1.Warmup.All.MinSamples)
+			}
+			if cfg.Anomaly.Tier1.Warmup.All.MinSpanHours != 24 {
+				t.Errorf("%s: Warmup.All.MinSpanHours = %d, want 24",
+					p, cfg.Anomaly.Tier1.Warmup.All.MinSpanHours)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples != 5 {
+				t.Errorf("%s: Warmup.Hourly.MinSamples = %d, want 5",
+					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours != 120 {
+				t.Errorf("%s: Warmup.Hourly.MinSpanHours = %d, want 120",
+					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Daily.MinSamples != 3 {
+				t.Errorf("%s: Warmup.Daily.MinSamples = %d, want 3",
+					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSamples)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours != 336 {
+				t.Errorf("%s: Warmup.Daily.MinSpanHours = %d, want 336",
+					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours)
+			}
+		})
+	}
 }
 
 // TestConfigFileExists tests the ConfigFileExists function

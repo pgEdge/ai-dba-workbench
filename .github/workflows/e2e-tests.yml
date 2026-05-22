@@ -2,7 +2,7 @@ name: E2E Tests
 
 on:
     push:
-        branches: [automation_practice]
+        branches: [e2e-modernization]
     # workflow_dispatch is only visible in the GitHub UI when viewing the
     # default branch or when the branch is explicitly selected in the
     # Run workflow dropdown. Inputs below appear once a branch with this

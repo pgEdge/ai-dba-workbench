@@ -137,6 +137,20 @@ async function globalSetup(_config: FullConfig): Promise<void> {
         },
     ]);
 
+    // Wait for the React client (nginx) to be reachable on BASE_URL
+    // before navigating. The client container may still be starting
+    // even after the API health check passes.
+    for (let i = 0; i < maxAttempts; i++) {
+        if (await isHttpServiceReady(BASE_URL)) { break; }
+        if (i === maxAttempts - 1) {
+            throw new Error(
+                `Client at ${BASE_URL} did not become reachable ` +
+                `after ${maxAttempts} attempts.`,
+            );
+        }
+        await sleep(delayMs);
+    }
+
     // Navigate to the app so cookies are persisted.
     const page = await context.newPage();
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });

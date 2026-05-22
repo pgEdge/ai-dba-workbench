@@ -92,8 +92,8 @@ The first protects the divisor from collapsing below a sensible
 floor; the second suppresses detection on baselines that have
 not yet observed enough data to be trustworthy. Both checks
 live in [`alerter/src/internal/engine/anomalies.go`][anomalies-go];
-`effectiveStdDev` at line 29 implements the floor, and
-`isBaselineWarm` at line 53 implements the warmup gate.
+the `effectiveStdDev` helper implements the floor, and the
+`isBaselineWarm` helper implements the warmup gate.
 
 [anomalies-go]:
     https://github.com/pgEdge/ai-dba-workbench/blob/main/alerter/src/internal/engine/anomalies.go

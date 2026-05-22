@@ -204,7 +204,7 @@ floor entirely; the detector then falls back to the existing
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `relative_pct` | float | `0.05` | Floor as fraction of `|mean|` |
+| `relative_pct` | float | `0.05` | Floor as fraction of |mean| |
 | `absolute_floor` | float | `0.001` | Absolute minimum stddev |
 
 The `anomaly.tier1.warmup` block suppresses detection for
@@ -254,9 +254,9 @@ Warmup suppressions are recorded at debug log level only; the
 detector does not write a candidate row or an alert when it
 skips a cold baseline. On the long-term test host, enable debug
 logging in the alerter and inspect recent suppressions with
-`sudo journalctl -u ai-workbench-alerter.service --since '10m
-ago'`. The log line names the connection, metric, period type,
-and sample count, which is enough to confirm whether a missing
+`sudo journalctl -u ai-workbench-alerter.service --since 10m`.
+The log line names the connection, metric, period type, and
+sample count, which is enough to confirm whether a missing
 alert reflects warmup suppression or a genuinely quiet metric.
 
 #### Tier 2: Embedding Similarity

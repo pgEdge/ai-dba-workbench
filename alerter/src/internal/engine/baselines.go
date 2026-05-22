@@ -100,22 +100,33 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 				dbNamePtr = &key.databaseName
 			}
 
+			// Capture the earliest sample timestamp once for this
+			// (connection, metric) pair so the same value is shared
+			// across the 'all', 'hourly', and 'daily' period_type
+			// rows written below. Anomaly warmup logic in Task 6/7
+			// reads this column to gate detection until the baseline
+			// has matured.
+			earliest := earliestTimestamp(values)
+
 			// Calculate 'all' baseline (global aggregate)
-			e.calculateAllBaseline(ctx, key.connectionID, dbNamePtr, rule.MetricName, values)
+			e.calculateAllBaseline(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, earliest)
 
 			// Calculate hourly baselines (by hour of day)
-			e.calculateHourlyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod)
+			e.calculateHourlyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest)
 
 			// Calculate daily baselines (by day of week)
-			e.calculateDailyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod)
+			e.calculateDailyBaselines(ctx, key.connectionID, dbNamePtr, rule.MetricName, values, minSamplesForTimePeriod, earliest)
 		}
 	}
 
 	e.log("Baseline calculation complete")
 }
 
-// calculateAllBaseline calculates the global 'all' baseline for a metric
-func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue) {
+// calculateAllBaseline calculates the global 'all' baseline for a metric.
+// The earliest parameter is the minimum collected_at timestamp across the
+// raw samples backing this (connection, metric) group; it is persisted on
+// the baseline row so anomaly detection can gate on baseline maturity.
+func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, earliest time.Time) {
 	if len(values) == 0 {
 		return
 	}
@@ -129,16 +140,17 @@ func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *s
 	mean, stddev := calculateStats(floatValues)
 
 	baseline := &database.MetricBaseline{
-		ConnectionID:   connID,
-		DatabaseName:   dbName,
-		MetricName:     metricName,
-		PeriodType:     "all",
-		Mean:           mean,
-		StdDev:         stddev,
-		Min:            minValue(floatValues),
-		Max:            maxValue(floatValues),
-		SampleCount:    int64(len(floatValues)),
-		LastCalculated: time.Now(),
+		ConnectionID:     connID,
+		DatabaseName:     dbName,
+		MetricName:       metricName,
+		PeriodType:       "all",
+		Mean:             mean,
+		StdDev:           stddev,
+		Min:              minValue(floatValues),
+		Max:              maxValue(floatValues),
+		SampleCount:      int64(len(floatValues)),
+		LastCalculated:   time.Now(),
+		EarliestSampleAt: earliest,
 	}
 
 	if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
@@ -147,8 +159,12 @@ func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *s
 	}
 }
 
-// calculateHourlyBaselines calculates baselines for each hour of the day (0-23)
-func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int) {
+// calculateHourlyBaselines calculates baselines for each hour of the day
+// (0-23). The earliest parameter is the minimum collected_at timestamp
+// across the raw samples backing this (connection, metric) group; it is
+// shared across every hourly row so all period_type baselines for the
+// same input data agree on baseline age.
+func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) {
 	// Group values by hour of day
 	hourlyValues := make(map[int][]float64)
 	for _, v := range values {
@@ -166,17 +182,18 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 		hourVal := hour
 
 		baseline := &database.MetricBaseline{
-			ConnectionID:   connID,
-			DatabaseName:   dbName,
-			MetricName:     metricName,
-			PeriodType:     "hourly",
-			HourOfDay:      &hourVal,
-			Mean:           mean,
-			StdDev:         stddev,
-			Min:            minValue(vals),
-			Max:            maxValue(vals),
-			SampleCount:    int64(len(vals)),
-			LastCalculated: time.Now(),
+			ConnectionID:     connID,
+			DatabaseName:     dbName,
+			MetricName:       metricName,
+			PeriodType:       "hourly",
+			HourOfDay:        &hourVal,
+			Mean:             mean,
+			StdDev:           stddev,
+			Min:              minValue(vals),
+			Max:              maxValue(vals),
+			SampleCount:      int64(len(vals)),
+			LastCalculated:   time.Now(),
+			EarliestSampleAt: earliest,
 		}
 
 		if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
@@ -186,8 +203,12 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 	}
 }
 
-// calculateDailyBaselines calculates baselines for each day of the week (0=Sunday to 6=Saturday)
-func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int) {
+// calculateDailyBaselines calculates baselines for each day of the week
+// (0=Sunday to 6=Saturday). The earliest parameter is the minimum
+// collected_at timestamp across the raw samples backing this (connection,
+// metric) group; it is shared across every daily row so all period_type
+// baselines for the same input data agree on baseline age.
+func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) {
 	// Group values by day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
 	dailyValues := make(map[int][]float64)
 	for _, v := range values {
@@ -206,17 +227,18 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 		dayVal := day
 
 		baseline := &database.MetricBaseline{
-			ConnectionID:   connID,
-			DatabaseName:   dbName,
-			MetricName:     metricName,
-			PeriodType:     "daily",
-			DayOfWeek:      &dayVal,
-			Mean:           mean,
-			StdDev:         stddev,
-			Min:            minValue(vals),
-			Max:            maxValue(vals),
-			SampleCount:    int64(len(vals)),
-			LastCalculated: time.Now(),
+			ConnectionID:     connID,
+			DatabaseName:     dbName,
+			MetricName:       metricName,
+			PeriodType:       "daily",
+			DayOfWeek:        &dayVal,
+			Mean:             mean,
+			StdDev:           stddev,
+			Min:              minValue(vals),
+			Max:              maxValue(vals),
+			SampleCount:      int64(len(vals)),
+			LastCalculated:   time.Now(),
+			EarliestSampleAt: earliest,
 		}
 
 		if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
@@ -267,6 +289,25 @@ func (e *Engine) calculateGlobalBaselinesFallback(ctx context.Context, connectio
 				metricName, connID, err)
 		}
 	}
+}
+
+// earliestTimestamp returns the smallest CollectedAt across the given
+// samples, or the Go zero time if samples is empty. The historical SQL
+// queries that source these samples generally order by collected_at, but
+// this scan is defensive: callers persist the return value verbatim as
+// the baseline's earliest_sample_at, which feeds anomaly-detection
+// warmup gating, so correctness matters more than the small extra pass.
+func earliestTimestamp(samples []database.HistoricalMetricValue) time.Time {
+	if len(samples) == 0 {
+		return time.Time{}
+	}
+	earliest := samples[0].CollectedAt
+	for _, s := range samples[1:] {
+		if s.CollectedAt.Before(earliest) {
+			earliest = s.CollectedAt
+		}
+	}
+	return earliest
 }
 
 // calculateStats calculates mean and standard deviation for a slice of values

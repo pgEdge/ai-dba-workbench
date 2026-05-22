@@ -42,6 +42,19 @@ engines:
       - 'client/src/components/AdminPanel/__tests__/AdminTokenScopes.test.tsx'
       - 'client/src/components/AdminPanel/tokens/__tests__/CreatedTokenDialog.test.tsx'
 
+  # Codacy uses Opengrep (a Semgrep fork) as a separate engine from
+  # the legacy "semgrep" engine; Go semgrep rules ship under this
+  # tool. The Opengrep rule `go_sql_rule-concat-sqli` flags every
+  # `pool.QueryRow(ctx, sql, $1arg)` call shape regardless of
+  # whether the SQL is a literal, a const, or concatenated -- a
+  # false positive that Codacy's own classifier scores at 95-98%
+  # confidence. Excluded from Opengrep only; every other Codacy
+  # engine (gosec, golangci-lint, etc.) still scans these files.
+  opengrep:
+    exclude_paths:
+      - 'alerter/src/internal/engine/anomalies_test.go'
+      - 'alerter/src/internal/engine/baselines_test.go'
+
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and
   # eslint-plugin-security-node, which are not part of the project's
   # local lint configuration. These plugins false-positive heavily on:

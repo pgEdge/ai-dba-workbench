@@ -109,6 +109,33 @@ func TestMigrateTwiceIsIdempotent(t *testing.T) {
 		"fk_pg_stat_database_connection_id")
 	expectConstraint(t, pool, "metrics.pg_stat_replication",
 		"fk_pg_stat_replication_connection_id")
+
+	// The alerter's new warmup gate needs to know when a baseline
+	// first started seeing samples. Assert the column exists with
+	// the expected type and is nullable.
+	var dataType, isNullable string
+	err := pool.QueryRow(ctx, `
+		SELECT data_type, is_nullable
+		FROM information_schema.columns
+		WHERE table_name = 'metric_baselines'
+		  AND column_name = 'earliest_sample_at'
+	`).Scan(&dataType, &isNullable)
+	if err != nil {
+		t.Fatalf(
+			"earliest_sample_at column must exist after migration: %v",
+			err)
+	}
+	if dataType != "timestamp with time zone" {
+		t.Errorf(
+			"earliest_sample_at data_type = %q, want %q",
+			dataType, "timestamp with time zone")
+	}
+	if isNullable != "YES" {
+		t.Errorf(
+			"earliest_sample_at is_nullable = %q, want %q "+
+				"(column must be nullable)",
+			isNullable, "YES")
+	}
 }
 
 // TestMigratePartialState reproduces the original failure shape: half

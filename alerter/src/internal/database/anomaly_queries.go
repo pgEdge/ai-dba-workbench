@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -208,12 +209,14 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 	return &c, nil
 }
 
-// GetMetricBaselines retrieves baselines for a metric on a connection
+// GetMetricBaselines retrieves baselines for a metric on a connection.
+// A NULL earliest_sample_at column maps to a Go zero time on the
+// returned MetricBaseline, which callers can test with .IsZero().
 func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, metricName string) ([]*MetricBaseline, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, connection_id, database_name, metric_name, period_type,
 		       day_of_week, hour_of_day, mean, stddev, min, max,
-		       sample_count, last_calculated
+		       sample_count, last_calculated, earliest_sample_at
 		FROM metric_baselines
 		WHERE connection_id = $1 AND metric_name = $2
 		ORDER BY period_type, day_of_week, hour_of_day
@@ -226,11 +229,15 @@ func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, me
 	var baselines []*MetricBaseline
 	for rows.Next() {
 		var b MetricBaseline
+		var earliest sql.NullTime
 		err := rows.Scan(&b.ID, &b.ConnectionID, &b.DatabaseName, &b.MetricName,
 			&b.PeriodType, &b.DayOfWeek, &b.HourOfDay, &b.Mean, &b.StdDev,
-			&b.Min, &b.Max, &b.SampleCount, &b.LastCalculated)
+			&b.Min, &b.Max, &b.SampleCount, &b.LastCalculated, &earliest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan metric baseline: %w", err)
+		}
+		if earliest.Valid {
+			b.EarliestSampleAt = earliest.Time
 		}
 		baselines = append(baselines, &b)
 	}
@@ -242,21 +249,26 @@ func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, me
 	return baselines, nil
 }
 
-// UpsertMetricBaseline inserts or updates a metric baseline
+// UpsertMetricBaseline inserts or updates a metric baseline. A zero
+// EarliestSampleAt is persisted as SQL NULL rather than the Go
+// 0001-01-01 epoch so downstream callers can distinguish "baseline
+// has no observed sample yet" from a valid early epoch timestamp.
 func (d *Datastore) UpsertMetricBaseline(ctx context.Context, b *MetricBaseline) error {
+	earliest := sql.NullTime{Time: b.EarliestSampleAt, Valid: !b.EarliestSampleAt.IsZero()}
 	_, err := d.pool.Exec(ctx, `
 		INSERT INTO metric_baselines (connection_id, database_name, metric_name,
 		                              period_type, day_of_week, hour_of_day,
 		                              mean, stddev, min, max, sample_count,
-		                              last_calculated)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		                              last_calculated, earliest_sample_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (connection_id, COALESCE(database_name, ''), metric_name,
 		             period_type, COALESCE(day_of_week, -1), COALESCE(hour_of_day, -1))
 		DO UPDATE SET mean = $7, stddev = $8, min = $9, max = $10,
-		              sample_count = $11, last_calculated = $12
+		              sample_count = $11, last_calculated = $12,
+		              earliest_sample_at = $13
 	`, b.ConnectionID, b.DatabaseName, b.MetricName, b.PeriodType,
 		b.DayOfWeek, b.HourOfDay, b.Mean, b.StdDev, b.Min, b.Max,
-		b.SampleCount, b.LastCalculated)
+		b.SampleCount, b.LastCalculated, earliest)
 	return err
 }
 

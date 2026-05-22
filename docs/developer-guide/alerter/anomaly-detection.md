@@ -85,6 +85,91 @@ evaluation:
 
 This approach accounts for time-based patterns in metric values.
 
+### Variance Floor and Warmup Gate
+
+Tier 1 applies two pre-checks before the z-score comparison.
+The first protects the divisor from collapsing below a sensible
+floor; the second suppresses detection on baselines that have
+not yet observed enough data to be trustworthy. Both checks
+live in [`alerter/src/internal/engine/anomalies.go`][anomalies-go];
+the `effectiveStdDev` helper implements the floor, and the
+`isBaselineWarm` helper implements the warmup gate.
+
+[anomalies-go]:
+    https://github.com/pgEdge/ai-dba-workbench/blob/main/alerter/src/internal/engine/anomalies.go
+
+#### Motivating Failure Mode
+
+On a young datastore with roughly 26 hours of data, the alerter
+produced 5,765 anomaly candidates in 24 hours;
+`pg_stat_activity.max_query_duration_seconds` averaged a |z| of
+609 with a peak of 5,862. The peak value is not anomaly
+detection; it is diagnostic of a baseline whose stored standard
+deviation had collapsed several orders of magnitude below the
+metric's natural variation. The existing `stddev == 0` guard
+correctly skipped baselines with an exactly zero divisor, but
+it could not catch the near-zero case that produced the runaway
+scores.
+
+#### Hybrid Variance Floor
+
+The `effectiveStdDev` helper raises the divisor to a hybrid
+floor before the z-score is computed. The floor combines a
+relative term, scaled by the absolute baseline mean, and an
+absolute term that acts as a safety net when the mean
+approaches zero.
+
+```text
+relative_floor = |baseline.mean| * variance_floor.relative_pct
+floor          = max(relative_floor, variance_floor.absolute_floor)
+effective_stddev = max(baseline.stddev, floor)
+```
+
+The defaults are `relative_pct = 0.05` and `absolute_floor =
+0.001`. The relative term dominates for most non-zero metrics,
+while the absolute term keeps small-mean metrics from
+collapsing the floor to zero. When both knobs are zero, the
+floor collapses and the existing `stddev == 0` guard handles
+the degenerate case.
+
+#### Warmup Gate Semantics
+
+The `isBaselineWarm` helper gates detection on two conditions
+per `period_type`: a minimum sample count and a minimum
+wall-clock span between the earliest recorded sample and now.
+Both must hold for the baseline to be considered warm. Each of
+the three `period_type` values (`all`, `hourly`, and `daily`)
+carries its own threshold pair, configured under
+`anomaly.tier1.warmup` in the alerter YAML.
+
+The gate fails closed in two distinct ways. When
+`SampleCount` falls below `MinSamples`, the gate reports the
+baseline cold and detection is skipped. When `MinSpanHours` is
+greater than zero and `EarliestSampleAt` is the zero value,
+the gate also reports cold; this covers rows written before
+the `metric_baselines.earliest_sample_at` column was added and
+fallback baselines that lack raw sample timestamps. Setting
+both `min_samples: 0` and `min_span_hours: 0` for a
+`period_type` disables warmup suppression for that type; the
+zero value on `MinSpanHours` also skips the
+`EarliestSampleAt.IsZero()` check, so a stale row does not
+spuriously fail closed when the operator has explicitly opted
+out.
+
+An unrecognised `period_type` falls back to the daily
+thresholds, which are the strictest of the three defaults.
+This is defensive only; the column is enum-constrained at
+write time.
+
+#### Z-Score Cap
+
+After the floored divisor produces a z-score, Tier 1 clamps
+the signed value to `±max_z_score` when the cap is positive. A
+cap of zero disables the clamp. The cap applies symmetrically
+to both extreme positive and extreme negative scores, so a
+runaway divisor cannot drive either tail beyond the configured
+bound.
+
 ## Tier 2: Embedding Similarity
 
 Tier 2 uses vector embeddings to find similar past anomalies.

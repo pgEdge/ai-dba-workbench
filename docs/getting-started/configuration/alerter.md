@@ -169,6 +169,96 @@ statistical detection.
 | `default_sensitivity` | float | `3.0` | Z-score threshold |
 | `evaluation_interval_seconds` | integer | `60` | Evaluation interval |
 
+#### Tier 1: Variance Floor, Warmup, and Z-Score Cap
+
+Three additional blocks under `anomaly.tier1` prevent the
+detector from firing on baselines that have not yet stabilised.
+These blocks are most relevant on young datastores; on a
+datastore with one or two days of metric history, a baseline's
+stored standard deviation can collapse far below the metric's
+natural variation, producing z-scores in the thousands. The
+variance floor and warmup gate suppress this failure mode, and
+the z-score cap acts as defence in depth.
+
+The `anomaly.tier1.max_z_score` option clamps the absolute
+z-score symmetrically around zero before the sensitivity
+comparison. The default is `100.0`; any genuine outlier sits
+well below this value, and the cap simply prevents a runaway
+divisor from generating multi-thousand-sigma scores. Setting
+`max_z_score: 0` disables the cap.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `max_z_score` | float | `100.0` | Z-score clamp; `0` disables |
+
+The `anomaly.tier1.variance_floor` block enforces a minimum
+divisor on the z-score calculation. The effective standard
+deviation is the larger of the raw stored value and a hybrid
+floor; the floor itself is the larger of `relative_pct` times
+the absolute baseline mean and `absolute_floor`. The relative
+term dominates for non-zero metrics, while the absolute term
+acts as a safety net when the mean approaches zero. Setting
+both `relative_pct: 0` and `absolute_floor: 0` disables the
+floor entirely; the detector then falls back to the existing
+`stddev == 0` guard.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `relative_pct` | float | `0.05` | Floor as fraction of abs(mean) |
+| `absolute_floor` | float | `0.001` | Absolute minimum stddev |
+
+The `anomaly.tier1.warmup` block suppresses detection for
+baselines that have not accumulated enough samples or enough
+wall-clock observation time. Each `period_type` (`all`,
+`hourly`, and `daily`) has its own pair of thresholds, and a
+baseline is considered warm only when both are met. The `all`
+baseline defaults require roughly one day of operation at the
+60 second collection interval; the `hourly` and `daily`
+defaults require enough span for each time bucket to have been
+observed multiple times. Setting both `min_samples: 0` and
+`min_span_hours: 0` for a given `period_type` disables warmup
+suppression for that type.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `all.min_samples` | integer | `100` | Minimum sample count |
+| `all.min_span_hours` | integer | `24` | Minimum span in hours |
+| `hourly.min_samples` | integer | `5` | Minimum sample count |
+| `hourly.min_span_hours` | integer | `120` | Minimum span in hours |
+| `daily.min_samples` | integer | `3` | Minimum sample count |
+| `daily.min_span_hours` | integer | `336` | Minimum span in hours |
+
+In the following example, the `anomaly.tier1` section tightens
+the variance floor and extends the `all` warmup window:
+
+```yaml
+anomaly:
+  tier1:
+    max_z_score: 100.0
+    variance_floor:
+      relative_pct: 0.10
+      absolute_floor: 0.005
+    warmup:
+      all:
+        min_samples: 200
+        min_span_hours: 48
+      hourly:
+        min_samples: 5
+        min_span_hours: 120
+      daily:
+        min_samples: 3
+        min_span_hours: 336
+```
+
+Warmup suppressions are recorded at debug log level only; the
+detector does not write a candidate row or an alert when it
+skips a cold baseline. On the long-term test host, enable debug
+logging in the alerter and inspect recent suppressions with
+`sudo journalctl -u ai-workbench-alerter.service --since 10m`.
+The log line names the connection, metric, period type, and
+sample count, which is enough to confirm whether a missing
+alert reflects warmup suppression or a genuinely quiet metric.
+
 #### Tier 2: Embedding Similarity
 
 The `anomaly.tier2` section configures pgvector-based

@@ -13,11 +13,82 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
+	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
+
+// effectiveStdDev applies the hybrid variance floor described in
+// the anomaly detector design. Returns max(raw_stddev,
+// max(|mean| * RelativePct, AbsoluteFloor)). Callers retain the
+// existing stddev == 0 guard for the degenerate case where both
+// floor knobs are zero.
+func effectiveStdDev(
+	b database.MetricBaseline,
+	cfg config.VarianceFloorConfig,
+) float64 {
+	relFloor := math.Abs(b.Mean) * cfg.RelativePct
+	floor := math.Max(relFloor, cfg.AbsoluteFloor)
+	return math.Max(b.StdDev, floor)
+}
+
+// isBaselineWarm reports whether the baseline has accumulated
+// enough samples and enough wall-clock span to be trustworthy
+// for anomaly detection. A zero EarliestSampleAt (e.g. a row
+// written before the column was populated, or a fallback
+// baseline that lacks raw sample timestamps) is treated as not
+// warm.
+//
+// The span check is skipped when the configured MinSpanHours is
+// zero, which is the documented escape hatch to disable the
+// time-span half of the gate.
+//
+// Unknown period_types fall back to the daily thresholds, which
+// are the strictest of the three configured pairs by default.
+// This is defensive; period_type is enum-constrained at write
+// time.
+func isBaselineWarm(
+	b database.MetricBaseline,
+	cfg config.WarmupConfig,
+	now time.Time,
+) bool {
+	thresh := warmupThresholdFor(b.PeriodType, cfg)
+	if b.SampleCount < int64(thresh.MinSamples) {
+		return false
+	}
+	if thresh.MinSpanHours > 0 {
+		if b.EarliestSampleAt.IsZero() {
+			return false
+		}
+		minSpan := time.Duration(thresh.MinSpanHours) * time.Hour
+		if now.Sub(b.EarliestSampleAt) < minSpan {
+			return false
+		}
+	}
+	return true
+}
+
+// warmupThresholdFor selects the per-period_type warmup
+// thresholds, falling back to the daily thresholds for any
+// unrecognized period_type.
+func warmupThresholdFor(
+	periodType string,
+	cfg config.WarmupConfig,
+) config.PerPeriodWarmupConfig {
+	switch periodType {
+	case "all":
+		return cfg.All
+	case "hourly":
+		return cfg.Hourly
+	case "daily":
+		return cfg.Daily
+	default:
+		return cfg.Daily
+	}
+}
 
 // detectAnomalies runs the tiered anomaly detection
 func (e *Engine) detectAnomalies(ctx context.Context) {
@@ -87,12 +158,43 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 			}
 
 			baseline := baselines[0]
-			if baseline.StdDev == 0 {
+
+			// Warmup gate: skip baselines that have not yet
+			// accumulated enough samples or wall-clock span to
+			// be trustworthy.
+			if !isBaselineWarm(*baseline, cfg.Anomaly.Tier1.Warmup, time.Now()) {
+				e.debugLog(
+					"Anomaly suppressed: baseline not warm "+
+						"(connection=%d metric=%s period=%s samples=%d earliest=%s)",
+					connID, rule.MetricName, baseline.PeriodType,
+					baseline.SampleCount, baseline.EarliestSampleAt,
+				)
 				continue
 			}
 
-			// Calculate z-score
-			zScore := (currentValue.Value - baseline.Mean) / baseline.StdDev
+			// Variance floor: never divide by a divisor smaller
+			// than the configured hybrid floor. This replaces
+			// the previous "stddev == 0" guard; if both floor
+			// knobs are zero the divisor can still be zero, so
+			// retain the degenerate-case skip.
+			stddev := effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor)
+			if stddev == 0 {
+				continue
+			}
+
+			// Calculate z-score using the floored divisor.
+			zScore := (currentValue.Value - baseline.Mean) / stddev
+
+			// Symmetric z-score cap: clamp |zScore| to MaxZScore
+			// when the cap is positive. A zero cap disables the
+			// clamp entirely.
+			if zCap := cfg.Anomaly.Tier1.MaxZScore; zCap > 0 {
+				if zScore > zCap {
+					zScore = zCap
+				} else if zScore < -zCap {
+					zScore = -zCap
+				}
+			}
 
 			// Check if z-score exceeds threshold
 			if zScore > sensitivity || zScore < -sensitivity {

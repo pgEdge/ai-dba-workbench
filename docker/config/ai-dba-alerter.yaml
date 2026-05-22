@@ -13,6 +13,62 @@ anomaly:
   enabled: true
   tier1:
     enabled: true
+
+    # Maximum absolute z-score after the variance floor is
+    # applied. Acts as defence in depth against future
+    # regressions in baseline math. Set to 0 to disable the
+    # cap entirely.
+    # Default: 100.0
+    max_z_score: 100.0
+
+    # Hybrid variance floor: effective_stddev =
+    #   max(raw_stddev, max(|mean|*relative_pct, absolute_floor))
+    # Prevents the divisor in the z-score formula from collapsing
+    # to a near-zero value when a baseline has only a handful of
+    # similar samples.
+    variance_floor:
+      # Fraction of |mean| used as the relative floor.
+      # Default: 0.05
+      relative_pct: 0.05
+
+      # Hard floor applied when the relative term is small (e.g.
+      # when |mean| is near zero). Set both relative_pct and
+      # absolute_floor to 0 to disable the variance floor.
+      # Default: 0.001
+      absolute_floor: 0.001
+
+    # Warmup gate: skip anomaly detection while a baseline has
+    # not seen enough samples or enough wall-clock time to be
+    # trustworthy. Indexed per period_type. Set min_samples and
+    # min_span_hours both to 0 for a given period_type to
+    # disable the gate for that type.
+    warmup:
+      # Global ("all") baseline: at default 60s collection
+      # interval, 100 samples is about 100 minutes of data and
+      # 24h of wall-clock makes sure a diurnal low has been
+      # observed.
+      all:
+        # Default: 100
+        min_samples: 100
+        # Default: 24
+        min_span_hours: 24
+
+      # Hourly baselines: each hour-of-day bucket fills once
+      # per day, so 120 hours of span = at least five days of
+      # operation.
+      hourly:
+        # Default: 5
+        min_samples: 5
+        # Default: 120
+        min_span_hours: 120
+
+      # Daily baselines: each day-of-week bucket fills once
+      # per week, so 336 hours = two weeks of operation.
+      daily:
+        # Default: 3
+        min_samples: 3
+        # Default: 336
+        min_span_hours: 336
   tier2:
     enabled: false
   tier3:

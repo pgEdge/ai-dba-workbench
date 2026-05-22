@@ -2988,6 +2988,32 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #5: Add earliest_sample_at column to metric_baselines.
+	// The alerter's warmup gate uses this timestamp to decide whether a
+	// baseline has accumulated enough lookback-window coverage to drive
+	// anomaly detection; NULL means the warmup gate fails closed for
+	// the row until the next baseline refresh populates a value.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     5,
+		Description: "Add earliest_sample_at column to metric_baselines",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metric_baselines
+					ADD COLUMN IF NOT EXISTS earliest_sample_at TIMESTAMPTZ;
+
+				COMMENT ON COLUMN metric_baselines.earliest_sample_at IS
+					'Timestamp of the earliest sample observed for this (connection, metric) pair within the alerter baseline lookback window. Used by the alerter''s warmup gate to decide whether the baseline is mature enough to drive anomaly detection. NULL means the warmup gate fails closed for this row until the next baseline refresh populates a value.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add earliest_sample_at column to metric_baselines: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations

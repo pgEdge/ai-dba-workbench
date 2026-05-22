@@ -12,6 +12,27 @@ project adheres to
 
 ### Added
 
+- Add a hybrid variance floor and a per-`period_type` warmup
+  gate to the alerter's Tier 1 anomaly detector, plus a
+  symmetric z-score cap as defence in depth. Three new YAML
+  blocks under `anomaly.tier1` expose the controls:
+  `max_z_score` (default `100.0`, set to `0` to disable the
+  clamp), `variance_floor` with `relative_pct` (default
+  `0.05`) and `absolute_floor` (default `0.001`), and `warmup`
+  with `min_samples` and `min_span_hours` pairs for `all`,
+  `hourly`, and `daily` baselines. A new
+  `metric_baselines.earliest_sample_at` column is added by an
+  idempotent `ALTER TABLE` in the consolidated collector
+  schema migration; the column is populated automatically by
+  the alerter's baseline builder at the next refresh, and the
+  warmup gate fails closed on NULL values until the column is
+  populated. The `anomaly_candidates` and `alerts` tables are
+  deliberately left untouched to preserve audit history.
+  **Operational:** operators upgrading an existing deployment
+  must `TRUNCATE TABLE metric_baselines` after stopping the
+  alerter and before starting the new binary, so the detector
+  rebuilds baselines under the new logic from a clean slate.
+
 - Add a startup datastore schema health check to the MCP
   server. The server now reads the collector-owned
   `schema_version` table and probes a small set of critical

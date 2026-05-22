@@ -10,11 +10,14 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"gopkg.in/yaml.v3"
 )
 
 // TestNewConfig tests that NewConfig creates a configuration with sensible defaults
@@ -54,6 +57,57 @@ func TestNewConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.got != tt.expected {
 				t.Errorf("%s = %v, expected %v", tt.name, tt.got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestNewConfigAnomalyDefaults verifies the defaults for the new
+// anomaly knobs introduced for the tier-1 warmup gate and the
+// hybrid variance floor. Every newly added field is asserted so
+// the test naturally covers the new types in full.
+func TestNewConfigAnomalyDefaults(t *testing.T) {
+	cfg := NewConfig()
+
+	tests := []struct {
+		name     string
+		got      any
+		expected any
+	}{
+		// Existing default - sanity check we did not regress.
+		{"tier1 default_sensitivity",
+			cfg.Anomaly.Tier1.DefaultSensitivity, 3.0},
+
+		// New: z-score cap.
+		{"tier1 max_z_score",
+			cfg.Anomaly.Tier1.MaxZScore, 100.0},
+
+		// New: hybrid variance floor.
+		{"tier1 variance_floor.relative_pct",
+			cfg.Anomaly.Tier1.VarianceFloor.RelativePct, 0.05},
+		{"tier1 variance_floor.absolute_floor",
+			cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor, 0.001},
+
+		// New: warmup, indexed per period_type.
+		{"tier1 warmup.all.min_samples",
+			cfg.Anomaly.Tier1.Warmup.All.MinSamples, 100},
+		{"tier1 warmup.all.min_span_hours",
+			cfg.Anomaly.Tier1.Warmup.All.MinSpanHours, 24},
+		{"tier1 warmup.hourly.min_samples",
+			cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples, 5},
+		{"tier1 warmup.hourly.min_span_hours",
+			cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours, 120},
+		{"tier1 warmup.daily.min_samples",
+			cfg.Anomaly.Tier1.Warmup.Daily.MinSamples, 3},
+		{"tier1 warmup.daily.min_span_hours",
+			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, 336},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.expected {
+				t.Errorf("%s = %v, expected %v",
+					tt.name, tt.got, tt.expected)
 			}
 		})
 	}
@@ -174,6 +228,86 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsBadAnomalyConfig covers the new Tier-1 range
+// checks added to Validate(): MaxZScore, VarianceFloor.RelativePct,
+// VarianceFloor.AbsoluteFloor, and Warmup.All.MinSamples. One sub-
+// case per error path is sufficient since each branch is a simple
+// numeric guard.
+func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		modifyFunc func(*Config)
+		errorMsg   string
+	}{
+		{
+			name: "negative max_z_score rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.MaxZScore = -1.0
+			},
+			errorMsg: "anomaly.tier1.max_z_score must be a finite non-negative number",
+		},
+		{
+			name: "positive Inf max_z_score rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.MaxZScore = math.Inf(1)
+			},
+			errorMsg: "anomaly.tier1.max_z_score must be a finite non-negative number",
+		},
+		{
+			name: "NaN relative_pct rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.RelativePct = math.NaN()
+			},
+			errorMsg: "anomaly.tier1.variance_floor.relative_pct must be a finite non-negative number",
+		},
+		{
+			name: "negative Inf relative_pct rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.RelativePct = math.Inf(-1)
+			},
+			errorMsg: "anomaly.tier1.variance_floor.relative_pct must be a finite non-negative number",
+		},
+		{
+			name: "negative absolute_floor rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor = -0.5
+			},
+			errorMsg: "anomaly.tier1.variance_floor.absolute_floor must be a finite non-negative number",
+		},
+		{
+			name: "positive Inf absolute_floor rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor = math.Inf(1)
+			},
+			errorMsg: "anomaly.tier1.variance_floor.absolute_floor must be a finite non-negative number",
+		},
+		{
+			name: "negative warmup all.min_samples rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.Warmup.All.MinSamples = -1
+			},
+			errorMsg: "anomaly.tier1.warmup thresholds must be >= 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewConfig()
+			tt.modifyFunc(cfg)
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil",
+					tt.errorMsg)
+			}
+			if err.Error() != tt.errorMsg {
+				t.Errorf("expected error %q, got %q",
+					tt.errorMsg, err.Error())
+			}
+		})
+	}
+}
+
 // TestLoadPassword tests the LoadPassword method
 func TestLoadPassword(t *testing.T) {
 	t.Run("password already set", func(t *testing.T) {
@@ -277,6 +411,28 @@ func TestLoadAPIKeys(t *testing.T) {
 
 		if cfg.GetAnthropicAPIKey() != "sk-ant-test-key" {
 			t.Errorf("Anthropic API key = %q, expected %q", cfg.GetAnthropicAPIKey(), "sk-ant-test-key")
+		}
+	})
+
+	t.Run("load gemini key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		keyFile := filepath.Join(tmpDir, "gemini.key")
+		err := os.WriteFile(keyFile, []byte("gemini-test-key\n"), 0600)
+		if err != nil {
+			t.Fatalf("failed to create key file: %v", err)
+		}
+
+		cfg := NewConfig()
+		cfg.LLM.Gemini.APIKeyFile = keyFile
+
+		err = cfg.LoadAPIKeys()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if cfg.GetGeminiAPIKey() != "gemini-test-key" {
+			t.Errorf("Gemini API key = %q, expected %q",
+				cfg.GetGeminiAPIKey(), "gemini-test-key")
 		}
 	})
 
@@ -386,6 +542,125 @@ threshold:
 			t.Error("expected error for invalid yaml, got nil")
 		}
 	})
+}
+
+// TestExampleConfigsParse loads each of the shipped example
+// alerter YAML files and confirms that the tier-1 anomaly knobs
+// added for the warmup gate, variance floor, and z-score cap
+// round-trip correctly through LoadFromFile. It also verifies
+// that each of the new keys is explicitly present in the raw
+// YAML, not merely supplied by NewConfig defaults during the
+// merge; this catches drift between the live config schema and
+// the annotated examples that operators copy from.
+func TestExampleConfigsParse(t *testing.T) {
+	paths := []string{
+		"../../../../examples/ai-dba-alerter.yaml",
+		"../../../../examples/walkthrough/config/ai-dba-alerter.yaml",
+		"../../../../docker/config/ai-dba-alerter.yaml",
+	}
+
+	requiredKeys := []string{
+		"anomaly.tier1.max_z_score",
+		"anomaly.tier1.variance_floor.relative_pct",
+		"anomaly.tier1.variance_floor.absolute_floor",
+		"anomaly.tier1.warmup.all.min_samples",
+		"anomaly.tier1.warmup.all.min_span_hours",
+		"anomaly.tier1.warmup.hourly.min_samples",
+		"anomaly.tier1.warmup.hourly.min_span_hours",
+		"anomaly.tier1.warmup.daily.min_samples",
+		"anomaly.tier1.warmup.daily.min_span_hours",
+	}
+
+	for _, p := range paths {
+		p := p
+		t.Run(p, func(t *testing.T) {
+			// First check the raw YAML for explicit key presence.
+			// Without this, a missing key would still yield the
+			// correct merged value because NewConfig supplies a
+			// non-zero default, defeating the drift check.
+			raw, err := os.ReadFile(p) // #nosec G304 - test fixture path
+			if err != nil {
+				t.Fatalf("read %s: %v", p, err)
+			}
+			var m map[string]any
+			if err := yaml.Unmarshal(raw, &m); err != nil {
+				t.Fatalf("yaml unmarshal %s: %v", p, err)
+			}
+			for _, key := range requiredKeys {
+				if !hasNestedKey(m, strings.Split(key, ".")) {
+					t.Errorf("%s: missing key %s", p, key)
+				}
+			}
+
+			// Then confirm that the merged values match the
+			// documented defaults, catching example/schema drift
+			// in values as well as in key presence.
+			cfg := NewConfig()
+			if err := cfg.LoadFromFile(p); err != nil {
+				t.Fatalf("failed to parse %s: %v", p, err)
+			}
+
+			if cfg.Anomaly.Tier1.MaxZScore != 100.0 {
+				t.Errorf("%s: MaxZScore = %v, want 100.0",
+					p, cfg.Anomaly.Tier1.MaxZScore)
+			}
+			if cfg.Anomaly.Tier1.VarianceFloor.RelativePct != 0.05 {
+				t.Errorf("%s: VarianceFloor.RelativePct = %v, want 0.05",
+					p, cfg.Anomaly.Tier1.VarianceFloor.RelativePct)
+			}
+			if cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor != 0.001 {
+				t.Errorf("%s: VarianceFloor.AbsoluteFloor = %v, want 0.001",
+					p, cfg.Anomaly.Tier1.VarianceFloor.AbsoluteFloor)
+			}
+			if cfg.Anomaly.Tier1.Warmup.All.MinSamples != 100 {
+				t.Errorf("%s: Warmup.All.MinSamples = %d, want 100",
+					p, cfg.Anomaly.Tier1.Warmup.All.MinSamples)
+			}
+			if cfg.Anomaly.Tier1.Warmup.All.MinSpanHours != 24 {
+				t.Errorf("%s: Warmup.All.MinSpanHours = %d, want 24",
+					p, cfg.Anomaly.Tier1.Warmup.All.MinSpanHours)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples != 5 {
+				t.Errorf("%s: Warmup.Hourly.MinSamples = %d, want 5",
+					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours != 120 {
+				t.Errorf("%s: Warmup.Hourly.MinSpanHours = %d, want 120",
+					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Daily.MinSamples != 3 {
+				t.Errorf("%s: Warmup.Daily.MinSamples = %d, want 3",
+					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSamples)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours != 336 {
+				t.Errorf("%s: Warmup.Daily.MinSpanHours = %d, want 336",
+					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours)
+			}
+		})
+	}
+}
+
+// hasNestedKey walks a nested map with the given path segments
+// and reports whether the leaf is explicitly present (non-nil).
+// Used by TestExampleConfigsParse to confirm example files set
+// the new anomaly keys rather than relying on NewConfig defaults.
+func hasNestedKey(m map[string]any, path []string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	head, rest := path[0], path[1:]
+	v, ok := m[head]
+	if !ok {
+		return false
+	}
+	if len(rest) == 0 {
+		return v != nil
+	}
+	inner, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	return hasNestedKey(inner, rest)
 }
 
 // TestConfigFileExists tests the ConfigFileExists function

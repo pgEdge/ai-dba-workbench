@@ -135,21 +135,26 @@ type BlackoutSchedule struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// MetricBaseline holds baseline statistics for a metric
+// MetricBaseline holds baseline statistics for a metric. The
+// EarliestSampleAt field is the timestamp of the earliest sample
+// observed for the (connection, metric) pair within the alerter's
+// baseline lookback window; a DB NULL maps to a Go zero time and
+// callers should test maturity with .IsZero().
 type MetricBaseline struct {
-	ID             int64     `json:"id"`
-	ConnectionID   int       `json:"connection_id"`
-	DatabaseName   *string   `json:"database_name,omitempty"`
-	MetricName     string    `json:"metric_name"`
-	PeriodType     string    `json:"period_type"`
-	DayOfWeek      *int      `json:"day_of_week,omitempty"`
-	HourOfDay      *int      `json:"hour_of_day,omitempty"`
-	Mean           float64   `json:"mean"`
-	StdDev         float64   `json:"stddev"`
-	Min            float64   `json:"min"`
-	Max            float64   `json:"max"`
-	SampleCount    int64     `json:"sample_count"`
-	LastCalculated time.Time `json:"last_calculated"`
+	ID               int64     `json:"id"`
+	ConnectionID     int       `json:"connection_id"`
+	DatabaseName     *string   `json:"database_name,omitempty"`
+	MetricName       string    `json:"metric_name"`
+	PeriodType       string    `json:"period_type"`
+	DayOfWeek        *int      `json:"day_of_week,omitempty"`
+	HourOfDay        *int      `json:"hour_of_day,omitempty"`
+	Mean             float64   `json:"mean"`
+	StdDev           float64   `json:"stddev"`
+	Min              float64   `json:"min"`
+	Max              float64   `json:"max"`
+	SampleCount      int64     `json:"sample_count"`
+	LastCalculated   time.Time `json:"last_calculated"`
+	EarliestSampleAt time.Time `json:"earliest_sample_at,omitempty"`
 }
 
 // AnomalyCandidate represents a candidate anomaly for tier 2/3 processing

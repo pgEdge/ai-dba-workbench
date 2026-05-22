@@ -41,6 +41,17 @@ engines:
       - 'client/src/components/Dashboard/__tests__/CollapsibleSection.test.tsx'
       - 'client/src/components/AdminPanel/__tests__/AdminTokenScopes.test.tsx'
       - 'client/src/components/AdminPanel/tokens/__tests__/CreatedTokenDialog.test.tsx'
+      # Test fixtures - integration tests embed parameterised SQL
+      # (`pool.QueryRow(ctx, sqlConst, $1arg)`) that Codacy's Opengrep
+      # `go_sql_rule-concat-sqli` flags as SQL injection. The rule
+      # fires on the QueryRow call shape regardless of whether the
+      # SQL argument is a literal, a const, or a built string; the
+      # actual parameter binding is correct ($1 placeholders) and
+      # Codacy's own false-positive classifier scores both files at
+      # 95-98% probability of being false positives. Excluded from
+      # semgrep only; other Codacy engines still scan these files.
+      - 'alerter/src/internal/engine/anomalies_test.go'
+      - 'alerter/src/internal/engine/baselines_test.go'
 
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and
   # eslint-plugin-security-node, which are not part of the project's

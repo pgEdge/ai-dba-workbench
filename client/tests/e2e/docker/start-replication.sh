@@ -16,6 +16,30 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Portable privilege-drop helper.  Tries gosu (Debian/official postgres
+# image), su-exec (Alpine), runuser (util-linux), then POSIX su.
+# Usage:  _pg <cmd> [args...]
+#         PGPASSWORD=secret _pg pg_basebackup ...
+# ---------------------------------------------------------------------------
+if command -v gosu > /dev/null 2>&1; then
+    _pg() { gosu postgres "$@"; }
+elif command -v su-exec > /dev/null 2>&1; then
+    _pg() { su-exec postgres "$@"; }
+elif command -v runuser > /dev/null 2>&1; then
+    _pg() { runuser -u postgres -- "$@"; }
+else
+    _pg() {
+        local cmd
+        cmd="$(printf '%q ' "$@")"
+        if [ -n "${PGPASSWORD:-}" ]; then
+            su postgres -s /bin/bash -c "export PGPASSWORD=$(printf '%q' "${PGPASSWORD}"); ${cmd}"
+        else
+            su postgres -s /bin/bash -c "${cmd}"
+        fi
+    }
+fi
+
 PRIMARY_DATA="/data/repl-primary"
 STANDBY1_DATA="/data/repl-standby1"
 STANDBY2_DATA="/data/repl-standby2"
@@ -32,7 +56,7 @@ chmod 0700 "${STANDBY1_DATA}" "${STANDBY2_DATA}"
 if [ ! -f "${PRIMARY_DATA}/PG_VERSION" ]; then
     echo "[replication] Initializing primary (port 5440)..."
 
-    gosu postgres initdb -D "${PRIMARY_DATA}" -U postgres \
+    _pg initdb -D "${PRIMARY_DATA}" -U postgres \
         --auth-local=trust --auth-host=md5
 
     cat >> "${PRIMARY_DATA}/postgresql.conf" <<'EOF'
@@ -56,7 +80,7 @@ EOF
         echo "host  all          all         0.0.0.0/0    md5"
     } >> "${PRIMARY_DATA}/pg_hba.conf"
 
-    gosu postgres pg_ctl -D "${PRIMARY_DATA}" -o "-p 5440" \
+    _pg pg_ctl -D "${PRIMARY_DATA}" -o "-p 5440" \
         -l "${LOG_DIR}/repl-primary.log" -w start
 
     psql -p 5440 -U postgres <<-EOSQL
@@ -83,10 +107,10 @@ EOSQL
     echo "[replication] Primary ready."
 else
     echo "[replication] Primary data exists — starting..."
-    if gosu postgres pg_ctl status -D "${PRIMARY_DATA}" | grep -q "server is running"; then
+    if _pg pg_ctl status -D "${PRIMARY_DATA}" | grep -q "server is running"; then
         echo "[replication] Primary already running."
     else
-        gosu postgres pg_ctl -D "${PRIMARY_DATA}" -o "-p 5440" \
+        _pg pg_ctl -D "${PRIMARY_DATA}" -o "-p 5440" \
             -l "${LOG_DIR}/repl-primary.log" -w start
     fi
 fi
@@ -96,7 +120,7 @@ fi
 # -----------------------------------------------------------------------
 if [ ! -f "${STANDBY1_DATA}/PG_VERSION" ]; then
     echo "[replication] Initializing standby1 (port 5441) via pg_basebackup..."
-    PGPASSWORD="${REPLICATOR_PASSWORD}" gosu postgres pg_basebackup \
+    PGPASSWORD="${REPLICATOR_PASSWORD}" _pg pg_basebackup \
         -h 127.0.0.1 -p 5440 -U replicator \
         -D "${STANDBY1_DATA}" -Fp -Xs -P -R
     chmod 0700 "${STANDBY1_DATA}"
@@ -104,17 +128,17 @@ if [ ! -f "${STANDBY1_DATA}/PG_VERSION" ]; then
     echo "host  all  all  0.0.0.0/0  md5" >> "${STANDBY1_DATA}/pg_hba.conf"
     echo "primary_conninfo = 'host=127.0.0.1 port=5440 user=replicator password=${REPLICATOR_PASSWORD}'" \
         >> "${STANDBY1_DATA}/postgresql.auto.conf"
-    gosu postgres pg_ctl -D "${STANDBY1_DATA}" -o "-p 5441" \
+    _pg pg_ctl -D "${STANDBY1_DATA}" -o "-p 5441" \
         -l "${LOG_DIR}/repl-standby1.log" -w start
     echo "[replication] Standby1 ready."
 else
     echo "[replication] Standby1 data exists — starting..."
-    if gosu postgres pg_ctl status -D "${STANDBY1_DATA}" | grep -q "server is running"; then
+    if _pg pg_ctl status -D "${STANDBY1_DATA}" | grep -q "server is running"; then
         echo "[replication] Standby1 already running."
     else
         echo "primary_conninfo = 'host=127.0.0.1 port=5440 user=replicator password=${REPLICATOR_PASSWORD}'" \
             >> "${STANDBY1_DATA}/postgresql.auto.conf"
-        gosu postgres pg_ctl -D "${STANDBY1_DATA}" -o "-p 5441" \
+        _pg pg_ctl -D "${STANDBY1_DATA}" -o "-p 5441" \
             -l "${LOG_DIR}/repl-standby1.log" start
     fi
 fi
@@ -124,7 +148,7 @@ fi
 # -----------------------------------------------------------------------
 if [ ! -f "${STANDBY2_DATA}/PG_VERSION" ]; then
     echo "[replication] Initializing standby2 (port 5442) via pg_basebackup..."
-    PGPASSWORD="${REPLICATOR_PASSWORD}" gosu postgres pg_basebackup \
+    PGPASSWORD="${REPLICATOR_PASSWORD}" _pg pg_basebackup \
         -h 127.0.0.1 -p 5440 -U replicator \
         -D "${STANDBY2_DATA}" -Fp -Xs -P -R
     chmod 0700 "${STANDBY2_DATA}"
@@ -132,17 +156,17 @@ if [ ! -f "${STANDBY2_DATA}/PG_VERSION" ]; then
     echo "host  all  all  0.0.0.0/0  md5" >> "${STANDBY2_DATA}/pg_hba.conf"
     echo "primary_conninfo = 'host=127.0.0.1 port=5440 user=replicator password=${REPLICATOR_PASSWORD}'" \
         >> "${STANDBY2_DATA}/postgresql.auto.conf"
-    gosu postgres pg_ctl -D "${STANDBY2_DATA}" -o "-p 5442" \
+    _pg pg_ctl -D "${STANDBY2_DATA}" -o "-p 5442" \
         -l "${LOG_DIR}/repl-standby2.log" -w start
     echo "[replication] Standby2 ready."
 else
     echo "[replication] Standby2 data exists — starting..."
-    if gosu postgres pg_ctl status -D "${STANDBY2_DATA}" | grep -q "server is running"; then
+    if _pg pg_ctl status -D "${STANDBY2_DATA}" | grep -q "server is running"; then
         echo "[replication] Standby2 already running."
     else
         echo "primary_conninfo = 'host=127.0.0.1 port=5440 user=replicator password=${REPLICATOR_PASSWORD}'" \
             >> "${STANDBY2_DATA}/postgresql.auto.conf"
-        gosu postgres pg_ctl -D "${STANDBY2_DATA}" -o "-p 5442" \
+        _pg pg_ctl -D "${STANDBY2_DATA}" -o "-p 5442" \
             -l "${LOG_DIR}/repl-standby2.log" start
     fi
 fi

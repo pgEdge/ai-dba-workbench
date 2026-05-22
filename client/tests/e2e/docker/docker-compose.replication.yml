@@ -1,0 +1,54 @@
+# pgEdge AI DBA Workbench - Replication Overlay
+#
+# Extends docker-compose.yml to add on-demand replication support.
+# Four PostgreSQL instances run inside the single postgres container:
+#
+#   5432  ai_workbench   (main cluster — always running)
+#   5440  ragdb primary  (started on demand by ReplicationHelper)
+#   5441  ragdb standby1 (started on demand by ReplicationHelper)
+#   5442  ragdb standby2 (started on demand by ReplicationHelper)
+#
+# The replication cluster is not started automatically. Tests trigger
+# it by calling ReplicationHelper.start(), which runs docker exec
+# against the postgres container to execute /start-replication.sh.
+#
+# Usage:
+#
+#   cd client/tests/e2e
+#   bash scripts/setup-secrets.sh
+#   POSTGRES_PASSWORD=postgres docker compose \
+#     -f docker/docker-compose.yml \
+#     -f docker/docker-compose.replication.yml \
+#     up -d
+#
+# Tear down (removes volumes):
+#
+#   docker compose \
+#     -f docker/docker-compose.yml \
+#     -f docker/docker-compose.replication.yml \
+#     down -v
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ai_workbench
+      PGDATA: ${PGDATA_DIR:-/var/lib/postgresql/data}
+      REPLICATOR_PASSWORD: ${REPLICATOR_PASSWORD:-replicator}
+    volumes:
+      - ./start-replication.sh:/start-replication.sh:ro
+      - ./stop-replication.sh:/stop-replication.sh:ro
+      - repl-primary-data:/data/repl-primary
+      - repl-standby1-data:/data/repl-standby1
+      - repl-standby2-data:/data/repl-standby2
+    ports:
+      - "5440:5440"
+      - "5441:5441"
+      - "5442:5442"
+
+volumes:
+  repl-primary-data:
+  repl-standby1-data:
+  repl-standby2-data:

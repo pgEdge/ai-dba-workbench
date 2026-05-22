@@ -73,7 +73,7 @@ func isBaselineWarm(
 
 // warmupThresholdFor selects the per-period_type warmup
 // thresholds, falling back to the daily thresholds for any
-// unrecognised period_type.
+// unrecognized period_type.
 func warmupThresholdFor(
 	periodType string,
 	cfg config.WarmupConfig,
@@ -158,12 +158,43 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 			}
 
 			baseline := baselines[0]
-			if baseline.StdDev == 0 {
+
+			// Warmup gate: skip baselines that have not yet
+			// accumulated enough samples or wall-clock span to
+			// be trustworthy.
+			if !isBaselineWarm(*baseline, cfg.Anomaly.Tier1.Warmup, time.Now()) {
+				e.debugLog(
+					"Anomaly suppressed: baseline not warm "+
+						"(connection=%d metric=%s period=%s samples=%d earliest=%s)",
+					connID, rule.MetricName, baseline.PeriodType,
+					baseline.SampleCount, baseline.EarliestSampleAt,
+				)
 				continue
 			}
 
-			// Calculate z-score
-			zScore := (currentValue.Value - baseline.Mean) / baseline.StdDev
+			// Variance floor: never divide by a divisor smaller
+			// than the configured hybrid floor. This replaces
+			// the previous "stddev == 0" guard; if both floor
+			// knobs are zero the divisor can still be zero, so
+			// retain the degenerate-case skip.
+			stddev := effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor)
+			if stddev == 0 {
+				continue
+			}
+
+			// Calculate z-score using the floored divisor.
+			zScore := (currentValue.Value - baseline.Mean) / stddev
+
+			// Symmetric z-score cap: clamp |zScore| to MaxZScore
+			// when the cap is positive. A zero cap disables the
+			// clamp entirely.
+			if zCap := cfg.Anomaly.Tier1.MaxZScore; zCap > 0 {
+				if zScore > zCap {
+					zScore = zCap
+				} else if zScore < -zCap {
+					zScore = -zCap
+				}
+			}
 
 			// Check if z-score exceeds threshold
 			if zScore > sensitivity || zScore < -sensitivity {

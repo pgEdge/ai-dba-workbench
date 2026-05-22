@@ -731,19 +731,26 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 }
 
 // assertLocalTestDSN fails the test fast if the supplied DSN points
-// at anything other than a local loopback host and the project's
-// canonical test database. CLAUDE.local.md is explicit that the
-// alerter integration tests must only target 127.0.0.1/ai_workbench;
-// the destructive DDL embedded in the integration schemas would wipe
-// any other instance the env var resolved to. Shared across
-// integration helpers in the engine package.
+// at anything other than a local loopback host and one of the known
+// safe test database names. CLAUDE.local.md is explicit that the
+// alerter integration tests must only target a local loopback
+// Postgres; the destructive DDL embedded in the integration schemas
+// would wipe any other instance the env var resolved to. The
+// loopback-only host check is the primary safety net. The database
+// allowlist is intentionally tiny: "ai_workbench" for local dev and
+// "postgres" for CI (the default database created by the postgres
+// Docker image). Shared across integration helpers in the engine
+// package.
 func assertLocalTestDSN(t *testing.T, dsn string) {
 	t.Helper()
-	const allowedDB = "ai_workbench"
 	allowedHosts := map[string]struct{}{
 		"127.0.0.1": {},
 		"localhost": {},
 		"":          {}, // unix socket; only reachable on this host
+	}
+	allowedDBs := map[string]struct{}{
+		"ai_workbench": {},
+		"postgres":     {},
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -756,9 +763,10 @@ func assertLocalTestDSN(t *testing.T, dsn string) {
 			"TEST_AI_WORKBENCH_SERVER to a "+
 			"postgresql://...@127.0.0.1 DSN", host)
 	}
-	if cfg.ConnConfig.Database != allowedDB {
+	if _, ok := allowedDBs[cfg.ConnConfig.Database]; !ok {
 		t.Fatalf("refusing to run destructive integration tests "+
-			"against database %q; expected %q",
-			cfg.ConnConfig.Database, allowedDB)
+			"against database %q; expected one of: "+
+			"ai_workbench, postgres",
+			cfg.ConnConfig.Database)
 	}
 }

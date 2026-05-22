@@ -204,7 +204,7 @@ floor entirely; the detector then falls back to the existing
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `relative_pct` | float | `0.05` | Floor as fraction of |mean| |
+| `relative_pct` | float | `0.05` | Floor as fraction of abs(mean) |
 | `absolute_floor` | float | `0.001` | Absolute minimum stddev |
 
 The `anomaly.tier1.warmup` block suppresses detection for

@@ -506,6 +506,13 @@ func newBaselinesIntegrationEnv(t *testing.T) (*Engine, *database.Datastore, *pg
 		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping baselines integration test")
 	}
 
+	// Safety guard: refuse to run destructive DDL on anything other
+	// than the local test database. CLAUDE.local.md is explicit that
+	// regression tests must target 127.0.0.1/ai_workbench only;
+	// accidentally pointing TEST_AI_WORKBENCH_SERVER at any shared
+	// instance would have these tests wipe its schema.
+	assertLocalTestDSN(t, connStr)
+
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {
@@ -720,5 +727,38 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 	}
 	if len(baselines) != 0 {
 		t.Errorf("Expected 0 baselines for empty metric, got %d", len(baselines))
+	}
+}
+
+// assertLocalTestDSN fails the test fast if the supplied DSN points
+// at anything other than a local loopback host and the project's
+// canonical test database. CLAUDE.local.md is explicit that the
+// alerter integration tests must only target 127.0.0.1/ai_workbench;
+// the destructive DDL embedded in the integration schemas would wipe
+// any other instance the env var resolved to. Shared across
+// integration helpers in the engine package.
+func assertLocalTestDSN(t *testing.T, dsn string) {
+	t.Helper()
+	const allowedDB = "ai_workbench"
+	allowedHosts := map[string]struct{}{
+		"127.0.0.1": {},
+		"localhost": {},
+		"":          {}, // unix socket; only reachable on this host
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse test DSN: %v", err)
+	}
+	host := cfg.ConnConfig.Host
+	if _, ok := allowedHosts[host]; !ok {
+		t.Fatalf("refusing to run destructive integration tests "+
+			"against non-loopback host %q; set "+
+			"TEST_AI_WORKBENCH_SERVER to a "+
+			"postgresql://...@127.0.0.1 DSN", host)
+	}
+	if cfg.ConnConfig.Database != allowedDB {
+		t.Fatalf("refusing to run destructive integration tests "+
+			"against database %q; expected %q",
+			cfg.ConnConfig.Database, allowedDB)
 	}
 }

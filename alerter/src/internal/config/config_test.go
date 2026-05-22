@@ -10,6 +10,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -220,6 +221,65 @@ func TestConfigValidate(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// TestValidateRejectsBadAnomalyConfig covers the new Tier-1 range
+// checks added to Validate(): MaxZScore, VarianceFloor.RelativePct,
+// VarianceFloor.AbsoluteFloor, and Warmup.All.MinSamples. One sub-
+// case per error path is sufficient since each branch is a simple
+// numeric guard.
+func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		modifyFunc func(*Config)
+		errorMsg   string
+	}{
+		{
+			name: "negative max_z_score rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.MaxZScore = -1.0
+			},
+			errorMsg: "anomaly.tier1.max_z_score must be >= 0",
+		},
+		{
+			name: "NaN relative_pct rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.RelativePct = math.NaN()
+			},
+			errorMsg: "anomaly.tier1.variance_floor.relative_pct must be >= 0",
+		},
+		{
+			name: "negative absolute_floor rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor = -0.5
+			},
+			errorMsg: "anomaly.tier1.variance_floor.absolute_floor must be >= 0",
+		},
+		{
+			name: "negative warmup all.min_samples rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.Warmup.All.MinSamples = -1
+			},
+			errorMsg: "anomaly.tier1.warmup thresholds must be >= 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewConfig()
+			tt.modifyFunc(cfg)
+
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil",
+					tt.errorMsg)
+			}
+			if err.Error() != tt.errorMsg {
+				t.Errorf("expected error %q, got %q",
+					tt.errorMsg, err.Error())
 			}
 		})
 	}

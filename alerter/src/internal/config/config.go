@@ -12,6 +12,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
@@ -427,6 +428,27 @@ func (c *Config) Validate() error {
 	}
 	if c.Pool.MaxConnections <= 0 {
 		return fmt.Errorf("pool.max_connections must be greater than 0")
+	}
+	if c.Anomaly.Tier1.MaxZScore < 0 || math.IsNaN(c.Anomaly.Tier1.MaxZScore) {
+		return fmt.Errorf("anomaly.tier1.max_z_score must be >= 0")
+	}
+	if c.Anomaly.Tier1.VarianceFloor.RelativePct < 0 ||
+		math.IsNaN(c.Anomaly.Tier1.VarianceFloor.RelativePct) {
+		return fmt.Errorf(
+			"anomaly.tier1.variance_floor.relative_pct must be >= 0")
+	}
+	if c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor < 0 ||
+		math.IsNaN(c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor) {
+		return fmt.Errorf(
+			"anomaly.tier1.variance_floor.absolute_floor must be >= 0")
+	}
+	if c.Anomaly.Tier1.Warmup.All.MinSamples < 0 ||
+		c.Anomaly.Tier1.Warmup.All.MinSpanHours < 0 ||
+		c.Anomaly.Tier1.Warmup.Hourly.MinSamples < 0 ||
+		c.Anomaly.Tier1.Warmup.Hourly.MinSpanHours < 0 ||
+		c.Anomaly.Tier1.Warmup.Daily.MinSamples < 0 ||
+		c.Anomaly.Tier1.Warmup.Daily.MinSpanHours < 0 {
+		return fmt.Errorf("anomaly.tier1.warmup thresholds must be >= 0")
 	}
 	return nil
 }

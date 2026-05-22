@@ -495,8 +495,43 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 		earliestSampleAt time.Time
 		current          float64
 		wantEmitted      bool
-		wantMaxAbsZ      float64 // only checked when wantEmitted
+
+		// overrideMaxZScore, when non-nil, replaces the engine's
+		// configured z-score cap for this sub-case. The
+		// "tiny stddev floored" case sets this to 0 so the
+		// observed z-score must come from the variance-floor
+		// divisor and not from the cap; a regression that
+		// bypassed effectiveStdDev would otherwise saturate at
+		// the cap and silently pass.
+		overrideMaxZScore *float64
+
+		// wantExactZ is the expected z-score (with tolerance
+		// wantZTolerance) when wantEmitted is true. Computed by
+		// the test from the same effectiveStdDev path the
+		// detector uses, so the assertion fails the moment the
+		// detector stops calling that helper.
+		wantExactZ     float64
+		wantZTolerance float64
 	}
+
+	zero := 0.0
+
+	// Use the engine's live config to derive the expected
+	// floored z-score so the test stays correct if the default
+	// floor knobs change.
+	floorCfg := engine.getConfig().Anomaly.Tier1.VarianceFloor
+
+	// Floored case: stddev is well below |mean|*RelativePct, so
+	// effectiveStdDev = |mean| * RelativePct = 10 * 0.05 = 0.5.
+	// z = (12 - 10) / 0.5 = 4.0 with the default floor config.
+	flooredBaseline := database.MetricBaseline{Mean: 10, StdDev: 0.0001}
+	flooredStdDev := effectiveStdDev(flooredBaseline, floorCfg)
+	flooredZ := (12.0 - 10.0) / flooredStdDev
+
+	// Cap-asserting case: with the default 100.0 cap and the
+	// huge negative current value, the z-score must be clamped
+	// exactly to -100.
+	cappedZ := -cfg.Anomaly.Tier1.MaxZScore
 
 	cases := []caseSpec{
 		{
@@ -509,16 +544,29 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			wantEmitted:      false,
 		},
 		{
+			// Verifies the variance floor: tiny raw stddev is
+			// replaced by the hybrid floor so the z-score stays
+			// finite. The cap is disabled for this case so a
+			// regression that skipped effectiveStdDev would
+			// produce a near-infinite z-score and fail the
+			// exact-match assertion (rather than being masked by
+			// the cap clamp).
 			name:       "warm baseline tiny stddev floored",
 			periodType: "all",
 			mean:       10, stddev: 0.0001,
-			sampleCount:      200,
-			earliestSampleAt: matureEarliest,
-			current:          12,
-			wantEmitted:      true,
-			wantMaxAbsZ:      100,
+			sampleCount:       200,
+			earliestSampleAt:  matureEarliest,
+			current:           12,
+			wantEmitted:       true,
+			overrideMaxZScore: &zero,
+			wantExactZ:        flooredZ,
+			wantZTolerance:    1e-6,
 		},
 		{
+			// Verifies the symmetric z-score cap: a deeply
+			// negative current value would otherwise produce a
+			// very large negative z, and the cap must clamp it
+			// to exactly -MaxZScore.
 			name:       "warm baseline huge negative z capped",
 			periodType: "all",
 			mean:       10, stddev: 0.0001,
@@ -526,12 +574,27 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			earliestSampleAt: matureEarliest,
 			current:          -1e6,
 			wantEmitted:      true,
-			wantMaxAbsZ:      100,
+			wantExactZ:       cappedZ,
+			wantZTolerance:   1e-6,
 		},
 	}
 
+	// Capture the live config so we can restore it after a
+	// per-case override.
+	originalCfg := engine.getConfig()
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Apply any per-case cap override and restore the
+			// original config on the way out, so sub-tests stay
+			// hermetic with respect to the cap.
+			if tc.overrideMaxZScore != nil {
+				modified := *originalCfg
+				modified.Anomaly.Tier1.MaxZScore = *tc.overrideMaxZScore
+				engine.ReloadConfig(&modified)
+				defer engine.ReloadConfig(originalCfg)
+			}
+
 			// Reset per-case state so each sub-test is hermetic.
 			if _, err := pool.Exec(ctx,
 				`TRUNCATE anomaly_candidates RESTART IDENTITY`); err != nil {
@@ -599,9 +662,15 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			engine.detectAnomalies(ctx)
 
 			var count int
+			// Capture the signed z-score so we can assert against
+			// the expected floored/clamped value rather than only
+			// its absolute bound; the bound-only check would let a
+			// regression that bypassed effectiveStdDev pass once
+			// the cap kicked in.
 			var observedZ float64
 			err := pool.QueryRow(ctx, `
-				SELECT COUNT(*), COALESCE(MAX(ABS(z_score)), 0)
+				SELECT COUNT(*),
+				       COALESCE((array_agg(z_score ORDER BY id DESC))[1], 0)
 				FROM anomaly_candidates
 				WHERE connection_id = $1
 				  AND metric_name = $2
@@ -616,9 +685,12 @@ func TestDetectAppliesGatesAndCap(t *testing.T) {
 			if !tc.wantEmitted && count != 0 {
 				t.Fatalf("expected no anomaly candidate, got %d", count)
 			}
-			if tc.wantEmitted && observedZ > tc.wantMaxAbsZ+1e-6 {
-				t.Errorf("expected |z_score| <= %v, got %v",
-					tc.wantMaxAbsZ, observedZ)
+			if tc.wantEmitted {
+				diff := math.Abs(observedZ - tc.wantExactZ)
+				if diff > tc.wantZTolerance {
+					t.Errorf("expected z_score ~= %v (tol %v), got %v",
+						tc.wantExactZ, tc.wantZTolerance, observedZ)
+				}
 			}
 		})
 	}

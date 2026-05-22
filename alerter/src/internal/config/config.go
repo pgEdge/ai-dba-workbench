@@ -429,18 +429,23 @@ func (c *Config) Validate() error {
 	if c.Pool.MaxConnections <= 0 {
 		return fmt.Errorf("pool.max_connections must be greater than 0")
 	}
-	if c.Anomaly.Tier1.MaxZScore < 0 || math.IsNaN(c.Anomaly.Tier1.MaxZScore) {
-		return fmt.Errorf("anomaly.tier1.max_z_score must be >= 0")
+	if c.Anomaly.Tier1.MaxZScore < 0 ||
+		math.IsNaN(c.Anomaly.Tier1.MaxZScore) ||
+		math.IsInf(c.Anomaly.Tier1.MaxZScore, 0) {
+		return fmt.Errorf(
+			"anomaly.tier1.max_z_score must be a finite non-negative number")
 	}
 	if c.Anomaly.Tier1.VarianceFloor.RelativePct < 0 ||
-		math.IsNaN(c.Anomaly.Tier1.VarianceFloor.RelativePct) {
+		math.IsNaN(c.Anomaly.Tier1.VarianceFloor.RelativePct) ||
+		math.IsInf(c.Anomaly.Tier1.VarianceFloor.RelativePct, 0) {
 		return fmt.Errorf(
-			"anomaly.tier1.variance_floor.relative_pct must be >= 0")
+			"anomaly.tier1.variance_floor.relative_pct must be a finite non-negative number")
 	}
 	if c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor < 0 ||
-		math.IsNaN(c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor) {
+		math.IsNaN(c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor) ||
+		math.IsInf(c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor, 0) {
 		return fmt.Errorf(
-			"anomaly.tier1.variance_floor.absolute_floor must be >= 0")
+			"anomaly.tier1.variance_floor.absolute_floor must be a finite non-negative number")
 	}
 	if c.Anomaly.Tier1.Warmup.All.MinSamples < 0 ||
 		c.Anomaly.Tier1.Warmup.All.MinSpanHours < 0 ||

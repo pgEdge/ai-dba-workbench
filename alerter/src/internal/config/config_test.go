@@ -13,9 +13,11 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"gopkg.in/yaml.v3"
 )
 
 // TestNewConfig tests that NewConfig creates a configuration with sensible defaults
@@ -242,21 +244,42 @@ func TestValidateRejectsBadAnomalyConfig(t *testing.T) {
 			modifyFunc: func(c *Config) {
 				c.Anomaly.Tier1.MaxZScore = -1.0
 			},
-			errorMsg: "anomaly.tier1.max_z_score must be >= 0",
+			errorMsg: "anomaly.tier1.max_z_score must be a finite non-negative number",
+		},
+		{
+			name: "positive Inf max_z_score rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.MaxZScore = math.Inf(1)
+			},
+			errorMsg: "anomaly.tier1.max_z_score must be a finite non-negative number",
 		},
 		{
 			name: "NaN relative_pct rejected",
 			modifyFunc: func(c *Config) {
 				c.Anomaly.Tier1.VarianceFloor.RelativePct = math.NaN()
 			},
-			errorMsg: "anomaly.tier1.variance_floor.relative_pct must be >= 0",
+			errorMsg: "anomaly.tier1.variance_floor.relative_pct must be a finite non-negative number",
+		},
+		{
+			name: "negative Inf relative_pct rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.RelativePct = math.Inf(-1)
+			},
+			errorMsg: "anomaly.tier1.variance_floor.relative_pct must be a finite non-negative number",
 		},
 		{
 			name: "negative absolute_floor rejected",
 			modifyFunc: func(c *Config) {
 				c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor = -0.5
 			},
-			errorMsg: "anomaly.tier1.variance_floor.absolute_floor must be >= 0",
+			errorMsg: "anomaly.tier1.variance_floor.absolute_floor must be a finite non-negative number",
+		},
+		{
+			name: "positive Inf absolute_floor rejected",
+			modifyFunc: func(c *Config) {
+				c.Anomaly.Tier1.VarianceFloor.AbsoluteFloor = math.Inf(1)
+			},
+			errorMsg: "anomaly.tier1.variance_floor.absolute_floor must be a finite non-negative number",
 		},
 		{
 			name: "negative warmup all.min_samples rejected",
@@ -524,9 +547,11 @@ threshold:
 // TestExampleConfigsParse loads each of the shipped example
 // alerter YAML files and confirms that the tier-1 anomaly knobs
 // added for the warmup gate, variance floor, and z-score cap
-// round-trip correctly through LoadFromFile. This catches drift
-// between the live config schema in this package and the
-// annotated examples that operators copy from.
+// round-trip correctly through LoadFromFile. It also verifies
+// that each of the new keys is explicitly present in the raw
+// YAML, not merely supplied by NewConfig defaults during the
+// merge; this catches drift between the live config schema and
+// the annotated examples that operators copy from.
 func TestExampleConfigsParse(t *testing.T) {
 	paths := []string{
 		"../../../../examples/ai-dba-alerter.yaml",
@@ -534,9 +559,42 @@ func TestExampleConfigsParse(t *testing.T) {
 		"../../../../docker/config/ai-dba-alerter.yaml",
 	}
 
+	requiredKeys := []string{
+		"anomaly.tier1.max_z_score",
+		"anomaly.tier1.variance_floor.relative_pct",
+		"anomaly.tier1.variance_floor.absolute_floor",
+		"anomaly.tier1.warmup.all.min_samples",
+		"anomaly.tier1.warmup.all.min_span_hours",
+		"anomaly.tier1.warmup.hourly.min_samples",
+		"anomaly.tier1.warmup.hourly.min_span_hours",
+		"anomaly.tier1.warmup.daily.min_samples",
+		"anomaly.tier1.warmup.daily.min_span_hours",
+	}
+
 	for _, p := range paths {
 		p := p
 		t.Run(p, func(t *testing.T) {
+			// First check the raw YAML for explicit key presence.
+			// Without this, a missing key would still yield the
+			// correct merged value because NewConfig supplies a
+			// non-zero default, defeating the drift check.
+			raw, err := os.ReadFile(p) // #nosec G304 - test fixture path
+			if err != nil {
+				t.Fatalf("read %s: %v", p, err)
+			}
+			var m map[string]any
+			if err := yaml.Unmarshal(raw, &m); err != nil {
+				t.Fatalf("yaml unmarshal %s: %v", p, err)
+			}
+			for _, key := range requiredKeys {
+				if !hasNestedKey(m, strings.Split(key, ".")) {
+					t.Errorf("%s: missing key %s", p, key)
+				}
+			}
+
+			// Then confirm that the merged values match the
+			// documented defaults, catching example/schema drift
+			// in values as well as in key presence.
 			cfg := NewConfig()
 			if err := cfg.LoadFromFile(p); err != nil {
 				t.Fatalf("failed to parse %s: %v", p, err)
@@ -580,6 +638,29 @@ func TestExampleConfigsParse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// hasNestedKey walks a nested map with the given path segments
+// and reports whether the leaf is explicitly present (non-nil).
+// Used by TestExampleConfigsParse to confirm example files set
+// the new anomaly keys rather than relying on NewConfig defaults.
+func hasNestedKey(m map[string]any, path []string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	head, rest := path[0], path[1:]
+	v, ok := m[head]
+	if !ok {
+		return false
+	}
+	if len(rest) == 0 {
+		return v != nil
+	}
+	inner, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	return hasNestedKey(inner, rest)
 }
 
 // TestConfigFileExists tests the ConfigFileExists function

@@ -51,7 +51,7 @@ export class ReplicationHelper {
         // whether the replication compose overlay was used when starting the stack.
         await execAsync(`docker cp ${START_SCRIPT} ${id}:/tmp/start-replication.sh`);
         const { stderr } = await execAsync(
-            `docker exec ${id} bash /tmp/start-replication.sh`,
+            `docker exec -u root ${id} bash /tmp/start-replication.sh`,
             { timeout: STARTUP_TIMEOUT_MS },
         );
         if (stderr) {
@@ -71,7 +71,7 @@ export class ReplicationHelper {
     async stop(): Promise<void> {
         const id = await this.getContainerId();
         await execAsync(`docker cp ${STOP_SCRIPT} ${id}:/tmp/stop-replication.sh`);
-        await execAsync(`docker exec ${id} bash /tmp/stop-replication.sh`, {
+        await execAsync(`docker exec -u root ${id} bash /tmp/stop-replication.sh`, {
             timeout: 30_000,
         });
     }

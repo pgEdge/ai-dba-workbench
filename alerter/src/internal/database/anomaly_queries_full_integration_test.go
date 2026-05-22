@@ -284,6 +284,105 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	}
 }
 
+func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "mb-earliest-conn")
+
+	earliest := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	in := &MetricBaseline{
+		ConnectionID:     connID,
+		MetricName:       "m_earliest",
+		PeriodType:       "all",
+		Mean:             5.0,
+		StdDev:           1.0,
+		Min:              0.0,
+		Max:              10.0,
+		SampleCount:      100,
+		LastCalculated:   time.Now(),
+		EarliestSampleAt: earliest,
+	}
+	if err := ds.UpsertMetricBaseline(ctx, in); err != nil {
+		t.Fatalf("UpsertMetricBaseline insert: %v", err)
+	}
+
+	got, err := ds.GetMetricBaselines(ctx, connID, "m_earliest")
+	if err != nil {
+		t.Fatalf("GetMetricBaselines: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 baseline, got %d", len(got))
+	}
+	if !got[0].EarliestSampleAt.Equal(earliest) {
+		t.Errorf("EarliestSampleAt = %v, want %v",
+			got[0].EarliestSampleAt, earliest)
+	}
+
+	// Update path: change EarliestSampleAt and confirm the ON
+	// CONFLICT DO UPDATE clause refreshes the column.
+	newEarliest := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
+	in.EarliestSampleAt = newEarliest
+	if err := ds.UpsertMetricBaseline(ctx, in); err != nil {
+		t.Fatalf("UpsertMetricBaseline update: %v", err)
+	}
+	got, err = ds.GetMetricBaselines(ctx, connID, "m_earliest")
+	if err != nil {
+		t.Fatalf("GetMetricBaselines after update: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 baseline after update, got %d", len(got))
+	}
+	if !got[0].EarliestSampleAt.Equal(newEarliest) {
+		t.Errorf("EarliestSampleAt after update = %v, want %v",
+			got[0].EarliestSampleAt, newEarliest)
+	}
+
+	// Zero-value path: a Baseline with an unset EarliestSampleAt must
+	// store NULL (which surfaces as a Go zero time, .IsZero() true)
+	// rather than 0001-01-01.
+	zero := &MetricBaseline{
+		ConnectionID:   connID,
+		MetricName:     "m_earliest_zero",
+		PeriodType:     "all",
+		Mean:           1.0,
+		StdDev:         1.0,
+		Min:            0.0,
+		Max:            2.0,
+		SampleCount:    10,
+		LastCalculated: time.Now(),
+	}
+	if err := ds.UpsertMetricBaseline(ctx, zero); err != nil {
+		t.Fatalf("UpsertMetricBaseline zero: %v", err)
+	}
+	gotZero, err := ds.GetMetricBaselines(ctx, connID, "m_earliest_zero")
+	if err != nil {
+		t.Fatalf("GetMetricBaselines zero: %v", err)
+	}
+	if len(gotZero) != 1 {
+		t.Fatalf("expected 1 baseline for zero case, got %d", len(gotZero))
+	}
+	if !gotZero[0].EarliestSampleAt.IsZero() {
+		t.Errorf("expected zero EarliestSampleAt, got %v",
+			gotZero[0].EarliestSampleAt)
+	}
+
+	// Confirm NULL is actually stored in the DB (not 0001-01-01).
+	var nullCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM metric_baselines
+		WHERE connection_id = $1 AND metric_name = 'm_earliest_zero'
+		  AND earliest_sample_at IS NULL
+	`, connID).Scan(&nullCount); err != nil {
+		t.Fatalf("count NULL earliest_sample_at: %v", err)
+	}
+	if nullCount != 1 {
+		t.Errorf("expected exactly one NULL earliest_sample_at row, got %d",
+			nullCount)
+	}
+}
+
 func TestGetAcknowledgedAnomalyAlerts(t *testing.T) {
 	ds, pool, cleanup := newFullTestDatastore(t)
 	defer cleanup()

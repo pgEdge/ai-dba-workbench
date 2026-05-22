@@ -224,7 +224,8 @@ CREATE TABLE metric_baselines (
     min REAL NOT NULL,
     max REAL NOT NULL,
     sample_count BIGINT NOT NULL DEFAULT 0,
-    last_calculated TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    last_calculated TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    earliest_sample_at TIMESTAMPTZ
 );
 
 CREATE UNIQUE INDEX idx_metric_baselines_unique

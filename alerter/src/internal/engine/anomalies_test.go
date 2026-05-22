@@ -10,10 +10,12 @@
 package engine
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
@@ -127,4 +129,38 @@ func TestBuildClassificationPrompt(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestEffectiveStdDev verifies the hybrid variance floor helper
+// returns max(raw_stddev, max(|mean| * RelativePct, AbsoluteFloor))
+// across the relevant branches of the formula.
+func TestEffectiveStdDev(t *testing.T) {
+	cases := []struct {
+		name     string
+		mean     float64
+		stddev   float64
+		relPct   float64
+		absFloor float64
+		want     float64
+	}{
+		{"raw stddev dominates", 100, 10, 0.05, 0.001, 10},
+		{"relative floor kicks in", 100, 0.01, 0.05, 0.001, 5},
+		{"absolute floor kicks in", 0, 0.0001, 0.05, 0.001, 0.001},
+		{"mean zero stddev zero", 0, 0, 0.05, 0.001, 0.001},
+		{"negative mean uses abs", -200, 0.01, 0.05, 0.001, 10},
+		{"both floors zero", 100, 0.0001, 0, 0, 0.0001},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := database.MetricBaseline{Mean: tc.mean, StdDev: tc.stddev}
+			cfg := config.VarianceFloorConfig{
+				RelativePct:   tc.relPct,
+				AbsoluteFloor: tc.absFloor,
+			}
+			got := effectiveStdDev(b, cfg)
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("name=%s: got %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
 }

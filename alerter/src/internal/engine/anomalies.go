@@ -13,11 +13,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
+	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
+
+// effectiveStdDev applies the hybrid variance floor described in
+// the anomaly detector design. Returns max(raw_stddev,
+// max(|mean| * RelativePct, AbsoluteFloor)). Callers retain the
+// existing stddev == 0 guard for the degenerate case where both
+// floor knobs are zero.
+func effectiveStdDev(
+	b database.MetricBaseline,
+	cfg config.VarianceFloorConfig,
+) float64 {
+	relFloor := math.Abs(b.Mean) * cfg.RelativePct
+	floor := math.Max(relFloor, cfg.AbsoluteFloor)
+	return math.Max(b.StdDev, floor)
+}
 
 // detectAnomalies runs the tiered anomaly detection
 func (e *Engine) detectAnomalies(ctx context.Context) {

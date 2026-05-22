@@ -131,6 +131,80 @@ func TestBuildClassificationPrompt(t *testing.T) {
 	})
 }
 
+// TestIsBaselineWarm verifies the warmup gate helper requires
+// both a minimum sample count and a minimum wall-clock span,
+// fails closed on a zero EarliestSampleAt unless the span check
+// is disabled, and falls back to the daily thresholds for
+// unknown period_types.
+func TestIsBaselineWarm(t *testing.T) {
+	cfg := config.WarmupConfig{
+		All: config.PerPeriodWarmupConfig{
+			MinSamples: 100, MinSpanHours: 24,
+		},
+		Hourly: config.PerPeriodWarmupConfig{
+			MinSamples: 5, MinSpanHours: 120,
+		},
+		Daily: config.PerPeriodWarmupConfig{
+			MinSamples: 3, MinSpanHours: 336,
+		},
+	}
+	now := time.Now().UTC()
+
+	cases := []struct {
+		name        string
+		periodType  string
+		samples     int64
+		earliest    time.Time
+		cfgOverride *config.WarmupConfig
+		want        bool
+	}{
+		{"all: both pass", "all", 200,
+			now.Add(-48 * time.Hour), nil, true},
+		{"all: under-samples", "all", 50,
+			now.Add(-48 * time.Hour), nil, false},
+		{"all: under-span", "all", 200,
+			now.Add(-12 * time.Hour), nil, false},
+		{"all: NULL earliest", "all", 200,
+			time.Time{}, nil, false},
+		{"hourly: both pass", "hourly", 10,
+			now.Add(-200 * time.Hour), nil, true},
+		{"daily: both pass", "daily", 5,
+			now.Add(-400 * time.Hour), nil, true},
+		{"gate disabled by zero config", "all", 0,
+			time.Time{},
+			&config.WarmupConfig{
+				All: config.PerPeriodWarmupConfig{
+					MinSamples: 0, MinSpanHours: 0,
+				},
+			},
+			true},
+		{"unknown period_type falls back to daily",
+			"weekly", 5, now.Add(-400 * time.Hour),
+			nil, true},
+		{"unknown period_type under daily span",
+			"weekly", 5, now.Add(-100 * time.Hour),
+			nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useCfg := cfg
+			if tc.cfgOverride != nil {
+				useCfg = *tc.cfgOverride
+			}
+			b := database.MetricBaseline{
+				PeriodType:       tc.periodType,
+				SampleCount:      tc.samples,
+				EarliestSampleAt: tc.earliest,
+			}
+			got := isBaselineWarm(b, useCfg, now)
+			if got != tc.want {
+				t.Errorf("name=%s: got %v, want %v",
+					tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestEffectiveStdDev verifies the hybrid variance floor helper
 // returns max(raw_stddev, max(|mean| * RelativePct, AbsoluteFloor))
 // across the relevant branches of the formula.

@@ -35,6 +35,61 @@ func effectiveStdDev(
 	return math.Max(b.StdDev, floor)
 }
 
+// isBaselineWarm reports whether the baseline has accumulated
+// enough samples and enough wall-clock span to be trustworthy
+// for anomaly detection. A zero EarliestSampleAt (e.g. a row
+// written before the column was populated, or a fallback
+// baseline that lacks raw sample timestamps) is treated as not
+// warm.
+//
+// The span check is skipped when the configured MinSpanHours is
+// zero, which is the documented escape hatch to disable the
+// time-span half of the gate.
+//
+// Unknown period_types fall back to the daily thresholds, which
+// are the strictest of the three configured pairs by default.
+// This is defensive; period_type is enum-constrained at write
+// time.
+func isBaselineWarm(
+	b database.MetricBaseline,
+	cfg config.WarmupConfig,
+	now time.Time,
+) bool {
+	thresh := warmupThresholdFor(b.PeriodType, cfg)
+	if b.SampleCount < int64(thresh.MinSamples) {
+		return false
+	}
+	if thresh.MinSpanHours > 0 {
+		if b.EarliestSampleAt.IsZero() {
+			return false
+		}
+		minSpan := time.Duration(thresh.MinSpanHours) * time.Hour
+		if now.Sub(b.EarliestSampleAt) < minSpan {
+			return false
+		}
+	}
+	return true
+}
+
+// warmupThresholdFor selects the per-period_type warmup
+// thresholds, falling back to the daily thresholds for any
+// unrecognised period_type.
+func warmupThresholdFor(
+	periodType string,
+	cfg config.WarmupConfig,
+) config.PerPeriodWarmupConfig {
+	switch periodType {
+	case "all":
+		return cfg.All
+	case "hourly":
+		return cfg.Hourly
+	case "daily":
+		return cfg.Daily
+	default:
+		return cfg.Daily
+	}
+}
+
 // detectAnomalies runs the tiered anomaly detection
 func (e *Engine) detectAnomalies(ctx context.Context) {
 	e.debugLog("Running anomaly detection...")

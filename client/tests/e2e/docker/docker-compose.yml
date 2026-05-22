@@ -85,7 +85,13 @@ services:
     depends_on:
       - server
     ports:
-      - "3000:80"
+      - "3000:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - e2e-network
     restart: unless-stopped

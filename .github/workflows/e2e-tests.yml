@@ -158,6 +158,27 @@ jobs:
                     exit 1
                   fi
 
+            - name: Wait for client to be healthy
+              if: steps.resolve-mode.outputs.install_mode == 'docker'
+              run: |
+                  echo "Waiting for client (nginx)..."
+                  attempts=0
+                  max_attempts=30
+                  while [ $attempts -lt $max_attempts ]; do
+                    if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
+                      echo "Client is responsive"
+                      break
+                    fi
+                    sleep 3
+                    attempts=$((attempts + 1))
+                  done
+                  if [ $attempts -ge $max_attempts ]; then
+                    echo "ERROR: Client did not respond"
+                    docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml ps
+                    docker compose -f $GITHUB_WORKSPACE/client/tests/e2e/docker/docker-compose.yml logs client
+                    exit 1
+                  fi
+
             - name: Create admin user
               if: steps.resolve-mode.outputs.install_mode == 'docker'
               run: |

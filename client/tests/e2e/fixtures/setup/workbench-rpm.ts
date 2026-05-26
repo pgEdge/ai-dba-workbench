@@ -58,6 +58,16 @@ export async function setupWorkbenchRPM(
 
     if (!serverAlreadyUp) {
         console.log('[E2E setup] Starting RPM stack (this may take a while on first run)...');
+        // Stop any notifications-only containers that may be holding ports
+        // 1025/8025 (mailpit) and 9090 (wiremock). Those containers run on
+        // a separate network and would prevent the RPM compose from binding
+        // the same ports, causing mailpit/wiremock to exit on startup.
+        const NOTIFICATIONS_COMPOSE = path.join(E2E_DIR, 'docker', 'docker-compose.notifications.yml');
+        try {
+            execSync(`docker compose -f ${NOTIFICATIONS_COMPOSE} down`, {
+                cwd: E2E_DIR, stdio: 'pipe', env: rpmEnv,
+            });
+        } catch { /* ignore if not running */ }
         execSync(`docker compose -f ${RPM_COMPOSE_FILE} down --volumes`, {
             cwd: E2E_DIR,
             stdio: 'pipe',

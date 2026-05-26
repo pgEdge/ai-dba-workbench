@@ -24,7 +24,7 @@ ARG REPO_CHANNEL=release
 # Handles both DNF (Rocky/RHEL) and APT (Debian/Ubuntu).
 # -----------------------------------------------------------------------
 RUN if command -v dnf >/dev/null 2>&1; then \
-        dnf install -y curl nginx procps-ng shadow-utils iputils bind-utils postgresql glibc-common && \
+        dnf install -y --allowerasing curl nginx procps-ng shadow-utils iputils bind-utils postgresql glibc-common && \
         dnf clean all; \
     elif command -v apt-get >/dev/null 2>&1; then \
         apt-get update && \

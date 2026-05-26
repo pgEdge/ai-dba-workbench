@@ -165,6 +165,17 @@ else
     done
     echo "[entrypoint] Collector initialized."
 
+    # Grant dba_server access to any tables the collector created
+    # (including schema_version). The server health check reads
+    # schema_version on startup; without this grant it fails before
+    # init-db.sql can be applied.
+    echo "[entrypoint] Granting dba_server access to collector-created tables..."
+    PGPASSWORD=postgres psql -h postgres -U postgres -d ai_workbench \
+        -v ON_ERROR_STOP=0 \
+        -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO dba_server;" \
+        -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO dba_server;" || true
+    echo "[entrypoint] dba_server grants applied."
+
     # Start ai-dba-server
     /usr/bin/ai-dba-server \
         -config "${CONFIG_DIR}/ai-dba-server.yaml" \

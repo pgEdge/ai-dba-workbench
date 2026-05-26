@@ -111,7 +111,7 @@ Container Registry.
     The `/usr/local/bin/` path in the command above is specific to Docker
     container images. Manual installs and RPM/DEB packages use different
     binary locations. See the
-    [installation paths table](installation.md#installation-paths-by-method)
+    [installation paths table](installation_overview.md#supported-installation-methods)
     for details.
 
 !!! warning "Add TLS before exposing the deployment"

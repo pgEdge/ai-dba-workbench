@@ -36,10 +36,11 @@ table summarizes the locations for each deployment method.
 !!! note
     RPM and DEB packages are available from the
     [pgEdge Enterprise Repository](https://docs.pgedge.com/enterprise/), and
-    are used in the Docker deployment method documented 
-    [here](docker.md). If you're using pgEdge packages for deployment, note
-    that the packages create and use the pgedge user automatically, and you do
-    not need to manually adjust your systemd files to manage the service.
+    are used in the Docker deployment method documented in the
+    [Docker deployment guide](docker.md). If you're using pgEdge packages
+    for deployment, note that the packages create and use the pgedge user
+    automatically, and you do not need to manually adjust your systemd files
+    to manage the service.
 
     Contact pgEdge for information about accessing the 
     [enterprise packages](https://docs.pgedge.com/enterprise/).

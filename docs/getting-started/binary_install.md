@@ -79,18 +79,18 @@ directory; the complete paths are:
 - `/etc/ai-workbench/password.txt`
 
 In the following example, the `mkdir` command creates the
-`/etc/pgedge` directory:
+`/etc/ai-workbench` directory:
 
 ```bash
-sudo mkdir -p /etc/pgedge
+sudo mkdir -p /etc/ai-workbench
 ```
 
-In the following example, the `openssl` command writes a secret to
-the `server.secret` file in the `/etc/pgedge` directory:
+Then, we use the `openssl` command to write a secret to
+the `server.secret` file in the `/etc/ai-workbench` directory:
 
 ```bash
 sudo openssl rand -base64 32 \
-    | sudo tee /etc/pgedge/server.secret \
+    | sudo tee /etc/ai-workbench/server.secret \
     > /dev/null
 sudo chmod 600 /etc/ai-workbench/server.secret
 ```
@@ -99,7 +99,6 @@ Then, use the `echo` and `chmod` commands to create the `password.txt` file
 in the `/etc/ai-workbench` directory and set the file permissions:
 
 ```bash
-sudo mkdir -p /etc/ai-workbench
 sudo sh -c 'echo "your-password" > /etc/ai-workbench/password.txt'
 sudo chmod 600 /etc/ai-workbench/password.txt
 ```
@@ -377,7 +376,7 @@ datastore:
   # Database name in the AI DBA Workbench datastore
   # Default: ai_workbench
   # Command-line: -pg-database
-  database: ai-workbench
+  database: ai_workbench
 
   # Username for connecting to the AI DBA Workbench datastore
   # Default: postgres
@@ -404,7 +403,7 @@ datastore:
 The `SECURITY SETTINGS` section stores the location of the secret file:
 
 ```yaml
-secret_file: /etc/ai-workbench/secret.secret
+secret_file: /etc/ai-workbench/server.secret
 ```
 
 In the following example, the `ai-dba-alerter` command starts the
@@ -437,7 +436,7 @@ Starting alerter engine...
 [alerter] Baseline calculation complete
 ```
 
-The server is running as a background process; press `Enter` to view your prompt.
+The alerter is running as a background process; press `Enter` to view your prompt.
 
 
 ## Running the Workbench

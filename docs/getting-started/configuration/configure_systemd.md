@@ -61,7 +61,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-### Configuring the Alerter Service
+## Configuring the Alerter Service
 
 The alerter service file configures the alerter to start automatically
 and restart if the process exits.

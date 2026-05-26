@@ -63,7 +63,7 @@ export async function setupWorkbenchRPM(
             stdio: 'pipe',
             env: rpmEnv,
         });
-        execSync(`docker compose -f ${RPM_COMPOSE_FILE} up -d --build`, {
+        execSync(`docker compose -f ${RPM_COMPOSE_FILE} up -d --build --wait --wait-timeout 360`, {
             cwd: E2E_DIR,
             stdio: 'inherit',
             env: rpmEnv,

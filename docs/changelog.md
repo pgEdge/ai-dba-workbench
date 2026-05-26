@@ -8,7 +8,7 @@ The format is based on
 project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0-beta3] - Unreleased
+## [1.0.0-beta3] - 2026-05-26
 
 ### Added
 
@@ -57,6 +57,7 @@ project adheres to
   have caused them without falling back to direct REST
   calls. The tool gates results through the same RBAC
   checks as `get_alert_history`. (#250)
+
 ### Security
 
 - Fix the server creating the SQLite `auth.db` file with

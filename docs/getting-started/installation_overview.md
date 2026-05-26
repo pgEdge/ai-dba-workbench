@@ -9,9 +9,16 @@ language and intelligent automation. The Workbench exposes pgEdge tools and
 data sources to both cloud-connected and locally hosted language models; this
 design ensures full functionality in air-gapped or secure environments.
 
+
 ## Supported Installation Methods
 
-The Workbench supports three deployment methods.
+The Workbench is supported on x86_64 (amd64) and arm64 when installed with
+[RPM packages](https://docs.pgedge.com/enterprise/) from the pgEdge
+repository, or [binary files](binary_install.md) or
+[source code](build_from_source.md) from 
+[the pgEdge GitHub repository](https://github.com/pgEdge/ai-dba-workbench).
+Additionally, macOS installations on x86_64 or arm64 are supported from
+GitHub.
 
 - [Building from binary files](binary_install.md) is the easiest method to use
   to deploy the Workbench.

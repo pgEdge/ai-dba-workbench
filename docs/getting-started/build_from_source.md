@@ -6,15 +6,13 @@ source code and configuration examples in the
 [GitHub repository](https://github.com/pgEdge/ai-dba-workbench).
 
 Before you deploy the Workbench, confirm the following prerequisites are
-in place:
+in place on a supported operating system and platform:
 
 - [PostgreSQL 14](https://www.postgresql.org/download/) or later is
   installed for the Workbench datastore.
 - The database credentials for the datastore database are available.
 - Network access exists between each monitored PostgreSQL server and the
   system hosting the Workbench.
-- A Linux x86_64 system is available to host the server-side components.
-
 
 ## Building from Source Code
 

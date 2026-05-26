@@ -63,11 +63,51 @@ export async function setupWorkbenchRPM(
             stdio: 'pipe',
             env: rpmEnv,
         });
-        execSync(`docker compose -f ${RPM_COMPOSE_FILE} up -d --build --wait --wait-timeout 360`, {
+        execSync(`docker compose -f ${RPM_COMPOSE_FILE} up -d --build`, {
             cwd: E2E_DIR,
             stdio: 'inherit',
             env: rpmEnv,
         });
+
+        // Wait for the workbench service to become healthy (up to 6 minutes).
+        // The RPM entrypoint starts PostgreSQL, runs migrations, and starts
+        // all services — this takes longer than a simple TCP health check.
+        console.log('[E2E setup] Waiting for workbench service to become healthy...');
+        const healthDeadline = Date.now() + 360_000;
+        let workbenchHealthy = false;
+        while (Date.now() < healthDeadline) {
+            const ps = spawnSync(
+                'docker',
+                ['compose', '-f', RPM_COMPOSE_FILE, 'ps', '--format', 'json'],
+                { cwd: E2E_DIR, stdio: 'pipe', env: rpmEnv },
+            );
+            const psOut = ps.stdout?.toString() ?? '';
+            const isHealthy = psOut.split('\n').some(line => {
+                try {
+                    const svc = JSON.parse(line) as Record<string, string>;
+                    return svc['Service'] === 'workbench' && svc['Health'] === 'healthy';
+                } catch { return false; }
+            });
+            if (isHealthy) {
+                workbenchHealthy = true;
+                console.log('[E2E setup] Workbench service is healthy.');
+                break;
+            }
+            await sleep(5_000);
+        }
+        if (!workbenchHealthy) {
+            try {
+                const logs = execSync(
+                    `docker compose -f ${RPM_COMPOSE_FILE} logs workbench --tail=100`,
+                    { cwd: E2E_DIR, env: rpmEnv },
+                );
+                console.error('[E2E setup] Workbench logs:\n' + logs.toString());
+            } catch { /* ignore */ }
+            throw new Error(
+                '[E2E setup] Workbench service did not become healthy within 360s. ' +
+                'Check the logs above for details.',
+            );
+        }
     }
 
     await validateRPMNetworkConnectivity();

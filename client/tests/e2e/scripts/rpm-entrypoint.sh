@@ -82,10 +82,11 @@ chown pgedge:pgedge "${CONFIG_DIR}/dba-alerter-password" 2>/dev/null || true
 # (both are safe, unambiguous lines). All DB connection params are
 # passed via CLI flags so the rest of the YAML files are never modified.
 # -----------------------------------------------------------------------
-echo "[entrypoint] Patching secret_file paths..."
+echo "[entrypoint] Patching secret_file paths and server port..."
 sed -i "s|^secret_file:.*|secret_file: ${CONFIG_DIR}/ai-dba-server.secret|"    "${CONFIG_DIR}/ai-dba-server.yaml"
 sed -i "s|^secret_file:.*|secret_file: ${CONFIG_DIR}/ai-dba-collector.secret|" "${CONFIG_DIR}/ai-dba-collector.yaml"
 sed -i "s/allow_internal_networks: false/allow_internal_networks: true/" "${CONFIG_DIR}/ai-dba-server.yaml"
+sed -i 's/address: ":8080"/address: ":8443"/' "${CONFIG_DIR}/ai-dba-server.yaml"
 
 # -----------------------------------------------------------------------
 # Create database users before starting services.

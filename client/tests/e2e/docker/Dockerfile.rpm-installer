@@ -61,7 +61,7 @@ RUN if command -v dnf >/dev/null 2>&1; then \
 # Install pgEdge AI DBA Workbench packages
 # -----------------------------------------------------------------------
 RUN if command -v dnf >/dev/null 2>&1; then \
-        dnf install -y 'pgedge-ai*' && dnf clean all; \
+        dnf install -y --nogpgcheck 'pgedge-ai*' && dnf clean all; \
     elif command -v apt-get >/dev/null 2>&1; then \
         apt-get update && \
         apt-get install -y 'pgedge-ai*' && \

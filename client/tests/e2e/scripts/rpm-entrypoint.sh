@@ -87,6 +87,7 @@ sed -i "s|^secret_file:.*|secret_file: ${CONFIG_DIR}/ai-dba-server.secret|"    "
 sed -i "s|^secret_file:.*|secret_file: ${CONFIG_DIR}/ai-dba-collector.secret|" "${CONFIG_DIR}/ai-dba-collector.yaml"
 sed -i "s/allow_internal_networks: false/allow_internal_networks: true/" "${CONFIG_DIR}/ai-dba-server.yaml"
 sed -i 's/address: ":8080"/address: ":8443"/' "${CONFIG_DIR}/ai-dba-server.yaml"
+echo "[entrypoint] Effective server listen address: $(grep 'address:' "${CONFIG_DIR}/ai-dba-server.yaml" | head -1 | xargs)"
 
 # -----------------------------------------------------------------------
 # Create database users before starting services.
@@ -117,8 +118,15 @@ if [ -d /run/systemd/system ]; then
 
     # Wait for server to finish migrations, then apply database grants.
     echo "[entrypoint] Waiting for server to finish migrations..."
+    server_wait=0
     until curl -sf http://localhost:8443/health >/dev/null 2>&1; do
         sleep 2
+        server_wait=$((server_wait + 1))
+        if [ $server_wait -ge 120 ]; then
+            echo "[entrypoint] ERROR: Server did not become healthy after 240s."
+            journalctl -u pgedge-ai-dba-server.service --no-pager -n 50 2>/dev/null || true
+            exit 1
+        fi
     done
     echo "[entrypoint] Applying database grants..."
     PGPASSWORD=postgres psql -h postgres -U postgres -d ai_workbench \
@@ -145,8 +153,15 @@ else
     echo "[entrypoint] ai-dba-collector started (PID $!)"
 
     echo "[entrypoint] Waiting for collector to initialize..."
+    collector_wait=0
     until grep -q "running\|started\|Collector is running" "${LOG_DIR}/collector.log" 2>/dev/null; do
         sleep 2
+        collector_wait=$((collector_wait + 1))
+        if [ $collector_wait -ge 60 ]; then
+            echo "[entrypoint] ERROR: Collector did not initialize after 120s. Last log:"
+            tail -30 "${LOG_DIR}/collector.log" 2>/dev/null || echo "(collector.log not found)"
+            exit 1
+        fi
     done
     echo "[entrypoint] Collector initialized."
 
@@ -163,8 +178,15 @@ else
     echo "[entrypoint] ai-dba-server started (PID $!)"
 
     echo "[entrypoint] Waiting for server to finish migrations..."
+    server_wait=0
     until curl -sf http://localhost:8443/health >/dev/null 2>&1; do
         sleep 2
+        server_wait=$((server_wait + 1))
+        if [ $server_wait -ge 120 ]; then
+            echo "[entrypoint] ERROR: Server did not become healthy after 240s. Last log:"
+            tail -50 "${LOG_DIR}/server.log" 2>/dev/null || echo "(server.log not found)"
+            exit 1
+        fi
     done
     echo "[entrypoint] Server is healthy — migrations complete."
 

@@ -98,7 +98,7 @@ User created successfully!
 ======================================================================
 
 Username:  alice
-Full Name: Alice
+Full Name: Alice Baker
 Email:    alice@pgedge.com
 Status:   Enabled
 ======================================================================

@@ -15,7 +15,7 @@ sudo systemctl status pgedge-ai-dba-collector
 A healthy collector shows an active status, a confirmed datastore connection,
 and active probe scheduling. The following example shows the expected output:
 
-```bash
+```text
 pgedge-ai-dba-collector.service - pgEdge AI DBA Workbench Collector
  Loaded: loaded (/etc/systemd/system/pgedge-ai-dba-collector.service; enabled; vendor preset: enabled)
  Active: active (running) since Tue 2026-05-12 14:45:17 UTC; 24h ago
@@ -47,7 +47,7 @@ curl -s http://localhost:8080/health
 A successful response confirms the server is running and accepting requests.
 The following example shows the expected output:
 
-```bash
+```text
 curl -s http://localhost:8080/health
 {"status":"ok","server":"pgedge-postgres-mcp","version":"1.0.0-beta1"}
 ```
@@ -64,7 +64,7 @@ sudo systemctl status pgedge-ai-dba-alerter
 A healthy alerter shows an active status and regular baseline recalculation
 on its hourly schedule. The following example shows the expected output:
 
-```bash
+```text
 pgedge-ai-dba-alerter.service - pgEdge AI DBA Workbench Alerter
  Loaded: loaded (/etc/systemd/system/pgedge-ai-dba-alerter.service; enabled; vendor preset: enabled)
  Active: active (running) since Tue 2026-05-12 15:32:55 UTC; 23h ago

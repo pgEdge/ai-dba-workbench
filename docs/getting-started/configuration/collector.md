@@ -8,7 +8,7 @@ order; later sources override earlier ones:
 2. Configuration file.
 3. Command-line flags.
 
-### File Location
+## File Location
 
 The collector searches for its configuration file in the following
 locations in order:
@@ -27,7 +27,7 @@ contain a configuration file, the collector uses built-in defaults
 silently. The collector no longer searches the binary directory or the
 current working directory.
 
-### File Format
+## File Format
 
 The configuration file uses YAML format with nested sections.
 

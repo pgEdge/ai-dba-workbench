@@ -123,18 +123,12 @@ The pgEdge AI DBA Workbench consists of four main components:
 - The [Client](client/README.md) provides a web-based user interface for
   the AI DBA Workbench.
 
+The Workbench can be:
 
-## Installing pgEdge AI DBA Workbench
-
-Before installing the Workbench with binary files or building the project from
-source, install the following software:
-
-- [Go 1.24](https://go.dev/doc/install) or later for building server-side
-  components.
-- [Node.js 18](https://nodejs.org/) or later for building the web client.
-- [PostgreSQL 14](https://www.postgresql.org/download/) or later for the
-  datastore.
-- [Make](https://www.gnu.org/software/make/) for build automation.
+* installed with [binary files](#using-binary-files-to-install-workbench) from the Github repo.
+* built from [source code](#building-workbench-from-source) from the Github repo.
+* deployed in a [Docker container](#using-docker-to-install-workbench).
+* installed with [packages from the pgEdge](https://docs.pgedge.com/enterprise/) repository.
 
 
 ### Using Binary Files to Install Workbench
@@ -142,79 +136,28 @@ source, install the following software:
 Pre-built binary files for Workbench are available from the pgEdge repo at:
 [https://github.com/pgEdge/ai-dba-workbench/releases](https://github.com/pgEdge/ai-dba-workbench/releases).
 
-The Quick Start - Installing with Binaries guide contains detailed
+The `Quick Start - Installing with Binaries` guide contains detailed
 instructions for using the binary files to install and configure
 [the Workbench](docs/getting-started/binary_install.md).
 
+### Building Workbench from Source
 
-### Building AI DBA Workbench from Source Code
+The Workbench can be built from source for local development or to
+produce custom binaries.
 
-This project uses Makefiles for building and testing. All components can be
-built from the top-level directory with the command:
+The `Quick Start - Building from Source` guide contains detailed
+instructions for cloning the repository, satisfying build dependencies,
+and compiling the Workbench:
+[Building from Source](docs/getting-started/build_from_source.md).
 
-```bash
-make all
-```
+### Using Docker to Install Workbench
 
-To build an individual component (for example the `collector`), use the
-following command:
+Pre-built container images for Workbench are published to the GitHub
+Container Registry for each release.
 
-```bash
-cd collector && make build
-```
-
-After building the project, you'll need to configure each component; for
-detailed configuration instructions for each component, see the following
-documentation:
-
-- The [Server Configuration](docs/getting-started/configuration/server.md)
-  reference covers all server options.
-- The [Collector Configuration](docs/getting-started/configuration/collector.md)
-  reference covers all collector options.
-- The [Alerter Configuration](docs/getting-started/configuration/alerter.md)
-  reference covers all alerter options.
-
-
-## Running the AI DBA Workbench Tests
-
-The project includes unit tests for each component. Use the following
-commands to run the full test suite:
-
-```bash
-make test
-make coverage
-make lint
-make test-all
-```
-
-To run tests for an individual component, use the following command:
-
-```bash
-cd collector && make test
-```
-
-Each sub-project and the top-level Makefile supports the following targets:
-
-- `all` builds the project and is the default target.
-- `test` runs the test suite.
-- `coverage` runs tests with a coverage report.
-- `lint` runs the linter.
-- `test-all` runs tests, coverage, and the linter.
-- `test-e2e` runs the Playwright end-to-end smoke-test suite
-  against a Docker-managed stack.
-- `clean` removes build artifacts.
-- `killall` kills any running processes.
-- `help` shows the available targets.
-
-### Using Environment Variables for Testing
-
-The following environment variables control test behavior:
-
-- `TEST_AI_WORKBENCH_SERVER` specifies the PostgreSQL connection string
-  for the test database; the default is
-  `postgres://postgres@localhost:5432/postgres`.
-- `TEST_AI_WORKBENCH_KEEP_DB=1` preserves the test database after tests
-  complete.
+The `Quick Start - Docker Deployment` guide contains detailed
+instructions for deploying the Workbench using Docker Compose:
+[Docker Deployment](docs/getting-started/docker.md).
 
 
 ## Issues

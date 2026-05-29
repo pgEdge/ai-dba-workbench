@@ -79,6 +79,20 @@ project adheres to
   start and operators should consult the WARNING log line that
   reports the observed mode. (#249)
 
+### Added
+
+- Add Gemini as a supported embedding provider in the
+  `embedding` and `knowledgebase` server configurations;
+  the provider supports `text-embedding-004` (default)
+  and `embedding-001`, both at 768 dimensions. (#246)
+
+### Changed
+
+- Update the default Gemini chat model in the alerter
+  and server configurations from `gemini-2.0-flash`,
+  which is no longer available to new API users, to
+  `gemini-2.5-flash`. (#246)
+
 ### Fixed
 
 - Fix the `get_timeline_events` MCP tool emitting a

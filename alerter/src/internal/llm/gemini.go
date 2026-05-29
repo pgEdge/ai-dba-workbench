@@ -21,7 +21,7 @@ import (
 
 const (
 	geminiBaseURL      = "https://generativelanguage.googleapis.com"
-	geminiDefaultModel = "gemini-2.0-flash"
+	geminiDefaultModel = "gemini-2.5-flash"
 )
 
 // GeminiReasoning implements ReasoningProvider using Google's Gemini API.

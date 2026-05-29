@@ -10,12 +10,17 @@
 package tools
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -547,4 +552,67 @@ func findInString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestGenerateKBQueryEmbedding_NoProvider verifies the helper returns
+// an explicit error when no knowledgebase embedding provider is set.
+func TestGenerateKBQueryEmbedding_NoProvider(t *testing.T) {
+	cfg := &config.Config{}
+	_, _, err := generateKBQueryEmbedding(context.Background(), cfg, "hello")
+	if err == nil {
+		t.Fatal("expected error when KB embedding provider is unset")
+	}
+	if !strings.Contains(err.Error(), "provider not configured") {
+		t.Errorf("expected 'provider not configured' error, got: %v", err)
+	}
+}
+
+// TestGenerateKBQueryEmbedding_Gemini exercises the full Gemini code
+// path for the knowledgebase helper, confirming the new
+// EmbeddingGeminiAPIKey / EmbeddingGeminiBaseURL config fields wire
+// through to the embedding factory.
+func TestGenerateKBQueryEmbedding_Gemini(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"embedding":{"values":[0.5,0.6,0.7]}}`))
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{
+		Knowledgebase: config.KnowledgebaseConfig{
+			EmbeddingProvider:      "gemini",
+			EmbeddingModel:         "text-embedding-004",
+			EmbeddingGeminiAPIKey:  "kb-test-key",
+			EmbeddingGeminiBaseURL: srv.URL,
+		},
+	}
+
+	vec, provider, err := generateKBQueryEmbedding(context.Background(), cfg, "hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider != "gemini" {
+		t.Errorf("expected provider 'gemini', got %q", provider)
+	}
+	if len(vec) != 3 {
+		t.Errorf("expected 3-element vector, got %d elements", len(vec))
+	}
+	if vec[0] != float32(0.5) {
+		t.Errorf("expected first element 0.5, got %v", vec[0])
+	}
+}
+
+// TestGenerateKBQueryEmbedding_InvalidProvider verifies factory errors
+// are propagated for unsupported provider values.
+func TestGenerateKBQueryEmbedding_InvalidProvider(t *testing.T) {
+	cfg := &config.Config{
+		Knowledgebase: config.KnowledgebaseConfig{
+			EmbeddingProvider: "unknown",
+		},
+	}
+	_, _, err := generateKBQueryEmbedding(context.Background(), cfg, "hello")
+	if err == nil {
+		t.Fatal("expected error for invalid KB provider, got nil")
+	}
 }

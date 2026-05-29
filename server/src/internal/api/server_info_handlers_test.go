@@ -344,7 +344,7 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 			llmConfig: &llmproxy.Config{
 				Provider:     "gemini",
 				GeminiAPIKey: "test-key",
-				Model:        "gemini-2.0-flash",
+				Model:        "gemini-2.5-flash",
 			},
 		}
 

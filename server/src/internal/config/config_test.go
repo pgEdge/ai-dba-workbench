@@ -740,3 +740,222 @@ data_dir: ./relative/path
 		})
 	}
 }
+
+// TestMergeConfigGeminiEmbedding verifies that the merge logic copies
+// the new Gemini fields from the source EmbeddingConfig to the
+// destination, mirroring the behavior for Voyage and OpenAI.
+func TestMergeConfigGeminiEmbedding(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{
+		Embedding: EmbeddingConfig{
+			Enabled:          true,
+			Provider:         "gemini",
+			Model:            "text-embedding-004",
+			GeminiAPIKey:     "test-gemini-key",
+			GeminiAPIKeyFile: "/path/to/gemini-key",
+			GeminiBaseURL:    "https://gemini.example.com",
+		},
+	}
+
+	mergeConfig(dest, src)
+
+	if dest.Embedding.Provider != "gemini" {
+		t.Errorf("expected provider 'gemini', got %q", dest.Embedding.Provider)
+	}
+	if dest.Embedding.Model != "text-embedding-004" {
+		t.Errorf("expected model 'text-embedding-004', got %q", dest.Embedding.Model)
+	}
+	if dest.Embedding.GeminiAPIKey != "test-gemini-key" {
+		t.Errorf("expected GeminiAPIKey 'test-gemini-key', got %q",
+			dest.Embedding.GeminiAPIKey)
+	}
+	if dest.Embedding.GeminiAPIKeyFile != "/path/to/gemini-key" {
+		t.Errorf("expected GeminiAPIKeyFile '/path/to/gemini-key', got %q",
+			dest.Embedding.GeminiAPIKeyFile)
+	}
+	if dest.Embedding.GeminiBaseURL != "https://gemini.example.com" {
+		t.Errorf("expected GeminiBaseURL 'https://gemini.example.com', got %q",
+			dest.Embedding.GeminiBaseURL)
+	}
+}
+
+// TestMergeConfigGeminiKnowledgebase verifies that the merge logic
+// copies the new Gemini fields from the source KnowledgebaseConfig to
+// the destination.
+func TestMergeConfigGeminiKnowledgebase(t *testing.T) {
+	dest := defaultConfig()
+	src := &Config{
+		Knowledgebase: KnowledgebaseConfig{
+			Enabled:                   true,
+			DatabasePath:              "/tmp/kb.db",
+			EmbeddingProvider:         "gemini",
+			EmbeddingModel:            "text-embedding-004",
+			EmbeddingGeminiAPIKey:     "kb-gemini-key",
+			EmbeddingGeminiAPIKeyFile: "/path/to/kb-gemini-key",
+			EmbeddingGeminiBaseURL:    "https://gemini.example.com",
+		},
+	}
+
+	mergeConfig(dest, src)
+
+	if dest.Knowledgebase.EmbeddingProvider != "gemini" {
+		t.Errorf("expected provider 'gemini', got %q",
+			dest.Knowledgebase.EmbeddingProvider)
+	}
+	if dest.Knowledgebase.EmbeddingGeminiAPIKey != "kb-gemini-key" {
+		t.Errorf("expected EmbeddingGeminiAPIKey 'kb-gemini-key', got %q",
+			dest.Knowledgebase.EmbeddingGeminiAPIKey)
+	}
+	if dest.Knowledgebase.EmbeddingGeminiAPIKeyFile != "/path/to/kb-gemini-key" {
+		t.Errorf("expected EmbeddingGeminiAPIKeyFile '/path/to/kb-gemini-key', got %q",
+			dest.Knowledgebase.EmbeddingGeminiAPIKeyFile)
+	}
+	if dest.Knowledgebase.EmbeddingGeminiBaseURL != "https://gemini.example.com" {
+		t.Errorf("expected EmbeddingGeminiBaseURL 'https://gemini.example.com', got %q",
+			dest.Knowledgebase.EmbeddingGeminiBaseURL)
+	}
+}
+
+// TestLoadAPIKeysFromFilesGeminiEmbedding verifies the secret-loading
+// path picks up the Gemini key from disk when GeminiAPIKey is unset
+// and GeminiAPIKeyFile points at a readable file.
+func TestLoadAPIKeysFromFilesGeminiEmbedding(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "gemini.key")
+	if err := os.WriteFile(keyPath, []byte("  file-loaded-gemini-key  \n"), 0600); err != nil {
+		t.Fatalf("failed to write key file: %v", err)
+	}
+
+	cfg := &Config{
+		Embedding: EmbeddingConfig{
+			GeminiAPIKeyFile: keyPath,
+		},
+	}
+
+	loadAPIKeysFromFiles(cfg)
+
+	if cfg.Embedding.GeminiAPIKey != "file-loaded-gemini-key" {
+		t.Errorf("expected GeminiAPIKey 'file-loaded-gemini-key', got %q",
+			cfg.Embedding.GeminiAPIKey)
+	}
+}
+
+// TestLoadAPIKeysFromFilesGeminiKnowledgebase verifies the
+// knowledgebase secret-loading path picks up the Gemini key from disk.
+func TestLoadAPIKeysFromFilesGeminiKnowledgebase(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "kb-gemini.key")
+	if err := os.WriteFile(keyPath, []byte("kb-file-gemini-key\n"), 0600); err != nil {
+		t.Fatalf("failed to write key file: %v", err)
+	}
+
+	cfg := &Config{
+		Knowledgebase: KnowledgebaseConfig{
+			EmbeddingGeminiAPIKeyFile: keyPath,
+		},
+	}
+
+	loadAPIKeysFromFiles(cfg)
+
+	if cfg.Knowledgebase.EmbeddingGeminiAPIKey != "kb-file-gemini-key" {
+		t.Errorf("expected EmbeddingGeminiAPIKey 'kb-file-gemini-key', got %q",
+			cfg.Knowledgebase.EmbeddingGeminiAPIKey)
+	}
+}
+
+// TestLoadAPIKeysFromFilesGeminiPreservesExisting verifies the
+// secret-loading code does not overwrite an explicit Gemini API key.
+func TestLoadAPIKeysFromFilesGeminiPreservesExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "gemini.key")
+	if err := os.WriteFile(keyPath, []byte("file-key\n"), 0600); err != nil {
+		t.Fatalf("failed to write key file: %v", err)
+	}
+
+	cfg := &Config{
+		Embedding: EmbeddingConfig{
+			GeminiAPIKey:     "preset-key",
+			GeminiAPIKeyFile: keyPath,
+		},
+		Knowledgebase: KnowledgebaseConfig{
+			EmbeddingGeminiAPIKey:     "preset-kb-key",
+			EmbeddingGeminiAPIKeyFile: keyPath,
+		},
+	}
+
+	loadAPIKeysFromFiles(cfg)
+
+	if cfg.Embedding.GeminiAPIKey != "preset-key" {
+		t.Errorf("expected existing Embedding key to be preserved, got %q",
+			cfg.Embedding.GeminiAPIKey)
+	}
+	if cfg.Knowledgebase.EmbeddingGeminiAPIKey != "preset-kb-key" {
+		t.Errorf("expected existing Knowledgebase key to be preserved, got %q",
+			cfg.Knowledgebase.EmbeddingGeminiAPIKey)
+	}
+}
+
+// TestLoadConfigGeminiFromYAML verifies the full LoadConfig pipeline
+// correctly unmarshals Gemini embedding fields from YAML, including
+// the api-key-from-file indirection.
+func TestLoadConfigGeminiFromYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "gemini.key")
+	if err := os.WriteFile(keyPath, []byte("yaml-gemini-key"), 0600); err != nil {
+		t.Fatalf("failed to write key file: %v", err)
+	}
+	kbKeyPath := filepath.Join(tmpDir, "kb-gemini.key")
+	if err := os.WriteFile(kbKeyPath, []byte("yaml-kb-gemini-key"), 0600); err != nil {
+		t.Fatalf("failed to write kb key file: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+embedding:
+    enabled: true
+    provider: gemini
+    model: text-embedding-004
+    gemini_api_key_file: ` + keyPath + `
+    gemini_base_url: https://gemini.example.com
+knowledgebase:
+    enabled: true
+    database_path: /tmp/kb.db
+    embedding_provider: gemini
+    embedding_model: text-embedding-004
+    embedding_gemini_api_key_file: ` + kbKeyPath + `
+    embedding_gemini_base_url: https://gemini.example.com
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Embedding.Provider != "gemini" {
+		t.Errorf("expected Embedding.Provider 'gemini', got %q",
+			cfg.Embedding.Provider)
+	}
+	if cfg.Embedding.GeminiAPIKey != "yaml-gemini-key" {
+		t.Errorf("expected Embedding.GeminiAPIKey 'yaml-gemini-key', got %q",
+			cfg.Embedding.GeminiAPIKey)
+	}
+	if cfg.Embedding.GeminiBaseURL != "https://gemini.example.com" {
+		t.Errorf("expected Embedding.GeminiBaseURL 'https://gemini.example.com', got %q",
+			cfg.Embedding.GeminiBaseURL)
+	}
+	if cfg.Knowledgebase.EmbeddingProvider != "gemini" {
+		t.Errorf("expected Knowledgebase.EmbeddingProvider 'gemini', got %q",
+			cfg.Knowledgebase.EmbeddingProvider)
+	}
+	if cfg.Knowledgebase.EmbeddingGeminiAPIKey != "yaml-kb-gemini-key" {
+		t.Errorf("expected Knowledgebase.EmbeddingGeminiAPIKey 'yaml-kb-gemini-key', got %q",
+			cfg.Knowledgebase.EmbeddingGeminiAPIKey)
+	}
+	if cfg.Knowledgebase.EmbeddingGeminiBaseURL != "https://gemini.example.com" {
+		t.Errorf("expected Knowledgebase.EmbeddingGeminiBaseURL 'https://gemini.example.com', got %q",
+			cfg.Knowledgebase.EmbeddingGeminiBaseURL)
+	}
+}

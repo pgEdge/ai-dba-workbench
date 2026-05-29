@@ -11,7 +11,8 @@ consistent API for generating vector representations of text.
 The package includes the following features:
 
 - A unified Provider interface supports multiple embedding backends.
-- OpenAI, Voyage AI, and Ollama providers are available out of the box.
+- OpenAI, Voyage AI, Gemini, and Ollama providers are available out of
+  the box.
 - Configurable logging tracks API calls, performance, and errors.
 - Automatic model dimension detection simplifies configuration.
 
@@ -45,6 +46,33 @@ The following models are supported:
 | `voyage-2-lite` | 1024 |
 
 The default model is `voyage-3-lite`.
+
+### Gemini
+
+The Gemini provider connects to Google's Generative Language
+embedding API.
+
+The following models are supported:
+
+| Model | Dimensions |
+|-------|------------|
+| `text-embedding-004` | 768 |
+| `embedding-001` | 768 |
+
+The default model is `text-embedding-004`. Model availability varies
+by Gemini API key tier; run ListModels to verify which embedding
+models a given key can access.
+
+In the following example, the server configuration selects the
+Gemini provider and reads the API key from a file on disk:
+
+```yaml
+embedding:
+  provider: "gemini"
+  model: "text-embedding-004"
+  gemini_api_key_file: "~/.gemini-api-key"
+  # gemini_base_url: "https://generativelanguage.googleapis.com"
+```
 
 ### Ollama
 
@@ -127,7 +155,7 @@ The `Config` struct holds configuration for embedding providers:
 
 ```go
 type Config struct {
-    Provider string // "voyage", "ollama", or "openai"
+    Provider string // "voyage", "openai", "gemini", or "ollama"
     Model    string // Model name (provider-specific)
 
     // Voyage AI-specific
@@ -135,6 +163,10 @@ type Config struct {
 
     // OpenAI-specific
     OpenAIAPIKey string
+
+    // Gemini-specific
+    GeminiAPIKey string
+    GeminiBaseURL string
 
     // Ollama-specific
     OllamaURL string

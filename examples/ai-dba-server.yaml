@@ -198,7 +198,7 @@ embedding:
   # Default: false
   enabled: false
 
-  # Embedding provider: "voyage", "openai", or "ollama"
+  # Embedding provider: "voyage", "openai", "gemini", or "ollama"
   # Default: ollama
   provider: "ollama"
 
@@ -206,6 +206,7 @@ embedding:
   # Default depends on provider:
   #   - voyage: voyage-3
   #   - openai: text-embedding-3-small
+  #   - gemini: text-embedding-004
   #   - ollama: nomic-embed-text
   model: "nomic-embed-text"
 
@@ -226,6 +227,22 @@ embedding:
   # containing the key via openai_api_key_file (raw keys cannot be
   # set inline for security).
   # openai_api_key_file: "~/.openai-api-key"
+
+  #-----------------------------------------------------------------------
+  # Gemini Configuration
+  #-----------------------------------------------------------------------
+  #
+  # Model availability varies by Gemini API key tier; run ListModels
+  # to verify which embedding models a given key can access.
+  #
+
+  # Google Gemini API key for embeddings — provide the path to a
+  # file containing the key via gemini_api_key_file (raw keys cannot
+  # be set inline for security).
+  # gemini_api_key_file: "~/.gemini-api-key"
+
+  # Base URL for the Gemini API
+  # gemini_base_url: "https://generativelanguage.googleapis.com"
 
   #-----------------------------------------------------------------------
   # Ollama Configuration
@@ -386,6 +403,17 @@ knowledgebase:
   # embedding_openai_api_key_file (raw keys cannot be set inline
   # for security).
   # embedding_openai_api_key_file: "~/.openai-api-key"
+
+  # Google Gemini API key for knowledgebase embeddings — provide
+  # the path to a file containing the key via
+  # embedding_gemini_api_key_file (raw keys cannot be set inline
+  # for security). Model availability varies by Gemini API key
+  # tier; run ListModels to verify which embedding models a given
+  # key can access.
+  # embedding_gemini_api_key_file: "~/.gemini-api-key"
+
+  # Base URL for the Gemini API used for knowledgebase embeddings
+  # embedding_gemini_base_url: "https://generativelanguage.googleapis.com"
 
 #=========================================================================
 # BUILT-IN TOOLS AND RESOURCES

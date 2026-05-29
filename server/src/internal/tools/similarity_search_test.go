@@ -10,10 +10,14 @@
 package tools
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
 
@@ -594,5 +598,66 @@ func TestFindTableInMetadataMap(t *testing.T) {
 				t.Errorf("findTableInMetadataMap() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestGenerateQueryEmbeddingWithConfig_Disabled verifies the helper
+// returns an error when embedding generation is disabled.
+func TestGenerateQueryEmbeddingWithConfig_Disabled(t *testing.T) {
+	cfg := &config.Config{
+		Embedding: config.EmbeddingConfig{Enabled: false},
+	}
+	_, err := generateQueryEmbeddingWithConfig(context.Background(), cfg, "hello")
+	if err == nil {
+		t.Fatal("expected error when embedding is disabled, got nil")
+	}
+	if !strings.Contains(err.Error(), "not enabled") {
+		t.Errorf("expected 'not enabled' error, got: %v", err)
+	}
+}
+
+// TestGenerateQueryEmbeddingWithConfig_Gemini exercises the full
+// Gemini code path through the new GeminiAPIKey/GeminiBaseURL config
+// plumbing, ensuring the helper builds an embedding provider that
+// reaches the Gemini API.
+func TestGenerateQueryEmbeddingWithConfig_Gemini(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"embedding":{"values":[0.1,0.2,0.3]}}`))
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{
+		Embedding: config.EmbeddingConfig{
+			Enabled:       true,
+			Provider:      "gemini",
+			Model:         "text-embedding-004",
+			GeminiAPIKey:  "test-key",
+			GeminiBaseURL: srv.URL,
+		},
+	}
+
+	vec, err := generateQueryEmbeddingWithConfig(context.Background(), cfg, "hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Errorf("expected 3-element vector, got %d elements", len(vec))
+	}
+}
+
+// TestGenerateQueryEmbeddingWithConfig_InvalidProvider verifies the
+// helper surfaces factory errors when the provider is unsupported.
+func TestGenerateQueryEmbeddingWithConfig_InvalidProvider(t *testing.T) {
+	cfg := &config.Config{
+		Embedding: config.EmbeddingConfig{
+			Enabled:  true,
+			Provider: "unknown",
+		},
+	}
+	_, err := generateQueryEmbeddingWithConfig(context.Background(), cfg, "hello")
+	if err == nil {
+		t.Fatal("expected error for invalid provider, got nil")
 	}
 }

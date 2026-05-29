@@ -277,6 +277,8 @@ func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, que
 		VoyageBaseURL: kbCfg.EmbeddingVoyageBaseURL,
 		OpenAIAPIKey:  kbCfg.EmbeddingOpenAIAPIKey,
 		OpenAIBaseURL: kbCfg.EmbeddingOpenAIBaseURL,
+		GeminiAPIKey:  kbCfg.EmbeddingGeminiAPIKey,
+		GeminiBaseURL: kbCfg.EmbeddingGeminiBaseURL,
 		OllamaURL:     kbCfg.EmbeddingOllamaURL,
 	}
 

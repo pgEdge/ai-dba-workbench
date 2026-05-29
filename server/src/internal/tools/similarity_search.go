@@ -724,6 +724,8 @@ func generateQueryEmbeddingWithConfig(ctx context.Context, serverCfg *config.Con
 		VoyageBaseURL: serverCfg.Embedding.VoyageBaseURL,
 		OpenAIAPIKey:  serverCfg.Embedding.OpenAIAPIKey,
 		OpenAIBaseURL: serverCfg.Embedding.OpenAIBaseURL,
+		GeminiAPIKey:  serverCfg.Embedding.GeminiAPIKey,
+		GeminiBaseURL: serverCfg.Embedding.GeminiBaseURL,
 		OllamaURL:     serverCfg.Embedding.OllamaURL,
 	}
 

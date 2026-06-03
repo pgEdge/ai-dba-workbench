@@ -25,14 +25,14 @@ import (
 const maxFieldLength = 255
 
 // validateMaxLen enforces the maxFieldLength byte-length ceiling on a
-// single request field. When value exceeds max it sends a 400 response
+// single request field. When value exceeds limit it sends a 400 response
 // with a field-specific message and returns false; otherwise it returns
 // true. Byte length (len) is used deliberately to mirror the backing
-// VARCHAR(max) column behaviour.
-func validateMaxLen(w http.ResponseWriter, fieldLabel, value string, max int) bool {
-	if len(value) > max {
+// VARCHAR(limit) column behavior.
+func validateMaxLen(w http.ResponseWriter, fieldLabel, value string, limit int) bool {
+	if len(value) > limit {
 		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("%s must be %d characters or less", fieldLabel, max))
+			fmt.Sprintf("%s must be %d characters or less", fieldLabel, limit))
 		return false
 	}
 	return true

@@ -437,7 +437,8 @@ func TestReadSecretFile(t *testing.T) {
 }
 
 func TestReadSecretFile_NotFound(t *testing.T) {
-	_, err := fileutil.ReadSecretFile("/nonexistent/path/to/secret.txt")
+	missingPath := filepath.Join(t.TempDir(), "missing.secret")
+	_, err := fileutil.ReadSecretFile(missingPath)
 	if err == nil {
 		t.Error("Expected error when reading non-existent secret file")
 	}

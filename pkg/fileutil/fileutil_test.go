@@ -299,10 +299,9 @@ func TestReadOwnerOnlyFileMissing(t *testing.T) {
 	}
 }
 
-// TestReadOwnerOnlyFileReadError exercises the io.ReadAll failure
-// branch. Opening a directory succeeds and its 0700 mode passes the
-// owner-only check, but reading its bytes fails, so the helper must
-// surface a read error rather than returning content.
+// TestReadOwnerOnlyFileReadError opens a directory: the regular-file
+// guard in readRegularFileBounded must reject it before any read is
+// attempted, so the helper surfaces an error rather than content.
 func TestReadOwnerOnlyFileReadError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("directory read semantics differ on Windows")
@@ -316,6 +315,134 @@ func TestReadOwnerOnlyFileReadError(t *testing.T) {
 	_, err := ReadOwnerOnlyFile(dir)
 	if err == nil {
 		t.Error("ReadOwnerOnlyFile() expected error reading a directory")
+	}
+}
+
+// TestReadSecretFileFIFORejected confirms that pointing ReadSecretFile
+// at a named pipe (FIFO) is rejected by the regular-file guard rather
+// than blocking on an open/read of the pipe.
+func TestReadSecretFileFIFORejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs are not supported on Windows")
+	}
+
+	fifoPath := filepath.Join(t.TempDir(), "secret.fifo")
+	if err := mkfifoForTest(fifoPath); err != nil {
+		t.Skipf("mkfifo unsupported on this platform: %v", err)
+	}
+
+	_, err := ReadSecretFile(fifoPath)
+	if err == nil {
+		t.Fatal("ReadSecretFile() expected error for a FIFO, got nil")
+	}
+}
+
+// TestReadOwnerOnlyFileFIFORejected confirms ReadOwnerOnlyFile rejects a
+// FIFO via the shared regular-file guard.
+func TestReadOwnerOnlyFileFIFORejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs are not supported on Windows")
+	}
+
+	fifoPath := filepath.Join(t.TempDir(), "key.fifo")
+	if err := mkfifoForTest(fifoPath); err != nil {
+		t.Skipf("mkfifo unsupported on this platform: %v", err)
+	}
+
+	_, err := ReadOwnerOnlyFile(fifoPath)
+	if err == nil {
+		t.Fatal("ReadOwnerOnlyFile() expected error for a FIFO, got nil")
+	}
+}
+
+// withMaxSecretFileSize lowers the effective size ceiling for the
+// duration of a test so the oversize-rejection and boundary branches
+// can be exercised with tiny fixtures, then restores it.
+func withMaxSecretFileSize(t *testing.T, limit int64) {
+	t.Helper()
+	prev := maxSecretFileSize
+	maxSecretFileSize = limit
+	t.Cleanup(func() { maxSecretFileSize = prev })
+}
+
+// TestReadSecretFileOversizedRejected confirms ReadSecretFile refuses a
+// file larger than the effective ceiling rather than allocating
+// unbounded memory.
+func TestReadSecretFileOversizedRejected(t *testing.T) {
+	withMaxSecretFileSize(t, 8)
+
+	filePath := filepath.Join(t.TempDir(), "big.secret")
+	if err := os.WriteFile(filePath, []byte("0123456789"), 0600); err != nil {
+		t.Fatalf("write oversized file: %v", err)
+	}
+
+	_, err := ReadSecretFile(filePath)
+	if err == nil {
+		t.Fatal("ReadSecretFile() expected error for an oversized file, got nil")
+	}
+}
+
+// TestReadOwnerOnlyFileOversizedRejected confirms ReadOwnerOnlyFile
+// refuses a file larger than the effective ceiling.
+func TestReadOwnerOnlyFileOversizedRejected(t *testing.T) {
+	withMaxSecretFileSize(t, 8)
+
+	filePath := filepath.Join(t.TempDir(), "big.key")
+	if err := os.WriteFile(filePath, []byte("0123456789"), 0600); err != nil {
+		t.Fatalf("write oversized file: %v", err)
+	}
+
+	_, err := ReadOwnerOnlyFile(filePath)
+	if err == nil {
+		t.Fatal("ReadOwnerOnlyFile() expected error for an oversized file, got nil")
+	}
+}
+
+// TestReadRegularFileBoundedStatError substitutes the open primitive
+// with one that returns an already-closed descriptor, so f.Stat() fails
+// and the helper surfaces the stat-error path.
+func TestReadRegularFileBoundedStatError(t *testing.T) {
+	realPath := filepath.Join(t.TempDir(), "real.secret")
+	if err := os.WriteFile(realPath, []byte("value"), 0600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	prev := openFileForRead
+	openFileForRead = func(p string) (*os.File, error) {
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, err
+		}
+		// Close it immediately so the subsequent Stat on the returned
+		// descriptor fails.
+		_ = f.Close()
+		return f, nil
+	}
+	t.Cleanup(func() { openFileForRead = prev })
+
+	_, err := readRegularFileBounded(realPath, nil)
+	if err == nil {
+		t.Fatal("readRegularFileBounded() expected stat error, got nil")
+	}
+}
+
+// TestReadSecretFileAtSizeLimit confirms a file exactly at the size
+// limit is still read successfully (boundary check, just below the
+// rejection threshold).
+func TestReadSecretFileAtSizeLimit(t *testing.T) {
+	withMaxSecretFileSize(t, 8)
+
+	filePath := filepath.Join(t.TempDir(), "atlimit.secret")
+	if err := os.WriteFile(filePath, []byte("01234567"), 0600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := ReadSecretFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadSecretFile() unexpected error at size limit: %v", err)
+	}
+	if got != "01234567" {
+		t.Errorf("ReadSecretFile() = %q, want %q", got, "01234567")
 	}
 }
 

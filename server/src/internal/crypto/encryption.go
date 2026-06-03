@@ -49,10 +49,12 @@ func GenerateKey() (*EncryptionKey, error) {
 
 // LoadKeyFromFile loads an encryption key from a file
 func LoadKeyFromFile(path string) (*EncryptionKey, error) {
-	// Reject any file that grants group or world access. Owner-only
-	// modes such as 0400 and 0600 pass; 0640, 0644, and friends fail.
-	// The permission check and read happen on the same open descriptor
-	// to close the TOCTOU window a separate stat + read would leave.
+	// On non-Windows platforms, reject any file that grants group or
+	// world access: owner-only modes such as 0400 and 0600 pass, while
+	// 0640, 0644, and friends fail. Windows mode bits do not map cleanly,
+	// so that permission check is skipped there. The regular-file, size,
+	// and permission checks all happen on the same open descriptor that
+	// is read, closing the TOCTOU window a separate stat + read leaves.
 	data, err := fileutil.ReadOwnerOnlyFile(path)
 	if err != nil {
 		return nil, err

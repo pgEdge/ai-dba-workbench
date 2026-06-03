@@ -216,7 +216,7 @@ builtins:
 | `-db-name string` | Database name |
 | `-db-user string` | Database user |
 | `-db-password string` | Database password |
-| `-db-password-file string` | Path to file with the database password |
+| `-db-password-file string` | Path to DB password file |
 | `-db-sslmode string` | SSL mode |
 
 ### Token Management Options

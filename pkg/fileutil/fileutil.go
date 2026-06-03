@@ -24,6 +24,97 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaxSecretFileSize is the maximum size, in bytes, that the secret and
+// key readers in this package will read from a single file. Secrets,
+// tokens, API keys, and encryption keys are all comfortably under a few
+// kilobytes, so a 1 MiB ceiling is generous while still bounding the
+// memory a single file read can allocate. Files larger than this limit
+// are rejected outright rather than truncated, so an oversized or
+// runaway file is treated as a configuration error.
+const MaxSecretFileSize = 1 << 20 // 1 MiB
+
+// maxSecretFileSize is the effective ceiling enforced by
+// readRegularFileBounded. It defaults to MaxSecretFileSize and is a
+// variable only so tests can lower it to exercise the size-rejection
+// and post-read overflow guards deterministically without allocating
+// multi-megabyte fixtures. Production code never reassigns it.
+var maxSecretFileSize int64 = MaxSecretFileSize
+
+// openFileForRead is the open primitive used by readRegularFileBounded.
+// It is a variable wrapping openNonBlocking so tests can substitute an
+// open that yields a descriptor whose Stat fails, exercising the
+// otherwise-unreachable stat-error guard. Production code never
+// reassigns it.
+var openFileForRead = openNonBlocking
+
+// readRegularFileBounded opens path, verifies on the open descriptor
+// that the target is a regular file (rejecting FIFOs, devices,
+// directories, and symlinks resolving to non-regular files), enforces
+// the MaxSecretFileSize ceiling on the bytes actually read, and returns
+// the contents read from that same descriptor. Performing the stat, the
+// regular-file check, the optional fd-based check, and the read on a
+// single descriptor closes the TOCTOU window that a separate os.Stat +
+// os.ReadFile would leave open.
+//
+// The size ceiling is enforced with an io.LimitReader capped at the
+// limit plus one byte, so a file that grows after the stat (or a
+// pseudo-file that under-reports its size) is rejected rather than read
+// without bound or silently truncated.
+//
+// The check closure, when non-nil, runs against the open descriptor
+// after the regular-file check passes but before the read, so
+// additional fd-based validation (such as a permission check) shares
+// the same TOCTOU-safe descriptor. The file is closed before the bytes
+// are returned to the caller.
+func readRegularFileBounded(path string, check func(info os.FileInfo) error) ([]byte, error) {
+	// Open non-blocking where the platform supports it. A plain
+	// os.Open of a FIFO blocks until a writer appears, which would
+	// hang startup on a misconfigured path; opening O_NONBLOCK lets
+	// the regular-file check below reject the FIFO immediately.
+	f, err := openFileForRead(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file %s: %w", path, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf(
+			"file %s is not a regular file (mode %s); refusing to read",
+			path, info.Mode())
+	}
+
+	if check != nil {
+		if err := check(info); err != nil {
+			return nil, err
+		}
+	}
+
+	// Read with a hard cap of maxSecretFileSize+1 so the limit is
+	// enforced authoritatively on the bytes actually read. Relying on
+	// the bounded read rather than the advisory info.Size() means a
+	// file that grows after the stat, or a pseudo-file that under-
+	// reports its size, is still rejected rather than read unbounded or
+	// silently truncated.
+	limit := maxSecretFileSize
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf(
+			"file %s is too large: exceeds the %d-byte limit",
+			path, limit)
+	}
+
+	return data, nil
+}
+
 // ExpandTildePath expands a leading tilde (~) in a file path to the user's
 // home directory. Returns the path unchanged if it does not start with tilde.
 func ExpandTildePath(path string) (string, error) {
@@ -45,6 +136,11 @@ func ExpandTildePath(path string) (string, error) {
 // only a trailing newline sequence (preserving any in-secret
 // whitespace), and returns an error if the resulting secret is empty.
 //
+// The read goes through readRegularFileBounded, so a path that points
+// at a FIFO, device, directory, or other non-regular file is rejected
+// (rather than hanging startup), and a file larger than
+// MaxSecretFileSize is refused rather than read into unbounded memory.
+//
 // The trailing-newline trim uses strings.TrimRight(data, "\r\n") rather
 // than TrimSpace so that secrets containing intentional leading,
 // trailing, or interior spaces survive intact; only the line-ending a
@@ -57,8 +153,7 @@ func ReadSecretFile(path string) (string, error) {
 
 	WarnIfPermissive(expandedPath)
 
-	// #nosec G304 - File path is provided by administrator configuration
-	data, err := os.ReadFile(expandedPath)
+	data, err := readRegularFileBounded(expandedPath, nil)
 	if err != nil {
 		return "", err
 	}
@@ -94,37 +189,36 @@ func WarnIfPermissive(path string) {
 	}
 }
 
-// ReadOwnerOnlyFile opens path, verifies on the open file descriptor
-// that the file grants no group or world access (mode & 0o077 == 0),
-// and returns its raw bytes. Checking permissions on the already-open
-// descriptor and reading from that same descriptor closes the TOCTOU
-// window that a separate os.Stat + os.ReadFile would leave. The
-// permission check is skipped on Windows, where Unix mode bits do not
-// map cleanly. Modes such as 0400 and 0600 pass; 0640, 0644, and
-// friends are rejected.
+// ReadOwnerOnlyFile reads path and returns its raw bytes after
+// verifying, on the open file descriptor, that the target is a regular
+// file no larger than MaxSecretFileSize. On non-Windows platforms it
+// additionally requires that the file grant no group or world access
+// (mode & 0o077 == 0). The regular-file check, size check, permission
+// check, and read all happen on the same open descriptor, closing the
+// TOCTOU window that a separate os.Stat + os.ReadFile would leave.
+//
+// On non-Windows platforms, owner-only modes such as 0400 and 0600
+// pass while 0640, 0644, and friends are rejected. On Windows the
+// Unix mode bits do not map cleanly, so the permission check is
+// skipped; only the regular-file and size checks apply there.
+//
+// The raw bytes are returned without trimming.
 func ReadOwnerOnlyFile(path string) ([]byte, error) {
-	// #nosec G304 - path is administrator-supplied configuration
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open key file %s: %w", path, err)
-	}
-	defer f.Close()
-
-	if runtime.GOOS != "windows" {
-		info, err := f.Stat()
-		if err != nil {
-			return nil, fmt.Errorf("failed to stat key file %s: %w", path, err)
+	check := func(info os.FileInfo) error {
+		if runtime.GOOS == "windows" {
+			return nil
 		}
 
 		mode := info.Mode().Perm()
 		if mode&0o077 != 0 {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"insecure permissions on key file %s: %04o (group/world access "+
 					"not permitted). Please run: chmod 600 %s", path, mode, path)
 		}
+		return nil
 	}
 
-	data, err := io.ReadAll(f)
+	data, err := readRegularFileBounded(path, check)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file %s: %w", path, err)
 	}

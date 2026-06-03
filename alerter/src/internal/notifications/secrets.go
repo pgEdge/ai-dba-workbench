@@ -34,12 +34,15 @@ func NewSecretManager(key []byte) (SecretManager, error) {
 
 // LoadSecretKey loads a secret key from a file.
 // The file should contain a hex-encoded 32-byte key (64 hex characters).
-// The file must not grant group or world access; owner-only modes such
-// as 0400 and 0600 are accepted, while 0640, 0644, and friends fail.
+// On non-Windows platforms the file must not grant group or world
+// access; owner-only modes such as 0400 and 0600 are accepted, while
+// 0640, 0644, and friends fail. Windows mode bits do not map cleanly,
+// so that permission check is skipped there.
 func LoadSecretKey(path string) ([]byte, error) {
-	// Reject any file that grants group or world access. The permission
-	// check and read happen on the same open descriptor to close the
-	// TOCTOU window a separate stat + read would leave.
+	// On non-Windows platforms, reject any file that grants group or
+	// world access. The regular-file, size, and permission checks all
+	// happen on the same open descriptor that is read, closing the TOCTOU
+	// window a separate stat + read would leave.
 	data, err := fileutil.ReadOwnerOnlyFile(path)
 	if err != nil {
 		return nil, err

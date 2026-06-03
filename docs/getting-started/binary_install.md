@@ -114,9 +114,16 @@ sudo chmod 600 /etc/pgedge/password.txt
 
 ## Configuring and Starting the Collector
 
-Copy the example configuration file to the system configuration directory
-before editing the settings. In the following example, the `cp` command
-copies the example collector configuration file to `/etc/pgedge`:
+Sample configuration files are available for download from the [GitHub
+repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
+The following command downloads the sample Collector configuration file:
+
+```bash
+curl -L -o ~/Downloads/ai-dba-collector.yaml https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/ai-dba-collector.yaml
+```
+
+Then, copy the sample Collector configuration file from `Downloads` to 
+`/etc/pgedge`:
 
 ```bash
 sudo cp ~/Downloads/examples/ai-dba-collector.yaml \
@@ -168,9 +175,17 @@ prompt.
 
 ## Configuring and Starting the Server
 
-Copy the server configuration file to the system configuration directory
-before editing the settings. In the following example, the `cp` command
-copies the sample configuration file to the `/etc/pgedge` directory:
+Sample configuration files are available for download from the 
+[GitHub repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
+The following command downloads the file to your `Downloads` directory:
+
+```bash
+curl -L -o ~/Downloads/ai-dba-server.yaml \
+    https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/ai-dba-server.yaml
+```
+
+After downloading the sample file, copy the file from `Downloads` to
+`/etc/pgedge`:
 
 ```bash
 sudo cp ~/Downloads/examples/ai-dba-server.yaml \
@@ -391,12 +406,17 @@ prompt.
 
 ## Configuring and Starting the Alerter
 
-The alerter connects to the same datastore database as the collector and
-server. Configure the alerter using a YAML configuration file or
-command-line flags; see the
-[alerter configuration](configuration/alerter.md) reference to review the
-available options. In the following example, the `cp` command copies the
-sample alerter configuration file from the Downloads folder to `/etc/pgedge`:
+Sample configuration files are available for download from the 
+[GitHub repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
+The following command downloads the sample file to your `Downloads` directory:
+
+```bash
+curl -L -o ~/Downloads/ai-dba-alerter.yaml \
+    https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/ai-dba-alerter.yaml
+```
+
+Then, copy the Alerter configuration file from the Downloads folder to 
+`/etc/pgedge`:
 
 ```bash
 sudo cp ~/Downloads/examples/ai-dba-alerter.yaml \

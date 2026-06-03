@@ -12,11 +12,8 @@
 ## Table of Contents
 
 - [pgEdge AI DBA Workbench](#pgedge-ai-dba-workbench)
-- [Installing pgEdge AI DBA Workbench](#installing-pgedge-ai-dba-workbench)
-  - [Using Binary Files to Install Workbench](#using-binary-files-to-install-workbench)
-  - [Building AI DBA Workbench from Source Code](#building-ai-dba-workbench-from-source-code)
-- [Running the AI DBA Workbench Tests](#running-the-ai-dba-workbench-tests)
-  - [Using Environment Variables for Testing](#using-environment-variables-for-testing)
+- [Using Binary Files to Install Workbench](#using-binary-files-to-install-workbench)
+- [Building Workbench from Source](#building-workbench-from-source)
 - Installing and Configuring pgEdge AI DBA Workbench:
   - [Installation Overview](docs/getting-started/installation_overview.md)
   - [Quick Start - Installing with Binaries](docs/getting-started/binary_install.md)

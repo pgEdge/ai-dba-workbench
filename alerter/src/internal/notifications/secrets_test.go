@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -362,6 +363,10 @@ func TestLoadSecretKey_FileNotFound(t *testing.T) {
 // permission check accepts owner-only modes beyond 0600. A 0400
 // (read-only owner) key file must load successfully.
 func TestLoadSecretKey_ReadOnlyOwnerPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-bit enforcement is not applied on Windows")
+	}
+
 	tmpDir := t.TempDir()
 	keyFile := filepath.Join(tmpDir, "readonly.key")
 
@@ -379,6 +384,10 @@ func TestLoadSecretKey_ReadOnlyOwnerPermissions(t *testing.T) {
 }
 
 func TestLoadSecretKey_InsecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-bit enforcement is not applied on Windows")
+	}
+
 	tmpDir := t.TempDir()
 	keyFile := filepath.Join(tmpDir, "secret.key")
 

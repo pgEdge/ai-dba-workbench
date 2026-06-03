@@ -361,7 +361,7 @@ protection for user-created database connections.
 | `database` | string | `postgres` | Database name |
 | `user` | string | | Database user (required) |
 | `password` | string | | Database password |
-| `password_file` | string | | DB password file; used if `password` empty |
+| `password_file` | string | | DB password file (if `password` empty) |
 | `sslmode` | string | `prefer` | SSL mode |
 | `pool_max_conns` | int | `4` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |

@@ -137,10 +137,12 @@ Install the following tools before starting development:
 
 ### Installation
 
-Install the project dependencies from the client
-directory.
+Install the project dependencies by running the
+following command from the `ai-dba-workbench` repository
+root.
 
-In the following example, the `npm install` command
+In the following example, the `cd client` command enters
+the client directory; the `npm install` command then
 downloads all required packages:
 
 ```bash

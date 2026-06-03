@@ -28,6 +28,11 @@ are in place on a supported operating system and platform:
 - Network access must exist between each monitored PostgreSQL server and
   the system that hosts the Workbench.
 
+!!! hint
+
+    The commands that follow are for a host running Ubuntu; modify the 
+    commands as needed for your platform.
+
 ## Cloning the Repository
 
 The project uses Makefiles for building and testing; when you clone the
@@ -39,8 +44,8 @@ command clones the repository:
 git clone https://github.com/pgEdge/ai-dba-workbench.git
 ```
 
-After cloning the repository, move into the top-level directory before
-building the components:
+After cloning the repository, move into the top-level directory of the
+repo before building the components:
 
 ```bash
 cd ai-dba-workbench
@@ -86,19 +91,29 @@ sudo cp bin/ai-dba-* /opt/ai-workbench/
 ```
 
 The web client builds separately and produces output in the `client/dist/`
-directory. Run these commands from the `ai-dba-workbench` repository
-root. In the following example, the `npm install` command installs the
-dependencies; the `npm run build` command then builds the client; the
-`cp` command installs the resulting files to `/opt/ai-workbench/client/`:
+directory. Run the following commands from the `ai-dba-workbench`
+repository root. In the following example, the `cd client` command enters
+the client directory; the `npm install` command installs the dependencies;
+the `npm run build` command then builds the client:
 
 ```bash
-cd client && npm install && npm run build
+cd client
+npm install && npm run build
+```
+
+Then, return to the repository root, and use the `mkdir` command to create the
+installation directory; the `cp` command installs the built files from
+`client/dist/` to `/opt/ai-workbench/client/`:
+
+```bash
+cd ..
 sudo mkdir -p /opt/ai-workbench/client
-sudo cp -r dist/* /opt/ai-workbench/client/
+sudo cp -r client/dist/* /opt/ai-workbench/client/
 ```
 
 The remaining sections run the installed binaries from
-`/opt/ai-workbench/`; all commands use this directory as the prefix.
+`/opt/ai-workbench/`; you'll notice commands use this directory as the
+prefix.
 
 ## Creating the Datastore Database
 
@@ -127,8 +142,10 @@ CREATE DATABASE ai_workbench;
 The collector creates the required schema tables automatically on the
 first startup.
 
-You can use `\q` to exit the `psql` client session and return to the terminal
-window.
+!!! hint
+
+    You can use `\q` to exit the `psql` client session and return to the 
+    terminal window.
 
 ## Creating a Server Secret and a Password File
 
@@ -175,11 +192,14 @@ sudo chmod 644 /etc/pgedge/password.txt
 
 ## Creating the admin User and SQLite Database
 
-Create the data directory and add an admin user account before editing
-the server configuration file. In the following example, the `mkdir`,
-`chown`, and `ai-dba-server` commands create the directory and add a
-user; the `-data-dir` flag places the `auth.db` authentication database
-in `/var/lib/ai-workbench/data`:
+The Workbench uses a SQLite database to store authentication and management
+details. Create the database and add an `admin` user account (this account
+will be used when connecting to the Workbench client) before editing the
+configuration files. 
+
+In the following example, the `mkdir`, `chown`, and `ai-dba-server` commands
+create the directory and add a user; the `-data-dir` flag places the `auth.db`
+authentication database in `/var/lib/ai-workbench/data`:
 
 ```bash
 sudo mkdir -p /var/lib/ai-workbench/data
@@ -231,8 +251,8 @@ User 'admin' is now a superuser
 
 !!! note
 
-    The login user for the Workbench requires superuser privileges to add a
-    server for monitoring.
+    Without superuser privileges, you are allowed to connect to the Workbench,
+    but you will not be able to add servers for monitoring.
 
 
 ## Configuring and Starting the Collector
@@ -248,9 +268,9 @@ copies the sample collector configuration file to `/etc/pgedge`:
 sudo cp ~/ai-dba-workbench/examples/ai-dba-collector.yaml /etc/pgedge/ai-dba-collector.yaml
 ```
 
-Update the configuration file to describe your deployment. The following
-example shows the minimum settings required for a local development
-environment based on the deployment we are performing in this document:
+Use your choice of editor to update the configuration file to describe your
+deployment. The following settings are the minimum changes required to create
+a local development environment based on this guide:
 
 ```yaml
 datastore:
@@ -309,11 +329,9 @@ The sample configuration file specifies the minimum settings for a local
 development environment; for many properties, accept the defaults.
 Update the configuration file to describe your deployment.
 
-The `datastore` properties provide connection details for the server's
-database; update the properties with the connection details and the password
-for the `postgres` user. Note that the `ai-dba-server.yaml` file calls for a
-hardcoded password or uses the `.pgpass` file instead of the `password.txt`
-file:
+The `DATABASE CONNECTION` properties provide connection details for the
+server's database; update the properties with the connection details and the
+password for the `postgres` user:
 
 ```yaml
 datastore:
@@ -468,8 +486,8 @@ prompt.
 
 ## Configuring nginx and Opening the Web UI
 
-The server does not include a static file service; install and configure
-[nginx](https://nginx.org/en/docs/) to serve the client files and
+The server does not include a static file service. You can install and
+configure [nginx](https://nginx.org/en/docs/) to serve the client files and
 proxy API requests to the server before opening the web UI. Use your choice
 of package manager to install nginx. In the following example, the
 `apt install` command installs nginx:
@@ -547,15 +565,6 @@ entry.
 
 ![Adding a server definition](../images/add_server.png)
 
-### Connecting to a Local PostgreSQL Server
-
-To monitor a PostgreSQL instance on the same host, the
-`allow_internal_networks` property must be set to `true` in the server
-configuration file; you set this property earlier in this guide. When
-adding a server definition in the web UI, specify `localhost` in the
-host name field before selecting `Save`.
-
-![Connected to a Local Server](../images/connected_server.png)
 
 ### Customizing your Configuration
 

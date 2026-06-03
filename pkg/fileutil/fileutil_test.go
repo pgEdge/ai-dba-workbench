@@ -310,6 +310,97 @@ func TestWarnIfPermissive(t *testing.T) {
 	WarnIfPermissive(filepath.Join(tmpDir, "missing.txt"))
 }
 
+// TestWarnIfPermissiveTildeExpansion confirms WarnIfPermissive expands a
+// leading tilde before the stat, so a permissive "~"-relative file emits
+// the warning rather than silently skipping it when the stat of the
+// literal "~/..." path fails.
+func TestWarnIfPermissiveTildeExpansion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// os.UserHomeDir reads %USERPROFILE% on Windows, so set it too to
+	// keep the tilde resolving inside the temp dir on every platform.
+	t.Setenv("USERPROFILE", home)
+
+	filePath := filepath.Join(home, "secret.txt")
+	if err := os.WriteFile(filePath, []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		WarnIfPermissive("~/secret.txt")
+	})
+
+	if !strings.Contains(stderr, "group/world-accessible") {
+		t.Errorf("expected permissive warning for tilde path, got %q", stderr)
+	}
+}
+
+// TestWarnIfPermissiveTildeExpansionError confirms WarnIfPermissive
+// silently returns (advisory only, never errors) when tilde expansion
+// fails because HOME is unset.
+func TestWarnIfPermissiveTildeExpansionError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("HOME-unset behaviour differs on Windows")
+	}
+
+	t.Setenv("HOME", "")
+	stderr := captureStderr(t, func() {
+		WarnIfPermissive("~/secret.txt")
+	})
+
+	if strings.Contains(stderr, "group/world-accessible") {
+		t.Errorf("unexpected warning when HOME is unset: %q", stderr)
+	}
+}
+
+// TestReadOwnerOnlyFileTildeExpansion confirms ReadOwnerOnlyFile expands
+// a leading tilde before opening the file, so a "~"-relative key path
+// resolves under the user's home directory and is read successfully.
+func TestReadOwnerOnlyFileTildeExpansion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// os.UserHomeDir reads %USERPROFILE% on Windows, so set it too to
+	// keep the tilde resolving inside the temp dir on every platform.
+	t.Setenv("USERPROFILE", home)
+
+	filePath := filepath.Join(home, "key")
+	if err := os.WriteFile(filePath, []byte("tilde-key"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, err := ReadOwnerOnlyFile("~/key")
+	if err != nil {
+		t.Fatalf("ReadOwnerOnlyFile() unexpected error: %v", err)
+	}
+	if string(data) != "tilde-key" {
+		t.Errorf("ReadOwnerOnlyFile() = %q, want %q", data, "tilde-key")
+	}
+}
+
+// TestReadOwnerOnlyFileTildeExpansionError confirms that a tilde
+// expansion failure (HOME unset) is propagated rather than swallowed.
+func TestReadOwnerOnlyFileTildeExpansionError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("HOME-unset behaviour differs on Windows")
+	}
+
+	// With HOME unset, os.UserHomeDir() fails, so ExpandTildePath
+	// returns an error and ReadOwnerOnlyFile must propagate it.
+	t.Setenv("HOME", "")
+	_, err := ReadOwnerOnlyFile("~/key")
+	if err == nil {
+		t.Error("ReadOwnerOnlyFile() expected error when HOME is unset")
+	}
+}
+
 func TestReadOwnerOnlyFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits do not map on Windows")

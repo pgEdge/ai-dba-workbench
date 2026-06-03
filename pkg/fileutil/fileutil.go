@@ -177,23 +177,33 @@ func ReadSecretFile(path string) (string, error) {
 
 // WarnIfPermissive prints a stderr warning if the file is group- or
 // world-readable (mode & 0o077 != 0). It never returns an error and is
-// a no-op on Windows, where Unix mode bits do not map cleanly. It stats
-// the path and delegates to warnIfPermissiveInfo; callers that already
-// hold a FileInfo (for example from an open descriptor) should call
-// warnIfPermissiveInfo directly to avoid a redundant stat.
+// a no-op on Windows, where Unix mode bits do not map cleanly. It
+// expands a leading tilde (reusing ExpandTildePath) before the stat so a
+// "~"-relative path warns consistently with ReadSecretFile and
+// ReadOwnerOnlyFile, then stats the expanded path and delegates to
+// warnIfPermissiveInfo; callers that already hold a FileInfo (for
+// example from an open descriptor) should call warnIfPermissiveInfo
+// directly to avoid a redundant stat.
 func WarnIfPermissive(path string) {
 	if runtime.GOOS == "windows" {
 		return
 	}
 
-	info, err := os.Stat(path)
+	expandedPath, err := ExpandTildePath(path)
+	if err != nil {
+		// Tilde expansion failures (HOME unset) are surfaced by the
+		// subsequent read; the warning is advisory only.
+		return
+	}
+
+	info, err := os.Stat(expandedPath)
 	if err != nil {
 		// Stat failures are surfaced by the subsequent read; the
 		// warning is best-effort only.
 		return
 	}
 
-	warnIfPermissiveInfo(path, info)
+	warnIfPermissiveInfo(expandedPath, info)
 }
 
 // warnIfPermissiveInfo prints a stderr warning if the supplied FileInfo
@@ -230,8 +240,18 @@ func warnIfPermissiveInfo(path string, info os.FileInfo) {
 // Unix mode bits do not map cleanly, so the permission check is
 // skipped; only the regular-file and size checks apply there.
 //
+// A leading tilde is expanded (reusing ExpandTildePath) before the
+// file is opened, so a "~"-relative key path resolves consistently
+// with ReadSecretFile. The expanded path is used in the permission-
+// error and read-error messages so they show the resolved location.
+//
 // The raw bytes are returned without trimming.
 func ReadOwnerOnlyFile(path string) ([]byte, error) {
+	expandedPath, err := ExpandTildePath(path)
+	if err != nil {
+		return nil, err
+	}
+
 	check := func(info os.FileInfo) error {
 		if runtime.GOOS == "windows" {
 			return nil
@@ -241,14 +261,16 @@ func ReadOwnerOnlyFile(path string) ([]byte, error) {
 		if mode&0o077 != 0 {
 			return fmt.Errorf(
 				"insecure permissions on key file %s: %04o (group/world access "+
-					"not permitted). Please run: chmod 600 %s", path, mode, path)
+					"not permitted). Please run: chmod 600 %s",
+				expandedPath, mode, expandedPath)
 		}
 		return nil
 	}
 
-	data, err := readRegularFileBounded(path, check)
+	data, err := readRegularFileBounded(expandedPath, check)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read key file %s: %w", path, err)
+		return nil, fmt.Errorf("failed to read key file %s: %w",
+			expandedPath, err)
 	}
 
 	return data, nil

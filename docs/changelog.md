@@ -8,6 +8,25 @@ The format is based on
 project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Fix the alerter intermittently and silently suppressing
+  anomaly alerts that should have fired. The Tier 3
+  LLM-based classifier parsed model responses
+  non-deterministically, so the same response could resolve
+  to either "alert" or "suppress" from one run to the next.
+  The parser now strips markdown code fences and extracts an
+  embedded JSON object before falling back to keyword
+  matching, and the keyword fallback applies a deterministic,
+  fail-safe precedence (alert before suppress, keep before
+  clear) instead of iterating a randomly ordered map. An
+  over-broad suppress keyword that matched phrases such as
+  "deviation from normal behavior" was also tightened. The
+  same anomaly condition now produces the same decision every
+  time, so genuine alerts fire reliably. (#264)
+
 ## [1.0.0-beta3] - 2026-05-26
 
 ### Added

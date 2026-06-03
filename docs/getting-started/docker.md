@@ -30,7 +30,8 @@ Container Registry.
 1. Clone the repository to obtain the configuration files.
 
     In the following example, the `git clone` command retrieves the
-    project repository, and then moves into the ai-dba-workbench directory:
+    project repository; the `cd` command then enters the project
+    directory.
 
     ```bash
     git clone \
@@ -49,8 +50,11 @@ Container Registry.
     echo '1safePassword!' > docker/secret/pg-password
     ```
 
-3. Set the PostgreSQL password for the database used by the Workbench to the
-   POSTGRES_PASSWORD environment variable. For example:
+3. Set the database password in the `POSTGRES_PASSWORD` environment
+   variable.
+
+    In the following example, the `export` command sets the database
+    password used by the Workbench.
 
     ```bash
     export POSTGRES_PASSWORD=1safePassword!
@@ -67,17 +71,19 @@ Container Registry.
       docker/config/ai-dba-server.yaml
     ```
 
-5. Start all of the services using the production Compose file. The following
-   command, starts the services in detached mode:
+5. Start all of the services using the production Compose file.
+
+    In the following example, the `docker compose` command starts the
+    services in detached mode.
 
     ```bash
     docker compose \
       -f examples/docker-compose.production.yml up -d
     ```
 
-    A healthy cluster returns:
+    The output from a healthy cluster resembles the following.
 
-    ```
+    ```text
     [+] up 8/8
  ✔ Network examples_ai-dba-network Created                                                                  0.0s
  ✔ Volume examples_pgdata          Created                                                                  0.0s
@@ -99,7 +105,7 @@ Container Registry.
 
     The output from a healthy cluster resembles the following.
 
-    ```
+    ```text
     NAME                   IMAGE                                               COMMAND                  SERVICE     CREATED          STATUS                     PORTS
     examples-alerter-1     ghcr.io/pgedge/ai-dba-alerter:latest                "/usr/local/bin/ai-d…"   alerter     13 minutes ago   Up 13 minutes              
     examples-client-1      ghcr.io/pgedge/ai-dba-client:latest                 "/docker-entrypoint.…"   client      13 minutes ago   Up 3 minutes (unhealthy)   0.0.0.0:3000->8080/tcp, [::]:3000->8080/tcp
@@ -141,8 +147,8 @@ Container Registry.
     The server prompts for optional notes and then confirms the user
     creation. The confirmation output resembles the following.
 
-    ```
-    Auth store: /usr/local/bin/data/auth.db
+    ```text
+    Auth store: /data/auth.db
     Enter notes for this user (optional):
 
     ======================================================================
@@ -157,9 +163,9 @@ Container Registry.
     ```
 
 8. Open a browser and navigate to `http://localhost:3000` to access
-   the web client.  Select the `+` icon to the right of the DATABASE SERVERS
-   label to add the connection details for the Postgres database you wish to
-   monitor:
+   the web client. Select the `+` icon to the right of the DATABASE
+   SERVERS label; then add the connection details for the PostgreSQL
+   database you wish to monitor.
 
 ![Adding a server definition](../images/add_server.png)
 

@@ -27,6 +27,18 @@ project adheres to
   same anomaly condition now produces the same decision every
   time, so genuine alerts fire reliably. (#264)
 
+- Fix the Add Cluster Group, Add Cluster, and Add Server
+  dialogs accepting Name, Host, Maintenance Database, and
+  Username values longer than 255 characters, which the
+  database rejected through its `VARCHAR(255)` columns and
+  surfaced as a generic, unhelpful server error. The web
+  client now caps those fields at 255 characters so
+  over-length input cannot be submitted, and the server
+  validates their length and returns a clear 400 response (for
+  example "Name must be 255 characters or less") instead of a
+  generic 500. The server counts characters rather than bytes
+  to match the `VARCHAR(255)` limit. (#270)
+
 ## [1.0.0-beta3] - 2026-05-26
 
 ### Added

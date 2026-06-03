@@ -12,9 +12,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -1049,10 +1051,12 @@ knowledgebase:
 }
 
 // TestDatabaseConfigLoadPassword exercises the password_file resolution
-// path on DatabaseConfig.LoadPassword across its four behaviors: an
+// path on DatabaseConfig.LoadPassword across its behaviors: an
 // already-set password short-circuits the file read; a valid file is
-// read and trimmed into Password; a missing file surfaces an error; and
-// an empty Password with an empty PasswordFile is a no-op.
+// read and trimmed into the unexported resolved field (NOT Password); a
+// missing or empty file surfaces an error; and an empty Password with an
+// empty PasswordFile is a no-op. A file-sourced secret must never land
+// in the marshalable Password field.
 func TestDatabaseConfigLoadPassword(t *testing.T) {
 	t.Run("PasswordAlreadySetIsNoOp", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -1072,6 +1076,13 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 		if cfg.Password != "explicit-password" {
 			t.Errorf("expected password to remain 'explicit-password', got %q", cfg.Password)
 		}
+		// The file read must be skipped entirely; nothing resolved.
+		if cfg.resolvedPassword != "" {
+			t.Errorf("expected resolvedPassword to stay empty, got %q", cfg.resolvedPassword)
+		}
+		if got := cfg.EffectivePassword(); got != "explicit-password" {
+			t.Errorf("EffectivePassword() = %q, want 'explicit-password'", got)
+		}
 	})
 
 	t.Run("ReadsAndTrimsTrailingNewlineFromValidFile", func(t *testing.T) {
@@ -1088,8 +1099,16 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 		if err := cfg.LoadPassword(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.Password != "secret pass " {
-			t.Errorf("expected password 'secret pass ', got %q", cfg.Password)
+		// The marshalable Password field must remain empty so the
+		// file-sourced secret cannot round-trip to disk.
+		if cfg.Password != "" {
+			t.Errorf("expected Password to remain empty, got %q", cfg.Password)
+		}
+		if cfg.resolvedPassword != "secret pass " {
+			t.Errorf("expected resolvedPassword 'secret pass ', got %q", cfg.resolvedPassword)
+		}
+		if got := cfg.EffectivePassword(); got != "secret pass " {
+			t.Errorf("EffectivePassword() = %q, want 'secret pass '", got)
 		}
 	})
 
@@ -1119,6 +1138,9 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 		if cfg.Password != "" {
 			t.Errorf("expected password to remain empty on error, got %q", cfg.Password)
 		}
+		if cfg.resolvedPassword != "" {
+			t.Errorf("expected resolvedPassword to remain empty on error, got %q", cfg.resolvedPassword)
+		}
 	})
 
 	t.Run("BothEmptyIsNoOp", func(t *testing.T) {
@@ -1130,5 +1152,157 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 		if cfg.Password != "" {
 			t.Errorf("expected password to remain empty, got %q", cfg.Password)
 		}
+		if got := cfg.EffectivePassword(); got != "" {
+			t.Errorf("EffectivePassword() = %q, want empty", got)
+		}
 	})
+}
+
+// TestDatabaseConfigEffectivePassword verifies the precedence rules of
+// EffectivePassword independently of the file-resolution path: an inline
+// Password always wins, otherwise the resolved (file-sourced) value is
+// returned, and an unconfigured password yields the empty string.
+func TestDatabaseConfigEffectivePassword(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		resolved string
+		want     string
+	}{
+		{"inline wins over resolved", "inline-pw", "file-pw", "inline-pw"},
+		{"inline only", "inline-pw", "", "inline-pw"},
+		{"resolved only", "", "file-pw", "file-pw"},
+		{"neither configured", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &DatabaseConfig{
+				Password:         tt.password,
+				resolvedPassword: tt.resolved,
+			}
+			if got := cfg.EffectivePassword(); got != tt.want {
+				t.Errorf("EffectivePassword() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildConnectionStringUsesResolvedPassword confirms the connection
+// string includes a file-sourced password resolved via LoadPassword,
+// even though that secret lives only in the unexported resolved field.
+func TestBuildConnectionStringUsesResolvedPassword(t *testing.T) {
+	tmpDir := t.TempDir()
+	passFile := filepath.Join(tmpDir, "db.password")
+	const secret = "resolved-secret"
+	if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write password file: %v", err)
+	}
+
+	cfg := &DatabaseConfig{
+		User:         "postgres",
+		Host:         "localhost",
+		Port:         5432,
+		Database:     "testdb",
+		PasswordFile: passFile,
+	}
+
+	if err := cfg.LoadPassword(); err != nil {
+		t.Fatalf("LoadPassword: %v", err)
+	}
+	if cfg.Password != "" {
+		t.Fatalf("expected Password to remain empty, got %q", cfg.Password)
+	}
+
+	got := cfg.BuildConnectionString()
+	want := "postgres://postgres:" + secret + "@localhost:5432/testdb"
+	if got != want {
+		t.Errorf("BuildConnectionString() = %q, want %q", got, want)
+	}
+}
+
+// TestMarshalDoesNotLeakResolvedPassword is the regression test for the
+// CodeRabbit finding on config.go: a password sourced from password_file
+// must not appear when the config is marshaled (the path SaveConfig
+// uses). Because LoadPassword stores file-sourced secrets in the
+// unexported, yaml:"-" resolvedPassword field, marshaling must emit an
+// empty password and never the secret itself.
+func TestMarshalDoesNotLeakResolvedPassword(t *testing.T) {
+	tmpDir := t.TempDir()
+	passFile := filepath.Join(tmpDir, "db.password")
+	const secret = "must-not-leak-to-disk"
+	if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write password file: %v", err)
+	}
+
+	cfg := &Config{
+		Database: &DatabaseConfig{
+			User:         "postgres",
+			Host:         "localhost",
+			Port:         5432,
+			Database:     "testdb",
+			PasswordFile: passFile,
+		},
+	}
+
+	if err := cfg.Database.LoadPassword(); err != nil {
+		t.Fatalf("LoadPassword: %v", err)
+	}
+	// Sanity: the secret was resolved and is usable at runtime.
+	if cfg.Database.EffectivePassword() != secret {
+		t.Fatalf("EffectivePassword() = %q, want %q", cfg.Database.EffectivePassword(), secret)
+	}
+
+	// Marshal the live config exactly as SaveConfig does.
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("yaml.Marshal: %v", err)
+	}
+	out := string(data)
+
+	if strings.Contains(out, secret) {
+		t.Fatalf("marshaled config leaked the file-sourced secret:\n%s", out)
+	}
+	// The password key must be present but empty for the file-sourced case.
+	if !strings.Contains(out, "password: \"\"") {
+		t.Errorf("expected an empty password field in marshaled output, got:\n%s", out)
+	}
+}
+
+// TestSaveConfigDoesNotLeakResolvedPassword drives the same regression
+// through the actual SaveConfig path, reading the written file back to
+// confirm the file-sourced secret never reaches disk.
+func TestSaveConfigDoesNotLeakResolvedPassword(t *testing.T) {
+	tmpDir := t.TempDir()
+	passFile := filepath.Join(tmpDir, "db.password")
+	const secret = "save-config-secret"
+	if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write password file: %v", err)
+	}
+
+	cfg := &Config{
+		Database: &DatabaseConfig{
+			User:         "postgres",
+			Host:         "localhost",
+			Port:         5432,
+			Database:     "testdb",
+			PasswordFile: passFile,
+		},
+	}
+	if err := cfg.Database.LoadPassword(); err != nil {
+		t.Fatalf("LoadPassword: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "saved.yaml")
+	if err := SaveConfig(outPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	written, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if strings.Contains(string(written), secret) {
+		t.Fatalf("SaveConfig leaked the file-sourced secret to disk:\n%s", written)
+	}
 }

@@ -207,6 +207,13 @@ type DatabaseConfig struct {
 	PasswordFile string `yaml:"password_file"` // Path to a file containing the database password (used only if Password is empty)
 	SSLMode      string `yaml:"sslmode"`       // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
 
+	// resolvedPassword holds a password read from PasswordFile. It is
+	// deliberately unexported and tagged yaml:"-" / json:"-" so that a
+	// file-sourced secret never round-trips into a serialized config
+	// (e.g. via SaveConfig); writing it inline would defeat the purpose
+	// of password_file. Read the effective password via EffectivePassword.
+	resolvedPassword string `yaml:"-" json:"-"`
+
 	// Connection pool settings
 	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
 	PoolMinConns        int    `yaml:"pool_min_conns"`          // Minimum number of connections (default: 0)
@@ -236,10 +243,10 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	// Build connection string components with URL-encoded user/password
 	connStr := fmt.Sprintf("postgres://%s", url.PathEscape(cfg.User))
 
-	// Add password only if explicitly set
+	// Add password only if one was resolved (inline or from password_file)
 	// If not set, pgx will use .pgpass file automatically
-	if cfg.Password != "" {
-		connStr += ":" + url.PathEscape(cfg.Password)
+	if password := cfg.EffectivePassword(); password != "" {
+		connStr += ":" + url.PathEscape(password)
 	}
 
 	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
@@ -259,6 +266,12 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 // is read via fileutil.ReadSecretFile, which trims only the trailing
 // newline (not all surrounding whitespace) and returns an error if the
 // file cannot be read or resolves to an empty secret.
+//
+// A file-sourced secret is stored in the unexported resolvedPassword
+// field, NOT in the exported Password field, so it cannot leak back to
+// disk if the config is ever marshaled (see SaveConfig). Callers must
+// read the resolved value via EffectivePassword rather than Password.
+// An inline Password is left untouched and may legitimately round-trip.
 func (cfg *DatabaseConfig) LoadPassword() error {
 	if cfg.Password != "" {
 		return nil
@@ -269,10 +282,22 @@ func (cfg *DatabaseConfig) LoadPassword() error {
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
-		cfg.Password = password
+		cfg.resolvedPassword = password
 	}
 
 	return nil
+}
+
+// EffectivePassword returns the database password to use for connecting.
+// An inline Password (from CLI flag or YAML) takes precedence; otherwise
+// the value resolved from PasswordFile by LoadPassword is returned. The
+// result is empty when no password was configured, in which case pgx
+// falls back to the .pgpass file.
+func (cfg *DatabaseConfig) EffectivePassword() string {
+	if cfg.Password != "" {
+		return cfg.Password
+	}
+	return cfg.resolvedPassword
 }
 
 // EmbeddingConfig holds embedding generation settings

@@ -69,7 +69,7 @@ func TestReloadResolvesPasswordFile(t *testing.T) {
 	var seenByCallback string
 	rc.OnReload(func(newCfg *Config) {
 		if newCfg.Database != nil {
-			seenByCallback = newCfg.Database.Password
+			seenByCallback = newCfg.Database.EffectivePassword()
 		}
 	})
 
@@ -81,11 +81,17 @@ func TestReloadResolvesPasswordFile(t *testing.T) {
 	if got.Database == nil {
 		t.Fatal("reloaded config has nil Database")
 	}
-	if got.Database.Password != secret {
-		t.Errorf("reloaded Password = %q, want %q", got.Database.Password, secret)
+	// A file-sourced secret must not populate the marshalable Password
+	// field; it is resolved into the unexported field and surfaced only
+	// through EffectivePassword.
+	if got.Database.Password != "" {
+		t.Errorf("reloaded Password = %q, want empty (file-sourced secret must not leak)", got.Database.Password)
+	}
+	if got.Database.EffectivePassword() != secret {
+		t.Errorf("reloaded EffectivePassword() = %q, want %q", got.Database.EffectivePassword(), secret)
 	}
 	if seenByCallback != secret {
-		t.Errorf("onReload callback saw Password %q, want %q", seenByCallback, secret)
+		t.Errorf("onReload callback saw EffectivePassword %q, want %q", seenByCallback, secret)
 	}
 }
 

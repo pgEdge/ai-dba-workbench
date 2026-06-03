@@ -293,13 +293,13 @@ secret_file: "/etc/pgedge/server.secret"
 In the following example, the `mkdir`, `chown`, and `ai-dba-server`
 commands create the `data` directory and add a user account; the
 `-data-dir` flag places the authentication database in
-`/opt/ai-workbench/data`:
+`/var/lib/ai-workbench/data`:
 
 ```bash
-sudo mkdir -p /opt/ai-workbench/data
-sudo chown -R $USER:$USER /opt/ai-workbench/data
+sudo mkdir -p /var/lib/ai-workbench/data
+sudo chown -R $USER:$USER /var/lib/ai-workbench/data
 /opt/ai-workbench/ai-dba-server -add-user -username admin \
-    -data-dir /opt/ai-workbench/data
+    -data-dir /var/lib/ai-workbench/data
 ```
 
 The command prompts for a password and optional user details; the
@@ -307,8 +307,8 @@ password must include at least one capital letter, one digit, and one
 special character:
 
 ```bash
-/opt/ai-workbench/ai-dba-server -add-user -username admin -data-dir /opt/ai-workbench/data
-Auth store: /opt/ai-workbench/data/auth.db
+/opt/ai-workbench/ai-dba-server -add-user -username admin -data-dir /var/lib/ai-workbench/data
+Auth store: /var/lib/ai-workbench/data/auth.db
 Enter password:
 Confirm password:
 Enter full name (optional): admin
@@ -326,6 +326,22 @@ Status:   Enabled
 ======================================================================
 ```
 
+Then, grant superuser status to the admin account. In the following
+example, the `-set-superuser` flag promotes the `admin` user to
+superuser:
+
+```bash
+/opt/ai-workbench/ai-dba-server \
+    -set-superuser -username admin \
+    -data-dir /var/lib/ai-workbench/data
+```
+
+The command confirms the change; for example:
+
+```bash
+User 'admin' is now a superuser
+```
+
 In the following example, the `ai-dba-server` command starts the server:
 
 ```bash
@@ -335,7 +351,7 @@ In the following example, the `ai-dba-server` command starts the server:
 The server displays status messages during startup; for example:
 
 ```bash
-Auth store: /opt/ai-workbench/data/auth.db (1 user(s), 0 token(s))
+Auth store: /var/lib/ai-workbench/data/auth.db (1 user(s), 0 token(s))
 RBAC: 21 MCP privileges registered
 Rate limiting enabled: 10 attempts per 15 minutes per IP
 Account lockout enabled: 10 failed attempts before lockout

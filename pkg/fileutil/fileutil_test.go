@@ -184,6 +184,12 @@ func TestReadSecretFilePermissiveWarning(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte("secret\n"), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
+	// os.WriteFile applies the mode before the process umask, so force
+	// the group/world-readable bits explicitly; otherwise a strict umask
+	// (e.g. 0077) would create the file 0600 and the warning would not fire.
+	if err := os.Chmod(filePath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
 
 	// The warning goes to stderr; this exercises the warn branch and
 	// confirms the read still succeeds despite the permissive mode.
@@ -236,6 +242,12 @@ func TestReadSecretFilePermissiveWarningEmitted(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "secret.txt")
 	if err := os.WriteFile(filePath, []byte("secret\n"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+	// os.WriteFile applies the mode before the process umask, so force
+	// the group/world-readable bits explicitly; otherwise a strict umask
+	// (e.g. 0077) would create the file 0600 and the warning would not fire.
+	if err := os.Chmod(filePath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
 
 	var got string
@@ -304,6 +316,12 @@ func TestWarnIfPermissive(t *testing.T) {
 	if err := os.WriteFile(permissive, []byte("x"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	// os.WriteFile applies the mode before the process umask, so force
+	// the group/world-readable bits explicitly; otherwise a strict umask
+	// (e.g. 0077) would create the file 0600 and the warning would not fire.
+	if err := os.Chmod(permissive, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
 	WarnIfPermissive(permissive)
 
 	// Missing file: best-effort, returns without panic.
@@ -328,6 +346,12 @@ func TestWarnIfPermissiveTildeExpansion(t *testing.T) {
 	filePath := filepath.Join(home, "secret.txt")
 	if err := os.WriteFile(filePath, []byte("x"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+	// os.WriteFile applies the mode before the process umask, so force
+	// the group/world-readable bits explicitly; otherwise a strict umask
+	// (e.g. 0077) would create the file 0600 and the warning would not fire.
+	if err := os.Chmod(filePath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
 
 	stderr := captureStderr(t, func() {

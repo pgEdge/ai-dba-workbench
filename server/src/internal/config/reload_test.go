@@ -43,8 +43,10 @@ func writeReloadConfig(t *testing.T, dir, passwordFile string) string {
 }
 
 // TestReloadResolvesPasswordFile confirms that a SIGHUP-style reload
-// re-resolves a YAML password_file, so the reloaded DatabaseConfig has
-// its Password populated from the file contents (matching startup).
+// re-resolves a YAML password_file. The reload does NOT populate the
+// marshalable DatabaseConfig.Password field; the file-sourced secret is
+// kept out of Password and surfaced only through EffectivePassword
+// (matching startup behavior).
 func TestReloadResolvesPasswordFile(t *testing.T) {
 	dir := t.TempDir()
 

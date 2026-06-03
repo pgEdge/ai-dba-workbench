@@ -1158,6 +1158,113 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 	})
 }
 
+// TestDatabaseConfigLoadPasswordClearsStaleSecret verifies that calling
+// LoadPassword more than once on the SAME DatabaseConfig never leaves a
+// previously resolved file-sourced secret behind. A second load that no
+// longer has a readable password_file must clear the resolved value so
+// EffectivePassword stops returning the stale secret. A nil receiver is
+// also a safe no-op.
+func TestDatabaseConfigLoadPasswordClearsStaleSecret(t *testing.T) {
+	t.Run("ClearedWhenPasswordFileRemoved", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		passFile := filepath.Join(tmpDir, "db.password")
+		const secret = "first-secret"
+		if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write password file: %v", err)
+		}
+
+		cfg := &DatabaseConfig{PasswordFile: passFile}
+
+		// First load resolves the secret from the file.
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("first LoadPassword: %v", err)
+		}
+		if got := cfg.EffectivePassword(); got != secret {
+			t.Fatalf("after first load EffectivePassword() = %q, want %q", got, secret)
+		}
+
+		// Operator removes password_file before a reload. The second
+		// load must clear the previously resolved secret.
+		cfg.PasswordFile = ""
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("second LoadPassword: %v", err)
+		}
+		if cfg.resolvedPassword != "" {
+			t.Errorf("resolvedPassword = %q, want empty after password_file removed", cfg.resolvedPassword)
+		}
+		if got := cfg.EffectivePassword(); got != "" {
+			t.Errorf("EffectivePassword() = %q, want empty after password_file removed", got)
+		}
+	})
+
+	t.Run("ClearedWhenSecondFileMissing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		passFile := filepath.Join(tmpDir, "db.password")
+		const secret = "first-secret"
+		if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write password file: %v", err)
+		}
+
+		cfg := &DatabaseConfig{PasswordFile: passFile}
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("first LoadPassword: %v", err)
+		}
+		if got := cfg.EffectivePassword(); got != secret {
+			t.Fatalf("after first load EffectivePassword() = %q, want %q", got, secret)
+		}
+
+		// Point at a now-missing file. The second load must return an
+		// error AND leave no stale secret behind.
+		cfg.PasswordFile = filepath.Join(tmpDir, "does-not-exist.password")
+		if err := cfg.LoadPassword(); err == nil {
+			t.Fatal("second LoadPassword expected error for missing file, got nil")
+		}
+		if cfg.resolvedPassword != "" {
+			t.Errorf("resolvedPassword = %q, want empty after failed read", cfg.resolvedPassword)
+		}
+		if got := cfg.EffectivePassword(); got != "" {
+			t.Errorf("EffectivePassword() = %q, want empty after failed read", got)
+		}
+	})
+
+	t.Run("ClearedWhenInlinePasswordSet", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		passFile := filepath.Join(tmpDir, "db.password")
+		const secret = "first-secret"
+		if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
+			t.Fatalf("failed to write password file: %v", err)
+		}
+
+		cfg := &DatabaseConfig{PasswordFile: passFile}
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("first LoadPassword: %v", err)
+		}
+		if cfg.resolvedPassword != secret {
+			t.Fatalf("after first load resolvedPassword = %q, want %q", cfg.resolvedPassword, secret)
+		}
+
+		// An inline Password now takes precedence. The reset must run
+		// before the early return so the stale resolved value is gone.
+		cfg.Password = "inline-now"
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("second LoadPassword: %v", err)
+		}
+		if cfg.resolvedPassword != "" {
+			t.Errorf("resolvedPassword = %q, want empty once inline Password is set", cfg.resolvedPassword)
+		}
+		if got := cfg.EffectivePassword(); got != "inline-now" {
+			t.Errorf("EffectivePassword() = %q, want 'inline-now'", got)
+		}
+	})
+
+	t.Run("NilReceiverIsNoOp", func(t *testing.T) {
+		var cfg *DatabaseConfig
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("nil-receiver LoadPassword: %v", err)
+		}
+	})
+}
+
 // TestDatabaseConfigEffectivePassword verifies the precedence rules of
 // EffectivePassword independently of the file-resolution path: an inline
 // Password always wins, otherwise the resolved (file-sourced) value is

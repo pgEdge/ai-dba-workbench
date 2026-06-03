@@ -272,7 +272,23 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 // disk if the config is ever marshaled (see SaveConfig). Callers must
 // read the resolved value via EffectivePassword rather than Password.
 // An inline Password is left untouched and may legitimately round-trip.
+//
+// LoadPassword clears any previously resolved file-sourced secret
+// before doing anything else, so it is safe to call repeatedly on the
+// same DatabaseConfig (for example across a SIGHUP reload). A stale
+// secret never survives a subsequent load: if PasswordFile is later
+// cleared, points at an unreadable file, or an inline Password is set,
+// the old resolved value is discarded.
 func (cfg *DatabaseConfig) LoadPassword() error {
+	if cfg == nil {
+		return nil
+	}
+
+	// Clear any previously resolved file-sourced secret first so that a
+	// stale value can never survive a subsequent load, regardless of the
+	// early returns below.
+	cfg.resolvedPassword = ""
+
 	if cfg.Password != "" {
 		return nil
 	}
@@ -280,6 +296,8 @@ func (cfg *DatabaseConfig) LoadPassword() error {
 	if cfg.PasswordFile != "" {
 		password, err := fileutil.ReadSecretFile(cfg.PasswordFile)
 		if err != nil {
+			// Leave resolvedPassword cleared on error; do not restore
+			// any prior value.
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
 		cfg.resolvedPassword = password

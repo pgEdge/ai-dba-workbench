@@ -68,6 +68,26 @@ func TestNewManager(t *testing.T) {
 		}
 	})
 
+	t.Run("whitespace-only secret file is an error", func(t *testing.T) {
+		// A file holding only whitespace has no real secret content;
+		// before the shared-helper refactor it was rejected, and the
+		// regression that allowed a useless whitespace-only secret to
+		// reach channel-decryption key material must stay fixed here.
+		for _, content := range []string{"   \n", "\t \n", "   "} {
+			secretPath := filepath.Join(t.TempDir(), "whitespace.secret")
+			if err := os.WriteFile(secretPath, []byte(content), 0600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			cfg := &config.NotificationsConfig{
+				Enabled:    true,
+				SecretFile: secretPath,
+			}
+			if _, err := NewManager(nil, cfg, false, nil); err == nil {
+				t.Errorf("expected error for whitespace-only secret file %q, got nil", content)
+			}
+		}
+	})
+
 	t.Run("valid secret file builds a manager", func(t *testing.T) {
 		secretPath := filepath.Join(t.TempDir(), "valid.secret")
 		if err := os.WriteFile(secretPath, []byte("server-secret-value\n"), 0600); err != nil {

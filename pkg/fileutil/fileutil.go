@@ -134,7 +134,8 @@ func ExpandTildePath(path string) (string, error) {
 // secret) from an operator-supplied file path. It expands a leading
 // tilde, warns (to stderr) if the file is group/world-readable, trims
 // only a trailing newline sequence (preserving any in-secret
-// whitespace), and returns an error if the resulting secret is empty.
+// whitespace), and returns an error if the resulting secret is empty or
+// contains only whitespace.
 //
 // The read goes through readRegularFileBounded, so a path that points
 // at a FIFO, device, directory, or other non-regular file is rejected
@@ -144,7 +145,12 @@ func ExpandTildePath(path string) (string, error) {
 // The trailing-newline trim uses strings.TrimRight(data, "\r\n") rather
 // than TrimSpace so that secrets containing intentional leading,
 // trailing, or interior spaces survive intact; only the line-ending a
-// text editor appends is stripped.
+// text editor appends is stripped. The emptiness check uses
+// strings.TrimSpace so a file holding only whitespace (spaces, tabs, or
+// newlines) is rejected rather than yielding a useless whitespace-only
+// secret; the value RETURNED, however, is the TrimRight("\r\n") result,
+// so meaningful leading, trailing, or interior whitespace in a real
+// secret is preserved unchanged. Only the validation trims whitespace.
 func ReadSecretFile(path string) (string, error) {
 	expandedPath, err := ExpandTildePath(path)
 	if err != nil {
@@ -168,8 +174,10 @@ func ReadSecretFile(path string) (string, error) {
 	}
 
 	secret := strings.TrimRight(string(data), "\r\n")
-	if secret == "" {
-		return "", fmt.Errorf("secret file %s is empty", expandedPath)
+	if strings.TrimSpace(secret) == "" {
+		return "", fmt.Errorf(
+			"secret file %s is empty or contains only whitespace",
+			expandedPath)
 	}
 
 	return secret, nil

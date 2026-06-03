@@ -116,8 +116,13 @@ func TestReadSecretFile(t *testing.T) {
 func TestReadSecretFileEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// A file that is empty or contains only a trailing newline is an error.
-	for _, content := range []string{"", "\n", "\r\n", "\n\n"} {
+	// A file that is empty, contains only a trailing newline, or holds
+	// only whitespace (spaces, tabs, newlines) is an error: a
+	// whitespace-only file has no real secret content, so accepting it
+	// would silently yield useless key material downstream.
+	for _, content := range []string{
+		"", "\n", "\r\n", "\n\n", "   ", "\t \n", "   \n", " \t\r\n",
+	} {
 		filePath := filepath.Join(tmpDir, "empty.txt")
 		if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
 			t.Fatalf("failed to write test file: %v", err)
@@ -125,8 +130,35 @@ func TestReadSecretFileEmpty(t *testing.T) {
 
 		_, err := ReadSecretFile(filePath)
 		if err == nil {
-			t.Errorf("ReadSecretFile(%q) expected empty-file error, got nil", content)
+			t.Errorf("ReadSecretFile(%q) expected empty/whitespace error, got nil", content)
+			continue
 		}
+		if !strings.Contains(err.Error(), "empty or contains only whitespace") {
+			t.Errorf("ReadSecretFile(%q) error = %q, want it to mention "+
+				"'empty or contains only whitespace'", content, err.Error())
+		}
+	}
+}
+
+// TestReadSecretFileWhitespacePreserved confirms that the emptiness
+// check uses strings.TrimSpace while the RETURNED value does not: a real
+// secret carrying meaningful leading and trailing whitespace passes
+// validation and is returned with that whitespace intact, trimmed only
+// of the trailing newline a text editor appends.
+func TestReadSecretFileWhitespacePreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "secret.txt")
+	if err := os.WriteFile(filePath, []byte("  s3cret \n"), 0600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	got, err := ReadSecretFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadSecretFile() unexpected error: %v", err)
+	}
+	if got != "  s3cret " {
+		t.Errorf("ReadSecretFile() = %q, want %q (surrounding whitespace "+
+			"must be preserved)", got, "  s3cret ")
 	}
 }
 

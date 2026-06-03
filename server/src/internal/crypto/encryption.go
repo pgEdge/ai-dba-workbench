@@ -17,6 +17,7 @@ import (
 	"os"
 
 	pkgcrypto "github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 const (
@@ -48,18 +49,13 @@ func GenerateKey() (*EncryptionKey, error) {
 
 // LoadKeyFromFile loads an encryption key from a file
 func LoadKeyFromFile(path string) (*EncryptionKey, error) {
-	// Check file permissions before loading
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat key file: %w", err)
+	// Reject any file that grants group or world access. Owner-only
+	// modes such as 0400 and 0600 pass; 0640, 0644, and friends fail.
+	if err := fileutil.RequireOwnerOnly(path); err != nil {
+		return nil, err
 	}
 
-	// Verify file has 0600 permissions (owner read/write only)
-	mode := fileInfo.Mode().Perm()
-	if mode != 0600 {
-		return nil, fmt.Errorf("insecure permissions on key file %s: %04o (expected 0600). Please run: chmod 600 %s", path, mode, path)
-	}
-
+	// #nosec G304 - File path is provided by administrator configuration
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key file: %w", err)

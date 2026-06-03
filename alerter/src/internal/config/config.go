@@ -345,7 +345,7 @@ func (c *Config) LoadPassword() error {
 	}
 
 	if c.Datastore.PasswordFile != "" {
-		password, err := fileutil.ReadTrimmedFileWithTilde(c.Datastore.PasswordFile)
+		password, err := fileutil.ReadSecretFile(c.Datastore.PasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
@@ -358,7 +358,7 @@ func (c *Config) LoadPassword() error {
 // LoadAPIKeys loads API keys from their respective files
 func (c *Config) LoadAPIKeys() error {
 	if c.LLM.OpenAI.APIKeyFile != "" {
-		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.OpenAI.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(c.LLM.OpenAI.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read OpenAI API key: %w", err)
 		}
@@ -366,7 +366,7 @@ func (c *Config) LoadAPIKeys() error {
 	}
 
 	if c.LLM.Anthropic.APIKeyFile != "" {
-		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.Anthropic.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(c.LLM.Anthropic.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read Anthropic API key: %w", err)
 		}
@@ -374,7 +374,7 @@ func (c *Config) LoadAPIKeys() error {
 	}
 
 	if c.LLM.Voyage.APIKeyFile != "" {
-		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.Voyage.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(c.LLM.Voyage.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read Voyage API key: %w", err)
 		}
@@ -382,7 +382,7 @@ func (c *Config) LoadAPIKeys() error {
 	}
 
 	if c.LLM.Gemini.APIKeyFile != "" {
-		key, err := fileutil.ReadTrimmedFileWithTilde(c.LLM.Gemini.APIKeyFile)
+		key, err := fileutil.ReadSecretFile(c.LLM.Gemini.APIKeyFile)
 		if err != nil {
 			return fmt.Errorf("failed to read Gemini API key: %w", err)
 		}

@@ -12,7 +12,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
+
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // PasswordSource indicates how a password was resolved.
@@ -38,6 +39,13 @@ type PasswordResult struct {
 // When the CLI flag is used, a deprecation warning is printed to
 // stderr because command-line arguments are visible in process
 // listings.
+//
+// When a file path is supplied, the read is delegated to
+// fileutil.ReadSecretFile, which expands a leading tilde, warns on
+// group/world-readable permissions, trims only the trailing newline,
+// and reports an empty file as an error. There is no directory-traversal
+// guard: the path is operator-supplied configuration, and legitimate
+// relative paths (including those containing "..") must be honored.
 func ResolvePassword(flagValue string, flagSet bool, filePath string) (PasswordResult, error) {
 	// 1. CLI flag (highest precedence, but deprecated)
 	if flagSet && flagValue != "" {
@@ -49,16 +57,9 @@ func ResolvePassword(flagValue string, flagSet bool, filePath string) (PasswordR
 
 	// 2. Password file
 	if filePath != "" {
-		if strings.Contains(filePath, "..") {
-			return PasswordResult{}, fmt.Errorf("password file path must not contain directory traversal sequences")
-		}
-		data, err := os.ReadFile(filePath)
+		password, err := fileutil.ReadSecretFile(filePath)
 		if err != nil {
 			return PasswordResult{}, fmt.Errorf("reading password file %s: %w", filePath, err)
-		}
-		password := strings.TrimRight(string(data), "\r\n")
-		if password == "" {
-			return PasswordResult{}, fmt.Errorf("password file %s is empty", filePath)
 		}
 		return PasswordResult{Value: password, Source: PasswordSourceFile}, nil
 	}

@@ -13,6 +13,7 @@ package fileutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -74,94 +75,196 @@ func TestExpandTildePath(t *testing.T) {
 	}
 }
 
-func TestReadTrimmedFile(t *testing.T) {
+func TestReadSecretFile(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Test reading valid file with whitespace
-	filePath := filepath.Join(tmpDir, "test.txt")
-	if err := os.WriteFile(filePath, []byte("  hello world  \n\n"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"trailing newline trimmed", "secret-value\n", "secret-value"},
+		{"trailing CRLF trimmed", "secret-value\r\n", "secret-value"},
+		{"multiple trailing newlines trimmed", "secret-value\n\n\n", "secret-value"},
+		{"no trailing newline", "secret-value", "secret-value"},
+		{"interior spaces preserved", "a secret with spaces\n", "a secret with spaces"},
+		{"leading spaces preserved", "   leading\n", "   leading"},
+		{"trailing spaces preserved", "trailing   \n", "trailing   "},
+		{"tabs preserved", "a\tb\tc\n", "a\tb\tc"},
 	}
 
-	content, err := ReadTrimmedFile(filePath)
-	if err != nil {
-		t.Errorf("ReadTrimmedFile() unexpected error: %v", err)
-	}
-	if content != "hello world" {
-		t.Errorf("ReadTrimmedFile() = %q, want %q", content, "hello world")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(tmpDir, tt.name+".txt")
+			if err := os.WriteFile(filePath, []byte(tt.content), 0600); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
 
-	// Test reading non-existent file
-	_, err = ReadTrimmedFile(filepath.Join(tmpDir, "nonexistent.txt"))
+			got, err := ReadSecretFile(filePath)
+			if err != nil {
+				t.Fatalf("ReadSecretFile() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("ReadSecretFile() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadSecretFileEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// A file that is empty or contains only a trailing newline is an error.
+	for _, content := range []string{"", "\n", "\r\n", "\n\n"} {
+		filePath := filepath.Join(tmpDir, "empty.txt")
+		if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+
+		_, err := ReadSecretFile(filePath)
+		if err == nil {
+			t.Errorf("ReadSecretFile(%q) expected empty-file error, got nil", content)
+		}
+	}
+}
+
+func TestReadSecretFileMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	_, err := ReadSecretFile(filepath.Join(tmpDir, "nonexistent.txt"))
 	if err == nil {
-		t.Error("ReadTrimmedFile() expected error for non-existent file")
-	}
-
-	// Test reading empty file
-	emptyFile := filepath.Join(tmpDir, "empty.txt")
-	if err := os.WriteFile(emptyFile, []byte(""), 0600); err != nil {
-		t.Fatalf("failed to write empty file: %v", err)
-	}
-	content, err = ReadTrimmedFile(emptyFile)
-	if err != nil {
-		t.Errorf("ReadTrimmedFile() unexpected error for empty file: %v", err)
-	}
-	if content != "" {
-		t.Errorf("ReadTrimmedFile() = %q, want empty string", content)
+		t.Error("ReadSecretFile() expected error for non-existent file")
 	}
 }
 
-func TestReadTrimmedFileWithTilde(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestReadSecretFileTildeExpansion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
-	// Test reading valid file
+	filePath := filepath.Join(home, "secret.txt")
+	if err := os.WriteFile(filePath, []byte("tilde-secret\n"), 0600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	got, err := ReadSecretFile("~/secret.txt")
+	if err != nil {
+		t.Fatalf("ReadSecretFile() unexpected error: %v", err)
+	}
+	if got != "tilde-secret" {
+		t.Errorf("ReadSecretFile() = %q, want %q", got, "tilde-secret")
+	}
+}
+
+func TestReadSecretFileTildeExpansionError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("HOME-unset behaviour differs on Windows")
+	}
+
+	// With HOME unset, os.UserHomeDir() fails, so ExpandTildePath
+	// returns an error and ReadSecretFile must propagate it.
+	t.Setenv("HOME", "")
+	_, err := ReadSecretFile("~/secret.txt")
+	if err == nil {
+		t.Error("ReadSecretFile() expected error when HOME is unset")
+	}
+}
+
+func TestReadSecretFilePermissiveWarning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
+	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "secret.txt")
-	if err := os.WriteFile(filePath, []byte("  secret-value  "), 0600); err != nil {
+	if err := os.WriteFile(filePath, []byte("secret\n"), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	content, err := ReadTrimmedFileWithTilde(filePath)
+	// The warning goes to stderr; this exercises the warn branch and
+	// confirms the read still succeeds despite the permissive mode.
+	got, err := ReadSecretFile(filePath)
 	if err != nil {
-		t.Errorf("ReadTrimmedFileWithTilde() unexpected error: %v", err)
+		t.Fatalf("ReadSecretFile() unexpected error: %v", err)
 	}
-	if content != "secret-value" {
-		t.Errorf("ReadTrimmedFileWithTilde() = %q, want %q", content, "secret-value")
+	if got != "secret" {
+		t.Errorf("ReadSecretFile() = %q, want %q", got, "secret")
 	}
 }
 
-func TestReadOptionalTrimmedFile(t *testing.T) {
+func TestWarnIfPermissive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
 	tmpDir := t.TempDir()
 
-	// Test reading valid file
-	filePath := filepath.Join(tmpDir, "api_key.txt")
-	if err := os.WriteFile(filePath, []byte("  test-api-key  \n"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+	// Owner-only file: no warning path, must not panic.
+	ownerOnly := filepath.Join(tmpDir, "owner.txt")
+	if err := os.WriteFile(ownerOnly, []byte("x"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	WarnIfPermissive(ownerOnly)
+
+	// Group/world readable: exercises the warning branch.
+	permissive := filepath.Join(tmpDir, "perm.txt")
+	if err := os.WriteFile(permissive, []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	WarnIfPermissive(permissive)
+
+	// Missing file: best-effort, returns without panic.
+	WarnIfPermissive(filepath.Join(tmpDir, "missing.txt"))
+}
+
+func TestRequireOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
 	}
 
-	content, err := ReadOptionalTrimmedFile(filePath)
-	if err != nil {
-		t.Errorf("ReadOptionalTrimmedFile() unexpected error: %v", err)
-	}
-	if content != "test-api-key" {
-		t.Errorf("ReadOptionalTrimmedFile() = %q, want %q", content, "test-api-key")
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		mode    os.FileMode
+		wantErr bool
+	}{
+		{"0400 accepted", 0400, false},
+		{"0600 accepted", 0600, false},
+		{"0640 rejected", 0640, true},
+		{"0644 rejected", 0644, true},
+		{"0604 rejected", 0604, true},
 	}
 
-	// Test empty path
-	content, err = ReadOptionalTrimmedFile("")
-	if err != nil {
-		t.Errorf("ReadOptionalTrimmedFile() unexpected error for empty path: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(tmpDir, tt.name)
+			if err := os.WriteFile(filePath, []byte("key"), 0600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if err := os.Chmod(filePath, tt.mode); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+
+			err := RequireOwnerOnly(filePath)
+			if tt.wantErr && err == nil {
+				t.Errorf("RequireOwnerOnly(%04o) = nil, want error", tt.mode)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("RequireOwnerOnly(%04o) = %v, want nil", tt.mode, err)
+			}
+		})
 	}
-	if content != "" {
-		t.Errorf("ReadOptionalTrimmedFile() = %q, want empty string", content)
+}
+
+func TestRequireOwnerOnlyMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
 	}
 
-	// Test non-existent file (should return empty, not error)
-	content, err = ReadOptionalTrimmedFile(filepath.Join(tmpDir, "nonexistent.txt"))
-	if err != nil {
-		t.Errorf("ReadOptionalTrimmedFile() unexpected error for non-existent file: %v", err)
-	}
-	if content != "" {
-		t.Errorf("ReadOptionalTrimmedFile() = %q, want empty string", content)
+	tmpDir := t.TempDir()
+	err := RequireOwnerOnly(filepath.Join(tmpDir, "nonexistent.txt"))
+	if err == nil {
+		t.Error("RequireOwnerOnly() expected error for missing file")
 	}
 }
 
@@ -429,57 +532,18 @@ func TestGetDefaultConfigPath_EmptyUserConfigDir(t *testing.T) {
 	}
 }
 
-func TestReadOptionalTrimmedFileError(t *testing.T) {
-	// Test with a directory (should fail when trying to read)
+func TestReadSecretFileDirectory(t *testing.T) {
+	// Reading a directory should fail.
 	tmpDir := t.TempDir()
 
-	// Create a subdirectory
 	subDir := filepath.Join(tmpDir, "subdir")
 	if err := os.Mkdir(subDir, 0755); err != nil {
 		t.Fatalf("failed to create subdirectory: %v", err)
 	}
 
-	// Attempting to read a directory should fail
-	_, err := ReadOptionalTrimmedFile(subDir)
+	_, err := ReadSecretFile(subDir)
 	if err == nil {
-		t.Error("ReadOptionalTrimmedFile() should fail when reading directory")
-	}
-}
-
-func TestReadTrimmedFileWithWhitespaceVariants(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	tests := []struct {
-		name     string
-		content  string
-		expected string
-	}{
-		{"leading spaces", "   hello", "hello"},
-		{"trailing spaces", "hello   ", "hello"},
-		{"leading tabs", "\t\thello", "hello"},
-		{"trailing tabs", "hello\t\t", "hello"},
-		{"leading newlines", "\n\nhello", "hello"},
-		{"trailing newlines", "hello\n\n", "hello"},
-		{"mixed whitespace", " \t\n hello world \n\t ", "hello world"},
-		{"only whitespace", "   \t\n  ", ""},
-		{"carriage returns", "\r\nhello\r\n", "hello"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			filePath := filepath.Join(tmpDir, tt.name+".txt")
-			if err := os.WriteFile(filePath, []byte(tt.content), 0600); err != nil {
-				t.Fatalf("failed to write test file: %v", err)
-			}
-
-			result, err := ReadTrimmedFile(filePath)
-			if err != nil {
-				t.Fatalf("ReadTrimmedFile() error: %v", err)
-			}
-			if result != tt.expected {
-				t.Errorf("ReadTrimmedFile() = %q, want %q", result, tt.expected)
-			}
-		})
+		t.Error("ReadSecretFile() should fail when reading a directory")
 	}
 }
 
@@ -528,14 +592,6 @@ database:
 	if cfg.Database.Username != "admin" {
 		t.Errorf("Database.Username = %q, want %q",
 			cfg.Database.Username, "admin")
-	}
-}
-
-func TestReadTrimmedFileWithTildeError(t *testing.T) {
-	// Test when file doesn't exist after tilde expansion
-	_, err := ReadTrimmedFileWithTilde("~/nonexistent_file_12345.txt")
-	if err == nil {
-		t.Error("ReadTrimmedFileWithTilde() expected error for non-existent file")
 	}
 }
 

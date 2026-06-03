@@ -285,40 +285,115 @@ func containsHelper(s, substr string) bool {
 	return false
 }
 
-func TestReadOptionalTrimmedFile(t *testing.T) {
-	// Create temp directory
+// TestLoadAPIKeysFromFilesNotConfigured verifies that leaving every
+// *_file path empty is not an error and leaves the keys untouched.
+func TestLoadAPIKeysFromFilesNotConfigured(t *testing.T) {
+	cfg := &Config{}
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		t.Fatalf("loadAPIKeysFromFiles with no files: %v", err)
+	}
+	if cfg.Embedding.VoyageAPIKey != "" || cfg.LLM.AnthropicAPIKey != "" {
+		t.Error("expected keys to remain empty when no files configured")
+	}
+}
+
+// TestLoadAPIKeysFromFilesMissingErrors verifies that a configured
+// key file that cannot be read now produces a propagated error rather
+// than being silently swallowed. Each provider field is exercised so
+// every error branch is covered.
+func TestLoadAPIKeysFromFilesMissingErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.key")
+
+	cases := []struct {
+		name  string
+		apply func(*Config)
+	}{
+		{"embedding voyage", func(c *Config) { c.Embedding.VoyageAPIKeyFile = missing }},
+		{"embedding openai", func(c *Config) { c.Embedding.OpenAIAPIKeyFile = missing }},
+		{"embedding gemini", func(c *Config) { c.Embedding.GeminiAPIKeyFile = missing }},
+		{"llm anthropic", func(c *Config) { c.LLM.AnthropicAPIKeyFile = missing }},
+		{"llm openai", func(c *Config) { c.LLM.OpenAIAPIKeyFile = missing }},
+		{"llm gemini", func(c *Config) { c.LLM.GeminiAPIKeyFile = missing }},
+		{"kb voyage", func(c *Config) { c.Knowledgebase.EmbeddingVoyageAPIKeyFile = missing }},
+		{"kb openai", func(c *Config) { c.Knowledgebase.EmbeddingOpenAIAPIKeyFile = missing }},
+		{"kb gemini", func(c *Config) { c.Knowledgebase.EmbeddingGeminiAPIKeyFile = missing }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{}
+			tc.apply(cfg)
+			if err := loadAPIKeysFromFiles(cfg); err == nil {
+				t.Errorf("expected error for missing %s key file", tc.name)
+			}
+		})
+	}
+}
+
+// TestLoadAPIKeysFromFilesAllProviders verifies every provider's
+// success-assignment branch loads the key from disk when a path is
+// configured and the field is otherwise empty.
+func TestLoadAPIKeysFromFilesAllProviders(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Test reading valid file
-	keyFile := filepath.Join(tmpDir, "api_key.txt")
-	if err := os.WriteFile(keyFile, []byte("  test-api-key-123  \n"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+	write := func(name, value string) string {
+		p := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(p, []byte(value+"\n"), 0600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return p
 	}
 
-	key, err := fileutil.ReadOptionalTrimmedFile(keyFile)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if key != "test-api-key-123" {
-		t.Errorf("expected 'test-api-key-123', got %q", key)
+	cfg := &Config{
+		Embedding: EmbeddingConfig{
+			VoyageAPIKeyFile: write("e-voyage", "e-voyage-key"),
+			OpenAIAPIKeyFile: write("e-openai", "e-openai-key"),
+			GeminiAPIKeyFile: write("e-gemini", "e-gemini-key"),
+		},
+		LLM: LLMConfig{
+			AnthropicAPIKeyFile: write("l-anthropic", "l-anthropic-key"),
+			OpenAIAPIKeyFile:    write("l-openai", "l-openai-key"),
+			GeminiAPIKeyFile:    write("l-gemini", "l-gemini-key"),
+		},
+		Knowledgebase: KnowledgebaseConfig{
+			EmbeddingVoyageAPIKeyFile: write("kb-voyage", "kb-voyage-key"),
+			EmbeddingOpenAIAPIKeyFile: write("kb-openai", "kb-openai-key"),
+			EmbeddingGeminiAPIKeyFile: write("kb-gemini", "kb-gemini-key"),
+		},
 	}
 
-	// Test empty path
-	key, err = fileutil.ReadOptionalTrimmedFile("")
-	if err != nil {
-		t.Errorf("unexpected error for empty path: %v", err)
-	}
-	if key != "" {
-		t.Errorf("expected empty string for empty path, got %q", key)
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		t.Fatalf("loadAPIKeysFromFiles: %v", err)
 	}
 
-	// Test non-existent file (should return empty, not error)
-	key, err = fileutil.ReadOptionalTrimmedFile(filepath.Join(tmpDir, "nonexistent.txt"))
-	if err != nil {
-		t.Errorf("unexpected error for non-existent file: %v", err)
+	checks := map[string]string{
+		cfg.Embedding.VoyageAPIKey:              "e-voyage-key",
+		cfg.Embedding.OpenAIAPIKey:              "e-openai-key",
+		cfg.Embedding.GeminiAPIKey:              "e-gemini-key",
+		cfg.LLM.AnthropicAPIKey:                 "l-anthropic-key",
+		cfg.LLM.OpenAIAPIKey:                    "l-openai-key",
+		cfg.LLM.GeminiAPIKey:                    "l-gemini-key",
+		cfg.Knowledgebase.EmbeddingVoyageAPIKey: "kb-voyage-key",
+		cfg.Knowledgebase.EmbeddingOpenAIAPIKey: "kb-openai-key",
+		cfg.Knowledgebase.EmbeddingGeminiAPIKey: "kb-gemini-key",
 	}
-	if key != "" {
-		t.Errorf("expected empty string for non-existent file, got %q", key)
+	for got, want := range checks {
+		if got != want {
+			t.Errorf("loaded key = %q, want %q", got, want)
+		}
+	}
+}
+
+// TestLoadAPIKeysFromFilesEmptyErrors verifies that a configured but
+// empty key file is now reported as an error.
+func TestLoadAPIKeysFromFilesEmptyErrors(t *testing.T) {
+	emptyPath := filepath.Join(t.TempDir(), "empty.key")
+	if err := os.WriteFile(emptyPath, []byte("\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg := &Config{Embedding: EmbeddingConfig{VoyageAPIKeyFile: emptyPath}}
+	if err := loadAPIKeysFromFiles(cfg); err == nil {
+		t.Error("expected error for empty key file")
 	}
 }
 
@@ -822,7 +897,7 @@ func TestMergeConfigGeminiKnowledgebase(t *testing.T) {
 func TestLoadAPIKeysFromFilesGeminiEmbedding(t *testing.T) {
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "gemini.key")
-	if err := os.WriteFile(keyPath, []byte("  file-loaded-gemini-key  \n"), 0600); err != nil {
+	if err := os.WriteFile(keyPath, []byte("file-loaded-gemini-key\n"), 0600); err != nil {
 		t.Fatalf("failed to write key file: %v", err)
 	}
 
@@ -832,7 +907,9 @@ func TestLoadAPIKeysFromFilesGeminiEmbedding(t *testing.T) {
 		},
 	}
 
-	loadAPIKeysFromFiles(cfg)
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		t.Fatalf("loadAPIKeysFromFiles: %v", err)
+	}
 
 	if cfg.Embedding.GeminiAPIKey != "file-loaded-gemini-key" {
 		t.Errorf("expected GeminiAPIKey 'file-loaded-gemini-key', got %q",
@@ -855,7 +932,9 @@ func TestLoadAPIKeysFromFilesGeminiKnowledgebase(t *testing.T) {
 		},
 	}
 
-	loadAPIKeysFromFiles(cfg)
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		t.Fatalf("loadAPIKeysFromFiles: %v", err)
+	}
 
 	if cfg.Knowledgebase.EmbeddingGeminiAPIKey != "kb-file-gemini-key" {
 		t.Errorf("expected EmbeddingGeminiAPIKey 'kb-file-gemini-key', got %q",
@@ -883,7 +962,9 @@ func TestLoadAPIKeysFromFilesGeminiPreservesExisting(t *testing.T) {
 		},
 	}
 
-	loadAPIKeysFromFiles(cfg)
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		t.Fatalf("loadAPIKeysFromFiles: %v", err)
+	}
 
 	if cfg.Embedding.GeminiAPIKey != "preset-key" {
 		t.Errorf("expected existing Embedding key to be preserved, got %q",
@@ -986,10 +1067,12 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 		}
 	})
 
-	t.Run("ReadsAndTrimsFromValidFile", func(t *testing.T) {
+	t.Run("ReadsAndTrimsTrailingNewlineFromValidFile", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		passFile := filepath.Join(tmpDir, "password.txt")
-		if err := os.WriteFile(passFile, []byte("  secret-pass\n"), 0600); err != nil {
+		// Only the trailing newline is stripped; in-secret whitespace
+		// (here a deliberate trailing space) is preserved.
+		if err := os.WriteFile(passFile, []byte("secret pass \n"), 0600); err != nil {
 			t.Fatalf("failed to write password file: %v", err)
 		}
 
@@ -998,8 +1081,21 @@ func TestDatabaseConfigLoadPassword(t *testing.T) {
 		if err := cfg.LoadPassword(); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.Password != "secret-pass" {
-			t.Errorf("expected password 'secret-pass', got %q", cfg.Password)
+		if cfg.Password != "secret pass " {
+			t.Errorf("expected password 'secret pass ', got %q", cfg.Password)
+		}
+	})
+
+	t.Run("EmptyFileReturnsError", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		passFile := filepath.Join(tmpDir, "empty.txt")
+		if err := os.WriteFile(passFile, []byte("\n"), 0600); err != nil {
+			t.Fatalf("failed to write password file: %v", err)
+		}
+
+		cfg := &DatabaseConfig{PasswordFile: passFile}
+		if err := cfg.LoadPassword(); err == nil {
+			t.Fatal("expected an error for an empty password file, got nil")
 		}
 	})
 

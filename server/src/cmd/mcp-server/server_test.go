@@ -32,11 +32,12 @@ func newServerWithSecretFile(secretFile string) *Server {
 }
 
 // TestLoadServerSecret_ExplicitFile verifies that an explicit
-// SecretFile in the config is read verbatim and trimmed.
+// SecretFile in the config is read with only its trailing newline
+// trimmed.
 func TestLoadServerSecret_ExplicitFile(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "server.secret")
-	if err := os.WriteFile(path, []byte("  explicit-secret\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("explicit-secret\n"), 0600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	s := newServerWithSecretFile(path)
@@ -111,11 +112,13 @@ func TestLoadServerSecret_NoneFound(t *testing.T) {
 }
 
 // TestLoadServerSecret_EmptyFile verifies that a secret file
-// containing only whitespace is rejected.
+// containing only newlines is rejected as empty. Only the trailing
+// newline sequence is trimmed, so a file of in-secret whitespace is
+// no longer treated as empty.
 func TestLoadServerSecret_EmptyFile(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "blank.secret")
-	if err := os.WriteFile(path, []byte("   \n\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("\n\n"), 0600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	s := newServerWithSecretFile(path)

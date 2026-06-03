@@ -319,7 +319,7 @@ func applyFlagOverrides(cfg *config.Config, dbHost string, dbPort int, dbName, d
 		cfg.Datastore.Username = dbUser
 	}
 	if dbPasswordFile != "" {
-		password, err := fileutil.ReadTrimmedFileWithTilde(dbPasswordFile)
+		password, err := fileutil.ReadSecretFile(dbPasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}

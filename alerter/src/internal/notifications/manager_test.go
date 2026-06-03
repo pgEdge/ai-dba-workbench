@@ -11,6 +11,8 @@ package notifications
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,6 +20,76 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
 )
+
+// TestNewManager exercises the construction paths that depend on the
+// secret-file read, which now flows through fileutil.ReadSecretFile.
+func TestNewManager(t *testing.T) {
+	t.Run("nil config returns nil manager", func(t *testing.T) {
+		m, err := NewManager(nil, nil, false, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if m != nil {
+			t.Error("expected nil manager when config is nil")
+		}
+	})
+
+	t.Run("disabled config returns nil manager", func(t *testing.T) {
+		m, err := NewManager(nil, &config.NotificationsConfig{Enabled: false}, false, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if m != nil {
+			t.Error("expected nil manager when notifications are disabled")
+		}
+	})
+
+	t.Run("missing secret file is an error", func(t *testing.T) {
+		cfg := &config.NotificationsConfig{
+			Enabled:    true,
+			SecretFile: "/nonexistent/secret",
+		}
+		if _, err := NewManager(nil, cfg, false, nil); err == nil {
+			t.Error("expected error when secret file is missing")
+		}
+	})
+
+	t.Run("empty secret file is an error", func(t *testing.T) {
+		secretPath := filepath.Join(t.TempDir(), "empty.secret")
+		if err := os.WriteFile(secretPath, []byte("\n"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		cfg := &config.NotificationsConfig{
+			Enabled:    true,
+			SecretFile: secretPath,
+		}
+		if _, err := NewManager(nil, cfg, false, nil); err == nil {
+			t.Error("expected error when secret file is empty")
+		}
+	})
+
+	t.Run("valid secret file builds a manager", func(t *testing.T) {
+		secretPath := filepath.Join(t.TempDir(), "valid.secret")
+		if err := os.WriteFile(secretPath, []byte("server-secret-value\n"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		cfg := &config.NotificationsConfig{
+			Enabled:            true,
+			SecretFile:         secretPath,
+			HTTPTimeoutSeconds: 0, // exercises the default-timeout branch
+		}
+		m, err := NewManager(nil, cfg, false, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if m == nil {
+			t.Fatal("expected a manager instance")
+		}
+		if m.serverSecret != "server-secret-value" {
+			t.Errorf("serverSecret = %q, want %q", m.serverSecret, "server-secret-value")
+		}
+	})
+}
 
 func TestManager_GetBackoffMinutes(t *testing.T) {
 	tests := []struct {

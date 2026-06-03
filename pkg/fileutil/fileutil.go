@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -37,54 +38,83 @@ func ExpandTildePath(path string) (string, error) {
 	return filepath.Join(homeDir, path[1:]), nil
 }
 
-// ReadTrimmedFile reads a file and returns its contents with leading and
-// trailing whitespace removed.
-func ReadTrimmedFile(path string) (string, error) {
-	// #nosec G304 - File path is provided by administrator configuration
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(content)), nil
-}
-
-// ReadTrimmedFileWithTilde reads a file after expanding any leading tilde
-// in the path, then returns the contents with whitespace trimmed.
-func ReadTrimmedFileWithTilde(path string) (string, error) {
+// ReadSecretFile reads a secret (password, token, API key, or server
+// secret) from an operator-supplied file path. It expands a leading
+// tilde, warns (to stderr) if the file is group/world-readable, trims
+// only a trailing newline sequence (preserving any in-secret
+// whitespace), and returns an error if the resulting secret is empty.
+//
+// The trailing-newline trim uses strings.TrimRight(data, "\r\n") rather
+// than TrimSpace so that secrets containing intentional leading,
+// trailing, or interior spaces survive intact; only the line-ending a
+// text editor appends is stripped.
+func ReadSecretFile(path string) (string, error) {
 	expandedPath, err := ExpandTildePath(path)
 	if err != nil {
 		return "", err
 	}
 
-	return ReadTrimmedFile(expandedPath)
-}
+	WarnIfPermissive(expandedPath)
 
-// ReadOptionalTrimmedFile reads a file and returns its contents with
-// whitespace trimmed. If the file does not exist, it returns an empty
-// string without an error. The path is expanded if it starts with tilde.
-func ReadOptionalTrimmedFile(path string) (string, error) {
-	if path == "" {
-		return "", nil
-	}
-
-	expandedPath, err := ExpandTildePath(path)
+	// #nosec G304 - File path is provided by administrator configuration
+	data, err := os.ReadFile(expandedPath)
 	if err != nil {
 		return "", err
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(expandedPath); os.IsNotExist(err) {
-		return "", nil
+	secret := strings.TrimRight(string(data), "\r\n")
+	if secret == "" {
+		return "", fmt.Errorf("secret file %s is empty", expandedPath)
 	}
 
-	// #nosec G304 - File path is provided by administrator configuration
-	content, err := os.ReadFile(expandedPath)
+	return secret, nil
+}
+
+// WarnIfPermissive prints a stderr warning if the file is group- or
+// world-readable (mode & 0o077 != 0). It never returns an error and is
+// a no-op on Windows, where Unix mode bits do not map cleanly.
+func WarnIfPermissive(path string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file %s: %w", expandedPath, err)
+		// Stat failures are surfaced by the subsequent read; the
+		// warning is best-effort only.
+		return
 	}
 
-	return strings.TrimSpace(string(content)), nil
+	if info.Mode().Perm()&0o077 != 0 {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: secret file %s is group/world-accessible (%04o); "+
+				"restrict it with: chmod 600 %s\n",
+			path, info.Mode().Perm(), path)
+	}
+}
+
+// RequireOwnerOnly returns an error if the file grants any group or
+// world access (mode & 0o077 != 0). Modes 0400 and 0600 pass; 0640,
+// 0644, and friends fail. It is a no-op (returns nil) on Windows, where
+// Unix mode bits do not map cleanly.
+func RequireOwnerOnly(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("failed to stat key file %s: %w", path, err)
+	}
+
+	mode := info.Mode().Perm()
+	if mode&0o077 != 0 {
+		return fmt.Errorf(
+			"insecure permissions on key file %s: %04o (group/world access "+
+				"not permitted). Please run: chmod 600 %s", path, mode, path)
+	}
+
+	return nil
 }
 
 // FileExists checks if a file exists at the given path.

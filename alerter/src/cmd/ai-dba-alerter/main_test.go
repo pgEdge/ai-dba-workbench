@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
@@ -343,4 +344,64 @@ func TestReloadConfigOnSignal_PasswordFileMissing(t *testing.T) {
 	if !strings.Contains(err.Error(), "password") {
 		t.Errorf("err = %v, want it to mention 'password'", err)
 	}
+}
+
+// TestApplyFlagOverrides exercises every override branch, with
+// particular focus on the db-password-file read, which now flows
+// through fileutil.ReadSecretFile.
+func TestApplyFlagOverrides(t *testing.T) {
+	t.Run("all scalar overrides applied", func(t *testing.T) {
+		cfg := config.NewConfig()
+		if err := applyFlagOverrides(cfg, "h", 5433, "db", "user", "", "require"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Datastore.Host != "h" || cfg.Datastore.Port != 5433 ||
+			cfg.Datastore.Database != "db" || cfg.Datastore.Username != "user" ||
+			cfg.Datastore.SSLMode != "require" {
+			t.Errorf("scalar overrides not applied: %+v", cfg.Datastore)
+		}
+	})
+
+	t.Run("no overrides leaves config untouched", func(t *testing.T) {
+		cfg := config.NewConfig()
+		host := cfg.Datastore.Host
+		if err := applyFlagOverrides(cfg, "", 0, "", "", "", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Datastore.Host != host {
+			t.Errorf("host changed unexpectedly to %q", cfg.Datastore.Host)
+		}
+	})
+
+	t.Run("password file loaded", func(t *testing.T) {
+		pwFile := filepath.Join(t.TempDir(), "pw.txt")
+		if err := os.WriteFile(pwFile, []byte("flag-password\n"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		cfg := config.NewConfig()
+		if err := applyFlagOverrides(cfg, "", 0, "", "", pwFile, ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Datastore.Password != "flag-password" {
+			t.Errorf("Password = %q, want %q", cfg.Datastore.Password, "flag-password")
+		}
+	})
+
+	t.Run("missing password file is an error", func(t *testing.T) {
+		cfg := config.NewConfig()
+		if err := applyFlagOverrides(cfg, "", 0, "", "", "/nonexistent/pw", ""); err == nil {
+			t.Error("expected error for missing password file")
+		}
+	})
+
+	t.Run("empty password file is an error", func(t *testing.T) {
+		pwFile := filepath.Join(t.TempDir(), "empty.txt")
+		if err := os.WriteFile(pwFile, []byte("\n"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		cfg := config.NewConfig()
+		if err := applyFlagOverrides(cfg, "", 0, "", "", pwFile, ""); err == nil {
+			t.Error("expected error for empty password file")
+		}
+	})
 }

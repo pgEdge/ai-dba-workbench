@@ -13,13 +13,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // Manager implements NotificationManager
@@ -44,13 +43,9 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 	}
 
 	// Load server secret from file (plain text, same format as server secret)
-	secretData, err := os.ReadFile(cfg.SecretFile)
+	serverSecret, err := fileutil.ReadSecretFile(cfg.SecretFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret file: %w", err)
-	}
-	serverSecret := strings.TrimSpace(string(secretData))
-	if serverSecret == "" {
-		return nil, fmt.Errorf("secret file is empty")
 	}
 
 	renderer := NewTemplateRenderer()

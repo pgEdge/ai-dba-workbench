@@ -268,9 +268,9 @@ func TestReadPasswordFromSecretFile(t *testing.T) {
 		t.Fatalf("Failed to write test password file: %v", err)
 	}
 
-	password, err := fileutil.ReadTrimmedFileWithTilde(passwordFile)
+	password, err := fileutil.ReadSecretFile(passwordFile)
 	if err != nil {
-		t.Fatalf("fileutil.ReadTrimmedFileWithTilde() error = %v", err)
+		t.Fatalf("fileutil.ReadSecretFile() error = %v", err)
 	}
 
 	if password != testPassword {
@@ -426,9 +426,9 @@ func TestReadSecretFile(t *testing.T) {
 		t.Fatalf("Failed to write test secret file: %v", err)
 	}
 
-	secret, err := fileutil.ReadTrimmedFileWithTilde(secretFile)
+	secret, err := fileutil.ReadSecretFile(secretFile)
 	if err != nil {
-		t.Fatalf("fileutil.ReadTrimmedFileWithTilde() error = %v", err)
+		t.Fatalf("fileutil.ReadSecretFile() error = %v", err)
 	}
 
 	if secret != testSecret {
@@ -437,7 +437,7 @@ func TestReadSecretFile(t *testing.T) {
 }
 
 func TestReadSecretFile_NotFound(t *testing.T) {
-	_, err := fileutil.ReadTrimmedFileWithTilde("/nonexistent/path/to/secret.txt")
+	_, err := fileutil.ReadSecretFile("/nonexistent/path/to/secret.txt")
 	if err == nil {
 		t.Error("Expected error when reading non-existent secret file")
 	}
@@ -658,6 +658,39 @@ func TestConfigLoadPassword_FileMissing(t *testing.T) {
 	}
 }
 
+func TestConfigLoadPassword_FileEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	pwFile := filepath.Join(tmpDir, "empty.txt")
+	if err := os.WriteFile(pwFile, []byte("\n"), 0600); err != nil {
+		t.Fatalf("failed to write password file: %v", err)
+	}
+
+	config := NewConfig()
+	config.Datastore.PasswordFile = pwFile
+
+	if err := config.LoadPassword(); err == nil {
+		t.Error("expected error when password file is empty")
+	}
+}
+
+func TestConfigLoadPassword_PreservesInteriorWhitespace(t *testing.T) {
+	tmpDir := t.TempDir()
+	pwFile := filepath.Join(tmpDir, "pw.txt")
+	// A trailing space is part of the secret; only the newline is trimmed.
+	if err := os.WriteFile(pwFile, []byte("file password \n"), 0600); err != nil {
+		t.Fatalf("failed to write password file: %v", err)
+	}
+
+	config := NewConfig()
+	config.Datastore.PasswordFile = pwFile
+	if err := config.LoadPassword(); err != nil {
+		t.Fatalf("LoadPassword() error = %v", err)
+	}
+	if config.Datastore.Password != "file password " {
+		t.Errorf("Password: got %q, want %q", config.Datastore.Password, "file password ")
+	}
+}
+
 func TestConfigLoadPassword_NoFileNoDirect(t *testing.T) {
 	config := NewConfig()
 	// Neither Password nor PasswordFile set: LoadPassword returns nil
@@ -736,6 +769,21 @@ func TestLoadSecret_ExplicitPath(t *testing.T) {
 
 	if config.GetServerSecret() != testSecret {
 		t.Errorf("Expected secret to be '%s', got '%s'", testSecret, config.GetServerSecret())
+	}
+}
+
+func TestLoadSecret_ExplicitPathEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	secretFile := filepath.Join(tmpDir, "empty.secret")
+	if err := os.WriteFile(secretFile, []byte("\n"), 0600); err != nil {
+		t.Fatalf("Failed to write test secret file: %v", err)
+	}
+
+	config := NewConfig()
+	config.SecretFile = secretFile
+
+	if err := config.LoadSecret(""); err == nil {
+		t.Error("expected error when explicit secret file is empty")
 	}
 }
 

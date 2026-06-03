@@ -265,7 +265,7 @@ func (cfg *DatabaseConfig) LoadPassword() error {
 	}
 
 	if cfg.PasswordFile != "" {
-		password, err := fileutil.ReadTrimmedFileWithTilde(cfg.PasswordFile)
+		password, err := fileutil.ReadSecretFile(cfg.PasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
@@ -467,7 +467,9 @@ func LoadConfig(configPath string, cliFlags CLIFlags) (*Config, error) {
 	}
 
 	// Load API keys from files if specified
-	loadAPIKeysFromFiles(cfg)
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		return nil, err
+	}
 
 	// Apply environment variable overrides
 	applyEnvOverrides(cfg)
@@ -874,58 +876,83 @@ func mergeConfig(dest, src *Config) {
 	// Prompts - no built-in prompts currently, merge logic can be added here for future prompts
 }
 
-// loadAPIKeysFromFiles loads API keys from files if specified in config
-func loadAPIKeysFromFiles(cfg *Config) {
+// loadAPIKeysFromFiles loads API keys from files when a *_file path is
+// configured. A key file is optional: when no path is set the field is
+// left untouched and that is not an error. When a path IS configured,
+// the file must exist, be readable, and be non-empty; any failure
+// (including a configured-but-empty file) is propagated to the caller
+// instead of being silently swallowed.
+func loadAPIKeysFromFiles(cfg *Config) error {
 	// Embedding API keys
 	if cfg.Embedding.VoyageAPIKey == "" && cfg.Embedding.VoyageAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.VoyageAPIKeyFile); err == nil && key != "" {
-			cfg.Embedding.VoyageAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Embedding.VoyageAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedding Voyage API key: %w", err)
 		}
+		cfg.Embedding.VoyageAPIKey = key
 	}
 	if cfg.Embedding.OpenAIAPIKey == "" && cfg.Embedding.OpenAIAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.OpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.Embedding.OpenAIAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Embedding.OpenAIAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedding OpenAI API key: %w", err)
 		}
+		cfg.Embedding.OpenAIAPIKey = key
 	}
 	if cfg.Embedding.GeminiAPIKey == "" && cfg.Embedding.GeminiAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.GeminiAPIKeyFile); err == nil && key != "" {
-			cfg.Embedding.GeminiAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Embedding.GeminiAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedding Gemini API key: %w", err)
 		}
+		cfg.Embedding.GeminiAPIKey = key
 	}
 
 	// LLM API keys
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.AnthropicAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.LLM.AnthropicAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read LLM Anthropic API key: %w", err)
 		}
+		cfg.LLM.AnthropicAPIKey = key
 	}
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.OpenAIAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.LLM.OpenAIAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read LLM OpenAI API key: %w", err)
 		}
+		cfg.LLM.OpenAIAPIKey = key
 	}
 	if cfg.LLM.GeminiAPIKey == "" && cfg.LLM.GeminiAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.GeminiAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.GeminiAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.LLM.GeminiAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read LLM Gemini API key: %w", err)
 		}
+		cfg.LLM.GeminiAPIKey = key
 	}
 
 	// Knowledgebase API keys
 	if cfg.Knowledgebase.EmbeddingVoyageAPIKey == "" && cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile); err == nil && key != "" {
-			cfg.Knowledgebase.EmbeddingVoyageAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read knowledgebase Voyage API key: %w", err)
 		}
+		cfg.Knowledgebase.EmbeddingVoyageAPIKey = key
 	}
 	if cfg.Knowledgebase.EmbeddingOpenAIAPIKey == "" && cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read knowledgebase OpenAI API key: %w", err)
 		}
+		cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
 	}
 	if cfg.Knowledgebase.EmbeddingGeminiAPIKey == "" && cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile); err == nil && key != "" {
-			cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read knowledgebase Gemini API key: %w", err)
 		}
+		cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
 	}
+
+	return nil
 }
 
 // applyEnvOverrides applies environment variable overrides to the configuration.

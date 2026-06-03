@@ -255,10 +255,10 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 // LoadPassword resolves the database password from PasswordFile when
 // Password is not already set. A non-empty Password always wins, so a
 // password supplied via CLI flag or inline YAML takes precedence over
-// the file. When PasswordFile is set and Password
-// is empty, the file contents (with surrounding whitespace trimmed) are
-// read into Password. An error is returned only when the file cannot be
-// read.
+// the file. When PasswordFile is set and Password is empty, the file
+// is read via fileutil.ReadSecretFile, which trims only the trailing
+// newline (not all surrounding whitespace) and returns an error if the
+// file cannot be read or resolves to an empty secret.
 func (cfg *DatabaseConfig) LoadPassword() error {
 	if cfg.Password != "" {
 		return nil

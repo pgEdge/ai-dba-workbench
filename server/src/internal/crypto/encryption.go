@@ -51,14 +51,11 @@ func GenerateKey() (*EncryptionKey, error) {
 func LoadKeyFromFile(path string) (*EncryptionKey, error) {
 	// Reject any file that grants group or world access. Owner-only
 	// modes such as 0400 and 0600 pass; 0640, 0644, and friends fail.
-	if err := fileutil.RequireOwnerOnly(path); err != nil {
-		return nil, err
-	}
-
-	// #nosec G304 - File path is provided by administrator configuration
-	data, err := os.ReadFile(path)
+	// The permission check and read happen on the same open descriptor
+	// to close the TOCTOU window a separate stat + read would leave.
+	data, err := fileutil.ReadOwnerOnlyFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read key file: %w", err)
+		return nil, err
 	}
 
 	// Decode base64

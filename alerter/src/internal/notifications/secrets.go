@@ -13,7 +13,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 
 	pkgcrypto "github.com/pgedge/ai-workbench/pkg/crypto"
@@ -38,15 +37,12 @@ func NewSecretManager(key []byte) (SecretManager, error) {
 // The file must not grant group or world access; owner-only modes such
 // as 0400 and 0600 are accepted, while 0640, 0644, and friends fail.
 func LoadSecretKey(path string) ([]byte, error) {
-	// Reject any file that grants group or world access.
-	if err := fileutil.RequireOwnerOnly(path); err != nil {
-		return nil, err
-	}
-
-	// #nosec G304 - File path is provided by administrator configuration
-	data, err := os.ReadFile(path)
+	// Reject any file that grants group or world access. The permission
+	// check and read happen on the same open descriptor to close the
+	// TOCTOU window a separate stat + read would leave.
+	data, err := fileutil.ReadOwnerOnlyFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read secret key file: %w", err)
+		return nil, err
 	}
 
 	// Trim whitespace (newlines, spaces, etc.)

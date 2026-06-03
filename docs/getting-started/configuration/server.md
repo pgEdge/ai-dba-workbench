@@ -216,7 +216,7 @@ builtins:
 | `-db-name string` | Database name |
 | `-db-user string` | Database user |
 | `-db-password string` | Database password |
-| `-db-password-file string` | Path to file containing the database password |
+| `-db-password-file string` | Path to file with the database password |
 | `-db-sslmode string` | SSL mode |
 
 ### Token Management Options
@@ -361,7 +361,7 @@ protection for user-created database connections.
 | `database` | string | `postgres` | Database name |
 | `user` | string | | Database user (required) |
 | `password` | string | | Database password |
-| `password_file` | string | | Path to a file containing the database password (used only if `password` is empty) |
+| `password_file` | string | | DB password file; used if `password` empty |
 | `sslmode` | string | `prefer` | SSL mode |
 | `pool_max_conns` | int | `4` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |

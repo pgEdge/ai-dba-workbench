@@ -15,6 +15,7 @@ package fileutil
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -93,28 +94,42 @@ func WarnIfPermissive(path string) {
 	}
 }
 
-// RequireOwnerOnly returns an error if the file grants any group or
-// world access (mode & 0o077 != 0). Modes 0400 and 0600 pass; 0640,
-// 0644, and friends fail. It is a no-op (returns nil) on Windows, where
-// Unix mode bits do not map cleanly.
-func RequireOwnerOnly(path string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-
-	info, err := os.Stat(path)
+// ReadOwnerOnlyFile opens path, verifies on the open file descriptor
+// that the file grants no group or world access (mode & 0o077 == 0),
+// and returns its raw bytes. Checking permissions on the already-open
+// descriptor and reading from that same descriptor closes the TOCTOU
+// window that a separate os.Stat + os.ReadFile would leave. The
+// permission check is skipped on Windows, where Unix mode bits do not
+// map cleanly. Modes such as 0400 and 0600 pass; 0640, 0644, and
+// friends are rejected.
+func ReadOwnerOnlyFile(path string) ([]byte, error) {
+	// #nosec G304 - path is administrator-supplied configuration
+	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("failed to stat key file %s: %w", path, err)
+		return nil, fmt.Errorf("failed to open key file %s: %w", path, err)
+	}
+	defer f.Close()
+
+	if runtime.GOOS != "windows" {
+		info, err := f.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("failed to stat key file %s: %w", path, err)
+		}
+
+		mode := info.Mode().Perm()
+		if mode&0o077 != 0 {
+			return nil, fmt.Errorf(
+				"insecure permissions on key file %s: %04o (group/world access "+
+					"not permitted). Please run: chmod 600 %s", path, mode, path)
+		}
 	}
 
-	mode := info.Mode().Perm()
-	if mode&0o077 != 0 {
-		return fmt.Errorf(
-			"insecure permissions on key file %s: %04o (group/world access "+
-				"not permitted). Please run: chmod 600 %s", path, mode, path)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read key file %s: %w", path, err)
 	}
 
-	return nil
+	return data, nil
 }
 
 // FileExists checks if a file exists at the given path.

@@ -140,6 +140,9 @@ func TestReadSecretFileMissing(t *testing.T) {
 func TestReadSecretFileTildeExpansion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// os.UserHomeDir reads %USERPROFILE% on Windows, so set it too to
+	// keep the tilde resolving inside the temp dir on every platform.
+	t.Setenv("USERPROFILE", home)
 
 	filePath := filepath.Join(home, "secret.txt")
 	if err := os.WriteFile(filePath, []byte("tilde-secret\n"), 0600); err != nil {
@@ -216,7 +219,7 @@ func TestWarnIfPermissive(t *testing.T) {
 	WarnIfPermissive(filepath.Join(tmpDir, "missing.txt"))
 }
 
-func TestRequireOwnerOnly(t *testing.T) {
+func TestReadOwnerOnlyFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits do not map on Windows")
 	}
@@ -245,26 +248,74 @@ func TestRequireOwnerOnly(t *testing.T) {
 				t.Fatalf("chmod: %v", err)
 			}
 
-			err := RequireOwnerOnly(filePath)
-			if tt.wantErr && err == nil {
-				t.Errorf("RequireOwnerOnly(%04o) = nil, want error", tt.mode)
+			data, err := ReadOwnerOnlyFile(filePath)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ReadOwnerOnlyFile(%04o) = nil error, want error",
+						tt.mode)
+				}
+				return
 			}
-			if !tt.wantErr && err != nil {
-				t.Errorf("RequireOwnerOnly(%04o) = %v, want nil", tt.mode, err)
+			if err != nil {
+				t.Errorf("ReadOwnerOnlyFile(%04o) = %v, want nil", tt.mode, err)
+				return
+			}
+			if string(data) != "key" {
+				t.Errorf("ReadOwnerOnlyFile() = %q, want %q", data, "key")
 			}
 		})
 	}
 }
 
-func TestRequireOwnerOnlyMissing(t *testing.T) {
+// TestReadOwnerOnlyFileReturnsRawBytes confirms the helper returns the
+// file contents verbatim, performing no trimming of surrounding or
+// interior whitespace.
+func TestReadOwnerOnlyFileReturnsRawBytes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits do not map on Windows")
 	}
 
 	tmpDir := t.TempDir()
-	err := RequireOwnerOnly(filepath.Join(tmpDir, "nonexistent.txt"))
+	filePath := filepath.Join(tmpDir, "raw.txt")
+	content := "  raw\tcontent\n\n"
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, err := ReadOwnerOnlyFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadOwnerOnlyFile() unexpected error: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("ReadOwnerOnlyFile() = %q, want verbatim %q", data, content)
+	}
+}
+
+func TestReadOwnerOnlyFileMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	_, err := ReadOwnerOnlyFile(filepath.Join(tmpDir, "nonexistent.txt"))
 	if err == nil {
-		t.Error("RequireOwnerOnly() expected error for missing file")
+		t.Error("ReadOwnerOnlyFile() expected error for missing file")
+	}
+}
+
+// TestReadOwnerOnlyFileReadError exercises the io.ReadAll failure
+// branch. Opening a directory succeeds and its 0700 mode passes the
+// owner-only check, but reading its bytes fails, so the helper must
+// surface a read error rather than returning content.
+func TestReadOwnerOnlyFileReadError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory read semantics differ on Windows")
+	}
+
+	dir := filepath.Join(t.TempDir(), "ownerdir")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	_, err := ReadOwnerOnlyFile(dir)
+	if err == nil {
+		t.Error("ReadOwnerOnlyFile() expected error reading a directory")
 	}
 }
 

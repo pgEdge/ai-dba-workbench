@@ -56,8 +56,8 @@ management. The Client provides the following features:
 
 The following sections provide starting points based on role and goals.
 
-- The [Quick Start](getting-started/installation_overview.md) guide helps new users
-  set up the Workbench for the first time.
+- [Choose an installation type](getting-started/installation_overview.md) for
+  details about setting up the Workbench for the first time.
 - The [User Guide](user-guide/index.md) covers dashboards, alerts, and AI
   features for day-to-day usage.
 - The [Administrator's Guide](admin-guide/index.md) explains authentication,

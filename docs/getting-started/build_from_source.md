@@ -565,8 +565,11 @@ entry.
 
 ![Adding a server definition](../images/add_server.png)
 
+For detailed information about using the Workbench, see the
+[User Guide](../user-guide/index.md).
 
-### Customizing your Configuration
+
+## Customizing your Configuration
 
 Consult the following guides for additional configuration information:
 

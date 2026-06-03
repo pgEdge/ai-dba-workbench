@@ -34,7 +34,7 @@ project adheres to
   tokens, API keys, server and notification secrets, and proxy
   header values. Secrets that legitimately contain leading,
   trailing, or interior spaces are now preserved verbatim.
-  **Operational:** operators who relied on the old
+  Operational: operators who relied on the old
   whitespace-stripping behaviour may need to re-create affected
   secret files so the stored value matches the intended secret.
   (#267)
@@ -43,7 +43,7 @@ project adheres to
   startup error, instead of silently treating the file as "no
   value". Previously an empty file fell through to `.pgpass` or a
   passwordless connection, which could mask a misconfigured
-  deployment. **Operational:** operators must ensure every
+  deployment. Operators must ensure every
   configured secret file contains a value before starting the new
   binaries. (#267)
 

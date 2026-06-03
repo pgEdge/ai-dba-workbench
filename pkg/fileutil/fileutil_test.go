@@ -360,6 +360,37 @@ func TestWarnIfPermissive(t *testing.T) {
 	WarnIfPermissive(filepath.Join(tmpDir, "missing.txt"))
 }
 
+// TestWarnIfPermissiveNoWarningForDirectory confirms that the exported
+// WarnIfPermissive, which stats the raw path and calls
+// warnIfPermissiveInfo directly rather than going through
+// readRegularFileBounded, stays silent for a non-regular file. A
+// directory created with the default mode is group/world-accessible, so
+// without the regular-file guard it would wrongly emit the "chmod 600"
+// warning; this asserts no such warning reaches stderr.
+func TestWarnIfPermissiveNoWarningForDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
+	dirPath := filepath.Join(t.TempDir(), "permdir")
+	if err := os.Mkdir(dirPath, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Force the group/world-readable bits explicitly so a strict umask
+	// cannot make the directory owner-only and mask the regular-file guard.
+	if err := os.Chmod(dirPath, 0755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		WarnIfPermissive(dirPath)
+	})
+
+	if strings.Contains(stderr, "group/world-accessible") {
+		t.Errorf("unexpected permissive warning for directory: %q", stderr)
+	}
+}
+
 // TestWarnIfPermissiveTildeExpansion confirms WarnIfPermissive expands a
 // leading tilde before the stat, so a permissive "~"-relative file emits
 // the warning rather than silently skipping it when the stat of the

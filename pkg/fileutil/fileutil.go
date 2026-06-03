@@ -227,6 +227,15 @@ func warnIfPermissiveInfo(path string, info os.FileInfo) {
 		return
 	}
 
+	// Only regular files produce the chmod-600 warning. When this is
+	// reached via ReadSecretFile's check closure the regular-file check
+	// has already passed, so this is harmless; when reached via the
+	// exported WarnIfPermissive on a directory or FIFO it correctly stays
+	// silent, matching the regular-file-only contract of ReadSecretFile.
+	if !info.Mode().IsRegular() {
+		return
+	}
+
 	if info.Mode().Perm()&0o077 != 0 {
 		fmt.Fprintf(os.Stderr,
 			"WARNING: secret file %s is group/world-accessible (%04o); "+

@@ -199,12 +199,13 @@ type TLSConfig struct {
 
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`     // Database host (default: localhost)
-	Port     int    `yaml:"port"`     // Database port (default: 5432)
-	Database string `yaml:"database"` // Database name (default: postgres)
-	User     string `yaml:"user"`     // Database user (required)
-	Password string `yaml:"password"` // Database password (optional, will use PGEDGE_DB_PASSWORD env var or .pgpass if not set)
-	SSLMode  string `yaml:"sslmode"`  // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
+	Host         string `yaml:"host"`          // Database host (default: localhost)
+	Port         int    `yaml:"port"`          // Database port (default: 5432)
+	Database     string `yaml:"database"`      // Database name (default: postgres)
+	User         string `yaml:"user"`          // Database user (required)
+	Password     string `yaml:"password"`      // Database password (optional, will use PGEDGE_DB_PASSWORD env var or .pgpass if not set)
+	PasswordFile string `yaml:"password_file"` // Path to a file containing the database password (used only if Password is empty)
+	SSLMode      string `yaml:"sslmode"`       // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
 
 	// Connection pool settings
 	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
@@ -249,6 +250,29 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	}
 
 	return connStr
+}
+
+// LoadPassword resolves the database password from PasswordFile when
+// Password is not already set. A non-empty Password always wins, so a
+// password supplied via CLI flag, environment variable, or inline YAML
+// takes precedence over the file. When PasswordFile is set and Password
+// is empty, the file contents (with surrounding whitespace trimmed) are
+// read into Password. An error is returned only when the file cannot be
+// read.
+func (cfg *DatabaseConfig) LoadPassword() error {
+	if cfg.Password != "" {
+		return nil
+	}
+
+	if cfg.PasswordFile != "" {
+		password, err := fileutil.ReadTrimmedFileWithTilde(cfg.PasswordFile)
+		if err != nil {
+			return fmt.Errorf("failed to read password file: %w", err)
+		}
+		cfg.Password = password
+	}
+
+	return nil
 }
 
 // EmbeddingConfig holds embedding generation settings

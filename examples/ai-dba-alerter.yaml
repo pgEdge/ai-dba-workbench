@@ -59,10 +59,10 @@ datastore:
   # Command-line: -pg-password-file
   #
   # Example: Create a password file with restricted permissions:
-  #   echo "your-password" > /etc/ai-workbench/password.txt
-  #   chmod 600 /etc/ai-workbench/password.txt
+  #   echo "your-password" > /etc/pgedge/password.txt
+  #   chmod 600 /etc/pgedge/password.txt
   #
-  # password_file: /etc/ai-workbench/password.txt
+  # password_file: /etc/pgedge/password.txt
 
   # Port on which the AI DBA Workbench datastore is listening
   # Default: 5432
@@ -554,7 +554,7 @@ notifications:
 #   host: datastore.internal.example.com
 #   database: ai_workbench_prod
 #   username: ai_workbench
-#   password_file: /var/secrets/ai-workbench/db-password.txt
+#   password_file: /etc/pgedge/password.txt
 #   port: 5432
 #   sslmode: verify-full
 #   sslcert: /etc/ai-workbench/certs/client-cert.pem

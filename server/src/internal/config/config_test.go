@@ -959,3 +959,73 @@ knowledgebase:
 			cfg.Knowledgebase.EmbeddingGeminiBaseURL)
 	}
 }
+
+// TestDatabaseConfigLoadPassword exercises the password_file resolution
+// path on DatabaseConfig.LoadPassword across its four behaviors: an
+// already-set password short-circuits the file read; a valid file is
+// read and trimmed into Password; a missing file surfaces an error; and
+// an empty Password with an empty PasswordFile is a no-op.
+func TestDatabaseConfigLoadPassword(t *testing.T) {
+	t.Run("PasswordAlreadySetIsNoOp", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		passFile := filepath.Join(tmpDir, "password.txt")
+		if err := os.WriteFile(passFile, []byte("from-file"), 0600); err != nil {
+			t.Fatalf("failed to write password file: %v", err)
+		}
+
+		cfg := &DatabaseConfig{
+			Password:     "explicit-password",
+			PasswordFile: passFile,
+		}
+
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Password != "explicit-password" {
+			t.Errorf("expected password to remain 'explicit-password', got %q", cfg.Password)
+		}
+	})
+
+	t.Run("ReadsAndTrimsFromValidFile", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		passFile := filepath.Join(tmpDir, "password.txt")
+		if err := os.WriteFile(passFile, []byte("  secret-pass\n"), 0600); err != nil {
+			t.Fatalf("failed to write password file: %v", err)
+		}
+
+		cfg := &DatabaseConfig{PasswordFile: passFile}
+
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Password != "secret-pass" {
+			t.Errorf("expected password 'secret-pass', got %q", cfg.Password)
+		}
+	})
+
+	t.Run("MissingFileReturnsError", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfg := &DatabaseConfig{
+			PasswordFile: filepath.Join(tmpDir, "does-not-exist.txt"),
+		}
+
+		err := cfg.LoadPassword()
+		if err == nil {
+			t.Fatal("expected an error for a missing password file, got nil")
+		}
+		if cfg.Password != "" {
+			t.Errorf("expected password to remain empty on error, got %q", cfg.Password)
+		}
+	})
+
+	t.Run("BothEmptyIsNoOp", func(t *testing.T) {
+		cfg := &DatabaseConfig{}
+
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Password != "" {
+			t.Errorf("expected password to remain empty, got %q", cfg.Password)
+		}
+	})
+}

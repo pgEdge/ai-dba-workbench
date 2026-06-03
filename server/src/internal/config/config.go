@@ -240,14 +240,24 @@ type ConnectionSecurityConfig struct {
 // BuildConnectionString creates a PostgreSQL connection string from DatabaseConfig
 // If password is not set, pgx will automatically look it up from .pgpass file
 func (cfg *DatabaseConfig) BuildConnectionString() string {
-	// Build connection string components with URL-encoded user/password
-	connStr := fmt.Sprintf("postgres://%s", url.PathEscape(cfg.User))
-
-	// Add password only if one was resolved (inline or from password_file)
-	// If not set, pgx will use .pgpass file automatically
+	// Build the userinfo component using net/url's userinfo encoders so
+	// that characters with special meaning in the userinfo (notably ':'
+	// and '@') are correctly percent-encoded. url.PathEscape must NOT be
+	// used here: it leaves ':' and '@' unescaped because they are valid
+	// path-segment characters, which would corrupt a DSN whose user or
+	// password contains them (increasingly likely with password_file).
+	//
+	// When no password is resolved, emit the username only (no ':' and
+	// no empty password component) so pgx can still fall back to .pgpass,
+	// preserving the previous behavior.
+	var userinfo string
 	if password := cfg.EffectivePassword(); password != "" {
-		connStr += ":" + url.PathEscape(password)
+		userinfo = url.UserPassword(cfg.User, password).String()
+	} else {
+		userinfo = url.User(cfg.User).String()
 	}
+
+	connStr := fmt.Sprintf("postgres://%s", userinfo)
 
 	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
 

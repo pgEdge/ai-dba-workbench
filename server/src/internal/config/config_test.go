@@ -10,11 +10,13 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"gopkg.in/yaml.v3"
 )
@@ -112,7 +114,7 @@ func TestBuildConnectionString(t *testing.T) {
 				Database: "production",
 				SSLMode:  "verify-full",
 			},
-			expected: "postgres://admin:p@ssw0rd@db.example.com:5433/production?sslmode=verify-full",
+			expected: "postgres://admin:p%40ssw0rd@db.example.com:5433/production?sslmode=verify-full",
 		},
 	}
 
@@ -123,6 +125,99 @@ func TestBuildConnectionString(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.expected, result)
 			}
 		})
+	}
+}
+
+// TestBuildConnectionStringRoundTrip is the authoritative correctness
+// check for userinfo encoding. For each password containing characters
+// with special meaning in a URL userinfo component, it builds the DSN,
+// parses it back with url.Parse, and asserts the recovered user and
+// password match the originals byte-for-byte. This proves the encoding
+// is correct regardless of the exact percent-encoded representation.
+func TestBuildConnectionStringRoundTrip(t *testing.T) {
+	const user = "admin@corp"
+
+	passwords := []string{
+		"p@ssw0rd",
+		"p:ss/w?rd",
+		"pa ss",
+		"p%40 word",
+		"p#ss&w=rd",
+	}
+
+	for _, pw := range passwords {
+		pw := pw
+		t.Run(pw, func(t *testing.T) {
+			cfg := DatabaseConfig{
+				User:     user,
+				Password: pw,
+				Host:     "db.example.com",
+				Port:     5432,
+				Database: "production",
+				SSLMode:  "require",
+			}
+
+			dsn := cfg.BuildConnectionString()
+
+			parsed, err := url.Parse(dsn)
+			if err != nil {
+				t.Fatalf("url.Parse(%q) returned error: %v", dsn, err)
+			}
+
+			if got := parsed.User.Username(); got != user {
+				t.Errorf("username = %q, want %q (dsn=%q)", got, user, dsn)
+			}
+
+			gotPW, hasPW := parsed.User.Password()
+			if !hasPW {
+				t.Fatalf("parsed DSN has no password component (dsn=%q)", dsn)
+			}
+			if gotPW != pw {
+				t.Errorf("password = %q, want %q (dsn=%q)", gotPW, pw, dsn)
+			}
+
+			// pgconn.ParseConfig validates the DSN the way pgx itself
+			// does; it parses only and never opens a connection, so it
+			// is safe to run without a database.
+			if _, err := pgconn.ParseConfig(dsn); err != nil {
+				t.Errorf("pgconn.ParseConfig(%q) returned error: %v", dsn, err)
+			}
+		})
+	}
+}
+
+// TestBuildConnectionStringNoPassword confirms that an empty effective
+// password yields a DSN carrying the username but no password component,
+// preserving pgx's .pgpass fallback, and that the DSN remains parseable.
+func TestBuildConnectionStringNoPassword(t *testing.T) {
+	cfg := DatabaseConfig{
+		User:     "admin@corp",
+		Host:     "db.example.com",
+		Port:     5432,
+		Database: "production",
+	}
+
+	dsn := cfg.BuildConnectionString()
+
+	if strings.Contains(dsn, ":@") {
+		t.Errorf("DSN must not contain an empty password component: %q", dsn)
+	}
+
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("url.Parse(%q) returned error: %v", dsn, err)
+	}
+
+	if got := parsed.User.Username(); got != cfg.User {
+		t.Errorf("username = %q, want %q (dsn=%q)", got, cfg.User, dsn)
+	}
+
+	if _, hasPW := parsed.User.Password(); hasPW {
+		t.Errorf("expected no password component, but one was present: %q", dsn)
+	}
+
+	if _, err := pgconn.ParseConfig(dsn); err != nil {
+		t.Errorf("pgconn.ParseConfig(%q) returned error: %v", dsn, err)
 	}
 }
 

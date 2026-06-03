@@ -606,13 +606,26 @@ func (d *Datastore) BuildConnectionString(conn *MonitoredConnection, password st
 		database = databaseOverride
 	}
 
-	// Start with user (URL-encode in case of special characters)
-	connStr := fmt.Sprintf("postgres://%s", url.QueryEscape(conn.Username))
-
-	// Add password if present (URL-encode to handle special characters)
+	// Build the userinfo component using net/url's userinfo encoders so
+	// that characters with special meaning in the userinfo (notably ':'
+	// and '@') are correctly percent-encoded. url.QueryEscape must NOT be
+	// used here: it follows application/x-www-form-urlencoded rules and
+	// encodes a space ' ' as '+', but '+' is a literal plus in a URL
+	// userinfo component, so a password containing a space would round-trip
+	// incorrectly. url.User/url.UserPassword apply the correct userinfo
+	// encoding instead.
+	//
+	// When no password is present, emit the username only (no ':' and no
+	// empty password component) so pgx can still fall back to the .pgpass
+	// file, preserving the previous behavior.
+	var userinfo string
 	if password != "" {
-		connStr += ":" + url.QueryEscape(password)
+		userinfo = url.UserPassword(conn.Username, password).String()
+	} else {
+		userinfo = url.User(conn.Username).String()
 	}
+
+	connStr := fmt.Sprintf("postgres://%s", userinfo)
 
 	// Use hostaddr if available, otherwise host
 	host := conn.Host

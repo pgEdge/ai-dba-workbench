@@ -967,8 +967,8 @@ func TestListConnections_Issue68_VisibleConnectionIDsError_Returns500(t *testing
 // =============================================================================
 // Regression Test Coverage for GitHub Issue #270
 //
-// createConnection now enforces the VARCHAR(255) byte-length limit on
-// Name, Host, Maintenance Database, and Username before any datastore
+// createConnection now enforces the VARCHAR(255) character-length limit
+// on Name, Host, Maintenance Database, and Username before any datastore
 // call, returning a field-specific 400 instead of a generic 500 when
 // the database would otherwise reject the over-length row. The harness
 // reuses setupIssue233CreateConnection, which authenticates a user with
@@ -1060,8 +1060,8 @@ func TestConnectionHandler_CreateConnection_Issue270_FieldTooLong(t *testing.T) 
 }
 
 // TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation
-// confirms the boundary: fields of exactly maxFieldLength bytes pass the
-// length checks and the handler proceeds to the nil datastore, which
+// confirms the boundary: fields of exactly maxFieldLength characters pass
+// the length checks and the handler proceeds to the nil datastore, which
 // panics. Recovering from that panic proves validation did not reject at
 // the limit.
 func TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation(t *testing.T) {
@@ -1086,4 +1086,77 @@ func TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation(t *
 	assertGatePassed(t, rec, func() {
 		handler.createConnection(rec, req)
 	})
+}
+
+// TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses
+// confirms the limit counts characters, not bytes: a Name of exactly
+// maxFieldLength multibyte runes (510 bytes for "é") must pass the length
+// check, mirroring the VARCHAR(255) column, which limits by characters.
+// A byte-based check would wrongly reject this. Later validation steps
+// (host SSRF check, nil datastore) prevent a clean 200 here, so the test
+// asserts the length-specific 400 message is not produced rather than a
+// specific status code.
+func TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses(t *testing.T) {
+	handler, userID, token, cleanup := setupIssue233CreateConnection(
+		t, "issue270_multibyte_atlimit", []string{auth.PermManageConnections})
+	defer cleanup()
+
+	reqBody := validConnectionCreateRequest()
+	// 255 runes but 510 bytes; len() would wrongly reject this.
+	reqBody.Name = strings.Repeat("é", maxFieldLength)
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	assertGatePassed(t, rec, func() {
+		handler.createConnection(rec, req)
+	})
+
+	if rec.Code == http.StatusBadRequest &&
+		strings.Contains(rec.Body.String(), "Name must be") {
+		t.Fatalf("Expected 255 multibyte runes to pass length validation, "+
+			"got length-error 400. Body: %s", rec.Body.String())
+	}
+}
+
+// TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected
+// confirms a Name of 256 multibyte runes is rejected by the character-based
+// length check with the expected 400 message, even though each run of the
+// byte-based check would also reject it; this pins the rune-counting path.
+func TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected(t *testing.T) {
+	handler, userID, token, cleanup := setupIssue233CreateConnection(
+		t, "issue270_multibyte_overlimit", []string{auth.PermManageConnections})
+	defer cleanup()
+
+	reqBody := validConnectionCreateRequest()
+	reqBody.Name = strings.Repeat("é", maxFieldLength+1)
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.createConnection(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	const wantMsg = "Name must be 255 characters or less"
+	if response.Error != wantMsg {
+		t.Errorf("Expected %q, got %q", wantMsg, response.Error)
+	}
 }

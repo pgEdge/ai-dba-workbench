@@ -12,25 +12,27 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
-// maxFieldLength is the maximum byte length permitted for short string
-// fields such as Name, Host, Maintenance Database, and Username. It
-// matches the VARCHAR(255) constraint on the corresponding database
+// maxFieldLength is the maximum character length permitted for short
+// string fields such as Name, Host, Maintenance Database, and Username.
+// It matches the VARCHAR(255) constraint on the corresponding database
 // columns, so callers can reject over-length input with a clear 400
 // before the datastore call rather than surfacing a generic 500 when
 // the database rejects the row.
 const maxFieldLength = 255
 
-// validateMaxLen enforces the maxFieldLength byte-length ceiling on a
-// single request field. When value exceeds limit it sends a 400 response
-// with a field-specific message and returns false; otherwise it returns
-// true. Byte length (len) is used deliberately to mirror the backing
-// VARCHAR(limit) column behavior.
+// validateMaxLen enforces the maxFieldLength character-length ceiling on
+// a single request field. When value exceeds limit it sends a 400
+// response with a field-specific message and returns false; otherwise it
+// returns true. Rune count (utf8.RuneCountInString) is used deliberately
+// to mirror the backing VARCHAR(limit) column, which limits by characters
+// rather than bytes.
 func validateMaxLen(w http.ResponseWriter, fieldLabel, value string, limit int) bool {
-	if len(value) > limit {
+	if utf8.RuneCountInString(value) > limit {
 		RespondError(w, http.StatusBadRequest,
 			fmt.Sprintf("%s must be %d characters or less", fieldLabel, limit))
 		return false

@@ -112,9 +112,10 @@ func TestLoadServerSecret_NoneFound(t *testing.T) {
 }
 
 // TestLoadServerSecret_EmptyFile verifies that a secret file
-// containing only newlines is rejected as empty. Only the trailing
-// newline sequence is trimmed, so a file of in-secret whitespace is
-// no longer treated as empty.
+// containing only newlines is rejected as empty. ReadSecretFile strips
+// only the trailing CR/LF sequence before validation, but content that
+// is empty or consists solely of whitespace is still treated as empty
+// and rejected.
 func TestLoadServerSecret_EmptyFile(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "blank.secret")

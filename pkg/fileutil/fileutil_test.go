@@ -61,6 +61,18 @@ func TestExpandTildePath(t *testing.T) {
 			expected: "./config.yaml",
 			wantErr:  false,
 		},
+		{
+			name:     "named-user home is rejected",
+			path:     "~postgres/password.txt",
+			expected: "",
+			wantErr:  true,
+		},
+		{
+			name:     "bare named-user is rejected",
+			path:     "~user",
+			expected: "",
+			wantErr:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -74,6 +86,29 @@ func TestExpandTildePath(t *testing.T) {
 				t.Errorf("ExpandTildePath() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+
+	// Guard explicitly against the silent-remap footgun: a "~user/..."
+	// path must NOT be rewritten to "$HOME/user/...". Confirm the error
+	// path returns an empty string rather than the remapped path under
+	// the current user's home directory.
+	remapped := filepath.Join(homeDir, "postgres/password.txt")
+	if got, err := ExpandTildePath("~postgres/password.txt"); err == nil {
+		t.Errorf("ExpandTildePath(~postgres/...) = %q, want error (no silent remap)", got)
+	} else if got == remapped {
+		t.Errorf("ExpandTildePath silently remapped ~postgres/... to %q", remapped)
+	} else if got != "" {
+		t.Errorf("ExpandTildePath(~postgres/...) returned %q on error, want empty string", got)
+	}
+
+	// On Windows the backslash form of the current-user home is accepted.
+	// On other platforms backslash is an ordinary path character, so a
+	// "~\\..." path is treated as a named-user home and rejected; assert
+	// the platform-appropriate behaviour without requiring a Windows host.
+	if runtime.GOOS == "windows" {
+		if _, err := ExpandTildePath("~\\foo"); err != nil {
+			t.Errorf("ExpandTildePath(~\\foo) on Windows error = %v, want nil", err)
+		}
 	}
 }
 

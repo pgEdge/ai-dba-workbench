@@ -69,6 +69,11 @@ describe('GroupDialog', () => {
             expect(getNameField()).toBeInTheDocument();
         });
 
+        it('limits the name field to 255 characters', () => {
+            renderWithTheme(<GroupDialog {...defaultProps} />);
+            expect(getNameField()).toHaveAttribute('maxlength', '255');
+        });
+
         it('renders description field', () => {
             renderWithTheme(<GroupDialog {...defaultProps} />);
             expect(getDescriptionField()).toBeInTheDocument();

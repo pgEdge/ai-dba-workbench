@@ -76,6 +76,15 @@ describe('ServerDialog', () => {
             expect(getPasswordField()).toBeInTheDocument();
         });
 
+        it('limits name, host, database, and username fields to 255 characters', () => {
+            renderWithTheme(<ServerDialog {...defaultProps} />);
+
+            expect(getNameField()).toHaveAttribute('maxlength', '255');
+            expect(getHostField()).toHaveAttribute('maxlength', '255');
+            expect(getDatabaseField()).toHaveAttribute('maxlength', '255');
+            expect(getUsernameField()).toHaveAttribute('maxlength', '255');
+        });
+
         it('renders monitor checkbox checked by default', () => {
             renderWithTheme(<ServerDialog {...defaultProps} />);
             const monitorCheckbox = screen.getByLabelText(/monitor this server/i);

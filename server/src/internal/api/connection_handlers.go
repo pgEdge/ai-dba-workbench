@@ -248,6 +248,22 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Enforce the VARCHAR(255) limits on the backing columns before any
+	// datastore call so over-length input returns a clear 400 instead of
+	// a generic 500 when the database rejects the row (issue #270).
+	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
+		return
+	}
+	if !validateMaxLen(w, "Host", req.Host, maxFieldLength) {
+		return
+	}
+	if !validateMaxLen(w, "Maintenance Database", req.DatabaseName, maxFieldLength) {
+		return
+	}
+	if !validateMaxLen(w, "Username", req.Username, maxFieldLength) {
+		return
+	}
+
 	// Validate host to prevent SSRF attacks
 	if err := h.hostValidator.ValidateHost(req.Host); err != nil {
 		log.Printf("[ERROR] Invalid host validation: %v", err)

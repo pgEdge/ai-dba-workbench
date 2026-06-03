@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -961,4 +962,128 @@ func TestListConnections_Issue68_VisibleConnectionIDsError_Returns500(t *testing
 		t.Fatalf("Expected 500 when VisibleConnectionIDs fails, got %d. Body: %s",
 			rec.Code, rec.Body.String())
 	}
+}
+
+// =============================================================================
+// Regression Test Coverage for GitHub Issue #270
+//
+// createConnection now enforces the VARCHAR(255) byte-length limit on
+// Name, Host, Maintenance Database, and Username before any datastore
+// call, returning a field-specific 400 instead of a generic 500 when
+// the database would otherwise reject the over-length row. The harness
+// reuses setupIssue233CreateConnection, which authenticates a user with
+// manage_connections so the request reaches the length checks; the
+// datastore is nil, so a valid request would panic past validation.
+// =============================================================================
+
+// validConnectionCreateRequest returns a baseline request whose fields are
+// all within the length limit, suitable for mutating a single field in the
+// table-driven over-length tests.
+func validConnectionCreateRequest() ConnectionCreateRequest {
+	return ConnectionCreateRequest{
+		Name:         "ok-name",
+		Host:         "db.example.com",
+		Port:         5432,
+		DatabaseName: "postgres",
+		Username:     "alice",
+		Password:     "secret",
+	}
+}
+
+// TestConnectionHandler_CreateConnection_Issue270_FieldTooLong verifies that
+// an over-length value in any of the four guarded fields yields a 400 with
+// the field-specific message, before the nil datastore is touched.
+func TestConnectionHandler_CreateConnection_Issue270_FieldTooLong(t *testing.T) {
+	tooLong := strings.Repeat("a", maxFieldLength+1)
+
+	cases := []struct {
+		name    string
+		mutate  func(*ConnectionCreateRequest)
+		wantMsg string
+	}{
+		{
+			name:    "Name",
+			mutate:  func(r *ConnectionCreateRequest) { r.Name = tooLong },
+			wantMsg: "Name must be 255 characters or less",
+		},
+		{
+			name:    "Host",
+			mutate:  func(r *ConnectionCreateRequest) { r.Host = tooLong },
+			wantMsg: "Host must be 255 characters or less",
+		},
+		{
+			name:    "MaintenanceDatabase",
+			mutate:  func(r *ConnectionCreateRequest) { r.DatabaseName = tooLong },
+			wantMsg: "Maintenance Database must be 255 characters or less",
+		},
+		{
+			name:    "Username",
+			mutate:  func(r *ConnectionCreateRequest) { r.Username = tooLong },
+			wantMsg: "Username must be 255 characters or less",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, userID, token, cleanup := setupIssue233CreateConnection(
+				t, "issue270_"+strings.ToLower(tc.name),
+				[]string{auth.PermManageConnections})
+			defer cleanup()
+
+			reqBody := validConnectionCreateRequest()
+			tc.mutate(&reqBody)
+			body, _ := json.Marshal(reqBody)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
+				bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req = withBearer(req, token)
+			req = withUser(req, userID)
+			rec := httptest.NewRecorder()
+
+			handler.createConnection(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("Expected status %d, got %d. Body: %s",
+					http.StatusBadRequest, rec.Code, rec.Body.String())
+			}
+
+			var response ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+			if response.Error != tc.wantMsg {
+				t.Errorf("Expected %q, got %q", tc.wantMsg, response.Error)
+			}
+		})
+	}
+}
+
+// TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation
+// confirms the boundary: fields of exactly maxFieldLength bytes pass the
+// length checks and the handler proceeds to the nil datastore, which
+// panics. Recovering from that panic proves validation did not reject at
+// the limit.
+func TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation(t *testing.T) {
+	handler, userID, token, cleanup := setupIssue233CreateConnection(
+		t, "issue270_atlimit", []string{auth.PermManageConnections})
+	defer cleanup()
+
+	reqBody := validConnectionCreateRequest()
+	reqBody.Name = strings.Repeat("a", maxFieldLength)
+	reqBody.Host = "db.example.com"
+	reqBody.DatabaseName = strings.Repeat("d", maxFieldLength)
+	reqBody.Username = strings.Repeat("u", maxFieldLength)
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	assertGatePassed(t, rec, func() {
+		handler.createConnection(rec, req)
+	})
 }

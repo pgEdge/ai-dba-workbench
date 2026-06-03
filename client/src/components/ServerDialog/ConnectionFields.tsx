@@ -13,6 +13,7 @@ import { TextField, Box, Typography } from '@mui/material';
 import type { ServerFormData, FormErrors, FieldChangeHandler } from './ServerDialog.types';
 import { sectionLabelSx } from './ServerDialog.styles';
 import { getSelectFieldSx } from '../shared/formStyles';
+import { MAX_FIELD_LENGTH } from '../../utils/formLimits';
 
 interface ConnectionFieldsProps {
     formData: ServerFormData;
@@ -49,6 +50,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 required
                 disabled={isSaving}
                 margin="dense"
+                inputProps={{ maxLength: MAX_FIELD_LENGTH }}
                 InputLabelProps={{ shrink: true }}
                 sx={selectFieldSx}
             />
@@ -84,6 +86,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     required
                     disabled={isSaving}
                     margin="dense"
+                    inputProps={{ maxLength: MAX_FIELD_LENGTH }}
                     InputLabelProps={{ shrink: true }}
                     sx={{ flex: 2, ...selectFieldSx }}
                 />
@@ -115,6 +118,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                 required
                 disabled={isSaving}
                 margin="dense"
+                inputProps={{ maxLength: MAX_FIELD_LENGTH }}
                 InputLabelProps={{ shrink: true }}
                 sx={{ mt: 1, ...selectFieldSx }}
             />
@@ -132,6 +136,7 @@ const ConnectionFields: React.FC<ConnectionFieldsProps> = ({
                     disabled={isSaving}
                     margin="dense"
                     autoComplete="off"
+                    inputProps={{ maxLength: MAX_FIELD_LENGTH }}
                     InputLabelProps={{ shrink: true }}
                     sx={{ flex: 1, ...selectFieldSx }}
                 />

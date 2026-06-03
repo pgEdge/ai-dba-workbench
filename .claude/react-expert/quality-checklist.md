@@ -192,6 +192,27 @@ dialog.
 - [ ] Consistent with project design system.
 - [ ] No inline styles unless necessary.
 
+### TextField native input attributes
+
+The project pins `@mui/material` at v5.14, so the `slotProps`
+API is not yet available; the `slotProps.htmlInput` migration
+only landed in MUI 5.15. Pass native `<input>` attributes
+(`maxLength`, `min`, `max`, `aria-label`, `autoComplete` when not
+already a top-level prop) through `inputProps` on `TextField`.
+This is the established, non-deprecated convention across the
+codebase (for example, `ConnectionFields.tsx` uses
+`inputProps={{ min: 1, max: 65535 }}` for the port field).
+
+Short free-text fields backed by `VARCHAR(255)` columns (names,
+hosts, database names, usernames) must enforce a client-side
+length cap so over-length input cannot reach the server. Use the
+shared `MAX_FIELD_LENGTH` constant from `src/utils/formLimits.ts`
+via `inputProps={{ maxLength: MAX_FIELD_LENGTH }}` rather than a
+bare `255`. Tests assert the cap with
+`expect(field).toHaveAttribute('maxlength', '255')` on the
+underlying input (the rendered DOM attribute is lowercase
+`maxlength`).
+
 ### Performance
 
 - [ ] Unnecessary re-renders prevented.

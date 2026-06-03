@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -256,6 +257,104 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 
 	if response.Error != "Name is required" {
 		t.Errorf("Expected 'Name is required', got %q", response.Error)
+	}
+}
+
+// TestClusterHandler_CreateClusterGroup_NameTooLong locks in issue #270:
+// a Name longer than the VARCHAR(255) column must be rejected with a 400
+// and a field-specific message before any datastore call (the handler
+// runs against a nil datastore, so a stray call would panic).
+func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	longName := strings.Repeat("a", maxFieldLength+1)
+	body, _ := json.Marshal(ClusterGroupRequest{Name: longName})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createClusterGroup(rec, req)
+
+	assertMaxLenRejected(t, rec, "Name")
+}
+
+// TestClusterHandler_CreateClusterInGroup_NameTooLong locks in issue #270
+// for the group-scoped cluster create path.
+func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	longName := strings.Repeat("a", maxFieldLength+1)
+	body, _ := json.Marshal(ClusterRequest{Name: longName})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createClusterInGroup(rec, req, 1)
+
+	assertMaxLenRejected(t, rec, "Name")
+}
+
+// TestClusterHandler_HandleCreateCluster_NameTooLong locks in issue #270
+// for the manual cluster create path.
+func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	longName := strings.Repeat("a", maxFieldLength+1)
+	body, _ := json.Marshal(ManualClusterRequest{Name: longName})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleCreateCluster(rec, req)
+
+	assertMaxLenRejected(t, rec, "Name")
+}
+
+// TestClusterHandler_CreateClusterGroup_NameAtLimit confirms the boundary:
+// a Name of exactly maxFieldLength bytes passes validation and reaches the
+// datastore (which panics on the nil datastore, proving the length check
+// did not short-circuit at the limit).
+func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	atLimit := strings.Repeat("a", maxFieldLength)
+	body, _ := json.Marshal(ClusterGroupRequest{Name: atLimit})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("Expected nil-datastore panic past validation, got none; status=%d body=%s",
+				rec.Code, rec.Body.String())
+		}
+	}()
+
+	handler.createClusterGroup(rec, req)
+}
+
+// assertMaxLenRejected asserts that the recorded response is a 400 carrying
+// the canonical "<field> must be 255 characters or less" message.
+func assertMaxLenRejected(t *testing.T, rec *httptest.ResponseRecorder, field string) {
+	t.Helper()
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	want := field + " must be 255 characters or less"
+	if response.Error != want {
+		t.Errorf("Expected %q, got %q", want, response.Error)
 	}
 }
 

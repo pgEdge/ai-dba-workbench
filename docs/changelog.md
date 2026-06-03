@@ -34,7 +34,7 @@ project adheres to
   tool kept succeeding while the tools that execute the query
   failed with an access error. The assistant retried slightly
   different queries indefinitely, repeatedly showing
-  "Validating query" and never responding. The chat loop now
+  `Validating query` and never responding. The chat loop now
   applies a repeated-failure circuit breaker: when the same
   tool fails with the same error three times, the assistant
   stops retrying and returns a clear message. The message names

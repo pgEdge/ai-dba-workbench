@@ -10,6 +10,14 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add a `password_file` option to the server's `database:` YAML
+  block, allowing the server to read the datastore password from
+  a file. The server uses this file only when no inline
+  `password` value and no CLI password flag are set, bringing the
+  server in line with the collector and alerter. (#267)
+
 ### Fixed
 
 - Fix the alerter intermittently and silently suppressing

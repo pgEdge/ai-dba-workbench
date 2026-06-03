@@ -203,7 +203,7 @@ type DatabaseConfig struct {
 	Port         int    `yaml:"port"`          // Database port (default: 5432)
 	Database     string `yaml:"database"`      // Database name (default: postgres)
 	User         string `yaml:"user"`          // Database user (required)
-	Password     string `yaml:"password"`      // Database password (optional, will use PGEDGE_DB_PASSWORD env var or .pgpass if not set)
+	Password     string `yaml:"password"`      // Database password (optional; falls back to password_file then pgx .pgpass when unset)
 	PasswordFile string `yaml:"password_file"` // Path to a file containing the database password (used only if Password is empty)
 	SSLMode      string `yaml:"sslmode"`       // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
 
@@ -254,8 +254,8 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 
 // LoadPassword resolves the database password from PasswordFile when
 // Password is not already set. A non-empty Password always wins, so a
-// password supplied via CLI flag, environment variable, or inline YAML
-// takes precedence over the file. When PasswordFile is set and Password
+// password supplied via CLI flag or inline YAML takes precedence over
+// the file. When PasswordFile is set and Password
 // is empty, the file contents (with surrounding whitespace trimmed) are
 // read into Password. An error is returned only when the file cannot be
 // read.

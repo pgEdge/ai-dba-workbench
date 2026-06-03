@@ -116,9 +116,9 @@ func main() {
 	}
 
 	// Resolve the datastore password from a password_file when no
-	// password was supplied via CLI flag, environment variable, or
-	// inline YAML. LoadConfig has already applied those higher-priority
-	// sources, so a non-empty Password here means one of them won and
+	// password was supplied via CLI flag or inline YAML. LoadConfig has
+	// already applied those higher-priority sources, so a non-empty
+	// Password here means one of them won and
 	// LoadPassword is a no-op. This keeps the YAML password_file option
 	// consistent with the collector and alerter components.
 	if cfg.Database != nil {

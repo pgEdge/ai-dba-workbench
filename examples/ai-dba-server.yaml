@@ -168,8 +168,8 @@ database:
 
   # Path to a file containing the database password
   # Used only when password is empty; the file contents are read and
-  # trimmed of surrounding whitespace. CLI flags, the PGEDGE_DB_PASSWORD
-  # environment variable, and an inline password all take precedence.
+  # trimmed of surrounding whitespace. CLI flags and an inline password
+  # all take precedence.
   # password_file: /etc/pgedge/password.txt
 
   # SSL mode: disable, require, verify-ca, verify-full

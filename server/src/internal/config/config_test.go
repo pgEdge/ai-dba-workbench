@@ -365,20 +365,27 @@ func TestLoadAPIKeysFromFilesAllProviders(t *testing.T) {
 		t.Fatalf("loadAPIKeysFromFiles: %v", err)
 	}
 
-	checks := map[string]string{
-		cfg.Embedding.VoyageAPIKey:              "e-voyage-key",
-		cfg.Embedding.OpenAIAPIKey:              "e-openai-key",
-		cfg.Embedding.GeminiAPIKey:              "e-gemini-key",
-		cfg.LLM.AnthropicAPIKey:                 "l-anthropic-key",
-		cfg.LLM.OpenAIAPIKey:                    "l-openai-key",
-		cfg.LLM.GeminiAPIKey:                    "l-gemini-key",
-		cfg.Knowledgebase.EmbeddingVoyageAPIKey: "kb-voyage-key",
-		cfg.Knowledgebase.EmbeddingOpenAIAPIKey: "kb-openai-key",
-		cfg.Knowledgebase.EmbeddingGeminiAPIKey: "kb-gemini-key",
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"Embedding.VoyageAPIKey", cfg.Embedding.VoyageAPIKey, "e-voyage-key"},
+		{"Embedding.OpenAIAPIKey", cfg.Embedding.OpenAIAPIKey, "e-openai-key"},
+		{"Embedding.GeminiAPIKey", cfg.Embedding.GeminiAPIKey, "e-gemini-key"},
+		{"LLM.AnthropicAPIKey", cfg.LLM.AnthropicAPIKey, "l-anthropic-key"},
+		{"LLM.OpenAIAPIKey", cfg.LLM.OpenAIAPIKey, "l-openai-key"},
+		{"LLM.GeminiAPIKey", cfg.LLM.GeminiAPIKey, "l-gemini-key"},
+		{"Knowledgebase.EmbeddingVoyageAPIKey",
+			cfg.Knowledgebase.EmbeddingVoyageAPIKey, "kb-voyage-key"},
+		{"Knowledgebase.EmbeddingOpenAIAPIKey",
+			cfg.Knowledgebase.EmbeddingOpenAIAPIKey, "kb-openai-key"},
+		{"Knowledgebase.EmbeddingGeminiAPIKey",
+			cfg.Knowledgebase.EmbeddingGeminiAPIKey, "kb-gemini-key"},
 	}
-	for got, want := range checks {
-		if got != want {
-			t.Errorf("loaded key = %q, want %q", got, want)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
 		}
 	}
 }

@@ -151,9 +151,18 @@ func ReadSecretFile(path string) (string, error) {
 		return "", err
 	}
 
-	WarnIfPermissive(expandedPath)
-
-	data, err := readRegularFileBounded(expandedPath, nil)
+	// The permissive-mode warning runs as the check closure rather than
+	// before the read, so it fires only after readRegularFileBounded has
+	// confirmed the target is a regular file. A path pointing at a
+	// directory or FIFO is rejected without emitting a misleading
+	// "chmod 600" warning, and the warning reuses the descriptor's stat
+	// info rather than performing a second os.Stat. The closure is
+	// advisory only and never returns an error.
+	data, err := readRegularFileBounded(expandedPath,
+		func(info os.FileInfo) error {
+			warnIfPermissiveInfo(expandedPath, info)
+			return nil
+		})
 	if err != nil {
 		return "", err
 	}
@@ -168,7 +177,10 @@ func ReadSecretFile(path string) (string, error) {
 
 // WarnIfPermissive prints a stderr warning if the file is group- or
 // world-readable (mode & 0o077 != 0). It never returns an error and is
-// a no-op on Windows, where Unix mode bits do not map cleanly.
+// a no-op on Windows, where Unix mode bits do not map cleanly. It stats
+// the path and delegates to warnIfPermissiveInfo; callers that already
+// hold a FileInfo (for example from an open descriptor) should call
+// warnIfPermissiveInfo directly to avoid a redundant stat.
 func WarnIfPermissive(path string) {
 	if runtime.GOOS == "windows" {
 		return
@@ -178,6 +190,22 @@ func WarnIfPermissive(path string) {
 	if err != nil {
 		// Stat failures are surfaced by the subsequent read; the
 		// warning is best-effort only.
+		return
+	}
+
+	warnIfPermissiveInfo(path, info)
+}
+
+// warnIfPermissiveInfo prints a stderr warning if the supplied FileInfo
+// describes a group- or world-readable file (mode & 0o077 != 0). It is a
+// no-op on Windows, where Unix mode bits do not map cleanly, and never
+// returns an error: the warning is advisory only. Accepting an existing
+// FileInfo lets callers that already hold one (such as the descriptor
+// stat inside readRegularFileBounded) warn without a second os.Stat,
+// which both avoids a redundant syscall and ensures the warning reflects
+// the same TOCTOU-safe stat used for the read.
+func warnIfPermissiveInfo(path string, info os.FileInfo) {
+	if runtime.GOOS == "windows" {
 		return
 	}
 

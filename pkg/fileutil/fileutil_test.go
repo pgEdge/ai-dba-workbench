@@ -11,9 +11,11 @@
 package fileutil
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -191,6 +193,95 @@ func TestReadSecretFilePermissiveWarning(t *testing.T) {
 	}
 	if got != "secret" {
 		t.Errorf("ReadSecretFile() = %q, want %q", got, "secret")
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it. It lets the warning-path tests assert on the
+// presence or absence of the permissive-mode warning without depending on
+// the global logger.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stderr: %v", err)
+	}
+	return string(data)
+}
+
+// TestReadSecretFilePermissiveWarningEmitted confirms that a permissive
+// (group/world-accessible) regular secret file still triggers the
+// "chmod 600" stderr warning now that the warning runs as the
+// readRegularFileBounded check closure rather than ahead of the read.
+func TestReadSecretFilePermissiveWarningEmitted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "secret.txt")
+	if err := os.WriteFile(filePath, []byte("secret\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var got string
+	stderr := captureStderr(t, func() {
+		var err error
+		got, err = ReadSecretFile(filePath)
+		if err != nil {
+			t.Fatalf("ReadSecretFile() unexpected error: %v", err)
+		}
+	})
+
+	if got != "secret" {
+		t.Errorf("ReadSecretFile() = %q, want %q", got, "secret")
+	}
+	if !strings.Contains(stderr, "group/world-accessible") {
+		t.Errorf("expected permissive warning on stderr, got %q", stderr)
+	}
+}
+
+// TestReadSecretFileNoWarningForDirectory confirms that a path pointing at
+// a non-regular target (a directory) is rejected without emitting the
+// misleading permissive-mode warning. The warning must fire only after the
+// regular-file check passes, so a directory rejected by
+// readRegularFileBounded never reaches the warn closure.
+func TestReadSecretFileNoWarningForDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not map on Windows")
+	}
+
+	// A directory created with default mode is group/world-accessible,
+	// so the old ordering would have warned about it before refusing it.
+	dirPath := filepath.Join(t.TempDir(), "secretdir")
+	if err := os.Mkdir(dirPath, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var readErr error
+	stderr := captureStderr(t, func() {
+		_, readErr = ReadSecretFile(dirPath)
+	})
+
+	if readErr == nil {
+		t.Fatal("ReadSecretFile() on a directory: expected error, got nil")
+	}
+	if strings.Contains(stderr, "group/world-accessible") {
+		t.Errorf("unexpected permissive warning for directory: %q", stderr)
 	}
 }
 

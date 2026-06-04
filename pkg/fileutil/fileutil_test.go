@@ -71,8 +71,26 @@ func TestExpandTildePath(t *testing.T) {
 			name:     "bare named-user is rejected",
 			path:     "~user",
 			expected: "",
-			wantErr:  true,
+			// On a non-Windows host backslash is not a separator, so
+			// "~\\secret.txt" is an unsupported named-user-style form
+			// and must be rejected; the Windows-accepts-backslash case
+			// is asserted separately below since tests run on Linux.
+			wantErr: true,
 		},
+	}
+
+	if runtime.GOOS != "windows" {
+		tests = append(tests, struct {
+			name     string
+			path     string
+			expected string
+			wantErr  bool
+		}{
+			name:     "backslash form rejected off Windows",
+			path:     "~\\secret.txt",
+			expected: "",
+			wantErr:  true,
+		})
 	}
 
 	for _, tt := range tests {
@@ -108,6 +126,20 @@ func TestExpandTildePath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		if _, err := ExpandTildePath("~\\foo"); err != nil {
 			t.Errorf("ExpandTildePath(~\\foo) on Windows error = %v, want nil", err)
+		}
+	} else {
+		// On Unix the backslash is an ordinary filename character, not a
+		// separator. Guard explicitly against the silent-remap footgun:
+		// "~\\secret.txt" must NOT be expanded to "$HOME\\secret.txt"
+		// (which could resolve the wrong secret); it must error and
+		// return an empty string.
+		remapped := filepath.Join(homeDir, "\\secret.txt")
+		if got, err := ExpandTildePath("~\\secret.txt"); err == nil {
+			t.Errorf("ExpandTildePath(~\\secret.txt) = %q, want error on non-Windows", got)
+		} else if got == remapped {
+			t.Errorf("ExpandTildePath silently remapped ~\\secret.txt to %q", remapped)
+		} else if got != "" {
+			t.Errorf("ExpandTildePath(~\\secret.txt) returned %q on error, want empty string", got)
 		}
 	}
 }

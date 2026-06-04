@@ -119,22 +119,32 @@ func readRegularFileBounded(path string, check func(info os.FileInfo) error) ([]
 // home directory. Returns the path unchanged if it does not start with a
 // tilde.
 //
-// Only the current-user forms "~", "~/..." (and "~\\..." on Windows) are
-// supported. The "~user/..." syntax (the home directory of a named user) is
-// NOT supported: rather than silently remapping it onto the current user's
-// home directory (which would read the wrong file), ExpandTildePath returns
-// an error for any tilde path whose second character is neither a path
-// separator nor the end of the string.
+// Only the current-user forms "~" and "~/..." are supported on every
+// platform; the backslash form "~\\..." is accepted only on Windows,
+// where the backslash is a real path separator. On non-Windows
+// platforms the backslash is an ordinary filename character, not a
+// separator, so "~\\..." is treated as an unsupported tilde form and
+// rejected rather than expanded under the current user's home (which
+// could resolve the wrong secret path). The "~user/..." syntax (the
+// home directory of a named user) is NOT supported on any platform:
+// rather than silently remapping it onto the current user's home
+// directory (which would read the wrong file), ExpandTildePath returns
+// an error for any tilde path whose second character is neither a
+// supported separator nor the end of the string.
 func ExpandTildePath(path string) (string, error) {
 	if path == "" || path[0] != '~' {
 		return path, nil
 	}
 
-	// Reject "~user/..." style paths. A bare "~" (len 1) and the
-	// "~/..." / "~\\..." current-user forms are accepted; anything else
-	// after the leading tilde would be a named-user home, which we do not
-	// support and must not silently remap onto the current user's home.
-	if len(path) > 1 && path[1] != '/' && path[1] != '\\' {
+	// Reject "~user/..." style paths and the cross-platform-ambiguous
+	// "~\\..." form. A bare "~" (len 1) and the "~/..." current-user
+	// form are accepted everywhere; the "~\\..." form is accepted only
+	// on Windows, where the backslash is a genuine path separator. On
+	// other platforms the backslash is a normal filename character, so
+	// "~\\..." is an unsupported named-user-style form and must not be
+	// silently remapped onto the current user's home.
+	if len(path) > 1 && path[1] != '/' &&
+		!(runtime.GOOS == "windows" && path[1] == '\\') {
 		return "", fmt.Errorf(
 			"unsupported tilde path %q: use ~ or ~/..., not ~user/...", path)
 	}

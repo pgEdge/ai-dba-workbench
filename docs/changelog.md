@@ -70,6 +70,18 @@ project adheres to
   loudly at startup. Leaving a key-file path unset remains valid
   and is not an error. (#267)
 
+- Fix name fields for server groups, clusters, and servers
+  accepting special characters such as `<>!@#$%`. Validation
+  previously rejected only empty input, so disallowed
+  characters were stored unchanged. The server and client now
+  apply the same rule: after trimming, a name must be
+  non-empty, at most 255 characters, and may contain only
+  letters, numbers, spaces, and the characters `. _ - ( )`.
+  The server returns HTTP 400 for invalid names across all
+  cluster-group, cluster, and server-connection create and
+  update endpoints, and the client shows an inline validation
+  error and blocks the save. (#269)
+
 - Fix the alerter intermittently and silently suppressing
   anomaly alerts that should have fired. The Tier 3
   LLM-based classifier parsed model responses

@@ -452,6 +452,45 @@ describe('GroupDialog', () => {
                 screen.queryByText(/name is required/i)
             ).not.toBeInTheDocument();
         });
+
+        it('shows an error and blocks save when the name has disallowed characters', async () => {
+            const user = userEvent.setup({ delay: null });
+            const onSave = vi.fn().mockResolvedValue(undefined);
+            renderWithTheme(
+                <GroupDialog {...defaultProps} onSave={onSave} />
+            );
+
+            fireEvent.change(getNameField(), {
+                target: { value: '<>!@#$%' },
+            });
+            await user.click(screen.getByRole('button', { name: /save/i }));
+
+            expect(
+                screen.getByText(/name may only contain letters/i)
+            ).toBeInTheDocument();
+            expect(onSave).not.toHaveBeenCalled();
+        });
+
+        it('allows a name with permitted special characters to save', async () => {
+            const user = userEvent.setup({ delay: null });
+            const onSave = vi.fn().mockResolvedValue(undefined);
+            renderWithTheme(
+                <GroupDialog {...defaultProps} onSave={onSave} />
+            );
+
+            fireEvent.change(getNameField(), {
+                target: { value: 'Group_01 (primary).v2-east' },
+            });
+            await user.click(screen.getByRole('button', { name: /save/i }));
+
+            await waitFor(() => {
+                expect(onSave).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        name: 'Group_01 (primary).v2-east',
+                    })
+                );
+            });
+        });
     });
 
     describe('form submission', () => {

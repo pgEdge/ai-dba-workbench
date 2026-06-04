@@ -34,6 +34,7 @@ import TopologyPanel from './TopologyPanel';
 import { deriveReplicationType } from './topology';
 import { SELECT_FIELD_DEFAULT_BG_SX } from './shared/formStyles';
 import SlideTransition from './shared/SlideTransition';
+import { validateName } from '../utils/validateName';
 
 /**
  * Replication type options displayed in the select dropdown.
@@ -130,8 +131,9 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
 
     const handleSave = async () => {
         const trimmed = name.trim();
-        if (!trimmed) {
-            setNameError('Name is required');
+        const nameValidationError = validateName(name);
+        if (nameValidationError) {
+            setNameError(nameValidationError);
             return;
         }
         setNameError('');

@@ -527,11 +527,12 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
+	// Issue #269: validate the name's characters, not just non-emptiness.
+	// ValidateDisplayName also enforces the VARCHAR(255) limit on the raw
+	// name, so no separate validateMaxLen("Name", ...) call is needed here
+	// (issue #270).
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -582,8 +583,9 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
+	// Issue #269: validate the name's characters, not just non-emptiness.
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -754,11 +756,12 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
+	// Issue #269: validate the name's characters, not just non-emptiness.
+	// ValidateDisplayName also enforces the VARCHAR(255) limit on the raw
+	// name, so no separate validateMaxLen("Name", ...) call is needed here
+	// (issue #270).
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -831,6 +834,15 @@ func (h *ClusterHandler) updateCluster(w http.ResponseWriter, r *http.Request, i
 	if req.Name == "" && req.GroupID == nil && req.Description == nil && req.ReplicationType == nil {
 		RespondError(w, http.StatusBadRequest, "At least name, group_id, description, or replication_type is required")
 		return
+	}
+
+	// Issue #269: name is optional on update (an empty string means "leave
+	// unchanged"). Validate its characters only when a name is supplied.
+	if req.Name != "" {
+		if err := ValidateDisplayName(req.Name); err != nil {
+			RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -944,6 +956,15 @@ func (h *ClusterHandler) updateAutoDetectedCluster(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Issue #269: name is optional here (empty means "leave unchanged").
+	// Validate its characters only when a name is supplied.
+	if req.Name != "" {
+		if err := ValidateDisplayName(req.Name); err != nil {
+			RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	// Use auto_cluster_key from request if provided, else compute from cluster ID
 	autoKey := req.AutoClusterKey
 	if autoKey == "" {
@@ -1050,8 +1071,9 @@ func (h *ClusterHandler) updateAutoDetectedGroup(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
+	// Issue #269: validate the name's characters, not just non-emptiness.
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1320,11 +1342,12 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
+	// Issue #269: validate the name's characters, not just non-emptiness.
+	// ValidateDisplayName also enforces the VARCHAR(255) limit on the raw
+	// name, so no separate validateMaxLen("Name", ...) call is needed here
+	// (issue #270).
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

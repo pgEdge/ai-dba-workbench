@@ -222,9 +222,10 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate required fields
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
+	// Validate required fields. Issue #269: validate the name's characters,
+	// not just non-emptiness.
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Host == "" {
@@ -250,10 +251,10 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 
 	// Enforce the VARCHAR(255) limits on the backing columns before any
 	// datastore call so over-length input returns a clear 400 instead of
-	// a generic 500 when the database rejects the row (issue #270).
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
-		return
-	}
+	// a generic 500 when the database rejects the row (issue #270). The Name
+	// column is already guarded by ValidateDisplayName above, which rejects
+	// over-length raw names; the remaining fields have no such validator and
+	// so are checked here.
 	if !validateMaxLen(w, "Host", req.Host, maxFieldLength) {
 		return
 	}
@@ -452,10 +453,13 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate name if provided
-	if req.Name != nil && *req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name cannot be empty")
-		return
+	// Validate name if provided. Issue #269: when a name is supplied, it
+	// must satisfy the full character policy, not merely be non-empty.
+	if req.Name != nil {
+		if err := ValidateDisplayName(*req.Name); err != nil {
+			RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Only users with manage_connections permission can make connections shared

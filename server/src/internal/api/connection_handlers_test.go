@@ -1002,9 +1002,14 @@ func TestConnectionHandler_CreateConnection_Issue270_FieldTooLong(t *testing.T) 
 		wantMsg string
 	}{
 		{
+			// The Name field is guarded by ValidateDisplayName, which now
+			// enforces the 255-character limit on the raw value itself, so
+			// the canonical over-length message for Name is ErrNameTooLong
+			// ("...or fewer"), distinct from the validateMaxLen wording used
+			// by the remaining fields ("...or less").
 			name:    "Name",
 			mutate:  func(r *ConnectionCreateRequest) { r.Name = tooLong },
-			wantMsg: "Name must be 255 characters or less",
+			wantMsg: "Name must be 255 characters or fewer",
 		},
 		{
 			name:    "Host",
@@ -1089,13 +1094,16 @@ func TestConnectionHandler_CreateConnection_Issue270_AtLimitPassesValidation(t *
 }
 
 // TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses
-// confirms the limit counts characters, not bytes: a Name of exactly
-// maxFieldLength multibyte runes (510 bytes for "é") must pass the length
-// check, mirroring the VARCHAR(255) column, which limits by characters.
-// A byte-based check would wrongly reject this. Later validation steps
-// (host SSRF check, nil datastore) prevent a clean 200 here, so the test
-// asserts the length-specific 400 message is not produced rather than a
-// specific status code.
+// confirms the validateMaxLen limit counts characters, not bytes: a Host of
+// exactly maxFieldLength multibyte runes (510 bytes for "é") must pass the
+// length check, mirroring the VARCHAR(255) column, which limits by
+// characters. A byte-based check would wrongly reject this. The Host field is
+// used rather than Name because the issue #269 display-name policy restricts
+// Name to an ASCII charset that excludes "é"; Host has no such charset
+// restriction, so it is the field that genuinely exercises rune counting in
+// validateMaxLen. Later validation steps (host SSRF check, nil datastore)
+// prevent a clean 200 here, so the test asserts the length-specific 400
+// message is not produced rather than a specific status code.
 func TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses(t *testing.T) {
 	handler, userID, token, cleanup := setupIssue233CreateConnection(
 		t, "issue270_multibyte_atlimit", []string{auth.PermManageConnections})
@@ -1103,7 +1111,7 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses(t *t
 
 	reqBody := validConnectionCreateRequest()
 	// 255 runes but 510 bytes; len() would wrongly reject this.
-	reqBody.Name = strings.Repeat("é", maxFieldLength)
+	reqBody.Host = strings.Repeat("é", maxFieldLength)
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
@@ -1118,23 +1126,25 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteAtLimitPasses(t *t
 	})
 
 	if rec.Code == http.StatusBadRequest &&
-		strings.Contains(rec.Body.String(), "Name must be") {
+		strings.Contains(rec.Body.String(), "Host must be") {
 		t.Fatalf("Expected 255 multibyte runes to pass length validation, "+
 			"got length-error 400. Body: %s", rec.Body.String())
 	}
 }
 
 // TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected
-// confirms a Name of 256 multibyte runes is rejected by the character-based
-// length check with the expected 400 message, even though each run of the
-// byte-based check would also reject it; this pins the rune-counting path.
+// confirms a Host of 256 multibyte runes is rejected by the character-based
+// validateMaxLen check with the expected 400 message, even though each run of
+// the byte-based check would also reject it; this pins the rune-counting
+// path. The Host field is used because the issue #269 charset on Name would
+// reject "é" before the length check could run.
 func TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected(t *testing.T) {
 	handler, userID, token, cleanup := setupIssue233CreateConnection(
 		t, "issue270_multibyte_overlimit", []string{auth.PermManageConnections})
 	defer cleanup()
 
 	reqBody := validConnectionCreateRequest()
-	reqBody.Name = strings.Repeat("é", maxFieldLength+1)
+	reqBody.Host = strings.Repeat("é", maxFieldLength+1)
 	body, _ := json.Marshal(reqBody)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
@@ -1155,7 +1165,7 @@ func TestConnectionHandler_CreateConnection_Issue270_MultibyteOverLimitRejected(
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
-	const wantMsg = "Name must be 255 characters or less"
+	const wantMsg = "Host must be 255 characters or less"
 	if response.Error != wantMsg {
 		t.Errorf("Expected %q, got %q", wantMsg, response.Error)
 	}

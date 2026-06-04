@@ -260,10 +260,12 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 	}
 }
 
-// TestClusterHandler_CreateClusterGroup_NameTooLong locks in issue #270:
-// a Name longer than the VARCHAR(255) column must be rejected with a 400
-// and a field-specific message before any datastore call (the handler
-// runs against a nil datastore, so a stray call would panic).
+// TestClusterHandler_CreateClusterGroup_NameTooLong locks in the column guard
+// for the Name field: a Name longer than the VARCHAR(255) column must be
+// rejected with a 400 before any datastore call (the handler runs against a
+// nil datastore, so a stray call would panic). Length is enforced by
+// ValidateDisplayName, the single authority for Name length (issues #269 and
+// #270), so the message is "...characters or fewer".
 func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
 	handler := permissionSatisfiedHandler()
 
@@ -276,11 +278,11 @@ func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
 
 	handler.createClusterGroup(rec, req)
 
-	assertMaxLenRejected(t, rec, "Name")
+	assertLengthRejected(t, rec, "Name must be 255 characters or fewer")
 }
 
-// TestClusterHandler_CreateClusterInGroup_NameTooLong locks in issue #270
-// for the group-scoped cluster create path.
+// TestClusterHandler_CreateClusterInGroup_NameTooLong locks in the Name
+// column guard for the group-scoped cluster create path (issues #269/#270).
 func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
 	handler := permissionSatisfiedHandler()
 
@@ -293,11 +295,11 @@ func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
 
 	handler.createClusterInGroup(rec, req, 1)
 
-	assertMaxLenRejected(t, rec, "Name")
+	assertLengthRejected(t, rec, "Name must be 255 characters or fewer")
 }
 
-// TestClusterHandler_HandleCreateCluster_NameTooLong locks in issue #270
-// for the manual cluster create path.
+// TestClusterHandler_HandleCreateCluster_NameTooLong locks in the Name
+// column guard for the manual cluster create path (issues #269/#270).
 func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
 	handler := permissionSatisfiedHandler()
 
@@ -310,7 +312,7 @@ func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
 
 	handler.handleCreateCluster(rec, req)
 
-	assertMaxLenRejected(t, rec, "Name")
+	assertLengthRejected(t, rec, "Name must be 255 characters or fewer")
 }
 
 // TestClusterHandler_CreateClusterGroup_NameAtLimit confirms the boundary:
@@ -337,9 +339,12 @@ func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
 	handler.createClusterGroup(rec, req)
 }
 
-// assertMaxLenRejected asserts that the recorded response is a 400 carrying
-// the canonical "<field> must be 255 characters or less" message.
-func assertMaxLenRejected(t *testing.T, rec *httptest.ResponseRecorder, field string) {
+// assertLengthRejected asserts that the recorded response is a 400 whose
+// error body matches wantMsg exactly. It is used for the over-length name
+// paths, where the Name field is guarded by ValidateDisplayName and so
+// surfaces the "...characters or fewer" wording rather than validateMaxLen's
+// "...characters or less".
+func assertLengthRejected(t *testing.T, rec *httptest.ResponseRecorder, wantMsg string) {
 	t.Helper()
 
 	if rec.Code != http.StatusBadRequest {
@@ -352,9 +357,8 @@ func assertMaxLenRejected(t *testing.T, rec *httptest.ResponseRecorder, field st
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	want := field + " must be 255 characters or less"
-	if response.Error != want {
-		t.Errorf("Expected %q, got %q", want, response.Error)
+	if response.Error != wantMsg {
+		t.Errorf("Expected %q, got %q", wantMsg, response.Error)
 	}
 }
 
@@ -2212,5 +2216,175 @@ func TestClusterHandler_DeleteAutoDetectedCluster_WithPermission(t *testing.T) {
 	}
 	if !dismissed {
 		t.Fatal("Cluster was not dismissed")
+	}
+}
+
+// =============================================================================
+// Regression tests for GitHub issue #269: name character validation.
+//
+// The create/update handlers previously rejected only empty names. They now
+// funnel through ValidateDisplayName, which rejects names containing
+// characters outside the permitted set (letters, digits, spaces, and
+// . _ - ( )) with HTTP 400 and a user-facing message. These tests use
+// permissionSatisfiedHandler() with a nil datastore so the validation
+// rejection fires before any datastore access; a stray datastore call would
+// panic and surface as a failure.
+// =============================================================================
+
+// issue269InvalidName is the canonical bad name from the issue.
+const issue269InvalidName = "<>!@#$%"
+
+// issue269InvalidCharsMessage is the user-facing wording the handlers must
+// surface for a name containing disallowed characters.
+const issue269InvalidCharsMessage = "Name may only contain letters, numbers, " +
+	"spaces, and the characters . _ - ( )"
+
+func TestClusterHandler_CreateClusterGroup_Issue269_InvalidChars(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createClusterGroup(rec, req)
+
+	assertInvalidNameRejected(t, rec)
+}
+
+func TestClusterHandler_CreateClusterInGroup_Issue269_InvalidChars(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	body, _ := json.Marshal(ClusterRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups/1/clusters",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createClusterInGroup(rec, req, 1)
+
+	assertInvalidNameRejected(t, rec)
+}
+
+func TestClusterHandler_HandleCreateCluster_Issue269_InvalidChars(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	body, _ := json.Marshal(ManualClusterRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleCreateCluster(rec, req)
+
+	assertInvalidNameRejected(t, rec)
+}
+
+func TestClusterHandler_UpdateCluster_Issue269_InvalidChars(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	// A name is supplied, so it must pass the character policy even though
+	// name is optional on update.
+	body, _ := json.Marshal(ClusterRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/1",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.updateCluster(rec, req, 1)
+
+	assertInvalidNameRejected(t, rec)
+}
+
+func TestClusterHandler_UpdateAutoDetectedCluster_Issue269_InvalidChars(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	body, _ := json.Marshal(AutoDetectedClusterRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/clusters/cluster-spock-foo",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.updateAutoDetectedCluster(rec, req, "cluster-spock-foo")
+
+	assertInvalidNameRejected(t, rec)
+}
+
+func TestClusterHandler_UpdateAutoDetectedGroup_Issue269_InvalidChars(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/cluster-groups/group-auto",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.updateAutoDetectedGroup(rec, req, "group-auto")
+
+	assertInvalidNameRejected(t, rec)
+}
+
+// TestClusterHandler_UpdateAutoDetectedGroup_Issue269_ValidName confirms a
+// well-formed name passes the issue #269 validator and is persisted through
+// UpsertGroupByAutoKey, proving the new guard does not reject legitimate
+// renames.
+func TestClusterHandler_UpdateAutoDetectedGroup_Issue269_ValidName(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Renamed Auto Group"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/group-auto", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.updateAutoDetectedGroup(rec, req, "group-auto")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp database.ClusterGroup
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Name != "Renamed Auto Group" {
+		t.Errorf("Response Name = %q, want %q", resp.Name, "Renamed Auto Group")
+	}
+
+	// Verify the rename was persisted under the computed auto_group_key.
+	var dbName string
+	err := pool.QueryRow(context.Background(),
+		"SELECT name FROM cluster_groups WHERE auto_group_key = $1",
+		"auto").Scan(&dbName)
+	if err != nil {
+		t.Fatalf("Failed to read upserted row: %v", err)
+	}
+	if dbName != "Renamed Auto Group" {
+		t.Errorf("Persisted name = %q, want %q", dbName, "Renamed Auto Group")
+	}
+}
+
+// assertInvalidNameRejected asserts that the recorded response is a 400 with
+// the issue #269 invalid-characters message.
+func assertInvalidNameRejected(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != issue269InvalidCharsMessage {
+		t.Errorf("Expected %q, got %q", issue269InvalidCharsMessage, response.Error)
 	}
 }

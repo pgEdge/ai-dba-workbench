@@ -296,6 +296,49 @@ describe('ServerDialog', () => {
             // Name error should be cleared (exact match)
             expect(screen.queryByText('Name is required')).not.toBeInTheDocument();
         });
+
+        it('shows an error and blocks save when the name has disallowed characters', async () => {
+            const user = userEvent.setup({ delay: null });
+            const onSave = vi.fn().mockResolvedValue();
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
+
+            fireEvent.change(getNameField(), { target: { value: '<>!@#$%' } });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
+
+            await user.click(screen.getByRole('button', { name: /save/i }));
+
+            expect(
+                screen.getByText(/name may only contain letters/i)
+            ).toBeInTheDocument();
+            expect(onSave).not.toHaveBeenCalled();
+        });
+
+        it('allows a name with permitted special characters to save', async () => {
+            const user = userEvent.setup({ delay: null });
+            const onSave = vi.fn().mockResolvedValue();
+            renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
+
+            fireEvent.change(getNameField(), {
+                target: { value: 'Server_01 (primary).east-1' },
+            });
+            fireEvent.change(getHostField(), { target: { value: 'localhost' } });
+            fireEvent.change(getDatabaseField(), { target: { value: 'postgres' } });
+            fireEvent.change(getUsernameField(), { target: { value: 'admin' } });
+            fireEvent.change(getPasswordField(), { target: { value: 'secret' } });
+
+            await user.click(screen.getByRole('button', { name: /save/i }));
+
+            await waitFor(() => {
+                expect(onSave).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        name: 'Server_01 (primary).east-1',
+                    })
+                );
+            });
+        });
     });
 
     describe('form submission', () => {

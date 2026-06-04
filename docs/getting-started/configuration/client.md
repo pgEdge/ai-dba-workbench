@@ -212,7 +212,8 @@ application interface.
 The web client requires the following tools for
 development:
 
-- [Node.js 20.19](https://nodejs.org/) or later.
+- [Node.js 20.19](https://nodejs.org/) or later on the 20.x line,
+  or Node.js 22.12 or later.
 - [npm 9](https://docs.npmjs.com/) or later.
 
 Install the project dependencies before starting

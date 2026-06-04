@@ -67,8 +67,9 @@ project adheres to
   `.nvmrc`. The client's build tooling, including Vite 8 and the
   `@csstools` packages, requires Node.js 20.19 or later, so older
   releases such as Node.js 18 failed the build with a cryptic
-  error. The documented prerequisite now states Node.js 20.19 or
-  later everywhere it appears. (#272)
+  error. The documented prerequisite now states the supported
+  range (Node.js 20.19 or later on the 20.x line, or 22.12 or
+  later) everywhere it appears. (#272)
 
 ### Fixed
 

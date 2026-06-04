@@ -20,7 +20,14 @@ place on a supported operating system and platform:
 Download the latest release from the
 [GitHub releases page](https://github.com/pgEdge/ai-dba-workbench/releases).
 The release archive includes the collector, server, and alerter binaries
-and pre-built web client files. After downloading the files, extract the
+and pre-built web client files:
+
+* ai-dba-collector-linux-arm64.tar.gz
+* ai-dba-server-linux-arm64.tar.gz
+* ai-dba-alerter-linux-arm64.tar.gz
+* ai-dba-client.tar.gz
+
+After downloading the files, extract the
 archives and copy the files into a deployment directory. In the following
 example, the `tar` and `cp` commands install the binary and client files
 to the `/opt/ai-workbench` directory:
@@ -47,11 +54,18 @@ sudo tar xzf ai-dba-client.tar.gz -C /opt/ai-workbench/client
 ## Creating the Datastore Database
 
 Use a PostgreSQL client to create a database for the datastore; the
-collector, server, and alerter share this database. In the following
-example, the `psql` command connects to the PostgreSQL server:
+collector, server, and alerter share this database. Use the
+[`psql`](https://www.postgresql.org/docs/18/app-psql.html) client
+to connect to the PostgreSQL server:
 
 ```bash
-psql -U postgres -h localhost
+sudo -u postgres psql
+```
+
+Alter the `postgres` role to make it a login role with a password:
+
+```sql
+ALTER ROLE postgres LOGIN PASSWORD '1safepassword';
 ```
 
 Then, create the datastore database. In the following example, the
@@ -60,12 +74,17 @@ Then, create the datastore database. In the following example, the
 
 ```sql
 CREATE DATABASE ai_workbench;
-CREATE USER ai_workbench WITH PASSWORD 'your-password';
+CREATE USER ai_workbench WITH PASSWORD '1safepassword';
 GRANT ALL PRIVILEGES ON DATABASE ai_workbench TO ai_workbench;
 ```
 
 The collector creates the required schema tables automatically on the
 first startup.
+
+!!! hint
+
+    You can use `\q` to exit the `psql` client session and return to the 
+    terminal window.
 
 
 ## Creating a Server Secret and a Password File
@@ -94,15 +113,15 @@ Then, use the `openssl` command to write a secret to the
 sudo openssl rand -base64 32 \
     | sudo tee /etc/pgedge/server.secret \
     > /dev/null
-sudo chmod 600 /etc/pgedge/server.secret
+sudo chmod 644 /etc/pgedge/server.secret
 ```
 
 Then, use the `echo` and `chmod` commands to create the `password.txt`
 file in the `/etc/pgedge` directory and set the file permissions:
 
 ```bash
-sudo sh -c 'echo "your-password" > /etc/pgedge/password.txt'
-sudo chmod 600 /etc/pgedge/password.txt
+sudo sh -c 'echo "1safepassword" > /etc/pgedge/password.txt'
+sudo chmod 644 /etc/pgedge/password.txt
 ```
 
 !!! hint
@@ -130,9 +149,9 @@ sudo cp ~/Downloads/examples/ai-dba-collector.yaml \
     /etc/pgedge/ai-dba-collector.yaml
 ```
 
-Update the configuration file to describe the deployment. The following
-example shows the minimum settings required for a local development
-environment:
+Use your choice of editor to modify the `/etc/pgedge/ai-dba-collector.yaml`
+file to describe the deployment. The following changes are the minimum settings
+required for our installation walkthrough:
 
 ```yaml
 datastore:
@@ -150,8 +169,8 @@ The `SECURITY SETTINGS` section stores the location of the secret file:
 secret_file: /etc/pgedge/server.secret
 ```
 
-In the following example, the `ai-dba-collector` command starts the
-collector with the configuration file:
+After updating the configuration file, start the collector. In the following
+example, the `ai-dba-collector` command starts the collector with the configuration file:
 
 ```bash
 /opt/ai-workbench/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml &
@@ -456,7 +475,7 @@ datastore:
   # Command-line: -pg-password-file
   #
   # Example: Create a password file with restricted permissions:
-  #   echo "your-password" > /etc/pgedge/password.txt
+  #   echo "1safepassword" > /etc/pgedge/password.txt
   #   chmod 600 /etc/pgedge/password.txt
   password_file: /etc/pgedge/password.txt
 

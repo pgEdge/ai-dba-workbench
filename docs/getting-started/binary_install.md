@@ -145,7 +145,7 @@ Then, copy the sample Collector configuration file from `Downloads` to
 `/etc/pgedge`:
 
 ```bash
-sudo cp ~/Downloads/examples/ai-dba-collector.yaml \
+sudo cp ~/Downloads/ai-dba-collector.yaml \
     /etc/pgedge/ai-dba-collector.yaml
 ```
 
@@ -207,7 +207,7 @@ After downloading the sample file, copy the file from `Downloads` to
 `/etc/pgedge`:
 
 ```bash
-sudo cp ~/Downloads/examples/ai-dba-server.yaml \
+sudo cp ~/Downloads/ai-dba-server.yaml \
     /etc/pgedge/ai-dba-server.yaml
 ```
 
@@ -438,7 +438,7 @@ Then, copy the Alerter configuration file from the Downloads folder to
 `/etc/pgedge`:
 
 ```bash
-sudo cp ~/Downloads/examples/ai-dba-alerter.yaml \
+sudo cp ~/Downloads/ai-dba-alerter.yaml \
     /etc/pgedge/ai-dba-alerter.yaml
 ```
 

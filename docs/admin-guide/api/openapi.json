@@ -7156,7 +7156,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request body or group name",
             "content": {
               "application/json": {
                 "schema": {
@@ -7177,6 +7177,16 @@
           },
           "403": {
             "description": "Requires manage_groups permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A group with this name already exists",
             "content": {
               "application/json": {
                 "schema": {
@@ -7301,7 +7311,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request body, group name, or empty payload",
             "content": {
               "application/json": {
                 "schema": {
@@ -7332,6 +7342,16 @@
           },
           "404": {
             "description": "Group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A group with this name already exists",
             "content": {
               "application/json": {
                 "schema": {
@@ -8121,7 +8141,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "Invalid request body or token name",
             "content": {
               "application/json": {
                 "schema": {
@@ -8475,7 +8495,7 @@
             }
           },
           "400": {
-            "description": "Invalid username or email format",
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -8496,16 +8516,6 @@
           },
           "403": {
             "description": "Requires manage_users permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Username already taken",
             "content": {
               "application/json": {
                 "schema": {
@@ -8569,7 +8579,7 @@
             }
           },
           "400": {
-            "description": "Invalid request or email format",
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {

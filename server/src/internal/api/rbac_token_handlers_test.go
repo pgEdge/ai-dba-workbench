@@ -262,6 +262,132 @@ func TestRBACHandler_CreateToken_InvalidBody(t *testing.T) {
 	}
 }
 
+// postToken posts a token-create request for the given owner and annotation
+// as the supplied admin user; it does not perform any user or group setup,
+// which is the caller's responsibility (see tokenAdminSetup). It returns the
+// recorder so the caller can assert on status and body.
+func postToken(t *testing.T, handler *RBACHandler, store *auth.AuthStore,
+	adminID int64, owner, annotation string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{
+		"owner_username": owner,
+		"annotation":     annotation,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/tokens",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+	handler.handleTokens(rec, req)
+	return rec
+}
+
+func tokenAdminSetup(t *testing.T) (*RBACHandler, *auth.AuthStore, int64, func()) {
+	t.Helper()
+	handler, store, cleanup := createTestRBACHandler(t)
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageTokenScopes)
+	store.CreateUser("tokenowner", "Password1234", "Token Owner", "", "")
+	return handler, store, adminID, cleanup
+}
+
+func TestRBACHandler_CreateToken_InvalidCharacters(t *testing.T) {
+	handler, store, adminID, cleanup := tokenAdminSetup(t)
+	defer cleanup()
+
+	rec := postToken(t, handler, store, adminID, "tokenowner", "bad/name!")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	want := "Name may only contain letters, numbers, spaces, and the characters . _ - ( )"
+	if resp.Error != want {
+		t.Errorf("Expected %q, got %q", want, resp.Error)
+	}
+}
+
+func TestRBACHandler_CreateToken_TooLong(t *testing.T) {
+	handler, store, adminID, cleanup := tokenAdminSetup(t)
+	defer cleanup()
+
+	long := ""
+	for i := 0; i < 256; i++ {
+		long += "a"
+	}
+	rec := postToken(t, handler, store, adminID, "tokenowner", long)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Error != "Name must be 255 characters or fewer" {
+		t.Errorf("Expected length message, got %q", resp.Error)
+	}
+}
+
+// TestRBACHandler_CreateToken_EmptyNameAllowed confirms that an empty or
+// whitespace-only annotation is permitted; an unnamed token is valid, so the
+// handler must not reject it. Validation runs only when an annotation is
+// supplied.
+func TestRBACHandler_CreateToken_EmptyNameAllowed(t *testing.T) {
+	handler, store, adminID, cleanup := tokenAdminSetup(t)
+	defer cleanup()
+
+	rec := postToken(t, handler, store, adminID, "tokenowner", "   ")
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusCreated, rec.Code, rec.Body.String())
+	}
+}
+
+// TestRBACHandler_CreateToken_DuplicateNamesAllowed confirms that, unlike
+// group names, token names (stored in the annotation field) are not
+// unique; creating two tokens with the same name must both succeed.
+func TestRBACHandler_CreateToken_DuplicateNamesAllowed(t *testing.T) {
+	handler, store, adminID, cleanup := tokenAdminSetup(t)
+	defer cleanup()
+
+	first := postToken(t, handler, store, adminID, "tokenowner", "Shared Name")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("First token: expected %d, got %d. Body: %s",
+			http.StatusCreated, first.Code, first.Body.String())
+	}
+
+	second := postToken(t, handler, store, adminID, "tokenowner", "Shared Name")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("Second token with duplicate name: expected %d, got %d. Body: %s",
+			http.StatusCreated, second.Code, second.Body.String())
+	}
+}
+
+// TestRBACHandler_CreateToken_UnknownOwner exercises the generic error
+// path: a syntactically valid token name with an owner that does not exist
+// makes CreateToken fail, which the handler maps to a 500.
+func TestRBACHandler_CreateToken_UnknownOwner(t *testing.T) {
+	handler, store, adminID, cleanup := tokenAdminSetup(t)
+	defer cleanup()
+
+	rec := postToken(t, handler, store, adminID, "no-such-user", "Valid Name")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+}
+
 // =============================================================================
 // Token Listing Tests
 // =============================================================================

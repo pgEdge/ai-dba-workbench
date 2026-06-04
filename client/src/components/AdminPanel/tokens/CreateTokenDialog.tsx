@@ -30,6 +30,7 @@ import {
     getContainedButtonSx,
 } from '../styles';
 import { SELECT_FIELD_SX } from '../../shared/formStyles';
+import { validateName, NAME_MAX_LENGTH } from '../../../utils/validateName';
 import ScopeMultiSelect from './ScopeMultiSelect';
 import ConnectionScopeTable from './ConnectionScopeTable';
 import {
@@ -153,7 +154,15 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
         (c) => !scopedConnections.some((sc) => sc.id === c.id)
     );
 
-    const canSubmit = owner && annotation.trim();
+    // The "Name" label maps to the backend `annotation`. It shares the
+    // same validation contract as group names; duplicate token names are
+    // allowed by design, so no duplicate handling lives here.
+    const nameValidation = validateName(annotation);
+    const canSubmit = owner && nameValidation === null;
+    // Suppress the inline error for an empty field so the dialog does not
+    // greet the user with a "Name is required" message before they type;
+    // the disabled Create button already communicates the requirement.
+    const nameError = annotation.trim() === '' ? null : nameValidation;
 
     return (
         <Dialog
@@ -177,6 +186,9 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     disabled={loading}
                     margin="dense"
                     required
+                    error={!!nameError}
+                    helperText={nameError ?? undefined}
+                    inputProps={{ maxLength: NAME_MAX_LENGTH }}
                     InputLabelProps={{ shrink: true }}
                     sx={SELECT_FIELD_SX}
                 />

@@ -135,6 +135,20 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The token's display name is stored in the annotation field. An empty
+	// annotation is permitted (an unnamed token), so validation runs only
+	// when the caller supplied a value. When present, the annotation is
+	// subject to the shared display-name contract (length, allowed
+	// characters). Token names are intentionally not unique, so no
+	// duplicate check is performed here.
+	annotation := strings.TrimSpace(req.Annotation)
+	if annotation != "" {
+		if err := ValidateDisplayName(annotation); err != nil {
+			RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	var expiry *time.Time
 	if req.ExpiresIn != nil && *req.ExpiresIn != "" && *req.ExpiresIn != "never" {
 		duration, err := parseTokenExpiry(*req.ExpiresIn)
@@ -148,7 +162,7 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawToken, storedToken, err := h.authStore.CreateToken(
-		req.OwnerUsername, req.Annotation, expiry)
+		req.OwnerUsername, annotation, expiry)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create token for %s: %v",
 			req.OwnerUsername, err)

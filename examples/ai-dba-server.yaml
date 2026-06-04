@@ -470,7 +470,8 @@ builtins:
 #=========================================================================
 
 # Path to server secret file (for encryption)
-# Default: /etc/pgedge/ai-dba-server.secret or ./ai-dba-server.secret
+# Default: <user-config-dir>/pgedge/ai-dba-server.secret,
+#          then /etc/pgedge/ai-dba-server.secret
 # secret_file: "/etc/ai-workbench/server.secret"
 
 # Path to custom definitions file (user-defined prompts and resources)

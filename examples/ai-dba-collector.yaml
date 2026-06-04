@@ -193,9 +193,9 @@ pool:
 #   chmod 600 /etc/pgedge/ai-dba-collector.secret
 #
 # Default search paths (if not specified):
-#   1. /etc/pgedge/ai-dba-collector.secret
-#   2. <binary-directory>/ai-dba-collector.secret
-#   3. ./ai-dba-collector.secret
+#   1. <user-config-dir>/pgedge/ai-dba-collector.secret
+#      (e.g. ~/.config/pgedge/ai-dba-collector.secret)
+#   2. /etc/pgedge/ai-dba-collector.secret
 #
 # secret_file: /etc/pgedge/ai-dba-collector.secret
 

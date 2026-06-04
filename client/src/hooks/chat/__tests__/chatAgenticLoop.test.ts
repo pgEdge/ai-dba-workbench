@@ -16,6 +16,8 @@ import {
     ITERATION_LIMIT_MESSAGE,
     NO_MCP_PRIVILEGES_MESSAGE,
     UNKNOWN_TOOL_MESSAGE,
+    MAX_REPEATED_TOOL_FAILURES,
+    buildRepeatedToolFailureMessage,
 } from '../chatAgenticLoop';
 import type { APIMessage, ToolDefinition } from '../chatTypes';
 import type { LLMResponse, ToolCallResponse } from '../../../types/llm';
@@ -1008,6 +1010,334 @@ describe('chatAgenticLoop', () => {
         });
 
         // ---------------------------------------------------------------
+        // Repeated-failure circuit breaker (issue #268)
+        //
+        // Some tools pass the LLM's test_query validation but fail at
+        // execution time with an "Access denied"-style error. Without a
+        // breaker, the LLM retries indefinitely until the iteration
+        // limit. The breaker trips after MAX_REPEATED_TOOL_FAILURES
+        // identical (tool + error) failures.
+        // ---------------------------------------------------------------
+
+        describe('repeated-failure circuit breaker', () => {
+            it('trips after MAX_REPEATED_TOOL_FAILURES identical failures', async () => {
+                const accessDenied = 'Access denied for connection 7';
+                // Always ask for query_database; the tool always fails
+                // with the same error.
+                const mockFetch = createMockFetch(
+                    Array(50).fill(
+                        createToolUseResponse([
+                            {
+                                id: 'q1',
+                                name: 'query_database',
+                                input: { query: 'SELECT 1' },
+                            },
+                        ]),
+                    ),
+                    new Map([
+                        [
+                            'query_database',
+                            createToolCallResponse(accessDenied, true),
+                        ],
+                    ]),
+                );
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                expect(result.finalMessage.isError).toBe(true);
+                expect(result.finalMessage.content).toBe(
+                    buildRepeatedToolFailureMessage(
+                        'query_database',
+                        accessDenied,
+                    ),
+                );
+                expect(result.finalMessage.content).toContain(accessDenied);
+            });
+
+            it('stops the loop early, well before maxIterations', async () => {
+                const accessDenied = 'Access denied';
+                const mockFetch = createMockFetch(
+                    Array(50).fill(
+                        createToolUseResponse([
+                            {
+                                id: 'q1',
+                                name: 'query_database',
+                                input: { query: 'SELECT 1' },
+                            },
+                        ]),
+                    ),
+                    new Map([
+                        [
+                            'query_database',
+                            createToolCallResponse(accessDenied, true),
+                        ],
+                    ]),
+                );
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                await runAgenticLoop(params);
+
+                const llmCalls = (
+                    mockFetch as ReturnType<typeof vi.fn>
+                ).mock.calls.filter(c => c[0] === '/api/v1/llm/chat');
+                // The breaker trips on the 3rd identical failure, so the
+                // LLM is called exactly MAX_REPEATED_TOOL_FAILURES times,
+                // far fewer than maxIterations would allow.
+                expect(llmCalls).toHaveLength(MAX_REPEATED_TOOL_FAILURES);
+                expect(llmCalls.length).toBeLessThan(50);
+            });
+
+            it('appends the breaker message to API history', async () => {
+                const accessDenied = 'Access denied';
+                const mockFetch = createMockFetch(
+                    Array(50).fill(
+                        createToolUseResponse([
+                            {
+                                id: 'q1',
+                                name: 'query_database',
+                                input: { query: 'SELECT 1' },
+                            },
+                        ]),
+                    ),
+                    new Map([
+                        [
+                            'query_database',
+                            createToolCallResponse(accessDenied, true),
+                        ],
+                    ]),
+                );
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                const last =
+                    result.updatedApiMessages[
+                        result.updatedApiMessages.length - 1
+                    ];
+                expect(last.role).toBe('assistant');
+                expect(last.content).toBe(
+                    buildRepeatedToolFailureMessage(
+                        'query_database',
+                        accessDenied,
+                    ),
+                );
+            });
+
+            it('trips via the catch path on repeated network failures', async () => {
+                // The tool call endpoint always throws; the catch path
+                // records identical errors that trip the breaker.
+                const mockFetch = vi
+                    .fn()
+                    .mockImplementation(async (url: string) => {
+                        if (url === '/api/v1/llm/chat') {
+                            return {
+                                ok: true,
+                                json: () =>
+                                    Promise.resolve(
+                                        createToolUseResponse([
+                                            {
+                                                id: 'q1',
+                                                name: 'query_database',
+                                                input: { query: 'SELECT 1' },
+                                            },
+                                        ]),
+                                    ),
+                            };
+                        }
+                        if (url === '/api/v1/mcp/tools/call') {
+                            throw new Error('Connection refused');
+                        }
+                        return { ok: false, text: () => Promise.resolve('') };
+                    });
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                expect(result.finalMessage.isError).toBe(true);
+                expect(result.finalMessage.content).toContain(
+                    'Connection refused',
+                );
+                const llmCalls = (
+                    mockFetch as ReturnType<typeof vi.fn>
+                ).mock.calls.filter(c => c[0] === '/api/v1/llm/chat');
+                expect(llmCalls).toHaveLength(MAX_REPEATED_TOOL_FAILURES);
+            });
+
+            it('does not trip when the same tool fails with different errors then succeeds', async () => {
+                // query_database fails with two distinct errors, then
+                // succeeds. No single (tool + error) signature reaches
+                // the threshold, so the breaker must not trip.
+                let toolCall = 0;
+                let llmCall = 0;
+                const mockFetch = vi
+                    .fn()
+                    .mockImplementation(async (url: string) => {
+                        if (url === '/api/v1/llm/chat') {
+                            llmCall++;
+                            // The first three iterations request the
+                            // tool; after the tool succeeds the LLM
+                            // returns a final text response.
+                            if (llmCall >= 4) {
+                                return {
+                                    ok: true,
+                                    json: () =>
+                                        Promise.resolve(
+                                            createTextResponse('All good'),
+                                        ),
+                                };
+                            }
+                            return {
+                                ok: true,
+                                json: () =>
+                                    Promise.resolve(
+                                        createToolUseResponse([
+                                            {
+                                                id: 'q1',
+                                                name: 'query_database',
+                                                input: { query: 'SELECT 1' },
+                                            },
+                                        ]),
+                                    ),
+                            };
+                        }
+                        if (url === '/api/v1/mcp/tools/call') {
+                            toolCall++;
+                            if (toolCall === 1) {
+                                return {
+                                    ok: true,
+                                    json: () =>
+                                        Promise.resolve(
+                                            createToolCallResponse(
+                                                'Error A',
+                                                true,
+                                            ),
+                                        ),
+                                };
+                            }
+                            if (toolCall === 2) {
+                                return {
+                                    ok: true,
+                                    json: () =>
+                                        Promise.resolve(
+                                            createToolCallResponse(
+                                                'Error B',
+                                                true,
+                                            ),
+                                        ),
+                                };
+                            }
+                            return {
+                                ok: true,
+                                json: () =>
+                                    Promise.resolve(
+                                        createToolCallResponse('OK'),
+                                    ),
+                            };
+                        }
+                        return { ok: false, text: () => Promise.resolve('') };
+                    });
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                expect(result.finalMessage.isError).toBeUndefined();
+                expect(result.finalMessage.content).toBe('All good');
+            });
+
+            it('trips on a tool even when another tool succeeds in between', async () => {
+                // test_query-style success interleaves with repeated
+                // query_database failures. The interleaved success must
+                // not reset the failing tool's counter.
+                let llmCall = 0;
+                const mockFetch = vi
+                    .fn()
+                    .mockImplementation(async (url: string, init?: RequestInit) => {
+                        if (url === '/api/v1/llm/chat') {
+                            llmCall++;
+                            // Each iteration requests both a successful
+                            // list_connections call and a failing
+                            // query_database call.
+                            return {
+                                ok: true,
+                                json: () =>
+                                    Promise.resolve(
+                                        createToolUseResponse([
+                                            {
+                                                id: `lc-${llmCall}`,
+                                                name: 'list_connections',
+                                                input: {},
+                                            },
+                                            {
+                                                id: `qd-${llmCall}`,
+                                                name: 'query_database',
+                                                input: { query: 'SELECT 1' },
+                                            },
+                                        ]),
+                                    ),
+                            };
+                        }
+                        if (url === '/api/v1/mcp/tools/call') {
+                            const body = JSON.parse(init?.body as string);
+                            if (body.name === 'list_connections') {
+                                return {
+                                    ok: true,
+                                    json: () =>
+                                        Promise.resolve(
+                                            createToolCallResponse('Conn A'),
+                                        ),
+                                };
+                            }
+                            return {
+                                ok: true,
+                                json: () =>
+                                    Promise.resolve(
+                                        createToolCallResponse(
+                                            'Access denied',
+                                            true,
+                                        ),
+                                    ),
+                            };
+                        }
+                        return { ok: false, text: () => Promise.resolve('') };
+                    });
+                const params = createLoopParams({
+                    maxIterations: 50,
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+
+                expect(result.finalMessage.isError).toBe(true);
+                expect(result.finalMessage.content).toBe(
+                    buildRepeatedToolFailureMessage(
+                        'query_database',
+                        'Access denied',
+                    ),
+                );
+                const llmCalls = (
+                    mockFetch as ReturnType<typeof vi.fn>
+                ).mock.calls.filter(c => c[0] === '/api/v1/llm/chat');
+                expect(llmCalls).toHaveLength(MAX_REPEATED_TOOL_FAILURES);
+            });
+        });
+
+        // ---------------------------------------------------------------
         // Module-level constants exposed for the orchestrator (issue #188)
         // ---------------------------------------------------------------
 
@@ -1020,6 +1350,21 @@ describe('chatAgenticLoop', () => {
             it('exports a non-empty UNKNOWN_TOOL_MESSAGE', () => {
                 expect(UNKNOWN_TOOL_MESSAGE.length).toBeGreaterThan(0);
                 expect(UNKNOWN_TOOL_MESSAGE).toContain('tools');
+            });
+
+            it('exports MAX_REPEATED_TOOL_FAILURES as a positive integer', () => {
+                expect(MAX_REPEATED_TOOL_FAILURES).toBe(3);
+                expect(Number.isInteger(MAX_REPEATED_TOOL_FAILURES)).toBe(true);
+            });
+
+            it('buildRepeatedToolFailureMessage names the tool and includes the error', () => {
+                const msg = buildRepeatedToolFailureMessage(
+                    'query_database',
+                    'Access denied',
+                );
+                expect(msg).toContain('query_database');
+                expect(msg).toContain('Access denied');
+                expect(msg).toContain('administrator');
             });
         });
     });

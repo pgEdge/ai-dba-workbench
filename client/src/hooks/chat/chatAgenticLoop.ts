@@ -97,6 +97,46 @@ export const UNKNOWN_TOOL_MESSAGE =
     'privileges. Please contact your administrator.';
 
 /**
+ * Threshold for the repeated-failure circuit breaker.
+ *
+ * When the same tool fails with the same error this many times across
+ * loop iterations, the loop stops rather than churning to the iteration
+ * limit. The 3rd identical failure trips the breaker. See issue #268.
+ */
+export const MAX_REPEATED_TOOL_FAILURES = 3;
+
+/**
+ * Build the user-facing message returned when the repeated-failure
+ * circuit breaker trips.
+ *
+ * Some tools (for example `query_database` or `get_schema_info`) pass
+ * the LLM's pre-flight validation via `test_query` but then fail at
+ * execution time with an "Access denied"-style error. The LLM responds
+ * by retrying slightly different SQL, which validates and fails again,
+ * looping until the iteration limit is exhausted. This builder produces
+ * a clear error that names the failing tool, surfaces the underlying
+ * error text, and points the user at a likely permissions or
+ * connection-access cause. See issue #268.
+ *
+ * @param toolName - The name of the tool that failed repeatedly.
+ * @param errorText - The underlying error text from the failed calls.
+ * @returns A clear, user-facing error message.
+ */
+export function buildRepeatedToolFailureMessage(
+    toolName: string,
+    errorText: string,
+): string {
+    return (
+        `The "${toolName}" tool failed repeatedly with the same error, ` +
+        'so I stopped retrying. The error was:\n\n' +
+        `${errorText}\n\n` +
+        'This is often a permissions or connection-access problem. ' +
+        'Ask your administrator to confirm you have access to this ' +
+        'connection and the relevant MCP privileges, then try again.'
+    );
+}
+
+/**
  * Run the agentic LLM tool-use loop.
  *
  * This function calls the LLM with the current message history. If the
@@ -129,6 +169,12 @@ export async function runAgenticLoop(
     let currentMessages = [...apiMessages];
     let iterations = 0;
     const collectedActivity: ToolActivity[] = [];
+
+    // Repeated-failure circuit breaker state (issue #268). Keyed by a
+    // signature combining the tool name and the error text, this counts
+    // how many times each distinct tool-error has been seen across loop
+    // iterations. Only error results (is_error truthy) are counted.
+    const failureCounts = new Map<string, number>();
 
     while (iterations < maxIterations) {
         if (abortSignal.aborted) {
@@ -232,6 +278,11 @@ export async function runAgenticLoop(
         // Execute each tool call sequentially
         const toolResults: ToolResult[] = [];
 
+        // The tool name and error text of the failure that tripped the
+        // circuit breaker, if any, recorded during this iteration.
+        let trippedToolName: string | null = null;
+        let trippedErrorText = '';
+
         for (const toolUse of toolUses) {
             const toolName = toolUse.name ?? 'unknown';
 
@@ -279,6 +330,19 @@ export async function runAgenticLoop(
                     content: resultText,
                     is_error: toolData.isError || undefined,
                 });
+
+                // Track repeated failures of this (tool, error) pair so
+                // the loop can break out rather than spinning until the
+                // iteration limit. Only error results count. See #268.
+                if (toolData.isError) {
+                    const signature = `${toolName} ${resultText}`;
+                    const count = (failureCounts.get(signature) ?? 0) + 1;
+                    failureCounts.set(signature, count);
+                    if (count >= MAX_REPEATED_TOOL_FAILURES) {
+                        trippedToolName = toolName;
+                        trippedErrorText = resultText;
+                    }
+                }
             } catch (toolErr) {
                 if ((toolErr as Error).name === 'AbortError') {
                     throw toolErr;
@@ -294,6 +358,16 @@ export async function runAgenticLoop(
                     content: errMsg,
                     is_error: true,
                 });
+
+                // The catch path always produces an error result, so
+                // count it toward the circuit breaker as well. See #268.
+                const signature = `${toolName} ${errMsg}`;
+                const count = (failureCounts.get(signature) ?? 0) + 1;
+                failureCounts.set(signature, count);
+                if (count >= MAX_REPEATED_TOOL_FAILURES) {
+                    trippedToolName = toolName;
+                    trippedErrorText = errMsg;
+                }
             }
         }
 
@@ -302,6 +376,32 @@ export async function runAgenticLoop(
             ...currentMessages,
             { role: 'user', content: toolResults },
         ];
+
+        // Repeated-failure circuit breaker (issue #268). If a tool has
+        // now failed with the same error MAX_REPEATED_TOOL_FAILURES
+        // times, stop looping and return a clear error rather than
+        // letting the LLM retry until the iteration limit is reached.
+        if (trippedToolName !== null) {
+            const breakerMessage = buildRepeatedToolFailureMessage(
+                trippedToolName,
+                trippedErrorText,
+            );
+            const finalMessage: ChatMessageData = {
+                role: 'assistant',
+                content: breakerMessage,
+                timestamp: new Date().toISOString(),
+                isError: true,
+                activity:
+                    collectedActivity.length > 0
+                        ? [...collectedActivity]
+                        : undefined,
+            };
+            currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: breakerMessage },
+            ];
+            return { finalMessage, updatedApiMessages: currentMessages };
+        }
     }
 
     // Loop exhausted iterations without a final text response

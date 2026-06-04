@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -301,9 +302,17 @@ func TestRBACHandler_CreateUser_DuplicateUsername(t *testing.T) {
 
 	handler.handleUsers(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
+	if rec.Code != http.StatusConflict {
 		t.Errorf("Expected status %d, got %d. Body: %s",
-			http.StatusInternalServerError, rec.Code, rec.Body.String())
+			http.StatusConflict, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Username already taken" {
+		t.Errorf("Expected 'Username already taken', got %q", response.Error)
 	}
 }
 
@@ -474,9 +483,210 @@ func TestRBACHandler_CreateServiceAccount_NoPasswordRequired(t *testing.T) {
 	}
 }
 
+// adminRBACHandler builds an RBAC handler with an admin user that holds the
+// manage_users permission. It returns the handler, the store, the admin's
+// user ID, and a cleanup func, removing the boilerplate repeated across the
+// validation tests below.
+func adminRBACHandler(t *testing.T) (*RBACHandler, *auth.AuthStore, int64, func()) {
+	t.Helper()
+	handler, store, cleanup := createTestRBACHandler(t)
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageUsers)
+	return handler, store, adminID, cleanup
+}
+
+// postUser issues a POST /api/v1/rbac/users request as the supplied user and
+// returns the recorder for assertions.
+func postUser(handler *RBACHandler, adminID int64, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/users",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+	handler.handleUsers(rec, req)
+	return rec
+}
+
+func TestRBACHandler_CreateUser_InvalidUsername(t *testing.T) {
+	handler, _, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"username": "<>!@#$%",
+		"password": "Securepassword1",
+	})
+	rec := postUser(handler, adminID, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	// The handler surfaces auth.ValidateUsername's message, capitalised.
+	expected := capitalizeFirst(auth.ValidateUsername("<>!@#$%").Error())
+	if response.Error != expected {
+		t.Errorf("Expected %q, got %q", expected, response.Error)
+	}
+}
+
+func TestRBACHandler_CreateUser_InvalidEmail_NoAt(t *testing.T) {
+	handler, _, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"username": "newuser",
+		"password": "Securepassword1",
+		"email":    "notanemail",
+	})
+	rec := postUser(handler, adminID, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Please enter a valid email address" {
+		t.Errorf("Expected 'Please enter a valid email address', got %q", response.Error)
+	}
+}
+
+func TestRBACHandler_CreateUser_InvalidEmail_NoDomainDot(t *testing.T) {
+	handler, _, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"username": "newuser",
+		"password": "Securepassword1",
+		"email":    "test@",
+	})
+	rec := postUser(handler, adminID, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Please enter a valid email address" {
+		t.Errorf("Expected 'Please enter a valid email address', got %q", response.Error)
+	}
+}
+
+func TestRBACHandler_CreateServiceAccount_InvalidUsername(t *testing.T) {
+	handler, _, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	isServiceAccount := true
+	body, _ := json.Marshal(map[string]any{
+		"username":           "bad name!",
+		"is_service_account": isServiceAccount,
+	})
+	rec := postUser(handler, adminID, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRBACHandler_CreateServiceAccount_InvalidEmail(t *testing.T) {
+	handler, _, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	isServiceAccount := true
+	body, _ := json.Marshal(map[string]any{
+		"username":           "svc-bademail",
+		"email":              "notanemail",
+		"is_service_account": isServiceAccount,
+	})
+	rec := postUser(handler, adminID, body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Please enter a valid email address" {
+		t.Errorf("Expected 'Please enter a valid email address', got %q", response.Error)
+	}
+}
+
+func TestRBACHandler_CreateServiceAccount_DuplicateUsername(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	store.CreateServiceAccount("svc-dup", "first", "", "")
+
+	isServiceAccount := true
+	body, _ := json.Marshal(map[string]any{
+		"username":           "svc-dup",
+		"is_service_account": isServiceAccount,
+	})
+	rec := postUser(handler, adminID, body)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Username already taken" {
+		t.Errorf("Expected 'Username already taken', got %q", response.Error)
+	}
+}
+
 // =============================================================================
 // User Update Tests
 // =============================================================================
+
+func TestRBACHandler_UpdateUser_InvalidEmail(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	store.CreateUser("target", "Password1234", "Target user", "old@example.com", "")
+	targetID, _ := store.GetUserID("target")
+
+	body, _ := json.Marshal(map[string]string{
+		"email": "notanemail",
+	})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10),
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.updateUser(rec, req, targetID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if response.Error != "Please enter a valid email address" {
+		t.Errorf("Expected 'Please enter a valid email address', got %q", response.Error)
+	}
+}
 
 func TestRBACHandler_UpdateUser_PasswordChange(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)

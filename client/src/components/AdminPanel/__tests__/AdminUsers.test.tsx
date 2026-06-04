@@ -458,6 +458,184 @@ describe('AdminUsers', () => {
             expect(createBtn).toBeDisabled();
         });
 
+        it('shows the inline error and disables Create for an invalid username', async () => {
+            installListMocks();
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            // A space is not an allowed username character.
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                'bad name'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
+            expect(
+                within(dialog).getByText(
+                    /Username may only contain letters, digits, and \. _ - @/i
+                )
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            ).toBeDisabled();
+        }, 15000);
+
+        it('rejects a leading punctuation character in the username', async () => {
+            installListMocks();
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                '_leading'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
+            expect(
+                within(dialog).getByText(
+                    /Username may only contain letters/i
+                )
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            ).toBeDisabled();
+        }, 15000);
+
+        it('shows the email error and disables Create for "notanemail"', async () => {
+            installListMocks();
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                'charlie'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
+            fireEvent.change(findFieldByLabel(dialog, 'Email'), {
+                target: { value: 'notanemail' },
+            });
+            expect(
+                within(dialog).getByText(/Enter a valid email address/i)
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            ).toBeDisabled();
+        }, 15000);
+
+        it('shows the email error and disables Create for "test@"', async () => {
+            installListMocks();
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                'charlie'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
+            fireEvent.change(findFieldByLabel(dialog, 'Email'), {
+                target: { value: 'test@' },
+            });
+            expect(
+                within(dialog).getByText(/Enter a valid email address/i)
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            ).toBeDisabled();
+        }, 15000);
+
+        it('enables Create with a valid username and email', async () => {
+            installListMocks();
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                'a_b.c-d@e'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
+            fireEvent.change(findFieldByLabel(dialog, 'Email'), {
+                target: { value: 'valid@example.com' },
+            });
+            expect(
+                within(dialog).queryByText(/Username may only contain/i)
+            ).not.toBeInTheDocument();
+            expect(
+                within(dialog).queryByText(/Enter a valid email address/i)
+            ).not.toBeInTheDocument();
+            expect(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            ).toBeEnabled();
+        }, 15000);
+
+        it('renders a server 409 error in the dialog alert', async () => {
+            installListMocks();
+            mockApiPost.mockRejectedValue(
+                new Error('Username already taken')
+            );
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('alice')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /create user/i })
+            );
+            const dialog = await screen.findByRole('dialog');
+            await user.type(
+                findFieldByLabel(dialog, 'Username'),
+                'alice'
+            );
+            fireEvent.change(findFieldByLabel(dialog, 'Password'), {
+                target: { value: 'Correct-Horse-99' },
+            });
+            await user.click(
+                within(dialog).getByRole('button', { name: /^create$/i })
+            );
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText(/Username already taken/i)
+                ).toBeInTheDocument();
+            });
+        }, 15000);
+
         it('closes the dialog without saving when Cancel is clicked', async () => {
             installListMocks();
             const user = userEvent.setup({ delay: null });
@@ -726,6 +904,26 @@ describe('AdminUsers', () => {
                     })
                 );
             });
+        });
+
+        it('shows the email error and disables Save for an invalid edit email', async () => {
+            installListMocks();
+            const user = userEvent.setup({ delay: null });
+            renderWithTheme(<AdminUsers />);
+            await waitFor(() => {
+                expect(screen.getByText('bob')).toBeInTheDocument();
+            });
+            await user.click(screen.getAllByLabelText('edit user')[1]);
+            const dialog = await screen.findByRole('dialog');
+            fireEvent.change(findFieldByLabel(dialog, 'Email'), {
+                target: { value: 'notanemail' },
+            });
+            expect(
+                within(dialog).getByText(/Enter a valid email address/i)
+            ).toBeInTheDocument();
+            expect(
+                within(dialog).getByRole('button', { name: /^save$/i })
+            ).toBeDisabled();
         });
 
         it('cancels the edit without calling the API', async () => {

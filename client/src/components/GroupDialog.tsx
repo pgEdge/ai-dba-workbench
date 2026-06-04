@@ -40,6 +40,7 @@ import ChannelOverridesPanel from './ChannelOverridesPanel';
 import SlideTransition from './shared/SlideTransition';
 import { parseGroupNumericId } from './ClusterNavigator/utils';
 import { MAX_FIELD_LENGTH } from '../utils/formLimits';
+import { validateName } from '../utils/validateName';
 
 // --- Style constants (Issue 23) ---
 
@@ -192,9 +193,9 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
         let isValid = true;
         setNameError('');
 
-        const trimmedName = name.trim();
-        if (!trimmedName) {
-            setNameError('Name is required');
+        const nameValidationError = validateName(name);
+        if (nameValidationError) {
+            setNameError(nameValidationError);
             isValid = false;
         }
 

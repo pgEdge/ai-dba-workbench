@@ -222,9 +222,10 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate required fields
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
+	// Validate required fields. Issue #269: validate the name's characters,
+	// not just non-emptiness.
+	if err := ValidateDisplayName(req.Name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Host == "" {
@@ -452,10 +453,13 @@ func (h *ConnectionHandler) updateConnection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate name if provided
-	if req.Name != nil && *req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name cannot be empty")
-		return
+	// Validate name if provided. Issue #269: when a name is supplied, it
+	// must satisfy the full character policy, not merely be non-empty.
+	if req.Name != nil {
+		if err := ValidateDisplayName(*req.Name); err != nil {
+			RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Only users with manage_connections permission can make connections shared

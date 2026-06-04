@@ -9,6 +9,7 @@
  */
 
 import type { ServerFormData, FormErrors } from './ServerDialog.types';
+import { validateName } from '../../utils/validateName';
 
 /**
  * Validates all form fields and returns an object containing error messages.
@@ -24,9 +25,9 @@ export const validateServerForm = (
     const errors: FormErrors = {};
 
     // Name validation
-    const trimmedName = formData.name.trim();
-    if (!trimmedName) {
-        errors.name = 'Name is required';
+    const nameError = validateName(formData.name);
+    if (nameError) {
+        errors.name = nameError;
     }
 
     // Host validation

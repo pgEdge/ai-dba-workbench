@@ -416,6 +416,71 @@ describe('ClusterConfigDialog', () => {
             expect(onSave).not.toHaveBeenCalled();
         });
 
+        it('blocks save when the name has disallowed characters', async () => {
+            const onSave = vi.fn();
+            renderWithTheme(
+                <ClusterConfigDialog
+                    {...baseProps}
+                    onSave={onSave}
+                    mode="edit"
+                    clusterId="cluster-11"
+                    numericClusterId={11}
+                    clusterName="Old Name"
+                    clusterDescription=""
+                    replicationType="binary"
+                    autoClusterKey={null}
+                />,
+            );
+
+            const nameField = screen.getByRole('textbox', {
+                name: /^name/i,
+            });
+            fireEvent.change(nameField, { target: { value: '<>!@#$%' } });
+
+            fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText(/name may only contain letters/i),
+                ).toBeInTheDocument();
+            });
+            expect(onSave).not.toHaveBeenCalled();
+        });
+
+        it('allows a name with permitted special characters to save', async () => {
+            const onSave = vi.fn().mockResolvedValue(undefined);
+            renderWithTheme(
+                <ClusterConfigDialog
+                    {...baseProps}
+                    onSave={onSave}
+                    mode="edit"
+                    clusterId="cluster-12"
+                    numericClusterId={12}
+                    clusterName="Old Name"
+                    clusterDescription=""
+                    replicationType="binary"
+                    autoClusterKey={null}
+                />,
+            );
+
+            const nameField = screen.getByRole('textbox', {
+                name: /^name/i,
+            });
+            fireEvent.change(nameField, {
+                target: { value: 'Cluster_01 (east).v2-1' },
+            });
+
+            fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+            await waitFor(() => {
+                expect(onSave).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        name: 'Cluster_01 (east).v2-1',
+                    }),
+                );
+            });
+        });
+
         it('creates a cluster with the chosen replication type', async () => {
             const onCreate = vi.fn().mockResolvedValue({ id: 99 });
             renderWithTheme(

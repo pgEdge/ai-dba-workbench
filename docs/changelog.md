@@ -61,7 +61,20 @@ project adheres to
   containing `..`, so legitimate relative paths now work. The flag
   previously rejected any path containing `..`. (#267)
 
+- Raise the web client's minimum Node.js version to 20.19 and
+  enforce it through an `engines` field in the client
+  `package.json` (`^20.19.0 || >=22.12.0`), with a matching
+  `.nvmrc`. The client's build tooling, including Vite 8 and the
+  `@csstools` packages, requires Node.js 20.19 or later, so older
+  releases such as Node.js 18 failed the build with a cryptic
+  error. The documented prerequisite now states Node.js 20.19 or
+  later everywhere it appears. (#272)
+
 ### Fixed
+
+- Resolve two moderate-severity npm vulnerabilities reported in
+  the web client's dependency tree by updating the affected
+  transitive dependencies. (#272)
 
 - Fix the server silently swallowing read errors for configured
   LLM, embedding, and knowledgebase API-key files. The server

@@ -3,6 +3,9 @@
     "version": "1.0.0-beta3",
     "description": "Web client for AI DBA Workbench",
     "type": "module",
+    "engines": {
+        "node": "^20.19.0 || >=22.12.0"
+    },
     "scripts": {
         "dev": "vite",
         "build": "vite build",

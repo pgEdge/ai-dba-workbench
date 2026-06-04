@@ -131,7 +131,7 @@ responses for display.
 
 Install the following tools before starting development:
 
-- [Node.js 18](https://nodejs.org/) or later.
+- [Node.js 20.19](https://nodejs.org/) or later.
 - npm (included with Node.js).
 
 ### Installation

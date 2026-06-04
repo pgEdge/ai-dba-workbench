@@ -39,7 +39,7 @@ The client provides the following capabilities:
 
 Before starting development, install the following tools:
 
-- [Node.js 18](https://nodejs.org/) or later.
+- [Node.js 20.19](https://nodejs.org/) or later.
 - [npm 9](https://docs.npmjs.com/) or later.
 
 ## Getting Started

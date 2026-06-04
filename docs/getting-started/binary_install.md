@@ -27,8 +27,8 @@ and pre-built web client files:
 * ai-dba-alerter-linux-arm64.tar.gz
 * ai-dba-client.tar.gz
 
-After downloading the files, extract the
-archives and copy the files into a deployment directory. In the following
+After downloading the files, move into your `Downloads` folder, and extract
+the archives and copy the files into a deployment directory. In the following
 example, the `tar` and `cp` commands install the binary and client files
 to the `/opt/ai-workbench` directory:
 
@@ -113,7 +113,7 @@ Then, use the `openssl` command to write a secret to the
 sudo openssl rand -base64 32 \
     | sudo tee /etc/pgedge/server.secret \
     > /dev/null
-sudo chmod 644 /etc/pgedge/server.secret
+sudo chmod 600 /etc/pgedge/server.secret
 ```
 
 Then, use the `echo` and `chmod` commands to create the `password.txt`
@@ -121,14 +121,79 @@ file in the `/etc/pgedge` directory and set the file permissions:
 
 ```bash
 sudo sh -c 'echo "1safepassword" > /etc/pgedge/password.txt'
-sudo chmod 644 /etc/pgedge/password.txt
+sudo chmod 600 /etc/pgedge/password.txt
 ```
 
 !!! hint
 
     When you configure your installation, ensure that the locations of
     the `server.secret` and `password.txt` files match the
-    absolute file paths in the YAML configuration files.
+    absolute file paths in each YAML configuration files.
+
+
+## Creating the admin User and SQLite Database
+
+The Workbench uses a SQLite database to store authentication and management
+details. Create the database and add an `admin` user account (this account
+will be used when connecting to the Workbench client) before editing the
+configuration files. 
+
+In the following example, the `mkdir`, `chown`, and `ai-dba-server` commands
+create the directory and add a user; the `-data-dir` flag places the `auth.db`
+authentication database in `/var/lib/ai-workbench/data`:
+
+```bash
+sudo mkdir -p /var/lib/ai-workbench/data
+sudo chown -R $USER:$USER /var/lib/ai-workbench/data
+/opt/ai-workbench/ai-dba-server \
+    -add-user -username admin \
+    -data-dir /var/lib/ai-workbench/data
+```
+
+The command prompts for a password and optional user details; this password
+will be used when connecting to the Workbench client, and must include at
+least one capital letter, one digit, and one special character:
+
+```bash
+/opt/ai-workbench/ai-dba-server -add-user -username admin -data-dir /var/lib/ai-workbench/data
+Auth store: /var/lib/ai-workbench/data/auth.db
+Enter password:
+Confirm password:
+Enter full name (optional): admin
+Enter email address (optional): admin@pgedge.com
+Enter notes for this user (optional):
+
+======================================================================
+User created successfully!
+======================================================================
+
+Username:  admin
+Full Name: admin
+Email:    admin@pgedge.com
+Status:   Enabled
+======================================================================
+```
+
+Then, grant superuser status to the admin account. In the following
+example, the `-set-superuser` flag promotes the `admin` user to
+superuser:
+
+```bash
+/opt/ai-workbench/ai-dba-server \
+    -set-superuser -username admin \
+    -data-dir /var/lib/ai-workbench/data
+```
+
+The command confirms the change; for example:
+
+```bash
+User 'admin' is now a superuser
+```
+
+!!! note
+
+    Without superuser privileges, you are allowed to connect to the Workbench,
+    but you will not be able to add servers for monitoring.
 
 
 ## Configuring and Starting the Collector
@@ -145,8 +210,7 @@ Then, copy the sample Collector configuration file from `Downloads` to
 `/etc/pgedge`:
 
 ```bash
-sudo cp ~/Downloads/ai-dba-collector.yaml \
-    /etc/pgedge/ai-dba-collector.yaml
+sudo cp ~/Downloads/ai-dba-collector.yaml /etc/pgedge/ai-dba-collector.yaml
 ```
 
 Use your choice of editor to modify the `/etc/pgedge/ai-dba-collector.yaml`
@@ -207,54 +271,27 @@ After downloading the sample file, copy the file from `Downloads` to
 `/etc/pgedge`:
 
 ```bash
-sudo cp ~/Downloads/ai-dba-server.yaml \
-    /etc/pgedge/ai-dba-server.yaml
+sudo cp ~/Downloads/ai-dba-server.yaml /etc/pgedge/ai-dba-server.yaml
 ```
 
-The sample configuration file specifies the minimum settings for a local
-development environment:
+Use your choice of editor to modify the `/etc/pgedge/ai-dba-server.yaml`
+file to describe the deployment. The following changes are the minimum settings
+required for our installation walkthrough:
 
 ```yaml
-http:
-  # Address to listen on (host:port or :port for all interfaces)
-  # Default: :8080
-  address: ":8080"
-
-  #-----------------------------------------------------------------------
-  # TLS/HTTPS Configuration
-  #-----------------------------------------------------------------------
-  tls:
-    # Enable TLS/HTTPS
-    # Default: false
-    enabled: false
+datastore:
+  host: localhost
+  database: ai_workbench
+  username: postgres
+  password:"" or password_file: /etc/pgedge/password.txt
+  port: 5432
+  sslmode: disable
 ```
 
-The `Authentication Configuration` section establishes connection
-behaviors and limits:
+!!! note
 
-```yaml
-auth:
-    # Enable authentication (strongly recommended for production)
-    # Default: true
-    enabled: true
-
-    # Account lockout after N failed login attempts (0 = disabled)
-    # Default: 10
-    max_failed_attempts_before_lockout: 10
-
-    # Maximum days for user-created tokens (0 = unlimited)
-    # This limits how long users can set their personal tokens to live
-    # Default: 0 (unlimited)
-    max_user_token_days: 0
-
-    # Rate limiting time window in minutes
-    # Default: 15
-    rate_limit_window_minutes: 15
-
-    # Maximum failed attempts per IP in the time window
-    # Default: 10
-    rate_limit_max_attempts: 10
-```
+    You can use either the `password` property or the `password_file`
+    property to specify the password.
 
 By default, the server blocks connections to internal and private IP
 addresses. To monitor a PostgreSQL instance on the same host or local
@@ -270,113 +307,25 @@ connection_security:
   allow_internal_networks: true
 ```
 
-The `database` properties provide connection details for the server;
-update the properties with the connection details and the password for
-the postgres user:
+The `PATHS and DATA DIRECTORIES` section contains two properties that must be
+updated. First, update the `secret_file` property to include the full path to
+the `server.secret` file:
 
 ```yaml
-database:
-  # Database host
-  # Default: localhost
-  host: "localhost"
-
-  # Database port
-  # Default: 5432
-  port: 5432
-
-  # Database name
-  # Default: postgres
-  database: "ai_workbench"
-
-  # Database user
-  # Required - there is no default
-  user: "postgres"
-
-  # Database password
-  # If not set, will use .pgpass file automatically
-  password: ""
-
-  # SSL mode: disable, require, verify-ca, verify-full
-  # Default: prefer
-  sslmode: "disable"
-
-  #-----------------------------------------------------------------------
-  # Connection Pool Settings
-  #-----------------------------------------------------------------------
-
-  # Maximum number of connections in the pool
-  # Default: 4
-  pool_max_conns: 4
-
-  # Minimum number of connections in the pool
-  # Default: 0
-  pool_min_conns: 0
-
-  # Maximum time a connection can be idle before being closed
-  # Default: 30m
-  pool_max_conn_idle_time: "30m"
-```
-
-Near the end of the file, the `secret_file` property stores the full
-path to the `server.secret` file:
-
-```yaml
+# Path to server secret file (for encryption)
+# Default: /etc/pgedge/ai-dba-server.secret or ./ai-dba-server.secret
 secret_file: "/etc/pgedge/server.secret"
 ```
 
-In the following example, the `mkdir`, `chown`, and `ai-dba-server`
-commands create the `data` directory and add a user account; the
-`-data-dir` flag places the authentication database in
-`/var/lib/ai-workbench/data`:
+Then, update the data_dir property to specify the full path to the SQLite
+database created earlier:
 
-```bash
-sudo mkdir -p /var/lib/ai-workbench/data
-sudo chown -R $USER:$USER /var/lib/ai-workbench/data
-/opt/ai-workbench/ai-dba-server -add-user -username admin \
-    -data-dir /var/lib/ai-workbench/data
+```yaml
+# Data directory for conversation history and other persistent data
+data_dir: "/var/lib/ai-workbench/data"
 ```
 
-The command prompts for a password and optional user details; the
-password must include at least one capital letter, one digit, and one
-special character:
-
-```bash
-/opt/ai-workbench/ai-dba-server -add-user -username admin -data-dir /var/lib/ai-workbench/data
-Auth store: /var/lib/ai-workbench/data/auth.db
-Enter password:
-Confirm password:
-Enter full name (optional): admin
-Enter email address (optional): admin@pgedge.com
-Enter notes for this user (optional):
-
-======================================================================
-User created successfully!
-======================================================================
-
-Username:  admin
-Full Name: admin
-Email:    admin@pgedge.com
-Status:   Enabled
-======================================================================
-```
-
-Then, grant superuser status to the admin account. In the following
-example, the `-set-superuser` flag promotes the `admin` user to
-superuser:
-
-```bash
-/opt/ai-workbench/ai-dba-server \
-    -set-superuser -username admin \
-    -data-dir /var/lib/ai-workbench/data
-```
-
-The command confirms the change; for example:
-
-```bash
-User 'admin' is now a superuser
-```
-
-In the following example, the `ai-dba-server` command starts the server:
+Then, save the file and start the server; for example:
 
 ```bash
 /opt/ai-workbench/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml &
@@ -434,56 +383,25 @@ curl -L -o ~/Downloads/ai-dba-alerter.yaml \
     https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/ai-dba-alerter.yaml
 ```
 
-Then, copy the Alerter configuration file from the Downloads folder to 
+Then, copy the Alerter configuration file from the `Downloads` folder to 
 `/etc/pgedge`:
 
 ```bash
-sudo cp ~/Downloads/ai-dba-alerter.yaml \
-    /etc/pgedge/ai-dba-alerter.yaml
+sudo cp ~/Downloads/ai-dba-alerter.yaml /etc/pgedge/ai-dba-alerter.yaml
 ```
 
-Update the configuration file to describe the deployment; the following
-example shows the minimum datastore settings:
+Use your choice of editor to modify the `/etc/pgedge/ai-dba-alerter.yaml`
+file to describe the deployment. The following changes are the minimum settings
+required for our installation walkthrough:
 
 ```yaml
 datastore:
-  # Hostname or IP address of the AI DBA Workbench datastore PostgreSQL server
-  # Default: localhost
-  # Command-line: -pg-host
   host: localhost
-
-  # IP address of the datastore server (optional)
-  # If set, bypasses DNS resolution and connects directly to this address
-  # The host value is still used for SSL certificate verification
-  # Default: none
-  # Command-line: -pg-hostaddr
-  # hostaddr: 127.0.0.1
-
-  # Database name in the AI DBA Workbench datastore
-  # Default: ai_workbench
-  # Command-line: -pg-database
   database: ai_workbench
-
-  # Username for connecting to the AI DBA Workbench datastore
-  # Default: postgres
-  # Command-line: -pg-username
   username: postgres
-
-  # Path to file containing the password for the AI DBA Workbench datastore
-  # The file should contain only the password with no extra whitespace
-  # Default: none (will attempt to use .pgpass if not specified)
-  # Command-line: -pg-password-file
-  #
-  # Example: Create a password file with restricted permissions:
-  #   echo "1safepassword" > /etc/pgedge/password.txt
-  #   chmod 600 /etc/pgedge/password.txt
   password_file: /etc/pgedge/password.txt
-
-  # Port on which the AI DBA Workbench datastore is listening
-  # Default: 5432
-  # Range: 1-65535
-  # Command-line: -pg-port
   port: 5432
+  sslmode: disable
 ```
 
 The `SECURITY SETTINGS` section stores the location of the secret file:
@@ -491,6 +409,9 @@ The `SECURITY SETTINGS` section stores the location of the secret file:
 ```yaml
 secret_file: /etc/pgedge/server.secret
 ```
+
+After updating the configuration file, start the alerter; for example:
+
 
 In the following example, the `ai-dba-alerter` command starts the
 alerter with the configuration file:
@@ -607,40 +528,8 @@ entry.
 
 ![Adding a server definition](../images/add_server.png)
 
-
-### Connecting to a Local PostgreSQL Server
-
-By default, the server blocks connections to internal and private IP
-addresses. To monitor a PostgreSQL instance on the same host or local
-network, enable internal network connections in the server configuration
-file.
-
-In the following example, the `vi` command opens the server configuration
-file for editing:
-
-```bash
-sudo vi /etc/pgedge/ai-dba-server.yaml
-```
-
-In the following example, the `connection_security` section enables
-internal network connections:
-
-```yaml
-connection_security:
-  allow_internal_networks: true
-```
-
-In the following example, the `systemctl` command restarts the server to
-apply the change:
-
-```bash
-sudo systemctl restart pgedge-ai-dba-server
-```
-
-When you add a server definition, provide the connection details and
-specify `localhost` in the host name field before you select `Save`.
-
-![Connected to a Local Server](../images/connected_server.png)
+For detailed information about using the Workbench, see the
+[User Guide](../user-guide/index.md).
 
 
 ### Customizing your Configuration

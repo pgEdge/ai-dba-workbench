@@ -528,11 +528,11 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Issue #269: validate the name's characters, not just non-emptiness.
+	// ValidateDisplayName also enforces the VARCHAR(255) limit on the raw
+	// name, so no separate validateMaxLen("Name", ...) call is needed here
+	// (issue #270).
 	if err := ValidateDisplayName(req.Name); err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
 		return
 	}
 
@@ -757,11 +757,11 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 	}
 
 	// Issue #269: validate the name's characters, not just non-emptiness.
+	// ValidateDisplayName also enforces the VARCHAR(255) limit on the raw
+	// name, so no separate validateMaxLen("Name", ...) call is needed here
+	// (issue #270).
 	if err := ValidateDisplayName(req.Name); err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
 		return
 	}
 
@@ -1343,11 +1343,11 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Issue #269: validate the name's characters, not just non-emptiness.
+	// ValidateDisplayName also enforces the VARCHAR(255) limit on the raw
+	// name, so no separate validateMaxLen("Name", ...) call is needed here
+	// (issue #270).
 	if err := ValidateDisplayName(req.Name); err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
 		return
 	}
 

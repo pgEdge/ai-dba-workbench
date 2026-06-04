@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -129,6 +130,51 @@ func TestConnectionHandler_CreateConnection_Issue269_InvalidChars(t *testing.T) 
 	handler.createConnection(rec, req)
 
 	assertInvalidNameRejected(t, rec)
+}
+
+// TestConnectionHandler_CreateConnection_Issue269_PaddedNameRawTooLong covers
+// the whitespace-padding edge case at the handler level: a name whose trimmed
+// length is within the 255-character limit but whose raw length exceeds it
+// (250 content characters plus 10 trailing spaces) must be rejected with a
+// 400 before any datastore write. Because the handler persists the raw value
+// to the VARCHAR(255) column, ValidateDisplayName now rejects on the raw
+// length and the over-length value never reaches the column.
+func TestConnectionHandler_CreateConnection_Issue269_PaddedNameRawTooLong(t *testing.T) {
+	handler, userID, token, cleanup := setupIssue233CreateConnection(
+		t, "issue269_create_padded_toolong",
+		[]string{auth.PermManageConnections})
+	defer cleanup()
+
+	paddedName := strings.Repeat("a", 250) + strings.Repeat(" ", 10)
+	body, _ := json.Marshal(ConnectionCreateRequest{
+		Name:         paddedName,
+		Host:         "db.example.com",
+		Port:         5432,
+		DatabaseName: "postgres",
+		Username:     "alice",
+		Password:     "secret",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.createConnection(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	const wantMsg = "Name must be 255 characters or fewer"
+	if response.Error != wantMsg {
+		t.Errorf("Expected %q, got %q", wantMsg, response.Error)
+	}
 }
 
 // seedIssue269Connection inserts a connection owned by the named user and

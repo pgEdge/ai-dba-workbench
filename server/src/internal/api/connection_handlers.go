@@ -251,10 +251,10 @@ func (h *ConnectionHandler) createConnection(w http.ResponseWriter, r *http.Requ
 
 	// Enforce the VARCHAR(255) limits on the backing columns before any
 	// datastore call so over-length input returns a clear 400 instead of
-	// a generic 500 when the database rejects the row (issue #270).
-	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
-		return
-	}
+	// a generic 500 when the database rejects the row (issue #270). The Name
+	// column is already guarded by ValidateDisplayName above, which rejects
+	// over-length raw names; the remaining fields have no such validator and
+	// so are checked here.
 	if !validateMaxLen(w, "Host", req.Host, maxFieldLength) {
 		return
 	}

@@ -260,10 +260,12 @@ func TestClusterHandler_CreateClusterGroup_MissingName(t *testing.T) {
 	}
 }
 
-// TestClusterHandler_CreateClusterGroup_NameTooLong locks in issue #270:
-// a Name longer than the VARCHAR(255) column must be rejected with a 400
-// and a field-specific message before any datastore call (the handler
-// runs against a nil datastore, so a stray call would panic).
+// TestClusterHandler_CreateClusterGroup_NameTooLong locks in the column guard
+// for the Name field: a Name longer than the VARCHAR(255) column must be
+// rejected with a 400 before any datastore call (the handler runs against a
+// nil datastore, so a stray call would panic). Length is enforced by
+// ValidateDisplayName, the single authority for Name length (issues #269 and
+// #270), so the message is "...characters or fewer".
 func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
 	handler := permissionSatisfiedHandler()
 
@@ -276,11 +278,11 @@ func TestClusterHandler_CreateClusterGroup_NameTooLong(t *testing.T) {
 
 	handler.createClusterGroup(rec, req)
 
-	assertMaxLenRejected(t, rec, "Name")
+	assertLengthRejected(t, rec, "Name must be 255 characters or fewer")
 }
 
-// TestClusterHandler_CreateClusterInGroup_NameTooLong locks in issue #270
-// for the group-scoped cluster create path.
+// TestClusterHandler_CreateClusterInGroup_NameTooLong locks in the Name
+// column guard for the group-scoped cluster create path (issues #269/#270).
 func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
 	handler := permissionSatisfiedHandler()
 
@@ -293,11 +295,11 @@ func TestClusterHandler_CreateClusterInGroup_NameTooLong(t *testing.T) {
 
 	handler.createClusterInGroup(rec, req, 1)
 
-	assertMaxLenRejected(t, rec, "Name")
+	assertLengthRejected(t, rec, "Name must be 255 characters or fewer")
 }
 
-// TestClusterHandler_HandleCreateCluster_NameTooLong locks in issue #270
-// for the manual cluster create path.
+// TestClusterHandler_HandleCreateCluster_NameTooLong locks in the Name
+// column guard for the manual cluster create path (issues #269/#270).
 func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
 	handler := permissionSatisfiedHandler()
 
@@ -310,7 +312,7 @@ func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
 
 	handler.handleCreateCluster(rec, req)
 
-	assertMaxLenRejected(t, rec, "Name")
+	assertLengthRejected(t, rec, "Name must be 255 characters or fewer")
 }
 
 // TestClusterHandler_CreateClusterGroup_NameAtLimit confirms the boundary:
@@ -337,9 +339,12 @@ func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
 	handler.createClusterGroup(rec, req)
 }
 
-// assertMaxLenRejected asserts that the recorded response is a 400 carrying
-// the canonical "<field> must be 255 characters or less" message.
-func assertMaxLenRejected(t *testing.T, rec *httptest.ResponseRecorder, field string) {
+// assertLengthRejected asserts that the recorded response is a 400 whose
+// error body matches wantMsg exactly. It is used for the over-length name
+// paths, where the Name field is guarded by ValidateDisplayName and so
+// surfaces the "...characters or fewer" wording rather than validateMaxLen's
+// "...characters or less".
+func assertLengthRejected(t *testing.T, rec *httptest.ResponseRecorder, wantMsg string) {
 	t.Helper()
 
 	if rec.Code != http.StatusBadRequest {
@@ -352,9 +357,8 @@ func assertMaxLenRejected(t *testing.T, rec *httptest.ResponseRecorder, field st
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	want := field + " must be 255 characters or less"
-	if response.Error != want {
-		t.Errorf("Expected %q, got %q", want, response.Error)
+	if response.Error != wantMsg {
+		t.Errorf("Expected %q, got %q", wantMsg, response.Error)
 	}
 }
 

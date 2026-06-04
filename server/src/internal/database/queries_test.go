@@ -13,9 +13,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ---------------------------------------------------------------------------
@@ -2754,6 +2757,112 @@ func TestBuildConnectionString(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildConnectionStringUserinfoRoundTrip proves that the userinfo
+// component (username and password) survives a build/parse cycle exactly,
+// even for characters with special meaning in a URL. This is the regression
+// guard for the url.QueryEscape -> url.UserPassword fix: QueryEscape encodes
+// a space as '+', which a URL parser reads back as a literal '+', corrupting
+// any password that contains a space. url.UserPassword applies the correct
+// userinfo encoding (a space becomes %20) so the value round-trips intact.
+func TestBuildConnectionStringUserinfoRoundTrip(t *testing.T) {
+	ds := &Datastore{}
+
+	// Each of these characters is special in some part of a URL; the space
+	// case is the one that specifically distinguishes the correct userinfo
+	// encoding (%20) from QueryEscape's form encoding (+).
+	specialPasswords := []string{
+		"@",          // userinfo delimiter
+		":",          // user/password separator
+		"/",          // path separator
+		" ",          // space: QueryEscape would emit '+'
+		"%",          // percent: must be escaped to round-trip
+		"#",          // fragment delimiter
+		"&",          // query separator
+		"=",          // query key/value separator
+		"p@ss:w/ord", // realistic mixed password
+		"a b+c",      // space adjacent to a literal '+'
+	}
+
+	for _, pw := range specialPasswords {
+		pw := pw
+		t.Run(fmt.Sprintf("password=%q", pw), func(t *testing.T) {
+			conn := &MonitoredConnection{
+				Host:         "localhost",
+				Port:         5432,
+				DatabaseName: "mydb",
+				Username:     "weird@user:name",
+			}
+
+			dsn := ds.BuildConnectionString(conn, pw, "")
+
+			parsed, err := url.Parse(dsn)
+			if err != nil {
+				t.Fatalf("url.Parse(%q) failed: %v", dsn, err)
+			}
+
+			if got := parsed.User.Username(); got != conn.Username {
+				t.Errorf("username round-trip mismatch: built %q, recovered %q", conn.Username, got)
+			}
+
+			gotPw, hasPw := parsed.User.Password()
+			if !hasPw {
+				t.Fatalf("expected a password component in %q", dsn)
+			}
+			if gotPw != pw {
+				t.Errorf("password round-trip mismatch: built %q, recovered %q (dsn=%q)", pw, gotPw, dsn)
+			}
+		})
+	}
+
+	t.Run("space encodes as %20 not +", func(t *testing.T) {
+		conn := &MonitoredConnection{
+			Host:         "localhost",
+			Port:         5432,
+			DatabaseName: "mydb",
+			Username:     "user",
+		}
+		dsn := ds.BuildConnectionString(conn, "pass word", "")
+		if !strings.Contains(dsn, "pass%20word") {
+			t.Errorf("expected space-containing password to encode as %%20, got %q", dsn)
+		}
+		if strings.Contains(dsn, "pass+word") {
+			t.Errorf("password must not use form-encoding '+' for a space, got %q", dsn)
+		}
+	})
+}
+
+// TestBuildConnectionStringPgconnParse confirms that pgconn, the parser pgx
+// actually uses for monitored-connection DSNs, accepts a DSN built from a
+// password full of special characters and recovers the password verbatim.
+// This is a parse-only assertion; it never opens a database connection.
+func TestBuildConnectionStringPgconnParse(t *testing.T) {
+	ds := &Datastore{}
+
+	const specialPassword = "p@ss w:o/rd#%&="
+	conn := &MonitoredConnection{
+		Host:         "localhost",
+		Port:         5432,
+		DatabaseName: "mydb",
+		Username:     "user",
+	}
+
+	dsn := ds.BuildConnectionString(conn, specialPassword, "")
+
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("pgconn.ParseConfig(%q) failed: %v", dsn, err)
+	}
+	if cfg.Password != specialPassword {
+		t.Errorf("pgconn recovered password %q, want %q", cfg.Password, specialPassword)
+	}
+	if cfg.User != conn.Username {
+		t.Errorf("pgconn recovered user %q, want %q", cfg.User, conn.Username)
+	}
+	if cfg.Database != conn.DatabaseName {
+		t.Errorf("pgconn recovered database %q, want %q", cfg.Database, conn.DatabaseName)
 	}
 }
 

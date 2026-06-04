@@ -62,6 +62,20 @@ func (rc *ReloadableConfig) Reload() error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Resolve the datastore password from a password_file before the new
+	// config is swapped in or handed to any onReload callback. LoadConfig
+	// applies CLI-flag and inline-YAML passwords, but a YAML password_file
+	// is only materialized here; without this step a reload would leave
+	// DatabaseConfig.Password empty and silently fall back to .pgpass.
+	// Doing it at this single chokepoint guarantees every reload consumer
+	// (including the SIGHUP client-manager update) sees the resolved
+	// password. On failure we abort the reload and keep the old config.
+	if newConfig.Database != nil {
+		if err := newConfig.Database.LoadPassword(); err != nil {
+			return fmt.Errorf("failed to resolve database password: %w", err)
+		}
+	}
+
 	// Log what settings require restart (won't be applied)
 	rc.logRestartRequiredSettings(newConfig)
 

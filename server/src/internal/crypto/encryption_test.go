@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -258,7 +259,38 @@ func TestLoadKeyFromInvalidFile(t *testing.T) {
 	}
 }
 
+// TestLoadKeyWithReadOnlyOwnerPermissions verifies the relaxed
+// permission check accepts owner-only modes beyond 0600. A 0400
+// (read-only owner) key file must load successfully.
+func TestLoadKeyWithReadOnlyOwnerPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-bit enforcement is not applied on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "readonly.key")
+
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	if err := key.SaveToFile(keyPath); err != nil {
+		t.Fatalf("SaveToFile failed: %v", err)
+	}
+	if err := os.Chmod(keyPath, 0400); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+
+	if _, err := LoadKeyFromFile(keyPath); err != nil {
+		t.Errorf("expected 0400 key file to load, got error: %v", err)
+	}
+}
+
 func TestLoadKeyWithInsecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-bit enforcement is not applied on Windows")
+	}
+
 	tmpDir, err := os.MkdirTemp("", "pgedge-crypto-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)

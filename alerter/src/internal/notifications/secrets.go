@@ -13,10 +13,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 
 	pkgcrypto "github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // secretManager implements SecretManager using AES-256-GCM
@@ -34,24 +34,18 @@ func NewSecretManager(key []byte) (SecretManager, error) {
 
 // LoadSecretKey loads a secret key from a file.
 // The file should contain a hex-encoded 32-byte key (64 hex characters).
-// The file must have 0600 permissions (owner read/write only).
+// On non-Windows platforms the file must not grant group or world
+// access; owner-only modes such as 0400 and 0600 are accepted, while
+// 0640, 0644, and friends fail. Windows mode bits do not map cleanly,
+// so that permission check is skipped there.
 func LoadSecretKey(path string) ([]byte, error) {
-	// Check file permissions before loading
-	fileInfo, err := os.Stat(path)
+	// On non-Windows platforms, reject any file that grants group or
+	// world access. The regular-file, size, and permission checks all
+	// happen on the same open descriptor that is read, closing the TOCTOU
+	// window a separate stat + read would leave.
+	data, err := fileutil.ReadOwnerOnlyFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to stat secret key file: %w", err)
-	}
-
-	mode := fileInfo.Mode().Perm()
-	if mode != 0600 {
-		return nil, fmt.Errorf(
-			"insecure permissions on secret key file %s: %04o (expected 0600). "+
-				"Please run: chmod 600 %s", path, mode, path)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read secret key file: %w", err)
+		return nil, err
 	}
 
 	// Trim whitespace (newlines, spaces, etc.)

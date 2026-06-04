@@ -10,7 +10,65 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add a `password_file` option to the server's `database:` YAML
+  block, allowing the server to read the datastore password from
+  a file. The server uses this file only when no inline
+  `password` value and no CLI password flag are set, bringing the
+  server in line with the collector and alerter. (#267)
+
+### Changed
+
+- Unify how the server, collector, and alerter read secrets from
+  files onto a single hardened helper. The change covers database
+  and user passwords, service tokens, LLM and embedding API keys,
+  server and notification secrets, proxy header values, and binary
+  encryption keys. Several behaviours below are
+  backward-incompatible, so operators upgrading the collector or
+  alerter should review them before rolling out the new binaries.
+  (#267)
+
+- Trim only the trailing newline from a secret file, rather than
+  stripping all surrounding whitespace. This applies to passwords,
+  tokens, API keys, server and notification secrets, and proxy
+  header values. Secrets that legitimately contain leading,
+  trailing, or interior spaces are now preserved verbatim.
+  Operational: operators who relied on the old
+  whitespace-stripping behaviour may need to re-create affected
+  secret files so the stored value matches the intended secret.
+  (#267)
+
+- Treat a configured-but-empty secret or password file as a hard
+  startup error, instead of silently treating the file as "no
+  value". Previously an empty file fell through to `.pgpass` or a
+  passwordless connection, which could mask a misconfigured
+  deployment. Operators must ensure every
+  configured secret file contains a value before starting the new
+  binaries. (#267)
+
+- Accept any owner-only permission mode, such as `0400` or `0600`,
+  for the binary key loaders that read the server encryption key
+  and the alerter notification secret key, instead of requiring
+  exactly `0600`. Group- or world-accessible modes such as `0640`
+  and `0644` are still rejected. (#267)
+
+- Expand a leading `~` in a secret or server-secret file path to
+  the user's home directory consistently across all components.
+  (#267)
+
+- Allow the server's `-db-password-file` flag to accept paths
+  containing `..`, so legitimate relative paths now work. The flag
+  previously rejected any path containing `..`. (#267)
+
 ### Fixed
+
+- Fix the server silently swallowing read errors for configured
+  LLM, embedding, and knowledgebase API-key files. The server
+  previously proceeded with no key when such a file was unreadable
+  or empty; an unreadable or empty configured key file now fails
+  loudly at startup. Leaving a key-file path unset remains valid
+  and is not an error. (#267)
 
 - Fix the alerter intermittently and silently suppressing
   anomaly alerts that should have fired. The Tier 3
@@ -52,6 +110,13 @@ project adheres to
   the failing tool, shows the underlying error, and suggests a
   likely permissions or connection-access problem to raise with
   an administrator. (#268)
+
+### Security
+
+- Log a warning recommending `chmod 600` when reading any secret
+  file from a group- or world-readable path. The read still
+  succeeds, so existing deployments continue to work while
+  operators tighten the affected file permissions. (#267)
 
 ## [1.0.0-beta3] - 2026-05-26
 

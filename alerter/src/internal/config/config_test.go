@@ -356,6 +356,37 @@ func TestLoadPassword(t *testing.T) {
 		}
 	})
 
+	t.Run("empty file is an error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		pwFile := filepath.Join(tmpDir, "empty.txt")
+		if err := os.WriteFile(pwFile, []byte("\n"), 0600); err != nil {
+			t.Fatalf("failed to create password file: %v", err)
+		}
+
+		cfg := NewConfig()
+		cfg.Datastore.PasswordFile = pwFile
+		if err := cfg.LoadPassword(); err == nil {
+			t.Error("expected error for empty password file, got nil")
+		}
+	})
+
+	t.Run("preserves interior whitespace", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		pwFile := filepath.Join(tmpDir, "pw.txt")
+		if err := os.WriteFile(pwFile, []byte("file password \n"), 0600); err != nil {
+			t.Fatalf("failed to create password file: %v", err)
+		}
+
+		cfg := NewConfig()
+		cfg.Datastore.PasswordFile = pwFile
+		if err := cfg.LoadPassword(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Datastore.Password != "file password " {
+			t.Errorf("password = %q, expected %q", cfg.Datastore.Password, "file password ")
+		}
+	})
+
 	t.Run("no password file specified", func(t *testing.T) {
 		cfg := NewConfig()
 
@@ -473,6 +504,44 @@ func TestLoadAPIKeys(t *testing.T) {
 		err := cfg.LoadAPIKeys()
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty key file is an error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		emptyFile := filepath.Join(tmpDir, "empty.key")
+		if err := os.WriteFile(emptyFile, []byte("\n"), 0600); err != nil {
+			t.Fatalf("failed to create key file: %v", err)
+		}
+
+		// Exercise each provider's error branch.
+		setters := []func(*Config){
+			func(c *Config) { c.LLM.OpenAI.APIKeyFile = emptyFile },
+			func(c *Config) { c.LLM.Anthropic.APIKeyFile = emptyFile },
+			func(c *Config) { c.LLM.Voyage.APIKeyFile = emptyFile },
+			func(c *Config) { c.LLM.Gemini.APIKeyFile = emptyFile },
+		}
+		for i, set := range setters {
+			cfg := NewConfig()
+			set(cfg)
+			if err := cfg.LoadAPIKeys(); err == nil {
+				t.Errorf("provider %d: expected error for empty key file, got nil", i)
+			}
+		}
+	})
+
+	t.Run("missing anthropic voyage gemini key files", func(t *testing.T) {
+		setters := []func(*Config){
+			func(c *Config) { c.LLM.Anthropic.APIKeyFile = "/nonexistent/anthropic.key" },
+			func(c *Config) { c.LLM.Voyage.APIKeyFile = "/nonexistent/voyage.key" },
+			func(c *Config) { c.LLM.Gemini.APIKeyFile = "/nonexistent/gemini.key" },
+		}
+		for i, set := range setters {
+			cfg := NewConfig()
+			set(cfg)
+			if err := cfg.LoadAPIKeys(); err == nil {
+				t.Errorf("provider %d: expected error for missing key file, got nil", i)
+			}
 		}
 	})
 }

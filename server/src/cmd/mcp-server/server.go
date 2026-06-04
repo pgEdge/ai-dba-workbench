@@ -14,10 +14,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -253,15 +253,10 @@ func (s *Server) loadServerSecret(execPath string) (string, error) {
 			"the config or place the file in one of those locations")
 	}
 
-	secretData, err := os.ReadFile(secretPath)
+	serverSecret, err := fileutil.ReadSecretFile(secretPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read secret file '%s': %w\n"+
 			"       The secret file must match the collector's secret for password decryption", secretPath, err)
-	}
-
-	serverSecret := strings.TrimSpace(string(secretData))
-	if serverSecret == "" {
-		return "", fmt.Errorf("secret file '%s' is empty", secretPath)
 	}
 
 	fmt.Fprintf(os.Stderr, "Server secret: loaded from %s\n", secretPath)

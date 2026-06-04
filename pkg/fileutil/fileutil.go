@@ -15,18 +15,138 @@ package fileutil
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// MaxSecretFileSize is the maximum size, in bytes, that the secret and
+// key readers in this package will read from a single file. Secrets,
+// tokens, API keys, and encryption keys are all comfortably under a few
+// kilobytes, so a 1 MiB ceiling is generous while still bounding the
+// memory a single file read can allocate. Files larger than this limit
+// are rejected outright rather than truncated, so an oversized or
+// runaway file is treated as a configuration error.
+const MaxSecretFileSize = 1 << 20 // 1 MiB
+
+// maxSecretFileSize is the effective ceiling enforced by
+// readRegularFileBounded. It defaults to MaxSecretFileSize and is a
+// variable only so tests can lower it to exercise the size-rejection
+// and post-read overflow guards deterministically without allocating
+// multi-megabyte fixtures. Production code never reassigns it.
+var maxSecretFileSize int64 = MaxSecretFileSize
+
+// openFileForRead is the open primitive used by readRegularFileBounded.
+// It is a variable wrapping openNonBlocking so tests can substitute an
+// open that yields a descriptor whose Stat fails, exercising the
+// otherwise-unreachable stat-error guard. Production code never
+// reassigns it.
+var openFileForRead = openNonBlocking
+
+// readRegularFileBounded opens path, verifies on the open descriptor
+// that the target is a regular file (rejecting FIFOs, devices,
+// directories, and symlinks resolving to non-regular files), enforces
+// the MaxSecretFileSize ceiling on the bytes actually read, and returns
+// the contents read from that same descriptor. Performing the stat, the
+// regular-file check, the optional fd-based check, and the read on a
+// single descriptor closes the TOCTOU window that a separate os.Stat +
+// os.ReadFile would leave open.
+//
+// The size ceiling is enforced with an io.LimitReader capped at the
+// limit plus one byte, so a file that grows after the stat (or a
+// pseudo-file that under-reports its size) is rejected rather than read
+// without bound or silently truncated.
+//
+// The check closure, when non-nil, runs against the open descriptor
+// after the regular-file check passes but before the read, so
+// additional fd-based validation (such as a permission check) shares
+// the same TOCTOU-safe descriptor. The file is closed before the bytes
+// are returned to the caller.
+func readRegularFileBounded(path string, check func(info os.FileInfo) error) ([]byte, error) {
+	// Open non-blocking where the platform supports it. A plain
+	// os.Open of a FIFO blocks until a writer appears, which would
+	// hang startup on a misconfigured path; opening O_NONBLOCK lets
+	// the regular-file check below reject the FIFO immediately.
+	f, err := openFileForRead(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file %s: %w", path, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf(
+			"file %s is not a regular file (mode %s); refusing to read",
+			path, info.Mode())
+	}
+
+	if check != nil {
+		if err := check(info); err != nil {
+			return nil, err
+		}
+	}
+
+	// Read with a hard cap of maxSecretFileSize+1 so the limit is
+	// enforced authoritatively on the bytes actually read. Relying on
+	// the bounded read rather than the advisory info.Size() means a
+	// file that grows after the stat, or a pseudo-file that under-
+	// reports its size, is still rejected rather than read unbounded or
+	// silently truncated.
+	limit := maxSecretFileSize
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf(
+			"file %s is too large: exceeds the %d-byte limit",
+			path, limit)
+	}
+
+	return data, nil
+}
+
 // ExpandTildePath expands a leading tilde (~) in a file path to the user's
-// home directory. Returns the path unchanged if it does not start with tilde.
+// home directory. Returns the path unchanged if it does not start with a
+// tilde.
+//
+// Only the current-user forms "~" and "~/..." are supported on every
+// platform; the backslash form "~\\..." is accepted only on Windows,
+// where the backslash is a real path separator. On non-Windows
+// platforms the backslash is an ordinary filename character, not a
+// separator, so "~\\..." is treated as an unsupported tilde form and
+// rejected rather than expanded under the current user's home (which
+// could resolve the wrong secret path). The "~user/..." syntax (the
+// home directory of a named user) is NOT supported on any platform:
+// rather than silently remapping it onto the current user's home
+// directory (which would read the wrong file), ExpandTildePath returns
+// an error for any tilde path whose second character is neither a
+// supported separator nor the end of the string.
 func ExpandTildePath(path string) (string, error) {
 	if path == "" || path[0] != '~' {
 		return path, nil
+	}
+
+	// Reject "~user/..." style paths and the cross-platform-ambiguous
+	// "~\\..." form. A bare "~" (len 1) and the "~/..." current-user
+	// form are accepted everywhere; the "~\\..." form is accepted only
+	// on Windows, where the backslash is a genuine path separator. On
+	// other platforms the backslash is a normal filename character, so
+	// "~\\..." is an unsupported named-user-style form and must not be
+	// silently remapped onto the current user's home.
+	if len(path) > 1 && path[1] != '/' &&
+		!(runtime.GOOS == "windows" && path[1] == '\\') {
+		return "", fmt.Errorf(
+			"unsupported tilde path %q: use ~ or ~/..., not ~user/...", path)
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -37,54 +157,167 @@ func ExpandTildePath(path string) (string, error) {
 	return filepath.Join(homeDir, path[1:]), nil
 }
 
-// ReadTrimmedFile reads a file and returns its contents with leading and
-// trailing whitespace removed.
-func ReadTrimmedFile(path string) (string, error) {
-	// #nosec G304 - File path is provided by administrator configuration
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(content)), nil
-}
-
-// ReadTrimmedFileWithTilde reads a file after expanding any leading tilde
-// in the path, then returns the contents with whitespace trimmed.
-func ReadTrimmedFileWithTilde(path string) (string, error) {
+// ReadSecretFile reads a secret (password, token, API key, or server
+// secret) from an operator-supplied file path. It expands a leading
+// tilde, warns (to stderr) if the file is group/world-readable, trims
+// only a trailing newline sequence (preserving any in-secret
+// whitespace), and returns an error if the resulting secret is empty or
+// contains only whitespace.
+//
+// The read goes through readRegularFileBounded, so a path that points
+// at a FIFO, device, directory, or other non-regular file is rejected
+// (rather than hanging startup), and a file larger than
+// MaxSecretFileSize is refused rather than read into unbounded memory.
+//
+// The trailing-newline trim uses strings.TrimRight(data, "\r\n") rather
+// than TrimSpace so that secrets containing intentional leading,
+// trailing, or interior spaces survive intact; only the line-ending a
+// text editor appends is stripped. The emptiness check uses
+// strings.TrimSpace so a file holding only whitespace (spaces, tabs, or
+// newlines) is rejected rather than yielding a useless whitespace-only
+// secret; the value RETURNED, however, is the TrimRight("\r\n") result,
+// so meaningful leading, trailing, or interior whitespace in a real
+// secret is preserved unchanged. Only the validation trims whitespace.
+func ReadSecretFile(path string) (string, error) {
 	expandedPath, err := ExpandTildePath(path)
 	if err != nil {
 		return "", err
 	}
 
-	return ReadTrimmedFile(expandedPath)
-}
-
-// ReadOptionalTrimmedFile reads a file and returns its contents with
-// whitespace trimmed. If the file does not exist, it returns an empty
-// string without an error. The path is expanded if it starts with tilde.
-func ReadOptionalTrimmedFile(path string) (string, error) {
-	if path == "" {
-		return "", nil
-	}
-
-	expandedPath, err := ExpandTildePath(path)
+	// The permissive-mode warning runs as the check closure rather than
+	// before the read, so it fires only after readRegularFileBounded has
+	// confirmed the target is a regular file. A path pointing at a
+	// directory or FIFO is rejected without emitting a misleading
+	// "chmod 600" warning, and the warning reuses the descriptor's stat
+	// info rather than performing a second os.Stat. The closure is
+	// advisory only and never returns an error.
+	data, err := readRegularFileBounded(expandedPath,
+		func(info os.FileInfo) error {
+			warnIfPermissiveInfo(expandedPath, info)
+			return nil
+		})
 	if err != nil {
 		return "", err
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(expandedPath); os.IsNotExist(err) {
-		return "", nil
+	secret := strings.TrimRight(string(data), "\r\n")
+	if strings.TrimSpace(secret) == "" {
+		return "", fmt.Errorf(
+			"secret file %s is empty or contains only whitespace",
+			expandedPath)
 	}
 
-	// #nosec G304 - File path is provided by administrator configuration
-	content, err := os.ReadFile(expandedPath)
+	return secret, nil
+}
+
+// WarnIfPermissive prints a stderr warning if the file is group- or
+// world-readable (mode & 0o077 != 0). It never returns an error and is
+// a no-op on Windows, where Unix mode bits do not map cleanly. It
+// expands a leading tilde (reusing ExpandTildePath) before the stat so a
+// "~"-relative path warns consistently with ReadSecretFile and
+// ReadOwnerOnlyFile, then stats the expanded path and delegates to
+// warnIfPermissiveInfo; callers that already hold a FileInfo (for
+// example from an open descriptor) should call warnIfPermissiveInfo
+// directly to avoid a redundant stat.
+func WarnIfPermissive(path string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	expandedPath, err := ExpandTildePath(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file %s: %w", expandedPath, err)
+		// Tilde expansion failures (HOME unset) are surfaced by the
+		// subsequent read; the warning is advisory only.
+		return
 	}
 
-	return strings.TrimSpace(string(content)), nil
+	info, err := os.Stat(expandedPath)
+	if err != nil {
+		// Stat failures are surfaced by the subsequent read; the
+		// warning is best-effort only.
+		return
+	}
+
+	warnIfPermissiveInfo(expandedPath, info)
+}
+
+// warnIfPermissiveInfo prints a stderr warning if the supplied FileInfo
+// describes a group- or world-readable file (mode & 0o077 != 0). It is a
+// no-op on Windows, where Unix mode bits do not map cleanly, and never
+// returns an error: the warning is advisory only. Accepting an existing
+// FileInfo lets callers that already hold one (such as the descriptor
+// stat inside readRegularFileBounded) warn without a second os.Stat,
+// which both avoids a redundant syscall and ensures the warning reflects
+// the same TOCTOU-safe stat used for the read.
+func warnIfPermissiveInfo(path string, info os.FileInfo) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	// Only regular files produce the chmod-600 warning. When this is
+	// reached via ReadSecretFile's check closure the regular-file check
+	// has already passed, so this is harmless; when reached via the
+	// exported WarnIfPermissive on a directory or FIFO it correctly stays
+	// silent, matching the regular-file-only contract of ReadSecretFile.
+	if !info.Mode().IsRegular() {
+		return
+	}
+
+	if info.Mode().Perm()&0o077 != 0 {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: secret file %s is group/world-accessible (%04o); "+
+				"restrict it with: chmod 600 %s\n",
+			path, info.Mode().Perm(), path)
+	}
+}
+
+// ReadOwnerOnlyFile reads path and returns its raw bytes after
+// verifying, on the open file descriptor, that the target is a regular
+// file no larger than MaxSecretFileSize. On non-Windows platforms it
+// additionally requires that the file grant no group or world access
+// (mode & 0o077 == 0). The regular-file check, size check, permission
+// check, and read all happen on the same open descriptor, closing the
+// TOCTOU window that a separate os.Stat + os.ReadFile would leave.
+//
+// On non-Windows platforms, owner-only modes such as 0400 and 0600
+// pass while 0640, 0644, and friends are rejected. On Windows the
+// Unix mode bits do not map cleanly, so the permission check is
+// skipped; only the regular-file and size checks apply there.
+//
+// A leading tilde is expanded (reusing ExpandTildePath) before the
+// file is opened, so a "~"-relative key path resolves consistently
+// with ReadSecretFile. The expanded path is used in the permission-
+// error and read-error messages so they show the resolved location.
+//
+// The raw bytes are returned without trimming.
+func ReadOwnerOnlyFile(path string) ([]byte, error) {
+	expandedPath, err := ExpandTildePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	check := func(info os.FileInfo) error {
+		if runtime.GOOS == "windows" {
+			return nil
+		}
+
+		mode := info.Mode().Perm()
+		if mode&0o077 != 0 {
+			return fmt.Errorf(
+				"insecure permissions on key file %s: %04o (group/world access "+
+					"not permitted). Please run: chmod 600 %s",
+				expandedPath, mode, expandedPath)
+		}
+		return nil
+	}
+
+	data, err := readRegularFileBounded(expandedPath, check)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read key file %s: %w",
+			expandedPath, err)
+	}
+
+	return data, nil
 }
 
 // FileExists checks if a file exists at the given path.

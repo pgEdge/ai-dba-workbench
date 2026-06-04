@@ -131,7 +131,7 @@ func (c *Config) LoadPassword() error {
 	}
 
 	if c.Datastore.PasswordFile != "" {
-		password, err := fileutil.ReadTrimmedFileWithTilde(c.Datastore.PasswordFile)
+		password, err := fileutil.ReadSecretFile(c.Datastore.PasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
@@ -159,7 +159,7 @@ func (c *Config) LoadSecret(binaryPath string) error {
 
 	// If secret file is explicitly specified, use it.
 	if c.SecretFile != "" {
-		secret, err := fileutil.ReadTrimmedFileWithTilde(c.SecretFile)
+		secret, err := fileutil.ReadSecretFile(c.SecretFile)
 		if err != nil {
 			return fmt.Errorf("failed to read secret file: %w", err)
 		}
@@ -170,7 +170,7 @@ func (c *Config) LoadSecret(binaryPath string) error {
 	// Resolve via the shared helper so all three services apply
 	// identical precedence to default paths.
 	if path := fileutil.GetDefaultConfigPath("", "ai-dba-collector.secret"); path != "" {
-		secret, err := fileutil.ReadTrimmedFileWithTilde(path)
+		secret, err := fileutil.ReadSecretFile(path)
 		if err != nil {
 			return fmt.Errorf("failed to read secret file %s: %w", path, err)
 		}

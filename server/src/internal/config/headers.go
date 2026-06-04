@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
@@ -49,16 +50,19 @@ func parseHeadersEnvVar(envVal string) (map[string]string, error) {
 }
 
 // loadHeadersFromFiles reads header values from the specified file paths.
-// Each file should contain the header value. Leading/trailing whitespace
-// and newlines are trimmed.
+// Each file should contain the header value, which may be a bearer token
+// or other secret. Values are read through fileutil.ReadSecretFile, so a
+// leading tilde is expanded, only the trailing newline is trimmed
+// (preserving any in-value whitespace), a permissive-permission warning
+// is emitted, and a configured-but-empty file is reported as an error.
 func loadHeadersFromFiles(files map[string]string) (map[string]string, error) {
 	result := make(map[string]string)
 	for headerName, filePath := range files {
-		content, err := os.ReadFile(filePath)
+		content, err := fileutil.ReadSecretFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("reading header %q from file %q: %w", headerName, filePath, err)
 		}
-		result[headerName] = strings.TrimSpace(string(content))
+		result[headerName] = content
 	}
 	return result, nil
 }

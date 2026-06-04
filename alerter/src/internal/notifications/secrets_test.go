@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -353,12 +354,40 @@ func TestLoadSecretKey_FileNotFound(t *testing.T) {
 		t.Error("LoadSecretKey() expected error for nonexistent file")
 	}
 
-	if !strings.Contains(err.Error(), "secret key file") {
-		t.Errorf("Error should mention secret key file: %v", err)
+	if !strings.Contains(err.Error(), "key file") {
+		t.Errorf("Error should mention the key file: %v", err)
+	}
+}
+
+// TestLoadSecretKey_ReadOnlyOwnerPermissions verifies the relaxed
+// permission check accepts owner-only modes beyond 0600. A 0400
+// (read-only owner) key file must load successfully.
+func TestLoadSecretKey_ReadOnlyOwnerPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-bit enforcement is not applied on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	keyFile := filepath.Join(tmpDir, "readonly.key")
+
+	validKey := strings.Repeat("ab", 32) // 64 hex chars = 32 bytes
+	if err := os.WriteFile(keyFile, []byte(validKey), 0600); err != nil {
+		t.Fatalf("Failed to write test key file: %v", err)
+	}
+	if err := os.Chmod(keyFile, 0400); err != nil {
+		t.Fatalf("Failed to chmod test key file: %v", err)
+	}
+
+	if _, err := LoadSecretKey(keyFile); err != nil {
+		t.Errorf("LoadSecretKey() expected 0400 file to load, got error: %v", err)
 	}
 }
 
 func TestLoadSecretKey_InsecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-bit enforcement is not applied on Windows")
+	}
+
 	tmpDir := t.TempDir()
 	keyFile := filepath.Join(tmpDir, "secret.key")
 

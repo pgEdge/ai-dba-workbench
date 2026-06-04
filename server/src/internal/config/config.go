@@ -199,12 +199,20 @@ type TLSConfig struct {
 
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`     // Database host (default: localhost)
-	Port     int    `yaml:"port"`     // Database port (default: 5432)
-	Database string `yaml:"database"` // Database name (default: postgres)
-	User     string `yaml:"user"`     // Database user (required)
-	Password string `yaml:"password"` // Database password (optional, will use PGEDGE_DB_PASSWORD env var or .pgpass if not set)
-	SSLMode  string `yaml:"sslmode"`  // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
+	Host         string `yaml:"host"`          // Database host (default: localhost)
+	Port         int    `yaml:"port"`          // Database port (default: 5432)
+	Database     string `yaml:"database"`      // Database name (default: postgres)
+	User         string `yaml:"user"`          // Database user (required)
+	Password     string `yaml:"password"`      // Database password (optional; falls back to password_file then pgx .pgpass when unset)
+	PasswordFile string `yaml:"password_file"` // Path to a file containing the database password (used only if Password is empty)
+	SSLMode      string `yaml:"sslmode"`       // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
+
+	// resolvedPassword holds a password read from PasswordFile. It is
+	// deliberately unexported and tagged yaml:"-" / json:"-" so that a
+	// file-sourced secret never round-trips into a serialized config
+	// (e.g. via SaveConfig); writing it inline would defeat the purpose
+	// of password_file. Read the effective password via EffectivePassword.
+	resolvedPassword string `yaml:"-" json:"-"`
 
 	// Connection pool settings
 	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
@@ -232,14 +240,24 @@ type ConnectionSecurityConfig struct {
 // BuildConnectionString creates a PostgreSQL connection string from DatabaseConfig
 // If password is not set, pgx will automatically look it up from .pgpass file
 func (cfg *DatabaseConfig) BuildConnectionString() string {
-	// Build connection string components with URL-encoded user/password
-	connStr := fmt.Sprintf("postgres://%s", url.PathEscape(cfg.User))
-
-	// Add password only if explicitly set
-	// If not set, pgx will use .pgpass file automatically
-	if cfg.Password != "" {
-		connStr += ":" + url.PathEscape(cfg.Password)
+	// Build the userinfo component using net/url's userinfo encoders so
+	// that characters with special meaning in the userinfo (notably ':'
+	// and '@') are correctly percent-encoded. url.PathEscape must NOT be
+	// used here: it leaves ':' and '@' unescaped because they are valid
+	// path-segment characters, which would corrupt a DSN whose user or
+	// password contains them (increasingly likely with password_file).
+	//
+	// When no password is resolved, emit the username only (no ':' and
+	// no empty password component) so pgx can still fall back to .pgpass,
+	// preserving the previous behavior.
+	var userinfo string
+	if password := cfg.EffectivePassword(); password != "" {
+		userinfo = url.UserPassword(cfg.User, password).String()
+	} else {
+		userinfo = url.User(cfg.User).String()
 	}
+
+	connStr := fmt.Sprintf("postgres://%s", userinfo)
 
 	connStr += fmt.Sprintf("@%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
 
@@ -249,6 +267,65 @@ func (cfg *DatabaseConfig) BuildConnectionString() string {
 	}
 
 	return connStr
+}
+
+// LoadPassword resolves the database password from PasswordFile when
+// Password is not already set. A non-empty Password always wins, so a
+// password supplied via CLI flag or inline YAML takes precedence over
+// the file. When PasswordFile is set and Password is empty, the file
+// is read via fileutil.ReadSecretFile, which trims only the trailing
+// newline (not all surrounding whitespace) and returns an error if the
+// file cannot be read or resolves to an empty secret.
+//
+// A file-sourced secret is stored in the unexported resolvedPassword
+// field, NOT in the exported Password field, so it cannot leak back to
+// disk if the config is ever marshaled (see SaveConfig). Callers must
+// read the resolved value via EffectivePassword rather than Password.
+// An inline Password is left untouched and may legitimately round-trip.
+//
+// LoadPassword clears any previously resolved file-sourced secret
+// before doing anything else, so it is safe to call repeatedly on the
+// same DatabaseConfig (for example across a SIGHUP reload). A stale
+// secret never survives a subsequent load: if PasswordFile is later
+// cleared, points at an unreadable file, or an inline Password is set,
+// the old resolved value is discarded.
+func (cfg *DatabaseConfig) LoadPassword() error {
+	if cfg == nil {
+		return nil
+	}
+
+	// Clear any previously resolved file-sourced secret first so that a
+	// stale value can never survive a subsequent load, regardless of the
+	// early returns below.
+	cfg.resolvedPassword = ""
+
+	if cfg.Password != "" {
+		return nil
+	}
+
+	if cfg.PasswordFile != "" {
+		password, err := fileutil.ReadSecretFile(cfg.PasswordFile)
+		if err != nil {
+			// Leave resolvedPassword cleared on error; do not restore
+			// any prior value.
+			return fmt.Errorf("failed to read password file: %w", err)
+		}
+		cfg.resolvedPassword = password
+	}
+
+	return nil
+}
+
+// EffectivePassword returns the database password to use for connecting.
+// An inline Password (from CLI flag or YAML) takes precedence; otherwise
+// the value resolved from PasswordFile by LoadPassword is returned. The
+// result is empty when no password was configured, in which case pgx
+// falls back to the .pgpass file.
+func (cfg *DatabaseConfig) EffectivePassword() string {
+	if cfg.Password != "" {
+		return cfg.Password
+	}
+	return cfg.resolvedPassword
 }
 
 // EmbeddingConfig holds embedding generation settings
@@ -443,7 +520,9 @@ func LoadConfig(configPath string, cliFlags CLIFlags) (*Config, error) {
 	}
 
 	// Load API keys from files if specified
-	loadAPIKeysFromFiles(cfg)
+	if err := loadAPIKeysFromFiles(cfg); err != nil {
+		return nil, err
+	}
 
 	// Apply environment variable overrides
 	applyEnvOverrides(cfg)
@@ -850,58 +929,83 @@ func mergeConfig(dest, src *Config) {
 	// Prompts - no built-in prompts currently, merge logic can be added here for future prompts
 }
 
-// loadAPIKeysFromFiles loads API keys from files if specified in config
-func loadAPIKeysFromFiles(cfg *Config) {
+// loadAPIKeysFromFiles loads API keys from files when a *_file path is
+// configured. A key file is optional: when no path is set the field is
+// left untouched and that is not an error. When a path IS configured,
+// the file must exist, be readable, and be non-empty; any failure
+// (including a configured-but-empty file) is propagated to the caller
+// instead of being silently swallowed.
+func loadAPIKeysFromFiles(cfg *Config) error {
 	// Embedding API keys
 	if cfg.Embedding.VoyageAPIKey == "" && cfg.Embedding.VoyageAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.VoyageAPIKeyFile); err == nil && key != "" {
-			cfg.Embedding.VoyageAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Embedding.VoyageAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedding Voyage API key: %w", err)
 		}
+		cfg.Embedding.VoyageAPIKey = key
 	}
 	if cfg.Embedding.OpenAIAPIKey == "" && cfg.Embedding.OpenAIAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.OpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.Embedding.OpenAIAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Embedding.OpenAIAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedding OpenAI API key: %w", err)
 		}
+		cfg.Embedding.OpenAIAPIKey = key
 	}
 	if cfg.Embedding.GeminiAPIKey == "" && cfg.Embedding.GeminiAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Embedding.GeminiAPIKeyFile); err == nil && key != "" {
-			cfg.Embedding.GeminiAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Embedding.GeminiAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read embedding Gemini API key: %w", err)
 		}
+		cfg.Embedding.GeminiAPIKey = key
 	}
 
 	// LLM API keys
 	if cfg.LLM.AnthropicAPIKey == "" && cfg.LLM.AnthropicAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.AnthropicAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.AnthropicAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.LLM.AnthropicAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read LLM Anthropic API key: %w", err)
 		}
+		cfg.LLM.AnthropicAPIKey = key
 	}
 	if cfg.LLM.OpenAIAPIKey == "" && cfg.LLM.OpenAIAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.OpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.OpenAIAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.LLM.OpenAIAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read LLM OpenAI API key: %w", err)
 		}
+		cfg.LLM.OpenAIAPIKey = key
 	}
 	if cfg.LLM.GeminiAPIKey == "" && cfg.LLM.GeminiAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.LLM.GeminiAPIKeyFile); err == nil && key != "" {
-			cfg.LLM.GeminiAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.LLM.GeminiAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read LLM Gemini API key: %w", err)
 		}
+		cfg.LLM.GeminiAPIKey = key
 	}
 
 	// Knowledgebase API keys
 	if cfg.Knowledgebase.EmbeddingVoyageAPIKey == "" && cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile); err == nil && key != "" {
-			cfg.Knowledgebase.EmbeddingVoyageAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Knowledgebase.EmbeddingVoyageAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read knowledgebase Voyage API key: %w", err)
 		}
+		cfg.Knowledgebase.EmbeddingVoyageAPIKey = key
 	}
 	if cfg.Knowledgebase.EmbeddingOpenAIAPIKey == "" && cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile); err == nil && key != "" {
-			cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Knowledgebase.EmbeddingOpenAIAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read knowledgebase OpenAI API key: %w", err)
 		}
+		cfg.Knowledgebase.EmbeddingOpenAIAPIKey = key
 	}
 	if cfg.Knowledgebase.EmbeddingGeminiAPIKey == "" && cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile != "" {
-		if key, err := fileutil.ReadOptionalTrimmedFile(cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile); err == nil && key != "" {
-			cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
+		key, err := fileutil.ReadSecretFile(cfg.Knowledgebase.EmbeddingGeminiAPIKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read knowledgebase Gemini API key: %w", err)
 		}
+		cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
 	}
+
+	return nil
 }
 
 // applyEnvOverrides applies environment variable overrides to the configuration.

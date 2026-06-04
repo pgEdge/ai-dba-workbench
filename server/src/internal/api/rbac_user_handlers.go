@@ -100,6 +100,29 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate the username format up front so an invalid username returns
+	// a clear 400 with the formatting rule rather than a generic 500.
+	if err := auth.ValidateUsername(req.Username); err != nil {
+		RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))
+		return
+	}
+
+	// Validate the email format when one is supplied.
+	if req.Email != "" {
+		if err := auth.ValidateEmail(req.Email); err != nil {
+			RespondError(w, http.StatusBadRequest, "Please enter a valid email address")
+			return
+		}
+	}
+
+	// Pre-check for a duplicate username so the caller gets a 409 rather
+	// than a generic 500 from the UNIQUE-constraint violation. This is
+	// driver-independent; it does not rely on matching the database error.
+	if existing, err := h.authStore.GetUser(req.Username); err == nil && existing != nil {
+		RespondError(w, http.StatusConflict, "Username already taken")
+		return
+	}
+
 	isServiceAccount := req.IsServiceAccount != nil && *req.IsServiceAccount
 
 	// Validate password for non-service accounts
@@ -177,6 +200,14 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 	if req.Password != nil && *req.Password != "" {
 		if err := auth.ValidatePassword(*req.Password); err != nil {
 			RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))
+			return
+		}
+	}
+
+	// Validate the email format when a non-empty email is supplied.
+	if req.Email != nil && *req.Email != "" {
+		if err := auth.ValidateEmail(*req.Email); err != nil {
+			RespondError(w, http.StatusBadRequest, "Please enter a valid email address")
 			return
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -778,6 +779,36 @@ func ValidateUsername(username string) error {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '.' && r != '@' && r != '-' {
 			return fmt.Errorf("username contains invalid character: %c", r)
 		}
+	}
+	return nil
+}
+
+// ValidateEmail checks that an email address is syntactically valid. It uses
+// net/mail.ParseAddress for RFC 5322 compliance and additionally requires the
+// domain to contain a dot, so bare hostnames (for example "test@") and inputs
+// with no "@" at all (for example "notanemail") are rejected.
+//
+// To stay in parity with the client validator
+// (/^[^\s@]+@[^\s@]+\.[^\s@]+$/), it also rejects the RFC 5322 name-addr form
+// ("User <user@example.com>") and any surrounding whitespace, since the
+// handlers store the raw input. Only a bare, untrimmed local@domain address
+// is accepted.
+func ValidateEmail(email string) error {
+	addr, err := mail.ParseAddress(email)
+	if err != nil {
+		return fmt.Errorf("invalid email address")
+	}
+	// Reject the name-addr form ("User <user@example.com>") and any leading
+	// or trailing whitespace: the input must be exactly the parsed address.
+	if addr.Name != "" || email != addr.Address {
+		return fmt.Errorf("invalid email address")
+	}
+	// mail.ParseAddress guarantees a local@domain form on success, so the
+	// substring after the final "@" is the domain. Require a dot in the
+	// domain so bare hostnames (for example "test@") are rejected.
+	domain := addr.Address[strings.LastIndex(addr.Address, "@")+1:]
+	if !strings.Contains(domain, ".") {
+		return fmt.Errorf("invalid email address")
 	}
 	return nil
 }

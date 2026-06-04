@@ -136,6 +136,17 @@ project adheres to
   the failing tool, shows the underlying error, and suggests a
   likely permissions or connection-access problem to raise with
   an administrator. (#268)
+- Fix the Admin Panel Create User and Edit User dialogs accepting
+  invalid usernames and email addresses, and reporting a generic
+  "Failed to create user" error for problems the user could have
+  corrected. The client and server now validate input before and
+  after submission: a username containing invalid or special
+  characters is rejected with a clear inline message, and an email
+  address is checked for correct format on both the client and the
+  server, so values such as `notanemail` or `test@` are no longer
+  accepted silently. Creating a user whose name already exists now
+  returns HTTP 409 with a "Username already taken" message instead
+  of a generic server error. (#271)
 
 ### Security
 

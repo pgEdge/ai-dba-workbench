@@ -46,6 +46,12 @@ import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
 import PasswordStrengthField from './PasswordStrengthField';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, codePointLength, utf8ByteLength } from './passwordStrength';
+import {
+    isValidEmail,
+    isValidUsername,
+    USERNAME_HELPER_TEXT,
+    EMAIL_HELPER_TEXT,
+} from './userValidation';
 import { useAuth } from '../../contexts/useAuth';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
 import {
@@ -187,7 +193,10 @@ const AdminUsers: React.FC = () => {
 
     // Create user
     const handleCreateUser = async () => {
-        if (!createUsername.trim() || (!createServiceAccount && !createPassword)) {return;}
+        const trimmedUsername = createUsername.trim();
+        if (!trimmedUsername || (!createServiceAccount && !createPassword)) {return;}
+        if (!isValidUsername(trimmedUsername)) {return;}
+        if (createEmail.trim() && !isValidEmail(createEmail.trim())) {return;}
         try {
             setCreateLoading(true);
             setCreateError(null);
@@ -248,6 +257,7 @@ const AdminUsers: React.FC = () => {
 
     const handleEditUser = async () => {
         if (!editUser) {return;}
+        if (editEmail.trim() && !isValidEmail(editEmail.trim())) {return;}
         try {
             setEditLoading(true);
             setEditError(null);
@@ -339,6 +349,17 @@ const AdminUsers: React.FC = () => {
             setError(extractErrorMessage(err));
         }
     };
+
+    // Inline validation flags. A field is only flagged once it is
+    // non-empty so the error does not show before the user types; empty
+    // required fields are handled by the existing disabled/required
+    // logic instead.
+    const createUsernameInvalid =
+        createUsername.trim().length > 0 && !isValidUsername(createUsername.trim());
+    const createEmailInvalid =
+        createEmail.trim().length > 0 && !isValidEmail(createEmail.trim());
+    const editEmailInvalid =
+        editEmail.trim().length > 0 && !isValidEmail(editEmail.trim());
 
     if (loading) {
         return (
@@ -542,6 +563,8 @@ const AdminUsers: React.FC = () => {
                         disabled={createLoading}
                         margin="dense"
                         required
+                        error={createUsernameInvalid}
+                        helperText={createUsernameInvalid ? USERNAME_HELPER_TEXT : undefined}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
                     />
@@ -575,6 +598,8 @@ const AdminUsers: React.FC = () => {
                         onChange={(e) => { setCreateEmail(e.target.value); }}
                         disabled={createLoading}
                         margin="dense"
+                        error={createEmailInvalid}
+                        helperText={createEmailInvalid ? EMAIL_HELPER_TEXT : undefined}
                         InputLabelProps={{ shrink: true }}
                     />
                     <TextField
@@ -634,6 +659,8 @@ const AdminUsers: React.FC = () => {
                         disabled={
                             createLoading
                             || !createUsername.trim()
+                            || createUsernameInvalid
+                            || createEmailInvalid
                             || (!createServiceAccount && !createPassword)
                             || (!createServiceAccount
                                 && createPassword.length > 0
@@ -687,6 +714,8 @@ const AdminUsers: React.FC = () => {
                         onChange={(e) => { setEditEmail(e.target.value); }}
                         disabled={editLoading}
                         margin="dense"
+                        error={editEmailInvalid}
+                        helperText={editEmailInvalid ? EMAIL_HELPER_TEXT : undefined}
                         InputLabelProps={{ shrink: true }}
                     />
                     <TextField
@@ -734,6 +763,7 @@ const AdminUsers: React.FC = () => {
                         variant="contained"
                         disabled={
                             editLoading
+                            || editEmailInvalid
                             || (editPassword.length > 0
                                 && codePointLength(editPassword)
                                     < PASSWORD_MIN_LENGTH)

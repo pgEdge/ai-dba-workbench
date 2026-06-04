@@ -11,14 +11,46 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+// ErrGroupNameExists is returned by CreateGroup and UpdateGroup when the
+// requested group name collides with an existing group. The schema marks
+// user_groups.name UNIQUE, so the underlying driver reports a UNIQUE
+// constraint violation; the store maps that violation to this sentinel so
+// the API layer can return a 409 Conflict rather than a generic 500.
+var ErrGroupNameExists = errors.New("a group with this name already exists")
+
+// ErrGroupNotFound is returned (wrapped) by UpdateGroup when the requested
+// group id does not match any existing group. The store reports this as a
+// sentinel so the API layer can distinguish a missing-group update from
+// other failures and return a 404 Not Found rather than a generic 500.
+var ErrGroupNotFound = errors.New("group not found")
+
+// isUniqueViolation reports whether err represents a SQLite UNIQUE
+// constraint failure on the named column. The modernc.org/sqlite driver
+// surfaces these as an error whose message has the stable form
+// "UNIQUE constraint failed: <table>.<column>", so a substring match on
+// that text is the portable way to detect the collision without importing
+// the driver's concrete error type.
+func isUniqueViolation(err error, qualifiedColumn string) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") &&
+		strings.Contains(msg, qualifiedColumn)
+}
 
 // =============================================================================
 // Group Management
 // =============================================================================
 
-// CreateGroup creates a new user group
+// CreateGroup creates a new user group. When the name collides with an
+// existing group it returns ErrGroupNameExists (wrapped) so the caller can
+// distinguish a duplicate-name conflict from other failures.
 func (s *AuthStore) CreateGroup(name, description string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -28,6 +60,9 @@ func (s *AuthStore) CreateGroup(name, description string) (int64, error) {
 		name, description,
 	)
 	if err != nil {
+		if isUniqueViolation(err, "user_groups.name") {
+			return 0, fmt.Errorf("failed to create group: %w", ErrGroupNameExists)
+		}
 		return 0, fmt.Errorf("failed to create group: %w", err)
 	}
 
@@ -39,16 +74,29 @@ func (s *AuthStore) CreateGroup(name, description string) (int64, error) {
 	return id, nil
 }
 
-// UpdateGroup updates an existing group's name and/or description
+// UpdateGroup updates an existing group's name and/or description. An empty
+// name leaves the existing name untouched, so a caller can update only the
+// description without clobbering the name; the name column is otherwise
+// UNIQUE, so a colliding name returns ErrGroupNameExists (wrapped).
 func (s *AuthStore) UpdateGroup(id int64, name, description string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(
-		"UPDATE user_groups SET name = ?, description = ? WHERE id = ?",
-		name, description, id,
-	)
+	var query string
+	var args []any
+	if name == "" {
+		query = "UPDATE user_groups SET description = ? WHERE id = ?"
+		args = []any{description, id}
+	} else {
+		query = "UPDATE user_groups SET name = ?, description = ? WHERE id = ?"
+		args = []any{name, description, id}
+	}
+
+	result, err := s.db.Exec(query, args...)
 	if err != nil {
+		if isUniqueViolation(err, "user_groups.name") {
+			return fmt.Errorf("failed to update group: %w", ErrGroupNameExists)
+		}
 		return fmt.Errorf("failed to update group: %w", err)
 	}
 
@@ -57,7 +105,7 @@ func (s *AuthStore) UpdateGroup(id int64, name, description string) error {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("group not found: %d", id)
+		return fmt.Errorf("group not found: %d: %w", id, ErrGroupNotFound)
 	}
 
 	return nil

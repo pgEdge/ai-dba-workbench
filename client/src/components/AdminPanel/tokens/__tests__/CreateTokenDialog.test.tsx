@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CreateTokenDialog from '../CreateTokenDialog';
@@ -228,6 +228,79 @@ describe('CreateTokenDialog', () => {
         });
     });
 
+    it('calls onOwnerChange when an owner is selected', async () => {
+        const onOwnerChange = vi.fn();
+        renderComponent({ onOwnerChange });
+        const ownerInput = screen.getByLabelText(/^Owner/);
+        fireEvent.focus(ownerInput);
+        fireEvent.keyDown(ownerInput, { key: 'ArrowDown' });
+
+        await waitFor(() => {
+            expect(
+                screen.getByRole('option', { name: 'alice' }),
+            ).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('option', { name: 'alice' }));
+        expect(onOwnerChange).toHaveBeenCalledWith(USERS[0]);
+    });
+
+    it('shows the invalid-character error and disables Create', () => {
+        renderComponent({ owner: USERS[0], annotation: 'bad@token!' });
+        expect(
+            screen.getByText(
+                'Name may only contain letters, numbers, spaces, '
+                + 'and the characters . _ - ( )',
+            ),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole('button', { name: 'Create' }),
+        ).toBeDisabled();
+    });
+
+    it('shows the length error for names over 255 chars', () => {
+        renderComponent({ owner: USERS[0], annotation: 'a'.repeat(256) });
+        expect(
+            screen.getByText('Name must be 255 characters or fewer'),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole('button', { name: 'Create' }),
+        ).toBeDisabled();
+    });
+
+    it('caps the Name input at 255 characters', () => {
+        renderComponent();
+        expect(screen.getByLabelText(/^Name/)).toHaveAttribute(
+            'maxlength',
+            '255',
+        );
+    });
+
+    it('accepts parentheses in the annotation', () => {
+        renderComponent({
+            owner: USERS[0],
+            annotation: 'token (primary)',
+        });
+        expect(
+            screen.queryByText(/Name may only contain/),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.getByRole('button', { name: 'Create' }),
+        ).not.toBeDisabled();
+    });
+
+    it('enables Create for a valid annotation with an owner', () => {
+        renderComponent({
+            owner: USERS[0],
+            annotation: 'valid_token-1.0',
+        });
+        expect(
+            screen.queryByText(/Name may only contain/),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.getByRole('button', { name: 'Create' }),
+        ).not.toBeDisabled();
+    });
+
     it('adds connection to scope when selected', async () => {
         const onScopedConnectionsChange = vi.fn();
         renderComponent({ onScopedConnectionsChange });
@@ -250,5 +323,68 @@ describe('CreateTokenDialog', () => {
                 }),
             ]),
         );
+    });
+
+    it('changes a scoped connection access level via the table', async () => {
+        const onScopedConnectionsChange = vi.fn();
+        renderComponent({
+            onScopedConnectionsChange,
+            ownerIsSuperuser: true,
+            scopedConnections: [
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+            ],
+        });
+
+        // The scope table's access-level select is the row that contains
+        // the connection name; scope the query to that table row.
+        const row = screen.getByText('Primary DB').closest('tr') as HTMLElement;
+        const levelSelect = within(row).getByRole('combobox');
+        fireEvent.mouseDown(levelSelect);
+        await waitFor(() => {
+            expect(
+                screen.getByRole('option', { name: 'Read/Write' }),
+            ).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('option', { name: 'Read/Write' }));
+
+        expect(onScopedConnectionsChange).toHaveBeenCalledWith([
+            { id: 1, name: 'Primary DB', access_level: 'read_write' },
+        ]);
+    });
+
+    it('removes a scoped connection via the table', () => {
+        const onScopedConnectionsChange = vi.fn();
+        renderComponent({
+            onScopedConnectionsChange,
+            scopedConnections: [
+                { id: 1, name: 'Primary DB', access_level: 'read' },
+                { id: 2, name: 'Secondary DB', access_level: 'read' },
+            ],
+        });
+
+        fireEvent.click(
+            screen.getByRole('button', { name: 'remove Primary DB' }),
+        );
+        expect(onScopedConnectionsChange).toHaveBeenCalledWith([
+            { id: 2, name: 'Secondary DB', access_level: 'read' },
+        ]);
+    });
+
+    it('closes via the backdrop when not loading', () => {
+        const onClose = vi.fn();
+        renderComponent({ onClose });
+        // Clicking the MUI backdrop triggers the Dialog onClose handler.
+        const backdrop = document.querySelector('.MuiBackdrop-root');
+        expect(backdrop).not.toBeNull();
+        fireEvent.click(backdrop as Element);
+        expect(onClose).toHaveBeenCalled();
+    });
+
+    it('does not close via the backdrop while loading', () => {
+        const onClose = vi.fn();
+        renderComponent({ onClose, loading: true });
+        const backdrop = document.querySelector('.MuiBackdrop-root');
+        fireEvent.click(backdrop as Element);
+        expect(onClose).not.toHaveBeenCalled();
     });
 });

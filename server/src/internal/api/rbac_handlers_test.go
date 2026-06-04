@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -130,6 +131,372 @@ func TestRBACHandler_CreateGroup_MissingName(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+// createGroupAdmin sets up an admin user holding the manage_groups
+// permission and returns the handler, store, admin user ID, and cleanup.
+func createGroupAdmin(t *testing.T) (*RBACHandler, *auth.AuthStore, int64, func()) {
+	t.Helper()
+	handler, store, cleanup := createTestRBACHandler(t)
+	store.CreateUser("admin", "Password1234", "Admin", "", "")
+	adminID, _ := store.GetUserID("admin")
+	gID, _ := store.CreateGroup("admins", "Admins")
+	store.AddUserToGroup(gID, adminID)
+	store.GrantAdminPermission(gID, auth.PermManageGroups)
+	return handler, store, adminID, cleanup
+}
+
+func postGroup(t *testing.T, handler *RBACHandler, userID int64,
+	name, description string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{
+		"name":        name,
+		"description": description,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+	handler.handleGroups(rec, req)
+	return rec
+}
+
+func TestRBACHandler_CreateGroup_InvalidCharacters(t *testing.T) {
+	handler, _, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	rec := postGroup(t, handler, adminID, "bad/name!", "desc")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	want := "Name may only contain letters, numbers, spaces, and the characters . _ - ( )"
+	if resp.Error != want {
+		t.Errorf("Expected %q, got %q", want, resp.Error)
+	}
+}
+
+func TestRBACHandler_CreateGroup_TooLong(t *testing.T) {
+	handler, _, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	longName := strings.Repeat("a", 256)
+	rec := postGroup(t, handler, adminID, longName, "desc")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Error != "Name must be 255 characters or fewer" {
+		t.Errorf("Expected length message, got %q", resp.Error)
+	}
+}
+
+func TestRBACHandler_CreateGroup_WhitespaceOnlyName(t *testing.T) {
+	handler, _, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	rec := postGroup(t, handler, adminID, "    ", "desc")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Error != "Name is required" {
+		t.Errorf("Expected 'Name is required', got %q", resp.Error)
+	}
+}
+
+func TestRBACHandler_CreateGroup_ValidTrimmed(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	rec := postGroup(t, handler, adminID, "  Dev Team-1.0  ", "desc")
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp["name"] != "Dev Team-1.0" {
+		t.Errorf("Expected trimmed name 'Dev Team-1.0', got %v", resp["name"])
+	}
+	// The stored group should carry the trimmed name.
+	if g, _ := store.GetGroupByName("Dev Team-1.0"); g == nil {
+		t.Error("Expected group to be stored under the trimmed name")
+	}
+}
+
+func TestRBACHandler_CreateGroup_DuplicateConflict(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	if _, err := store.CreateGroup("developers", "first"); err != nil {
+		t.Fatalf("Failed to seed group: %v", err)
+	}
+
+	rec := postGroup(t, handler, adminID, "developers", "second")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Error != "A group with this name already exists" {
+		t.Errorf("Expected duplicate-name message, got %q", resp.Error)
+	}
+}
+
+func TestRBACHandler_CreateGroup_InvalidBody(t *testing.T) {
+	handler, _, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups",
+		bytes.NewBufferString("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroups(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestRBACHandler_UpdateGroup_InvalidBody(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	gID, _ := store.CreateGroup("editme", "")
+
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewBufferString("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestRBACHandler_CreateGroup_StoreError(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	// A superuser bypasses the DB-backed permission lookup, so closing the
+	// store lets the request reach CreateGroup, which then fails with a
+	// non-sentinel error and exercises the generic 500 path.
+	store.Close()
+
+	body, _ := json.Marshal(map[string]string{
+		"name":        "valid-name",
+		"description": "desc",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/rbac/groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroups(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRBACHandler_UpdateGroup_StoreError(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	gID, _ := store.CreateGroup("present", "")
+	store.Close()
+
+	body, _ := json.Marshal(map[string]string{"name": "renamed"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withSuperuser(req)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRBACHandler_UpdateGroup_PermissionDenied(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	store.CreateUser("normie", "Password1234", "Normal user", "", "")
+	userID, _ := store.GetUserID("normie")
+	gID, _ := store.CreateGroup("target", "")
+
+	body, _ := json.Marshal(map[string]string{"name": "renamed"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRBACHandler_UpdateGroup_InvalidCharacters(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	gID, _ := store.CreateGroup("editable", "desc")
+
+	body, _ := json.Marshal(map[string]string{"name": "bad*name"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRBACHandler_UpdateGroup_DuplicateConflict(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	store.CreateGroup("existing", "")
+	gID, _ := store.CreateGroup("renamable", "")
+
+	body, _ := json.Marshal(map[string]string{"name": "existing"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Error != "A group with this name already exists" {
+		t.Errorf("Expected duplicate-name message, got %q", resp.Error)
+	}
+}
+
+func TestRBACHandler_UpdateGroup_NotFound(t *testing.T) {
+	handler, _, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	// A valid, non-colliding name on a non-existent group exercises the
+	// missing-group path: the store wraps auth.ErrGroupNotFound, which the
+	// handler maps to 404 rather than a duplicate-name conflict or a
+	// generic 500.
+	body, _ := json.Marshal(map[string]string{"name": "ghost-group"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/99999", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d. Body: %s",
+			http.StatusNotFound, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRBACHandler_UpdateGroup_DescriptionOnly(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	gID, _ := store.CreateGroup("keepname", "old")
+
+	body, _ := json.Marshal(map[string]string{"description": "new description"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	// The name must be left untouched by a description-only update.
+	g, _ := store.GetGroup(gID)
+	if g == nil || g.Name != "keepname" {
+		t.Errorf("Expected name to remain 'keepname', got %+v", g)
+	}
+}
+
+func TestRBACHandler_UpdateGroup_ValidRename(t *testing.T) {
+	handler, store, adminID, cleanup := createGroupAdmin(t)
+	defer cleanup()
+
+	gID, _ := store.CreateGroup("oldname", "")
+
+	body, _ := json.Marshal(map[string]string{"name": "  new-name.1  "})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/groups/"+itoa(gID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.handleGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	g, _ := store.GetGroup(gID)
+	if g == nil || g.Name != "new-name.1" {
+		t.Errorf("Expected trimmed name 'new-name.1', got %+v", g)
 	}
 }
 

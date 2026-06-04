@@ -1023,6 +1023,166 @@ describe('AdminGroups', () => {
         });
     });
 
+    describe('Name validation', () => {
+        async function openCreate(
+            user: ReturnType<typeof userEvent.setup>,
+        ) {
+            renderWithTheme(<AdminGroups />);
+            await waitFor(() => {
+                expect(screen.getByText('No groups found.')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getByRole('button', { name: /Create Group/i }),
+            );
+            await waitFor(() => {
+                expect(screen.getByText('Create group')).toBeInTheDocument();
+            });
+            return screen.getByRole('dialog');
+        }
+
+        it('shows the invalid-character error and disables Create', async () => {
+            setupApiGetRouter({ '/api/v1/rbac/groups': { groups: [] } });
+            const user = userEvent.setup({ delay: null });
+
+            const dialog = await openCreate(user);
+            fireEvent.change(within(dialog).getByLabelText('Name *'), {
+                target: { value: 'bad<name>!' },
+            });
+
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText(
+                        'Name may only contain letters, numbers, spaces, '
+                        + 'and the characters . _ - ( )',
+                    ),
+                ).toBeInTheDocument();
+            });
+            expect(
+                within(dialog).getByRole('button', { name: /Create/i }),
+            ).toBeDisabled();
+            expect(mockApiPost).not.toHaveBeenCalled();
+        });
+
+        it('caps typing at 255 chars and flags an over-length value', async () => {
+            setupApiGetRouter({ '/api/v1/rbac/groups': { groups: [] } });
+            const user = userEvent.setup({ delay: null });
+
+            const dialog = await openCreate(user);
+            const nameField = within(dialog).getByLabelText('Name *');
+            // The native maxlength hard-caps interactive typing at 255.
+            expect(nameField).toHaveAttribute('maxlength', '255');
+
+            // Programmatically force an over-length value (bypassing the
+            // native cap) to exercise the inline error branch.
+            fireEvent.change(nameField, {
+                target: { value: 'a'.repeat(256) },
+            });
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText(
+                        'Name must be 255 characters or fewer',
+                    ),
+                ).toBeInTheDocument();
+            });
+            expect(
+                within(dialog).getByRole('button', { name: /Create/i }),
+            ).toBeDisabled();
+        });
+
+        it('enables Create once the name is valid', async () => {
+            setupApiGetRouter({ '/api/v1/rbac/groups': { groups: [] } });
+            const user = userEvent.setup({ delay: null });
+
+            const dialog = await openCreate(user);
+            const createButton = within(dialog).getByRole('button', {
+                name: /Create/i,
+            });
+            // Start invalid, then correct it.
+            fireEvent.change(within(dialog).getByLabelText('Name *'), {
+                target: { value: '@@@' },
+            });
+            expect(createButton).toBeDisabled();
+            fireEvent.change(within(dialog).getByLabelText('Name *'), {
+                target: { value: 'valid-name_1.0' },
+            });
+            await waitFor(() => {
+                expect(createButton).not.toBeDisabled();
+            });
+        });
+
+        it('accepts parentheses in the name', async () => {
+            setupApiGetRouter({ '/api/v1/rbac/groups': { groups: [] } });
+            const user = userEvent.setup({ delay: null });
+
+            const dialog = await openCreate(user);
+            fireEvent.change(within(dialog).getByLabelText('Name *'), {
+                target: { value: 'group (primary)' },
+            });
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByRole('button', { name: /Create/i }),
+                ).not.toBeDisabled();
+            });
+            expect(
+                within(dialog).queryByText(/Name may only contain/),
+            ).not.toBeInTheDocument();
+        });
+
+        it('surfaces the 409 duplicate-group message in the dialog', async () => {
+            setupApiGetRouter({ '/api/v1/rbac/groups': { groups: [] } });
+            // Mirror how apiClient surfaces a 409: a thrown Error whose
+            // message carries the server's body text.
+            mockApiPost.mockRejectedValue(
+                new Error('A group with this name already exists'),
+            );
+            const user = userEvent.setup({ delay: null });
+
+            const dialog = await openCreate(user);
+            fireEvent.change(within(dialog).getByLabelText('Name *'), {
+                target: { value: 'duplicate-group' },
+            });
+            await user.click(
+                within(dialog).getByRole('button', { name: /Create/i }),
+            );
+
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText(
+                        'A group with this name already exists',
+                    ),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('applies the same validation to the edit dialog', async () => {
+            setupApiGetRouter();
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminGroups />);
+            await waitFor(() => {
+                expect(screen.getByText('eng')).toBeInTheDocument();
+            });
+            await user.click(
+                screen.getAllByRole('button', { name: /edit group/i })[0],
+            );
+            const dialog = await screen.findByRole('dialog');
+            fireEvent.change(within(dialog).getByLabelText('Name *'), {
+                target: { value: 'bad/name' },
+            });
+            await waitFor(() => {
+                expect(
+                    within(dialog).getByText(
+                        'Name may only contain letters, numbers, spaces, '
+                        + 'and the characters . _ - ( )',
+                    ),
+                ).toBeInTheDocument();
+            });
+            expect(
+                within(dialog).getByRole('button', { name: /Save/i }),
+            ).toBeDisabled();
+        });
+    });
+
     describe('Edit dialog cancel', () => {
         it('closes the edit dialog on Cancel without calling PUT', async () => {
             setupApiGetRouter();

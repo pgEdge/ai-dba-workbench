@@ -10,6 +10,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -63,21 +64,27 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		RespondError(w, http.StatusBadRequest, "Name is required")
+	name := strings.TrimSpace(req.Name)
+	if err := ValidateDisplayName(name); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	groupID, err := h.authStore.CreateGroup(req.Name, req.Description)
+	groupID, err := h.authStore.CreateGroup(name, req.Description)
 	if err != nil {
-		log.Printf("[ERROR] Failed to create group %s: %v", req.Name, err)
+		if errors.Is(err, auth.ErrGroupNameExists) {
+			RespondError(w, http.StatusConflict,
+				"A group with this name already exists")
+			return
+		}
+		log.Printf("[ERROR] Failed to create group %s: %v", name, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to create group")
 		return
 	}
 
 	RespondJSON(w, http.StatusCreated, map[string]any{
 		"id":   groupID,
-		"name": req.Name,
+		"name": name,
 	})
 }
 
@@ -257,13 +264,32 @@ func (h *RBACHandler) updateGroup(w http.ResponseWriter, r *http.Request, groupI
 		return
 	}
 
-	if req.Name == "" && req.Description == "" {
+	name := strings.TrimSpace(req.Name)
+	if name == "" && req.Description == "" {
 		RespondError(w, http.StatusBadRequest,
 			"At least one of name or description is required")
 		return
 	}
 
-	if err := h.authStore.UpdateGroup(groupID, req.Name, req.Description); err != nil {
+	// Validate the name only when the caller supplied one; a
+	// description-only update leaves the existing name untouched.
+	if name != "" {
+		if err := ValidateDisplayName(name); err != nil {
+			RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	if err := h.authStore.UpdateGroup(groupID, name, req.Description); err != nil {
+		if errors.Is(err, auth.ErrGroupNameExists) {
+			RespondError(w, http.StatusConflict,
+				"A group with this name already exists")
+			return
+		}
+		if errors.Is(err, auth.ErrGroupNotFound) {
+			RespondError(w, http.StatusNotFound, "Group not found")
+			return
+		}
 		log.Printf("[ERROR] Failed to update group %d: %v", groupID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to update group")
 		return

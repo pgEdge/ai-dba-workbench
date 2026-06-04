@@ -213,6 +213,52 @@ bare `255`. Tests assert the cap with
 underlying input (the rendered DOM attribute is lowercase
 `maxlength`).
 
+### AdminPanel name-field validation
+
+AdminPanel dialogs that expose a free-text "Name" field (the
+Create/Edit Group dialog and the Create Token dialog, where the
+"Name" label maps to the backend `annotation`) must validate the
+field against the same contract the server enforces. Reuse the
+canonical client helper at `src/utils/validateName.ts`, the same
+one `GroupDialog.tsx` (the cluster group dialog) uses, rather than
+re-implementing the rules per dialog:
+
+- `validateName(value)` returns the exact inline error string, or
+  `null` when the trimmed value is valid. Feed it the raw
+  (untrimmed) field value; it trims internally. Empty input is
+  treated as invalid and returns `NAME_ERROR_REQUIRED`.
+- Drive the submit button's `disabled` state and the early-return
+  guard in the submit handler with `validateName(name) !== null`;
+  this also covers the empty/required case. For the token dialog,
+  combine it with the existing owner check: `owner &&
+  validateName(annotation) === null`.
+- Do not surface the "Name is required" message while the field is
+  empty; suppress the inline error for an empty trimmed value
+  (`value.trim() === '' ? null : validateName(value)`) so the
+  dialog never greets the user with a hard error before they type.
+  The disabled submit button already communicates the requirement.
+- `NAME_MAX_LENGTH` is `255`. Pass it via
+  `inputProps={{ maxLength: NAME_MAX_LENGTH }}` to hard-cap typing,
+  and surface the validator output through the TextField
+  `error`/`helperText` props for the over-length and
+  invalid-character cases.
+
+The allowed character set is ASCII letters, digits, spaces,
+periods, underscores, hyphens, and parentheses
+(`NAME_PATTERN = /^[A-Za-z0-9 ._()-]+$/`). The error strings are
+fixed and must match the canonical helper exactly: "Name must be
+255 characters or fewer" and "Name may only contain letters,
+numbers, spaces, and the characters . _ - ( )".
+
+Server duplicate-name conflicts (HTTP 409) reach the dialog
+automatically: `apiPost`/`apiPut` throw an `ApiError` whose
+`message` carries the server body, and `useCrudPanel.runMutation`
+routes that message to `dialogError` when no `errorFallback`
+overrides it. Do not pass an `errorFallback` to the create/edit
+group mutations, or the server's "A group with this name already
+exists" message will be masked. Token names are intentionally not
+unique, so no duplicate handling belongs in the token dialog.
+
 ### Performance
 
 - [ ] Unnecessary re-renders prevented.

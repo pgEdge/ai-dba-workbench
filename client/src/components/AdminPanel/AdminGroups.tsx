@@ -65,7 +65,11 @@ import {
     getTableContainerSx,
     getRadioSx,
 } from './styles';
-import { useCrudPanel, extractErrorMessage } from './_shared';
+import {
+    useCrudPanel,
+    extractErrorMessage,
+} from './_shared';
+import { validateName, NAME_MAX_LENGTH } from '../../utils/validateName';
 
 
 interface RbacGroup {
@@ -181,7 +185,7 @@ const AdminGroups: React.FC = () => {
     };
 
     const handleCreateGroup = async () => {
-        if (!formName.trim()) { return; }
+        if (validateName(formName) !== null) { return; }
         const result = await crud.runMutation(
             () =>
                 apiPost('/api/v1/rbac/groups', {
@@ -204,7 +208,7 @@ const AdminGroups: React.FC = () => {
 
     const handleEditGroup = async () => {
         const target = crud.editingItem;
-        if (!formName.trim() || !target) { return; }
+        if (validateName(formName) !== null || !target) { return; }
         const result = await crud.runMutation(
             () =>
                 apiPut(`/api/v1/rbac/groups/${target.id}`, {
@@ -361,6 +365,16 @@ const AdminGroups: React.FC = () => {
     // submit-button labels) keep rendering exactly as before.
     const createDialogOpen = crud.dialogOpen && !isEditMode;
     const editDialogOpen = crud.dialogOpen && isEditMode;
+    // Both dialogs share `formName`, so a single derived error covers the
+    // create and edit Name fields. The canonical `validateName` trims
+    // internally and returns NAME_ERROR_REQUIRED for empty input, so the
+    // submit button stays disabled until a valid name is entered.
+    const nameValidation = validateName(formName);
+    const nameInvalid = nameValidation !== null;
+    // Suppress the inline error for an empty field so the dialog does not
+    // greet the user with a "Name is required" message before they type;
+    // the disabled submit button already communicates the requirement.
+    const nameError = formName.trim() === '' ? null : nameValidation;
 
     return (
         <Box>
@@ -557,6 +571,9 @@ const AdminGroups: React.FC = () => {
                         disabled={crud.saving}
                         margin="dense"
                         required
+                        error={!!nameError}
+                        helperText={nameError ?? undefined}
+                        inputProps={{ maxLength: NAME_MAX_LENGTH }}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
                     />
@@ -580,7 +597,7 @@ const AdminGroups: React.FC = () => {
                     <Button
                         onClick={handleCreateGroup}
                         variant="contained"
-                        disabled={crud.saving || !formName.trim()}
+                        disabled={crud.saving || nameInvalid}
                         sx={containedButtonSx}
                     >
                         {crud.saving ? <CircularProgress size={20} color="inherit" aria-label="Creating" /> : 'Create'}
@@ -604,6 +621,9 @@ const AdminGroups: React.FC = () => {
                         disabled={crud.saving}
                         margin="dense"
                         required
+                        error={!!nameError}
+                        helperText={nameError ?? undefined}
+                        inputProps={{ maxLength: NAME_MAX_LENGTH }}
                         InputLabelProps={{ shrink: true }}
                         sx={SELECT_FIELD_SX}
                     />
@@ -627,7 +647,7 @@ const AdminGroups: React.FC = () => {
                     <Button
                         onClick={handleEditGroup}
                         variant="contained"
-                        disabled={crud.saving || !formName.trim()}
+                        disabled={crud.saving || nameInvalid}
                         sx={containedButtonSx}
                     >
                         {crud.saving ? <CircularProgress size={20} color="inherit" aria-label="Saving" /> : 'Save'}

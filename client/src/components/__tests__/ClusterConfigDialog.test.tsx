@@ -972,4 +972,24 @@ describe('ClusterConfigDialog', () => {
             expect(descField).toHaveValue('Updated description');
         });
     });
+
+    describe('field length limits (issue #270)', () => {
+        it('limits the name field to 255 characters in create mode', () => {
+            renderWithTheme(
+                <ClusterConfigDialog
+                    {...baseProps}
+                    mode="create"
+                    clusterName=""
+                    clusterDescription=""
+                    replicationType={null}
+                    autoClusterKey={null}
+                />,
+            );
+
+            const nameField = screen.getByRole('textbox', {
+                name: /^name/i,
+            });
+            expect(nameField).toHaveAttribute('maxlength', '255');
+        });
+    });
 });

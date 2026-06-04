@@ -28,6 +28,7 @@ import {
 import { Close as CloseIcon } from '@mui/icons-material';
 import AlertOverridesPanel from './AlertOverridesPanel';
 import ProbeOverridesPanel from './ProbeOverridesPanel';
+import { MAX_FIELD_LENGTH } from '../utils/formLimits';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
 import TopologyPanel from './TopologyPanel';
 import { deriveReplicationType } from './topology';
@@ -307,6 +308,7 @@ const ClusterConfigDialog: React.FC<ClusterConfigDialogProps> = ({
                             required
                             disabled={isSaving || (isCreateMode && createdClusterId != null)}
                             margin="dense"
+                            inputProps={{ maxLength: MAX_FIELD_LENGTH }}
                             InputLabelProps={{ shrink: true }}
                             sx={SELECT_FIELD_DEFAULT_BG_SX}
                         />

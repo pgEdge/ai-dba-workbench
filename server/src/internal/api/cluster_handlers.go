@@ -531,6 +531,9 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 		RespondError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
+	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -753,6 +756,9 @@ func (h *ClusterHandler) createClusterInGroup(w http.ResponseWriter, r *http.Req
 
 	if req.Name == "" {
 		RespondError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
 		return
 	}
 
@@ -1316,6 +1322,9 @@ func (h *ClusterHandler) handleCreateCluster(w http.ResponseWriter, r *http.Requ
 
 	if req.Name == "" {
 		RespondError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+	if !validateMaxLen(w, "Name", req.Name, maxFieldLength) {
 		return
 	}
 

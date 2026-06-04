@@ -39,6 +39,7 @@ import ProbeOverridesPanel from './ProbeOverridesPanel';
 import ChannelOverridesPanel from './ChannelOverridesPanel';
 import SlideTransition from './shared/SlideTransition';
 import { parseGroupNumericId } from './ClusterNavigator/utils';
+import { MAX_FIELD_LENGTH } from '../utils/formLimits';
 
 // --- Style constants (Issue 23) ---
 
@@ -259,6 +260,7 @@ const GroupDialog: React.FC<GroupDialogProps> = ({
                 required
                 disabled={isSaving}
                 margin="dense"
+                inputProps={{ maxLength: MAX_FIELD_LENGTH }}
                 sx={textFieldSx}
             />
 

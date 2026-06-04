@@ -27,6 +27,21 @@ project adheres to
   same anomaly condition now produces the same decision every
   time, so genuine alerts fire reliably. (#264)
 
+- Fix Ellie, the AI chat assistant, hanging in an effectively
+  infinite tool-validation loop for regular, non-superuser
+  users. When a regular user selected a connection shared with
+  them and asked Ellie to describe it, the query-validation
+  tool kept succeeding while the tools that execute the query
+  failed with an access error. The assistant retried slightly
+  different queries indefinitely, repeatedly showing
+  `Validating query` and never responding. The chat loop now
+  applies a repeated-failure circuit breaker: when the same
+  tool fails with the same error three times, the assistant
+  stops retrying and returns a clear message. The message names
+  the failing tool, shows the underlying error, and suggests a
+  likely permissions or connection-access problem to raise with
+  an administrator. (#268)
+
 ## [1.0.0-beta3] - 2026-05-26
 
 ### Added

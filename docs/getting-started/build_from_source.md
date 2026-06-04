@@ -173,7 +173,7 @@ Then, use the `openssl` command to write a secret to the
 sudo openssl rand -base64 32 \
     | sudo tee /etc/pgedge/server.secret \
     > /dev/null
-sudo chmod 644 /etc/pgedge/server.secret
+sudo chmod 600 /etc/pgedge/server.secret
 ```
 
 Then, use the `echo` and `chmod` commands to create the `password.txt`
@@ -181,7 +181,7 @@ file in the `/etc/pgedge` directory and set the file permissions:
 
 ```bash
 sudo sh -c 'echo "1safepassword" > /etc/pgedge/password.txt'
-sudo chmod 644 /etc/pgedge/password.txt
+sudo chmod 600 /etc/pgedge/password.txt
 ```
 
 !!! hint

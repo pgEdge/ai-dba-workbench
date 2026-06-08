@@ -88,9 +88,10 @@ Each component requires specific network access to operate correctly:
 
 ## Customizing Configuration Files
 
-The installation guides linked above share the details required to get a minimal
-deployment of the Workbench installed and serving content.  Additional configuration options
-are extensive; for details about options available in each configuration file, see:
+The installation guides linked above share the details required to get a
+minimal deployment of the Workbench installed and serving content.
+Additional configuration options are extensive; for details about options
+available in each configuration file, see:
 
 - The [collector](configuration/collector.md) guide covers tuned
   connection pools and SSL.

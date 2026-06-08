@@ -234,7 +234,8 @@ secret_file: /etc/pgedge/server.secret
 ```
 
 After updating the configuration file, start the collector. In the following
-example, the `ai-dba-collector` command starts the collector with the configuration file:
+example, the `ai-dba-collector` command starts the collector with the
+configuration file:
 
 ```bash
 /opt/ai-workbench/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml &
@@ -283,7 +284,9 @@ datastore:
   host: localhost
   database: ai_workbench
   username: postgres
-  password:"" or password_file: /etc/pgedge/password.txt
+  # Use either password or password_file (see the note below).
+  password: ""
+  # password_file: /etc/pgedge/password.txt
   port: 5432
   sslmode: disable
 ```

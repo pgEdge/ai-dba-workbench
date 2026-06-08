@@ -73,6 +73,16 @@ project adheres to
 
 ### Fixed
 
+- Fix the AI assistant "Ellie" and the client-side analysis prompts
+  generating SQL against the old combined `pg_stat_bgwriter` columns
+  such as `checkpoints_timed`, `checkpoints_req`, and
+  `buffers_checkpoint`, which fail on PostgreSQL 17 and later. Those
+  checkpoint statistics moved into the new `pg_stat_checkpointer` view
+  in PostgreSQL 17. The system prompts now instruct the model to query
+  `pg_stat_checkpointer` on PostgreSQL 17 and later and the combined
+  `pg_stat_bgwriter` view on PostgreSQL 16 and earlier, choosing the
+  view based on the target server's version. (#286)
+
 - Fix the alerter's Gemini provider lacking a configurable embedding
   model. The `llm.gemini` section now exposes an `embedding_model`
   option that defaults to `gemini-embedding-001`; the alerter

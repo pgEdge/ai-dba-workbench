@@ -254,6 +254,10 @@ jobs:
               with:
                   name: ${{ github.ref_name }}
                   draft: false
-                  prerelease: false
+                  # Treat semver pre-release tags (those carrying a
+                  # -rc/-beta/-alpha suffix, i.e. any hyphen) as
+                  # GitHub pre-releases; a bare GA tag such as
+                  # v1.0.0 publishes as a full release.
+                  prerelease: ${{ contains(github.ref_name, '-') }}
                   generate_release_notes: true
                   files: release/*

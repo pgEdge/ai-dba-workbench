@@ -8,7 +8,11 @@ The format is based on
 project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-06-08
+
+This release is the first general-availability release of the
+pgEdge AI DBA Workbench, graduating the project from beta to a
+stable, supported 1.0 line.
 
 ### Added
 
@@ -83,6 +87,16 @@ project adheres to
   `pg_stat_bgwriter` view on PostgreSQL 16 and earlier, choosing the
   view based on the target server's version. (#286)
 
+- Fix the `get_metric_baselines` MCP tool returning no baselines
+  when the `metric_name` filter used an unqualified shorthand such
+  as `cache_hit_ratio`, because the tool matched the stored
+  fully-qualified name such as `pg_stat_database.cache_hit_ratio`
+  only on an exact match. The filter now applies a parameterised,
+  case-insensitive containment match, with literal `%` and `_`
+  matched literally, and a filter that matches nothing returns the
+  available fully-qualified metric names within the caller's RBAC
+  scope so the model can retry. (#287)
+
 - Fix the alerter failing to load its server secret when
   `secret_file` was unset, with no fallback search. The alerter now
   resolves a default secret file the way the collector and server
@@ -117,6 +131,18 @@ project adheres to
   already exists now returns a clear "A group with this name
   already exists" conflict (HTTP 409) instead of a generic server
   error. (#273)
+
+- Fix the Admin Panel's Create User and Edit User dialogs
+  accepting invalid usernames and email addresses and surfacing
+  unhelpful errors. A username with special characters, an
+  invalid email such as `notanemail` or `test@`, or a duplicate
+  username previously returned a generic server error or stored
+  silently. The client and server now apply matching rules: the
+  server validates the username, validates the email format, and
+  returns HTTP 400 with the specific rule, or HTTP 409 "Username
+  already taken" for a duplicate. The dialogs show inline,
+  field-level errors and block the save until the input is
+  valid. (#271)
 
 - Resolve two moderate-severity npm vulnerabilities reported in
   the web client's dependency tree by updating the affected

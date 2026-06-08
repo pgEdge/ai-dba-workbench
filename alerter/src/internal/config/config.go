@@ -190,6 +190,46 @@ type NotificationsConfig struct {
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns"`
 }
 
+// ResolveServerSecret loads the server secret used to decrypt
+// notification channel credentials.
+//
+// Search order (highest priority first):
+//
+//  1. The explicit SecretFile path from the YAML config (if set).
+//  2. The per-user config directory reported by os.UserConfigDir(),
+//     under pgedge/ai-dba-alerter.secret.
+//  3. The system-wide path /etc/pgedge/ai-dba-alerter.secret.
+//
+// This mirrors the precedence the collector and server apply via
+// fileutil.GetDefaultConfigPath, so all three services resolve their
+// default secret paths identically. The existing ReadSecretFile
+// semantics (empty-file rejection, permissive-mode warning) are
+// preserved for every candidate.
+func (n *NotificationsConfig) ResolveServerSecret() (string, error) {
+	// If a secret file is explicitly specified, use it directly.
+	if n.SecretFile != "" {
+		secret, err := fileutil.ReadSecretFile(n.SecretFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read secret file: %w", err)
+		}
+		return secret, nil
+	}
+
+	// Resolve via the shared helper so all three services apply
+	// identical precedence to default paths.
+	if path := fileutil.GetDefaultConfigPath("", "ai-dba-alerter.secret"); path != "" {
+		secret, err := fileutil.ReadSecretFile(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read secret file %s: %w", path, err)
+		}
+		return secret, nil
+	}
+
+	return "", fmt.Errorf("server secret file not found. Searched: " +
+		"per-user config dir (~/.config/pgedge or platform " +
+		"equivalent) and /etc/pgedge/ai-dba-alerter.secret")
+}
+
 // OllamaConfig holds Ollama provider settings
 type OllamaConfig struct {
 	BaseURL        string `yaml:"base_url"`

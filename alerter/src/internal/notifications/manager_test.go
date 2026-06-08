@@ -19,10 +19,13 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // TestNewManager exercises the construction paths that depend on the
-// secret-file read, which now flows through fileutil.ReadSecretFile.
+// secret-file read, which now flows through
+// config.NotificationsConfig.ResolveServerSecret (and in turn
+// fileutil.ReadSecretFile / fileutil.GetDefaultConfigPath).
 func TestNewManager(t *testing.T) {
 	t.Run("nil config returns nil manager", func(t *testing.T) {
 		m, err := NewManager(nil, nil, false, nil)
@@ -85,6 +88,52 @@ func TestNewManager(t *testing.T) {
 			if _, err := NewManager(nil, cfg, false, nil); err == nil {
 				t.Errorf("expected error for whitespace-only secret file %q, got nil", content)
 			}
+		}
+	})
+
+	t.Run("empty SecretFile falls back to default location", func(t *testing.T) {
+		// With no explicit SecretFile, NewManager must resolve the
+		// secret from the shared /etc/pgedge fallback. Both default
+		// locations are redirected so the test cannot read or depend
+		// on the host's real per-user config dir or /etc/pgedge.
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "xdg"))
+		t.Setenv("HOME", filepath.Join(base, "home"))
+		t.Setenv("AppData", filepath.Join(base, "appdata"))
+
+		systemDir := filepath.Join(base, "etc-pgedge")
+		fileutil.SetSystemConfigDirForTest(t, systemDir)
+		if err := os.MkdirAll(systemDir, 0700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		candidate := filepath.Join(systemDir, "ai-dba-alerter.secret")
+		if err := os.WriteFile(candidate, []byte("fallback-secret\n"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		cfg := &config.NotificationsConfig{Enabled: true}
+		m, err := NewManager(nil, cfg, false, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if m == nil {
+			t.Fatal("expected a manager instance")
+		}
+		if m.serverSecret != "fallback-secret" {
+			t.Errorf("serverSecret = %q, want %q", m.serverSecret, "fallback-secret")
+		}
+	})
+
+	t.Run("empty SecretFile with no default is an error", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "xdg"))
+		t.Setenv("HOME", filepath.Join(base, "home"))
+		t.Setenv("AppData", filepath.Join(base, "appdata"))
+		fileutil.SetSystemConfigDirForTest(t, filepath.Join(base, "absent-etc-pgedge"))
+
+		cfg := &config.NotificationsConfig{Enabled: true}
+		if _, err := NewManager(nil, cfg, false, nil); err == nil {
+			t.Error("expected error when no secret file exists on default paths")
 		}
 	})
 

@@ -455,8 +455,16 @@ prompt.
 The server does not include a static file service; install and configure
 [nginx](https://nginx.org/en/docs/) to serve the client files and proxy
 API requests to the server before running the Workbench. Use your choice
-of package manager to install nginx. In the following example, the
-`apt install` command installs nginx:
+of package manager to install nginx.
+
+!!! warning "TLS is required"
+    Any network-accessible deployment must terminate TLS in the
+    reverse proxy that fronts the server. The reverse proxy is
+    responsible for TLS termination, HTTP-to-HTTPS redirection, and
+    HSTS. See the [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
+
+In the following example, the `apt install` command installs nginx:
 
 ```bash
 sudo apt install nginx

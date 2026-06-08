@@ -15,8 +15,8 @@ are in place on a supported operating system and platform:
 - [Go 1.26](https://go.dev/dl/) or later is required to build the
   server-side components.
 
-- [Node.js 18](https://nodejs.org/en/download) or later is required to
-  build the web client.
+- [Node.js 20.19](https://nodejs.org/en/download) or later on the 20.x
+  line, or Node.js 22.12 or later, is required to build the web client.
 
 - [Make](https://www.gnu.org/software/make/) is required to execute the
   Makefile.
@@ -489,8 +489,16 @@ prompt.
 The server does not include a static file service. You can install and
 configure [nginx](https://nginx.org/en/docs/) to serve the client files and
 proxy API requests to the server before opening the web UI. Use your choice
-of package manager to install nginx. In the following example, the
-`apt install` command installs nginx:
+of package manager to install nginx.
+
+!!! warning "TLS is required"
+    Any network-accessible deployment must terminate TLS in the
+    reverse proxy that fronts the server. The reverse proxy is
+    responsible for TLS termination, HTTP-to-HTTPS redirection, and
+    HSTS. See the [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
+
+In the following example, the `apt install` command installs nginx:
 
 ```bash
 sudo apt install nginx

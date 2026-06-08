@@ -27,6 +27,17 @@ pre-built production images.
 The quickest way to deploy uses pre-built images from the GitHub
 Container Registry.
 
+!!! warning "Add TLS before exposing the deployment"
+    The default Compose configuration publishes the client container
+    on plain HTTP at `http://localhost:3000` for first-run
+    convenience. Any deployment reachable from a network other than
+    the host loopback must terminate TLS in front of the client
+    container. Place an external reverse proxy (or TLS sidecar) in
+    front of the published port, configure HTTP-to-HTTPS redirection
+    and HSTS on the proxy, and restrict the published port to the
+    proxy. See the [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    for the full operator checklist.
+
 1. Clone the repository to obtain the configuration files.
 
     In the following example, the `git clone` command retrieves the

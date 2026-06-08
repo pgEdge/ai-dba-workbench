@@ -844,3 +844,125 @@ func TestAPIKeyGetters(t *testing.T) {
 		t.Errorf("GetVoyageAPIKey = %q, expected empty string", cfg.GetVoyageAPIKey())
 	}
 }
+
+// isolateSecretDirs redirects both default secret-search locations to
+// fresh temporary directories so ResolveServerSecret never touches the
+// host's real per-user config dir or /etc/pgedge. It returns the
+// resolved per-user pgedge directory and the system-wide directory so
+// callers can place candidate secret files.
+func isolateSecretDirs(t *testing.T) (userPgedgeDir, systemDir string) {
+	t.Helper()
+
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("HOME", base)
+	t.Setenv("AppData", base)
+
+	systemDir = filepath.Join(base, "absent-etc-pgedge")
+	fileutil.SetSystemConfigDirForTest(t, systemDir)
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("os.UserConfigDir: %v", err)
+	}
+	userPgedgeDir = filepath.Join(userDir, "pgedge")
+
+	return userPgedgeDir, systemDir
+}
+
+// TestResolveServerSecret covers the alerter's server-secret search
+// order: an explicit SecretFile, fallback to the per-user config dir,
+// fallback to /etc/pgedge, and the not-found error path.
+func TestResolveServerSecret(t *testing.T) {
+	t.Run("explicit secret file honored", func(t *testing.T) {
+		// Isolate defaults so a stray host file cannot satisfy the
+		// lookup; the explicit path must take precedence regardless.
+		isolateSecretDirs(t)
+
+		secretPath := filepath.Join(t.TempDir(), "explicit.secret")
+		if err := os.WriteFile(secretPath, []byte("explicit-secret\n"), 0600); err != nil {
+			t.Fatalf("failed to write secret file: %v", err)
+		}
+
+		cfg := &NotificationsConfig{SecretFile: secretPath}
+		secret, err := cfg.ResolveServerSecret()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if secret != "explicit-secret" {
+			t.Errorf("secret = %q, expected %q", secret, "explicit-secret")
+		}
+	})
+
+	t.Run("explicit secret file read error", func(t *testing.T) {
+		isolateSecretDirs(t)
+
+		cfg := &NotificationsConfig{SecretFile: "/nonexistent/path/alerter.secret"}
+		_, err := cfg.ResolveServerSecret()
+		if err == nil {
+			t.Fatal("expected error for nonexistent explicit secret file")
+		}
+		if !strings.Contains(err.Error(), "failed to read secret file") {
+			t.Errorf("error = %q, expected it to mention reading the secret file", err)
+		}
+	})
+
+	t.Run("fallback to per-user config dir", func(t *testing.T) {
+		userPgedgeDir, _ := isolateSecretDirs(t)
+
+		if err := os.MkdirAll(userPgedgeDir, 0700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		candidate := filepath.Join(userPgedgeDir, "ai-dba-alerter.secret")
+		if err := os.WriteFile(candidate, []byte("user-dir-secret\n"), 0600); err != nil {
+			t.Fatalf("failed to write secret file: %v", err)
+		}
+
+		cfg := &NotificationsConfig{}
+		secret, err := cfg.ResolveServerSecret()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if secret != "user-dir-secret" {
+			t.Errorf("secret = %q, expected %q", secret, "user-dir-secret")
+		}
+	})
+
+	t.Run("fallback to /etc/pgedge", func(t *testing.T) {
+		_, systemDir := isolateSecretDirs(t)
+
+		if err := os.MkdirAll(systemDir, 0700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		candidate := filepath.Join(systemDir, "ai-dba-alerter.secret")
+		if err := os.WriteFile(candidate, []byte("system-dir-secret\n"), 0600); err != nil {
+			t.Fatalf("failed to write secret file: %v", err)
+		}
+
+		cfg := &NotificationsConfig{}
+		secret, err := cfg.ResolveServerSecret()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if secret != "system-dir-secret" {
+			t.Errorf("secret = %q, expected %q", secret, "system-dir-secret")
+		}
+	})
+
+	t.Run("error names both locations when none found", func(t *testing.T) {
+		isolateSecretDirs(t)
+
+		cfg := &NotificationsConfig{}
+		_, err := cfg.ResolveServerSecret()
+		if err == nil {
+			t.Fatal("expected error when no secret file exists on default paths")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "per-user config dir") {
+			t.Errorf("error = %q, expected it to mention the per-user config dir", msg)
+		}
+		if !strings.Contains(msg, "/etc/pgedge/ai-dba-alerter.secret") {
+			t.Errorf("error = %q, expected it to mention /etc/pgedge/ai-dba-alerter.secret", msg)
+		}
+	})
+}

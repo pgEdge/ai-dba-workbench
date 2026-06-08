@@ -18,7 +18,6 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
-	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
 // Manager implements NotificationManager
@@ -42,10 +41,14 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 		return nil, nil
 	}
 
-	// Load server secret from file (plain text, same format as server secret)
-	serverSecret, err := fileutil.ReadSecretFile(cfg.SecretFile)
+	// Load server secret from file (plain text, same format as server
+	// secret). When SecretFile is empty, ResolveServerSecret falls back
+	// to the shared default locations (per-user config dir, then
+	// /etc/pgedge/ai-dba-alerter.secret), matching the collector and
+	// server precedence.
+	serverSecret, err := cfg.ResolveServerSecret()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read secret file: %w", err)
+		return nil, err
 	}
 
 	renderer := NewTemplateRenderer()

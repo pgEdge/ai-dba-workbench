@@ -83,6 +83,14 @@ project adheres to
   `pg_stat_bgwriter` view on PostgreSQL 16 and earlier, choosing the
   view based on the target server's version. (#286)
 
+- Fix the alerter failing to load its server secret when
+  `secret_file` was unset, with no fallback search. The alerter now
+  resolves a default secret file the way the collector and server
+  already do; when `secret_file` is not set, it searches the
+  per-user config directory first and then `/etc/pgedge`. This
+  brings the three services to parity and makes the search order
+  documented in `examples/ai-dba-alerter.yaml` accurate. (#291)
+
 - Fix the alerter's Gemini provider lacking a configurable embedding
   model. The `llm.gemini` section now exposes an `embedding_model`
   option that defaults to `gemini-embedding-001`; the alerter

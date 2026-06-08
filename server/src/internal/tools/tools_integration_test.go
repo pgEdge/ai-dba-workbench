@@ -44,6 +44,7 @@ import (
 // a strict subset of the production migration in
 // collector/src/database/schema.go.
 const toolsIntegrationSchema = `
+DROP TABLE IF EXISTS metric_baselines CASCADE;
 DROP TABLE IF EXISTS connections CASCADE;
 DROP SCHEMA IF EXISTS metrics CASCADE;
 
@@ -70,9 +71,25 @@ CREATE TABLE metrics.pg_connectivity (
     connection_id INTEGER NOT NULL,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE metric_baselines (
+    id SERIAL PRIMARY KEY,
+    connection_id INTEGER NOT NULL,
+    metric_name VARCHAR(255) NOT NULL,
+    period_type VARCHAR(16) NOT NULL,
+    day_of_week INTEGER,
+    hour_of_day INTEGER,
+    mean DOUBLE PRECISION NOT NULL DEFAULT 0,
+    stddev DOUBLE PRECISION NOT NULL DEFAULT 0,
+    min DOUBLE PRECISION NOT NULL DEFAULT 0,
+    max DOUBLE PRECISION NOT NULL DEFAULT 0,
+    sample_count BIGINT NOT NULL DEFAULT 0,
+    last_calculated TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 const toolsIntegrationTeardown = `
+DROP TABLE IF EXISTS metric_baselines CASCADE;
 DROP TABLE IF EXISTS connections CASCADE;
 DROP SCHEMA IF EXISTS metrics CASCADE;
 `

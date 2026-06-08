@@ -64,8 +64,19 @@ Use this tool to:
 
 <parameters>
 - connection_id: (optional) ID of a monitored connection. Omit to return baselines across all accessible connections.
-- metric_name: (optional) Filter to a specific metric name
+- metric_name: (optional) Filter by metric name. Stored names are fully-qualified as view.metric (e.g. pg_stat_database.cache_hit_ratio). Matching is partial and case-insensitive, so a shorthand like "cache_hit_ratio" or "cache_hit" matches "pg_stat_database.cache_hit_ratio".
 </parameters>
+
+<metric_naming>
+Stored metric names are fully-qualified in the form view.metric, where view
+is the source statistics view and metric is the column (for example,
+pg_stat_database.cache_hit_ratio or pg_stat_bgwriter.checkpoints_timed).
+You do not need the full name: metric_name matching is partial and
+case-insensitive, so passing "cache_hit_ratio" matches
+"pg_stat_database.cache_hit_ratio". If a filter matches nothing, the tool
+returns the list of available metric names so you can retry with a correct
+value.
+</metric_naming>
 
 <output>
 Returns TSV data with:
@@ -84,10 +95,11 @@ Returns TSV data with:
 
 <examples>
 - get_metric_baselines() - baselines across all accessible connections
-- get_metric_baselines(metric_name="cpu_usage") - CPU usage baselines across all connections
-- get_metric_baselines(connection_id=5, metric_name="xact_commit") - transaction baselines for specific connection
+- get_metric_baselines(metric_name="cache_hit_ratio") - matches the fully-qualified pg_stat_database.cache_hit_ratio across all connections
+- get_metric_baselines(connection_id=5, metric_name="xact_commit") - matches pg_stat_database.xact_commit for a specific connection
+- get_metric_baselines(metric_name="pg_stat_database.cache_hit_ratio") - the fully-qualified name also works
 </examples>`,
-			CompactDescription: `Query statistical baselines for metrics used in anomaly detection. Omit connection_id to see baselines across all accessible connections. Returns mean, stddev, min, max, and sample count. Filter by metric_name.`,
+			CompactDescription: `Query statistical baselines for metrics used in anomaly detection. Omit connection_id to see baselines across all accessible connections. Returns mean, stddev, min, max, and sample count. Filter by metric_name (partial, case-insensitive match against fully-qualified view.metric names, e.g. pg_stat_database.cache_hit_ratio).`,
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -97,7 +109,7 @@ Returns TSV data with:
 					},
 					"metric_name": map[string]any{
 						"type":        "string",
-						"description": "Filter to a specific metric name.",
+						"description": "Filter by metric name. Stored names are fully-qualified as view.metric (e.g. pg_stat_database.cache_hit_ratio). Matching is partial and case-insensitive, so a shorthand such as \"cache_hit_ratio\" matches \"pg_stat_database.cache_hit_ratio\". If nothing matches, the response lists the available metric names.",
 					},
 				},
 				Required: []string{},
@@ -192,21 +204,48 @@ Returns TSV data with:
 	}
 }
 
+// escapeLikePattern escapes the LIKE/ILIKE wildcard characters ('%' and '_')
+// and the escape character itself ('\') in user-supplied text so the value is
+// matched literally as a substring. The result is intended to be wrapped in
+// '%' ... '%' and bound as a positional parameter, with the SQL using the
+// `ESCAPE '\'` clause. This keeps a literal '%' or '_' in the input from
+// broadening the match unexpectedly while remaining fully parameterised.
+func escapeLikePattern(s string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	)
+	return replacer.Replace(s)
+}
+
 // baselinesSingleConnection queries baselines for a single connection (original behavior)
 func baselinesSingleConnection(
 	ctx context.Context, pool *pgxpool.Pool,
 	connectionID int, connName string, metricName *string,
 ) (mcp.ToolResponse, error) {
+	// metricPattern is the bound parameter for the ILIKE filter. It is nil
+	// when no metric_name was supplied, in which case the filter is a no-op.
+	// When supplied, the user's text is escaped and wrapped in '%' ... '%'
+	// so it matches the fully-qualified stored name as a case-insensitive
+	// substring (e.g. "cache_hit_ratio" matches
+	// "pg_stat_database.cache_hit_ratio").
+	var metricPattern *string
+	if metricName != nil {
+		p := "%" + escapeLikePattern(*metricName) + "%"
+		metricPattern = &p
+	}
+
 	query := `
         SELECT metric_name, period_type, day_of_week, hour_of_day,
                mean, stddev, min, max, sample_count, last_calculated
         FROM metric_baselines
         WHERE connection_id = $1
-          AND ($2::text IS NULL OR metric_name = $2)
+          AND ($2::text IS NULL OR metric_name ILIKE $2 ESCAPE '\')
         ORDER BY metric_name, period_type, day_of_week, hour_of_day
     `
 
-	rows, err := pool.Query(ctx, query, connectionID, metricName)
+	rows, err := pool.Query(ctx, query, connectionID, metricPattern)
 	if err != nil {
 		return mcp.NewToolError(fmt.Sprintf("Failed to query metric baselines: %v", err))
 	}
@@ -264,6 +303,21 @@ func baselinesSingleConnection(
 	}
 
 	if rowCount == 0 {
+		// When a metric_name filter was supplied but nothing matched, the
+		// LLM most likely used a shorthand that does not appear in any
+		// stored fully-qualified name. List the available metric names for
+		// this connection so it can retry with a correct value.
+		if metricName != nil {
+			available := availableMetricNamesSingle(ctx, pool, connectionID)
+			if len(available) > 0 {
+				return mcp.NewToolSuccess(fmt.Sprintf(
+					"No metric baselines matched %q for connection %d. "+
+						"Stored metric names are fully-qualified (view.metric); "+
+						"available metric names for this connection are: %s. "+
+						"Retry with one of these (partial, case-insensitive matching is supported).",
+					*metricName, connectionID, strings.Join(available, ", ")))
+			}
+		}
 		return mcp.NewToolSuccess(fmt.Sprintf("No metric baselines found for connection %d. Baselines are calculated after sufficient historical data is collected.", connectionID))
 	}
 
@@ -279,6 +333,16 @@ func baselinesAllConnections(
 ) (mcp.ToolResponse, error) {
 	connFilter, connArgs := buildConnectionFilter("mb.connection_id", allConnections, accessibleIDs)
 
+	// metricPattern is the bound parameter for the ILIKE filter. When
+	// supplied, the user's text is escaped and wrapped in '%' ... '%' so it
+	// matches the fully-qualified stored name as a case-insensitive
+	// substring (see escapeLikePattern).
+	var metricPattern *string
+	if metricName != nil {
+		p := "%" + escapeLikePattern(*metricName) + "%"
+		metricPattern = &p
+	}
+
 	paramIdx := len(connArgs) + 1
 	query := fmt.Sprintf(`
         SELECT mb.connection_id, c.name AS connection_name,
@@ -287,13 +351,13 @@ func baselinesAllConnections(
         FROM metric_baselines mb
         JOIN connections c ON c.id = mb.connection_id
         WHERE %s
-          AND ($%d::text IS NULL OR mb.metric_name = $%d)
+          AND ($%d::text IS NULL OR mb.metric_name ILIKE $%d ESCAPE '\')
         ORDER BY c.name, mb.metric_name, mb.period_type, mb.day_of_week, mb.hour_of_day
     `, connFilter, paramIdx, paramIdx)
 
 	queryArgs := make([]any, 0, len(connArgs)+1)
 	queryArgs = append(queryArgs, connArgs...)
-	queryArgs = append(queryArgs, metricName)
+	queryArgs = append(queryArgs, metricPattern)
 
 	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
@@ -355,12 +419,93 @@ func baselinesAllConnections(
 	}
 
 	if rowCount == 0 {
+		// When a metric_name filter was supplied but nothing matched,
+		// list the available metric names across the accessible
+		// connections so the LLM can retry with a correct value.
+		if metricName != nil {
+			available := availableMetricNamesMulti(ctx, pool, allConnections, accessibleIDs)
+			if len(available) > 0 {
+				return mcp.NewToolSuccess(fmt.Sprintf(
+					"No metric baselines matched %q across accessible connections. "+
+						"Stored metric names are fully-qualified (view.metric); "+
+						"available metric names are: %s. "+
+						"Retry with one of these (partial, case-insensitive matching is supported).",
+					*metricName, strings.Join(available, ", ")))
+			}
+		}
 		return mcp.NewToolSuccess("No metric baselines found across accessible connections. Baselines are calculated after sufficient historical data is collected.")
 	}
 
 	fmt.Fprintf(&sb, "\n(%d baselines)\n", rowCount)
 
 	return mcp.NewToolSuccess(sb.String())
+}
+
+// availableMetricNamesLimit bounds the number of distinct metric names
+// returned in a "no match" helper message.
+const availableMetricNamesLimit = 50
+
+// availableMetricNamesSingle returns the distinct metric names that have
+// baselines for the given connection, bounded by availableMetricNamesLimit.
+// It is used only to build a helpful "no match" message; any query error is
+// treated as "no names available" so the caller falls back to the generic
+// message rather than surfacing an error.
+func availableMetricNamesSingle(ctx context.Context, pool *pgxpool.Pool, connectionID int) []string {
+	rows, err := pool.Query(ctx, `
+        SELECT DISTINCT metric_name
+        FROM metric_baselines
+        WHERE connection_id = $1
+        ORDER BY metric_name
+        LIMIT $2
+    `, connectionID, availableMetricNamesLimit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	return scanMetricNames(rows)
+}
+
+// availableMetricNamesMulti returns the distinct metric names that have
+// baselines across the accessible connections, bounded by
+// availableMetricNamesLimit. It reuses buildConnectionFilter so the lookup
+// respects the same RBAC scoping as the main query. Query errors yield nil.
+func availableMetricNamesMulti(ctx context.Context, pool *pgxpool.Pool, allConnections bool, accessibleIDs []int) []string {
+	connFilter, connArgs := buildConnectionFilter("mb.connection_id", allConnections, accessibleIDs)
+	query := fmt.Sprintf(`
+        SELECT DISTINCT mb.metric_name
+        FROM metric_baselines mb
+        WHERE %s
+        ORDER BY mb.metric_name
+        LIMIT $%d
+    `, connFilter, len(connArgs)+1)
+
+	queryArgs := make([]any, 0, len(connArgs)+1)
+	queryArgs = append(queryArgs, connArgs...)
+	queryArgs = append(queryArgs, availableMetricNamesLimit)
+
+	rows, err := pool.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	return scanMetricNames(rows)
+}
+
+// scanMetricNames collects metric_name values from a single-column result
+// set. Scan errors abort the collection and return what was gathered so far.
+func scanMetricNames(rows interface {
+	Next() bool
+	Scan(...any) error
+}) []string {
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			break
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 // formatOptionalInt formats an optional int pointer for TSV output

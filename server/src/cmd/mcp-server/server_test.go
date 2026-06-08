@@ -221,6 +221,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
+	defer func() { _ = r.Close() }()
 	os.Stderr = w
 	defer func() { os.Stderr = orig }()
 

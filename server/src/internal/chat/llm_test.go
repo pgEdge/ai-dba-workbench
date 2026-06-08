@@ -1483,3 +1483,39 @@ func TestSystemPrompt_MentionsSpockOutputPlugin(t *testing.T) {
 			"plugin LIKE 'spock%%' for cross-version Spock compatibility")
 	}
 }
+
+// TestSystemPrompt_MentionsCheckpointerSplit guards the checkpoint/bgwriter
+// guidance added for issue #286. In PostgreSQL 17 the checkpoint columns
+// moved out of pg_stat_bgwriter into the new pg_stat_checkpointer view;
+// without this guidance the LLM writes pg_stat_bgwriter queries that fail
+// with "column does not exist" on PG17+ servers.
+func TestSystemPrompt_MentionsCheckpointerSplit(t *testing.T) {
+	// PG17+ checkpoint stats live in the new pg_stat_checkpointer view.
+	if !strings.Contains(SystemPrompt, "pg_stat_checkpointer") {
+		t.Errorf("SystemPrompt should mention the pg_stat_checkpointer view " +
+			"so the LLM writes correct checkpoint queries on PG17+")
+	}
+
+	// The guidance must explain the version split rather than blindly
+	// always using one view.
+	if !strings.Contains(SystemPrompt, "PostgreSQL 17") {
+		t.Errorf("SystemPrompt should explain that checkpoint stats moved " +
+			"in PostgreSQL 17")
+	}
+
+	// PG17+ checkpoint columns the LLM should use.
+	for _, col := range []string{"num_timed", "num_requested", "buffers_written"} {
+		if !strings.Contains(SystemPrompt, col) {
+			t.Errorf("SystemPrompt should reference the PG17+ checkpointer "+
+				"column %q", col)
+		}
+	}
+
+	// PG16-and-earlier combined columns should still be documented.
+	for _, col := range []string{"checkpoints_timed", "checkpoints_req", "buffers_checkpoint"} {
+		if !strings.Contains(SystemPrompt, col) {
+			t.Errorf("SystemPrompt should reference the PG16 pg_stat_bgwriter "+
+				"column %q", col)
+		}
+	}
+}

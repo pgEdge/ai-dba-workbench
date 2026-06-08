@@ -226,6 +226,7 @@ type VoyageConfig struct {
 type GeminiConfig struct {
 	APIKeyFile     string `yaml:"api_key_file"`
 	BaseURL        string `yaml:"base_url"`
+	EmbeddingModel string `yaml:"embedding_model"`
 	ReasoningModel string `yaml:"reasoning_model"`
 	apiKey         string
 }
@@ -315,6 +316,7 @@ func NewConfig() *Config {
 				EmbeddingModel: "voyage-3-lite",
 			},
 			Gemini: GeminiConfig{
+				EmbeddingModel: "gemini-embedding-001",
 				ReasoningModel: "gemini-2.5-flash",
 			},
 		},

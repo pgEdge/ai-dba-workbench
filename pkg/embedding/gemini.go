@@ -56,10 +56,14 @@ type geminiEmbeddingResponse struct {
 	} `json:"embedding"`
 }
 
-// Model dimensions for Gemini embedding models
+// Model dimensions for Gemini embedding models. The current
+// gemini-embedding-* family produces 3072-dimensional vectors;
+// the deprecated text-embedding-004 and embedding-001 models are
+// no longer supported.
 var geminiModelDimensions = map[string]int{
-	"text-embedding-004": 768,
-	"embedding-001":      768,
+	"gemini-embedding-001":       3072,
+	"gemini-embedding-2":         3072,
+	"gemini-embedding-2-preview": 3072,
 }
 
 // NewGeminiProvider creates a new Gemini embedding provider.
@@ -69,14 +73,16 @@ func NewGeminiProvider(apiKey, model, baseURL string) (*GeminiProvider, error) {
 		return nil, fmt.Errorf("Gemini API key cannot be empty")
 	}
 
-	// Default to text-embedding-004 if no model specified
+	// Default to gemini-embedding-001 if no model specified. This is
+	// the model the KB Builder uses, so the server and alerter must
+	// match it for embedding compatibility.
 	if model == "" {
-		model = "text-embedding-004"
+		model = "gemini-embedding-001"
 	}
 
 	// Validate model is supported
 	if _, ok := geminiModelDimensions[model]; !ok {
-		return nil, fmt.Errorf("unsupported Gemini model: %s (supported: text-embedding-004, embedding-001)", model)
+		return nil, fmt.Errorf("unsupported Gemini model: %s (supported: gemini-embedding-001, gemini-embedding-2, gemini-embedding-2-preview)", model)
 	}
 
 	// Default base URL if not provided

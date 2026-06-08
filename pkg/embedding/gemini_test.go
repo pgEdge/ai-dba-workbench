@@ -20,7 +20,7 @@ import (
 
 func TestNewGeminiProvider(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
-		provider, err := NewGeminiProvider("AIza-test-key-12345678", "text-embedding-004", "")
+		provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-001", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -30,7 +30,7 @@ func TestNewGeminiProvider(t *testing.T) {
 	})
 
 	t.Run("empty API key", func(t *testing.T) {
-		_, err := NewGeminiProvider("", "text-embedding-004", "")
+		_, err := NewGeminiProvider("", "gemini-embedding-001", "")
 		if err == nil {
 			t.Fatal("expected error for empty API key")
 		}
@@ -44,18 +44,36 @@ func TestNewGeminiProvider(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if provider.ModelName() != "text-embedding-004" {
-			t.Errorf("expected default model 'text-embedding-004', got %q", provider.ModelName())
+		if provider.ModelName() != "gemini-embedding-001" {
+			t.Errorf("expected default model 'gemini-embedding-001', got %q", provider.ModelName())
 		}
 	})
 
 	t.Run("custom model", func(t *testing.T) {
-		provider, err := NewGeminiProvider("AIza-test-key-12345678", "embedding-001", "")
+		provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-2", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if provider.ModelName() != "embedding-001" {
-			t.Errorf("expected model 'embedding-001', got %q", provider.ModelName())
+		if provider.ModelName() != "gemini-embedding-2" {
+			t.Errorf("expected model 'gemini-embedding-2', got %q", provider.ModelName())
+		}
+	})
+
+	t.Run("preview model", func(t *testing.T) {
+		provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-2-preview", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if provider.ModelName() != "gemini-embedding-2-preview" {
+			t.Errorf("expected model 'gemini-embedding-2-preview', got %q", provider.ModelName())
+		}
+	})
+
+	t.Run("deprecated models rejected", func(t *testing.T) {
+		for _, m := range []string{"text-embedding-004", "embedding-001"} {
+			if _, err := NewGeminiProvider("AIza-test-key-12345678", m, ""); err == nil {
+				t.Errorf("expected error for deprecated model %q", m)
+			}
 		}
 	})
 
@@ -64,10 +82,14 @@ func TestNewGeminiProvider(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for unsupported model")
 		}
+		want := "unsupported Gemini model: unsupported-model (supported: gemini-embedding-001, gemini-embedding-2, gemini-embedding-2-preview)"
+		if err.Error() != want {
+			t.Errorf("unexpected error message:\n got: %q\nwant: %q", err.Error(), want)
+		}
 	})
 
 	t.Run("custom base URL", func(t *testing.T) {
-		provider, err := NewGeminiProvider("AIza-test-key-12345678", "text-embedding-004", "https://custom.example.com")
+		provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-001", "https://custom.example.com")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -82,8 +104,9 @@ func TestGeminiProvider_Dimensions(t *testing.T) {
 		model      string
 		dimensions int
 	}{
-		{"text-embedding-004", 768},
-		{"embedding-001", 768},
+		{"gemini-embedding-001", 3072},
+		{"gemini-embedding-2", 3072},
+		{"gemini-embedding-2-preview", 3072},
 	}
 
 	for _, tt := range tests {
@@ -100,17 +123,17 @@ func TestGeminiProvider_Dimensions(t *testing.T) {
 }
 
 func TestGeminiProvider_ModelName(t *testing.T) {
-	provider, err := NewGeminiProvider("AIza-test-key-12345678", "text-embedding-004", "")
+	provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-001", "")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	if provider.ModelName() != "text-embedding-004" {
-		t.Errorf("expected model 'text-embedding-004', got %q", provider.ModelName())
+	if provider.ModelName() != "gemini-embedding-001" {
+		t.Errorf("expected model 'gemini-embedding-001', got %q", provider.ModelName())
 	}
 }
 
 func TestGeminiProvider_ProviderName(t *testing.T) {
-	provider, err := NewGeminiProvider("AIza-test-key-12345678", "text-embedding-004", "")
+	provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-001", "")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
@@ -137,13 +160,13 @@ func TestGeminiProvider_Embed_Success(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			t.Errorf("failed to decode request body: %v", err)
 		}
-		if reqBody.Model != "models/text-embedding-004" {
-			t.Errorf("expected model 'models/text-embedding-004', got %q", reqBody.Model)
+		if reqBody.Model != "models/gemini-embedding-001" {
+			t.Errorf("expected model 'models/gemini-embedding-001', got %q", reqBody.Model)
 		}
 
 		// Return mock embedding response
 		response := geminiEmbeddingResponse{}
-		response.Embedding.Values = make([]float64, 768)
+		response.Embedding.Values = make([]float64, 3072)
 		for i := range response.Embedding.Values {
 			response.Embedding.Values[i] = 0.01 * float64(i)
 		}
@@ -158,7 +181,7 @@ func TestGeminiProvider_Embed_Success(t *testing.T) {
 
 	provider := &GeminiProvider{
 		apiKey:  "AIza-test-key-12345678",
-		model:   "text-embedding-004",
+		model:   "gemini-embedding-001",
 		baseURL: server.URL,
 		client:  server.Client(),
 	}
@@ -167,13 +190,13 @@ func TestGeminiProvider_Embed_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(embedding) != 768 {
-		t.Errorf("expected 768 dimensions, got %d", len(embedding))
+	if len(embedding) != 3072 {
+		t.Errorf("expected 3072 dimensions, got %d", len(embedding))
 	}
 }
 
 func TestGeminiProvider_Embed_EmptyText(t *testing.T) {
-	provider, err := NewGeminiProvider("AIza-test-key-12345678", "text-embedding-004", "")
+	provider, err := NewGeminiProvider("AIza-test-key-12345678", "gemini-embedding-001", "")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
@@ -200,7 +223,7 @@ func TestGeminiProvider_Embed_APIError(t *testing.T) {
 
 	provider := &GeminiProvider{
 		apiKey:  "invalid-key",
-		model:   "text-embedding-004",
+		model:   "gemini-embedding-001",
 		baseURL: server.URL,
 		client:  server.Client(),
 	}
@@ -224,7 +247,7 @@ func TestGeminiProvider_Embed_RateLimit(t *testing.T) {
 
 	provider := &GeminiProvider{
 		apiKey:  "AIza-test-key-12345678",
-		model:   "text-embedding-004",
+		model:   "gemini-embedding-001",
 		baseURL: server.URL,
 		client:  server.Client(),
 	}
@@ -251,7 +274,7 @@ func TestGeminiProvider_Embed_EmptyResponse(t *testing.T) {
 
 	provider := &GeminiProvider{
 		apiKey:  "AIza-test-key-12345678",
-		model:   "text-embedding-004",
+		model:   "gemini-embedding-001",
 		baseURL: server.URL,
 		client:  server.Client(),
 	}
@@ -278,7 +301,7 @@ func TestGeminiProvider_Embed_MalformedJSON(t *testing.T) {
 
 	provider := &GeminiProvider{
 		apiKey:  "AIza-test-key-12345678",
-		model:   "text-embedding-004",
+		model:   "gemini-embedding-001",
 		baseURL: server.URL,
 		client:  server.Client(),
 	}
@@ -291,7 +314,7 @@ func TestGeminiProvider_Embed_MalformedJSON(t *testing.T) {
 
 func TestGeminiProvider_APIKeyMasking(t *testing.T) {
 	// Test with short API key (less than 8 chars)
-	provider, err := NewGeminiProvider("short", "text-embedding-004", "")
+	provider, err := NewGeminiProvider("short", "gemini-embedding-001", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,7 +340,7 @@ func TestGeminiProvider_Embed_EmptyEmbeddingValues(t *testing.T) {
 
 	provider := &GeminiProvider{
 		apiKey:  "AIza-test-key-12345678",
-		model:   "text-embedding-004",
+		model:   "gemini-embedding-001",
 		baseURL: server.URL,
 		client:  server.Client(),
 	}

@@ -73,6 +73,22 @@ project adheres to
 
 ### Fixed
 
+- Fix the alerter's Gemini provider lacking a configurable embedding
+  model. The `llm.gemini` section now exposes an `embedding_model`
+  option that defaults to `gemini-embedding-001`; the alerter
+  previously offered no embedding model field for Gemini. When Gemini
+  is the embedding provider, the configured model must match the model
+  that the KB Builder used to produce the knowledgebase. (#284)
+
+- Fix the documented Gemini embedding model list, which referenced the
+  deprecated `text-embedding-004` and `embedding-001` models that
+  Google has retired. The supported models are now
+  `gemini-embedding-001` (the default), `gemini-embedding-2`, and
+  `gemini-embedding-2-preview`, all of which output 3072 dimensions
+  rather than the previously documented 768. The server's
+  knowledgebase status log now reports the Gemini API key as loaded.
+  (#285)
+
 - Fix the Admin Panel's Create Group, Edit Group, and Create
   Token dialogs accepting unsupported special characters and
   over-long Name values. RBAC group and token names now reuse the

@@ -582,7 +582,7 @@ func TestGenerateKBQueryEmbedding_Gemini(t *testing.T) {
 	cfg := &config.Config{
 		Knowledgebase: config.KnowledgebaseConfig{
 			EmbeddingProvider:      "gemini",
-			EmbeddingModel:         "text-embedding-004",
+			EmbeddingModel:         "gemini-embedding-001",
 			EmbeddingGeminiAPIKey:  "kb-test-key",
 			EmbeddingGeminiBaseURL: srv.URL,
 		},

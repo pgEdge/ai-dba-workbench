@@ -212,7 +212,7 @@ embedding:
   # Default depends on provider:
   #   - voyage: voyage-3
   #   - openai: text-embedding-3-small
-  #   - gemini: text-embedding-004
+  #   - gemini: gemini-embedding-001
   #   - ollama: nomic-embed-text
   model: "nomic-embed-text"
 
@@ -415,7 +415,10 @@ knowledgebase:
   # embedding_gemini_api_key_file (raw keys cannot be set inline
   # for security). Model availability varies by Gemini API key
   # tier; run ListModels to verify which embedding models a given
-  # key can access.
+  # key can access. The embedding model (set via "model" above;
+  # default gemini-embedding-001) MUST match the model used by the
+  # KB Builder that produced the knowledgebase; otherwise the
+  # generated embeddings are incompatible with the stored vectors.
   # embedding_gemini_api_key_file: "~/.gemini-api-key"
 
   # Base URL for the Gemini API used for knowledgebase embeddings

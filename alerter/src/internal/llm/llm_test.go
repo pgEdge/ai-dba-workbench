@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"os"
 	"strings"
 	"testing"
 
@@ -246,6 +247,65 @@ func TestNewEmbeddingProvider_VoyageMissingKey(t *testing.T) {
 	_, err := NewEmbeddingProvider(cfg)
 	if !errors.Is(err, ErrAPIKeyMissing) {
 		t.Errorf("err = %v, want ErrAPIKeyMissing", err)
+	}
+}
+
+func TestNewEmbeddingProvider_GeminiMissingKey(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.LLM.EmbeddingProvider = "gemini"
+	_, err := NewEmbeddingProvider(cfg)
+	if !errors.Is(err, ErrAPIKeyMissing) {
+		t.Errorf("err = %v, want ErrAPIKeyMissing", err)
+	}
+}
+
+func TestNewEmbeddingProvider_GeminiSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyFile := tmpDir + "/gemini.key"
+	if err := os.WriteFile(keyFile, []byte("AIza-test-key-12345678\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	cfg := config.NewConfig()
+	cfg.LLM.EmbeddingProvider = "gemini"
+	cfg.LLM.Gemini.APIKeyFile = keyFile
+	if err := cfg.LoadAPIKeys(); err != nil {
+		t.Fatalf("LoadAPIKeys: %v", err)
+	}
+
+	p, err := NewEmbeddingProvider(cfg)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if p == nil {
+		t.Fatal("provider nil")
+	}
+	if p.ModelName() != "gemini-embedding-001" {
+		t.Errorf("model = %q, want gemini-embedding-001", p.ModelName())
+	}
+}
+
+func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyFile := tmpDir + "/gemini.key"
+	if err := os.WriteFile(keyFile, []byte("AIza-test-key-12345678\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	cfg := config.NewConfig()
+	cfg.LLM.EmbeddingProvider = "gemini"
+	cfg.LLM.Gemini.APIKeyFile = keyFile
+	cfg.LLM.Gemini.EmbeddingModel = "text-embedding-004"
+	if err := cfg.LoadAPIKeys(); err != nil {
+		t.Fatalf("LoadAPIKeys: %v", err)
+	}
+
+	_, err := NewEmbeddingProvider(cfg)
+	if err == nil {
+		t.Fatal("expected error for unsupported gemini embedding model")
+	}
+	if !strings.Contains(err.Error(), "gemini:") {
+		t.Errorf("err = %v, want gemini-prefixed error", err)
 	}
 }
 

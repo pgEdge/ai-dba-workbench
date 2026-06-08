@@ -123,6 +123,17 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 		}
 		return &embeddingAdapter{provider: provider}, nil
 
+	case "gemini":
+		apiKey := cfg.GetGeminiAPIKey()
+		if apiKey == "" {
+			return nil, fmt.Errorf("gemini: %w", ErrAPIKeyMissing)
+		}
+		provider, err := embedding.NewGeminiProvider(apiKey, cfg.LLM.Gemini.EmbeddingModel, cfg.LLM.Gemini.BaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("gemini: %w", err)
+		}
+		return &embeddingAdapter{provider: provider}, nil
+
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL
 		if baseURL == "" {

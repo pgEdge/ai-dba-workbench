@@ -56,12 +56,16 @@ The following models are supported:
 
 | Model | Dimensions |
 |-------|------------|
-| `text-embedding-004` | 768 |
-| `embedding-001` | 768 |
+| `gemini-embedding-001` | 3072 |
+| `gemini-embedding-2` | 3072 |
+| `gemini-embedding-2-preview` | 3072 |
 
-The default model is `text-embedding-004`. Model availability varies
-by Gemini API key tier; run ListModels to verify which embedding
-models a given key can access.
+The default model is `gemini-embedding-001`, the model the KB Builder
+uses. When Gemini supplies knowledgebase embeddings, the configured
+model must match the model that produced the knowledgebase; otherwise
+the embeddings are incompatible. Model availability varies by Gemini
+API key tier; run ListModels to verify which embedding models a given
+key can access.
 
 In the following example, the server configuration selects the
 Gemini provider and reads the API key from a file on disk:
@@ -69,7 +73,7 @@ Gemini provider and reads the API key from a file on disk:
 ```yaml
 embedding:
   provider: "gemini"
-  model: "text-embedding-004"
+  model: "gemini-embedding-001"
   gemini_api_key_file: "~/.gemini-api-key"
   # gemini_base_url: "https://generativelanguage.googleapis.com"
 ```

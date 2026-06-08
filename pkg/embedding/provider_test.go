@@ -179,7 +179,7 @@ func TestNewProvider_Gemini(t *testing.T) {
     t.Run("valid config", func(t *testing.T) {
         cfg := Config{
             Provider:     "gemini",
-            Model:        "text-embedding-004",
+            Model:        "gemini-embedding-001",
             GeminiAPIKey: "AIza-test-key-12345678",
         }
 
@@ -198,7 +198,7 @@ func TestNewProvider_Gemini(t *testing.T) {
     t.Run("missing API key", func(t *testing.T) {
         cfg := Config{
             Provider: "gemini",
-            Model:    "text-embedding-004",
+            Model:    "gemini-embedding-001",
         }
 
         _, err := NewProvider(cfg)
@@ -210,7 +210,7 @@ func TestNewProvider_Gemini(t *testing.T) {
     t.Run("with custom base URL", func(t *testing.T) {
         cfg := Config{
             Provider:      "gemini",
-            Model:         "text-embedding-004",
+            Model:         "gemini-embedding-001",
             GeminiAPIKey:  "AIza-test-key-12345678",
             GeminiBaseURL: "https://custom.example.com",
         }

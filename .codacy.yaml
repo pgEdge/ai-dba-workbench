@@ -54,6 +54,7 @@ engines:
     exclude_paths:
       - 'alerter/src/internal/engine/anomalies_test.go'
       - 'alerter/src/internal/engine/baselines_test.go'
+      - 'server/src/internal/tools/get_metric_baselines.go'
 
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and
   # eslint-plugin-security-node, which are not part of the project's

@@ -10,6 +10,7 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -131,6 +132,121 @@ func TestGetMetricBaselinesWithMetricName(t *testing.T) {
 		t.Errorf("expected 'Datastore not configured' error, got: %s",
 			response.Content[0].Text)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// escapeLikePattern helper tests
+// ---------------------------------------------------------------------------
+
+func TestEscapeLikePattern(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no special characters",
+			input: "cache_hit",
+			// underscore is escaped so it matches literally
+			want: `cache\_hit`,
+		},
+		{
+			name:  "percent sign",
+			input: "100%cpu",
+			want:  `100\%cpu`,
+		},
+		{
+			name:  "underscore",
+			input: "cache_hit_ratio",
+			want:  `cache\_hit\_ratio`,
+		},
+		{
+			name:  "backslash escaped first",
+			input: `a\b`,
+			want:  `a\\b`,
+		},
+		{
+			name:  "all specials combined",
+			input: `a_b%c\d`,
+			want:  `a\_b\%c\\d`,
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := escapeLikePattern(tt.input)
+			if got != tt.want {
+				t.Errorf("escapeLikePattern(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// scanMetricNames helper tests
+// ---------------------------------------------------------------------------
+
+// fakeRows implements the minimal Next/Scan interface used by
+// scanMetricNames, allowing the Scan-error branch to be exercised without a
+// real database.
+type fakeRows struct {
+	values  []string
+	idx     int
+	failAt  int // index at which Scan returns an error; -1 to never fail
+	scanErr error
+}
+
+func (f *fakeRows) Next() bool {
+	return f.idx < len(f.values)
+}
+
+func (f *fakeRows) Scan(dest ...any) error {
+	if f.idx == f.failAt {
+		return f.scanErr
+	}
+	if len(dest) > 0 {
+		if p, ok := dest[0].(*string); ok {
+			*p = f.values[f.idx]
+		}
+	}
+	f.idx++
+	return nil
+}
+
+func TestScanMetricNames(t *testing.T) {
+	t.Run("collects all rows", func(t *testing.T) {
+		rows := &fakeRows{values: []string{"a", "b", "c"}, failAt: -1}
+		got := scanMetricNames(rows)
+		if strings.Join(got, ",") != "a,b,c" {
+			t.Errorf("expected a,b,c got %v", got)
+		}
+	})
+
+	t.Run("stops on scan error", func(t *testing.T) {
+		rows := &fakeRows{
+			values:  []string{"a", "b", "c"},
+			failAt:  1,
+			scanErr: fmt.Errorf("boom"),
+		}
+		got := scanMetricNames(rows)
+		// Should have collected only the first value before the error.
+		if strings.Join(got, ",") != "a" {
+			t.Errorf("expected only [a] before error, got %v", got)
+		}
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		rows := &fakeRows{values: nil, failAt: -1}
+		got := scanMetricNames(rows)
+		if got != nil {
+			t.Errorf("expected nil for empty result, got %v", got)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

@@ -63,20 +63,22 @@ copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
 repo_url: https://github.com/pgEdge/ai-dba-workbench
 
 nav:
-  - Home: index.md
+  - Architecture Overview: index.md
 
-  - Getting Started:
-    - Quick Start: getting-started/quick-start.md
-    - Installation: getting-started/installation.md
-    - Docker Deployment: getting-started/docker.md
-    - Configuration:
+  - Installing and Configuring pgEdge AI DBA Workbench:
+    - Installation Overview: getting-started/installation_overview.md
+    - Quick Start - Installing with Binaries: getting-started/binary_install.md
+    - Building from Source Code: getting-started/build_from_source.md
+    - Deploying with Docker: getting-started/docker.md
+    - Configuration Details:
       - Server: getting-started/configuration/server.md
       - Collector: getting-started/configuration/collector.md
       - Alerter: getting-started/configuration/alerter.md
       - Web Client: getting-started/configuration/client.md
+      - Configuring systemd Services: getting-started/configuration/configure_systemd.md
 
   - User Guide:
-    - Overview: user-guide/index.md
+    - Using the Workbench: user-guide/index.md
     - Monitoring Dashboards:
       - Dashboard Overview: user-guide/dashboards/index.md
       - Estate Dashboard: user-guide/dashboards/estate.md
@@ -98,6 +100,7 @@ nav:
   - Administrator's Guide:
     - Overview: admin-guide/index.md
     - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md
+    - Verifying the Health of Components: admin-guide/verify_health.md
     - Users & Authentication: admin-guide/authentication.md
     - Connection Management: admin-guide/connections.md
     - Alert Rules & Thresholds: admin-guide/alert-rules.md

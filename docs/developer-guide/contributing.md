@@ -62,7 +62,10 @@ cd collector && make build
 cd server && make build
 ```
 
-Build the web client with the following commands:
+Build the web client from the `ai-dba-workbench` repository root. In the
+following example, the `cd client` command enters the client directory;
+the `npm install` command installs dependencies; the `npm run build`
+command builds the client:
 
 ```bash
 cd client && npm install && npm run build

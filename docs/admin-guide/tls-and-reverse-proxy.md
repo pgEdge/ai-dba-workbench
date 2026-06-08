@@ -169,7 +169,7 @@ to restore a supported configuration.
 ## See Also
 
 - The
-  [installation guide](../getting-started/installation.md)
+  [installation guide](../getting-started/installation_overview.md)
   covers the standard production deployment.
 - The
   [Docker deployment guide](../getting-started/docker.md)

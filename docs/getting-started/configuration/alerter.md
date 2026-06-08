@@ -383,6 +383,12 @@ key can access.
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 | `reasoning_model` | string | `gemini-2.5-flash` | Reasoning model |
+| `embedding_model` | string | `gemini-embedding-001` | Embedding model |
+
+When Gemini is the embedding provider, the
+`embedding_model` must match the model that the KB
+Builder used to produce the knowledgebase; the KB
+Builder uses `gemini-embedding-001`.
 
 #### Voyage Configuration
 

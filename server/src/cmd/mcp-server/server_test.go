@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,5 +209,103 @@ func TestLoadServerSecret_ExplicitMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to read secret file") {
 		t.Errorf("err = %v, want it to mention 'failed to read secret file'", err)
+	}
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and
+// returns everything fn writes to it.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	return string(out)
+}
+
+// TestLogStartupInfo_KnowledgebaseAPIKeyStatus exercises the
+// knowledgebase API-key status branch in logStartupInfo, including
+// the Gemini branch that previously never set "loaded".
+func TestLogStartupInfo_KnowledgebaseAPIKeyStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		kb   config.KnowledgebaseConfig
+		want string
+	}{
+		{
+			name: "voyage key loaded",
+			kb: config.KnowledgebaseConfig{
+				Enabled:               true,
+				EmbeddingProvider:     "voyage",
+				EmbeddingVoyageAPIKey: "voyage-key",
+			},
+			want: "API key: loaded",
+		},
+		{
+			name: "openai key loaded",
+			kb: config.KnowledgebaseConfig{
+				Enabled:               true,
+				EmbeddingProvider:     "openai",
+				EmbeddingOpenAIAPIKey: "openai-key",
+			},
+			want: "API key: loaded",
+		},
+		{
+			name: "gemini key loaded",
+			kb: config.KnowledgebaseConfig{
+				Enabled:               true,
+				EmbeddingProvider:     "gemini",
+				EmbeddingModel:        "gemini-embedding-001",
+				EmbeddingGeminiAPIKey: "gemini-key",
+			},
+			want: "API key: loaded",
+		},
+		{
+			name: "no key set",
+			kb: config.KnowledgebaseConfig{
+				Enabled:           true,
+				EmbeddingProvider: "gemini",
+			},
+			want: "API key: not set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{cfg: &config.Config{Knowledgebase: tt.kb}}
+			out := captureStderr(t, s.logStartupInfo)
+			if !strings.Contains(out, tt.want) {
+				t.Errorf("logStartupInfo output = %q, want it to contain %q", out, tt.want)
+			}
+			if !strings.Contains(out, "Knowledgebase: ENABLED") {
+				t.Errorf("expected knowledgebase enabled line, got %q", out)
+			}
+		})
+	}
+}
+
+// TestLogStartupInfo_KnowledgebaseDisabled covers the disabled
+// knowledgebase branch of logStartupInfo.
+func TestLogStartupInfo_KnowledgebaseDisabled(t *testing.T) {
+	s := &Server{cfg: &config.Config{}, debug: true}
+	out := captureStderr(t, s.logStartupInfo)
+	if !strings.Contains(out, "Knowledgebase: DISABLED") {
+		t.Errorf("expected disabled knowledgebase line, got %q", out)
+	}
+	if !strings.Contains(out, "Debug logging: ENABLED") {
+		t.Errorf("expected debug line, got %q", out)
 	}
 }

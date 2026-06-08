@@ -514,6 +514,8 @@ func (s *Server) logStartupInfo() {
 			apiKeyStatus = "loaded"
 		} else if s.cfg.Knowledgebase.EmbeddingOpenAIAPIKey != "" {
 			apiKeyStatus = "loaded"
+		} else if s.cfg.Knowledgebase.EmbeddingGeminiAPIKey != "" {
+			apiKeyStatus = "loaded"
 		}
 		fmt.Fprintf(os.Stderr, "Knowledgebase: ENABLED (provider: %s, model: %s, API key: %s)\n",
 			s.cfg.Knowledgebase.EmbeddingProvider, s.cfg.Knowledgebase.EmbeddingModel, apiKeyStatus)

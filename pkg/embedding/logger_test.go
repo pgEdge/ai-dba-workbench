@@ -353,7 +353,7 @@ func TestLogResponseTrace(t *testing.T) {
 		logger: log.New(&buf, "[LLM] ", 0),
 	}
 
-	LogResponseTrace("gemini", "text-embedding-004", 200, 768)
+	LogResponseTrace("gemini", "gemini-embedding-001", 200, 768)
 	output := buf.String()
 
 	if !strings.Contains(output, "Response details") {

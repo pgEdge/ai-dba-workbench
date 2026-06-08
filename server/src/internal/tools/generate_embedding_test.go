@@ -212,7 +212,7 @@ func TestGenerateEmbeddingTool_GeminiMissingAPIKey(t *testing.T) {
 		Embedding: config.EmbeddingConfig{
 			Enabled:  true,
 			Provider: "gemini",
-			Model:    "text-embedding-004",
+			Model:    "gemini-embedding-001",
 		},
 	}
 	tool := GenerateEmbeddingTool(cfg)
@@ -240,7 +240,7 @@ func TestGenerateEmbeddingTool_GeminiMissingAPIKey(t *testing.T) {
 // echo back in its success response.
 func TestGenerateEmbeddingTool_GeminiSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.URL.Path, "/v1beta/models/text-embedding-004:embedContent") {
+		if !strings.Contains(r.URL.Path, "/v1beta/models/gemini-embedding-001:embedContent") {
 			t.Errorf("unexpected request path %q", r.URL.Path)
 		}
 		if r.URL.Query().Get("key") != "test-gemini-key" {
@@ -258,7 +258,7 @@ func TestGenerateEmbeddingTool_GeminiSuccess(t *testing.T) {
 		Embedding: config.EmbeddingConfig{
 			Enabled:       true,
 			Provider:      "gemini",
-			Model:         "text-embedding-004",
+			Model:         "gemini-embedding-001",
 			GeminiAPIKey:  "test-gemini-key",
 			GeminiBaseURL: srv.URL,
 		},
@@ -280,8 +280,8 @@ func TestGenerateEmbeddingTool_GeminiSuccess(t *testing.T) {
 	if !strings.Contains(body, "Provider: gemini") {
 		t.Errorf("expected 'Provider: gemini' in response, got: %s", body)
 	}
-	if !strings.Contains(body, "Model: text-embedding-004") {
-		t.Errorf("expected 'Model: text-embedding-004' in response, got: %s", body)
+	if !strings.Contains(body, "Model: gemini-embedding-001") {
+		t.Errorf("expected 'Model: gemini-embedding-001' in response, got: %s", body)
 	}
 	if !strings.Contains(body, "0.1") || !strings.Contains(body, "0.3") {
 		t.Errorf("expected embedding vector in response, got: %s", body)

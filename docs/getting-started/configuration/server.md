@@ -370,8 +370,9 @@ protection for user-created database connections.
 ### Embedding (`embedding`)
 
 The `provider` option accepts `voyage`, `openai`, `gemini`, or
-`ollama`. The Gemini provider supports `text-embedding-004` (default,
-768 dimensions) and `embedding-001` (768 dimensions). Model
+`ollama`. The Gemini provider supports `gemini-embedding-001` (the
+default, 3072 dimensions), `gemini-embedding-2`, and
+`gemini-embedding-2-preview` (also 3072 dimensions). Model
 availability varies by Gemini API key tier; run ListModels to verify
 which embedding models a given key can access.
 
@@ -513,10 +514,17 @@ llm:
 ### Knowledgebase (`knowledgebase`)
 
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
-or `ollama`. The Gemini provider supports `text-embedding-004`
-(default, 768 dimensions) and `embedding-001` (768 dimensions). Model
+or `ollama`. The Gemini provider supports `gemini-embedding-001` (the
+default, 3072 dimensions), `gemini-embedding-2`, and
+`gemini-embedding-2-preview` (also 3072 dimensions). Model
 availability varies by Gemini API key tier; run ListModels to verify
 which embedding models a given key can access.
+
+When Gemini provides the knowledgebase embeddings, the configured
+`embedding_model` must match the model that the KB Builder used to
+produce the knowledgebase. The KB Builder uses `gemini-embedding-001`;
+selecting a different model produces incompatible embeddings and breaks
+similarity search.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|

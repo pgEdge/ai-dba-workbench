@@ -51,6 +51,8 @@ func TestNewConfig(t *testing.T) {
 		{"correlation window", cfg.Correlation.WindowSeconds, 120},
 		{"llm embedding provider", cfg.LLM.EmbeddingProvider, "ollama"},
 		{"llm reasoning provider", cfg.LLM.ReasoningProvider, "ollama"},
+		{"gemini embedding model", cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-001"},
+		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-flash"},
 	}
 
 	for _, tt := range tests {
@@ -586,6 +588,35 @@ threshold:
 		if cfg.Threshold.EvaluationIntervalSeconds != 120 {
 			t.Errorf("evaluation_interval = %d, expected %d",
 				cfg.Threshold.EvaluationIntervalSeconds, 120)
+		}
+	})
+
+	t.Run("gemini embedding model round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configFile := filepath.Join(tmpDir, "gemini.yaml")
+		yamlContent := `
+llm:
+  embedding_provider: gemini
+  gemini:
+    embedding_model: gemini-embedding-2
+    reasoning_model: gemini-2.5-pro
+`
+		if err := os.WriteFile(configFile, []byte(yamlContent), 0644); err != nil {
+			t.Fatalf("failed to create config file: %v", err)
+		}
+
+		cfg := NewConfig()
+		if err := cfg.LoadFromFile(configFile); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if cfg.LLM.Gemini.EmbeddingModel != "gemini-embedding-2" {
+			t.Errorf("gemini embedding_model = %q, expected %q",
+				cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-2")
+		}
+		if cfg.LLM.Gemini.ReasoningModel != "gemini-2.5-pro" {
+			t.Errorf("gemini reasoning_model = %q, expected %q",
+				cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-pro")
 		}
 	})
 

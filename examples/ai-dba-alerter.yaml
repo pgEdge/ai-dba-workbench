@@ -399,6 +399,13 @@ llm:
     # Base URL for the Gemini API
     # base_url: https://generativelanguage.googleapis.com
 
+    # Model to use for embeddings
+    # Default: gemini-embedding-001
+    # This MUST match the embedding model used by the KB Builder
+    # that produced the knowledgebase; otherwise the generated
+    # embeddings are incompatible with the stored vectors.
+    embedding_model: gemini-embedding-001
+
     # Model to use for reasoning/classification
     # Model availability varies by Gemini API key tier; run
     # ListModels to verify which models a given key can access.

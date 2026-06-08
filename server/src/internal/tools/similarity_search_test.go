@@ -632,7 +632,7 @@ func TestGenerateQueryEmbeddingWithConfig_Gemini(t *testing.T) {
 		Embedding: config.EmbeddingConfig{
 			Enabled:       true,
 			Provider:      "gemini",
-			Model:         "text-embedding-004",
+			Model:         "gemini-embedding-001",
 			GeminiAPIKey:  "test-key",
 			GeminiBaseURL: srv.URL,
 		},

@@ -929,7 +929,7 @@ func TestMergeConfigGeminiEmbedding(t *testing.T) {
 		Embedding: EmbeddingConfig{
 			Enabled:          true,
 			Provider:         "gemini",
-			Model:            "text-embedding-004",
+			Model:            "gemini-embedding-001",
 			GeminiAPIKey:     "test-gemini-key",
 			GeminiAPIKeyFile: "/path/to/gemini-key",
 			GeminiBaseURL:    "https://gemini.example.com",
@@ -941,8 +941,8 @@ func TestMergeConfigGeminiEmbedding(t *testing.T) {
 	if dest.Embedding.Provider != "gemini" {
 		t.Errorf("expected provider 'gemini', got %q", dest.Embedding.Provider)
 	}
-	if dest.Embedding.Model != "text-embedding-004" {
-		t.Errorf("expected model 'text-embedding-004', got %q", dest.Embedding.Model)
+	if dest.Embedding.Model != "gemini-embedding-001" {
+		t.Errorf("expected model 'gemini-embedding-001', got %q", dest.Embedding.Model)
 	}
 	if dest.Embedding.GeminiAPIKey != "test-gemini-key" {
 		t.Errorf("expected GeminiAPIKey 'test-gemini-key', got %q",
@@ -968,7 +968,7 @@ func TestMergeConfigGeminiKnowledgebase(t *testing.T) {
 			Enabled:                   true,
 			DatabasePath:              "/tmp/kb.db",
 			EmbeddingProvider:         "gemini",
-			EmbeddingModel:            "text-embedding-004",
+			EmbeddingModel:            "gemini-embedding-001",
 			EmbeddingGeminiAPIKey:     "kb-gemini-key",
 			EmbeddingGeminiAPIKeyFile: "/path/to/kb-gemini-key",
 			EmbeddingGeminiBaseURL:    "https://gemini.example.com",
@@ -1099,14 +1099,14 @@ func TestLoadConfigGeminiFromYAML(t *testing.T) {
 embedding:
     enabled: true
     provider: gemini
-    model: text-embedding-004
+    model: gemini-embedding-001
     gemini_api_key_file: ` + keyPath + `
     gemini_base_url: https://gemini.example.com
 knowledgebase:
     enabled: true
     database_path: /tmp/kb.db
     embedding_provider: gemini
-    embedding_model: text-embedding-004
+    embedding_model: gemini-embedding-001
     embedding_gemini_api_key_file: ` + kbKeyPath + `
     embedding_gemini_base_url: https://gemini.example.com
 `

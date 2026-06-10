@@ -401,7 +401,9 @@ func pgvectorAvailable(ctx context.Context, pool *pgxpool.Pool) bool {
 
 // createAnomalyEmbeddingsTable creates anomaly_embeddings when pgvector
 // is available. The table is required by StoreAnomalyEmbedding and
-// FindSimilarAnomalies; the tests skip when it cannot be created.
+// FindSimilarAnomalies; the tests skip when it cannot be created. The
+// embedding column is halfvec(4000) to match the production schema;
+// StoreAnomalyEmbedding zero-pads short test vectors to that width.
 func createAnomalyEmbeddingsTable(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, `
 		DROP TABLE IF EXISTS anomaly_embeddings CASCADE;
@@ -409,7 +411,7 @@ func createAnomalyEmbeddingsTable(ctx context.Context, pool *pgxpool.Pool) error
 		CREATE TABLE anomaly_embeddings (
 			id BIGSERIAL PRIMARY KEY,
 			candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-			embedding vector(3),
+			embedding halfvec(4000),
 			model_name TEXT NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(candidate_id)

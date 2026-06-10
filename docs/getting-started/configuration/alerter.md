@@ -304,6 +304,13 @@ across metrics.
 The `llm` section configures LLM providers for tier 3
 anomaly detection and embedding generation.
 
+The configured embedding model must not produce vectors with more
+than 4000 dimensions. The alerter stores anomaly embeddings as
+`halfvec(4000)` and zero-pads each embedding to 4000 dimensions; 4000
+is pgvector's HNSW index limit for the `halfvec` type. The alerter
+rejects a model that exceeds 4000 dimensions with a clear error rather
+than truncating the vector.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `embedding_provider` | string | `ollama` | Embedding provider |

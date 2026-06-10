@@ -3035,6 +3035,42 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #6 widens the two embedding columns from the original
+	// vector(1536) declaration to halfvec(4000), so non-OpenAI providers
+	// (Gemini 3072, Voyage, Ollama) can store embeddings of any size up
+	// to 4000 dimensions. The application zero-pads every vector to 4000
+	// before storage and searching, which leaves cosine distance
+	// unchanged. See GitHub issue #294.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     6,
+		Description: "Widen embedding columns to halfvec(4000) for multi-provider support",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := upgradeEmbeddingColumnToHalfvec(ctx, tx,
+				"chat_memories", "embedding",
+				"idx_chat_memories_embedding",
+				"CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding "+
+					"ON chat_memories USING hnsw (embedding halfvec_cosine_ops)",
+			); err != nil {
+				return fmt.Errorf(
+					"failed to widen chat_memories.embedding: %w", err)
+			}
+
+			if err := upgradeEmbeddingColumnToHalfvec(ctx, tx,
+				"anomaly_embeddings", "embedding",
+				"idx_anomaly_embeddings_vector",
+				"CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector "+
+					"ON anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops)",
+			); err != nil {
+				return fmt.Errorf(
+					"failed to widen anomaly_embeddings.embedding: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations
@@ -3306,7 +3342,7 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 			CREATE TABLE IF NOT EXISTS anomaly_embeddings (
 				id BIGSERIAL PRIMARY KEY,
 				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-				embedding vector(1536),
+				embedding halfvec(4000),
 				model_name TEXT NOT NULL,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				UNIQUE(candidate_id)
@@ -3318,7 +3354,7 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
 				ON anomaly_embeddings(candidate_id);
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
-				ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
+				ON anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
 		`); err != nil {
 			return fmt.Errorf("pgvector schema setup: %w", err)
 		}
@@ -3346,18 +3382,132 @@ func runChatMemoryEmbeddingSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "chat_memories_embedding_setup", func() error {
 		_, err := tx.Exec(ctx, `
 			ALTER TABLE chat_memories
-				ADD COLUMN IF NOT EXISTS embedding vector(1536);
+				ADD COLUMN IF NOT EXISTS embedding halfvec(4000);
 
 			COMMENT ON COLUMN chat_memories.embedding IS
-				'Vector embedding (1536 dimensions) for similarity search';
+				'Vector embedding for similarity search, zero-padded to a fixed width';
 
 			CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
-				ON chat_memories USING hnsw (embedding vector_cosine_ops);
+				ON chat_memories USING hnsw (embedding halfvec_cosine_ops);
 		`)
 		if err != nil {
 			return fmt.Errorf(
 				"add chat_memories embedding column/index: %w", err)
 		}
+		return nil
+	})
+}
+
+// rowQuerier is the minimal QueryRow contract embeddingColumnTypeName
+// needs. Narrowing from pgx.Tx keeps the helper unit-testable with a
+// tiny fake; every production call site passes a real pgx.Tx.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// embeddingColumnTypeName returns the format_type() name of the named
+// column (for example "vector(1536)" or "halfvec(4000)"). It returns an
+// empty string when the table or column does not exist, which lets the
+// caller treat a missing column as "nothing to upgrade" rather than an
+// error. The lookup joins pg_attribute against pg_class/pg_namespace and
+// resolves the type modifier so the dimension is included.
+func embeddingColumnTypeName(
+	ctx context.Context,
+	q rowQuerier,
+	table, column string,
+) (string, error) {
+	var typeName string
+	err := q.QueryRow(ctx, `
+		SELECT format_type(a.atttypid, a.atttypmod)
+		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public'
+		  AND c.relname = $1
+		  AND a.attname = $2
+		  AND a.attnum > 0
+		  AND NOT a.attisdropped
+	`, table, column).Scan(&typeName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf(
+			"failed to read type of %s.%s: %w", table, column, err)
+	}
+	return typeName, nil
+}
+
+// upgradeEmbeddingColumnToHalfvec converts a vector(N) embedding column
+// to halfvec(4000) in place, zero-padding existing rows and rebuilding
+// the HNSW index, all inside a SAVEPOINT. The work is guarded the same
+// way the original migration #1 setup is: a database without pgvector,
+// or with a pgvector too old to support halfvec, degrades to a logged
+// no-op rather than aborting the surrounding migration transaction.
+//
+// The function is fully idempotent. It first reads the current column
+// type; it skips every table whose column is already halfvec (or whose
+// table/column does not exist), so re-running migration #6 is a no-op.
+//
+// The padding expression mirrors the cast the application performs, so
+// stored vectors and freshly inserted vectors share an identical layout:
+// short vectors are right-padded with zeros to 4000 dimensions and NULLs
+// are preserved as NULL.
+func upgradeEmbeddingColumnToHalfvec(
+	ctx context.Context,
+	tx pgx.Tx,
+	table, column, indexName, createIndexSQL string,
+) error {
+	return runSavepointed(ctx, tx, "upgrade_"+table+"_"+column, func() error {
+		typeName, err := embeddingColumnTypeName(ctx, tx, table, column)
+		if err != nil {
+			return err
+		}
+
+		// Nothing to do when the table/column is absent (fresh installs
+		// already create halfvec) or the column is already halfvec.
+		if typeName == "" {
+			return nil
+		}
+		if strings.HasPrefix(typeName, "halfvec") {
+			return nil
+		}
+		if !strings.HasPrefix(typeName, "vector") {
+			// An unexpected type: leave it untouched rather than risk a
+			// destructive cast. This should never happen in practice.
+			return fmt.Errorf(
+				"unexpected type %q for %s.%s; refusing to convert",
+				typeName, table, column)
+		}
+
+		// Drop the old vector_cosine_ops HNSW index before changing the
+		// column type; the operator class no longer matches afterwards.
+		if _, err := tx.Exec(ctx,
+			fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)); err != nil {
+			return fmt.Errorf("drop index %s: %w", indexName, err)
+		}
+
+		// Convert the column, zero-padding each non-NULL vector to 4000
+		// dimensions and preserving NULLs. The cast goes through the
+		// real[] representation so array_fill can append the padding.
+		alter := fmt.Sprintf(`
+			ALTER TABLE %s
+				ALTER COLUMN %s TYPE halfvec(4000)
+				USING CASE
+					WHEN %s IS NULL THEN NULL
+					ELSE (%s::real[] || array_fill(0::real,
+						ARRAY[4000 - vector_dims(%s)]))::halfvec(4000)
+				END
+		`, table, column, column, column, column)
+		if _, err := tx.Exec(ctx, alter); err != nil {
+			return fmt.Errorf("alter column %s.%s: %w", table, column, err)
+		}
+
+		// Recreate the HNSW index with the halfvec operator class.
+		if _, err := tx.Exec(ctx, createIndexSQL); err != nil {
+			return fmt.Errorf("recreate index %s: %w", indexName, err)
+		}
+
 		return nil
 	})
 }

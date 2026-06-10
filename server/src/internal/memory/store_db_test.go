@@ -19,9 +19,10 @@ import (
 )
 
 // memoryTestSchema mirrors the chat_memories table that store.go reads
-// from and writes to. The vector dimension is intentionally small (3) so
-// tests can supply tiny float slices and still exercise the cosine
-// distance ordering branch.
+// from and writes to. The embedding column is halfvec(4000) to match the
+// production schema; store.go zero-pads every short test vector to that
+// width before insertion, so the tests can still supply tiny float
+// slices and exercise the cosine distance ordering branch.
 const memoryTestSchema = `
 CREATE EXTENSION IF NOT EXISTS vector;
 DROP TABLE IF EXISTS chat_memories CASCADE;
@@ -32,7 +33,7 @@ CREATE TABLE chat_memories (
     category TEXT NOT NULL,
     content TEXT NOT NULL,
     pinned BOOLEAN NOT NULL DEFAULT FALSE,
-    embedding vector(3),
+    embedding halfvec(4000),
     model_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -178,13 +179,31 @@ func TestStore_Store(t *testing.T) {
 		}
 	})
 
-	t.Run("insert error surfaces wrapped", func(t *testing.T) {
-		// Force a DB-side failure by passing a wrong-length vector.
+	t.Run("oversized embedding is rejected", func(t *testing.T) {
+		// A short vector now pads cleanly to the halfvec width and
+		// inserts successfully, so the failure case is a vector that
+		// exceeds the maximum supported dimensions. Store must reject it
+		// via the PadTo guard before reaching the database.
 		truncateMemories(t, pool)
+		oversized := make([]float32, 4001)
 		_, err := store.Store(ctx, "alice", "user", "c", "hi",
-			false, []float32{1, 2, 3, 4, 5}, "m")
+			false, oversized, "m")
 		if err == nil {
-			t.Fatalf("expected wrapped insert error for bad vector dim")
+			t.Fatalf("expected error for oversized embedding")
+		}
+	})
+
+	t.Run("short embedding pads and inserts", func(t *testing.T) {
+		// A 5-element vector used to fail against vector(3); under
+		// halfvec(4000) with application padding it must now succeed.
+		truncateMemories(t, pool)
+		mem, err := store.Store(ctx, "alice", "user", "c", "hi",
+			false, []float32{1, 2, 3, 4, 5}, "m")
+		if err != nil {
+			t.Fatalf("expected short embedding to pad and insert: %v", err)
+		}
+		if mem.ID == 0 {
+			t.Errorf("expected non-zero id")
 		}
 	})
 }
@@ -692,6 +711,18 @@ func TestStore_Search(t *testing.T) {
 		}
 		if len(got) > 100 {
 			t.Errorf("expected <=100 rows, got %d", len(got))
+		}
+	})
+
+	t.Run("oversized query vector is rejected", func(t *testing.T) {
+		// The vector-search path pads the query vector identically to
+		// stored vectors; a query vector beyond the supported width must
+		// surface the PadTo error rather than reach the database.
+		seed(t)
+		oversized := make([]float32, 4001)
+		if _, err := store.Search(ctx, "alice", "", "", "", 0,
+			oversized); err == nil {
+			t.Fatalf("expected error for oversized query vector")
 		}
 	})
 }

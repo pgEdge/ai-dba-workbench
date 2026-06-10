@@ -52,8 +52,11 @@ engines:
   # engine (gosec, golangci-lint, etc.) still scans these files.
   opengrep:
     exclude_paths:
+      - 'alerter/src/internal/database/anomaly_queries.go'
       - 'alerter/src/internal/engine/anomalies_test.go'
       - 'alerter/src/internal/engine/baselines_test.go'
+      - 'collector/src/database/migration_v6_test.go'
+      - 'collector/src/database/schema.go'
       - 'server/src/internal/tools/get_metric_baselines.go'
 
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and

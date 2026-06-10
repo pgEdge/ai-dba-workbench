@@ -341,7 +341,30 @@ test.describe('Replication Cluster', () => {
                     .filter({ hasText: GROUP_NAME })
                     .first();
 
-                await dragHandle.dragTo(targetGroup);
+                // Use manual mouse simulation instead of dragTo()
+                // because WebKit does not support the HTML5 drag
+                // API that Playwright's dragTo() relies on.
+                const dragBox = await dragHandle.boundingBox();
+                const targetBox = await targetGroup.boundingBox();
+                if (dragBox && targetBox) {
+                    const startX = dragBox.x + dragBox.width / 2;
+                    const startY = dragBox.y + dragBox.height / 2;
+                    const endX = targetBox.x + targetBox.width / 2;
+                    const endY = targetBox.y + targetBox.height / 2;
+
+                    await page.mouse.move(startX, startY);
+                    await page.mouse.down();
+                    // Move in steps to trigger drag events
+                    const steps = 10;
+                    for (let i = 1; i <= steps; i++) {
+                        await page.mouse.move(
+                            startX + (endX - startX) * (i / steps),
+                            startY + (endY - startY) * (i / steps),
+                            { steps: 1 },
+                        );
+                    }
+                    await page.mouse.up();
+                }
 
                 // Wait for the move to register
                 await page.waitForTimeout(500);

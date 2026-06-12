@@ -10,7 +10,7 @@
 package main
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -96,7 +96,9 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.Datastore != nil && deps.Config != nil && deps.Config.Memory.IsEnabled() {
 			memoryStore = memory.NewStore(deps.Datastore.GetPool())
 		}
-		setupLLMHandlers(mux, deps.Config, authWrapper, deps.ToolProvider, memoryStore, deps.AuthStore)
+		if err := setupLLMHandlers(mux, deps.Config, deps.ToolProvider, memoryStore, deps.AuthStore); err != nil {
+			return err
+		}
 
 		// MCP tool REST bridge (exposes tools/list and tools/call over REST)
 		if deps.ToolProvider != nil {
@@ -248,46 +250,23 @@ func extractToken(r *http.Request) (string, bool, string) {
 }
 
 // createAuthWrapper creates a handler wrapper that enforces authentication
-// Supports both Authorization header (for API tokens) and session cookies (for browser sessions)
+// Supports both Authorization header (for API tokens) and session cookies (for browser sessions).
+// The actual token/session validation is delegated to auth.AuthenticateRequest,
+// the single shared implementation used by both this middleware and the
+// LLM proxy's Authorize hook.
 func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.HandlerFunc {
 	return func(handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			token, ok, errMsg := extractToken(r)
-			if !ok {
-				http.Error(w, errMsg, http.StatusUnauthorized)
+			ctx, err := auth.AuthenticateRequest(r, authStore)
+			if err != nil {
+				// Preserve the historical, capitalised 401 response
+				// bodies that existing clients may assert on.
+				msg := "Missing or invalid authentication credentials"
+				if errors.Is(err, auth.ErrInvalidToken) {
+					msg = "Invalid or expired token"
+				}
+				http.Error(w, msg, http.StatusUnauthorized)
 				return
-			}
-
-			// Token valid - add token hash to context for tracing and isolation
-			tokenHash := auth.GetTokenHashByRawToken(token)
-			ctx := context.WithValue(r.Context(), auth.TokenHashContextKey, tokenHash)
-
-			// Try API token first, then session token
-			// Populate RBAC context values (UserID, IsSuperuser) for permission checks
-			storedToken, err := authStore.ValidateToken(token)
-			if err == nil && storedToken != nil {
-				ctx = context.WithValue(ctx, auth.UserIDContextKey, storedToken.OwnerID)
-				// Look up user to determine superuser status and username
-				user, userErr := authStore.GetUserByID(storedToken.OwnerID)
-				if userErr == nil && user != nil {
-					ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, user.IsSuperuser)
-					ctx = context.WithValue(ctx, auth.UsernameContextKey, user.Username)
-				}
-			} else {
-				// Try session token
-				username, sessionErr := authStore.ValidateSessionToken(token)
-				if sessionErr != nil {
-					http.Error(w, "Invalid or expired token",
-						http.StatusUnauthorized)
-					return
-				}
-				ctx = context.WithValue(ctx, auth.UsernameContextKey, username)
-				// Get user ID and superuser status for RBAC
-				user, userErr := authStore.GetUser(username)
-				if userErr == nil && user != nil {
-					ctx = context.WithValue(ctx, auth.UserIDContextKey, user.ID)
-					ctx = context.WithValue(ctx, auth.IsSuperuserContextKey, user.IsSuperuser)
-				}
 			}
 
 			r = r.WithContext(ctx)
@@ -398,11 +377,14 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 	}
 }
 
-// setupLLMHandlers configures LLM proxy endpoints
-func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(http.HandlerFunc) http.HandlerFunc, toolProvider api.ContextAwareToolProvider, memoryStore *memory.Store, authStore *auth.AuthStore) {
+// setupLLMHandlers configures LLM proxy endpoints by mounting the
+// library LLM proxy handler under /api/v1/llm. Returns an error if the
+// proxy handler cannot be constructed.
+func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, toolProvider api.ContextAwareToolProvider, memoryStore *memory.Store, authStore *auth.AuthStore) error {
 	// Build a compact description lookup map from registered tools.
 	// The web client sends tools without CompactDescription populated,
-	// so we look them up server-side and apply them in HandleChat.
+	// so the proxy's TransformRequest hook looks them up server-side and
+	// applies them before dispatch.
 	compactDescs := make(map[string]string)
 	if toolProvider != nil {
 		for _, t := range toolProvider.List() {
@@ -432,18 +414,15 @@ func setupLLMHandlers(mux *http.ServeMux, cfg *config.Config, authWrapper func(h
 		LLMConfig:              &cfg.LLM,
 	}
 
-	// Provider/model listing don't require auth (needed for login page)
-	mux.HandleFunc("/api/v1/llm/providers",
-		func(w http.ResponseWriter, r *http.Request) {
-			llmproxy.HandleProviders(w, r, llmConfig)
-		})
-	mux.HandleFunc("/api/v1/llm/models",
-		func(w http.ResponseWriter, r *http.Request) {
-			llmproxy.HandleModels(w, r, llmConfig)
-		})
-	// Chat endpoint requires auth (makes actual LLM API calls)
-	mux.HandleFunc("/api/v1/llm/chat",
-		authWrapper(func(w http.ResponseWriter, r *http.Request) {
-			llmproxy.HandleChat(w, r, llmConfig)
-		}))
+	// Mount the library LLM proxy under the /api/v1/llm prefix. The proxy
+	// registers providers/models/health (public) and chat/chat/stream/
+	// embed/rerank (authed) under this prefix; its Authorize hook enforces
+	// the public/auth split and its TransformRequest hook injects the
+	// Workbench system prompt, pinned memory, and user context.
+	h, err := llmproxy.NewHandler(llmConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM proxy handler: %w", err)
+	}
+	mux.Handle("/api/v1/llm/", h)
+	return nil
 }

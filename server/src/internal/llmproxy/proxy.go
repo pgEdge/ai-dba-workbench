@@ -7,16 +7,27 @@
  *
  *-------------------------------------------------------------------------
  */
+
+// Package llmproxy adapts the pgEdge AI DBA Workbench's LLM configuration,
+// authentication, and prompt-injection policy onto the library's
+// llm/proxy gateway. It is a thin shim: the library owns the HTTP wire
+// contract (typed content blocks, system_prompt, usage) and the provider
+// transport, whilst this package supplies the Workbench-specific
+// behavior via the proxy's Authorize, TransformRequest, and telemetry
+// hooks.
 package llmproxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/pgedge/ai-workbench/server/internal/apiconst"
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all" // register all built-in providers
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/proxy"
+
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -24,7 +35,9 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
-// Config holds LLM configuration from the server config
+// Config holds LLM configuration from the server config along with the
+// stores and policy flags the shim needs to enforce Workbench behavior
+// through the library proxy's hooks.
 type Config struct {
 	Provider               string
 	Model                  string
@@ -44,389 +57,215 @@ type Config struct {
 	LLMConfig              *config.LLMConfig // LLMConfig for accessing custom headers (may be nil)
 }
 
-// chatLLMConfig projects the proxy Config into the data struct that
-// chat.NewClientFromLLMConfig consumes. The chat package does not
-// depend on llmproxy, so this projection lives here.
-func (c *Config) chatLLMConfig() chat.LLMConfig {
-	return chat.LLMConfig{
-		Provider:               c.Provider,
-		Model:                  c.Model,
-		AnthropicAPIKey:        c.AnthropicAPIKey,
-		AnthropicBaseURL:       c.AnthropicBaseURL,
-		OpenAIAPIKey:           c.OpenAIAPIKey,
-		OpenAIBaseURL:          c.OpenAIBaseURL,
-		GeminiAPIKey:           c.GeminiAPIKey,
-		GeminiBaseURL:          c.GeminiBaseURL,
-		OllamaURL:              c.OllamaURL,
-		MaxTokens:              c.MaxTokens,
-		Temperature:            c.Temperature,
-		UseCompactDescriptions: c.UseCompactDescriptions,
-	}
-}
+// maxChatBodySize caps the chat/embed/rerank request body at 5MB to
+// accommodate tool definitions and message history, consistent with the
+// DecodeJSONBody pattern used elsewhere in the API layer.
+const maxChatBodySize = 5 << 20 // 5 MB
 
-// Message represents a message in the chat conversation
-type Message struct {
-	Role         string         `json:"role"`
-	Content      any            `json:"content"`
-	CacheControl map[string]any `json:"cache_control,omitempty"`
-}
+// NewHandler builds the library LLM proxy from cfg and returns the
+// http.Handler that serves the /api/v1/llm routes. The provider map
+// includes only the providers cfg actually configures (mirroring the
+// historical provider-gating rules), so an unconfigured provider is
+// unreachable through the proxy. Authentication, prompt injection, and
+// tracing are wired through the proxy's hooks.
+func NewHandler(cfg *Config) (http.Handler, error) {
+	providers := cfg.buildProviders()
 
-// Tool represents an MCP tool definition
-type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema InputSchema `json:"inputSchema"`
-}
-
-// InputSchema defines the JSON schema for tool input
-type InputSchema struct {
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties"`
-	Required   []string       `json:"required,omitempty"`
-}
-
-// ProvidersResponse represents the response for GET /api/llm/providers
-type ProvidersResponse struct {
-	Providers    []ProviderInfo `json:"providers"`
-	DefaultModel string         `json:"defaultModel"`
-}
-
-// ProviderInfo represents information about an LLM provider
-type ProviderInfo struct {
-	Name      string `json:"name"`
-	Display   string `json:"display"`
-	IsDefault bool   `json:"isDefault"`
-}
-
-// ModelsResponse represents the response for GET /api/llm/models
-type ModelsResponse struct {
-	Models []ModelInfo `json:"models"`
-}
-
-// ModelInfo represents information about an LLM model
-type ModelInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-}
-
-// ChatRequest represents the request body for POST /api/llm/chat
-type ChatRequest struct {
-	Messages []Message `json:"messages"`
-	Tools    []Tool    `json:"tools"`
-	System   string    `json:"system,omitempty"`   // Optional system prompt override
-	Provider string    `json:"provider,omitempty"` // Override default provider
-	Model    string    `json:"model,omitempty"`    // Override default model
-	Debug    bool      `json:"debug,omitempty"`    // Enable debug mode for token usage
-}
-
-// ChatResponse represents the response body for POST /api/llm/chat
-type ChatResponse struct {
-	Content    []any            `json:"content"`
-	StopReason string           `json:"stop_reason"`
-	TokenUsage *chat.TokenUsage `json:"token_usage,omitempty"` // Optional token usage (when debug enabled)
-}
-
-// HandleProviders handles GET /api/v1/llm/providers
-func HandleProviders(w http.ResponseWriter, r *http.Request, cfg *Config) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	providers := []ProviderInfo{}
-
-	// Check which providers are configured
-	if cfg.AnthropicAPIKey != "" {
-		providers = append(providers, ProviderInfo{
-			Name:      "anthropic",
-			Display:   "Anthropic Claude",
-			IsDefault: cfg.Provider == "anthropic",
-		})
-	}
-
-	if cfg.OpenAIAPIKey != "" || cfg.OpenAIBaseURL != "" {
-		providers = append(providers, ProviderInfo{
-			Name:      "openai",
-			Display:   "OpenAI",
-			IsDefault: cfg.Provider == "openai",
-		})
-	}
-
-	if cfg.GeminiAPIKey != "" {
-		providers = append(providers, ProviderInfo{
-			Name:      "gemini",
-			Display:   "Google Gemini",
-			IsDefault: cfg.Provider == "gemini",
-		})
-	}
-
-	if cfg.OllamaURL != "" {
-		providers = append(providers, ProviderInfo{
-			Name:      "ollama",
-			Display:   "Ollama",
-			IsDefault: cfg.Provider == "ollama",
-		})
-	}
-
-	response := ProvidersResponse{
-		Providers:    providers,
-		DefaultModel: cfg.Model,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM providers response: %v\n", err)
-	}
-}
-
-// validProviders is an allowlist of supported LLM provider identifiers.
-// Validate user-supplied provider values against this map before use.
-var validProviders = map[string]bool{
-	"anthropic": true,
-	"openai":    true,
-	"gemini":    true,
-	"ollama":    true,
-}
-
-// HandleModels handles GET /api/v1/llm/models?provider=<provider>
-func HandleModels(w http.ResponseWriter, r *http.Request, cfg *Config) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	provider := r.URL.Query().Get("provider")
-	if provider == "" {
-		http.Error(w, "Provider parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	// Validate provider against allowlist before use
-	if !validProviders[provider] {
-		http.Error(w, "Unsupported provider", http.StatusBadRequest)
-		return
-	}
-
-	// Create LLM client for the provider (debug mode always false for models listing)
-	headers, err := getProviderHeaders(cfg.LLMConfig, provider)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", provider, err)
-		http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-		return
-	}
-
-	client, err := chat.NewClientFromLLMConfig(cfg.chatLLMConfig(), chat.LLMOptions{
-		Provider: provider,
-		Headers:  headers,
+	p := proxy.New(proxy.Config{
+		DefaultProvider:  cfg.Provider,
+		Providers:        providers,
+		PathPrefix:       "/api/v1/llm",
+		MaxBodyBytes:     maxChatBodySize,
+		Authorize:        cfg.authorize,
+		TransformRequest: cfg.transformRequest,
+		OnRequest:        cfg.onRequest,
+		OnResponse:       cfg.onResponse,
+		OnError:          cfg.onError,
 	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// List models
-	modelNames, err := client.ListModels(r.Context())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to list models: %v\n", err)
-		http.Error(w, "Failed to list models", http.StatusInternalServerError)
-		return
-	}
-
-	// Convert to model info
-	models := make([]ModelInfo, len(modelNames))
-	for i, name := range modelNames {
-		models[i] = ModelInfo{
-			Name: name,
-		}
-	}
-
-	response := ModelsResponse{
-		Models: models,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM models response: %v\n", err)
-	}
+	return p.Handler(), nil
 }
 
-// HandleChat handles POST /api/v1/llm/chat
-func HandleChat(w http.ResponseWriter, r *http.Request, cfg *Config) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+// buildProviders assembles the per-provider Options map. A provider is
+// included only when configured: anthropic and gemini require an API
+// key; openai requires a key OR a base URL (to support local
+// OpenAI-compatible endpoints); ollama requires a URL. This mirrors the
+// gating the old HandleProviders endpoint applied.
+func (c *Config) buildProviders() map[string]pgllm.Options {
+	providers := make(map[string]pgllm.Options)
+
+	if c.AnthropicAPIKey != "" {
+		providers["anthropic"] = c.providerOptions("anthropic", c.AnthropicAPIKey, c.AnthropicBaseURL)
+	}
+	if c.OpenAIAPIKey != "" || c.OpenAIBaseURL != "" {
+		providers["openai"] = c.providerOptions("openai", c.OpenAIAPIKey, c.OpenAIBaseURL)
+	}
+	if c.GeminiAPIKey != "" {
+		providers["gemini"] = c.providerOptions("gemini", c.GeminiAPIKey, c.GeminiBaseURL)
+	}
+	if c.OllamaURL != "" {
+		providers["ollama"] = c.providerOptions("ollama", "", c.OllamaURL)
 	}
 
-	startTime := time.Now()
+	return providers
+}
 
-	// Get tracing context from request
+// providerOptions constructs the library Options for a single provider,
+// carrying the shared model/token/temperature/timeout defaults plus the
+// provider's custom headers. Header-loading failures are logged and
+// treated as no headers, matching the old getProviderHeaders behavior.
+func (c *Config) providerOptions(name, apiKey, baseURL string) pgllm.Options {
+	headers, err := getProviderHeaders(c.LLMConfig, name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", name, err)
+		headers = nil
+	}
+
+	opts := pgllm.Options{
+		APIKey:        apiKey,
+		Model:         c.Model,
+		BaseURL:       baseURL,
+		CustomHeaders: headers,
+	}
+	if c.MaxTokens > 0 {
+		opts.MaxTokens = pgllm.Int(c.MaxTokens)
+	}
+	if c.Temperature > 0 {
+		opts.Temperature = pgllm.Float(c.Temperature)
+	}
+	if c.LLMConfig != nil && c.LLMConfig.TimeoutSeconds > 0 {
+		opts.RequestTimeout = time.Duration(c.LLMConfig.TimeoutSeconds) * time.Second
+	}
+	return opts
+}
+
+// authorize is the proxy's Authorize hook. The public discovery
+// endpoints (providers/models/health) require no credentials, matching
+// the old behavior that let the login page list providers. Every other
+// endpoint (chat, chat/stream, embed, rerank) requires a valid token; on
+// success the enriched auth context is attached to the request so the
+// TransformRequest hook can read the authenticated identity.
+//
+// SECURITY: the suffix checks match only the exact public listing
+// endpoints. The library registers them at "/api/v1/llm/providers",
+// "/api/v1/llm/models", and "/api/v1/llm/health"; an authed path such
+// as "/api/v1/llm/chat" does not end in any of these suffixes, so there
+// is no auth-bypass surface.
+func (c *Config) authorize(r *http.Request) error {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/providers"),
+		strings.HasSuffix(r.URL.Path, "/models"),
+		strings.HasSuffix(r.URL.Path, "/health"):
+		return nil // public, as today
+	}
+
+	ctx, err := auth.AuthenticateRequest(r, c.AuthStore)
+	if err != nil {
+		return &proxy.AuthError{Err: err, Status: http.StatusUnauthorized}
+	}
+	// Sanctioned context-attach: the proxy invokes Authorize, then
+	// TransformRequest/OnRequest, against this same *http.Request, so
+	// the attached identity propagates downstream.
+	*r = *r.WithContext(ctx)
+	return nil
+}
+
+// transformRequest is the proxy's TransformRequest hook. It reproduces
+// the old HandleChat injection exactly:
+//
+//  1. compact tool-description selection (Workbench policy);
+//  2. default to the Ellie system prompt when the request omits one;
+//  3. wrap with pinned-memory context (when a memory store is present);
+//  4. wrap with user/RBAC context (when an auth store is present).
+//
+// The Ellie persona is ALWAYS applied when the request carries no system
+// prompt; this was previously done inside the chat clients and is now
+// done here so the persona survives the migration.
+func (c *Config) transformRequest(r *http.Request, req *pgllm.ChatRequest) error {
 	ctx := r.Context()
-	tokenHash := auth.GetTokenHashFromContext(ctx)
-	sessionID := tokenHash // Use token hash as session ID
-	requestID := tracing.GenerateRequestID()
 
-	// Limit request body size to 5MB to accommodate tool definitions and
-	// message history, consistent with the DecodeJSONBody pattern used in
-	// the API layer.
-	const maxChatBodySize = 5 << 20 // 5 MB
-	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
-
-	// Ensure request body is closed
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: Failed to close request body: %v\n", err)
-		}
-	}()
-
-	// Parse request body
-	var req ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Log user prompts if tracing is enabled
-	if tracing.IsEnabled() {
-		// Extract user messages for logging
-		for _, msg := range req.Messages {
-			if msg.Role == "user" {
-				tracing.LogUserPrompt(sessionID, tokenHash, requestID, msg.Content)
-			}
-		}
-	}
-
-	// Use provided provider/model or defaults
-	provider := req.Provider
-	if provider == "" {
-		provider = cfg.Provider
-	}
-
-	// Validate provider against allowlist before use
-	if !validProviders[provider] {
-		http.Error(w, "Unsupported provider", http.StatusBadRequest)
-		return
-	}
-
-	model := req.Model
-	if model == "" {
-		model = cfg.Model
-	}
-
-	// Validate model name: allow only safe characters, max 256 chars
-	if !isValidModelName(model) {
-		http.Error(w, "Invalid model name: must be 1-256 characters and contain only alphanumeric characters, hyphens, dots, colons, forward slashes, and underscores", http.StatusBadRequest)
-		return
-	}
-
-	// Create LLM client with debug mode from request
-	headers, err := getProviderHeaders(cfg.LLMConfig, provider)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", provider, err)
-		http.Error(w, "Failed to load provider headers", http.StatusInternalServerError)
-		return
-	}
-
-	client, err := chat.NewClientFromLLMConfig(cfg.chatLLMConfig(), chat.LLMOptions{
-		Provider: provider,
-		Model:    model,
-		Debug:    req.Debug,
-		Headers:  headers,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Convert proxy messages to chat messages
-	chatMessages := make([]chat.Message, len(req.Messages))
-	for i, msg := range req.Messages {
-		chatMessages[i] = chat.Message{
-			Role:         msg.Role,
-			Content:      msg.Content,
-			CacheControl: msg.CacheControl,
-		}
-	}
-
-	// Apply compact descriptions from the server-side registry.
-	// The tools arrive from the web client without CompactDescription
-	// populated, so we swap the full description for the compact one
-	// before sending tools to the LLM.
-	if cfg.UseCompactDescriptions && len(cfg.CompactDescriptions) > 0 {
+	// Apply compact descriptions from the server-side registry. The web
+	// client sends tools without CompactDescription populated, so we
+	// look them up and set them, then ask the provider to use compact
+	// descriptions.
+	if c.UseCompactDescriptions && len(c.CompactDescriptions) > 0 {
 		for i := range req.Tools {
-			if compact, ok := cfg.CompactDescriptions[req.Tools[i].Name]; ok {
-				req.Tools[i].Description = compact
+			if cd, ok := c.CompactDescriptions[req.Tools[i].Name]; ok {
+				req.Tools[i].CompactDescription = cd
 			}
 		}
+		req.ToolDescriptions = pgllm.ToolDescriptionCompact
+	}
+
+	// Default to the Ellie system prompt when the request omits one.
+	base := req.SystemPrompt
+	if base == "" {
+		base = chat.SystemPrompt
 	}
 
 	// Inject pinned memories into the system prompt when available.
-	// This ensures the LLM always has access to important stored context.
-	effectiveSystemPrompt := req.System
-	if cfg.MemoryStore != nil {
-		username := auth.GetUsernameFromContext(ctx)
-		if username != "" {
-			pinnedMemories, memErr := cfg.MemoryStore.GetPinned(ctx, username)
+	if c.MemoryStore != nil {
+		if username := auth.GetUsernameFromContext(ctx); username != "" {
+			pinned, memErr := c.MemoryStore.GetPinned(ctx, username)
 			if memErr != nil {
 				fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch pinned memories: %v\n", memErr)
-			} else if len(pinnedMemories) > 0 {
-				base := effectiveSystemPrompt
-				if base == "" {
-					base = chat.SystemPrompt
-				}
-				effectiveSystemPrompt = chat.BuildSystemPrompt(base, pinnedMemories)
+			} else if len(pinned) > 0 {
+				base = chat.BuildSystemPrompt(base, pinned)
 			}
 		}
 	}
 
-	// Inject user context into the system prompt when available.
-	// This gives the LLM awareness of who it is talking to.
-	if cfg.AuthStore != nil {
+	// Inject user/RBAC context into the system prompt when available.
+	if c.AuthStore != nil {
 		userID := auth.GetUserIDFromContext(ctx)
 		username := auth.GetUsernameFromContext(ctx)
 		if userID > 0 && username != "" {
-			userInfo := buildUserInfo(cfg.AuthStore, userID, username)
-			if userInfo != nil {
-				base := effectiveSystemPrompt
-				if base == "" {
-					base = chat.SystemPrompt
-				}
-				effectiveSystemPrompt = chat.BuildUserContext(base, userInfo)
+			if ui := buildUserInfo(c.AuthStore, userID, username); ui != nil {
+				base = chat.BuildUserContext(base, ui)
 			}
 		}
 	}
 
-	// Call LLM - pass tools as []any to avoid import cycle
-	// The chat client will access tool fields which are structurally identical to mcp.Tool
-	llmResponse, err := client.Chat(ctx, chatMessages, req.Tools, effectiveSystemPrompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: LLM chat request failed: %v\n", err)
-		if tracing.IsEnabled() {
-			tracing.LogError(sessionID, tokenHash, requestID, "llm_chat", err)
-		}
-		http.Error(w, "LLM request failed", http.StatusInternalServerError)
+	req.SystemPrompt = base
+	return nil
+}
+
+// onRequest logs user prompts when tracing is enabled, reproducing the
+// per-user-message LogUserPrompt calls the old HandleChat made.
+func (c *Config) onRequest(r *http.Request, info proxy.RequestInfo) {
+	if !tracing.IsEnabled() || info.Request == nil {
 		return
 	}
-
-	// Log LLM response if tracing is enabled
-	if tracing.IsEnabled() {
-		duration := time.Since(startTime)
-		tracing.LogLLMResponse(sessionID, tokenHash, requestID, llmResponse.Content, duration)
+	tokenHash := auth.GetTokenHashFromContext(r.Context())
+	for _, msg := range info.Request.Messages {
+		if msg.Role != pgllm.RoleUser {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.Type == pgllm.BlockText {
+				tracing.LogUserPrompt(tokenHash, tokenHash, info.RequestID, block.Text)
+			}
+		}
 	}
+}
 
-	// Return response
-	response := ChatResponse{
-		Content:    llmResponse.Content,
-		StopReason: llmResponse.StopReason,
-		TokenUsage: llmResponse.TokenUsage,
+// onResponse logs the assembled LLM response when tracing is enabled,
+// reproducing the old HandleChat LogLLMResponse call.
+func (c *Config) onResponse(r *http.Request, info proxy.ResponseInfo) {
+	if !tracing.IsEnabled() || info.Response == nil {
+		return
 	}
+	tokenHash := auth.GetTokenHashFromContext(r.Context())
+	tracing.LogLLMResponse(tokenHash, tokenHash, info.RequestID, info.Response.Content, 0)
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode LLM chat response: %v\n", err)
+// onError logs request errors when tracing is enabled, reproducing the
+// old HandleChat LogError call.
+func (c *Config) onError(r *http.Request, info proxy.ErrorInfo) {
+	if !tracing.IsEnabled() || info.Err == nil {
+		return
 	}
+	tokenHash := auth.GetTokenHashFromContext(r.Context())
+	tracing.LogError(tokenHash, tokenHash, info.RequestID, "llm_chat", info.Err)
 }
 
 // buildUserInfo fetches user data from the auth store and returns a
@@ -446,7 +285,7 @@ func buildUserInfo(authStore *auth.AuthStore, userID int64, username string) *ch
 		IsSuperuser: user.IsSuperuser,
 	}
 
-	// Fetch group names
+	// Fetch group names.
 	groups, err := authStore.GetGroupsForUser(userID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch groups for user %q: %v\n", username, err)
@@ -456,7 +295,7 @@ func buildUserInfo(authStore *auth.AuthStore, userID int64, username string) *ch
 		}
 	}
 
-	// Fetch admin permissions
+	// Fetch admin permissions.
 	perms, err := authStore.GetUserAdminPermissions(userID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch admin permissions for user %q: %v\n", username, err)
@@ -471,26 +310,9 @@ func buildUserInfo(authStore *auth.AuthStore, userID int64, username string) *ch
 	return info
 }
 
-// isValidModelName validates that a model name contains only safe
-// characters and is within the allowed length. Allowed characters are
-// alphanumeric, hyphens, dots, colons, forward slashes, and underscores.
-func isValidModelName(model string) bool {
-	if model == "" || len(model) > 256 {
-		return false
-	}
-	for _, c := range model {
-		if (c < 'a' || c > 'z') &&
-			(c < 'A' || c > 'Z') &&
-			(c < '0' || c > '9') &&
-			c != '-' && c != '.' && c != ':' && c != '/' && c != '_' {
-			return false
-		}
-	}
-	return true
-}
-
-// getProviderHeaders retrieves custom headers for the given provider from the
-// LLMConfig. Returns nil if the config is nil or if header loading fails.
+// getProviderHeaders retrieves custom headers for the given provider from
+// the LLMConfig. Returns nil if the config is nil or if header loading
+// fails.
 func getProviderHeaders(llmConfig *config.LLMConfig, provider string) (map[string]string, error) {
 	if llmConfig == nil {
 		return nil, nil

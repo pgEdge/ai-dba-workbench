@@ -11,779 +11,742 @@ package llmproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/proxy"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/chat"
+	"github.com/pgedge/ai-workbench/server/internal/config"
+	"github.com/pgedge/ai-workbench/server/internal/memory"
+	"github.com/pgedge/ai-workbench/server/internal/tracing"
 )
 
-func TestHandleProviders_Success(t *testing.T) {
-	config := &Config{
-		Provider:        "anthropic",
-		Model:           "claude-sonnet-4-20250514",
-		AnthropicAPIKey: "test-key",
-		OpenAIAPIKey:    "test-openai-key",
-	}
+// -----------------------------------------------------------------------
+// Fake provider (registered globally, overriding "anthropic") for the
+// end-to-end NewHandler round-trip test. It captures the dispatched
+// ChatRequest so tests can assert the injected system prompt reached the
+// provider layer.
+// -----------------------------------------------------------------------
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
-	w := httptest.NewRecorder()
+type fakeProvider struct {
+	mu      sync.Mutex
+	chatReq *pgllm.ChatRequest
+}
 
-	HandleProviders(w, req, config)
+var (
+	fakeMu       sync.Mutex
+	fakeInstance *fakeProvider
+)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", w.Code)
-	}
+func setFake(f *fakeProvider) {
+	fakeMu.Lock()
+	defer fakeMu.Unlock()
+	fakeInstance = f
+}
 
-	var response ProvidersResponse
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(response.Providers) != 2 {
-		t.Errorf("expected 2 providers, got %d", len(response.Providers))
-	}
-
-	if response.DefaultModel != "claude-sonnet-4-20250514" {
-		t.Errorf("expected default model 'claude-sonnet-4-20250514', got %q", response.DefaultModel)
-	}
-
-	// Check that anthropic is marked as default
-	anthropicFound := false
-	for _, p := range response.Providers {
-		if p.Name == "anthropic" {
-			anthropicFound = true
-			if !p.IsDefault {
-				t.Error("expected anthropic to be marked as default")
-			}
+func init() {
+	// Override the "anthropic" provider with a test double so the proxy's
+	// per-request constructor returns our capturing fake.
+	pgllm.RegisterProvider("anthropic", func(_ pgllm.Options) (pgllm.Client, error) {
+		fakeMu.Lock()
+		defer fakeMu.Unlock()
+		if fakeInstance == nil {
+			return nil, errors.New("fake provider not initialized; call setFake() first")
 		}
-	}
-	if !anthropicFound {
-		t.Error("expected anthropic provider in list")
-	}
+		return fakeInstance, nil
+	})
 }
 
-func TestHandleProviders_MethodNotAllowed(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/providers", nil)
-	w := httptest.NewRecorder()
-
-	HandleProviders(w, req, config)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405, got %d", w.Code)
-	}
+func (f *fakeProvider) Chat(_ context.Context, req pgllm.ChatRequest) (*pgllm.ChatResponse, error) {
+	f.mu.Lock()
+	captured := req
+	f.chatReq = &captured
+	f.mu.Unlock()
+	return &pgllm.ChatResponse{
+		Content:    []pgllm.ContentBlock{{Type: pgllm.BlockText, Text: "hi"}},
+		StopReason: pgllm.StopReasonEndTurn,
+	}, nil
 }
 
-func TestHandleProviders_NoProviders(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
-	w := httptest.NewRecorder()
-
-	HandleProviders(w, req, config)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", w.Code)
-	}
-
-	var response ProvidersResponse
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(response.Providers) != 0 {
-		t.Errorf("expected 0 providers, got %d", len(response.Providers))
-	}
+func (f *fakeProvider) capturedRequest() *pgllm.ChatRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.chatReq
 }
 
-func TestHandleProviders_AllProviders(t *testing.T) {
-	config := &Config{
-		Provider:        "openai",
-		Model:           "gpt-4o",
-		AnthropicAPIKey: "anthropic-key",
-		OpenAIAPIKey:    "openai-key",
-		GeminiAPIKey:    "gemini-key",
-		OllamaURL:       "http://localhost:11434",
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
-	w := httptest.NewRecorder()
-
-	HandleProviders(w, req, config)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", w.Code)
-	}
-
-	var response ProvidersResponse
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(response.Providers) != 4 {
-		t.Errorf("expected 4 providers, got %d", len(response.Providers))
-	}
-
-	// Check that openai is marked as default
-	for _, p := range response.Providers {
-		if p.Name == "openai" && !p.IsDefault {
-			t.Error("expected openai to be marked as default")
-		}
-		if p.Name != "openai" && p.IsDefault {
-			t.Errorf("expected %s to not be marked as default", p.Name)
-		}
-	}
-
-	// Check that gemini is in the list
-	geminiFound := false
-	for _, p := range response.Providers {
-		if p.Name == "gemini" {
-			geminiFound = true
-			if p.Display != "Google Gemini" {
-				t.Errorf("expected gemini display 'Google Gemini', got %q", p.Display)
-			}
-		}
-	}
-	if !geminiFound {
-		t.Error("expected gemini provider in list")
-	}
+func (f *fakeProvider) ChatStream(context.Context, pgllm.ChatRequest) (*pgllm.Stream, error) {
+	return nil, pgllm.ErrNotSupported
 }
-
-func TestHandleProviders_OpenAIBaseURLOnly(t *testing.T) {
-	config := &Config{
-		Provider:      "openai",
-		Model:         "local-model",
-		OpenAIBaseURL: "http://localhost:8080/v1",
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
-	w := httptest.NewRecorder()
-
-	HandleProviders(w, req, config)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", w.Code)
-	}
-
-	var response ProvidersResponse
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(response.Providers) != 1 {
-		t.Fatalf("expected 1 provider, got %d", len(response.Providers))
-	}
-
-	if response.Providers[0].Name != "openai" {
-		t.Errorf("expected provider 'openai', got %q", response.Providers[0].Name)
-	}
-
-	if !response.Providers[0].IsDefault {
-		t.Error("expected openai to be marked as default")
-	}
+func (f *fakeProvider) Embed(context.Context, string) ([]float64, error) {
+	return nil, pgllm.ErrNotSupported
 }
-
-func TestHandleModels_MethodNotAllowed(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/models", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405, got %d", w.Code)
-	}
+func (f *fakeProvider) EmbedBatch(context.Context, []string) ([][]float64, error) {
+	return nil, pgllm.ErrNotSupported
 }
-
-func TestHandleModels_MissingProvider(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+func (f *fakeProvider) Rerank(context.Context, pgllm.RerankRequest) (*pgllm.RerankResponse, error) {
+	return nil, pgllm.ErrNotSupported
 }
-
-func TestHandleModels_UnsupportedProvider(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=unsupported", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+func (f *fakeProvider) EmbedMultimodal(context.Context, pgllm.MultimodalEmbedRequest) ([][]float64, error) {
+	return nil, pgllm.ErrNotSupported
 }
-
-func TestHandleModels_AnthropicNotConfigured(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=anthropic", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+func (f *fakeProvider) ListModels(context.Context, ...pgllm.ListModelsOption) ([]string, error) {
+	return []string{"claude-test"}, nil
 }
-
-func TestHandleModels_OpenAINotConfigured(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=openai", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+func (f *fakeProvider) ListModelsWithMetadata(context.Context, ...pgllm.ListModelsOption) ([]pgllm.ModelInfo, error) {
+	return []pgllm.ModelInfo{{ID: "claude-test"}}, nil
 }
-
-func TestHandleModels_OllamaNotConfigured(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=ollama", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleModels_GeminiNotConfigured(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=gemini", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleModels_OpenAIBaseURLOnly(t *testing.T) {
-	// Use httptest.NewServer to mock the OpenAI-compatible models
-	// endpoint. Without this the handler issues a real outbound HTTP
-	// request and blocks waiting for the OS-level TCP connect timeout
-	// (~120s on macOS), which dominates `make test-all` wall clock.
-	// The purpose of this test is only to confirm that the "OpenAI
-	// API key not configured" gate is passed when OpenAIBaseURL is
-	// set; the request must reach the network layer, but we do not
-	// care about the network response itself.
-	server := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			// Return an empty data array so ListModels parses
-			// successfully and the handler returns 200. The body shape
-			// matches the OpenAI /v1/models response contract.
-			w.Header().Set("Content-Type", "application/json")
-			if _, err := w.Write([]byte(`{"data": []}`)); err != nil {
-				t.Errorf("mock server failed to write body: %v", err)
-			}
-		}))
-	defer server.Close()
-
-	config := &Config{
-		OpenAIBaseURL: server.URL,
-		Model:         "local-model",
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/models?provider=openai", nil)
-	w := httptest.NewRecorder()
-
-	HandleModels(w, req, config)
-
-	// Must not return the 400 "not configured" gate; reaching the
-	// mock server means the configuration check passed.
-	if w.Code == http.StatusBadRequest {
-		body := w.Body.String()
-		if body == "OpenAI API key not configured\n" {
-			t.Error("should not get 'not configured' error when base URL is set")
-		}
-	}
-}
-
-func TestHandleChat_MethodNotAllowed(t *testing.T) {
-	config := &Config{}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/chat", nil)
-	w := httptest.NewRecorder()
-
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_InvalidBody(t *testing.T) {
-	config := &Config{
-		Provider: "anthropic",
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader([]byte("invalid json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_UnsupportedProvider(t *testing.T) {
-	config := &Config{
-		Provider: "unsupported",
-	}
-
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_AnthropicNotConfigured(t *testing.T) {
-	config := &Config{
-		Provider: "anthropic",
-		// No API key
-	}
-
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_OpenAINotConfigured(t *testing.T) {
-	config := &Config{
-		Provider: "openai",
-		// No API key
-	}
-
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_OpenAIBaseURLOnly(t *testing.T) {
-	config := &Config{
-		Provider:      "openai",
-		OpenAIBaseURL: "http://localhost:8080/v1",
-	}
-
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	// Should not get a 400 "not configured" error
-	if w.Code == http.StatusBadRequest {
-		respBody := w.Body.String()
-		if respBody == "OpenAI API key not configured\n" {
-			t.Error("should not get 'not configured' error when base URL is set")
-		}
-	}
-}
-
-func TestHandleChat_GeminiNotConfigured(t *testing.T) {
-	config := &Config{
-		Provider: "gemini",
-		// No API key
-	}
-
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_OllamaNotConfigured(t *testing.T) {
-	config := &Config{
-		Provider: "ollama",
-		// No URL
-	}
-
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestHandleChat_OverrideProvider(t *testing.T) {
-	config := &Config{
-		Provider:     "anthropic",
-		OpenAIAPIKey: "test-key",
-	}
-
-	// Override to openai
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-		Provider: "openai",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	// Should fail because we don't have a real API key, but it should get
-	// past the "not configured" check since OpenAI key is set
-	// The error will be from the actual API call
-	if w.Code == http.StatusBadRequest {
-		// Check that it's not because openai is "not configured"
-		body := w.Body.String()
-		if body == "OpenAI API key not configured\n" {
-			t.Error("should not get 'not configured' error when key is set")
-		}
-	}
-}
-
-func TestHandleChat_OverrideProviderWithBaseURL(t *testing.T) {
-	config := &Config{
-		Provider:      "anthropic",
-		OpenAIBaseURL: "http://localhost:8080/v1",
-	}
-
-	// Override to openai using base URL only (no API key)
-	body := ChatRequest{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-		Provider: "openai",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
-		bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	HandleChat(w, req, config)
-
-	// Should not get a 400 "not configured" error
-	if w.Code == http.StatusBadRequest {
-		respBody := w.Body.String()
-		if respBody == "OpenAI API key not configured\n" {
-			t.Error("should not get 'not configured' error when base URL is set")
-		}
-	}
-}
-
-// Test struct serialization
-func TestConfigStruct(t *testing.T) {
-	config := Config{
-		Provider:        "anthropic",
-		Model:           "claude-sonnet-4-20250514",
-		AnthropicAPIKey: "test-key",
-		MaxTokens:       4096,
-		Temperature:     0.7,
-	}
-
-	if config.Provider != "anthropic" {
-		t.Errorf("expected provider 'anthropic', got %q", config.Provider)
-	}
-	if config.MaxTokens != 4096 {
-		t.Errorf("expected max tokens 4096, got %d", config.MaxTokens)
-	}
-	if config.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("expected model 'claude-sonnet-4-20250514', got %q", config.Model)
-	}
-	if config.AnthropicAPIKey != "test-key" {
-		t.Errorf("expected AnthropicAPIKey 'test-key', got %q", config.AnthropicAPIKey)
-	}
-	if config.Temperature != 0.7 {
-		t.Errorf("expected temperature 0.7, got %f", config.Temperature)
-	}
-}
-
-func TestMessageStruct(t *testing.T) {
-	msg := Message{
-		Role:    "user",
-		Content: "Hello, world!",
-	}
-
-	data, err := json.Marshal(msg)
+func (f *fakeProvider) Provider() string           { return "anthropic" }
+func (f *fakeProvider) Model() string              { return "claude-test" }
+func (f *fakeProvider) Usage() pgllm.TokenUsage    { return pgllm.TokenUsage{} }
+func (f *fakeProvider) ResetUsage()                {}
+func (f *fakeProvider) Ping(context.Context) error { return nil }
+
+// -----------------------------------------------------------------------
+// Auth store helper
+// -----------------------------------------------------------------------
+
+func newTestAuthStore(t *testing.T) *auth.AuthStore {
+	t.Helper()
+	tmpDir, err := os.MkdirTemp("", "llmproxy-authn-*")
 	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
 	}
-
-	var decoded Message
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if decoded.Role != "user" {
-		t.Errorf("expected role 'user', got %q", decoded.Role)
-	}
-	if decoded.Content != "Hello, world!" {
-		t.Errorf("expected content 'Hello, world!', got %v", decoded.Content)
-	}
-}
-
-func TestToolStruct(t *testing.T) {
-	tool := Tool{
-		Name:        "query_database",
-		Description: "Execute a SQL query",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"query": map[string]any{
-					"type":        "string",
-					"description": "The SQL query to execute",
-				},
-			},
-			Required: []string{"query"},
-		},
-	}
-
-	data, err := json.Marshal(tool)
+	store, err := auth.NewAuthStore(tmpDir, 0, 0)
 	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to create auth store: %v", err)
 	}
-
-	var decoded Tool
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if decoded.Name != "query_database" {
-		t.Errorf("expected name 'query_database', got %q", decoded.Name)
-	}
-	if len(decoded.InputSchema.Required) != 1 {
-		t.Errorf("expected 1 required field, got %d", len(decoded.InputSchema.Required))
-	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+	t.Cleanup(func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	})
+	return store
 }
 
-func TestProviderInfoStruct(t *testing.T) {
-	info := ProviderInfo{
-		Name:      "anthropic",
-		Display:   "Anthropic Claude",
-		IsDefault: true,
+// sessionTokenFor creates a user and returns a valid session token.
+func sessionTokenFor(t *testing.T, store *auth.AuthStore, username string) string {
+	t.Helper()
+	if err := store.CreateUser(username, "Testpass1234", "test note", "Test User", ""); err != nil {
+		t.Fatalf("failed to create user %q: %v", username, err)
 	}
-
-	data, err := json.Marshal(info)
+	token, _, err := store.AuthenticateUser(username, "Testpass1234")
 	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
+		t.Fatalf("failed to authenticate %q: %v", username, err)
 	}
-
-	var decoded ProviderInfo
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if decoded.Name != "anthropic" {
-		t.Errorf("expected name 'anthropic', got %q", decoded.Name)
-	}
-	if !decoded.IsDefault {
-		t.Error("expected isDefault to be true")
-	}
+	return token
 }
 
-func TestChatRequestStruct(t *testing.T) {
-	req := ChatRequest{
-		Messages: []Message{
-			{Role: "user", Content: "Hello"},
-		},
-		Tools:    []Tool{},
-		Provider: "anthropic",
-		Model:    "claude-sonnet-4-20250514",
-		Debug:    true,
-	}
+// -----------------------------------------------------------------------
+// buildProviders gating
+// -----------------------------------------------------------------------
 
-	data, err := json.Marshal(req)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	var decoded ChatRequest
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if len(decoded.Messages) != 1 {
-		t.Errorf("expected 1 message, got %d", len(decoded.Messages))
-	}
-	if !decoded.Debug {
-		t.Error("expected debug to be true")
-	}
-}
-
-func TestChatResponseStruct(t *testing.T) {
-	resp := ChatResponse{
-		Content: []any{
-			map[string]any{
-				"type": "text",
-				"text": "Hello!",
-			},
-		},
-		StopReason: "end_turn",
-	}
-
-	data, err := json.Marshal(resp)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	var decoded ChatResponse
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if decoded.StopReason != "end_turn" {
-		t.Errorf("expected stop_reason 'end_turn', got %q", decoded.StopReason)
-	}
-	if len(decoded.Content) != 1 {
-		t.Errorf("expected 1 content item, got %d", len(decoded.Content))
-	}
-}
-
-func TestIsValidModelName(t *testing.T) {
-	// Build a 257-character string of all 'a' to exceed the 256 limit.
-	tooLong := make([]byte, 257)
-	for i := range tooLong {
-		tooLong[i] = 'a'
-	}
-	// Build a 256-character string of all 'a' to exercise the inclusive
-	// upper bound (validator rejects only strings strictly longer than
-	// 256).
-	maxLen := make([]byte, 256)
-	for i := range maxLen {
-		maxLen[i] = 'a'
-	}
-
+func TestBuildProviders_Gating(t *testing.T) {
 	tests := []struct {
-		name  string
-		model string
-		want  bool
+		name string
+		cfg  *Config
+		want []string
 	}{
-		{"empty", "", false},
-		{"too long", string(tooLong), false},
-		{"max length accepted", string(maxLen), true},
-		{"simple lowercase", "gpt-4", true},
-		{"simple uppercase", "GPT-4", true},
-		{"with digits", "claude-3-5-sonnet", true},
-		{"with dot", "gpt-4.1", true},
-		{"with colon", "llama3:70b", true},
-		{"with slash", "meta/llama-3", true},
-		{"with underscore", "custom_model", true},
-		{"all allowed", "abc-123.456:foo/bar_baz", true},
-		{"space rejected", "bad model", false},
-		{"tab rejected", "bad\tmodel", false},
-		{"newline rejected", "bad\nmodel", false},
-		{"hash rejected", "model#1", false},
-		{"paren rejected", "model(1)", false},
-		{"non-ascii rejected", "gpt-4✅", false},
-		{"whitespace-only rejected", "   ", false},
+		{"none", &Config{}, nil},
+		{"anthropic key", &Config{AnthropicAPIKey: "k"}, []string{"anthropic"}},
+		{"openai key", &Config{OpenAIAPIKey: "k"}, []string{"openai"}},
+		{"openai baseurl only", &Config{OpenAIBaseURL: "http://x"}, []string{"openai"}},
+		{"gemini key", &Config{GeminiAPIKey: "k"}, []string{"gemini"}},
+		{"ollama url", &Config{OllamaURL: "http://x"}, []string{"ollama"}},
+		{
+			"all",
+			&Config{AnthropicAPIKey: "k", OpenAIAPIKey: "k", GeminiAPIKey: "k", OllamaURL: "http://x"},
+			[]string{"anthropic", "gemini", "ollama", "openai"},
+		},
+		{
+			"anthropic key empty but baseurl set is not enough",
+			&Config{AnthropicBaseURL: "http://x"},
+			nil,
+		},
+		{
+			"gemini baseurl alone is not enough",
+			&Config{GeminiBaseURL: "http://x"},
+			nil,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isValidModelName(tt.model); got != tt.want {
-				t.Errorf("isValidModelName(%q) = %v, want %v",
-					tt.model, got, tt.want)
+			got := tt.cfg.buildProviders()
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected providers %v, got keys %v", tt.want, keys(got))
+			}
+			for _, name := range tt.want {
+				if _, ok := got[name]; !ok {
+					t.Errorf("expected provider %q to be configured", name)
+				}
 			}
 		})
 	}
 }
 
-func TestModelsResponseStruct(t *testing.T) {
-	resp := ModelsResponse{
-		Models: []ModelInfo{
-			{Name: "claude-sonnet-4-20250514", Description: "Balanced model"},
-			{Name: "claude-opus-4-20250514", Description: "Most capable"},
+func keys(m map[string]pgllm.Options) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestProviderOptions_DefaultsAndHeaders(t *testing.T) {
+	cfg := &Config{
+		Model:       "claude-test",
+		MaxTokens:   2048,
+		Temperature: 0.5,
+		LLMConfig:   &config.LLMConfig{TimeoutSeconds: 30},
+	}
+	opts := cfg.providerOptions("anthropic", "key", "http://base")
+	if opts.APIKey != "key" {
+		t.Errorf("expected APIKey 'key', got %q", opts.APIKey)
+	}
+	if opts.Model != "claude-test" {
+		t.Errorf("expected Model 'claude-test', got %q", opts.Model)
+	}
+	if opts.BaseURL != "http://base" {
+		t.Errorf("expected BaseURL 'http://base', got %q", opts.BaseURL)
+	}
+	if opts.MaxTokens == nil || *opts.MaxTokens != 2048 {
+		t.Errorf("expected MaxTokens 2048, got %v", opts.MaxTokens)
+	}
+	if opts.Temperature == nil || *opts.Temperature != 0.5 {
+		t.Errorf("expected Temperature 0.5, got %v", opts.Temperature)
+	}
+	if opts.RequestTimeout.Seconds() != 30 {
+		t.Errorf("expected 30s timeout, got %v", opts.RequestTimeout)
+	}
+}
+
+// -----------------------------------------------------------------------
+// authorize
+// -----------------------------------------------------------------------
+
+func TestAuthorize_PublicPaths(t *testing.T) {
+	cfg := &Config{} // no auth store needed for public paths
+	for _, path := range []string{
+		"/api/v1/llm/providers",
+		"/api/v1/llm/models",
+		"/api/v1/llm/health",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if err := cfg.authorize(req); err != nil {
+			t.Errorf("expected public path %q to be allowed, got %v", path, err)
+		}
+	}
+}
+
+func TestAuthorize_MissingToken(t *testing.T) {
+	store := newTestAuthStore(t)
+	cfg := &Config{AuthStore: store}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	err := cfg.authorize(req)
+	if err == nil {
+		t.Fatal("expected error for missing token")
+	}
+	var ae *proxy.AuthError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *proxy.AuthError, got %T", err)
+	}
+	if ae.HTTPStatus() != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", ae.HTTPStatus())
+	}
+}
+
+func TestAuthorize_InvalidToken(t *testing.T) {
+	store := newTestAuthStore(t)
+	cfg := &Config{AuthStore: store}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	req.Header.Set("Authorization", "Bearer bogus")
+	err := cfg.authorize(req)
+	var ae *proxy.AuthError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *proxy.AuthError, got %T (%v)", err, err)
+	}
+	if ae.HTTPStatus() != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", ae.HTTPStatus())
+	}
+}
+
+func TestAuthorize_ValidTokenAttachesContext(t *testing.T) {
+	store := newTestAuthStore(t)
+	token := sessionTokenFor(t, store, "alice")
+	cfg := &Config{AuthStore: store}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	if err := cfg.authorize(req); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	// The attached context must be readable on the same request object,
+	// since the proxy reuses it for TransformRequest.
+	if got := auth.GetUsernameFromContext(req.Context()); got != "alice" {
+		t.Errorf("expected username 'alice' on request context, got %q", got)
+	}
+	if got := auth.GetUserIDFromContext(req.Context()); got <= 0 {
+		t.Errorf("expected positive user ID on request context, got %d", got)
+	}
+}
+
+// authorizeAttacksChatPath confirms that a /chat path is never matched by
+// the public-suffix checks (no auth bypass).
+func TestAuthorize_ChatRequiresAuth(t *testing.T) {
+	store := newTestAuthStore(t)
+	cfg := &Config{AuthStore: store}
+	for _, path := range []string{
+		"/api/v1/llm/chat",
+		"/api/v1/llm/chat/stream",
+		"/api/v1/llm/embed",
+		"/api/v1/llm/rerank",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		if err := cfg.authorize(req); err == nil {
+			t.Errorf("expected auth required for %q, got nil error", path)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------
+// transformRequest
+// -----------------------------------------------------------------------
+
+// withIdentity returns a request whose context carries the given user
+// identity, simulating a successful authorize.
+func withIdentity(username string, userID int64) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	ctx := context.WithValue(req.Context(), auth.UsernameContextKey, username)
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, userID)
+	return req.WithContext(ctx)
+}
+
+func TestTransformRequest_DefaultSystemPromptApplied(t *testing.T) {
+	cfg := &Config{} // no stores
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	llmReq := &pgllm.ChatRequest{}
+	if err := cfg.transformRequest(req, llmReq); err != nil {
+		t.Fatalf("transformRequest error: %v", err)
+	}
+	if llmReq.SystemPrompt != chat.SystemPrompt {
+		t.Errorf("expected default Ellie system prompt to be applied")
+	}
+}
+
+func TestTransformRequest_PreservesProvidedSystemPrompt(t *testing.T) {
+	cfg := &Config{}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	llmReq := &pgllm.ChatRequest{SystemPrompt: "custom prompt"}
+	if err := cfg.transformRequest(req, llmReq); err != nil {
+		t.Fatalf("transformRequest error: %v", err)
+	}
+	if !strings.HasPrefix(llmReq.SystemPrompt, "custom prompt") {
+		t.Errorf("expected provided prompt to be preserved as the base, got %q", llmReq.SystemPrompt)
+	}
+}
+
+func TestTransformRequest_CompactDescriptions(t *testing.T) {
+	cfg := &Config{
+		UseCompactDescriptions: true,
+		CompactDescriptions:    map[string]string{"query": "compact desc"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	llmReq := &pgllm.ChatRequest{
+		Tools: []pgllm.Tool{
+			{Name: "query", Description: "full desc"},
+			{Name: "other", Description: "other desc"},
 		},
 	}
+	if err := cfg.transformRequest(req, llmReq); err != nil {
+		t.Fatalf("transformRequest error: %v", err)
+	}
+	if llmReq.Tools[0].CompactDescription != "compact desc" {
+		t.Errorf("expected compact description set on 'query', got %q", llmReq.Tools[0].CompactDescription)
+	}
+	if llmReq.Tools[1].CompactDescription != "" {
+		t.Errorf("expected no compact description for unmapped tool, got %q", llmReq.Tools[1].CompactDescription)
+	}
+	if llmReq.ToolDescriptions != pgllm.ToolDescriptionCompact {
+		t.Errorf("expected ToolDescriptionCompact mode, got %q", llmReq.ToolDescriptions)
+	}
+}
 
-	data, err := json.Marshal(resp)
+func TestTransformRequest_UserContextInjection(t *testing.T) {
+	store := newTestAuthStore(t)
+	// Create user and resolve its ID.
+	if err := store.CreateUser("bob", "Testpass1234", "bob note", "Bob", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	user, err := store.GetUser("bob")
+	if err != nil || user == nil {
+		t.Fatalf("failed to fetch user: %v", err)
+	}
+
+	cfg := &Config{AuthStore: store}
+	req := withIdentity("bob", user.ID)
+	llmReq := &pgllm.ChatRequest{}
+	if err := cfg.transformRequest(req, llmReq); err != nil {
+		t.Fatalf("transformRequest error: %v", err)
+	}
+	if !strings.Contains(llmReq.SystemPrompt, "<current-user>") {
+		t.Errorf("expected user-context block in system prompt, got %q", llmReq.SystemPrompt)
+	}
+	if !strings.Contains(llmReq.SystemPrompt, "Username: bob") {
+		t.Errorf("expected username in user-context block, got %q", llmReq.SystemPrompt)
+	}
+	// Default Ellie prompt should be the base.
+	if !strings.HasPrefix(llmReq.SystemPrompt, chat.SystemPrompt) {
+		t.Errorf("expected Ellie prompt as base before user context")
+	}
+}
+
+// TestTransformRequest_MemoryThenUserContextOrder verifies that pinned
+// memory wraps the base BEFORE the user-context block, matching the old
+// HandleChat ordering. Requires a local Postgres via
+// TEST_AI_WORKBENCH_SERVER; skipped when unset.
+func TestTransformRequest_MemoryThenUserContextOrder(t *testing.T) {
+	dsn := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if dsn == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set; skipping memory-injection DB test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
+		t.Fatalf("failed to connect to test DB: %v", err)
+	}
+	defer pool.Close()
+
+	// Minimal chat_memories table scoped to this test.
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS chat_memories`); err != nil {
+		t.Fatalf("failed to drop table: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE chat_memories (
+			id          BIGSERIAL PRIMARY KEY,
+			username    TEXT NOT NULL,
+			scope       TEXT NOT NULL,
+			category    TEXT NOT NULL,
+			content     TEXT NOT NULL,
+			pinned      BOOLEAN NOT NULL DEFAULT FALSE,
+			model_name  TEXT NOT NULL DEFAULT '',
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`); err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS chat_memories`)
+	})
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO chat_memories (username, scope, category, content, pinned)
+		 VALUES ($1, 'user', 'pref', 'prefers concise answers', TRUE)`,
+		"carol"); err != nil {
+		t.Fatalf("failed to insert memory: %v", err)
 	}
 
-	var decoded ModelsResponse
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
+	store := newTestAuthStore(t)
+	if err := store.CreateUser("carol", "Testpass1234", "", "Carol", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	user, err := store.GetUser("carol")
+	if err != nil || user == nil {
+		t.Fatalf("failed to fetch user: %v", err)
 	}
 
-	if len(decoded.Models) != 2 {
-		t.Errorf("expected 2 models, got %d", len(decoded.Models))
+	cfg := &Config{
+		AuthStore:   store,
+		MemoryStore: memory.NewStore(pool),
+	}
+	req := withIdentity("carol", user.ID)
+	llmReq := &pgllm.ChatRequest{}
+	if err := cfg.transformRequest(req, llmReq); err != nil {
+		t.Fatalf("transformRequest error: %v", err)
+	}
+
+	sp := llmReq.SystemPrompt
+	memIdx := strings.Index(sp, "<user-stored-memories>")
+	userIdx := strings.Index(sp, "<current-user>")
+	if memIdx < 0 {
+		t.Fatalf("expected memory block in system prompt, got %q", sp)
+	}
+	if userIdx < 0 {
+		t.Fatalf("expected user-context block in system prompt, got %q", sp)
+	}
+	if memIdx > userIdx {
+		t.Errorf("expected memory block BEFORE user-context block (memIdx=%d userIdx=%d)", memIdx, userIdx)
+	}
+	if !strings.Contains(sp, "prefers concise answers") {
+		t.Errorf("expected memory content in prompt, got %q", sp)
+	}
+}
+
+// -----------------------------------------------------------------------
+// NewHandler end-to-end
+// -----------------------------------------------------------------------
+
+func TestNewHandler_ProvidersEndpointPublic(t *testing.T) {
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "claude-test",
+		AnthropicAPIKey: "test-key",
+		OpenAIAPIKey:    "test-key",
+	}
+	h, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/llm/providers", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from public providers endpoint, got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp proxy.ProvidersResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode providers response: %v", err)
+	}
+	if len(resp.Providers) != 2 {
+		t.Errorf("expected 2 configured providers, got %d", len(resp.Providers))
+	}
+}
+
+func TestNewHandler_ChatRequiresAuth(t *testing.T) {
+	store := newTestAuthStore(t)
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "claude-test",
+		AnthropicAPIKey: "test-key",
+		AuthStore:       store,
+	}
+	h, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler error: %v", err)
+	}
+
+	body, _ := json.Marshal(proxy.ChatRequest{
+		Messages: []pgllm.Message{pgllm.UserText("hello")},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated chat, got %d", w.Code)
+	}
+}
+
+func TestNewHandler_ChatInjectsSystemPrompt(t *testing.T) {
+	fake := &fakeProvider{}
+	setFake(fake)
+	t.Cleanup(func() { setFake(nil) })
+
+	store := newTestAuthStore(t)
+	token := sessionTokenFor(t, store, "dave")
+
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "claude-test",
+		AnthropicAPIKey: "test-key",
+		AuthStore:       store,
+	}
+	h, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler error: %v", err)
+	}
+
+	body, _ := json.Marshal(proxy.ChatRequest{
+		Messages: []pgllm.Message{pgllm.UserText("hello")},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from authed chat, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	captured := fake.capturedRequest()
+	if captured == nil {
+		t.Fatal("provider never received a chat request")
+	}
+	// The injected Ellie prompt plus user-context must have reached the
+	// provider, proving the authorize -> transformRequest context attach
+	// propagated to the dispatched request.
+	if !strings.HasPrefix(captured.SystemPrompt, chat.SystemPrompt) {
+		t.Errorf("expected Ellie system prompt to reach provider, got %q", captured.SystemPrompt)
+	}
+	if !strings.Contains(captured.SystemPrompt, "Username: dave") {
+		t.Errorf("expected user-context (Username: dave) to reach provider, got %q", captured.SystemPrompt)
+	}
+
+	// The response should carry the library wire contract.
+	var resp proxy.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode chat response: %v", err)
+	}
+	if len(resp.Content) != 1 || resp.Content[0].Text != "hi" {
+		t.Errorf("unexpected response content: %+v", resp.Content)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Tracing hooks
+// -----------------------------------------------------------------------
+
+// TestTracingHooks_DisabledNoPanic exercises the early-return guard in
+// each hook when tracing is disabled. This is the default process state
+// unless a prior test initialized the global tracer.
+func TestTracingHooks_DisabledNoPanic(t *testing.T) {
+	cfg := &Config{}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+
+	cfg.onRequest(req, proxy.RequestInfo{
+		RequestID: "rid",
+		Request: &pgllm.ChatRequest{
+			Messages: []pgllm.Message{pgllm.UserText("hi")},
+		},
+	})
+	cfg.onResponse(req, proxy.ResponseInfo{
+		RequestID: "rid",
+		Response: &pgllm.ChatResponse{
+			Content: []pgllm.ContentBlock{{Type: pgllm.BlockText, Text: "ok"}},
+		},
+	})
+	cfg.onError(req, proxy.ErrorInfo{RequestID: "rid", Err: errors.New("boom")})
+
+	// Nil-info branches must also be safe.
+	cfg.onRequest(req, proxy.RequestInfo{})
+	cfg.onResponse(req, proxy.ResponseInfo{})
+	cfg.onError(req, proxy.ErrorInfo{})
+}
+
+// TestTracingHooks_Enabled drives the logging bodies of the hooks with
+// tracing turned on. tracing.Initialize is sync.Once-gated, so if a
+// prior test already initialized the tracer this still exercises the
+// hook bodies (guarded by IsEnabled) without asserting file output.
+func TestTracingHooks_Enabled(t *testing.T) {
+	traceFile := t.TempDir() + "/trace.jsonl"
+	_ = tracing.Initialize(traceFile)
+	if !tracing.IsEnabled() {
+		t.Skip("tracer already initialized disabled in this process; logging body covered elsewhere")
+	}
+
+	cfg := &Config{}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	ctx := context.WithValue(req.Context(), auth.TokenHashContextKey, "hash123")
+	req = req.WithContext(ctx)
+
+	cfg.onRequest(req, proxy.RequestInfo{
+		RequestID: "rid",
+		Request: &pgllm.ChatRequest{
+			Messages: []pgllm.Message{
+				pgllm.UserText("a user prompt"),
+				pgllm.AssistantText("ignored assistant text"),
+			},
+		},
+	})
+	cfg.onResponse(req, proxy.ResponseInfo{
+		RequestID: "rid",
+		Response: &pgllm.ChatResponse{
+			Content: []pgllm.ContentBlock{{Type: pgllm.BlockText, Text: "the answer"}},
+		},
+	})
+	cfg.onError(req, proxy.ErrorInfo{RequestID: "rid", Err: errors.New("kaboom")})
+
+	if err := tracing.Close(); err != nil {
+		t.Fatalf("failed to close tracer: %v", err)
+	}
+	data, err := os.ReadFile(traceFile)
+	if err != nil {
+		t.Fatalf("failed to read trace file: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "a user prompt") {
+		t.Errorf("expected user prompt in trace output")
+	}
+	if !strings.Contains(out, "the answer") {
+		t.Errorf("expected LLM response in trace output")
+	}
+	if !strings.Contains(out, "kaboom") {
+		t.Errorf("expected error in trace output")
+	}
+}
+
+// -----------------------------------------------------------------------
+// buildUserInfo with groups and admin permissions
+// -----------------------------------------------------------------------
+
+func TestBuildUserInfo_GroupsAndPermissions(t *testing.T) {
+	store := newTestAuthStore(t)
+	if err := store.CreateUser("erin", "Testpass1234", "erin note", "Erin", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	user, err := store.GetUser("erin")
+	if err != nil || user == nil {
+		t.Fatalf("failed to fetch user: %v", err)
+	}
+
+	groupID, err := store.CreateGroup("dbas", "Database admins")
+	if err != nil {
+		t.Fatalf("failed to create group: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, user.ID); err != nil {
+		t.Fatalf("failed to add user to group: %v", err)
+	}
+	if err := store.GrantAdminPermission(groupID, "manage_users"); err != nil {
+		t.Fatalf("failed to grant admin permission: %v", err)
+	}
+
+	info := buildUserInfo(store, user.ID, "erin")
+	if info == nil {
+		t.Fatal("expected non-nil UserInfo")
+	}
+	if info.Username != "erin" || info.DisplayName != "Erin" || info.Notes != "erin note" {
+		t.Errorf("unexpected user fields: %+v", info)
+	}
+	if len(info.Groups) != 1 || info.Groups[0] != "dbas" {
+		t.Errorf("expected group 'dbas', got %v", info.Groups)
+	}
+	if len(info.AdminPerms) != 1 || info.AdminPerms[0] != "manage_users" {
+		t.Errorf("expected admin perm 'manage_users', got %v", info.AdminPerms)
+	}
+}
+
+func TestBuildUserInfo_UnknownUser(t *testing.T) {
+	store := newTestAuthStore(t)
+	if info := buildUserInfo(store, 999, "nobody"); info != nil {
+		t.Errorf("expected nil UserInfo for unknown user, got %+v", info)
+	}
+}
+
+func TestProviderOptions_NoLLMConfig(t *testing.T) {
+	cfg := &Config{Model: "m"} // no LLMConfig -> no headers, no timeout
+	opts := cfg.providerOptions("anthropic", "k", "")
+	if opts.CustomHeaders != nil {
+		t.Errorf("expected nil headers with no LLMConfig, got %v", opts.CustomHeaders)
+	}
+	if opts.RequestTimeout != 0 {
+		t.Errorf("expected zero timeout with no LLMConfig, got %v", opts.RequestTimeout)
+	}
+	if opts.MaxTokens != nil {
+		t.Errorf("expected nil MaxTokens when unset, got %v", opts.MaxTokens)
 	}
 }

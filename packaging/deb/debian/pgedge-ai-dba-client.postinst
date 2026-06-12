@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create sites-enabled directory if it doesn't exist
+        mkdir -p /etc/nginx/sites-enabled
+
+        # Enable nginx site
+        if [ ! -e /etc/nginx/sites-enabled/pgedge-ai-dba-client ]; then
+            ln -s /etc/nginx/sites-available/pgedge-ai-dba-client /etc/nginx/sites-enabled/pgedge-ai-dba-client
+        fi
+
+        # Test and reload nginx
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

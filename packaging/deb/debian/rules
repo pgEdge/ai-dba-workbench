@@ -1,0 +1,84 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_dwz:
+
+override_dh_builddeb:
+	dh_builddeb -- -Zgzip
+
+override_dh_installsystemd:
+	dh_installsystemd -ppgedge-ai-dba-server --no-enable --no-start --restart-after-upgrade
+	dh_installsystemd -ppgedge-ai-dba-collector --no-enable --no-start --restart-after-upgrade
+	dh_installsystemd -ppgedge-ai-dba-alerter --no-enable --no-start --restart-after-upgrade
+
+override_dh_auto_install:
+	mkdir -p debian/tmp/sbom
+
+	# --- Config files ---
+	install -D -m 640 $(CURDIR)/ai-dba-server.yaml debian/pgedge-ai-dba-server/etc/pgedge/ai-dba-server.yaml
+	install -D -m 640 $(CURDIR)/ai-dba-collector.yaml debian/pgedge-ai-dba-collector/etc/pgedge/ai-dba-collector.yaml
+	install -D -m 640 $(CURDIR)/ai-dba-alerter.yaml debian/pgedge-ai-dba-alerter/etc/pgedge/ai-dba-alerter.yaml
+
+	# --- Server ---
+	syft dir:$(CURDIR)/server -o cyclonedx-json > debian/tmp/sbom/pgedge-ai-dba-server-sbom.json || exit 1
+	KEY_ID=$$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $$5}' | head -n 1); export KEY_ID; \
+	gpg --armor --detach-sign \
+		--output debian/tmp/sbom/pgedge-ai-dba-server-sbom.json.asc \
+		debian/tmp/sbom/pgedge-ai-dba-server-sbom.json || exit 1
+	install -D -m 755 server/ai-dba-server debian/pgedge-ai-dba-server/usr/bin/ai-dba-server
+	install -D -m 644 LICENSE.md debian/pgedge-ai-dba-server/usr/share/doc/pgedge-ai-dba-server/LICENSE.md
+	install -D -m 644 README.md debian/pgedge-ai-dba-server/usr/share/doc/pgedge-ai-dba-server/README.md
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-server-sbom.json debian/pgedge-ai-dba-server/usr/share/pgedge-ai-dba-server/pgedge-ai-dba-server-sbom.json
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-server-sbom.json.asc debian/pgedge-ai-dba-server/usr/share/pgedge-ai-dba-server/pgedge-ai-dba-server-sbom.json.asc
+	install -d debian/pgedge-ai-dba-server/var/lib/pgedge/ai-dba-server
+	install -d debian/pgedge-ai-dba-server/var/log/pgedge/ai-dba-server
+
+	# --- Collector ---
+	syft dir:$(CURDIR)/collector -o cyclonedx-json > debian/tmp/sbom/pgedge-ai-dba-collector-sbom.json || exit 1
+	KEY_ID=$$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $$5}' | head -n 1); export KEY_ID; \
+	gpg --armor --detach-sign \
+		--output debian/tmp/sbom/pgedge-ai-dba-collector-sbom.json.asc \
+		debian/tmp/sbom/pgedge-ai-dba-collector-sbom.json || exit 1
+	install -D -m 755 collector/ai-dba-collector debian/pgedge-ai-dba-collector/usr/bin/ai-dba-collector
+	install -D -m 644 LICENSE.md debian/pgedge-ai-dba-collector/usr/share/doc/pgedge-ai-dba-collector/LICENSE.md
+	install -D -m 644 README.md debian/pgedge-ai-dba-collector/usr/share/doc/pgedge-ai-dba-collector/README.md
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-collector-sbom.json debian/pgedge-ai-dba-collector/usr/share/pgedge-ai-dba-collector/pgedge-ai-dba-collector-sbom.json
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-collector-sbom.json.asc debian/pgedge-ai-dba-collector/usr/share/pgedge-ai-dba-collector/pgedge-ai-dba-collector-sbom.json.asc
+	install -d debian/pgedge-ai-dba-collector/var/lib/pgedge/ai-dba-collector
+	install -d debian/pgedge-ai-dba-collector/var/log/pgedge/ai-dba-collector
+
+	# --- Alerter ---
+	syft dir:$(CURDIR)/alerter -o cyclonedx-json > debian/tmp/sbom/pgedge-ai-dba-alerter-sbom.json || exit 1
+	KEY_ID=$$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $$5}' | head -n 1); export KEY_ID; \
+	gpg --armor --detach-sign \
+		--output debian/tmp/sbom/pgedge-ai-dba-alerter-sbom.json.asc \
+		debian/tmp/sbom/pgedge-ai-dba-alerter-sbom.json || exit 1
+	install -D -m 755 alerter/ai-dba-alerter debian/pgedge-ai-dba-alerter/usr/bin/ai-dba-alerter
+	install -D -m 644 LICENSE.md debian/pgedge-ai-dba-alerter/usr/share/doc/pgedge-ai-dba-alerter/LICENSE.md
+	install -D -m 644 README.md debian/pgedge-ai-dba-alerter/usr/share/doc/pgedge-ai-dba-alerter/README.md
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-alerter-sbom.json debian/pgedge-ai-dba-alerter/usr/share/pgedge-ai-dba-alerter/pgedge-ai-dba-alerter-sbom.json
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-alerter-sbom.json.asc debian/pgedge-ai-dba-alerter/usr/share/pgedge-ai-dba-alerter/pgedge-ai-dba-alerter-sbom.json.asc
+	install -d debian/pgedge-ai-dba-alerter/var/lib/pgedge/ai-dba-alerter
+	install -d debian/pgedge-ai-dba-alerter/var/log/pgedge/ai-dba-alerter
+
+	# --- Client (web UI) ---
+	syft dir:$(CURDIR)/client -o cyclonedx-json > debian/tmp/sbom/pgedge-ai-dba-client-sbom.json || exit 1
+	KEY_ID=$$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $$5}' | head -n 1); export KEY_ID; \
+	gpg --armor --detach-sign \
+		--output debian/tmp/sbom/pgedge-ai-dba-client-sbom.json.asc \
+		debian/tmp/sbom/pgedge-ai-dba-client-sbom.json || exit 1
+	install -d debian/pgedge-ai-dba-client/usr/share/pgedge/ai-dba-client
+	cp -r client/. debian/pgedge-ai-dba-client/usr/share/pgedge/ai-dba-client/
+	install -D -m 644 LICENSE.md debian/pgedge-ai-dba-client/usr/share/doc/pgedge-ai-dba-client/LICENSE.md
+	install -D -m 644 README.md debian/pgedge-ai-dba-client/usr/share/doc/pgedge-ai-dba-client/README.md
+	install -D -m 644 debian/pgedge-ai-dba-client.nginx debian/pgedge-ai-dba-client/etc/nginx/sites-available/pgedge-ai-dba-client
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-client-sbom.json debian/pgedge-ai-dba-client/usr/share/pgedge-ai-dba-client/pgedge-ai-dba-client-sbom.json
+	install -D -m 644 debian/tmp/sbom/pgedge-ai-dba-client-sbom.json.asc debian/pgedge-ai-dba-client/usr/share/pgedge-ai-dba-client/pgedge-ai-dba-client-sbom.json.asc
+
+	# --- Docs ---
+	#install -d debian/pgedge-ai-dba-docs/usr/share/pgedge/ai-dba-docs
+	#cp -r docs/. debian/pgedge-ai-dba-docs/usr/share/pgedge/ai-dba-docs/
+
+	rm -rf debian/tmp/sbom

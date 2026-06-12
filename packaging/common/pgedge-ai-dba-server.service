@@ -1,0 +1,42 @@
+[Unit]
+Description=pgEdge AI DBA Server
+Documentation=https://github.com/pgEdge/ai-dba-workbench
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=pgedge
+Group=pgedge
+WorkingDirectory=/var/lib/pgedge/ai-dba-server
+
+ExecStart=/usr/bin/ai-dba-server --config /etc/pgedge/ai-dba-server.yaml --data-dir /var/lib/pgedge/ai-dba-server
+StandardOutput=append:/var/log/pgedge/ai-dba-server/ai-dba-server.log
+StandardError=append:/var/log/pgedge/ai-dba-server/ai-dba-server.log
+
+Environment="PGEDGE_DATA_DIR=/var/lib/pgedge/ai-dba-server"
+EnvironmentFile=-/etc/pgedge/ai-dba-server.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pgedge/ai-dba-server /var/log/pgedge/ai-dba-server
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+LimitNOFILE=65536
+LimitNPROC=4096
+
+SyslogIdentifier=pgedge-ai-dba-server
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

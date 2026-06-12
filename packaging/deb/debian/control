@@ -1,0 +1,41 @@
+Source: pgedge-ai-dba-workbench
+Section: database
+Priority: optional
+Maintainer: pgEdge Build Team <support@pgedge.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.1.3
+Homepage: https://github.com/pgEdge/ai-dba-workbench
+
+Package: pgedge-ai-dba-server
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, pgedge-ai-kb, openssl
+Description: pgEdge AI DBA Server
+ Core AI DBA server providing REST API and AI-powered analysis for
+ PostgreSQL databases.
+
+Package: pgedge-ai-dba-collector
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, pgedge-ai-dba-server (= ${binary:Version}), openssl
+Description: pgEdge AI DBA Collector
+ Metrics and data collector agent for the pgEdge AI DBA Workbench.
+ Collects PostgreSQL performance data and sends it to the AI DBA server.
+
+Package: pgedge-ai-dba-alerter
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, pgedge-ai-dba-server (= ${binary:Version})
+Description: pgEdge AI DBA Alerter
+ Alerting agent for the pgEdge AI DBA Workbench. Monitors PostgreSQL
+ health and triggers AI-powered alerts based on configurable rules.
+
+Package: pgedge-ai-dba-client
+Architecture: all
+Depends: ${misc:Depends}, pgedge-ai-dba-server (= ${source:Version}), nginx
+Description: pgEdge AI DBA Web Client
+ React-based web interface for the pgEdge AI DBA Workbench. Provides
+ dashboards, alerting UI, and AI-powered database analysis views.
+
+#Package: pgedge-ai-dba-docs
+#Architecture: all
+#Depends: ${misc:Depends}
+#Description: pgEdge AI DBA Workbench Documentation
+# Documentation for the pgEdge AI DBA Workbench.

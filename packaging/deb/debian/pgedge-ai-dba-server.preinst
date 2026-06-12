@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+# Create pgedge group and user if they don't exist
+getent group pgedge >/dev/null || groupadd -r pgedge
+getent passwd pgedge >/dev/null || \
+    useradd -r -g pgedge -d /var/lib/pgedge -s /sbin/nologin \
+    -c "pgEdge Services" pgedge
+
+exit 0

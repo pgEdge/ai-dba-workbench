@@ -1,0 +1,42 @@
+[Unit]
+Description=pgEdge AI DBA Collector
+Documentation=https://github.com/pgEdge/ai-dba-workbench
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=pgedge
+Group=pgedge
+WorkingDirectory=/var/lib/pgedge/ai-dba-collector
+
+ExecStart=/usr/bin/ai-dba-collector --config /etc/pgedge/ai-dba-collector.yaml
+StandardOutput=append:/var/log/pgedge/ai-dba-collector/ai-dba-collector.log
+StandardError=append:/var/log/pgedge/ai-dba-collector/ai-dba-collector.log
+
+Environment="PGEDGE_DATA_DIR=/var/lib/pgedge/ai-dba-collector"
+EnvironmentFile=-/etc/pgedge/ai-dba-collector.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pgedge/ai-dba-collector /var/log/pgedge/ai-dba-collector
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+LimitNOFILE=65536
+LimitNPROC=4096
+
+SyslogIdentifier=pgedge-ai-dba-collector
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

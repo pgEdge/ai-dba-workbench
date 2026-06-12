@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -297,10 +298,7 @@ func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, que
 	}
 
 	// Convert float64 to float32
-	vector32 := make([]float32, len(vector))
-	for i, v := range vector {
-		vector32[i] = float32(v)
-	}
+	vector32 := vec.Float64ToFloat32(vector)
 
 	return vector32, embCfg.Provider, nil
 }

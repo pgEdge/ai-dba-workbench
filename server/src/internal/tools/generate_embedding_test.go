@@ -243,8 +243,8 @@ func TestGenerateEmbeddingTool_GeminiSuccess(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/v1beta/models/gemini-embedding-001:embedContent") {
 			t.Errorf("unexpected request path %q", r.URL.Path)
 		}
-		if r.URL.Query().Get("key") != "test-gemini-key" {
-			t.Errorf("expected API key in query string, got %q", r.URL.Query().Get("key"))
+		if r.Header.Get("x-goog-api-key") != "test-gemini-key" {
+			t.Errorf("expected API key in x-goog-api-key header, got %q", r.Header.Get("x-goog-api-key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

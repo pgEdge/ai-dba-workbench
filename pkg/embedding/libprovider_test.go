@@ -56,6 +56,47 @@ func TestNewLibProviderClientError(t *testing.T) {
 	}
 }
 
+func TestValidateEmbeddingModelMessages(t *testing.T) {
+	cases := []struct {
+		provider string
+		model    string
+		wantErr  string
+	}{
+		{
+			"openai", "bad-model",
+			"unsupported OpenAI model: bad-model (supported: text-embedding-3-large, text-embedding-3-small, text-embedding-ada-002)",
+		},
+		{
+			"voyage", "bad-model",
+			"unsupported Voyage AI model: bad-model (supported: voyage-3, voyage-3-lite, voyage-2, voyage-2-lite)",
+		},
+		{
+			"gemini", "text-embedding-004",
+			"unsupported Gemini model: text-embedding-004 (supported: gemini-embedding-001, gemini-embedding-2, gemini-embedding-2-preview)",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.provider, func(t *testing.T) {
+			err := validateEmbeddingModel(c.provider, c.model)
+			if err == nil {
+				t.Fatalf("expected error for %s/%s", c.provider, c.model)
+			}
+			if err.Error() != c.wantErr {
+				t.Fatalf("err = %q, want %q", err.Error(), c.wantErr)
+			}
+		})
+	}
+
+	// Guarded providers accept their supported models.
+	if err := validateEmbeddingModel("openai", "text-embedding-3-small"); err != nil {
+		t.Errorf("supported openai model rejected: %v", err)
+	}
+	// Unguarded providers accept any model.
+	if err := validateEmbeddingModel("ollama", "any-custom-model"); err != nil {
+		t.Errorf("ollama should not be validated: %v", err)
+	}
+}
+
 func TestNewProviderDispatch(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -65,11 +106,15 @@ func TestNewProviderDispatch(t *testing.T) {
 	}{
 		{"openai ok", Config{Provider: "openai", OpenAIAPIKey: "k"}, false, "openai"},
 		{"openai needs key or url", Config{Provider: "openai"}, true, ""},
+		{"openai bad model", Config{Provider: "openai", OpenAIAPIKey: "k", Model: "bad-model"}, true, ""},
 		{"voyage ok", Config{Provider: "voyage", VoyageAPIKey: "k"}, false, "voyage"},
 		{"voyage needs key", Config{Provider: "voyage"}, true, ""},
+		{"voyage bad model", Config{Provider: "voyage", VoyageAPIKey: "k", Model: "bad-model"}, true, ""},
 		{"gemini ok", Config{Provider: "gemini", GeminiAPIKey: "k"}, false, "gemini"},
 		{"gemini needs key", Config{Provider: "gemini"}, true, ""},
+		{"gemini bad model", Config{Provider: "gemini", GeminiAPIKey: "k", Model: "text-embedding-004"}, true, ""},
 		{"ollama ok", Config{Provider: "ollama"}, false, "ollama"},
+		{"ollama any custom model accepted", Config{Provider: "ollama", Model: "any-custom-model"}, false, "ollama"},
 		{"unknown", Config{Provider: "nope"}, true, ""},
 	}
 	for _, c := range cases {

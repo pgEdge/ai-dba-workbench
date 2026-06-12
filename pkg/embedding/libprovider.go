@@ -13,6 +13,7 @@ package embedding
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pgEdge/pgedge-go-llm-lib/llm"
 	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all" // register providers
@@ -25,6 +26,43 @@ var defaultModels = map[string]string{
 	"voyage": "voyage-3-lite",
 	"gemini": "gemini-embedding-001",
 	"ollama": "nomic-embed-text",
+}
+
+// supportedEmbeddingModels is a fail-fast allow-list of known-good embedding
+// models per provider. Construction rejects any model not listed here, which
+// guards against silently producing vectors of an unexpected dimension that
+// would be incompatible with the stored knowledge-base vectors. Providers
+// absent from this map (for example Ollama, which discovers models at
+// runtime) are not validated and accept any model name.
+var supportedEmbeddingModels = map[string][]string{
+	"openai": {"text-embedding-3-large", "text-embedding-3-small", "text-embedding-ada-002"},
+	"voyage": {"voyage-3", "voyage-3-lite", "voyage-2", "voyage-2-lite"},
+	"gemini": {"gemini-embedding-001", "gemini-embedding-2", "gemini-embedding-2-preview"},
+}
+
+// providerDisplayNames maps an internal provider key to the human-readable
+// name used verbatim in the unsupported-model error messages.
+var providerDisplayNames = map[string]string{
+	"openai": "OpenAI",
+	"voyage": "Voyage AI",
+	"gemini": "Gemini",
+}
+
+// validateEmbeddingModel enforces the per-provider allow-list. It returns nil
+// for providers that are not in the allow-list (they accept any model) and
+// for models that appear in the provider's supported set.
+func validateEmbeddingModel(provider, model string) error {
+	models, guarded := supportedEmbeddingModels[provider]
+	if !guarded {
+		return nil
+	}
+	for _, m := range models {
+		if m == model {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported %s model: %s (supported: %s)",
+		providerDisplayNames[provider], model, strings.Join(models, ", "))
 }
 
 // libProvider adapts an llm.Client to the embedding.Provider interface.
@@ -42,6 +80,9 @@ func (p *libProvider) ProviderName() string { return p.client.Provider() }
 func newLibProvider(provider, apiKey, model, baseURL string) (Provider, error) {
 	if model == "" {
 		model = defaultModels[provider]
+	}
+	if err := validateEmbeddingModel(provider, model); err != nil {
+		return nil, err
 	}
 	client, err := llm.NewClient(provider, llm.Options{
 		APIKey:  apiKey,

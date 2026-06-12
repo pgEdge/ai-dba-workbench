@@ -285,13 +285,12 @@ func TestNewEmbeddingProvider_GeminiSuccess(t *testing.T) {
 	}
 }
 
-func TestNewEmbeddingProvider_GeminiExplicitModel(t *testing.T) {
-	// The library-backed Gemini provider no longer maintains a hardcoded
-	// allow-list of embedding model names; it accepts any model at
-	// construction time and defers validation to the live API. This test
-	// therefore verifies that an explicitly configured model name is
-	// accepted and threaded through to ModelName(), rather than asserting
-	// the previous construction-time rejection of unknown models.
+func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
+	// The library-backed Gemini provider enforces a construction-time
+	// allow-list of known-good embedding models. This guards knowledge-base
+	// vector compatibility by rejecting unknown models that might emit
+	// vectors of an unexpected dimension. An unsupported model such as
+	// "text-embedding-004" must therefore fail at construction.
 	tmpDir := t.TempDir()
 	keyFile := tmpDir + "/gemini.key"
 	if err := os.WriteFile(keyFile, []byte("AIza-test-key-12345678\n"), 0600); err != nil {
@@ -306,15 +305,12 @@ func TestNewEmbeddingProvider_GeminiExplicitModel(t *testing.T) {
 		t.Fatalf("LoadAPIKeys: %v", err)
 	}
 
-	p, err := NewEmbeddingProvider(cfg)
-	if err != nil {
-		t.Fatalf("err = %v", err)
+	_, err := NewEmbeddingProvider(cfg)
+	if err == nil {
+		t.Fatal("expected error for unsupported Gemini embedding model")
 	}
-	if p == nil {
-		t.Fatal("provider nil")
-	}
-	if p.ModelName() != "text-embedding-004" {
-		t.Errorf("model = %q, want text-embedding-004", p.ModelName())
+	if !strings.Contains(err.Error(), "unsupported Gemini model") {
+		t.Errorf("err = %v, want it to contain \"unsupported Gemini model\"", err)
 	}
 }
 

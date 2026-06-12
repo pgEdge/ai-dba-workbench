@@ -102,11 +102,13 @@ func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()
 	// Quote the schema name via pgx.Identifier so it is safely escaped; the
 	// name itself is derived from the SQL-safe test name, not user input.
 	schemaIdent := pgx.Identifier{schema}.Sanitize()
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; schema identifier sanitized via pgx.Identifier, DDL identifiers cannot be parameterized
 	if _, err := pool.Exec(ctx,
 		fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s`, schemaIdent, schemaIdent)); err != nil {
 		pool.Close()
 		t.Skipf("Failed to create private test schema: %v", err)
 	}
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; constant string literal, no user input
 	if _, err := pool.Exec(ctx, memoryEmbeddingTableDDL); err != nil {
 		pool.Close()
 		t.Skipf("Failed to create memory embedding table (pgvector may be missing): %v", err)
@@ -114,6 +116,7 @@ func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()
 
 	store := memory.NewStore(pool)
 	cleanup := func() {
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; schema identifier sanitized via pgx.Identifier, DDL identifiers cannot be parameterized
 		if _, err := pool.Exec(context.Background(),
 			fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schemaIdent)); err != nil {
 			t.Logf("memory embedding teardown failed: %v", err)

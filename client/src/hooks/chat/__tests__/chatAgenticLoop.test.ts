@@ -790,6 +790,89 @@ describe('chatAgenticLoop', () => {
                 expect(body.arguments).toEqual({ query: 'SELECT 1' });
             });
 
+            it('second LLM request carries tool_result text + nested tool_use on round-trip', async () => {
+                // Drive the loop: first LLM response returns a tool_use block
+                // (nested shape); the tool executes; second LLM response returns
+                // a final text block. Asserts the SECOND /api/v1/llm/chat body
+                // locks down the Phase E normaliseMessages wire contract.
+                const toolId = 'round-trip-tool-1';
+                const toolName = 'query_database';
+                const toolInput = { query: 'SELECT version()' };
+                const toolResultStr = 'PostgreSQL 18.0';
+
+                const mockFetch = createMockFetch(
+                    [
+                        createToolUseResponse([
+                            { id: toolId, name: toolName, input: toolInput },
+                        ]),
+                        createTextResponse('Done.'),
+                    ],
+                    new Map([[toolName, createToolCallResponse(toolResultStr)]]),
+                );
+                const params = createLoopParams({
+                    apiMessages: [{ role: 'user', content: 'What version?' }],
+                    systemPrompt: 'Be helpful',
+                    fetchFn: mockFetch,
+                });
+
+                const result = await runAgenticLoop(params);
+                expect(result.finalMessage.content).toBe('Done.');
+
+                // Identify the second /api/v1/llm/chat call (index 1 in
+                // mockFetch.mock.calls; call 0 is the first LLM request and
+                // call 1 is the /mcp/tools/call, so filter by URL to be safe).
+                const llmCalls = (mockFetch as ReturnType<typeof vi.fn>).mock.calls
+                    .filter(c => c[0] === '/api/v1/llm/chat');
+                expect(llmCalls).toHaveLength(2);
+
+                const body = JSON.parse(llmCalls[1][1]?.body as string);
+
+                // 1. system_prompt is set; the deprecated `system` key must be absent.
+                expect(body.system_prompt).toBe('Be helpful');
+                expect(body.system).toBeUndefined();
+
+                // 2. Every message must carry block-array content, never a bare string.
+                for (const msg of body.messages) {
+                    expect(Array.isArray(msg.content)).toBe(true);
+                }
+
+                // 3. The echoed assistant turn must preserve the nested tool_use shape.
+                const assistantMsg = body.messages.find(
+                    (m: { role: string }) => m.role === 'assistant',
+                );
+                expect(assistantMsg).toBeDefined();
+                const toolUseBlock = (
+                    assistantMsg.content as Array<{ type: string; tool_use?: { id: string; name: string; input: Record<string, unknown> } }>
+                ).find(b => b.type === 'tool_use');
+                expect(toolUseBlock).toBeDefined();
+                expect(toolUseBlock?.tool_use?.id).toBe(toolId);
+                expect(toolUseBlock?.tool_use?.name).toBe(toolName);
+                expect(toolUseBlock?.tool_use?.input).toEqual(toolInput);
+
+                // 4. The follow-up tool_result message must use `text` (not `content`)
+                //    and carry the correct tool_use_id. Search all user messages
+                //    for one whose content contains a tool_result block, since the
+                //    first user message ('What version?') is also an array after
+                //    normaliseMessages runs.
+                type WireBlock = { type: string; tool_use_id?: string; text?: string; content?: unknown };
+                type WireMsg = { role: string; content: WireBlock[] };
+                const toolResultMsg = (body.messages as WireMsg[]).find(
+                    m =>
+                        m.role === 'user' &&
+                        Array.isArray(m.content) &&
+                        (m.content as WireBlock[]).some(b => b.type === 'tool_result'),
+                );
+                expect(toolResultMsg).toBeDefined();
+                if (!toolResultMsg) {
+                    throw new Error('expected toolResultMsg');
+                }
+                const trBlock = toolResultMsg.content.find(b => b.type === 'tool_result');
+                expect(trBlock).toBeDefined();
+                expect(trBlock?.tool_use_id).toBe(toolId);
+                expect(trBlock?.text).toBe(toolResultStr);
+                expect(trBlock?.content).toBeUndefined();
+            });
+
             it('passes abort signal to fetch calls', async () => {
                 const abortController = new AbortController();
                 const mockFetch = createMockFetch([createTextResponse('Hi')]);

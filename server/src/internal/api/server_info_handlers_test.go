@@ -17,6 +17,7 @@ import (
 	"time"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
 
@@ -392,6 +393,30 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 		}
 		if client == nil {
 			t.Error("expected non-nil client for ollama provider")
+		}
+	})
+
+	t.Run("positive timeout honored", func(t *testing.T) {
+		// A positive TimeoutSeconds on the underlying config must produce a
+		// usable client; the library defers credential validation so a valid
+		// provider yields a non-nil client without error.
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:  "ollama",
+				OllamaURL: "http://localhost:11434",
+				Model:     "llama2",
+				LLMConfig: &config.LLMConfig{
+					TimeoutSeconds: 45,
+				},
+			},
+		}
+
+		client, err := h.createLLMClient()
+		if err != nil {
+			t.Fatalf("expected no error with positive timeout, got %v", err)
+		}
+		if client == nil {
+			t.Error("expected non-nil client when timeout is configured")
 		}
 	})
 

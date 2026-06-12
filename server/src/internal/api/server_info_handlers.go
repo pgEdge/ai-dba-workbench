@@ -844,6 +844,12 @@ func (h *ServerInfoHandler) createLLMClient() (pgllm.Client, error) {
 		MaxTokens:     pgllm.Int(llmAnalysisMaxTokens),
 		Temperature:   pgllm.Float(llmAnalysisTemperature),
 	}
+	// Honor the operator-configured request timeout, matching the proxy
+	// shim's providerOptions. Only set it when positive so a zero/unset
+	// value leaves the library default in place.
+	if h.llmConfig.LLMConfig != nil && h.llmConfig.LLMConfig.TimeoutSeconds > 0 {
+		opts.RequestTimeout = time.Duration(h.llmConfig.LLMConfig.TimeoutSeconds) * time.Second
+	}
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {

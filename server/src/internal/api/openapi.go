@@ -707,20 +707,31 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 		},
 		"LLMStreamChunk": {
-			Type:        "object",
-			Description: "One Server-Sent Event payload from POST /llm/chat/stream (llm.StreamChunk). The type field selects which other fields are populated.",
+			Type: "object",
+			Description: "Data payload of a Server-Sent Event from POST /llm/chat/stream. " +
+				"Most events carry a JSON-encoded llm.StreamChunk whose type field selects " +
+				"which other fields are populated; the stream terminates with an event named " +
+				"done (a final chunk carrying usage). If the upstream stream fails, the proxy " +
+				"instead emits a terminal event named error whose data is an ErrorResponse " +
+				"object ({\"error\":\"...\"}) rather than a stream chunk. The optional error " +
+				"field below documents that terminal payload.",
 			Properties: map[string]*OpenAPISchema{
 				"type": {
 					Type:        "string",
-					Description: "Chunk type discriminator",
+					Description: "Chunk type discriminator (present on every non-error event)",
 					Enum:        []string{"text", "tool_use_start", "tool_use_delta", "done"},
 				},
 				"text":     {Type: "string", Description: "Incremental text delta (text chunks)"},
 				"tool_use": {Type: "object", Description: "Tool call descriptor (tool_use_start chunks)"},
 				"partial":  {Type: "string", Description: "Incremental tool-argument JSON fragment (tool_use_delta chunks)"},
 				"usage":    {Ref: "#/components/schemas/LLMTokenUsage"},
+				"error": {
+					Type: "string",
+					Description: "Error detail carried by the terminal event named error " +
+						"(event: error\\ndata: {\"error\":\"...\"}). Present only when the " +
+						"stream fails; mutually exclusive with type.",
+				},
 			},
-			Required: []string{"type"},
 		},
 		"EmbedRequest": {
 			Type:        "object",
@@ -747,6 +758,60 @@ func buildSchemas() map[string]*OpenAPISchema {
 						Items: &OpenAPISchema{Type: "number"},
 					},
 					Description: "One embedding vector per input string, in order",
+				},
+			},
+		},
+		"EmbedMultimodalRequest": {
+			Type:        "object",
+			Description: "Request body for POST /llm/embed/multimodal (library proxy.EmbedMultimodalRequest).",
+			Properties: map[string]*OpenAPISchema{
+				"provider": {Type: "string", Description: "Override the default provider"},
+				"model":    {Type: "string", Description: "Override the configured model"},
+				"inputs": {
+					Type:        "array",
+					Description: "One or more multimodal inputs; each is embedded to a single vector",
+					Items: &OpenAPISchema{
+						Type: "object",
+						Properties: map[string]*OpenAPISchema{
+							"content": {
+								Type:        "array",
+								Description: "Ordered text and/or image content blocks for this input",
+								Items:       &OpenAPISchema{Ref: "#/components/schemas/MultimodalContent"},
+							},
+						},
+						Required: []string{"content"},
+					},
+				},
+			},
+			Required: []string{"inputs"},
+		},
+		"MultimodalContent": {
+			Type:        "object",
+			Description: "A single text or image content block within a multimodal input.",
+			Properties: map[string]*OpenAPISchema{
+				"type": {
+					Type:        "string",
+					Description: "Content block type",
+					Enum:        []string{"text", "image"},
+				},
+				"text":         {Type: "string", Description: "Text content (text blocks)"},
+				"image_url":    {Type: "string", Description: "URL of the image to embed (image blocks)"},
+				"image_base64": {Type: "string", Description: "Base64-encoded image bytes (image blocks)"},
+				"mime_type":    {Type: "string", Description: "MIME type of the image, e.g. image/png (image blocks)"},
+			},
+			Required: []string{"type"},
+		},
+		"EmbedMultimodalResponse": {
+			Type:        "object",
+			Description: "Response body for POST /llm/embed/multimodal (library proxy.EmbedMultimodalResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"embeddings": {
+					Type: "array",
+					Items: &OpenAPISchema{
+						Type:  "array",
+						Items: &OpenAPISchema{Type: "number"},
+					},
+					Description: "One embedding vector per input, in order",
 				},
 			},
 		},
@@ -2380,6 +2445,23 @@ func buildPaths() map[string]OpenAPIPathItem {
 				RequestBody: jsonRequestBody("EmbedRequest", "Input strings to embed", true),
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("EmbedResponse", "Embedding vectors"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/embed/multimodal": {
+			Post: &OpenAPIOperation{
+				Summary:     "Generate multimodal embeddings",
+				Description: "Embeds one or more multimodal inputs, each a sequence of text and/or image content blocks, and returns one vector per input. Requires authentication (bearer token or session cookie).",
+				OperationID: "embedMultimodalWithLLM",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("EmbedMultimodalRequest", "Multimodal inputs to embed", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("EmbedMultimodalResponse", "Embedding vectors"),
 					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"500": jsonResponse("ErrorResponse", "LLM error"),

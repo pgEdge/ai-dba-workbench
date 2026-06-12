@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,13 +25,13 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/memory"
 )
 
-// memoryEmbeddingSchema mirrors the chat_memories table that the memory
+// memoryEmbeddingTableDDL mirrors the chat_memories table that the memory
 // store reads from and writes to. The vector dimension is 3 so the mocked
 // Gemini endpoint can return a three-element vector and the store can
-// persist it without dimension mismatch.
-const memoryEmbeddingSchema = `
-CREATE EXTENSION IF NOT EXISTS vector;
-DROP TABLE IF EXISTS chat_memories CASCADE;
+// persist it without dimension mismatch. The table is created inside a
+// per-test private schema (see newMemoryEmbeddingStore) so it never
+// clobbers the canonical public.chat_memories shared with other tests.
+const memoryEmbeddingTableDDL = `
 CREATE TABLE chat_memories (
     id BIGSERIAL PRIMARY KEY,
     username TEXT NOT NULL,
@@ -45,12 +46,15 @@ CREATE TABLE chat_memories (
 );
 `
 
-const memoryEmbeddingTeardown = `DROP TABLE IF EXISTS chat_memories CASCADE;`
-
 // newMemoryEmbeddingStore wires a memory.Store to the
-// TEST_AI_WORKBENCH_SERVER Postgres instance and creates the chat_memories
-// table with a vector(3) embedding column. The test skips cleanly when the
-// database is unconfigured or pgvector is unavailable.
+// TEST_AI_WORKBENCH_SERVER Postgres instance. To avoid clobbering the
+// shared public.chat_memories table (which other tools and memory-package
+// integration tests rely on), it creates a uniquely-named private schema
+// and a chat_memories table with a vector(3) embedding column inside it.
+// The pool's search_path is set so the memory store's unqualified
+// chat_memories references resolve to this private table. Teardown drops
+// the whole schema, leaving the shared table untouched. The test skips
+// cleanly when the database is unconfigured or pgvector is unavailable.
 func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()) {
 	t.Helper()
 
@@ -62,8 +66,21 @@ func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()
 		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping memory embedding test")
 	}
 
+	// Derive a unique, SQL-safe schema name from the test name so parallel
+	// or sequential runs never collide and the shared public schema is
+	// never touched.
+	schema := uniqueSchemaName(t.Name())
+
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
+	cfg, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		t.Skipf("Could not parse test database connection string: %v", err)
+	}
+	// Resolve unqualified table references to the private schema first,
+	// then fall back to public for the vector extension's types.
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Skipf("Could not connect to test database: %v", err)
 	}
@@ -71,19 +88,50 @@ func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()
 		pool.Close()
 		t.Skipf("Test database ping failed: %v", err)
 	}
-	if _, err := pool.Exec(ctx, memoryEmbeddingSchema); err != nil {
+
+	// The vector extension lives in the public schema; create it there so
+	// the vector type is resolvable via the search_path fallback.
+	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
 		pool.Close()
-		t.Skipf("Failed to create memory embedding schema (pgvector may be missing): %v", err)
+		t.Skipf("pgvector extension unavailable: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s`, schema, schema)); err != nil {
+		pool.Close()
+		t.Skipf("Failed to create private test schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, memoryEmbeddingTableDDL); err != nil {
+		pool.Close()
+		t.Skipf("Failed to create memory embedding table (pgvector may be missing): %v", err)
 	}
 
 	store := memory.NewStore(pool)
 	cleanup := func() {
-		if _, err := pool.Exec(context.Background(), memoryEmbeddingTeardown); err != nil {
+		if _, err := pool.Exec(context.Background(),
+			fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema)); err != nil {
 			t.Logf("memory embedding teardown failed: %v", err)
 		}
 		pool.Close()
 	}
 	return store, pool, cleanup
+}
+
+// uniqueSchemaName builds an SQL-safe, lower-case schema identifier from a
+// test name. Non-alphanumeric characters (which Go test names embed, e.g.
+// "/" from subtests) are replaced with underscores so the result is a
+// valid unquoted PostgreSQL identifier.
+func uniqueSchemaName(testName string) string {
+	var b strings.Builder
+	b.WriteString("test_mem_")
+	for _, c := range strings.ToLower(testName) {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // newMockGeminiEmbeddingServer stands in for the Gemini embedContent

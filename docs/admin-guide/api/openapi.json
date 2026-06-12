@@ -4932,6 +4932,74 @@
         ]
       }
     },
+    "/llm/embed/multimodal": {
+      "post": {
+        "summary": "Generate multimodal embeddings",
+        "description": "Embeds one or more multimodal inputs, each a sequence of text and/or image content blocks, and returns one vector per input. Requires authentication (bearer token or session cookie).",
+        "operationId": "embedMultimodalWithLLM",
+        "tags": [
+          "LLM"
+        ],
+        "requestBody": {
+          "description": "Multimodal inputs to embed",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedMultimodalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Embedding vectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedMultimodalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or provider not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/llm/health": {
       "get": {
         "summary": "LLM proxy health",
@@ -10844,6 +10912,58 @@
           "email_address"
         ]
       },
+      "EmbedMultimodalRequest": {
+        "type": "object",
+        "description": "Request body for POST /llm/embed/multimodal (library proxy.EmbedMultimodalRequest).",
+        "properties": {
+          "inputs": {
+            "type": "array",
+            "description": "One or more multimodal inputs; each is embedded to a single vector",
+            "items": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "array",
+                  "description": "Ordered text and/or image content blocks for this input",
+                  "items": {
+                    "$ref": "#/components/schemas/MultimodalContent"
+                  }
+                }
+              },
+              "required": [
+                "content"
+              ]
+            }
+          },
+          "model": {
+            "type": "string",
+            "description": "Override the configured model"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Override the default provider"
+          }
+        },
+        "required": [
+          "inputs"
+        ]
+      },
+      "EmbedMultimodalResponse": {
+        "type": "object",
+        "description": "Response body for POST /llm/embed/multimodal (library proxy.EmbedMultimodalResponse).",
+        "properties": {
+          "embeddings": {
+            "type": "array",
+            "description": "One embedding vector per input, in order",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
       "EmbedRequest": {
         "type": "object",
         "description": "Request body for POST /llm/embed (library proxy.EmbedRequest).",
@@ -11098,8 +11218,12 @@
       },
       "LLMStreamChunk": {
         "type": "object",
-        "description": "One Server-Sent Event payload from POST /llm/chat/stream (llm.StreamChunk). The type field selects which other fields are populated.",
+        "description": "Data payload of a Server-Sent Event from POST /llm/chat/stream. Most events carry a JSON-encoded llm.StreamChunk whose type field selects which other fields are populated; the stream terminates with an event named done (a final chunk carrying usage). If the upstream stream fails, the proxy instead emits a terminal event named error whose data is an ErrorResponse object ({\"error\":\"...\"}) rather than a stream chunk. The optional error field below documents that terminal payload.",
         "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error detail carried by the terminal event named error (event: error\\ndata: {\"error\":\"...\"}). Present only when the stream fails; mutually exclusive with type."
+          },
           "partial": {
             "type": "string",
             "description": "Incremental tool-argument JSON fragment (tool_use_delta chunks)"
@@ -11114,7 +11238,7 @@
           },
           "type": {
             "type": "string",
-            "description": "Chunk type discriminator",
+            "description": "Chunk type discriminator (present on every non-error event)",
             "enum": [
               "text",
               "tool_use_start",
@@ -11125,10 +11249,7 @@
           "usage": {
             "$ref": "#/components/schemas/LLMTokenUsage"
           }
-        },
-        "required": [
-          "type"
-        ]
+        }
       },
       "LLMTokenUsage": {
         "type": "object",
@@ -11422,6 +11543,39 @@
             }
           }
         }
+      },
+      "MultimodalContent": {
+        "type": "object",
+        "description": "A single text or image content block within a multimodal input.",
+        "properties": {
+          "image_base64": {
+            "type": "string",
+            "description": "Base64-encoded image bytes (image blocks)"
+          },
+          "image_url": {
+            "type": "string",
+            "description": "URL of the image to embed (image blocks)"
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the image, e.g. image/png (image blocks)"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content (text blocks)"
+          },
+          "type": {
+            "type": "string",
+            "description": "Content block type",
+            "enum": [
+              "text",
+              "image"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
       },
       "NotificationChannel": {
         "type": "object",

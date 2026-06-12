@@ -528,6 +528,15 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 // and base URL from the server's LLM configuration and returns the
 // construction error so callers can report a misconfigured provider.
 func (g *Generator) createLLMClient() (pgllm.Client, error) {
+	// Guard against a nil or provider-less config: NewGenerator accepts a
+	// nil *llmproxy.Config (AI disabled or config omitted), so dereferencing
+	// g.llmConfig here would panic. Returning an error lets the existing
+	// caller paths (generateSummaryFromPrompt and its callers) report the
+	// misconfiguration gracefully without generating a summary.
+	if g.llmConfig == nil || g.llmConfig.Provider == "" {
+		return nil, fmt.Errorf("no LLM provider configured")
+	}
+
 	provider := g.llmConfig.Provider
 
 	headers, err := g.getProviderHeaders(provider)
@@ -557,6 +566,12 @@ func (g *Generator) createLLMClient() (pgllm.Client, error) {
 		CustomHeaders: headers,
 		MaxTokens:     pgllm.Int(llmMaxTokens),
 		Temperature:   pgllm.Float(llmTemperature),
+	}
+	// Honor the operator-configured request timeout, matching the proxy
+	// shim's providerOptions. Only set it when positive so a zero/unset
+	// value leaves the library default in place.
+	if g.llmConfig.LLMConfig != nil && g.llmConfig.LLMConfig.TimeoutSeconds > 0 {
+		opts.RequestTimeout = time.Duration(g.llmConfig.LLMConfig.TimeoutSeconds) * time.Second
 	}
 
 	client, err := pgllm.NewClient(provider, opts)

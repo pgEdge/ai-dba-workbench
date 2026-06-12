@@ -971,6 +971,61 @@ func TestCreateLLMClient_MissingProviderReturnsError(t *testing.T) {
 	}
 }
 
+func TestCreateLLMClient_NilConfigReturnsError(t *testing.T) {
+	// NewGenerator accepts a nil *llmproxy.Config when AI is disabled or the
+	// LLM config is omitted. createLLMClient must not panic dereferencing the
+	// nil config; it returns an error so the caller paths degrade gracefully.
+	g := NewGenerator(nil, nil)
+
+	client, err := g.createLLMClient()
+	if err == nil {
+		t.Fatal("expected an error when llmConfig is nil")
+	}
+	if client != nil {
+		t.Errorf("expected nil client when llmConfig is nil, got %T", client)
+	}
+	if !strings.Contains(err.Error(), "no LLM provider configured") {
+		t.Errorf("expected 'no LLM provider configured' error, got %v", err)
+	}
+}
+
+func TestGenerateSummaryFromPrompt_NilConfigNoPanic(t *testing.T) {
+	// The whole summary path must remain a graceful no-op when AI is
+	// disabled (nil config): createLLMClient returns an error which the
+	// caller wraps, and no panic occurs.
+	g := NewGenerator(nil, nil)
+
+	summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+	if err == nil {
+		t.Fatal("expected an error when llmConfig is nil")
+	}
+	if summary != "" {
+		t.Errorf("expected empty summary on nil config, got %q", summary)
+	}
+}
+
+func TestCreateLLMClient_TimeoutSecondsHonoured(t *testing.T) {
+	// A positive TimeoutSeconds on the underlying config must produce a
+	// usable client; the timeout is applied to the library Options. The
+	// library defers credential validation, so a valid provider with a
+	// positive timeout yields a non-nil client without error.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider: "ollama",
+		Model:    "llama3",
+		LLMConfig: &config.LLMConfig{
+			TimeoutSeconds: 45,
+		},
+	})
+
+	client, err := g.createLLMClient()
+	if err != nil {
+		t.Fatalf("expected no error with positive timeout, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client when timeout is configured")
+	}
+}
+
 func TestCreateLLMClient_AnthropicMissingKeyConstructs(t *testing.T) {
 	// The library defers credential validation to request time, so a
 	// missing API key still yields a usable client object; the failure

@@ -827,6 +827,86 @@ func TestValidateModelMiddleware_RejectsUnsafeModel(t *testing.T) {
 	}
 }
 
+// TestValidateModelMiddleware_RejectsOversizedBody verifies that a request
+// body larger than maxChatBodySize is rejected with 413 rather than being
+// silently truncated to the cap and processed. A LimitReader at exactly the
+// cap would have truncated the body and let the wrapped handler run on the
+// prefix; reading cap+1 bytes detects the overflow and rejects it.
+func TestValidateModelMiddleware_RejectsOversizedBody(t *testing.T) {
+	var reached bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+	h := validateModelMiddleware(next)
+
+	// Build a body that is comfortably larger than the cap. The model field
+	// is valid; the rejection must be driven purely by the body size, not by
+	// model validation.
+	padding := strings.Repeat("a", maxChatBodySize+1024)
+	body, _ := json.Marshal(proxy.ChatRequest{
+		Model:    "gemini-1.5-pro",
+		Messages: []pgllm.Message{pgllm.UserText(padding)},
+	})
+	if int64(len(body)) <= maxChatBodySize {
+		t.Fatalf("test setup: body %d bytes is not over the cap %d", len(body), maxChatBodySize)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if reached {
+		t.Fatal("expected oversized body to be rejected before reaching the wrapped handler")
+	}
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized body, got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp proxy.ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if !strings.Contains(resp.Error, "maximum allowed size") {
+		t.Errorf("expected size-limit error, got %q", resp.Error)
+	}
+}
+
+// TestValidateModelMiddleware_AcceptsBodyAtCap verifies that a body whose
+// size is just under the cap is NOT rejected: the cap+1 read must not flag a
+// within-limit body as oversized.
+func TestValidateModelMiddleware_AcceptsBodyAtCap(t *testing.T) {
+	var reached bool
+	var gotBody []byte
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	})
+	h := validateModelMiddleware(next)
+
+	body, _ := json.Marshal(proxy.ChatRequest{
+		Model:    "gemini-1.5-pro",
+		Messages: []pgllm.Message{pgllm.UserText("hello")},
+	})
+	if int64(len(body)) > maxChatBodySize {
+		t.Fatalf("test setup: body %d bytes unexpectedly exceeds cap %d", len(body), maxChatBodySize)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if !reached {
+		t.Fatal("expected within-cap body to reach the wrapped handler")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for within-cap body, got %d (%s)", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(gotBody, body) {
+		t.Errorf("body not restored intact for downstream handler")
+	}
+}
+
 // TestValidateModelMiddleware_PassesValidAndEmptyModel confirms that a
 // valid model and an omitted model (the operator default) both flow
 // through to the wrapped handler with the body intact and re-readable.

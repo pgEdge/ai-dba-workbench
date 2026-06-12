@@ -132,6 +132,15 @@ type modelEnvelope struct {
 // the model, then replaces the body with a fresh reader so the proxy can
 // parse it normally. An empty model is allowed: it means "use the
 // operator-configured default", which is trusted.
+//
+// SECURITY: the read is bounded by maxChatBodySize+1 bytes so an oversized
+// body can be detected rather than silently truncated. A LimitReader at
+// exactly maxChatBodySize would truncate a larger body to its first
+// maxChatBodySize bytes, and restoring only that prefix would let the
+// proxy's own MaxBytesReader (also maxChatBodySize) accept the truncated
+// request, processing a request the cap was meant to reject. Reading one
+// extra byte lets the middleware distinguish "at the cap" from "over the
+// cap" and reject the latter with 413 before the wrapped handler runs.
 func validateModelMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || !modelBearingPaths[r.URL.Path] {
@@ -139,9 +148,17 @@ func validateModelMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodySize))
+		// Read up to maxChatBodySize+1 bytes. If the extra byte is
+		// present the body exceeds the cap and must be rejected rather
+		// than truncated and processed.
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodySize+1))
 		if err != nil {
 			writeModelError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if int64(len(body)) > maxChatBodySize {
+			writeModelError(w, http.StatusRequestEntityTooLarge,
+				"request body exceeds the maximum allowed size")
 			return
 		}
 		// Restore the body so the proxy can decode it again. The proxy

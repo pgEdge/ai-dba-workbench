@@ -1024,6 +1024,7 @@ jobs:
             - name: Compose Slack fields
               id: compose_slack
               env:
+                  COMPONENT_NAME:   ${{ github.event.repository.name }}
                   CV:               ${{ needs.determine-repo-type.outputs.component-version }}
                   CBN:              ${{ needs.determine-repo-type.outputs.component-buildnum }}
                   EFFECTIVE_TAG:    ${{ needs.determine-repo-type.outputs.effective-tag }}
@@ -1031,85 +1032,96 @@ jobs:
                   REPO_TYPE:        ${{ needs.determine-repo-type.outputs.repo-type }}
                   PUSH_DNF_RESULT:  ${{ needs.push-dnf.result }}
                   PUSH_APT_RESULT:  ${{ needs.push-apt.result }}
+                  # has_rpm / has_deb let the status logic distinguish
+                  # "family was skipped because it doesn't exist" from
+                  # "family was skipped because something upstream failed".
+                  HAS_RPM:          ${{ needs.detect-matrix.outputs.has_rpm }}
+                  HAS_DEB:          ${{ needs.detect-matrix.outputs.has_deb }}
                   ACTOR:            ${{ github.actor }}
                   REPO_URL:         ${{ github.server_url }}/${{ github.repository }}
-                  # github.run_started_at is the workflow-trigger time and is
-                  # always populated (for both tag-push and workflow_dispatch).
-                  RUN_STARTED_AT:   ${{ github.run_started_at }}
               run: |
                   set -euo pipefail
 
-                  # ---- run duration --------------------------------------
-                  # pushed_at is set on tag-push events; for workflow_dispatch
-                  # it falls back to "now" so duration shows 0s (acceptable).
                   unix_ts="$(date -u +%s)"
-                  started=$(date -u -d "${RUN_STARTED_AT:-now}" +%s 2>/dev/null || echo "$unix_ts")
-                  dur_sec=$((unix_ts - started))
-                  [ "$dur_sec" -lt 0 ] && dur_sec=0
-                  if [ "$dur_sec" -ge 60 ]; then
-                      duration="$((dur_sec/60))m $((dur_sec%60))s"
-                  else
-                      duration="${dur_sec}s"
-                  fi
+                  fallback_ts="$(date -u +'%Y-%m-%d %H:%M UTC')"
 
-                  # ---- tag link (no link on simulated runs — tag doesn't exist) ----
+                  # ---- subject (clickable tag inside outer-bold) ---------
+                  # Publisher wraps subject with *...*; link tokens still
+                  # render correctly inside the outer bold. For simulated
+                  # runs we omit the link because the tag doesn't exist.
                   if [ "${SIMULATED}" = "true" ]; then
-                      tag_md="\`${EFFECTIVE_TAG}\` _(simulated)_"
+                      subject="${COMPONENT_NAME} ${EFFECTIVE_TAG} (simulated)"
                   else
-                      tag_md="<${REPO_URL}/releases/tag/${EFFECTIVE_TAG}|\`${EFFECTIVE_TAG}\`>"
+                      subject="${COMPONENT_NAME} <${REPO_URL}/releases/tag/${EFFECTIVE_TAG}|${EFFECTIVE_TAG}>"
                   fi
 
-                  # ---- per-OS status from successful backup paths --------
-                  # Each backup path is
-                  #   <repo_type>/<comp>/<ver>/<ts>/<family>/<os_or_distro>/
-                  # so the OS / distro is at split-index 5. Only successful
-                  # pushes have backup paths (the manifest builder gates on
-                  # PUSH_*_RESULT == 'success'), so cells listed here did
-                  # publish to S3.
-                  rpm_oss=""
-                  deb_distros=""
-                  dnf_count=0
-                  apt_count=0
+                  # ---- status (family-aware) -----------------------------
+                  # Count outcomes only for families this component actually
+                  # builds (has_rpm / has_deb). A skipped push on a family
+                  # the component doesn't ship is not a downgrade.  We pass
+                  # the resulting status to the publisher explicitly via
+                  # its `status:` input — the publisher's auto-compute path
+                  # requires build_*_result inputs that this workflow
+                  # doesn't track separately.
+                  if [ "${SIMULATED}" = "true" ]; then
+                      status="Simulated"
+                  else
+                      appl_success=0; appl_failed=0; appl_skipped=0
+                      if [ "${HAS_RPM:-true}" = "true" ]; then
+                          case "${PUSH_DNF_RESULT}" in
+                              success) appl_success=$((appl_success+1)) ;;
+                              skipped) appl_skipped=$((appl_skipped+1)) ;;
+                              *)       appl_failed=$((appl_failed+1)) ;;
+                          esac
+                      fi
+                      if [ "${HAS_DEB:-true}" = "true" ]; then
+                          case "${PUSH_APT_RESULT}" in
+                              success) appl_success=$((appl_success+1)) ;;
+                              skipped) appl_skipped=$((appl_skipped+1)) ;;
+                              *)       appl_failed=$((appl_failed+1)) ;;
+                          esac
+                      fi
+                      total=$((appl_success + appl_failed + appl_skipped))
+                      if [ "$total" -eq 0 ]; then
+                          status="Skipped"
+                      elif [ "$appl_failed" -eq 0 ] && [ "$appl_skipped" -eq 0 ]; then
+                          status="Success"
+                      elif [ "$appl_success" -gt 0 ]; then
+                          status="Partial"
+                      elif [ "$appl_skipped" -eq "$total" ]; then
+                          status="Skipped"
+                      else
+                          status="Failed"
+                      fi
+                  fi
+
+                  # ---- archs from the manifest's cells[] -----------------
+                  # cells[] is populated only for cells whose push family
+                  # succeeded (manifest builder gates on PUSH_*_RESULT), so
+                  # this reflects what actually shipped. Falls back to "—"
+                  # for failed / simulated runs.
+                  archs="—"
                   if [ -f aggregated/manifest.json ]; then
-                      rpm_oss=$(jq -r '
-                          (.backups.dnf // [])
-                          | map(split("/")[5])
-                          | sort
-                          | map("el" + . + " :white_check_mark:")
-                          | join("  ")
-                      ' aggregated/manifest.json)
-                      deb_distros=$(jq -r '
-                          (.backups.apt // [])
-                          | map(split("/")[5])
-                          | sort
-                          | map(. + " :white_check_mark:")
-                          | join("  ")
-                      ' aggregated/manifest.json)
-                      dnf_count=$(jq -r '(.backups.dnf // []) | length' aggregated/manifest.json)
-                      apt_count=$(jq -r '(.backups.apt // []) | length' aggregated/manifest.json)
+                      a=$(jq -r '(.cells // []) | map(.arch) | unique | join(", ")' aggregated/manifest.json)
+                      [ -n "$a" ] && archs="$a"
                   fi
 
-                  # ---- hero subject (single bold line under header) ------
-                  # Publisher wraps the subject with *...*, so we don't
-                  # include inner * markers (Slack mrkdwn doesn't nest
-                  # bold). Link tokens render correctly inside outer bold.
-                  subject="${tag_md} → ${REPO_TYPE} by @${ACTOR}  ·  ${duration}"
-
-                  # ---- fields grid: details that complement the hero -----
-                  # Hero already carries tag / channel / actor / duration,
-                  # so fields focus on per-cell status and counts.
                   fields=$(jq -nc \
-                      --arg version    "${CV}-${CBN}" \
-                      --arg per_os_rpm "${rpm_oss}" \
-                      --arg per_os_deb "${deb_distros}" \
-                      --arg backups    "${dnf_count} RPM • ${apt_count} DEB" \
+                      --arg channel     "${REPO_TYPE}" \
+                      --arg version     "${CV}" \
+                      --arg buildnum    "${CBN}" \
+                      --arg archs       "${archs}" \
+                      --arg actor       "${ACTOR}" \
+                      --arg unix_ts     "${unix_ts}" \
+                      --arg fallback_ts "${fallback_ts}" \
                       '[
-                        {title:"Version", value:("`" + $version + "`")},
-                        {title:"Backups", value:$backups}
-                      ]
-                      + (if $per_os_rpm != "" then [{title:"RPM cells", value:$per_os_rpm}] else [] end)
-                      + (if $per_os_deb != "" then [{title:"DEB cells", value:$per_os_deb}] else [] end)
-                      ')
+                        {title:"Channel",      value:("`" + $channel + "`")},
+                        {title:"Version",      value:("`" + $version + "`")},
+                        {title:"Build #",      value:("`" + $buildnum + "`")},
+                        {title:"Archs",        value:("`" + $archs + "`")},
+                        {title:"Triggered by", value:$actor},
+                        {title:"When",         value:("<!date^" + $unix_ts + "^{date_short_pretty} at {time}|" + $fallback_ts + ">")}
+                      ]')
 
                   result_fields=$(jq -nc \
                       --arg dnf "${PUSH_DNF_RESULT}" \
@@ -1119,12 +1131,21 @@ jobs:
                         {title:"Push APT", value:("`" + $apt + "`")}
                       ]')
 
-                  # Backup paths are now summarized in the Backups field
-                  # above; full path lists are reachable from the workflow
-                  # run link in the action bar.
-                  code_sections='[]'
+                  # Full backup paths in code blocks (operationally useful
+                  # for diagnostics and audit). Publisher elides empty
+                  # sections automatically when push didn't run.
+                  dnf_paths=$(jq -c '.backups.dnf // []' aggregated/manifest.json)
+                  apt_paths=$(jq -c '.backups.apt // []' aggregated/manifest.json)
+                  code_sections=$(jq -nc \
+                      --argjson dnf "${dnf_paths}" \
+                      --argjson apt "${apt_paths}" \
+                      '[
+                        {title:"DNF backup paths", lines:$dnf},
+                        {title:"APT backup paths", lines:$apt}
+                      ]')
 
                   {
+                      echo "status=${status}"
                       echo "subject<<__SUB_EOF__"
                       echo "${subject}"
                       echo "__SUB_EOF__"
@@ -1156,9 +1177,12 @@ jobs:
                   # Skip the _pending/ upload when there's nothing to QA:
                   # simulate_tag dispatches or both-pushes-failed runs.
                   skip_publish: ${{ needs.determine-repo-type.outputs.simulated == 'true' || (needs.push-dnf.result != 'success' && needs.push-apt.result != 'success') }}
-                  # Override status only on simulated runs; for real tag
-                  # pushes, let the action auto-compute from push results.
-                  status: ${{ needs.determine-repo-type.outputs.simulated == 'true' && 'Simulated' || '' }}
+                  # Status computed in compose_slack from push results +
+                  # the simulated flag (mirrors the old notify-slack logic).
+                  # We pass it explicitly because the publisher's auto-
+                  # compute requires has_rpm/has_deb/build_*_result inputs
+                  # that this workflow doesn't surface.
+                  status: ${{ steps.compose_slack.outputs.status }}
                   push_dnf_result: ${{ needs.push-dnf.result }}
                   push_apt_result: ${{ needs.push-apt.result }}
                   slack_webhook:   ${{ secrets.SLACK_CHANNEL_URL }}

@@ -19,6 +19,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../types/llm';
+import { normaliseMessages } from '../types/llm';
 
 export interface AgenticLoopOptions {
     /** Initial messages (typically a single user message). */
@@ -64,9 +65,9 @@ export async function runAgenticLoop(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                messages,
+                messages: normaliseMessages(messages),
                 tools: tools.length > 0 ? tools : undefined,
-                system: systemPrompt,
+                system_prompt: systemPrompt,
             }),
         });
 
@@ -98,7 +99,7 @@ export async function runAgenticLoop(
 
         // Update progress with tool names
         const toolNames = toolUses.map(
-            t => getToolDisplayName(t.name || '') || 'unknown tool',
+            t => getToolDisplayName(t.tool_use?.name || '') || 'unknown tool',
         );
         const uniqueNames = [...new Set(toolNames)];
         onActiveTools?.(uniqueNames);
@@ -116,8 +117,8 @@ export async function runAgenticLoop(
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        name: toolUse.name,
-                        arguments: toolUse.input,
+                        name: toolUse.tool_use?.name,
+                        arguments: toolUse.tool_use?.input,
                     }),
                 });
 
@@ -131,14 +132,14 @@ export async function runAgenticLoop(
 
                 toolResults.push({
                     type: 'tool_result',
-                    tool_use_id: toolUse.id ?? '',
-                    content: resultText,
+                    tool_use_id: toolUse.tool_use?.id ?? '',
+                    text: resultText,
                 });
             } catch (toolErr) {
                 toolResults.push({
                     type: 'tool_result',
-                    tool_use_id: toolUse.id ?? '',
-                    content: `Tool execution error: ${(toolErr as Error).message}`,
+                    tool_use_id: toolUse.tool_use?.id ?? '',
+                    text: `Tool execution error: ${(toolErr as Error).message}`,
                     is_error: true,
                 });
             }

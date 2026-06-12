@@ -20,7 +20,11 @@ import {
     buildRepeatedToolFailureMessage,
 } from '../chatAgenticLoop';
 import type { APIMessage, ToolDefinition } from '../chatTypes';
-import type { LLMResponse, ToolCallResponse } from '../../../types/llm';
+import type {
+    LLMContentBlock,
+    LLMResponse,
+    ToolCallResponse,
+} from '../../../types/llm';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -89,14 +93,12 @@ function createToolUseResponse(
     tools: { id: string; name: string; input: Record<string, unknown> }[],
     text?: string,
 ): LLMResponse {
-    const content = tools.map(t => ({
+    const content: LLMContentBlock[] = tools.map(t => ({
         type: 'tool_use',
-        id: t.id,
-        name: t.name,
-        input: t.input,
+        tool_use: { id: t.id, name: t.name, input: t.input },
     }));
     if (text) {
-        content.unshift({ type: 'text', text, id: '', name: '', input: {} });
+        content.unshift({ type: 'text', text });
     }
     return { content };
 }
@@ -408,10 +410,12 @@ describe('chatAgenticLoop', () => {
                             content: [
                                 {
                                     type: 'tool_use',
-                                    name: 'list_connections',
-                                    input: {},
-                                    // No id field
-                                },
+                                    tool_use: {
+                                        name: 'list_connections',
+                                        input: {},
+                                        // No id field
+                                    },
+                                } as LLMContentBlock,
                             ],
                         },
                         createTextResponse('Done'),
@@ -439,10 +443,12 @@ describe('chatAgenticLoop', () => {
                             content: [
                                 {
                                     type: 'tool_use',
-                                    id: 'tool-1',
-                                    input: {},
-                                    // No name field
-                                },
+                                    tool_use: {
+                                        id: 'tool-1',
+                                        input: {},
+                                        // No name field
+                                    },
+                                } as LLMContentBlock,
                             ],
                         },
                         createTextResponse('Done'),
@@ -746,8 +752,14 @@ describe('chatAgenticLoop', () => {
 
                 const call = mockFetch.mock.calls[0];
                 const body = JSON.parse(call[1]?.body as string);
-                expect(body.messages).toEqual([{ role: 'user', content: 'Hello' }]);
-                expect(body.system).toBe('Be helpful');
+                expect(body.messages).toEqual([
+                    {
+                        role: 'user',
+                        content: [{ type: 'text', text: 'Hello' }],
+                    },
+                ]);
+                expect(body.system_prompt).toBe('Be helpful');
+                expect(body.system).toBeUndefined();
                 expect(body.tools).toEqual(params.availableTools);
             });
 

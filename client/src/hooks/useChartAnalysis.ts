@@ -270,8 +270,13 @@ Provide analysis of trends, anomalies, and actionable recommendations.`;
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    messages: [{ role: 'user', content: userMessage }],
-                    system: systemPrompt,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: [{ type: 'text', text: userMessage }],
+                        },
+                    ],
+                    system_prompt: systemPrompt,
                 }),
             });
 

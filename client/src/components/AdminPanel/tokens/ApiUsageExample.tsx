@@ -34,7 +34,7 @@ curl -s -X DELETE -H "Authorization: Bearer <token>" \\
 # Chat with the AI assistant
 curl -s -X POST -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
-  -d '{"messages": [{"role": "user", "content": "What tables exist in the database?"}]}' \\
+  -d '{"messages": [{"role": "user", "content": [{"type": "text", "text": "What tables exist in the database?"}]}]}' \\
   <server-url>/api/v1/llm/chat`;
 
 /**

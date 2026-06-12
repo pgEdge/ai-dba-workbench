@@ -11,13 +11,41 @@
 /**
  * Content block returned by the LLM API. Represents text output,
  * tool-use requests, or other structured content from the model.
+ *
+ * Text blocks carry `text`. Tool-use blocks from the server nest the
+ * call details under `tool_use` ({@link LLMToolUse}); the legacy flat
+ * `id`/`name`/`input` fields are retained only for backward-compatible
+ * local construction and are no longer populated by the server for
+ * tool-use responses.
  */
 export interface LLMContentBlock {
     type: string;
     text?: string;
+    tool_use?: LLMToolUse;
     id?: string;
     name?: string;
     input?: Record<string, unknown>;
+}
+
+/**
+ * Nested tool-use payload carried by a `tool_use` content block in a
+ * library `llm/proxy` chat response.
+ */
+export interface LLMToolUse {
+    id: string;
+    name: string;
+    input?: Record<string, unknown>;
+}
+
+/**
+ * Token usage accounting returned by the LLM chat endpoint.
+ */
+export interface LLMUsage {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
 }
 
 /**
@@ -26,6 +54,7 @@ export interface LLMContentBlock {
 export interface LLMResponse {
     content?: LLMContentBlock[];
     stop_reason?: string;
+    usage?: LLMUsage;
 }
 
 /**
@@ -42,7 +71,7 @@ export interface ToolCallResponse {
 export interface ToolResult {
     type: 'tool_result';
     tool_use_id: string;
-    content: string;
+    text: string;
     is_error?: boolean;
 }
 
@@ -54,6 +83,41 @@ export interface ToolResult {
 export interface Message {
     role: string;
     content: string | LLMContentBlock[] | ToolResult[];
+}
+
+/**
+ * Normalise a message's content into the typed-block array shape
+ * required by the library `llm/proxy` chat endpoint. Plain strings are
+ * wrapped in a single `text` block; block arrays (assistant content,
+ * tool results) are passed through unchanged.
+ *
+ * The server rejects plain-string content, so every outgoing message
+ * must pass through this helper before it is serialised.
+ *
+ * @param content - The message content to normalise.
+ * @returns A typed-block array suitable for the wire.
+ */
+export function toContentBlocks(
+    content: string | LLMContentBlock[] | ToolResult[],
+): LLMContentBlock[] | ToolResult[] {
+    if (typeof content === 'string') {
+        return [{ type: 'text', text: content }];
+    }
+    return content;
+}
+
+/**
+ * Normalise an array of messages so every message carries typed-block
+ * content. See {@link toContentBlocks}.
+ *
+ * @param messages - The messages to normalise.
+ * @returns Messages with block-array content.
+ */
+export function normaliseMessages(messages: Message[]): Message[] {
+    return messages.map(m => ({
+        role: m.role,
+        content: toContentBlocks(m.content),
+    }));
 }
 
 /**

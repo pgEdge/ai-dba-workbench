@@ -133,9 +133,11 @@ describe('runAgenticLoop', () => {
                     content: [
                         {
                             type: 'tool_use',
-                            id: 'tool-1',
-                            name: 'query_database',
-                            input: { query: 'SELECT 1' },
+                            tool_use: {
+                                id: 'tool-1',
+                                name: 'query_database',
+                                input: { query: 'SELECT 1' },
+                            },
                         },
                     ],
                 }),
@@ -166,8 +168,8 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
-                        { type: 'tool_use', id: 'tool-2', name: 'get_schema_info', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
+                        { type: 'tool_use', tool_use: { id: 'tool-2', name: 'get_schema_info', input: {} } },
                     ],
                 }),
             );
@@ -198,7 +200,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -223,7 +225,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -253,7 +255,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -287,7 +289,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValue(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -319,7 +321,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -363,7 +365,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -393,8 +395,8 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
-                        { type: 'tool_use', id: 'tool-2', name: 'get_schema_info', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
+                        { type: 'tool_use', tool_use: { id: 'tool-2', name: 'get_schema_info', input: {} } },
                     ],
                 }),
             );
@@ -426,8 +428,8 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', name: 'query_database', input: {} },
-                        { type: 'tool_use', id: 'tool-2', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', name: 'query_database', input: {} } },
+                        { type: 'tool_use', tool_use: { id: 'tool-2', name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -470,15 +472,29 @@ describe('runAgenticLoop', () => {
                 }),
             );
 
-            await runAgenticLoop({ ...baseOptions, tools });
+            // Use a fresh messages array so the assertion is not affected
+            // by mutation from other tests that share baseOptions.messages
+            // (the loop pushes assistant/tool turns onto the array).
+            await runAgenticLoop({
+                ...baseOptions,
+                messages: [{ role: 'user', content: 'Test query' }],
+                tools,
+            });
 
             expect(mockApiFetch).toHaveBeenCalledWith('/api/v1/llm/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    messages: baseOptions.messages,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: 'Test query' },
+                            ],
+                        },
+                    ],
                     tools,
-                    system: baseOptions.systemPrompt,
+                    system_prompt: baseOptions.systemPrompt,
                 }),
             });
         });
@@ -503,7 +519,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', name: 'query_database', input: {} },
+                        { type: 'tool_use', tool_use: { name: 'query_database', input: {} } },
                     ],
                 }),
             );
@@ -530,7 +546,7 @@ describe('runAgenticLoop', () => {
             mockApiFetch.mockResolvedValueOnce(
                 createMockResponse({
                     content: [
-                        { type: 'tool_use', id: 'tool-1', input: {} },
+                        { type: 'tool_use', tool_use: { id: 'tool-1', input: {} } },
                     ],
                 }),
             );

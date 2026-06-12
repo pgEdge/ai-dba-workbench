@@ -674,7 +674,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				},
 				"tool_choice": {
 					Type:        "object",
-					Description: "Constrains tool-use behaviour (auto, none, required, specific)",
+					Description: "Constrains tool-use behavior (auto, none, required, specific)",
 				},
 				"stop_sequences": {
 					Type:        "array",

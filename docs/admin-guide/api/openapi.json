@@ -10030,7 +10030,7 @@
           },
           "tool_choice": {
             "type": "object",
-            "description": "Constrains tool-use behaviour (auto, none, required, specific)"
+            "description": "Constrains tool-use behavior (auto, none, required, specific)"
           },
           "tool_descriptions": {
             "type": "string",

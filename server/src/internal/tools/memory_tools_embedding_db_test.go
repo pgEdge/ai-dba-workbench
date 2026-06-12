@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
@@ -90,13 +91,19 @@ func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()
 	}
 
 	// The vector extension lives in the public schema; create it there so
-	// the vector type is resolvable via the search_path fallback.
-	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+	// the vector type persists in public (resolvable via the search_path
+	// fallback) rather than being created in and dropped with the private
+	// test schema on every run.
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; constant string literal, no user input
+	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector SCHEMA public`); err != nil {
 		pool.Close()
 		t.Skipf("pgvector extension unavailable: %v", err)
 	}
+	// Quote the schema name via pgx.Identifier so it is safely escaped; the
+	// name itself is derived from the SQL-safe test name, not user input.
+	schemaIdent := pgx.Identifier{schema}.Sanitize()
 	if _, err := pool.Exec(ctx,
-		fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s`, schema, schema)); err != nil {
+		fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s`, schemaIdent, schemaIdent)); err != nil {
 		pool.Close()
 		t.Skipf("Failed to create private test schema: %v", err)
 	}
@@ -108,7 +115,7 @@ func newMemoryEmbeddingStore(t *testing.T) (*memory.Store, *pgxpool.Pool, func()
 	store := memory.NewStore(pool)
 	cleanup := func() {
 		if _, err := pool.Exec(context.Background(),
-			fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schema)); err != nil {
+			fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, schemaIdent)); err != nil {
 			t.Logf("memory embedding teardown failed: %v", err)
 		}
 		pool.Close()

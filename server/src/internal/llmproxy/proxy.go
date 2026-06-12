@@ -19,6 +19,7 @@ package llmproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -335,50 +336,78 @@ func (c *Config) authorize(r *http.Request) error {
 func (c *Config) transformRequest(r *http.Request, req *pgllm.ChatRequest) error {
 	ctx := r.Context()
 
-	// Apply compact descriptions from the server-side registry. The web
-	// client sends tools without CompactDescription populated, so we
-	// look them up and set them, then ask the provider to use compact
-	// descriptions.
-	if c.UseCompactDescriptions && len(c.CompactDescriptions) > 0 {
-		for i := range req.Tools {
-			if cd, ok := c.CompactDescriptions[req.Tools[i].Name]; ok {
-				req.Tools[i].CompactDescription = cd
-			}
-		}
-		req.ToolDescriptions = pgllm.ToolDescriptionCompact
-	}
+	c.applyCompactDescriptions(req)
 
-	// Default to the Ellie system prompt when the request omits one.
+	// Default to the Ellie system prompt when the request omits one, then
+	// layer memory and user/RBAC context on top in that exact order.
 	base := req.SystemPrompt
 	if base == "" {
 		base = chat.SystemPrompt
 	}
-
-	// Inject pinned memories into the system prompt when available.
-	if c.MemoryStore != nil {
-		if username := auth.GetUsernameFromContext(ctx); username != "" {
-			pinned, memErr := c.MemoryStore.GetPinned(ctx, username)
-			if memErr != nil {
-				fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch pinned memories: %v\n", memErr)
-			} else if len(pinned) > 0 {
-				base = chat.BuildSystemPrompt(base, pinned)
-			}
-		}
-	}
-
-	// Inject user/RBAC context into the system prompt when available.
-	if c.AuthStore != nil {
-		userID := auth.GetUserIDFromContext(ctx)
-		username := auth.GetUsernameFromContext(ctx)
-		if userID > 0 && username != "" {
-			if ui := buildUserInfo(c.AuthStore, userID, username); ui != nil {
-				base = chat.BuildUserContext(base, ui)
-			}
-		}
-	}
+	base = c.applyMemoryContext(ctx, base)
+	base = c.applyUserContext(ctx, base)
 
 	req.SystemPrompt = base
 	return nil
+}
+
+// applyCompactDescriptions populates each tool's CompactDescription from the
+// server-side registry and switches the request to compact tool
+// descriptions. The web client sends tools without CompactDescription
+// populated, so we look them up and set them. It is a no-op when compact
+// descriptions are disabled or the registry is empty.
+func (c *Config) applyCompactDescriptions(req *pgllm.ChatRequest) {
+	if !c.UseCompactDescriptions || len(c.CompactDescriptions) == 0 {
+		return
+	}
+	for i := range req.Tools {
+		if cd, ok := c.CompactDescriptions[req.Tools[i].Name]; ok {
+			req.Tools[i].CompactDescription = cd
+		}
+	}
+	req.ToolDescriptions = pgllm.ToolDescriptionCompact
+}
+
+// applyMemoryContext wraps base with the caller's pinned-memory context when
+// a memory store is configured and the caller has pinned memories. It
+// returns base unchanged otherwise. Fetch errors are logged and treated as
+// "no pinned memories" so the request still proceeds.
+func (c *Config) applyMemoryContext(ctx context.Context, base string) string {
+	if c.MemoryStore == nil {
+		return base
+	}
+	username := auth.GetUsernameFromContext(ctx)
+	if username == "" {
+		return base
+	}
+	pinned, memErr := c.MemoryStore.GetPinned(ctx, username)
+	if memErr != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch pinned memories: %v\n", memErr)
+		return base
+	}
+	if len(pinned) == 0 {
+		return base
+	}
+	return chat.BuildSystemPrompt(base, pinned)
+}
+
+// applyUserContext wraps base with the caller's user/RBAC context when an
+// auth store is configured and the caller resolves to a known user. It
+// returns base unchanged otherwise.
+func (c *Config) applyUserContext(ctx context.Context, base string) string {
+	if c.AuthStore == nil {
+		return base
+	}
+	userID := auth.GetUserIDFromContext(ctx)
+	username := auth.GetUsernameFromContext(ctx)
+	if userID <= 0 || username == "" {
+		return base
+	}
+	ui := buildUserInfo(c.AuthStore, userID, username)
+	if ui == nil {
+		return base
+	}
+	return chat.BuildUserContext(base, ui)
 }
 
 // onRequest logs user prompts when tracing is enabled, reproducing the

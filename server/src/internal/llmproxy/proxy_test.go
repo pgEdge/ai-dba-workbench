@@ -498,6 +498,110 @@ func TestTransformRequest_MemoryThenUserContextOrder(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
+// applyMemoryContext / applyUserContext guard branches
+//
+// These exercise the early-return guards in the two injection helpers that
+// the happy-path transformRequest tests above do not reach, keeping each
+// helper at or above the project's 90% line-coverage floor.
+// -----------------------------------------------------------------------
+
+func TestApplyMemoryContext_NilStore(t *testing.T) {
+	cfg := &Config{} // MemoryStore is nil
+	out := cfg.applyMemoryContext(context.Background(), "base")
+	if out != "base" {
+		t.Errorf("expected base unchanged when MemoryStore is nil, got %q", out)
+	}
+}
+
+func TestApplyMemoryContext_NoUsername(t *testing.T) {
+	// A non-nil store but no username in context must return base without
+	// touching the store (GetPinned is never called).
+	cfg := &Config{MemoryStore: memory.NewStore(nil)}
+	out := cfg.applyMemoryContext(context.Background(), "base")
+	if out != "base" {
+		t.Errorf("expected base unchanged when context carries no username, got %q", out)
+	}
+}
+
+// TestApplyMemoryContext_DBPaths covers the GetPinned error path and the
+// empty-result path. It needs a live Postgres via TEST_AI_WORKBENCH_SERVER
+// and is skipped when that is unset.
+func TestApplyMemoryContext_DBPaths(t *testing.T) {
+	dsn := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if dsn == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set; skipping memory-context DB test")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("failed to connect to test DB: %v", err)
+	}
+	defer pool.Close()
+
+	cfg := &Config{MemoryStore: memory.NewStore(pool)}
+	userCtx := context.WithValue(ctx, auth.UsernameContextKey, "nobody")
+
+	// Error path: with no chat_memories table present, GetPinned fails and
+	// the helper logs a warning and returns base unchanged.
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS chat_memories`); err != nil {
+		t.Fatalf("failed to drop table: %v", err)
+	}
+	if out := cfg.applyMemoryContext(userCtx, "base"); out != "base" {
+		t.Errorf("expected base unchanged on GetPinned error, got %q", out)
+	}
+
+	// Empty-result path: table exists but the user has no pinned memories.
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE chat_memories (
+			id          BIGSERIAL PRIMARY KEY,
+			username    TEXT NOT NULL,
+			scope       TEXT NOT NULL,
+			category    TEXT NOT NULL,
+			content     TEXT NOT NULL,
+			pinned      BOOLEAN NOT NULL DEFAULT FALSE,
+			model_name  TEXT NOT NULL DEFAULT '',
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`); err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS chat_memories`)
+	})
+	if out := cfg.applyMemoryContext(userCtx, "base"); out != "base" {
+		t.Errorf("expected base unchanged when no pinned memories, got %q", out)
+	}
+}
+
+func TestApplyUserContext_NilStore(t *testing.T) {
+	cfg := &Config{} // AuthStore is nil
+	out := cfg.applyUserContext(context.Background(), "base")
+	if out != "base" {
+		t.Errorf("expected base unchanged when AuthStore is nil, got %q", out)
+	}
+}
+
+func TestApplyUserContext_NoIdentity(t *testing.T) {
+	// AuthStore present but the context carries no identity: userID is 0,
+	// so the helper returns base without a lookup.
+	cfg := &Config{AuthStore: newTestAuthStore(t)}
+	out := cfg.applyUserContext(context.Background(), "base")
+	if out != "base" {
+		t.Errorf("expected base unchanged when context carries no identity, got %q", out)
+	}
+}
+
+func TestApplyUserContext_UserNotFound(t *testing.T) {
+	// A positive userID and a username that does not exist in the store:
+	// buildUserInfo returns nil, so the helper returns base unchanged.
+	cfg := &Config{AuthStore: newTestAuthStore(t)}
+	out := cfg.applyUserContext(withIdentity("ghost", 999).Context(), "base")
+	if out != "base" {
+		t.Errorf("expected base unchanged when user cannot be looked up, got %q", out)
+	}
+}
+
+// -----------------------------------------------------------------------
 // NewHandler end-to-end
 // -----------------------------------------------------------------------
 

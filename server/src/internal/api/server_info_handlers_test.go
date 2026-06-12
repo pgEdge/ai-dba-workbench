@@ -11,10 +11,12 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/pgedge/ai-workbench/server/internal/chat"
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
 
@@ -110,9 +112,10 @@ func TestParseDatabaseAnalysisResponse(t *testing.T) {
 		{Name: "analytics"},
 	}
 
-	resp := chat.LLMResponse{
-		Content: []any{
-			chat.TextContent{
+	resp := &pgllm.ChatResponse{
+		Content: []pgllm.ContentBlock{
+			{
+				Type: pgllm.BlockText,
 				Text: "myapp: A web application database.\nanalytics: A data warehouse for reporting.\n",
 			},
 		},
@@ -140,9 +143,10 @@ func TestParseDatabaseAnalysisResponseHandlesMarkdownFormatting(t *testing.T) {
 		{Name: "metrics"},
 	}
 
-	resp := chat.LLMResponse{
-		Content: []any{
-			chat.TextContent{
+	resp := &pgllm.ChatResponse{
+		Content: []pgllm.ContentBlock{
+			{
+				Type: pgllm.BlockText,
 				Text: "- myapp: A web application database.\n" +
 					"* analytics: A data warehouse for reporting.\n" +
 					"**warehouse**: A storage system.\n" +
@@ -179,9 +183,10 @@ func TestParseDatabaseAnalysisResponseIgnoresUnknownDatabases(t *testing.T) {
 		{Name: "myapp"},
 	}
 
-	resp := chat.LLMResponse{
-		Content: []any{
-			chat.TextContent{
+	resp := &pgllm.ChatResponse{
+		Content: []pgllm.ContentBlock{
+			{
+				Type: pgllm.BlockText,
 				Text: "myapp: A web app.\nunknown_db: Should be ignored.\n",
 			},
 		},
@@ -197,17 +202,18 @@ func TestParseDatabaseAnalysisResponseIgnoresUnknownDatabases(t *testing.T) {
 	}
 }
 
-func TestParseDatabaseAnalysisResponseHandlesMapContent(t *testing.T) {
+func TestParseDatabaseAnalysisResponseConcatenatesTextBlocksOnly(t *testing.T) {
 	databases := []DatabaseInfo{
 		{Name: "testdb"},
 	}
 
-	resp := chat.LLMResponse{
-		Content: []any{
-			map[string]any{
-				"type": "text",
-				"text": "testdb: A test database.\n",
-			},
+	// Non-text blocks must be ignored; only BlockText contributes to the
+	// parsed text. Two text blocks are concatenated in order.
+	resp := &pgllm.ChatResponse{
+		Content: []pgllm.ContentBlock{
+			{Type: pgllm.BlockToolUse, Text: "ignored tool block"},
+			{Type: pgllm.BlockText, Text: "testdb: A test "},
+			{Type: pgllm.BlockText, Text: "database.\n"},
 		},
 	}
 
@@ -215,6 +221,14 @@ func TestParseDatabaseAnalysisResponseHandlesMapContent(t *testing.T) {
 
 	if result["testdb"] != "A test database." {
 		t.Errorf("unexpected testdb description: %q", result["testdb"])
+	}
+}
+
+func TestParseDatabaseAnalysisResponseNilResponse(t *testing.T) {
+	databases := []DatabaseInfo{{Name: "testdb"}}
+	result := parseDatabaseAnalysisResponse(nil, databases)
+	if len(result) != 0 {
+		t.Errorf("expected empty result for nil response, got %d entries", len(result))
 	}
 }
 
@@ -318,7 +332,10 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 			},
 		}
 
-		client := h.createLLMClient()
+		client, err := h.createLLMClient()
+		if err != nil {
+			t.Fatalf("expected no error for anthropic provider, got %v", err)
+		}
 		if client == nil {
 			t.Error("expected non-nil client for anthropic provider")
 		}
@@ -333,7 +350,10 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 			},
 		}
 
-		client := h.createLLMClient()
+		client, err := h.createLLMClient()
+		if err != nil {
+			t.Fatalf("expected no error for openai provider, got %v", err)
+		}
 		if client == nil {
 			t.Error("expected non-nil client for openai provider")
 		}
@@ -348,7 +368,10 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 			},
 		}
 
-		client := h.createLLMClient()
+		client, err := h.createLLMClient()
+		if err != nil {
+			t.Fatalf("expected no error for gemini provider, got %v", err)
+		}
 		if client == nil {
 			t.Error("expected non-nil client for gemini provider")
 		}
@@ -363,33 +386,42 @@ func TestServerInfoCreateLLMClient(t *testing.T) {
 			},
 		}
 
-		client := h.createLLMClient()
+		client, err := h.createLLMClient()
+		if err != nil {
+			t.Fatalf("expected no error for ollama provider, got %v", err)
+		}
 		if client == nil {
 			t.Error("expected non-nil client for ollama provider")
 		}
 	})
 
-	t.Run("empty provider returns nil", func(t *testing.T) {
+	t.Run("empty provider returns error", func(t *testing.T) {
 		h := &ServerInfoHandler{
 			llmConfig: &llmproxy.Config{
 				Provider: "",
 			},
 		}
 
-		client := h.createLLMClient()
+		client, err := h.createLLMClient()
+		if err == nil {
+			t.Error("expected an error for empty provider")
+		}
 		if client != nil {
 			t.Error("expected nil client for empty provider")
 		}
 	})
 
-	t.Run("unknown provider returns nil", func(t *testing.T) {
+	t.Run("unknown provider returns error", func(t *testing.T) {
 		h := &ServerInfoHandler{
 			llmConfig: &llmproxy.Config{
 				Provider: "unsupported-provider",
 			},
 		}
 
-		client := h.createLLMClient()
+		client, err := h.createLLMClient()
+		if err == nil {
+			t.Error("expected an error for unknown provider")
+		}
 		if client != nil {
 			t.Error("expected nil client for unknown provider")
 		}
@@ -514,6 +546,107 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 		)
 		if result != nil {
 			t.Error("expected nil for cache miss on different connection ID")
+		}
+	})
+
+	t.Run("returns nil when client construction fails", func(t *testing.T) {
+		// A non-empty but unsupported provider passes the empty-provider
+		// gate yet makes createLLMClient fail; getAIAnalysis must return
+		// nil rather than panic on the nil client.
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{Provider: "unsupported-provider"},
+			cache:     make(map[int]*aiCacheEntry),
+		}
+
+		result := h.getAIAnalysis(
+			context.Background(), 1,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		)
+		if result != nil {
+			t.Error("expected nil when client construction fails")
+		}
+	})
+
+	t.Run("returns analysis and caches on successful LLM call", func(t *testing.T) {
+		// Drive the full happy path: an OpenAI-compatible stub returns a
+		// per-database description, which getAIAnalysis must parse, return,
+		// and cache for the connection ID.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/chat/completions" {
+				http.Error(w, "unexpected path", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"choices": [{"message": {"role": "assistant", "content": "mydb: A primary application store.\n"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+			}`))
+		}))
+		defer srv.Close()
+
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+			},
+			cache: make(map[int]*aiCacheEntry),
+		}
+
+		result := h.getAIAnalysis(
+			context.Background(), 7,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		)
+		if result == nil {
+			t.Fatal("expected non-nil analysis on successful LLM call")
+		}
+		if result.Databases["mydb"] != "A primary application store." {
+			t.Errorf("unexpected description: %q", result.Databases["mydb"])
+		}
+
+		// The result must be cached under the connection ID.
+		h.cacheMu.RLock()
+		entry, ok := h.cache[7]
+		h.cacheMu.RUnlock()
+		if !ok {
+			t.Fatal("expected cache entry for connection 7")
+		}
+		if entry.analysis["mydb"] != "A primary application store." {
+			t.Errorf("unexpected cached description: %q", entry.analysis["mydb"])
+		}
+	})
+
+	t.Run("returns nil when LLM call fails", func(t *testing.T) {
+		// A non-retryable 400 makes Chat fail fast; getAIAnalysis logs and
+		// returns nil without caching.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+		}))
+		defer srv.Close()
+
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+			},
+			cache: make(map[int]*aiCacheEntry),
+		}
+
+		result := h.getAIAnalysis(
+			context.Background(), 8,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		)
+		if result != nil {
+			t.Error("expected nil when the LLM call fails")
+		}
+		h.cacheMu.RLock()
+		_, ok := h.cache[8]
+		h.cacheMu.RUnlock()
+		if ok {
+			t.Error("expected no cache entry when the LLM call fails")
 		}
 	})
 }

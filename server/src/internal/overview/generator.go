@@ -17,7 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pgedge/ai-workbench/server/internal/chat"
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"golang.org/x/sync/singleflight"
@@ -504,19 +505,17 @@ func (g *Generator) generateSummary(ctx context.Context, snapshot *database.Esta
 // Separating the instruction from the data ensures that smaller models
 // respect the formatting rules delivered via the system prompt.
 func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data string) (string, error) {
-	client := g.createLLMClient()
-	if client == nil {
-		return "", fmt.Errorf("no LLM provider configured")
+	client, err := g.createLLMClient()
+	if err != nil {
+		return "", fmt.Errorf("no LLM provider configured: %w", err)
 	}
 
-	messages := []chat.Message{
-		{
-			Role:    "user",
-			Content: data,
-		},
-	}
-
-	resp, err := client.Chat(ctx, messages, nil, system)
+	resp, err := client.Chat(ctx, pgllm.ChatRequest{
+		Messages:     []pgllm.Message{pgllm.UserText(data)},
+		SystemPrompt: system,
+		MaxTokens:    pgllm.Int(llmMaxTokens),
+		Temperature:  pgllm.Float(llmTemperature),
+	})
 	if err != nil {
 		return "", fmt.Errorf("LLM chat failed: %w", err)
 	}
@@ -524,35 +523,48 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 	return extractTextFromResponse(resp), nil
 }
 
-// createLLMClient builds the appropriate chat client based on the
-// configured LLM provider. Returns nil when no provider is configured.
-func (g *Generator) createLLMClient() chat.LLMClient {
-	headers, err := g.getProviderHeaders(g.llmConfig.Provider)
+// createLLMClient builds a pgedge-go-llm-lib client based on the
+// configured LLM provider. It selects the per-provider API key, model,
+// and base URL from the server's LLM configuration and returns the
+// construction error so callers can report a misconfigured provider.
+func (g *Generator) createLLMClient() (pgllm.Client, error) {
+	provider := g.llmConfig.Provider
+
+	headers, err := g.getProviderHeaders(provider)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", g.llmConfig.Provider, err)
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", provider, err)
 	}
 
-	client, err := chat.NewClientFromLLMConfig(chat.LLMConfig{
-		Provider:               g.llmConfig.Provider,
-		Model:                  g.llmConfig.Model,
-		AnthropicAPIKey:        g.llmConfig.AnthropicAPIKey,
-		AnthropicBaseURL:       g.llmConfig.AnthropicBaseURL,
-		OpenAIAPIKey:           g.llmConfig.OpenAIAPIKey,
-		OpenAIBaseURL:          g.llmConfig.OpenAIBaseURL,
-		GeminiAPIKey:           g.llmConfig.GeminiAPIKey,
-		GeminiBaseURL:          g.llmConfig.GeminiBaseURL,
-		OllamaURL:              g.llmConfig.OllamaURL,
-		UseCompactDescriptions: g.llmConfig.UseCompactDescriptions,
-	}, chat.LLMOptions{
-		MaxTokens:   llmMaxTokens,
-		Temperature: llmTemperature,
-		Headers:     headers,
-	})
+	var apiKey, baseURL string
+	switch provider {
+	case "anthropic":
+		apiKey = g.llmConfig.AnthropicAPIKey
+		baseURL = g.llmConfig.AnthropicBaseURL
+	case "openai":
+		apiKey = g.llmConfig.OpenAIAPIKey
+		baseURL = g.llmConfig.OpenAIBaseURL
+	case "gemini":
+		apiKey = g.llmConfig.GeminiAPIKey
+		baseURL = g.llmConfig.GeminiBaseURL
+	case "ollama":
+		baseURL = g.llmConfig.OllamaURL
+	}
+
+	opts := pgllm.Options{
+		APIKey:        apiKey,
+		Model:         g.llmConfig.Model,
+		BaseURL:       baseURL,
+		CustomHeaders: headers,
+		MaxTokens:     pgllm.Int(llmMaxTokens),
+		Temperature:   pgllm.Float(llmTemperature),
+	}
+
+	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to create LLM client: %v\n", err)
-		return nil
+		return nil, err
 	}
-	return client
+	return client, nil
 }
 
 // getProviderHeaders retrieves custom headers for the given provider from the
@@ -566,18 +578,14 @@ func (g *Generator) getProviderHeaders(provider string) (map[string]string, erro
 
 // extractTextFromResponse walks the LLM response content blocks and
 // concatenates all text content into a single string.
-func extractTextFromResponse(resp chat.LLMResponse) string {
+func extractTextFromResponse(resp *pgllm.ChatResponse) string {
+	if resp == nil {
+		return ""
+	}
 	var parts []string
-	for _, item := range resp.Content {
-		switch v := item.(type) {
-		case chat.TextContent:
-			parts = append(parts, v.Text)
-		case map[string]any:
-			if t, ok := v["type"].(string); ok && t == "text" {
-				if text, ok := v["text"].(string); ok {
-					parts = append(parts, text)
-				}
-			}
+	for _, b := range resp.Content {
+		if b.Type == pgllm.BlockText {
+			parts = append(parts, b.Text)
 		}
 	}
 	return strings.Join(parts, "")

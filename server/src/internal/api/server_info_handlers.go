@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	_ "github.com/pgEdge/pgedge-go-llm-lib/llm/all"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
-	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
@@ -675,19 +676,17 @@ func (h *ServerInfoHandler) getAIAnalysis(
 	prompt := buildDatabaseAnalysisPrompt(databases)
 
 	// Create LLM client
-	client := h.createLLMClient()
-	if client == nil {
+	client, err := h.createLLMClient()
+	if err != nil {
 		return nil
 	}
 
-	messages := []chat.Message{
-		{
-			Role:    "user",
-			Content: prompt,
-		},
-	}
-
-	resp, err := client.Chat(ctx, messages, nil, "")
+	resp, err := client.Chat(ctx, pgllm.ChatRequest{
+		Messages:     []pgllm.Message{pgllm.UserText(prompt)},
+		SystemPrompt: "",
+		MaxTokens:    pgllm.Int(llmAnalysisMaxTokens),
+		Temperature:  pgllm.Float(llmAnalysisTemperature),
+	})
 	if err != nil {
 		log.Printf("[ERROR] AI analysis failed for connection %d: %v",
 			connectionID, err)
@@ -752,20 +751,15 @@ func buildDatabaseAnalysisPrompt(databases []DatabaseInfo) string {
 // parseDatabaseAnalysisResponse extracts per-database descriptions from
 // the LLM response text.
 func parseDatabaseAnalysisResponse(
-	resp chat.LLMResponse,
+	resp *pgllm.ChatResponse,
 	databases []DatabaseInfo,
 ) map[string]string {
 	// Extract text from response
 	var text string
-	for _, item := range resp.Content {
-		switch v := item.(type) {
-		case chat.TextContent:
-			text += v.Text
-		case map[string]any:
-			if t, ok := v["type"].(string); ok && t == "text" {
-				if txt, ok := v["text"].(string); ok {
-					text += txt
-				}
+	if resp != nil {
+		for _, b := range resp.Content {
+			if b.Type == pgllm.BlockText {
+				text += b.Text
 			}
 		}
 	}
@@ -815,70 +809,48 @@ func parseDatabaseAnalysisResponse(
 	return result
 }
 
-// createLLMClient builds the appropriate chat client based on the
-// configured LLM provider.
-func (h *ServerInfoHandler) createLLMClient() chat.LLMClient {
-	switch h.llmConfig.Provider {
-	case "anthropic":
-		headers, err := h.getProviderHeaders("anthropic")
-		if err != nil {
-			log.Printf("[ERROR] Failed to get Anthropic provider headers: %v", err)
-		}
-		return chat.NewAnthropicClient(
-			h.llmConfig.AnthropicAPIKey,
-			h.llmConfig.Model,
-			llmAnalysisMaxTokens,
-			llmAnalysisTemperature,
-			false,
-			h.llmConfig.AnthropicBaseURL,
-			h.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	case "openai":
-		headers, err := h.getProviderHeaders("openai")
-		if err != nil {
-			log.Printf("[ERROR] Failed to get OpenAI provider headers: %v", err)
-		}
-		return chat.NewOpenAIClient(
-			h.llmConfig.OpenAIAPIKey,
-			h.llmConfig.Model,
-			llmAnalysisMaxTokens,
-			llmAnalysisTemperature,
-			false,
-			h.llmConfig.OpenAIBaseURL,
-			h.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	case "gemini":
-		headers, err := h.getProviderHeaders("gemini")
-		if err != nil {
-			log.Printf("[ERROR] Failed to get Gemini provider headers: %v", err)
-		}
-		return chat.NewGeminiClient(
-			h.llmConfig.GeminiAPIKey,
-			h.llmConfig.Model,
-			llmAnalysisMaxTokens,
-			llmAnalysisTemperature,
-			false,
-			h.llmConfig.GeminiBaseURL,
-			h.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	case "ollama":
-		headers, err := h.getProviderHeaders("ollama")
-		if err != nil {
-			log.Printf("[ERROR] Failed to get Ollama provider headers: %v", err)
-		}
-		return chat.NewOllamaClient(
-			h.llmConfig.OllamaURL,
-			h.llmConfig.Model,
-			false,
-			h.llmConfig.UseCompactDescriptions,
-			headers,
-		)
-	default:
-		return nil
+// createLLMClient builds a pgedge-go-llm-lib client based on the
+// configured LLM provider. It selects the per-provider API key, model,
+// and base URL from the injected LLM configuration and returns the
+// construction error so callers can skip analysis on misconfiguration.
+func (h *ServerInfoHandler) createLLMClient() (pgllm.Client, error) {
+	provider := h.llmConfig.Provider
+
+	headers, err := h.getProviderHeaders(provider)
+	if err != nil {
+		log.Printf("[ERROR] Failed to get %s provider headers: %v", provider, err)
 	}
+
+	var apiKey, baseURL string
+	switch provider {
+	case "anthropic":
+		apiKey = h.llmConfig.AnthropicAPIKey
+		baseURL = h.llmConfig.AnthropicBaseURL
+	case "openai":
+		apiKey = h.llmConfig.OpenAIAPIKey
+		baseURL = h.llmConfig.OpenAIBaseURL
+	case "gemini":
+		apiKey = h.llmConfig.GeminiAPIKey
+		baseURL = h.llmConfig.GeminiBaseURL
+	case "ollama":
+		baseURL = h.llmConfig.OllamaURL
+	}
+
+	opts := pgllm.Options{
+		APIKey:        apiKey,
+		Model:         h.llmConfig.Model,
+		BaseURL:       baseURL,
+		CustomHeaders: headers,
+		MaxTokens:     pgllm.Int(llmAnalysisMaxTokens),
+		Temperature:   pgllm.Float(llmAnalysisTemperature),
+	}
+
+	client, err := pgllm.NewClient(provider, opts)
+	if err != nil {
+		log.Printf("[ERROR] Failed to create LLM client: %v", err)
+		return nil, err
+	}
+	return client, nil
 }
 
 // getProviderHeaders retrieves custom headers for the given provider from the

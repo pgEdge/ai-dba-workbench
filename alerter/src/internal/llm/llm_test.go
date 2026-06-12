@@ -285,7 +285,13 @@ func TestNewEmbeddingProvider_GeminiSuccess(t *testing.T) {
 	}
 }
 
-func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
+func TestNewEmbeddingProvider_GeminiExplicitModel(t *testing.T) {
+	// The library-backed Gemini provider no longer maintains a hardcoded
+	// allow-list of embedding model names; it accepts any model at
+	// construction time and defers validation to the live API. This test
+	// therefore verifies that an explicitly configured model name is
+	// accepted and threaded through to ModelName(), rather than asserting
+	// the previous construction-time rejection of unknown models.
 	tmpDir := t.TempDir()
 	keyFile := tmpDir + "/gemini.key"
 	if err := os.WriteFile(keyFile, []byte("AIza-test-key-12345678\n"), 0600); err != nil {
@@ -300,12 +306,15 @@ func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
 		t.Fatalf("LoadAPIKeys: %v", err)
 	}
 
-	_, err := NewEmbeddingProvider(cfg)
-	if err == nil {
-		t.Fatal("expected error for unsupported gemini embedding model")
+	p, err := NewEmbeddingProvider(cfg)
+	if err != nil {
+		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "gemini:") {
-		t.Errorf("err = %v, want gemini-prefixed error", err)
+	if p == nil {
+		t.Fatal("provider nil")
+	}
+	if p.ModelName() != "text-embedding-004" {
+		t.Errorf("model = %q, want text-embedding-004", p.ModelName())
 	}
 }
 

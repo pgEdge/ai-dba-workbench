@@ -227,8 +227,8 @@ func TestGenerateEmbeddingTool_GeminiMissingAPIKey(t *testing.T) {
 	if len(response.Content) == 0 {
 		t.Fatal("expected error message in response")
 	}
-	if !strings.Contains(response.Content[0].Text, "Gemini API key is required") {
-		t.Errorf("expected 'Gemini API key is required' error, got: %s",
+	if !strings.Contains(response.Content[0].Text, "gemini API key is required") {
+		t.Errorf("expected 'gemini API key is required' error, got: %s",
 			response.Content[0].Text)
 	}
 }

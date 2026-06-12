@@ -433,12 +433,12 @@ func deserializeEmbedding(data []byte) []float32 {
 		return nil
 	}
 
-	vec := make([]float32, len(data)/4)
-	for i := range vec {
+	out := make([]float32, len(data)/4)
+	for i := range out {
 		bits := binary.LittleEndian.Uint32(data[i*4:])
-		vec[i] = math.Float32frombits(bits)
+		out[i] = math.Float32frombits(bits)
 	}
-	return vec
+	return out
 }
 
 func cosineSimilarity(a, b []float32) float64 {

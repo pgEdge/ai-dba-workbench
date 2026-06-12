@@ -85,12 +85,12 @@ func NewProvider(cfg Config) (Provider, error) {
 		return NewOpenAIProvider(cfg.OpenAIAPIKey, cfg.Model, cfg.OpenAIBaseURL)
 	case "voyage":
 		if cfg.VoyageAPIKey == "" {
-			return nil, fmt.Errorf("Voyage AI API key is required when provider is 'voyage'")
+			return nil, fmt.Errorf("voyage AI API key is required when provider is 'voyage'")
 		}
 		return NewVoyageProvider(cfg.VoyageAPIKey, cfg.Model, cfg.VoyageBaseURL)
 	case "gemini":
 		if cfg.GeminiAPIKey == "" {
-			return nil, fmt.Errorf("Gemini API key is required when provider is 'gemini'")
+			return nil, fmt.Errorf("gemini API key is required when provider is 'gemini'")
 		}
 		return NewGeminiProvider(cfg.GeminiAPIKey, cfg.Model, cfg.GeminiBaseURL)
 	case "ollama":

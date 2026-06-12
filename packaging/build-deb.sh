@@ -37,6 +37,7 @@ prepare() {
   else
     echo "No local staging dir; downloading release tarballs from GitHub..."
     BASE_URL="https://github.com/pgEdge/ai-dba-workbench/releases/download/${AI_DBA_WORKBENCH_BRANCH}"
+    mkdir -p "${SRC_DIR}/.tmp"
     wget -P "${SRC_DIR}/.tmp" "${BASE_URL}/ai-dba-server-linux-${ARCH}.tar.gz"
     wget -P "${SRC_DIR}/.tmp" "${BASE_URL}/ai-dba-collector-linux-${ARCH}.tar.gz"
     wget -P "${SRC_DIR}/.tmp" "${BASE_URL}/ai-dba-alerter-linux-${ARCH}.tar.gz"

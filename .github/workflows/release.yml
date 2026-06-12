@@ -45,7 +45,10 @@ on:
                 default: 'false'
 
 permissions:
-    contents: write
+    # Least-privilege default — overridden per-job only where write is
+    # genuinely needed (see the `release` job for the contents: write
+    # override required by softprops/action-gh-release).
+    contents: read
 
 concurrency:
     group: release-${{ github.ref_name }}
@@ -352,6 +355,11 @@ jobs:
     release:
         name: Create Release
         if: github.ref_type == 'tag'
+        # softprops/action-gh-release needs to push a tag/release using
+        # GITHUB_TOKEN — explicitly opt back into write here so the
+        # workflow-level read default doesn't block it.
+        permissions:
+            contents: write
         runs-on: ubuntu-latest
         needs: [build-client, build-docs, build-go]
 

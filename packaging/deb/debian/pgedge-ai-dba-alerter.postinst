@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # pgedge user is created by pgedge-ai-dba-server (dependency)
+        chown -R pgedge:pgedge /var/lib/pgedge/ai-dba-alerter
+        chown -R pgedge:pgedge /var/log/pgedge/ai-dba-alerter
+
+        chown root:pgedge /etc/pgedge/ai-dba-alerter.yaml
+        chmod 640 /etc/pgedge/ai-dba-alerter.yaml
+
+        touch /var/log/pgedge/ai-dba-alerter/ai-dba-alerter.log
+        chown pgedge:pgedge /var/log/pgedge/ai-dba-alerter/ai-dba-alerter.log
+        ;;
+esac
+
+#DEBHELPER#

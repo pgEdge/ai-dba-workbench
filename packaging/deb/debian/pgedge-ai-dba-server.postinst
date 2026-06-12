@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create pgedge group and user if they don't exist
+        getent group pgedge >/dev/null || addgroup --system pgedge
+        getent passwd pgedge >/dev/null || adduser --system \
+            --ingroup pgedge \
+            --home /var/lib/pgedge \
+            --no-create-home \
+            --shell /usr/sbin/nologin \
+            --gecos "pgEdge Services" \
+            pgedge
+
+        # Fix ownership of data and log directories
+        chown -R pgedge:pgedge /var/lib/pgedge/ai-dba-server
+        chown -R pgedge:pgedge /var/log/pgedge/ai-dba-server
+
+        # Fix config file group ownership
+        chown root:pgedge /etc/pgedge/ai-dba-server.yaml
+        chmod 640 /etc/pgedge/ai-dba-server.yaml
+
+        # Pre-create log file with correct ownership so systemd doesn't create it as root
+        touch /var/log/pgedge/ai-dba-server/ai-dba-server.log
+        chown pgedge:pgedge /var/log/pgedge/ai-dba-server/ai-dba-server.log
+        ;;
+esac
+
+#DEBHELPER#

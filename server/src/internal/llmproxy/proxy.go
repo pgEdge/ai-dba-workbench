@@ -145,11 +145,18 @@ func (c *Config) providerOptions(name, apiKey, baseURL string) pgllm.Options {
 // success the enriched auth context is attached to the request so the
 // TransformRequest hook can read the authenticated identity.
 //
-// SECURITY: the suffix checks match only the exact public listing
-// endpoints. The library registers them at "/api/v1/llm/providers",
-// "/api/v1/llm/models", and "/api/v1/llm/health"; an authed path such
-// as "/api/v1/llm/chat" does not end in any of these suffixes, so there
-// is no auth-bypass surface.
+// SECURITY: suffix-matching is safe here because the library registers
+// eight exact Go 1.22 method+path routes (GET .../providers, .../models,
+// .../health; POST .../chat, .../chat/stream, .../embed, .../rerank) and
+// only calls Authorize from within an already-routed handler. By the time
+// this function runs the path is exactly one of those values, so
+// "/api/v1/llm/chat" cannot reach the public branch.
+//
+// Coupling note: if a future pgedge-go-llm-lib version adds a new public
+// read endpoint it will default to auth-required here (fail-safe, fine);
+// but a new route whose path happened to end in "/models" or "/health"
+// as a subpath would be made public. Re-validate this allow-list whenever
+// the library version is bumped.
 func (c *Config) authorize(r *http.Request) error {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/providers"),

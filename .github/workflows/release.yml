@@ -1002,13 +1002,16 @@ jobs:
                       | sed "s|${S3_BACKUP_BUCKET}|<backup-bucket>|g"
                   echo "Aggregated manifest uploaded (key=${key})"
 
-            # Publisher gates: only enqueue a QA candidate when at least one
-            # push family actually succeeded — otherwise _pending/ would
-            # accumulate manifests with no publishable artifacts.
+            # pgedge-build-publisher now does both jobs in one step:
+            #   * uploads the manifest to _pending/ for qa-certify (gated
+            #     via skip_publish — true when nothing publishable)
+            #   * sends the Slack notification (always, as long as the
+            #     webhook secret is set)
+            # The old separate notify-slack job is gone — its Block Kit
+            # construction lives below as `compose_slack`, fed into the
+            # publisher's `fields_json` / `result_fields_json` /
+            # `code_sections_json` inputs.
             - name: Checkout pgedge-build-publisher
-              if: |
-                  github.ref_type == 'tag' &&
-                  (needs.push-dnf.result == 'success' || needs.push-apt.result == 'success')
               env:
                   TOKEN: ${{ secrets.PGEDGE_BUILDER_TOKEN }}
               run: |
@@ -1018,17 +1021,152 @@ jobs:
                       "https://x-access-token:${TOKEN}@github.com/pgEdge/pgedge-build-publisher.git" \
                       ".github/actions/pgedge-build-publisher"
 
-            - name: Publish manifest to _pending/ for qa-certify
-              if: |
-                  github.ref_type == 'tag' &&
-                  (needs.push-dnf.result == 'success' || needs.push-apt.result == 'success')
+            - name: Compose Slack fields
+              id: compose_slack
+              env:
+                  CV:               ${{ needs.determine-repo-type.outputs.component-version }}
+                  CBN:              ${{ needs.determine-repo-type.outputs.component-buildnum }}
+                  EFFECTIVE_TAG:    ${{ needs.determine-repo-type.outputs.effective-tag }}
+                  SIMULATED:        ${{ needs.determine-repo-type.outputs.simulated }}
+                  REPO_TYPE:        ${{ needs.determine-repo-type.outputs.repo-type }}
+                  PUSH_DNF_RESULT:  ${{ needs.push-dnf.result }}
+                  PUSH_APT_RESULT:  ${{ needs.push-apt.result }}
+                  ACTOR:            ${{ github.actor }}
+                  REPO_URL:         ${{ github.server_url }}/${{ github.repository }}
+                  # github.run_started_at is the workflow-trigger time and is
+                  # always populated (for both tag-push and workflow_dispatch).
+                  RUN_STARTED_AT:   ${{ github.run_started_at }}
+              run: |
+                  set -euo pipefail
+
+                  # ---- run duration --------------------------------------
+                  # pushed_at is set on tag-push events; for workflow_dispatch
+                  # it falls back to "now" so duration shows 0s (acceptable).
+                  unix_ts="$(date -u +%s)"
+                  started=$(date -u -d "${RUN_STARTED_AT:-now}" +%s 2>/dev/null || echo "$unix_ts")
+                  dur_sec=$((unix_ts - started))
+                  [ "$dur_sec" -lt 0 ] && dur_sec=0
+                  if [ "$dur_sec" -ge 60 ]; then
+                      duration="$((dur_sec/60))m $((dur_sec%60))s"
+                  else
+                      duration="${dur_sec}s"
+                  fi
+
+                  # ---- tag link (no link on simulated runs — tag doesn't exist) ----
+                  if [ "${SIMULATED}" = "true" ]; then
+                      tag_md="\`${EFFECTIVE_TAG}\` _(simulated)_"
+                  else
+                      tag_md="<${REPO_URL}/releases/tag/${EFFECTIVE_TAG}|\`${EFFECTIVE_TAG}\`>"
+                  fi
+
+                  # ---- per-OS status from successful backup paths --------
+                  # Each backup path is
+                  #   <repo_type>/<comp>/<ver>/<ts>/<family>/<os_or_distro>/
+                  # so the OS / distro is at split-index 5. Only successful
+                  # pushes have backup paths (the manifest builder gates on
+                  # PUSH_*_RESULT == 'success'), so cells listed here did
+                  # publish to S3.
+                  rpm_oss=""
+                  deb_distros=""
+                  dnf_count=0
+                  apt_count=0
+                  if [ -f aggregated/manifest.json ]; then
+                      rpm_oss=$(jq -r '
+                          (.backups.dnf // [])
+                          | map(split("/")[5])
+                          | sort
+                          | map("el" + . + " :white_check_mark:")
+                          | join("  ")
+                      ' aggregated/manifest.json)
+                      deb_distros=$(jq -r '
+                          (.backups.apt // [])
+                          | map(split("/")[5])
+                          | sort
+                          | map(. + " :white_check_mark:")
+                          | join("  ")
+                      ' aggregated/manifest.json)
+                      dnf_count=$(jq -r '(.backups.dnf // []) | length' aggregated/manifest.json)
+                      apt_count=$(jq -r '(.backups.apt // []) | length' aggregated/manifest.json)
+                  fi
+
+                  # ---- hero subject (single bold line under header) ------
+                  # Publisher wraps the subject with *...*, so we don't
+                  # include inner * markers (Slack mrkdwn doesn't nest
+                  # bold). Link tokens render correctly inside outer bold.
+                  subject="${tag_md} → ${REPO_TYPE} by @${ACTOR}  ·  ${duration}"
+
+                  # ---- fields grid: details that complement the hero -----
+                  # Hero already carries tag / channel / actor / duration,
+                  # so fields focus on per-cell status and counts.
+                  fields=$(jq -nc \
+                      --arg version    "${CV}-${CBN}" \
+                      --arg per_os_rpm "${rpm_oss}" \
+                      --arg per_os_deb "${deb_distros}" \
+                      --arg backups    "${dnf_count} RPM • ${apt_count} DEB" \
+                      '[
+                        {title:"Version", value:("`" + $version + "`")},
+                        {title:"Backups", value:$backups}
+                      ]
+                      + (if $per_os_rpm != "" then [{title:"RPM cells", value:$per_os_rpm}] else [] end)
+                      + (if $per_os_deb != "" then [{title:"DEB cells", value:$per_os_deb}] else [] end)
+                      ')
+
+                  result_fields=$(jq -nc \
+                      --arg dnf "${PUSH_DNF_RESULT}" \
+                      --arg apt "${PUSH_APT_RESULT}" \
+                      '[
+                        {title:"Push DNF", value:("`" + $dnf + "`")},
+                        {title:"Push APT", value:("`" + $apt + "`")}
+                      ]')
+
+                  # Backup paths are now summarized in the Backups field
+                  # above; full path lists are reachable from the workflow
+                  # run link in the action bar.
+                  code_sections='[]'
+
+                  {
+                      echo "subject<<__SUB_EOF__"
+                      echo "${subject}"
+                      echo "__SUB_EOF__"
+                      echo "fields<<__F_EOF__"
+                      echo "${fields}"
+                      echo "__F_EOF__"
+                      echo "result_fields<<__RF_EOF__"
+                      echo "${result_fields}"
+                      echo "__RF_EOF__"
+                      echo "code_sections<<__CS_EOF__"
+                      echo "${code_sections}"
+                      echo "__CS_EOF__"
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Publish manifest + Slack notification
+              # No outer `if:` — runs on every publish-manifest invocation
+              # (i.e., whenever determine-repo-type succeeded). The action
+              # internally decides whether to upload the manifest via the
+              # `skip_publish` flag, and the Slack step fires whenever
+              # `slack_webhook` is set. Simulated runs ship "Simulated"
+              # status; real-tag-with-failed-pushes ship Failed / Partial
+              # with no _pending/ enqueue.
               uses: ./.github/actions/pgedge-build-publisher
               with:
-                  manifest_json: ${{ steps.build_manifest.outputs.manifest_json }}
+                  manifest_json:    ${{ steps.build_manifest.outputs.manifest_json }}
                   s3_backup_bucket: ${{ secrets.S3_BACKUP_BUCKET_NAME }}
-                  repo_type: ${{ needs.determine-repo-type.outputs.repo-type }}
-                  component_name: ${{ env.COMPONENT_NAME }}
-                  slack_webhook: ''
+                  repo_type:        ${{ needs.determine-repo-type.outputs.repo-type }}
+                  component_name:   ${{ env.COMPONENT_NAME }}
+                  # Skip the _pending/ upload when there's nothing to QA:
+                  # simulate_tag dispatches or both-pushes-failed runs.
+                  skip_publish: ${{ needs.determine-repo-type.outputs.simulated == 'true' || (needs.push-dnf.result != 'success' && needs.push-apt.result != 'success') }}
+                  # Override status only on simulated runs; for real tag
+                  # pushes, let the action auto-compute from push results.
+                  status: ${{ needs.determine-repo-type.outputs.simulated == 'true' && 'Simulated' || '' }}
+                  push_dnf_result: ${{ needs.push-dnf.result }}
+                  push_apt_result: ${{ needs.push-apt.result }}
+                  slack_webhook:   ${{ secrets.SLACK_CHANNEL_URL }}
+                  subject:            ${{ steps.compose_slack.outputs.subject }}
+                  fields_json:        ${{ steps.compose_slack.outputs.fields }}
+                  result_fields_json: ${{ steps.compose_slack.outputs.result_fields }}
+                  code_sections_json: ${{ steps.compose_slack.outputs.code_sections }}
+                  tagline: "pgEdge release pipeline"
                   aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
                   aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 

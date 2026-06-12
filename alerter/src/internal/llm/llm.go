@@ -16,8 +16,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 )
@@ -80,27 +80,15 @@ type embeddingAdapter struct {
 // It converts the float64 embedding from pkg/embedding to float32 and
 // normalizes the dimensions to EmbeddingDimension if needed.
 func (a *embeddingAdapter) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	// Call the underlying provider
 	emb64, err := a.provider.Embed(ctx, text)
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert float64 to float32
-	emb32 := make([]float32, len(emb64))
-	for i, v := range emb64 {
-		emb32[i] = float32(v)
-	}
-
-	// Resize to standard dimension if needed
+	emb32 := vec.Float64ToFloat32(emb64)
 	if len(emb32) != EmbeddingDimension {
-		emb32 = resizeEmbedding(emb32, EmbeddingDimension)
+		emb32 = vec.Resize(emb32, EmbeddingDimension)
 	}
-
-	// Normalize the embedding
-	emb32 = normalizeEmbedding(emb32)
-
-	return emb32, nil
+	return vec.Normalize(emb32), nil
 }
 
 // ModelName returns the name of the embedding model being used.
@@ -215,42 +203,4 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 	default:
 		return nil, fmt.Errorf("unknown reasoning provider: %s", cfg.LLM.ReasoningProvider)
 	}
-}
-
-// resizeEmbedding resizes an embedding to the target dimension.
-// If the source embedding is larger, it truncates.
-// If smaller, it pads with zeros.
-func resizeEmbedding(embedding []float32, targetDim int) []float32 {
-	if len(embedding) == targetDim {
-		return embedding
-	}
-
-	result := make([]float32, targetDim)
-	if len(embedding) > targetDim {
-		// Truncate
-		copy(result, embedding[:targetDim])
-	} else {
-		// Pad with zeros
-		copy(result, embedding)
-	}
-	return result
-}
-
-// normalizeEmbedding normalizes a vector to unit length (L2 normalization).
-func normalizeEmbedding(embedding []float32) []float32 {
-	var sumSquares float64
-	for _, v := range embedding {
-		sumSquares += float64(v) * float64(v)
-	}
-
-	if sumSquares == 0 {
-		return embedding
-	}
-
-	magnitude := float32(1.0 / math.Sqrt(sumSquares))
-	result := make([]float32, len(embedding))
-	for i, v := range embedding {
-		result[i] = v * magnitude
-	}
-	return result
 }

@@ -50,7 +50,7 @@ func TestLibReasoningClassify(t *testing.T) {
 		}},
 	}
 	r := &libReasoning{client: fc}
-	out, err := r.Classify(context.Background(), "analyse this anomaly")
+	out, err := r.Classify(context.Background(), "analyze this anomaly")
 	if err != nil {
 		t.Fatalf("Classify: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestLibReasoningClassify(t *testing.T) {
 	}
 	if len(fc.gotReq.Messages[0].Content) != 1 ||
 		fc.gotReq.Messages[0].Content[0].Type != pgllm.BlockText ||
-		fc.gotReq.Messages[0].Content[0].Text != "analyse this anomaly" {
+		fc.gotReq.Messages[0].Content[0].Text != "analyze this anomaly" {
 		t.Fatalf("user message content = %+v", fc.gotReq.Messages[0].Content)
 	}
 	if fc.gotReq.MaxTokens == nil || *fc.gotReq.MaxTokens != 500 {
@@ -83,6 +83,37 @@ func TestLibReasoningClassifyError(t *testing.T) {
 	r := &libReasoning{client: &fakeChatClient{err: errors.New("boom")}}
 	if _, err := r.Classify(context.Background(), "x"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// TestLibReasoningClassifyEmptyContent verifies that Classify returns ("", nil)
+// when the response contains no text blocks; the caller's parser treats an
+// empty string as the "no-decision" fallback.
+func TestLibReasoningClassifyEmptyContent(t *testing.T) {
+	fc := &fakeChatClient{
+		model: "gpt-4o-mini",
+		resp:  &pgllm.ChatResponse{Content: []pgllm.ContentBlock{}},
+	}
+	r := &libReasoning{client: fc}
+	out, err := r.Classify(context.Background(), "prompt")
+	if err != nil {
+		t.Fatalf("Classify: %v", err)
+	}
+	if out != "" {
+		t.Fatalf("out = %q, want empty string", out)
+	}
+}
+
+// TestNewLibReasoningOllamaExplicitBaseURL verifies that an explicit BaseURL is
+// accepted and that the default model (llama3.2) is applied when none is given.
+// No network is attempted: the library constructs the client without dialing.
+func TestNewLibReasoningOllamaExplicitBaseURL(t *testing.T) {
+	r, err := newLibReasoning("ollama", "", "", "http://localhost:11434")
+	if err != nil {
+		t.Fatalf("newLibReasoning: %v", err)
+	}
+	if r.ModelName() != "llama3.2" {
+		t.Fatalf("ModelName = %q, want llama3.2", r.ModelName())
 	}
 }
 

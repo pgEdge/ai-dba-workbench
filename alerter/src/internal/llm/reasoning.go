@@ -33,7 +33,7 @@ var defaultReasoningModels = map[string]string{
 
 // libReasoning implements ReasoningProvider by delegating to the
 // pgedge-go-llm-lib Client.Chat method. A single implementation serves
-// every provider; the provider-specific behaviour lives in the library.
+// every provider; the provider-specific behavior lives in the library.
 type libReasoning struct {
 	client pgllm.Client
 }

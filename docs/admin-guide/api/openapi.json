@@ -4731,13 +4731,13 @@
     "/llm/chat": {
       "post": {
         "summary": "Send chat message to LLM",
-        "description": "Sends messages to the configured LLM and returns the response",
+        "description": "Sends messages to the configured LLM and returns a single response. Messages carry typed content blocks; the system prompt is supplied in system_prompt and token usage is reported in usage. Requires authentication (bearer token or session cookie).",
         "operationId": "chatWithLLM",
         "tags": [
           "LLM"
         ],
         "requestBody": {
-          "description": "Chat messages and tools",
+          "description": "Chat messages, tools, and generation parameters",
           "required": true,
           "content": {
             "application/json": {
@@ -4796,10 +4796,168 @@
         ]
       }
     },
+    "/llm/chat/stream": {
+      "post": {
+        "summary": "Stream a chat response from the LLM",
+        "description": "Sends messages to the configured LLM and streams the response as Server-Sent Events. Each event's data field is a JSON-encoded stream chunk; the stream ends with an event named done (or error). Requires authentication (bearer token or session cookie).",
+        "operationId": "chatWithLLMStream",
+        "tags": [
+          "LLM"
+        ],
+        "requestBody": {
+          "description": "Chat messages, tools, and generation parameters",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server-Sent Event stream of chat chunks",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMStreamChunk"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or provider not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/llm/embed": {
+      "post": {
+        "summary": "Generate embeddings",
+        "description": "Embeds one or more input strings and returns one vector per input. Requires authentication (bearer token or session cookie).",
+        "operationId": "embedWithLLM",
+        "tags": [
+          "LLM"
+        ],
+        "requestBody": {
+          "description": "Input strings to embed",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Embedding vectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or provider not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/llm/health": {
+      "get": {
+        "summary": "LLM proxy health",
+        "description": "Returns the overall proxy health and the health of each configured provider. Public; no authentication required.",
+        "operationId": "llmHealth",
+        "tags": [
+          "LLM"
+        ],
+        "responses": {
+          "200": {
+            "description": "Proxy and per-provider health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/llm/models": {
       "get": {
         "summary": "List LLM models",
-        "description": "Returns available models for a specific provider",
+        "description": "Returns the model identifiers available from a named provider. Public; no authentication required.",
         "operationId": "listLLMModels",
         "tags": [
           "LLM"
@@ -4842,7 +5000,7 @@
     "/llm/providers": {
       "get": {
         "summary": "List LLM providers",
-        "description": "Returns available LLM providers and the default model",
+        "description": "Returns the configured LLM providers, including each provider's display name and the default provider. Public; no authentication required.",
         "operationId": "listLLMProviders",
         "tags": [
           "LLM"
@@ -4859,6 +5017,74 @@
             }
           }
         }
+      }
+    },
+    "/llm/rerank": {
+      "post": {
+        "summary": "Rerank documents",
+        "description": "Ranks candidate documents by relevance to a query and returns them in descending order of relevance. Requires authentication (bearer token or session cookie).",
+        "operationId": "rerankWithLLM",
+        "tags": [
+          "LLM"
+        ],
+        "requestBody": {
+          "description": "Query and candidate documents",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ranked documents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or provider not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/mcp/tools": {
@@ -9763,28 +9989,62 @@
       },
       "ChatRequest": {
         "type": "object",
+        "description": "Request body for POST /llm/chat and POST /llm/chat/stream (library proxy.ChatRequest).",
         "properties": {
-          "debug": {
-            "type": "boolean",
-            "description": "Enable debug mode for token usage"
+          "max_tokens": {
+            "type": "integer",
+            "description": "Maximum tokens for the response"
           },
           "messages": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Message"
+              "$ref": "#/components/schemas/LLMMessage"
             }
           },
           "model": {
             "type": "string",
-            "description": "Override default model"
+            "description": "Override the configured model for this request"
           },
           "provider": {
             "type": "string",
-            "description": "Override default provider"
+            "description": "Override the default provider for this request"
+          },
+          "response_format": {
+            "type": "object",
+            "description": "Structured-output mode (text, json_object, or json_schema)"
+          },
+          "stop_sequences": {
+            "type": "array",
+            "description": "Strings that terminate generation when produced",
+            "items": {
+              "type": "string"
+            }
+          },
+          "system_prompt": {
+            "type": "string",
+            "description": "System prompt prepended to the conversation"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature"
+          },
+          "tool_choice": {
+            "type": "object",
+            "description": "Constrains tool-use behaviour (auto, none, required, specific)"
+          },
+          "tool_descriptions": {
+            "type": "string",
+            "description": "Selects which tool description text providers send",
+            "enum": [
+              "",
+              "full",
+              "compact",
+              "auto"
+            ]
           },
           "tools": {
             "type": "array",
-            "description": "MCP tools available to the LLM",
+            "description": "Tools available to the LLM (name, description, input_schema)",
             "items": {
               "type": "object"
             }
@@ -9796,29 +10056,29 @@
       },
       "ChatResponse": {
         "type": "object",
+        "description": "Response body for POST /llm/chat (library proxy.ChatResponse).",
         "properties": {
           "content": {
             "type": "array",
             "description": "Response content blocks",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/LLMContentBlock"
             }
           },
           "stop_reason": {
             "type": "string",
-            "description": "Reason for stopping generation"
+            "description": "Reason generation stopped",
+            "enum": [
+              "end_turn",
+              "max_tokens",
+              "stop_sequence",
+              "tool_use",
+              "content_filter",
+              "error"
+            ]
           },
-          "token_usage": {
-            "type": "object",
-            "description": "Token usage statistics (when debug enabled)",
-            "properties": {
-              "input_tokens": {
-                "type": "integer"
-              },
-              "output_tokens": {
-                "type": "integer"
-              }
-            }
+          "usage": {
+            "$ref": "#/components/schemas/LLMTokenUsage"
           }
         }
       },
@@ -10584,6 +10844,46 @@
           "email_address"
         ]
       },
+      "EmbedRequest": {
+        "type": "object",
+        "description": "Request body for POST /llm/embed (library proxy.EmbedRequest).",
+        "properties": {
+          "input": {
+            "type": "array",
+            "description": "One or more strings to embed",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": "string",
+            "description": "Override the configured model"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Override the default provider"
+          }
+        },
+        "required": [
+          "input"
+        ]
+      },
+      "EmbedResponse": {
+        "type": "object",
+        "description": "Response body for POST /llm/embed (library proxy.EmbedResponse).",
+        "properties": {
+          "embeddings": {
+            "type": "array",
+            "description": "One embedding vector per input string, in order",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -10684,6 +10984,175 @@
           "name": {
             "type": "string",
             "description": "Group name"
+          }
+        }
+      },
+      "LLMContentBlock": {
+        "type": "object",
+        "description": "A single typed content block within an LLM message (llm.ContentBlock). The type field selects which payload fields are populated.",
+        "properties": {
+          "cache_control": {
+            "type": "object",
+            "description": "Anthropic-specific prompt-cache marker; ignored by other providers"
+          },
+          "document": {
+            "type": "object",
+            "description": "Document payload (url or base64 data plus media_type)"
+          },
+          "image": {
+            "type": "object",
+            "description": "Image payload (url or base64 data plus media_type)"
+          },
+          "is_error": {
+            "type": "boolean",
+            "description": "Set on a tool_result block when the tool errored"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text payload (text and simple tool_result blocks)"
+          },
+          "tool_use": {
+            "type": "object",
+            "description": "Tool call payload (id, name, input)"
+          },
+          "tool_use_id": {
+            "type": "string",
+            "description": "Identifies the tool_use this tool_result responds to"
+          },
+          "type": {
+            "type": "string",
+            "description": "Block type discriminator",
+            "enum": [
+              "text",
+              "image",
+              "document",
+              "tool_use",
+              "tool_result"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "LLMHealthResponse": {
+        "type": "object",
+        "description": "Response body for GET /llm/health (library proxy.HealthResponse).",
+        "properties": {
+          "providers": {
+            "type": "object",
+            "description": "Per-provider health keyed by provider name",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "description": "Error detail when status is down"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "down"
+                  ]
+                }
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "Overall proxy health",
+            "enum": [
+              "ok",
+              "degraded"
+            ]
+          }
+        }
+      },
+      "LLMMessage": {
+        "type": "object",
+        "description": "A chat message in the library llm/proxy contract. Content is always an array of typed content blocks; the legacy string form is no longer accepted.",
+        "properties": {
+          "content": {
+            "type": "array",
+            "description": "Typed content blocks (array form is required)",
+            "items": {
+              "$ref": "#/components/schemas/LLMContentBlock"
+            }
+          },
+          "role": {
+            "type": "string",
+            "description": "Message role",
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "tool"
+            ]
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ]
+      },
+      "LLMStreamChunk": {
+        "type": "object",
+        "description": "One Server-Sent Event payload from POST /llm/chat/stream (llm.StreamChunk). The type field selects which other fields are populated.",
+        "properties": {
+          "partial": {
+            "type": "string",
+            "description": "Incremental tool-argument JSON fragment (tool_use_delta chunks)"
+          },
+          "text": {
+            "type": "string",
+            "description": "Incremental text delta (text chunks)"
+          },
+          "tool_use": {
+            "type": "object",
+            "description": "Tool call descriptor (tool_use_start chunks)"
+          },
+          "type": {
+            "type": "string",
+            "description": "Chunk type discriminator",
+            "enum": [
+              "text",
+              "tool_use_start",
+              "tool_use_delta",
+              "done"
+            ]
+          },
+          "usage": {
+            "$ref": "#/components/schemas/LLMTokenUsage"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "LLMTokenUsage": {
+        "type": "object",
+        "description": "Token consumption for a request (llm.TokenUsage).",
+        "properties": {
+          "cache_creation_input_tokens": {
+            "type": "integer",
+            "description": "Tokens written to the prompt cache (Anthropic only)"
+          },
+          "cache_read_input_tokens": {
+            "type": "integer",
+            "description": "Tokens served from the prompt cache (Anthropic only)"
+          },
+          "completion_tokens": {
+            "type": "integer",
+            "description": "Tokens in the completion"
+          },
+          "prompt_tokens": {
+            "type": "integer",
+            "description": "Tokens in the prompt"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "description": "Total tokens consumed"
           }
         }
       },
@@ -10943,11 +11412,13 @@
       },
       "ModelsResponse": {
         "type": "object",
+        "description": "Response from GET /llm/models (library llm/proxy contract)",
         "properties": {
           "models": {
             "type": "array",
+            "description": "Model identifiers available from the named provider",
             "items": {
-              "$ref": "#/components/schemas/ModelInfo"
+              "type": "string"
             }
           }
         }
@@ -11432,26 +11903,31 @@
       "ProviderInfo": {
         "type": "object",
         "properties": {
-          "display": {
-            "type": "string",
-            "description": "Display name"
-          },
-          "isDefault": {
+          "default": {
             "type": "boolean",
             "description": "Whether this is the default provider"
           },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable provider name"
+          },
+          "model": {
+            "type": "string",
+            "description": "Configured model for this provider"
+          },
           "name": {
             "type": "string",
-            "description": "Provider identifier"
+            "description": "Provider identifier (e.g. anthropic, openai, ollama)"
           }
         }
       },
       "ProvidersResponse": {
         "type": "object",
+        "description": "Response from GET /llm/providers (library llm/proxy contract)",
         "properties": {
-          "defaultModel": {
+          "default_provider": {
             "type": "string",
-            "description": "Default model name"
+            "description": "Name of the default provider"
           },
           "providers": {
             "type": "array",
@@ -11636,6 +12112,75 @@
           "target_connection_id",
           "relationship_type"
         ]
+      },
+      "RerankRequest": {
+        "type": "object",
+        "description": "Request body for POST /llm/rerank (library proxy.RerankRequest).",
+        "properties": {
+          "documents": {
+            "type": "array",
+            "description": "Candidate documents to rank",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": "string",
+            "description": "Override the configured model"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Override the default provider"
+          },
+          "query": {
+            "type": "string",
+            "description": "Query to rank documents against"
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Return at most the top-K most relevant documents"
+          }
+        },
+        "required": [
+          "query",
+          "documents"
+        ]
+      },
+      "RerankResponse": {
+        "type": "object",
+        "description": "Response body for POST /llm/rerank (library proxy.RerankResponse).",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Ranked documents, ordered by descending relevance",
+            "items": {
+              "type": "object",
+              "properties": {
+                "document": {
+                  "type": "string",
+                  "description": "Document text (only when the provider returns it)"
+                },
+                "index": {
+                  "type": "integer",
+                  "description": "Position in the original documents slice"
+                },
+                "relevance_score": {
+                  "type": "number",
+                  "description": "Provider relevance score"
+                }
+              }
+            }
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "total_tokens": {
+                "type": "integer",
+                "description": "Total tokens consumed by the rerank call"
+              }
+            }
+          }
+        }
       },
       "SaveAnalysisRequest": {
         "type": "object",

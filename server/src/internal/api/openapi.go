@@ -566,30 +566,81 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Required: []string{"role", "content"},
 		},
 		"ProvidersResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "Response from GET /llm/providers (library llm/proxy contract)",
 			Properties: map[string]*OpenAPISchema{
 				"providers": {
 					Type:  "array",
 					Items: &OpenAPISchema{Ref: "#/components/schemas/ProviderInfo"},
 				},
-				"defaultModel": {Type: "string", Description: "Default model name"},
+				"default_provider": {Type: "string", Description: "Name of the default provider"},
 			},
 		},
 		"ProviderInfo": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"name":      {Type: "string", Description: "Provider identifier"},
-				"display":   {Type: "string", Description: "Display name"},
-				"isDefault": {Type: "boolean", Description: "Whether this is the default provider"},
+				"name":         {Type: "string", Description: "Provider identifier (e.g. anthropic, openai, ollama)"},
+				"display_name": {Type: "string", Description: "Human-readable provider name"},
+				"model":        {Type: "string", Description: "Configured model for this provider"},
+				"default":      {Type: "boolean", Description: "Whether this is the default provider"},
 			},
 		},
 		"ModelsResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "Response from GET /llm/models (library llm/proxy contract)",
 			Properties: map[string]*OpenAPISchema{
 				"models": {
-					Type:  "array",
-					Items: &OpenAPISchema{Ref: "#/components/schemas/ModelInfo"},
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "Model identifiers available from the named provider",
 				},
+			},
+		},
+		"LLMContentBlock": {
+			Type:        "object",
+			Description: "A single typed content block within an LLM message (llm.ContentBlock). The type field selects which payload fields are populated.",
+			Properties: map[string]*OpenAPISchema{
+				"type": {
+					Type:        "string",
+					Description: "Block type discriminator",
+					Enum:        []string{"text", "image", "document", "tool_use", "tool_result"},
+				},
+				"text":          {Type: "string", Description: "Text payload (text and simple tool_result blocks)"},
+				"image":         {Type: "object", Description: "Image payload (url or base64 data plus media_type)"},
+				"document":      {Type: "object", Description: "Document payload (url or base64 data plus media_type)"},
+				"tool_use":      {Type: "object", Description: "Tool call payload (id, name, input)"},
+				"tool_use_id":   {Type: "string", Description: "Identifies the tool_use this tool_result responds to"},
+				"is_error":      {Type: "boolean", Description: "Set on a tool_result block when the tool errored"},
+				"cache_control": {Type: "object", Description: "Anthropic-specific prompt-cache marker; ignored by other providers"},
+			},
+			Required: []string{"type"},
+		},
+		"LLMMessage": {
+			Type:        "object",
+			Description: "A chat message in the library llm/proxy contract. Content is always an array of typed content blocks; the legacy string form is no longer accepted.",
+			Properties: map[string]*OpenAPISchema{
+				"role": {
+					Type:        "string",
+					Description: "Message role",
+					Enum:        []string{"user", "assistant", "system", "tool"},
+				},
+				"content": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/LLMContentBlock"},
+					Description: "Typed content blocks (array form is required)",
+				},
+			},
+			Required: []string{"role", "content"},
+		},
+		"LLMTokenUsage": {
+			Type:        "object",
+			Description: "Token consumption for a request (llm.TokenUsage).",
+			Properties: map[string]*OpenAPISchema{
+				"prompt_tokens":               {Type: "integer", Description: "Tokens in the prompt"},
+				"completion_tokens":           {Type: "integer", Description: "Tokens in the completion"},
+				"total_tokens":                {Type: "integer", Description: "Total tokens consumed"},
+				"cache_creation_input_tokens": {Type: "integer", Description: "Tokens written to the prompt cache (Anthropic only)"},
+				"cache_read_input_tokens":     {Type: "integer", Description: "Tokens served from the prompt cache (Anthropic only)"},
 			},
 		},
 		"ModelInfo": {
@@ -600,38 +651,163 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 		},
 		"ChatRequest": {
-			Type: "object",
+			Type:        "object",
+			Description: "Request body for POST /llm/chat and POST /llm/chat/stream (library proxy.ChatRequest).",
 			Properties: map[string]*OpenAPISchema{
 				"messages": {
 					Type:  "array",
-					Items: &OpenAPISchema{Ref: "#/components/schemas/Message"},
+					Items: &OpenAPISchema{Ref: "#/components/schemas/LLMMessage"},
 				},
 				"tools": {
 					Type:        "array",
 					Items:       &OpenAPISchema{Type: "object"},
-					Description: "MCP tools available to the LLM",
+					Description: "Tools available to the LLM (name, description, input_schema)",
 				},
-				"provider": {Type: "string", Description: "Override default provider"},
-				"model":    {Type: "string", Description: "Override default model"},
-				"debug":    {Type: "boolean", Description: "Enable debug mode for token usage"},
+				"system_prompt": {Type: "string", Description: "System prompt prepended to the conversation"},
+				"max_tokens":    {Type: "integer", Description: "Maximum tokens for the response"},
+				"temperature":   {Type: "number", Description: "Sampling temperature"},
+				"provider":      {Type: "string", Description: "Override the default provider for this request"},
+				"model":         {Type: "string", Description: "Override the configured model for this request"},
+				"response_format": {
+					Type:        "object",
+					Description: "Structured-output mode (text, json_object, or json_schema)",
+				},
+				"tool_choice": {
+					Type:        "object",
+					Description: "Constrains tool-use behaviour (auto, none, required, specific)",
+				},
+				"stop_sequences": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "Strings that terminate generation when produced",
+				},
+				"tool_descriptions": {
+					Type:        "string",
+					Description: "Selects which tool description text providers send",
+					Enum:        []string{"", "full", "compact", "auto"},
+				},
 			},
 			Required: []string{"messages"},
 		},
 		"ChatResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "Response body for POST /llm/chat (library proxy.ChatResponse).",
 			Properties: map[string]*OpenAPISchema{
 				"content": {
 					Type:        "array",
-					Items:       &OpenAPISchema{Type: "object"},
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/LLMContentBlock"},
 					Description: "Response content blocks",
 				},
-				"stop_reason": {Type: "string", Description: "Reason for stopping generation"},
-				"token_usage": {
-					Type:        "object",
-					Description: "Token usage statistics (when debug enabled)",
+				"stop_reason": {
+					Type:        "string",
+					Description: "Reason generation stopped",
+					Enum:        []string{"end_turn", "max_tokens", "stop_sequence", "tool_use", "content_filter", "error"},
+				},
+				"usage": {Ref: "#/components/schemas/LLMTokenUsage"},
+			},
+		},
+		"LLMStreamChunk": {
+			Type:        "object",
+			Description: "One Server-Sent Event payload from POST /llm/chat/stream (llm.StreamChunk). The type field selects which other fields are populated.",
+			Properties: map[string]*OpenAPISchema{
+				"type": {
+					Type:        "string",
+					Description: "Chunk type discriminator",
+					Enum:        []string{"text", "tool_use_start", "tool_use_delta", "done"},
+				},
+				"text":     {Type: "string", Description: "Incremental text delta (text chunks)"},
+				"tool_use": {Type: "object", Description: "Tool call descriptor (tool_use_start chunks)"},
+				"partial":  {Type: "string", Description: "Incremental tool-argument JSON fragment (tool_use_delta chunks)"},
+				"usage":    {Ref: "#/components/schemas/LLMTokenUsage"},
+			},
+			Required: []string{"type"},
+		},
+		"EmbedRequest": {
+			Type:        "object",
+			Description: "Request body for POST /llm/embed (library proxy.EmbedRequest).",
+			Properties: map[string]*OpenAPISchema{
+				"provider": {Type: "string", Description: "Override the default provider"},
+				"model":    {Type: "string", Description: "Override the configured model"},
+				"input": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "One or more strings to embed",
+				},
+			},
+			Required: []string{"input"},
+		},
+		"EmbedResponse": {
+			Type:        "object",
+			Description: "Response body for POST /llm/embed (library proxy.EmbedResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"embeddings": {
+					Type: "array",
+					Items: &OpenAPISchema{
+						Type:  "array",
+						Items: &OpenAPISchema{Type: "number"},
+					},
+					Description: "One embedding vector per input string, in order",
+				},
+			},
+		},
+		"RerankRequest": {
+			Type:        "object",
+			Description: "Request body for POST /llm/rerank (library proxy.RerankRequest).",
+			Properties: map[string]*OpenAPISchema{
+				"provider": {Type: "string", Description: "Override the default provider"},
+				"model":    {Type: "string", Description: "Override the configured model"},
+				"query":    {Type: "string", Description: "Query to rank documents against"},
+				"documents": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "Candidate documents to rank",
+				},
+				"top_k": {Type: "integer", Description: "Return at most the top-K most relevant documents"},
+			},
+			Required: []string{"query", "documents"},
+		},
+		"RerankResponse": {
+			Type:        "object",
+			Description: "Response body for POST /llm/rerank (library proxy.RerankResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"results": {
+					Type: "array",
+					Items: &OpenAPISchema{
+						Type: "object",
+						Properties: map[string]*OpenAPISchema{
+							"index":           {Type: "integer", Description: "Position in the original documents slice"},
+							"relevance_score": {Type: "number", Description: "Provider relevance score"},
+							"document":        {Type: "string", Description: "Document text (only when the provider returns it)"},
+						},
+					},
+					Description: "Ranked documents, ordered by descending relevance",
+				},
+				"usage": {
+					Type: "object",
 					Properties: map[string]*OpenAPISchema{
-						"input_tokens":  {Type: "integer"},
-						"output_tokens": {Type: "integer"},
+						"total_tokens": {Type: "integer", Description: "Total tokens consumed by the rerank call"},
+					},
+				},
+			},
+		},
+		"LLMHealthResponse": {
+			Type:        "object",
+			Description: "Response body for GET /llm/health (library proxy.HealthResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"status": {
+					Type:        "string",
+					Description: "Overall proxy health",
+					Enum:        []string{"ok", "degraded"},
+				},
+				"providers": {
+					Type:        "object",
+					Description: "Per-provider health keyed by provider name",
+					AdditionalProperties: &OpenAPISchema{
+						Type: "object",
+						Properties: map[string]*OpenAPISchema{
+							"status": {Type: "string", Enum: []string{"ok", "down"}},
+							"error":  {Type: "string", Description: "Error detail when status is down"},
+						},
 					},
 				},
 			},
@@ -2114,11 +2290,11 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 		},
 
-		// LLM
+		// LLM proxy (library llm/proxy gateway mounted at /llm)
 		"/llm/providers": {
 			Get: &OpenAPIOperation{
 				Summary:     "List LLM providers",
-				Description: "Returns available LLM providers and the default model",
+				Description: "Returns the configured LLM providers, including each provider's display name and the default provider. Public; no authentication required.",
 				OperationID: "listLLMProviders",
 				Tags:        []string{"LLM"},
 				Responses: map[string]OpenAPIResponse{
@@ -2130,7 +2306,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/llm/models": {
 			Get: &OpenAPIOperation{
 				Summary:     "List LLM models",
-				Description: "Returns available models for a specific provider",
+				Description: "Returns the model identifiers available from a named provider. Public; no authentication required.",
 				OperationID: "listLLMModels",
 				Tags:        []string{"LLM"},
 				Parameters:  []OpenAPIParameter{queryParamStringRequired("provider", "Provider name (anthropic, openai, ollama)")},
@@ -2141,16 +2317,86 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 		},
 
+		"/llm/health": {
+			Get: &OpenAPIOperation{
+				Summary:     "LLM proxy health",
+				Description: "Returns the overall proxy health and the health of each configured provider. Public; no authentication required.",
+				OperationID: "llmHealth",
+				Tags:        []string{"LLM"},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("LLMHealthResponse", "Proxy and per-provider health"),
+				},
+			},
+		},
+
 		"/llm/chat": {
 			Post: &OpenAPIOperation{
 				Summary:     "Send chat message to LLM",
-				Description: "Sends messages to the configured LLM and returns the response",
+				Description: "Sends messages to the configured LLM and returns a single response. Messages carry typed content blocks; the system prompt is supplied in system_prompt and token usage is reported in usage. Requires authentication (bearer token or session cookie).",
 				OperationID: "chatWithLLM",
 				Tags:        []string{"LLM"},
 				Security:    bearerAuth,
-				RequestBody: jsonRequestBody("ChatRequest", "Chat messages and tools", true),
+				RequestBody: jsonRequestBody("ChatRequest", "Chat messages, tools, and generation parameters", true),
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ChatResponse", "LLM response"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/chat/stream": {
+			Post: &OpenAPIOperation{
+				Summary:     "Stream a chat response from the LLM",
+				Description: "Sends messages to the configured LLM and streams the response as Server-Sent Events. Each event's data field is a JSON-encoded stream chunk; the stream ends with an event named done (or error). Requires authentication (bearer token or session cookie).",
+				OperationID: "chatWithLLMStream",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("ChatRequest", "Chat messages, tools, and generation parameters", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Server-Sent Event stream of chat chunks",
+						Content: map[string]OpenAPIMediaType{
+							"text/event-stream": {
+								Schema: &OpenAPISchema{Ref: "#/components/schemas/LLMStreamChunk"},
+							},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/embed": {
+			Post: &OpenAPIOperation{
+				Summary:     "Generate embeddings",
+				Description: "Embeds one or more input strings and returns one vector per input. Requires authentication (bearer token or session cookie).",
+				OperationID: "embedWithLLM",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("EmbedRequest", "Input strings to embed", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("EmbedResponse", "Embedding vectors"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/rerank": {
+			Post: &OpenAPIOperation{
+				Summary:     "Rerank documents",
+				Description: "Ranks candidate documents by relevance to a query and returns them in descending order of relevance. Requires authentication (bearer token or session cookie).",
+				OperationID: "rerankWithLLM",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("RerankRequest", "Query and candidate documents", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("RerankResponse", "Ranked documents"),
 					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"500": jsonResponse("ErrorResponse", "LLM error"),

@@ -749,28 +749,40 @@ func TestIsValidModelName(t *testing.T) {
 		model string
 		want  bool
 	}{
-		{"typical gemini name", "gemini-1.5-pro", true},
+		// Valid model names: charset and length within bounds, no ".." substring.
+		{"typical gemini name", "gemini-2.5-flash", true},
 		{"typical anthropic name", "claude-3-7-sonnet-20250219", true},
 		{"colon and slash allowed", "library/model:tag", true},
+		{"single slash vendor/model", "vendor/model", true},
+		{"single dot voyage", "voyage-3.5", true},
+		{"single dot text-embedding", "text-embedding-3-small", true},
 		{"single char", "a", true},
 		{"exactly 256 chars", strings.Repeat("a", 256), true},
+
+		// Invalid: empty or too long.
 		{"empty is rejected by helper", "", false},
-		{"over 256 chars", longName, false},
-		// SECURITY: percent-encoded traversal must be rejected because '%'
-		// is outside the allowed charset; this is the vector that would
-		// decode to a path separator at the upstream provider.
+		{"exactly 257 chars", longName, false},
+
+		// SECURITY: percent-encoded traversal is rejected because '%' is
+		// outside the allowed charset; this is the vector that would decode
+		// to a path separator at the upstream provider.
 		{"percent-encoded traversal", "..%2f..%2fadmin", false},
+
+		// SECURITY: literal ".." traversal is now rejected (VULN-001). The
+		// characters '.' and '/' individually pass the charset check, but
+		// any name containing the substring ".." is rejected to prevent
+		// path-manipulation when the value is interpolated into a provider
+		// URL (e.g. "/v1beta/models/{model}:generateContent").
+		{"literal path traversal", "../../../../v1/admin", false},
+		{"dotdot at start", "..%2f..%2fadmin", false},
+		{"dotdot interior", "a..b", false},
+
+		// Invalid: characters outside the allowed set.
 		{"space", "gemini pro", false},
 		{"control char", "gemini\n", false},
 		{"backslash", "gemini\\pro", false},
 		{"question mark", "model?foo=bar", false},
 		{"unicode", "modèle", false},
-		// NOTE: a literal "../" sequence contains only characters the
-		// historical validator allows ('.' and '/'), so it passes. This
-		// matches the exact pre-migration contract; the encoded form above
-		// is the one the validator blocks. See the package report for the
-		// residual literal-traversal limitation.
-		{"literal dot-slash traversal (allowed by historical charset)", "../../../../v1/admin", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

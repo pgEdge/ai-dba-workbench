@@ -180,9 +180,17 @@ func writeModelError(w http.ResponseWriter, status int, msg string) {
 // characters and is within the allowed length. Allowed characters are
 // alphanumeric, hyphens, dots, colons, forward slashes, and underscores.
 //
-// This is the exact validation the pre-migration HandleChat applied
-// inline; it is preserved here verbatim so the security contract is
-// unchanged by the move to the library proxy.
+// In addition to the charset check, any model name that contains the
+// substring ".." is rejected. A literal "../" sequence passes the
+// character-set filter (both '.' and '/' are in the allowed set), but
+// the Go HTTP client path-cleans such a value when it is interpolated
+// into a provider URL path (e.g. the Gemini provider builds
+// "/v1beta/models/{model}:generateContent"), producing a different
+// upstream path than intended. Rejecting ".." closes VULN-001 for the
+// literal traversal form; the percent-encoded form ("..%2f") is already
+// rejected by the charset check because '%' is not in the allowed set.
+// Single dots (e.g. "voyage-3.5") and single slashes (e.g.
+// "vendor/model") remain valid.
 func isValidModelName(model string) bool {
 	if model == "" || len(model) > 256 {
 		return false
@@ -194,6 +202,13 @@ func isValidModelName(model string) bool {
 			c != '-' && c != '.' && c != ':' && c != '/' && c != '_' {
 			return false
 		}
+	}
+	// SECURITY: reject any literal ".." substring to prevent path-traversal
+	// via the provider URL interpolation (VULN-001). This must come after
+	// the charset loop so that an invalid character is caught first and
+	// the ".." check is only reached for otherwise-valid names.
+	if strings.Contains(model, "..") {
+		return false
 	}
 	return true
 }

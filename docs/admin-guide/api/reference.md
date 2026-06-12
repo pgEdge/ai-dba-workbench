@@ -254,6 +254,7 @@ The API provides endpoints in the following categories.
 | POST | `/api/v1/llm/chat` | Send a chat message to the LLM. |
 | POST | `/api/v1/llm/chat/stream` | Stream a chat response as SSE. |
 | POST | `/api/v1/llm/embed` | Generate embeddings for input text. |
+| POST | `/api/v1/llm/embed/multimodal` | Generate embeddings for multimodal (text and image) inputs. |
 | POST | `/api/v1/llm/rerank` | Rerank documents against a query. |
 
 ### Memory

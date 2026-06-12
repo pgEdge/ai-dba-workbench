@@ -75,12 +75,17 @@ configure_pgedge_apt_repo(){
 }
 
 detect_os_type(){
+  # build.sh sets COMPONENT_DIR via cd+pwd, so absolute paths land here
+  # regardless of how the bridge wrapper at ./common/build.sh spelled $0.
+  # The old `$(dirname "$0")/../${COMPONENT_NAME}/…` lookup assumed
+  # common-functions.sh was a sibling of the component dir; in this repo
+  # it lives at <component>/scripts/, one level deeper.
   if command -v dnf &>/dev/null || command -v yum &>/dev/null; then
     echo "Detected RPM-based system"
-    source "$(dirname "$0")/../${COMPONENT_NAME}/build-rpm.sh"
+    source "${COMPONENT_DIR}/build-rpm.sh"
   elif command -v apt-get &>/dev/null; then
     echo "Detected Debian-based system"
-    source "$(dirname "$0")/../${COMPONENT_NAME}/build-deb.sh"
+    source "${COMPONENT_DIR}/build-deb.sh"
   else
     echo "Unsupported platform: No known package manager found" >&2
     exit 1
@@ -101,8 +106,8 @@ import_gpg_keys() {
     fi
   fi
 
-  PRI_FILE=$(dirname "$0")/public.key
-  PUB_FILE=$(dirname "$0")/private.key
+  PRI_FILE="${SCRIPT_DIR}/public.key"
+  PUB_FILE="${SCRIPT_DIR}/private.key"
 
   GPG_PUBLIC_KEY=$(cat $PRI_FILE)
   GPG_PRIVATE_KEY=$(cat $PUB_FILE)

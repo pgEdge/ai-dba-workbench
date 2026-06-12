@@ -18,7 +18,10 @@
 package llmproxy
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -82,7 +85,117 @@ func NewHandler(cfg *Config) (http.Handler, error) {
 		OnResponse:       cfg.onResponse,
 		OnError:          cfg.onError,
 	})
-	return p.Handler(), nil
+	// Wrap the proxy handler with model-name validation. The library's
+	// TransformRequest hook receives a *pgllm.ChatRequest that does NOT
+	// carry the per-request model override (the model lives on the proxy
+	// wire type proxy.ChatRequest and is consumed by the library before
+	// TransformRequest runs), so the validation cannot live in that hook.
+	// The middleware peeks the model from the request body and rejects an
+	// unsafe value before it can reach a provider's URL path. See
+	// validateModelName for the security rationale.
+	return validateModelMiddleware(p.Handler()), nil
+}
+
+// modelBearingPaths are the POST endpoints whose JSON body carries an
+// optional per-request "model" override. These are the only routes that
+// can flow an attacker-controlled model into a provider's URL path, so
+// the validation middleware inspects exactly these and passes every other
+// route (GET discovery endpoints, unknown paths) straight through.
+var modelBearingPaths = map[string]bool{
+	"/api/v1/llm/chat":             true,
+	"/api/v1/llm/chat/stream":      true,
+	"/api/v1/llm/embed":            true,
+	"/api/v1/llm/embed/multimodal": true,
+	"/api/v1/llm/rerank":           true,
+}
+
+// modelEnvelope captures just the "model" field from a request body so the
+// middleware can validate it without depending on the full proxy wire
+// types. Every model-bearing endpoint shares this field name.
+type modelEnvelope struct {
+	Model string `json:"model"`
+}
+
+// validateModelMiddleware rejects requests that carry an unsafe per-request
+// model override before they reach the library proxy.
+//
+// SECURITY: the per-request model is interpolated UNESCAPED into the
+// provider URL path (e.g. the Gemini provider builds
+// "/v1beta/models/{model}:generateContent"). Without validation an
+// authenticated caller could smuggle traversal or path characters
+// ("../", "%2f", and similar) into that path and redirect the upstream
+// request. This middleware restores the validation that the pre-migration
+// HandleChat performed inline; the library's TransformRequest hook cannot
+// see the model, so the check is enforced here at the HTTP boundary.
+//
+// The middleware reads the body (bounded by maxChatBodySize), validates
+// the model, then replaces the body with a fresh reader so the proxy can
+// parse it normally. An empty model is allowed: it means "use the
+// operator-configured default", which is trusted.
+func validateModelMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !modelBearingPaths[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodySize))
+		if err != nil {
+			writeModelError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		// Restore the body so the proxy can decode it again. The proxy
+		// re-applies its own MaxBytesReader on top of this reader.
+		r.Body = io.NopCloser(bytes.NewReader(body))
+
+		var env modelEnvelope
+		// A malformed body is left for the proxy to reject with its own
+		// error; we only act on a successfully-parsed, unsafe model.
+		if jsonErr := json.Unmarshal(body, &env); jsonErr == nil {
+			if env.Model != "" && !isValidModelName(env.Model) {
+				writeModelError(w, http.StatusBadRequest,
+					"invalid model name: must be 1-256 characters and contain only "+
+						"alphanumeric characters, hyphens, dots, colons, forward slashes, and underscores")
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeModelError emits a JSON error response matching the proxy's
+// ErrorResponse wire shape ({"error": "..."}) so callers see a consistent
+// error envelope regardless of whether the proxy or this middleware
+// produced the rejection.
+func writeModelError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(proxy.ErrorResponse{Error: msg}); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode model-validation error response: %v\n", err)
+	}
+}
+
+// isValidModelName validates that a model name contains only safe
+// characters and is within the allowed length. Allowed characters are
+// alphanumeric, hyphens, dots, colons, forward slashes, and underscores.
+//
+// This is the exact validation the pre-migration HandleChat applied
+// inline; it is preserved here verbatim so the security contract is
+// unchanged by the move to the library proxy.
+func isValidModelName(model string) bool {
+	if model == "" || len(model) > 256 {
+		return false
+	}
+	for _, c := range model {
+		if (c < 'a' || c > 'z') &&
+			(c < 'A' || c > 'Z') &&
+			(c < '0' || c > '9') &&
+			c != '-' && c != '.' && c != ':' && c != '/' && c != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // buildProviders assembles the per-provider Options map. A provider is

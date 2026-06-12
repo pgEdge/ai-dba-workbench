@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -734,6 +735,255 @@ func TestBuildUserInfo_UnknownUser(t *testing.T) {
 	store := newTestAuthStore(t)
 	if info := buildUserInfo(store, 999, "nobody"); info != nil {
 		t.Errorf("expected nil UserInfo for unknown user, got %+v", info)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Model-name validation
+// -----------------------------------------------------------------------
+
+func TestIsValidModelName(t *testing.T) {
+	longName := strings.Repeat("a", 257)
+	tests := []struct {
+		name  string
+		model string
+		want  bool
+	}{
+		{"typical gemini name", "gemini-1.5-pro", true},
+		{"typical anthropic name", "claude-3-7-sonnet-20250219", true},
+		{"colon and slash allowed", "library/model:tag", true},
+		{"single char", "a", true},
+		{"exactly 256 chars", strings.Repeat("a", 256), true},
+		{"empty is rejected by helper", "", false},
+		{"over 256 chars", longName, false},
+		// SECURITY: percent-encoded traversal must be rejected because '%'
+		// is outside the allowed charset; this is the vector that would
+		// decode to a path separator at the upstream provider.
+		{"percent-encoded traversal", "..%2f..%2fadmin", false},
+		{"space", "gemini pro", false},
+		{"control char", "gemini\n", false},
+		{"backslash", "gemini\\pro", false},
+		{"question mark", "model?foo=bar", false},
+		{"unicode", "modèle", false},
+		// NOTE: a literal "../" sequence contains only characters the
+		// historical validator allows ('.' and '/'), so it passes. This
+		// matches the exact pre-migration contract; the encoded form above
+		// is the one the validator blocks. See the package report for the
+		// residual literal-traversal limitation.
+		{"literal dot-slash traversal (allowed by historical charset)", "../../../../v1/admin", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isValidModelName(tt.model); got != tt.want {
+				t.Errorf("isValidModelName(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateModelMiddleware_RejectsUnsafeModel drives the middleware
+// directly: an unsafe per-request model on a model-bearing endpoint is
+// rejected with 400 before the wrapped handler ever runs.
+func TestValidateModelMiddleware_RejectsUnsafeModel(t *testing.T) {
+	var reached bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+	h := validateModelMiddleware(next)
+
+	body, _ := json.Marshal(proxy.ChatRequest{
+		Model:    "..%2f..%2fadmin",
+		Messages: []pgllm.Message{pgllm.UserText("hi")},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if reached {
+		t.Fatal("expected middleware to reject before reaching the wrapped handler")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsafe model, got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp proxy.ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if !strings.Contains(resp.Error, "invalid model name") {
+		t.Errorf("expected invalid-model-name error, got %q", resp.Error)
+	}
+}
+
+// TestValidateModelMiddleware_PassesValidAndEmptyModel confirms that a
+// valid model and an omitted model (the operator default) both flow
+// through to the wrapped handler with the body intact and re-readable.
+func TestValidateModelMiddleware_PassesValidAndEmptyModel(t *testing.T) {
+	cases := []struct {
+		name  string
+		model string
+	}{
+		{"valid model", "gemini-1.5-pro"},
+		{"empty model uses default", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody []byte
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				gotBody = b
+				w.WriteHeader(http.StatusOK)
+			})
+			h := validateModelMiddleware(next)
+
+			body, _ := json.Marshal(proxy.ChatRequest{
+				Model:    tc.model,
+				Messages: []pgllm.Message{pgllm.UserText("hi")},
+			})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+			}
+			// The wrapped handler must still see the original, intact body.
+			if !bytes.Equal(gotBody, body) {
+				t.Errorf("body not restored for downstream handler:\n got %s\nwant %s", gotBody, body)
+			}
+		})
+	}
+}
+
+// TestValidateModelMiddleware_NonModelRoutesPassThrough verifies that GET
+// discovery endpoints and unknown paths bypass model validation entirely,
+// body untouched.
+func TestValidateModelMiddleware_NonModelRoutesPassThrough(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"GET providers", http.MethodGet, "/api/v1/llm/providers"},
+		{"GET models", http.MethodGet, "/api/v1/llm/models"},
+		{"POST unknown path", http.MethodPost, "/api/v1/llm/unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reached bool
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			})
+			h := validateModelMiddleware(next)
+
+			// A body with an unsafe model must NOT be inspected on these
+			// routes, so the request still reaches the wrapped handler.
+			body, _ := json.Marshal(modelEnvelope{Model: "..%2f..%2fadmin"})
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewReader(body))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if !reached {
+				t.Fatal("expected non-model route to pass through to wrapped handler")
+			}
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+		})
+	}
+}
+
+// TestValidateModelMiddleware_MalformedBodyDeferredToProxy confirms a body
+// that is not valid JSON is passed through (the proxy reports its own
+// parse error) rather than being rejected as an invalid model.
+func TestValidateModelMiddleware_MalformedBodyDeferredToProxy(t *testing.T) {
+	var reached bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		// The proxy would re-read and reject; emulate a pass-through read.
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	})
+	h := validateModelMiddleware(next)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat",
+		bytes.NewReader([]byte("{not json")))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if !reached {
+		t.Fatal("expected malformed body to be deferred to the wrapped handler")
+	}
+}
+
+// errReadCloser is a request body whose Read always fails, used to drive
+// the middleware's body-read error path.
+type errReadCloser struct{}
+
+func (errReadCloser) Read([]byte) (int, error) { return 0, errors.New("boom") }
+func (errReadCloser) Close() error             { return nil }
+
+// TestValidateModelMiddleware_BodyReadError confirms a body that fails to
+// read is rejected with 400 and never reaches the wrapped handler.
+func TestValidateModelMiddleware_BodyReadError(t *testing.T) {
+	var reached bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+	h := validateModelMiddleware(next)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", nil)
+	req.Body = errReadCloser{}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if reached {
+		t.Fatal("expected body-read failure to reject before the wrapped handler")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on body-read error, got %d", w.Code)
+	}
+}
+
+// TestNewHandler_ChatRejectsUnsafeModel exercises the full round-trip: an
+// authenticated chat request carrying a path-manipulating model is
+// rejected with 400 by the wrapped handler before any provider call.
+func TestNewHandler_ChatRejectsUnsafeModel(t *testing.T) {
+	fake := &fakeProvider{}
+	setFake(fake)
+	t.Cleanup(func() { setFake(nil) })
+
+	store := newTestAuthStore(t)
+	token := sessionTokenFor(t, store, "frank")
+
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "claude-test",
+		AnthropicAPIKey: "test-key",
+		AuthStore:       store,
+	}
+	h, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler error: %v", err)
+	}
+
+	body, _ := json.Marshal(proxy.ChatRequest{
+		Model:    "..%2f..%2fadmin",
+		Messages: []pgllm.Message{pgllm.UserText("hello")},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/llm/chat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsafe model, got %d (%s)", w.Code, w.Body.String())
+	}
+	if fake.capturedRequest() != nil {
+		t.Fatal("provider must not be reached for an unsafe model")
 	}
 }
 

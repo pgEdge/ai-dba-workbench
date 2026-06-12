@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -194,41 +195,26 @@ func writeModelError(w http.ResponseWriter, status int, msg string) {
 	}
 }
 
-// isValidModelName validates that a model name contains only safe
-// characters and is within the allowed length. Allowed characters are
-// alphanumeric, hyphens, dots, colons, forward slashes, and underscores.
+// modelNameRe accepts model names whose every byte is in
+// [A-Za-z0-9._:/-] and whose total byte length is between 1 and 256
+// inclusive. The charset is ASCII-only, so every multi-byte UTF-8
+// sequence is automatically rejected. Because Go's regexp engine
+// matches bytes on a string, {1,256} is a byte-count, matching the
+// original len(model) guard exactly.
+var modelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,256}$`)
+
+// isValidModelName reports whether a model name is safe to interpolate
+// into a provider URL path: 1-256 bytes from [A-Za-z0-9._:/-], and
+// containing no ".." sequence (which would allow path traversal after
+// URL path-cleaning).
 //
-// In addition to the charset check, any model name that contains the
-// substring ".." is rejected. A literal "../" sequence passes the
-// character-set filter (both '.' and '/' are in the allowed set), but
-// the Go HTTP client path-cleans such a value when it is interpolated
-// into a provider URL path (e.g. the Gemini provider builds
-// "/v1beta/models/{model}:generateContent"), producing a different
-// upstream path than intended. Rejecting ".." closes VULN-001 for the
-// literal traversal form; the percent-encoded form ("..%2f") is already
-// rejected by the charset check because '%' is not in the allowed set.
-// Single dots (e.g. "voyage-3.5") and single slashes (e.g.
-// "vendor/model") remain valid.
+// Allowed characters are alphanumeric, hyphens, dots, colons, forward
+// slashes, and underscores. The percent-encoded traversal form
+// ("..%2f") is rejected by the charset check because '%' is not in the
+// allowed set. Single dots (e.g. "voyage-3.5") and single slashes
+// (e.g. "vendor/model") remain valid.
 func isValidModelName(model string) bool {
-	if model == "" || len(model) > 256 {
-		return false
-	}
-	for _, c := range model {
-		if (c < 'a' || c > 'z') &&
-			(c < 'A' || c > 'Z') &&
-			(c < '0' || c > '9') &&
-			c != '-' && c != '.' && c != ':' && c != '/' && c != '_' {
-			return false
-		}
-	}
-	// SECURITY: reject any literal ".." substring to prevent path-traversal
-	// via the provider URL interpolation (VULN-001). This must come after
-	// the charset loop so that an invalid character is caught first and
-	// the ".." check is only reached for otherwise-valid names.
-	if strings.Contains(model, "..") {
-		return false
-	}
-	return true
+	return modelNameRe.MatchString(model) && !strings.Contains(model, "..")
 }
 
 // buildProviders assembles the per-provider Options map. A provider is

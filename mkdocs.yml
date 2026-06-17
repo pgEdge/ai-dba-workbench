@@ -99,12 +99,15 @@ nav:
 
   - Administrator's Guide:
     - Overview: admin-guide/index.md
+    - Managing Users and Permissions:
+      - Overview: admin-guide/managing-users-and-permissions/index.md
+      - Creating and Managing Accounts: admin-guide/managing-users-and-permissions/accounts.md
+      - Group Management: admin-guide/managing-users-and-permissions/group.md
+      - Token Management: admin-guide/managing-users-and-permissions/tokens.md
+    - Enforcing the Password Policy: admin-guide/password.md
+    - Connection Management: admin-guide/connections.md
     - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md
     - Verifying the Health of Components: admin-guide/verify_health.md
-    - Creating and Managing Accounts: admin-guide/accounts.md
-    - Token Management: admin-guide/tokens.md
-    - Connection Management: admin-guide/connections.md
-    - Enforcing the Password Policy: admin-guide/password.md
     - Alert Rules & Thresholds: admin-guide/alert-rules.md
     - Notification Channels: admin-guide/notification-channels.md
     - Probe Configuration: admin-guide/probes.md

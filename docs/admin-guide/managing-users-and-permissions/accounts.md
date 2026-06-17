@@ -2,14 +2,15 @@
 
 The Workbench and MCP server support built-in authentication via two methods:
 
-- User accounts provide interactive authentication for users. When a user
-  authenticates successfully, the server assigns a session token. The token
-  allows the user to remain connected until the session ends.
+- User accounts provide interactive password authentication for users. When a
+  user authenticates successfully, the server assigns a *session token*. The
+  token allows the user to remain connected until the session ends.
 - Service accounts allow automated, programmatic access to the API via direct
-  HTTP/HTTPS connections with authentication managed by API tokens. A service
-  account cannot log in with a password. A service account can be a superuser
-  or a member of groups, with RBAC privileges managed like login users. The
-  server rejects password-based login for service accounts.
+  HTTP/HTTPS connections with authentication managed by an *API token*. A
+  service account cannot log in with a password. A service account can be a
+  superuser or a member of a group with RBAC privileges managed like a login 
+  user, but must use an API token for authentication. The server rejects
+  password-based authentication for service accounts.
 
 Authentication data is stored in a SQLite database (`auth.db`) within the
 `data` directory. By default, the database resides at `./data/auth.db`
@@ -40,7 +41,7 @@ at the command line.
 To use the Workbench GUI to add an account, select the `Settings` icon in the
 upper-right corner of the Workbench console.
 
-![Adding a user account](../images/create_user.png)
+![Adding a user account](../../images/create_user.png)
 
 Use the fields on the `Create user` dialog to define the user; provide:
 
@@ -87,13 +88,28 @@ In interactive mode, provide the following:
 - Annotation or note (optional)
 
 You can also provide required fields when you use the `-add-user` flag to
-create a user in non-interactive mode:
+create a user in non-interactive mode. In the following example, the 
+`-add-service-account` command supplies the username, password, and note as
+flags:
 
 ```bash
 ./bin/ai-dba-server -add-user \
   -username alice \
   -password "SecurePassword123!" \
   -user-note "Alice Smith - Developer"
+```
+
+You can also provide required fields when you use the
+`-add-service-account` flag to create a service account in non-interactive
+mode. In the following example, the `-add-service-account` command supplies
+the username, full name, email, and a note as flags:
+
+```bash
+./bin/ai-dba-server -add-service-account \
+  -username inventory-svc \
+  -full-name "Inventory Service" \
+  -email "inventory@example.com" \
+  -user-note "Inventory management service account"
 ```
 
 ### Reviewing a List of Accounts
@@ -105,12 +121,12 @@ You can review a list of user and service accounts in either the Workbench
 console or at the command line. To review the list in the console, select the
 `Settings` icon in the upper-right corner:
 
-![Viewing the Users list](../images/list_users.png)
+![Viewing the Users list](../../images/list_users.png)
 
 Use the arrow to the left of a Username to review detailed information about
 the privileges assigned to the user:
 
-![Viewing the Users list](../images/user_privs.png)
+![Viewing the Users list](../../images/user_privs.png)
 
 You can also include the `-list-users` flag when invoking the `ai-dba-server`
 command to display a list of user accounts on the command line:
@@ -155,7 +171,7 @@ modify:
 - if the account is `Enabled`.
 - if the account has `Superuser` privileges.
 
-![Editing user details](../images/edit_account.png)
+![Editing user details](../../images/edit_account.png)
 
 You can also modify these properties at the command line. In the following
 example, the `-update-user` flag starts an interactive session to modify an
@@ -201,7 +217,7 @@ To use the Workbench console to delete a user account, select the `Delete`
 icon (the garbage can) at the far right of an account name. When the popup
 opens, confirm that you wish to delete the account by selecting `Delete`:
 
-![Deleting a user](../images/delete_user.png)
+![Deleting a user](../../images/delete_user.png)
 
 You can also delete a user or service account at the command line. In the
 following example, the `-delete-user` flag removes a user account:
@@ -211,11 +227,14 @@ following example, the `-delete-user` flag removes a user account:
 ./bin/ai-dba-server -delete-user -username charlie
 ```
 
-## Managing Rate Limiting and Account Lockout
+## Managing Authentication Rate Limiting and Account Lockout
 
 Rate limiting and account lockout behavior are controlled by authentication
 settings in the server configuration file
-([`/etc/pgedge/ai-dba-server.yaml`](../getting-started/configuration/server.md)).
+([`/etc/pgedge/ai-dba-server.yaml`](../../getting-started/configuration/server.md)).
+When a valid user name is provided for authentication, the server begins to
+track failed login attempts and the time period in which those attempts are
+made.
 
 The configuration file manages the following authentication options:
 
@@ -233,9 +252,7 @@ http:
     max_user_token_days: 90  # 0 = unlimited
 ```
 
-When a valid user name is provided, the server tracks failed login attempts.
-
-The following settings control lockout behavior:
+The following properties control lockout behavior:
 
 - The default disables lockout; a value of 0 means no lockout applies.
 - The `max_failed_attempts_before_lockout` setting controls the threshold for

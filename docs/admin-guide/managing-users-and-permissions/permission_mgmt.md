@@ -60,9 +60,8 @@ Select:
 - the `Access Level` to apply to the selected connections; choose `Read` or
   `Read/Write`.
 
-Once access is granted, the new connection appears on a new row in the `Connection Permissions` section.
-
-![The Connection Permissions list](../../images/connection_permission_list.png)
+Once access is granted, the new connection appears on a new row in the
+`Connection Permissions` section.
 
 To modify the access level for a connection, delete the connection permission
 and reassign the connection to the group with the new level.
@@ -142,7 +141,7 @@ tool in the table:
 | Utility | `read_resource` | Reads MCP resources via the tool interface for backward compatibility with older clients. |
 
 To grant an MCP permission, select the `+ Grant` icon across from the `MCP
-Permissions` heading. When the `Grant admin permission` popup opens:
+Permissions` heading. When the `Grant MCP permission` popup opens:
 
 ![The MCP Permissions dialog](../../images/grant_mcp_permission.png)
 

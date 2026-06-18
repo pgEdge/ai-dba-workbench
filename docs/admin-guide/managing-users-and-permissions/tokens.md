@@ -19,15 +19,16 @@ system supports three scope types:
   access through group membership. The system always enforces the more
   restrictive level.
 - *MCP privilege scope* limits the token to specific MCP tools.
-- *Admin permission scope* limits the token to specific administrative operations.
+- *Admin permission scope* limits the token to specific administrative
+  operations.
 
 Each scope type supports a wildcard option that grants access to all items of
 that type:
 
 - `All Connections` uses `connection_id=0` to match every connection the owner
   can access.
-- `All MCP Privileges` uses `privilege_identifier_id=0` to match every MCP privilege the owner
-  holds.
+- `All MCP Privileges` uses `privilege_identifier_id=0` to match every MCP
+  privilege the owner holds.
 - `All Admin Permissions` uses `*` to match every admin permission the owner
   holds.
 
@@ -54,11 +55,11 @@ Provide the following information in the `Create token` dialog:
 - The `Expiry` drop-down sets the token lifetime; the choices are 30 days,
   90 days, 1 year, or Never, defaulting to 90 days.
 - The `Add Connection` drop-down adds a database connection to the token's
-  scope; repeat this step to add multiple connections. The drop-down shows only
-  connections the selected owner can access, and displays `No options` when the
-  owner has no connections assigned. After adding a connection, the access level
-  defaults to the owner's maximum level for that connection; you can lower it
-  to `read`.
+  scope; repeat this step to add multiple connections. The drop-down shows
+  only connections the selected owner can access, and displays `No options`
+  when the owner has no connections assigned. After adding a connection, the
+  access level defaults to the owner's maximum level for that connection; you
+  can lower it to `read`.
 - The `Allowed MCP Privileges` drop-down restricts the token to specific MCP
   tools; the `All MCP Privileges` wildcard grants every MCP privilege the owner
   holds.

@@ -21,18 +21,15 @@ The User Guide is organized into the following sections:
 
 ## Getting Started
 
-The web client connects to an MCP server instance. After installing and 
-configuring your Workbench installation, open a browser and
-navigate to the server address to authenticate with the Workbench. 
+The web client connects to an MCP server instance. After installing and
+configuring your Workbench installation, open a browser and navigate to
+the server address to authenticate with the Workbench.
 
-Log in with
-the [user credentials added during configuration](../getting-started/binary_install.md#creating-the-admin-user-and-sqlite-database) to begin monitoring your PostgreSQL estate.
+Log in with the [user credentials added during
+configuration](../getting-started/binary_install.md#creating-the-admin-user-and-sqlite-database)
+to begin monitoring your PostgreSQL estate.
 
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
-
-!!! note
-
-    
 
 After logging in, select the `+` next to the DATABASE SERVERS heading
 in the left navigation panel. The Workbench adds a new server definition

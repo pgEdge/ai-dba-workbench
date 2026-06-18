@@ -4,7 +4,8 @@ A group is a named collection of users and service accounts that share
 access to a set of permissions assigned by the group manager, an
 administrative user. This keeps permission management consistent and
 auditable; for a full description of how groups fit into the Workbench
-access model, see the [Managing Users and Permissions](permission_model.md) page.
+access model, see the [Managing Users and
+Permissions](permission_model.md) page.
 
 ## Creating a Group
 

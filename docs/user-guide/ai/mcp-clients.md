@@ -17,7 +17,7 @@ configuring a client.
 - An API token is required for authentication. Create
   tokens through the admin panel under Security >
   Tokens, or use the REST API. See
-  [Users & Authentication](../../admin-guide/authentication.md)
+  [Users & Authentication](../../admin-guide/managing-users-and-permissions/permission_model.md)
   for details on token management.
 
 ## Endpoint

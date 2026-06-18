@@ -26,7 +26,7 @@ that type:
 
 - `All Connections` uses `connection_id=0` to match every connection the owner
   can access.
-- `All MCP Privileges` uses `id=0` to match every MCP privilege the owner
+- `All MCP Privileges` uses `privilege_identifier_id=0` to match every MCP privilege the owner
   holds.
 - `All Admin Permissions` uses `*` to match every admin permission the owner
   holds.
@@ -118,8 +118,8 @@ The command displays the token upon creation:
 Token created successfully!
 ===========================================================
 
-Token: O9ms9jqTfUdy-DIjvpFWeqd_yH_NEj7me0mgOnOjGdQ=
-Hash:  b3f805a4c2e7d9f1...
+Token: <generated-token-value>
+Hash:  <token-hash>
 ID:    1
 Owner: alice
 Note:  CI/CD Pipeline
@@ -155,9 +155,9 @@ Tokens:
 ======================================================================
 ID   Hash Prefix        Owner     Super  Svc    Expires          Status
 ----------------------------------------------------------------------
-1    b3f805a4c2e7d9f1   alice     No     No     2025-01-28 10:15 Active
-2    7a2f19d8e1c4b5a3   svc-bot   No     Yes    Never            Active
-3    9c8d7e6f5a4b3c2d   bob       No     No     2024-10-15 14:20 EXPIRED
+1    <hash-prefix-1>    alice     No     No     2025-01-28 10:15 Active
+2    <hash-prefix-2>    svc-bot   No     Yes    Never            Active
+3    <hash-prefix-3>    bob       No     No     2024-10-15 14:20 EXPIRED
 ======================================================================
 ```
 
@@ -181,5 +181,5 @@ examples, `-remove-token` deletes an API token by its ID and hash prefix:
 ./bin/ai-dba-server -remove-token 1
 
 # Remove by hash prefix (minimum 8 characters)
-./bin/ai-dba-server -remove-token b3f805a4
+./bin/ai-dba-server -remove-token <hash-prefix>
 ```

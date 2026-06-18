@@ -2,9 +2,7 @@
 
 The Workbench permission model controls what each user, service account,
 and token can do. The model layers several pieces that work together to
-grant or restrict access. This page describes how those pieces relate
-and explains each one in detail; the linked pages describe the
-day-to-day tasks that manage them.
+grant or restrict access.
 
 The permission model controls three kinds of access:
 
@@ -13,13 +11,41 @@ The permission model controls three kinds of access:
 - The model controls which administrative operations an account can
   perform.
 
-The Workbench builds this access from three layered pieces: groups,
-privileges, and token scopes. Groups collect users and assign shared
-privileges; privileges define connection and tool access; token scopes
-narrow what an individual token may do. Superusers bypass every
-permission check and hold full access to all operations. Administrators
-manage these pieces through the Administration console or the command
-line.
+The Workbench builds this access from layered pieces using groups, privileges,
+permissions, and token scopes to manage the layers. Groups collect users and
+assign shared privileges; privileges define connection and tool access; token
+scopes narrow what an individual token may do. Administrators manage these
+pieces with the Administration console or the command line.
+
+!!! hint
+
+    Superusers bypass every permission check and hold full access to all
+    operations. 
+
+## How the Pieces Interact
+
+The Workbench evaluates a request by combining the layered pieces in
+order. An account first inherits privileges from every group it belongs
+to, including the privileges of any nested groups. A token then applies
+its scope, narrowing those inherited privileges to the scoped subset.
+
+The following sequence describes how the Workbench resolves access for a
+request:
+
+1. The Workbench identifies the account that owns the request token.
+
+2. The Workbench collects the privileges from every group the account
+   belongs to, including nested groups.
+
+3. The Workbench applies the token scope, restricting the request to the
+   scoped subset of those privileges.
+
+4. The Workbench grants the request only when the resulting permissions
+   allow the requested operation.
+
+A superuser short-circuits this sequence; the Workbench grants every
+request from a superuser account regardless of group or scope.
+
 
 ## Accounts and Roles
 
@@ -79,6 +105,7 @@ privileges for a group:
 
 For instructions on creating groups and managing their membership, see
 [Group Management](group.md).
+
 
 ## Token Scopes
 
@@ -148,29 +175,9 @@ The Workbench defines the following ten administrative permissions:
 Each permission allows a specific class of management operation; for
 example, `manage_users` allows creating, editing, and deleting accounts.
 
-## How the Pieces Interact
+For detailed instructions about assigning permissions to a group, see
+[Permission Management](permission_mgmt.md).
 
-The Workbench evaluates a request by combining the layered pieces in
-order. An account first inherits privileges from every group it belongs
-to, including the privileges of any nested groups. A token then applies
-its scope, narrowing those inherited privileges to the scoped subset.
-
-The following sequence describes how the Workbench resolves access for a
-request:
-
-1. The Workbench identifies the account that owns the request token.
-
-2. The Workbench collects the privileges from every group the account
-   belongs to, including nested groups.
-
-3. The Workbench applies the token scope, restricting the request to the
-   scoped subset of those privileges.
-
-4. The Workbench grants the request only when the resulting permissions
-   allow the requested operation.
-
-A superuser short-circuits this sequence; the Workbench grants every
-request from a superuser account regardless of group or scope.
 
 ## Related Pages
 
@@ -183,3 +190,5 @@ model:
   and manage their membership.
 - The [Token Management](tokens.md) page describes how to create tokens
   and define their scopes.
+- The [Permission Management](permission_mgmt.md) page describes how to
+  assign and revoke permissions.

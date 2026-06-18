@@ -38,7 +38,7 @@ sessions.
 Follow these guidelines for password security:
 
 - Encourage users to choose long passphrases that satisfy the policy described
-  in [Password Policy](#password-policy).
+  in [Password Policy](password.md).
 - Never log or display passwords in output.
 - Always use HTTPS in production environments.
 - Rotate passwords when a credential leak is suspected rather than on a fixed

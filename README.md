@@ -47,7 +47,7 @@
 - Administrator's Guide:
   - [Overview](docs/admin-guide/index.md)
   - [Verifying the Health of Components](docs/admin-guide/verify_health.md)
-  - [Users & Authentication](docs/admin-guide/authentication.md)
+  - [Users & Authentication](docs/admin-guide/managing-users-and-permissions/permission_model.md)
   - [Connection Management](docs/admin-guide/connections.md)
   - [Alert Rules & Thresholds](docs/admin-guide/alert-rules.md)
   - [Notification Channels](docs/admin-guide/notification-channels.md)

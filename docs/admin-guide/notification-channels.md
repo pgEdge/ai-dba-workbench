@@ -449,7 +449,7 @@ objects:
 
 - [Alert Rules](alert-rules.md) describes the rules
   that trigger notifications.
-- [Authentication](authentication.md) covers the
+- [Authentication](managing-users-and-permissions/permission_model.md) covers the
   permissions required for channel management.
 - [API Reference](api/reference.md) provides
   interactive API documentation.

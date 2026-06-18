@@ -4,13 +4,13 @@ A group is a named collection of users and service accounts that share
 access to a set of permissions assigned by the group manager, an
 administrative user. This keeps permission management consistent and
 auditable; for a full description of how groups fit into the Workbench
-access model, see the [Managing Users and Permissions](index.md) page.
+access model, see the [Managing Users and Permissions](permission_model.md) page.
 
 ## Creating a Group
 
 You can create a group in the Workbench console or at the command line.
 
-To create a group in the Administration page of the Workbench console,
+To create a group in the `Administration` page of the Workbench console,
 select the `Settings` icon, choose the `Groups` tab, and then select
 `+ Create Group`.
 
@@ -24,6 +24,25 @@ Provide the following details for the new group:
 Then, select `Create` to save the new group.
 
 ![Group List](../../images/group_list_console.png)
+
+You can also create a group at the command line. In the following
+example, the `-add-group` command creates a group named `dba-team`; the
+`-group` flag supplies the group name:
+
+```bash
+./bin/ai-dba-server -add-group -group dba-team
+```
+
+The command confirms the new group and reports its assigned identifier:
+
+```console
+Group 'dba-team' created successfully (ID: 3)
+```
+
+## Adding Members
+
+You can add a member to a group in the Workbench console or at the
+command line.
 
 To add a member to the new group, use the down-arrow to the left of the
 group name to expand the group description. Then, select the
@@ -44,20 +63,6 @@ Complete the popup to add a user to the group:
   that the Workbench adds to the group.
 
 Then, select `Add` to add the member and close the popup.
-
-You can also create a group at the command line. In the following
-example, the `-add-group` command creates a group named `dba-team`; the
-`-group` flag supplies the group name:
-
-```bash
-./bin/ai-dba-server -add-group -group dba-team
-```
-
-The command confirms the new group and reports its assigned identifier:
-
-```console
-Group 'dba-team' created successfully (ID: 3)
-```
 
 You can add members at the command line with the `-add-member` command.
 Use the `-username` flag to add a user or service account; use the
@@ -94,13 +99,37 @@ The command confirms the nested membership:
 Group 'readonly' added to group 'dba-team'
 ```
 
-## Listing Groups
+## Managing Group Membership
 
 You can review the configured groups in the Workbench console or at the
 command line.
 
-Groups appear on the `Groups` tab of the Administration console, where
-each row shows the group name and its assigned privileges.
+To review a list of groups in the `Administration` page of the
+Workbench console, select the `Settings` icon and then choose `Groups`
+from the navigation pane.
+
+![Listing groups in the console](../../images/group_list_console.png)
+
+Select the expand arrow to the left of a group name to view its
+details.
+
+![Listing group details in the console](../../images/group_details.png)
+
+The expanded view displays: 
+
+- The group's members and their account types appear in the `MEMBERS`
+  section.
+- The connections and corresponding access levels appear in the
+  `CONNECTIONS` section.
+- The administrative permissions granted to the group appear in the
+  `ADMIN` section.
+- The MCP permissions the group holds appear in the `MCP` section.
+
+These sections reflect the group's current grants; to modify them, use the
+`Permissions` dialog described in [Permission Management](permission_mgmt.md).
+
+To add a member from this view, select `+ Add Member` in the `MEMBERS`
+section; see [Adding Members](#adding-members).
 
 You can also list groups at the command line. In the following example,
 the `-list-groups` command displays every group with its identifier,
@@ -122,24 +151,76 @@ ID     Name                 Created              Description
 ================================================================================
 ```
 
+To review the privileges assigned directly to a group at the command
+line, use the `-show-group-privileges` command. In the following
+example, the `-show-group-privileges` command lists the privileges for
+the `dba-team` group; the `-group` flag names the group:
+
+```bash
+./bin/ai-dba-server -show-group-privileges -group Mgmt
+```
+
+The command prints the MCP and connection privileges for the group:
+
+```console
+Auth store: /var/lib/ai-workbench/data/auth.db
+
+Privileges for group 'Mgmt':
+======================================================================
+
+MCP Privileges:
+  - [resource] pg://connection_info
+  - [tool] describe_probe
+  - [tool] execute_explain
+  - [tool] get_metric_baselines
+
+Connection Privileges:
+  - Connection 3: read_write
+  - Connection 4: read
+======================================================================
+```
+
+When the group has no privileges in a category, the command shows `None`
+for that category:
+
+```console
+Privileges for group 'dba-team':
+======================================================================
+MCP Privileges: None
+
+Connection Privileges: None
+======================================================================
+```
+
 ## Removing Members
 
-You remove a member from a group at the command line with the
+You can remove a member from a group in the Workbench console or at
+the command line.
+
+To remove a member in the console, expand the group row and locate the
+member in the `MEMBERS` section. Select the red remove icon to the
+right of the member's name:
+
+![Removing a member from a group](../../images/remove_member.png)
+
+The Workbench removes the member from the group immediately.
+
+You can remove a member from a group at the command line with the
 `-remove-member` command. Use the `-username` flag to remove a user or
 service account; use the `-member-group` flag to remove a nested group.
 You must specify exactly one of these flags.
 
 In the following example, the `-remove-member` command removes the user
-`alice` from the `dba-team` group:
+`Edward` from the `Mgmt` group:
 
 ```bash
-./bin/ai-dba-server -remove-member -group dba-team -username alice
+./bin/ai-dba-server -remove-member -group Mgmt -username Edward
 ```
 
 The command confirms the change:
 
 ```console
-User 'alice' removed from group 'dba-team'
+User 'Edward' removed from group 'Mgmt'
 ```
 
 In the following example, the `-remove-member` command removes the
@@ -149,13 +230,21 @@ nested `readonly` group from the `dba-team` group:
 ./bin/ai-dba-server -remove-member -group dba-team -member-group readonly
 ```
 
+The command confirms the change:
+
+```console
+Group 'readonly' removed from group 'dba-team'
+```
+
 ## Deleting a Group
 
 You can delete a group in the Workbench console or at the command line.
 
 To delete a group in the console, open the `Groups` tab, and then select
-the delete icon for the group you wish to remove. Confirm the deletion
-when the console prompts you.
+the `Delete` icon (the garbage can) for the group you wish to remove. Confirm
+the deletion when prompted:
+
+![Deleting a group](../../images/confirm_group_delete.png)
 
 You can also delete a group at the command line. In the following
 example, the `-delete-group` command removes the `dba-team` group; the

@@ -223,7 +223,7 @@ standard JSON format:
 
 ## Related Documentation
 
-- [Authentication](authentication.md) covers tokens and
+- [Authentication](managing-users-and-permissions/permission_model.md) covers tokens and
   access control.
 - [API Reference](api/reference.md) provides
   interactive API documentation.

@@ -89,8 +89,8 @@ In interactive mode, provide the following:
 
 You can also provide required fields when you use the `-add-user` flag to
 create a user in non-interactive mode. In the following example, the 
-`-add-service-account` command supplies the username, password, and note as
-flags:
+`-add-user` command supplies the username,
+password, and note as flags:
 
 ```bash
 ./bin/ai-dba-server -add-user \
@@ -132,7 +132,7 @@ You can also include the `-list-users` flag when invoking the `ai-dba-server`
 command to display a list of user accounts on the command line:
 
 ```bash
-./bin/ai-dba-server -list-user
+./bin/ai-dba-server -list-users
 ```
 
 The user list includes all currently defined user and service accounts:
@@ -257,8 +257,8 @@ The following properties control lockout behavior:
 - The default disables lockout; a value of 0 means no lockout applies.
 - The `max_failed_attempts_before_lockout` setting controls the threshold for
   locking out an account.
-- An administrator must re-enable locked accounts until the number of minutes
-  specified in `rate_limit_window_minutes` passes.
+- An administrator must re-enable locked accounts with `-enable-user`;
+  `rate_limit_window_minutes` controls only the rate-limit window.
 
 You can use the following command to re-enable a locked account and reset the
 number of failed login attempts:

@@ -101,7 +101,7 @@ nav:
     - Overview: admin-guide/index.md
     - Managing Users and Permissions:
       - Understanding the Workbench Permission Model: admin-guide/managing-users-and-permissions/permission_model.md
-      - Creating and Managing Accounts: admin-guide/managing-users-and-permissions/accounts.md
+      - Account Management: admin-guide/managing-users-and-permissions/accounts.md
       - Group Management: admin-guide/managing-users-and-permissions/group.md
       - Token Management: admin-guide/managing-users-and-permissions/tokens.md
       - Permission Management: admin-guide/managing-users-and-permissions/permission_mgmt.md

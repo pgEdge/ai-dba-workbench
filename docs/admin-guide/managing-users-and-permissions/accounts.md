@@ -1,4 +1,4 @@
-# Creating and Managing Accounts
+# Account Management
 
 The Workbench and MCP server support built-in authentication via two methods:
 
@@ -8,16 +8,16 @@ The Workbench and MCP server support built-in authentication via two methods:
 - Service accounts allow automated, programmatic access to the API via direct
   HTTP/HTTPS connections with authentication managed by an *API token*. A
   service account cannot log in with a password. A service account can be a
-  superuser or a member of a group with RBAC privileges managed like a login 
-  user, but must use an API token for authentication. The server rejects
-  password-based authentication for service accounts.
+  superuser or a member of a group with role-based access privileges managed
+  like a login user, but must use an API token for authentication. The server
+  rejects password-based authentication for service accounts.
 
 Authentication data is stored in a SQLite database (`auth.db`) within the
 `data` directory. By default, the database resides at `./data/auth.db`
 relative to the server binary.
 
-The following table describes the database tables used to manage account,
-permissions, and authentication details:
+The following table describes the database tables used to store account,
+permission, and authentication details:
 
 | Table | Description |
 |-------|-------------|
@@ -38,8 +38,11 @@ and client applications.
 You can add either account type with the Workbench's graphical interface, or
 at the command line.
 
-To use the Workbench GUI to add an account, select the `Settings` icon in the
-upper-right corner of the Workbench console.
+To use the Workbench GUI to add an account, authenticate with the Workbench
+console as an administrative user, and select the `Settings` icon in the
+upper-right corner of the Workbench console.  Select Users from the left
+navigation pane, and then select the `+ Create User` icon in the upper-right
+corner of the `Users` page.
 
 ![Adding a user account](../../images/create_user.png)
 
@@ -53,7 +56,7 @@ Use the fields on the `Create user` dialog to define the user; provide:
 
 Toggles at the bottom of the dialog allow you to:
 
-- indicate that the account is intended for programmatic access *only* by
+- indicate that the account is intended for *programmatic access only* by
   setting the `Service Account` toggle to `on`.
 - `Enable` or `Disable` the account; when disabled, the user cannot log in.
 - create a `Superuser` account; setting the `Superuser` toggle to `on`
@@ -66,7 +69,7 @@ the `-add-user` flag starts interactive mode, prompting you for user details:
 ./bin/ai-dba-server -add-user
 ```
 
-In interactive mode, provide the following:
+When prompted, provide the following:
 
 - Username (required)
 - Password (hidden input, with confirmation)
@@ -80,7 +83,7 @@ interactive mode:
 ./bin/ai-dba-server -add-service-account
 ```
 
-In interactive mode, provide the following:
+When prompted, provide the following:
 
 - Username (required)
 - Full account name (optional)
@@ -89,8 +92,8 @@ In interactive mode, provide the following:
 
 You can also provide required fields when you use the `-add-user` flag to
 create a user in non-interactive mode. In the following example, the 
-`-add-user` command supplies the username,
-password, and note as flags:
+`-add-user` command supplies the username, password, and a note in key/value
+pairs:
 
 ```bash
 ./bin/ai-dba-server -add-user \
@@ -99,10 +102,10 @@ password, and note as flags:
   -user-note "Alice Smith - Developer"
 ```
 
-You can also provide required fields when you use the
-`-add-service-account` flag to create a service account in non-interactive
-mode. In the following example, the `-add-service-account` command supplies
-the username, full name, email, and a note as flags:
+You can also create a service account in non-interactive mode; provide the
+required fields and values with the `-add-service-account` flag. In the
+following example, the `-add-service-account` command supplies the username,
+full name, email, and a note in key/value pairs:
 
 ```bash
 ./bin/ai-dba-server -add-service-account \
@@ -118,8 +121,8 @@ The Workbench console and command line both provide ways to review existing
 user and service accounts.
 
 You can review a list of user and service accounts in either the Workbench
-console or at the command line. To review the list in the console, select the
-`Settings` icon in the upper-right corner:
+console or at the command line. To review the list in the console, navigate to
+the `Users` page in the `Administration` console:
 
 ![Viewing the Users list](../../images/list_users.png)
 
@@ -128,8 +131,8 @@ the privileges assigned to the user:
 
 ![Viewing the Users list](../../images/user_privs.png)
 
-You can also include the `-list-users` flag when invoking the `ai-dba-server`
-command to display a list of user accounts on the command line:
+You can also use the `-list-users` command to display a list of user accounts
+on the command line:
 
 ```bash
 ./bin/ai-dba-server -list-users
@@ -160,8 +163,8 @@ The Workbench console and command line both support modifying account
 properties.
 
 To update the details associated with an account in the console, navigate to
-the `Users` tab and select the edit icon (the pencil) at the far-right of the
-account you wish to modify. The `Edit user` dialog opens, allowing you to
+the `Users` page and select the edit icon (the pencil) at the far-right of the
+account listing you wish to modify. The `Edit user` dialog opens, allowing you to
 modify:
 
 - the `Password` associated with the account.
@@ -174,16 +177,16 @@ modify:
 ![Editing user details](../../images/edit_account.png)
 
 You can also modify these properties at the command line. In the following
-example, the `-update-user` flag starts an interactive session to modify an
-existing user account:
+example, the `-update-user` command starts an interactive session that
+modifies an existing user account:
 
 ```bash
 # Interactive update
 ./bin/ai-dba-server -update-user -username alice
 ```
 
-To update an account programmatically, pass the `-update-user` flag along
-with keywords and the new information on the command line; for example:
+To update an account programmatically, invoke the `-update-user` command with
+keywords and the new information on the command line; for example:
 
 ```bash
 # Update password from command line (less secure)
@@ -197,7 +200,7 @@ with keywords and the new information on the command line; for example:
   -user-note "Alice Smith - Senior Developer"
 ```
 
-Similarly, pass the `-disable-user` and `-enable-user` flags to control
+Similarly, use the `-disable-user` and `-enable-user` commands to control
 whether an account is enabled or disabled:
 
 ```bash
@@ -210,12 +213,13 @@ whether an account is enabled or disabled:
 
 ### Deleting an Account
 
-Use the Workbench console or the command line to delete a user or service
-account.
+You can use the Workbench console or the command line to delete a user or
+service account.
 
-To use the Workbench console to delete a user account, select the `Delete`
-icon (the garbage can) at the far right of an account name. When the popup
-opens, confirm that you wish to delete the account by selecting `Delete`:
+To use the Workbench console to delete a user account, navigate to the `Users`
+page, and select the `Delete` icon (the garbage can) at the far right of an
+account listing. When the popup opens, confirm that you wish to delete the
+account by selecting `Delete`:
 
 ![Deleting a user](../../images/delete_user.png)
 
@@ -254,11 +258,16 @@ http:
 
 The following properties control lockout behavior:
 
-- The default disables lockout; a value of 0 means no lockout applies.
-- The `max_failed_attempts_before_lockout` setting controls the threshold for
-  locking out an account.
-- An administrator must re-enable locked accounts with `-enable-user`;
-  `rate_limit_window_minutes` controls only the rate-limit window.
+- `rate_limit_window_minutes` controls the time window in minutes during which
+  failed login attempts are counted per IP address; the default is `15`.
+- `rate_limit_max_attempts` controls the maximum number of failed login
+  attempts allowed from a single IP address within the rate-limit window
+  before that IP is blocked; the default is `10`.
+- The `max_failed_attempts_before_lockout` setting controls the number of
+  failed authentication attempts before locking  an account; a value of `0`
+  disables the property.
+- `max_user_token_days` controls the maximum lifetime in days for user-created
+  tokens; a value of `0` allows you to use tokens with unlimited lifetime.
 
 You can use the following command to re-enable a locked account and reset the
 number of failed login attempts:

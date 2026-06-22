@@ -79,7 +79,7 @@ You can also grant a connection at the command line with the
 - Include the `-group` flag to name the group that receives the access.
 - Include the `-connection` flag to identify the connection by its ID.
 - Include the `-access-level` flag to set the level to `read` or
-  `read_write`; the command defaults to `read` when you omit the flag.
+  `read_write`; the command defaults to `read` if you omit the flag.
 
 In the following example, the `-grant-connection` command grants the
 `dba-team` group `read_write` access to connection `3`:

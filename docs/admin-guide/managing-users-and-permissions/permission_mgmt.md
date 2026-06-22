@@ -34,6 +34,9 @@ tables refresh to match the new selection.
 
 ### Connection Permissions
 
+You can manage connection permissions in the Workbench console or at the
+command line.
+
 The `Connection Permissions` section shows each connection the selected group
 can authenticate with, and the access level the group holds for that
 connection. Each connection in the table corresponds to a server defined in
@@ -45,7 +48,7 @@ The following table lists the access levels available for each connection:
 | Access Level | Description |
 |---|---|
 | `read` | Allows read-only operations; the group inspects data and metadata without changing them. |
-| `read_write` | Allows both read and write operations against the connection. |
+| `read_write&nbsp;` | Allows both read and write operations against the connection. |
 
 To add a connection/access level pair, select the `+ Grant` icon across from
 the `Connection Permissions` heading.
@@ -70,8 +73,48 @@ To revoke a connection grant, select the red `Delete` icon (the garbage can)
 in the `Actions` column for that row. The console removes the connection access
 immediately, and the group loses the listed access to the connection.
 
+You can also grant a connection at the command line with the
+`-grant-connection` command:
 
-## Admin Permissions
+- Include the `-group` flag to name the group that receives the access.
+- Include the `-connection` flag to identify the connection by its ID.
+- Include the `-access-level` flag to set the level to `read` or
+  `read_write`; the command defaults to `read` when you omit the flag.
+
+In the following example, the `-grant-connection` command grants the
+`dba-team` group `read_write` access to connection `3`:
+
+```bash
+./bin/ai-dba-server -grant-connection -group dba-team -connection 3 \
+    -access-level read_write
+```
+
+The command confirms the grant:
+
+```console
+Granted read_write access to connection 3 for group 'dba-team'
+```
+
+You can revoke a connection at the command line with the
+`-revoke-connection` command:
+
+- Include the `-group` flag to name the group that loses the access.
+- Include the `-connection` flag to identify the connection by its ID.
+
+In the following example, the `-revoke-connection` command revokes the
+`dba-team` group's access to connection `3`:
+
+```bash
+./bin/ai-dba-server -revoke-connection -group dba-team -connection 3
+```
+
+The command confirms the revocation:
+
+```console
+Revoked access to connection 3 from group 'dba-team'
+```
+
+### Admin Permissions
 
 The `Admin Permissions` section shows the administrative permissions granted
 to the selected group. The following table lists the administrative
@@ -106,14 +149,17 @@ To revoke a permission, select the `Delete` icon across from the permission
 name. The console revokes the permission from the group immediately.
 
 
-## MCP Permissions
+### MCP Permissions
 
-The MCP Permissions section displays the MCP tools and resources that can be
+You can manage MCP permissions in the Workbench console or at the command
+line.
+
+The `MCP Permissions` section displays the MCP tools and resources that can be
 accessed by the selected group.
 
 The following table lists the MCP tools and resources available for a group,
-organized by category; the All MCP Privileges wildcard grants access to every
-tool in the table:
+organized by category; the `All MCP Privileges` wildcard grants access to 
+every tool in the table:
 
 | Group | Tool | Description |
 |---|---|---|
@@ -159,4 +205,68 @@ group immediately, and the group loses access to the listed tool.
 
     Granting access to `All MCP Privileges` overrides line item tool and
     resource grants.
+
+You can also grant an MCP privilege at the command line with the
+`-grant-privilege` command:
+
+- Include the `-group` flag to name the group that receives the privilege.
+- Include the `-privilege` flag to name the privilege by its identifier.
+
+In the following example, the `-grant-privilege` command grants the
+`query_database` privilege to the `dba-team` group:
+
+```bash
+./bin/ai-dba-server -grant-privilege -group dba-team -privilege query_database
+```
+
+The command confirms the grant:
+
+```console
+Granted privilege 'query_database' to group 'dba-team'
+```
+
+You can revoke an MCP privilege at the command line with the
+`-revoke-privilege` command:
+
+- Include the `-group` flag to name the group that loses the privilege.
+- Include the `-privilege` flag to name the privilege by its identifier.
+
+In the following example, the `-revoke-privilege` command revokes the
+`query_database` privilege from the `dba-team` group:
+
+```bash
+./bin/ai-dba-server -revoke-privilege -group dba-team -privilege query_database
+```
+
+The command confirms the revocation:
+
+```console
+Revoked privilege 'query_database' from group 'dba-team'
+```
+
+To review the privileges available to grant, use the `-list-privileges`
+command. In the following example, the `-list-privileges` command lists
+every registered MCP privilege:
+
+```bash
+./bin/ai-dba-server -list-privileges
+```
+
+The command prints each privilege with its ID, type, identifier, and
+description:
+
+```console
+MCP Privileges:
+==========================================================================================
+ID     Type       Identifier                     Description
+------------------------------------------------------------------------------------------
+1      tool       query_database                 Execute read-only SQL queries against ...
+2      tool       get_schema_info                Retrieve database schema information (...
+3      resource   pg://connection_info           Current database connection information...
+==========================================================================================
+```
+
+To review the privileges already assigned to a group, use the
+`-show-group-privileges` command described in
+[Group Management](group.md#managing-group-membership).
 

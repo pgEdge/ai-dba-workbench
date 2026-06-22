@@ -29,21 +29,24 @@ that type:
   can access.
 - `All MCP Privileges` uses `privilege_identifier_id=0` to match every MCP
   privilege the owner holds.
-- `All Admin Permissions` uses `*` to match every admin permission the owner
+- `All Admin Permissions` uses `*` to match every ADMIN permission the owner
   holds.
 
 The effective access for a scoped token equals the intersection of the owner's
-group-level access and the token scope. A token cannot exceed the access level
-of the owner.
+group-level access and the token scope. 
+
+!!! note
+
+    A token cannot exceed the access level of the owner.
 
 
 ## Creating a Token
 
 You can create a token with the Workbench console or at the command line.
 
-To use the console to create a token, select the `Settings` icon, and then
-select the `Tokens` tab from the left navigation pane. When the Tokens page
-opens, select the `+ Create Token` icon to open the `Create token` dialog:
+To use the console to create a token, navigate to the `Administration` page,
+and select `Tokens` from the left navigation pane. When the Tokens page opens,
+select the `+ Create Token` icon to open the `Create token` dialog:
 
 ![Adding a token](../../images/create_token.png)
 
@@ -66,8 +69,9 @@ Provide the following information in the `Create token` dialog:
 - The `Allowed Admin Permissions` drop-down restricts the token to specific
   admin operations; the `All Admin Permissions` wildcard grants every admin
   permission the owner holds.
-- The `Create` button stays disabled until both the `Name` and `Owner` fields
-  are filled in.
+
+The `Create` button is disabled until both the `Name` and `Owner` fields are
+completed; select `Create` to create the described token.
 
 ![A newly generated token](../../images/new_token.png)
 
@@ -86,8 +90,8 @@ When prompted, provide the following:
 - Expiry duration (e.g., `30d`, `1y`, `never`)
 
 The syntax used to create a token in non-interactive is the same for a user
-account or a service account; specify token properties when invoking the
-`-add-token` command:
+account or a service account; specify token properties in key/value pairs when
+invoking the `-add-token` command:
 
 ```bash
 # Create token for a user
@@ -143,13 +147,15 @@ Tokens appear on the `Tokens` tab in the Administration console:
 ![The list of tokens](../../images/token_list.png)
 
 You can also display a list of tokens at the command line. In the following
-example, the `ai-dba-server -list-tokens` command displays a list of tokens:
+example, the `-list-tokens` command displays a list of tokens:
 
 ```bash
 ./bin/ai-dba-server -list-tokens
 ```
 
-The information displayed includes the token's ID, owner, and current status:
+The information displayed includes the token's ID, the hash prefix, the token
+owner, if the account is a superuser, if the account is a service account, the
+token expiration details, and current status:
 
 ```console
 Tokens:
@@ -166,16 +172,16 @@ ID   Hash Prefix        Owner     Super  Svc    Expires          Status
 
 You can delete a token in the Workbench console's `Tokens` table or at the
 command line.  To delete a token in the console, select the `Delete` icon
-(the trash can) at the far-right of a token entry.  A popup opens, asking you
-to confirm that you wish to delete the token:
+(the garbage can) at the far-right of a token entry.  A popup opens, asking
+you to confirm that you wish to delete the token:
 
 ![The list of tokens](../../images/delete_token.png)
 
 Select `Delete` to permanently delete the specified token.
 
-You can also delete a token at the command line by including the
-`-remove-token` flag and the token ID or hash prefix; in the following
-examples, `-remove-token` deletes an API token by its ID and hash prefix:
+You can also delete a token at the command line with the `-remove-token`
+command and the token ID or hash prefix; in the following examples,
+`-remove-token` deletes an API token by its ID and hash prefix:
 
 ```bash
 # Remove by token ID

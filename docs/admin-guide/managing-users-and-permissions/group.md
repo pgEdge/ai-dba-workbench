@@ -1,11 +1,11 @@
 # Group Management
 
 A group is a named collection of users and service accounts that share
-access to a set of permissions assigned by the group manager, an
-administrative user. This keeps permission management consistent and
+access to a set of permissions assigned by the group manager (an
+administrative user). This keeps permission management consistent and
 auditable; for a full description of how groups fit into the Workbench
-access model, see the [Managing Users and
-Permissions](permission_model.md) page.
+access model, see
+[Understanding the Workbench Permission Model](permission_model.md).
 
 ## Creating a Group
 
@@ -19,10 +19,10 @@ select the `Settings` icon, choose the `Groups` tab, and then select
 
 Provide the following details for the new group:
 
-- Enter a group name in the Name field.
-- Enter a description in the Description field.
+- Enter a group name in the `Name` field.
+- Enter a user-friendly description in the `Description` field.
 
-Then, select `Create` to save the new group.
+Then, select `Create` to add the new group to the list on the `Groups` page.
 
 ![Group List](../../images/group_list_console.png)
 
@@ -34,7 +34,7 @@ example, the `-add-group` command creates a group named `dba-team`; the
 ./bin/ai-dba-server -add-group -group dba-team
 ```
 
-The command confirms the new group and reports its assigned identifier:
+The response confirms the new group and reports its assigned identifier:
 
 ```console
 Group 'dba-team' created successfully (ID: 3)
@@ -45,7 +45,7 @@ Group 'dba-team' created successfully (ID: 3)
 You can add a member to a group in the Workbench console or at the
 command line.
 
-To add a member to the new group, use the down-arrow to the left of the
+To add a member to a group, use the down-arrow to the left of the
 group name to expand the group description. Then, select the
 `+ Add Member` icon at the far right of the entry:
 
@@ -65,13 +65,16 @@ Complete the popup to add a user to the group:
 
 Then, select `Add` to add the member and close the popup.
 
-You can add members at the command line with the `-add-member` command.
-Use the `-username` flag to add a user or service account; use the
-`-member-group` flag to add a nested group. You must specify only one of
-these flags; the command rejects both flags if used together.
+You can also add members at the command line with the `-add-member` command:
+
+- Include the `-username` flag to add a user or service account. 
+- Include the `-member-group` flag to add a nested group. 
+
+You must specify only one of these flags; the command rejects both flags if
+used together.
 
 In the following example, the `-add-group` command creates the
-`dba-team` group; the `-add-member` command then adds the user `alice`
+`dba-team` group; then, the `-add-member` command then adds the user `alice`
 to it:
 
 ```bash
@@ -79,7 +82,7 @@ to it:
 ./bin/ai-dba-server -add-member -group dba-team -username alice
 ```
 
-The command confirms the new membership:
+The response confirms the membership:
 
 ```console
 User 'alice' added to group 'dba-team'
@@ -94,7 +97,7 @@ In the following example, the `-add-group` command creates the
 ./bin/ai-dba-server -add-member -group dba-team -member-group readonly
 ```
 
-The command confirms the nested membership:
+The response confirms the nested membership:
 
 ```console
 Group 'readonly' added to group 'dba-team'
@@ -111,20 +114,20 @@ from the navigation pane.
 
 ![Listing groups in the console](../../images/group_list_console.png)
 
-Select the expand arrow to the left of a group name to view its
-details.
+Select the arrow to the left of a group name to view details about the
+group.
 
 ![Listing group details in the console](../../images/group_details.png)
 
 The expanded view displays: 
 
-- The group's members and their account types appear in the `MEMBERS`
+- The group's members and their account types in the `MEMBERS`
   section.
-- The connections and corresponding access levels appear in the
+- The connections and corresponding access levels in the
   `CONNECTIONS` section.
-- The administrative permissions granted to the group appear in the
+- The administrative permissions granted to the group in the
   `ADMIN` section.
-- The MCP permissions the group holds appear in the `MCP` section.
+- The MCP permissions the group holds in the `MCP` section.
 
 These sections reflect the group's current grants; to modify them, use the
 `Permissions` dialog described in [Permission Management](permission_mgmt.md).
@@ -134,7 +137,7 @@ section; see [Adding Members](#adding-members).
 
 You can also list groups at the command line. In the following example,
 the `-list-groups` command displays every group with its identifier,
-name, creation time, and description:
+group name, creation time, and description:
 
 ```bash
 ./bin/ai-dba-server -list-groups
@@ -161,7 +164,7 @@ the `dba-team` group; the `-group` flag names the group:
 ./bin/ai-dba-server -show-group-privileges -group Mgmt
 ```
 
-The command prints the MCP and connection privileges for the group:
+The command displays the MCP and connection privileges for the group:
 
 ```console
 Auth store: /var/lib/ai-workbench/data/auth.db

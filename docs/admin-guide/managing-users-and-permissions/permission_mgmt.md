@@ -48,7 +48,7 @@ The following table lists the access levels available for each connection:
 | Access Level | Description |
 |---|---|
 | `read` | Allows read-only operations; the group inspects data and metadata without changing them. |
-| `read_write&nbsp;` | Allows both read and write operations against the connection. |
+| `read_write` | Allows both read and write operations against the connection. |
 
 To add a connection/access level pair, select the `+ Grant` icon across from
 the `Connection Permissions` heading.

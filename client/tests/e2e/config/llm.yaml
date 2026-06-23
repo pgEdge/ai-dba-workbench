@@ -1,0 +1,36 @@
+# LLM configuration for E2E test scenarios.
+#
+# This file provides defaults. Override any value at runtime with
+# environment variables (documented in .env.e2e.example).
+#
+# API keys must NEVER be stored here — use environment variables.
+
+# Master switch. Set to true to enable LLM-gated test steps.
+# env: E2E_AI_ENABLED=true|false|1|0
+ai_enabled: false
+
+reasoning:
+  # env: E2E_REASONING_PROVIDER=anthropic|openai|gemini|ollama
+  provider: anthropic
+  # env: E2E_REASONING_MODEL
+  model: claude-sonnet-4-6
+
+embedding:
+  # env: E2E_EMBEDDING_PROVIDER=voyage|openai|gemini|cohere|ollama
+  provider: voyage
+  # env: E2E_EMBEDDING_MODEL
+  model: voyage-3
+
+# Alerter-specific overrides. Empty string means "fall back to the
+# top-level reasoning/embedding config above."
+alerter:
+  reasoning:
+    # env: E2E_ALERTER_REASONING_PROVIDER
+    provider: ""
+    # env: E2E_ALERTER_REASONING_MODEL
+    model: ""
+  embedding:
+    # env: E2E_ALERTER_EMBEDDING_PROVIDER
+    provider: ""
+    # env: E2E_ALERTER_EMBEDDING_MODEL
+    model: ""

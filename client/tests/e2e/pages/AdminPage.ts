@@ -71,6 +71,18 @@ export class AdminPage extends BasePage {
     }
 
     /**
+     * Close the Administration full-screen dialog. Call before any
+     * interaction that requires the main app header (e.g. signOut).
+     */
+    async closeAdminPanel(): Promise<void> {
+        await expect(this.closeAdminButton).toBeVisible({ timeout: 5_000 });
+        await this.closeAdminButton.click();
+        await expect(
+            this.page.getByRole('heading', { name: 'Administration' }),
+        ).toBeHidden({ timeout: 5_000 });
+    }
+
+    /**
      * Click a navigation item in the admin panel sidebar.
      * The items are MUI ListItemButtons rendered with role=button.
      */

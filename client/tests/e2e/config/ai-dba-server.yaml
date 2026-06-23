@@ -21,3 +21,15 @@ database:
 
 secret_file: /etc/pgedge/ai-dba.secret
 data_dir: /data
+
+# LLM provider configuration (optional).
+# Uncomment and populate to enable AI features in E2E tests.
+# llm:
+#   provider: anthropic        # anthropic | openai | gemini | ollama
+#   anthropic_api_key: ""      # or use anthropic_api_key_file
+#   openai_api_key: ""
+#   gemini_api_key: ""
+#   reasoning_model: claude-sonnet-4-6
+#   embedding_provider: voyage
+#   voyage_api_key: ""
+#   embedding_model: voyage-3

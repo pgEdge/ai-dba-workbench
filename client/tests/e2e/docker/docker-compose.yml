@@ -39,6 +39,7 @@ services:
     volumes:
       - ${E2E_CONFIG_DIR:-../config}/ai-dba-server.yaml:/etc/pgedge/ai-dba-server.yaml:ro
       - ${E2E_SECRET_DIR:-../secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ${E2E_SECRET_DIR:-../secret}/llm_api_key:/etc/pgedge/llm_api_key:ro
       - server-data:/data
     ports:
       - "8080:8080"
@@ -73,6 +74,7 @@ services:
     volumes:
       - ${E2E_CONFIG_DIR:-../config}/ai-dba-alerter.yaml:/etc/pgedge/ai-dba-alerter.yaml:ro
       - ${E2E_SECRET_DIR:-../secret}/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
+      - ${E2E_SECRET_DIR:-../secret}/llm_api_key:/etc/pgedge/llm_api_key:ro
       - ${E2E_SECRET_DIR:-../secret}/pg-password:/etc/pgedge/pg-password:ro
     networks:
       - e2e-network

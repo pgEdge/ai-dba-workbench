@@ -12,9 +12,11 @@ import { chromium, type FullConfig } from '@playwright/test';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 import { ApiHelper } from '../helpers/api.helper';
 import { ADMIN_USER, API_URL, BASE_URL } from './test-data';
 import { type E2EConfig, loadE2EConfig } from './e2e-config';
+import { LLM_CONFIG, ALERTER_LLM_CONFIG, type LlmConfig } from './llm-config';
 import { setupWorkbenchDocker, createAdminUserDocker } from './setup/workbench-docker';
 import { setupWorkbenchRPM, createAdminUserRPM } from './setup/workbench-rpm';
 
@@ -32,7 +34,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     const api = new ApiHelper(API_URL);
 
     // -------------------------------------------------------
-    // 0. Generate secrets on first run
+    // 0a. Generate secrets on first run
     // -------------------------------------------------------
     const e2eDir = path.join(__dirname, '..');
     const secretFile = path.join(e2eDir, 'secret', 'ai-dba.secret');
@@ -45,9 +47,14 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     }
 
     // -------------------------------------------------------
+    // 0b. Generate configs (LLM injection + config/generated/)
+    // -------------------------------------------------------
+    generateE2EConfigs(e2eDir);
+
+    // -------------------------------------------------------
     // 1. Start workbench stack (mode-specific)
     // -------------------------------------------------------
-    await setupWorkbench(e2eConfig);
+    await setupWorkbench(e2eConfig, LLM_CONFIG.enabled);
 
     // -------------------------------------------------------
     // 2. Health check
@@ -184,10 +191,199 @@ async function globalSetup(_config: FullConfig): Promise<void> {
     }
 }
 
+// -----------------------------------------------------------------------
+// LLM config generation
+// -----------------------------------------------------------------------
+
+/**
+ * Build the server-format LLM YAML block from the resolved LlmConfig.
+ *
+ * The server's LLMConfig struct reads API keys from files, not inline
+ * values. The key file path inside the container is always
+ * /etc/pgedge/llm_api_key (mounted from secret/llm_api_key).
+ */
+function buildServerLlmBlock(config: LlmConfig): Record<string, unknown> {
+    const block: Record<string, unknown> = {
+        provider: config.reasoning.provider,
+        model: config.reasoning.model,
+    };
+
+    const keyFileMap: Record<string, string> = {
+        anthropic: 'anthropic_api_key_file',
+        openai: 'openai_api_key_file',
+        gemini: 'gemini_api_key_file',
+    };
+
+    const provider = config.reasoning.provider;
+    if (provider === 'ollama') {
+        block['ollama_url'] = config.reasoning.baseUrl
+            ?? 'http://localhost:11434';
+    } else if (keyFileMap[provider]) {
+        block[keyFileMap[provider]] = '/etc/pgedge/llm_api_key';
+    }
+
+    return block;
+}
+
+/**
+ * Build the alerter-format LLM YAML block from the resolved LlmConfig.
+ *
+ * The alerter's LLMConfig struct uses a nested per-provider layout:
+ *   llm:
+ *     reasoning_provider: <provider>
+ *     embedding_provider: <provider>
+ *     <provider>:
+ *       api_key_file: /etc/pgedge/llm_api_key
+ *       reasoning_model: <model>
+ */
+function buildAlerterLlmBlock(config: LlmConfig): Record<string, unknown> {
+    const block: Record<string, unknown> = {
+        reasoning_provider: config.reasoning.provider,
+        embedding_provider: config.embedding.provider,
+    };
+
+    const providerBlock = (
+        provider: string,
+        model: string,
+        isReasoning: boolean,
+    ): Record<string, unknown> => {
+        const entry: Record<string, unknown> = {};
+        if (provider === 'ollama') {
+            entry['base_url'] = config.reasoning.baseUrl
+                ?? 'http://localhost:11434';
+        } else {
+            entry['api_key_file'] = '/etc/pgedge/llm_api_key';
+        }
+        if (isReasoning) {
+            entry['reasoning_model'] = model;
+        } else {
+            entry['embedding_model'] = model;
+        }
+        return entry;
+    };
+
+    // Reasoning provider sub-block
+    block[config.reasoning.provider] = providerBlock(
+        config.reasoning.provider,
+        config.reasoning.model,
+        true,
+    );
+
+    // Embedding provider sub-block (merge if same provider)
+    if (config.embedding.provider === config.reasoning.provider) {
+        const existing = block[config.reasoning.provider] as Record<string, unknown>;
+        existing['embedding_model'] = config.embedding.model;
+    } else {
+        block[config.embedding.provider] = providerBlock(
+            config.embedding.provider,
+            config.embedding.model,
+            false,
+        );
+    }
+
+    return block;
+}
+
+/**
+ * Generate E2E configs with LLM settings injected.
+ *
+ * Creates config/generated/ with copies of all base configs. When
+ * LLM is enabled, the server and alerter configs receive an `llm:`
+ * block and the API key is written to secret/llm_api_key. When
+ * disabled, configs are copied unchanged and the key file is empty.
+ *
+ * Sets process.env.E2E_CONFIG_DIR so docker-compose picks up the
+ * generated configs.
+ */
+function generateE2EConfigs(e2eDir: string): void {
+    const configDir = path.join(e2eDir, 'config');
+    const generatedDir = path.join(configDir, 'generated');
+    const secretDir = path.join(e2eDir, 'secret');
+
+    // Ensure directories exist.
+    fs.mkdirSync(generatedDir, { recursive: true });
+    fs.mkdirSync(secretDir, { recursive: true });
+
+    // (a) Write the LLM API key file.
+    const keyFilePath = path.join(secretDir, 'llm_api_key');
+    if (LLM_CONFIG.enabled && LLM_CONFIG.reasoning.apiKey) {
+        fs.writeFileSync(keyFilePath, LLM_CONFIG.reasoning.apiKey, {
+            mode: 0o600,
+        });
+    } else {
+        // Empty file so the Docker volume mount never fails.
+        fs.writeFileSync(keyFilePath, '', { mode: 0o600 });
+    }
+
+    // (b) Copy base configs to generated/.
+    const configFiles = [
+        'ai-dba-server.yaml',
+        'ai-dba-alerter.yaml',
+        'ai-dba-collector.yaml',
+    ];
+    for (const file of configFiles) {
+        const src = path.join(configDir, file);
+        const dest = path.join(generatedDir, file);
+        if (fs.existsSync(src)) {
+            fs.copyFileSync(src, dest);
+        }
+    }
+
+    if (LLM_CONFIG.enabled) {
+        console.log(
+            `[E2E setup] LLM config: enabled=true, ` +
+            `provider=${LLM_CONFIG.reasoning.provider}, ` +
+            `model=${LLM_CONFIG.reasoning.model}`,
+        );
+
+        // (c) Merge LLM block into generated server config.
+        const serverConfigPath = path.join(
+            generatedDir, 'ai-dba-server.yaml',
+        );
+        const serverYaml = yaml.load(
+            fs.readFileSync(serverConfigPath, 'utf8'),
+        ) as Record<string, unknown> | null ?? {};
+        serverYaml['llm'] = buildServerLlmBlock(LLM_CONFIG);
+        fs.writeFileSync(
+            serverConfigPath,
+            yaml.dump(serverYaml, { lineWidth: -1 }),
+        );
+        console.log(
+            '[E2E setup] Generated server config with LLM block ' +
+            `\u2192 config/generated/ai-dba-server.yaml`,
+        );
+
+        // (d) Merge LLM block into generated alerter config.
+        const alerterConfigPath = path.join(
+            generatedDir, 'ai-dba-alerter.yaml',
+        );
+        const alerterYaml = yaml.load(
+            fs.readFileSync(alerterConfigPath, 'utf8'),
+        ) as Record<string, unknown> | null ?? {};
+        alerterYaml['llm'] = buildAlerterLlmBlock(ALERTER_LLM_CONFIG);
+        fs.writeFileSync(
+            alerterConfigPath,
+            yaml.dump(alerterYaml, { lineWidth: -1 }),
+        );
+        console.log(
+            '[E2E setup] Generated alerter config with LLM block ' +
+            `\u2192 config/generated/ai-dba-alerter.yaml`,
+        );
+    } else {
+        console.log(
+            '[E2E setup] LLM config: enabled=false ' +
+            '\u2014 using base configs unchanged',
+        );
+    }
+
+    // (e) Point docker-compose at the generated config directory.
+    process.env.E2E_CONFIG_DIR = '../config/generated';
+}
+
 /** Route to the correct workbench setup based on install mode. */
-async function setupWorkbench(config: E2EConfig): Promise<void> {
+async function setupWorkbench(config: E2EConfig, forceRecreateServer: boolean): Promise<void> {
     if (config.installMode === 'docker') {
-        await setupWorkbenchDocker();
+        await setupWorkbenchDocker(forceRecreateServer);
     } else {
         await setupWorkbenchRPM(config.repoChannel, config.platformImage);
     }

@@ -132,6 +132,41 @@ export class UserManagementPage extends BasePage {
         await this.submitCreateForm();
     }
 
+    /**
+     * Create a service account via the create-user dialog.
+     * Service accounts do not require a password; the password
+     * field is hidden when the "Service Account" toggle is checked.
+     */
+    async createServiceAccount(
+        username: string,
+        displayName?: string,
+    ): Promise<void> {
+        await this.openCreateDialog();
+
+        const dialog = this.innerDialog;
+
+        await dialog.getByLabel('Username').fill(username);
+        await dialog.getByLabel('Service Account').check();
+
+        if (displayName) {
+            await dialog.getByLabel('Display Name').fill(displayName);
+        }
+
+        await this.submitCreateForm();
+    }
+
+    /**
+     * Disable a user by clicking the inline 'Toggle enabled' switch
+     * in their table row. Call only when the user is currently
+     * enabled.
+     */
+    async disableUser(username: string): Promise<void> {
+        const row = this.getTableRow(username);
+        await row
+            .getByRole('checkbox', { name: /toggle enabled/i })
+            .click();
+    }
+
     // ---------------------------------------------------------------
     // Edit user flow
     // ---------------------------------------------------------------

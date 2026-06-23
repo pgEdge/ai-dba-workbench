@@ -14,14 +14,16 @@ import { ADMIN_USER, API_URL } from '../test-data';
 
 const E2E_DIR = path.join(__dirname, '..', '..');
 const COMPOSE_FILE = path.join(E2E_DIR, 'docker', 'docker-compose.yml');
-const COMPOSE_ENV = { ...process.env, POSTGRES_PASSWORD: 'postgres' };
 const DOCKER_COMPOSE_ARGS = [
     'compose', '-f', COMPOSE_FILE, 'exec', '-T', 'server',
 ];
 
 /** Start the Docker-based workbench stack if not already running. */
-export async function setupWorkbenchDocker(): Promise<void> {
+export async function setupWorkbenchDocker(forceRecreateServer = false): Promise<void> {
     console.log('[E2E setup] Install mode: Docker');
+    // Evaluated here (not at module load) so E2E_CONFIG_DIR set by
+    // generateE2EConfigs() is captured before docker compose runs.
+    const COMPOSE_ENV = { ...process.env, POSTGRES_PASSWORD: 'postgres' };
 
     let serverAlreadyUp = false;
     try {
@@ -43,15 +45,26 @@ export async function setupWorkbenchDocker(): Promise<void> {
             stdio: 'inherit',
             env: COMPOSE_ENV,
         });
+    } else if (forceRecreateServer) {
+        console.log(
+            '[E2E setup] Server already running — recreating server and alerter ' +
+            'containers to apply LLM config...',
+        );
+        execSync(`docker compose -f ${COMPOSE_FILE} up -d --force-recreate server alerter`, {
+            cwd: E2E_DIR,
+            stdio: 'inherit',
+            env: COMPOSE_ENV,
+        });
     }
 }
 
 /** Create admin user inside the Docker server container. */
 export function createAdminUserDocker(): void {
+    const composeEnv = { ...process.env, POSTGRES_PASSWORD: 'postgres' };
     const spawnOpts = {
         cwd: E2E_DIR,
         stdio: 'pipe' as const,
-        env: COMPOSE_ENV,
+        env: composeEnv,
     };
 
     spawnSync('docker', [

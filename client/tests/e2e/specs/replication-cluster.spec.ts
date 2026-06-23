@@ -81,7 +81,7 @@ async function addServer(page: Page, cfg: ServerConfig): Promise<void> {
         // the app is fully rendered before interacting with the menu.
         // After drag-and-drop, moveClusterToGroup triggers an async
         // fetchClusterData that can cause a re-render mid-interaction.
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState('load');
         await expect(
             page.locator('header'),
             'App header should be visible before opening Add Server menu',
@@ -200,7 +200,7 @@ test.describe('Replication Cluster', () => {
             'Application header should be visible after load',
         ).toBeVisible({ timeout: 10_000 });
         // Wait for navigator data to load before existence checks
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState('load');
 
         // -------------------------------------------------------
         // Step 1 — Create Cluster Group
@@ -379,7 +379,7 @@ test.describe('Replication Cluster', () => {
             // moveClusterToGroup's fetchClusterData to settle. The MUI
             // Slide transition is 225ms; we wait longer to cover the
             // async data refresh that follows the move.
-            await page.waitForLoadState('networkidle');
+            await page.waitForLoadState('load');
             await page.waitForTimeout(500);
             // Ensure the dialog is fully gone from the DOM
             const dialogAfterDrag = page.getByRole('dialog');

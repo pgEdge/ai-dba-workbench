@@ -23,8 +23,26 @@ declare module 'js-yaml' {
      */
     export function load(input: string): unknown;
 
+    /** Options accepted by {@link dump}. */
+    export interface DumpOptions {
+        /** Set max line width. Use -1 for unlimited width. */
+        lineWidth?: number;
+        /** Indentation width in spaces. */
+        indent?: number;
+        /** Do not throw on invalid types and store them as text. */
+        skipInvalid?: boolean;
+        /** Specifies level of nesting for collections (-1 for unlimited). */
+        flowLevel?: number;
+        /** If true, sort keys when dumping YAML. */
+        sortKeys?: boolean;
+        /** Do not convert duplicate objects into references. */
+        noRefs?: boolean;
+        /** Do not use compatibility mode. */
+        noCompatMode?: boolean;
+    }
+
     /**
      * Serialize a JavaScript value to a YAML string.
      */
-    export function dump(input: unknown): string;
+    export function dump(input: unknown, options?: DumpOptions): string;
 }

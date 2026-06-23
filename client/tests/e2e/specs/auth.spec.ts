@@ -10,11 +10,12 @@
 
 import { test, expect } from '@playwright/test';
 import { label } from 'allure-js-commons';
-import { ADMIN_USER, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
+import { ADMIN_USER, BASE_URL, TEST_USER_PASSWORD, makeTestUsername } from '../fixtures/test-data';
 import { AuthHelper } from '../helpers/auth.helper';
 import { ApiHelper } from '../helpers/api.helper';
 import { LoginPage } from '../pages/LoginPage';
 import { AdminPage } from '../pages/AdminPage';
+import { UserManagementPage } from '../pages/UserManagementPage';
 
 test.describe('Authentication & Login', () => {
     const apiHelper = new ApiHelper();
@@ -96,6 +97,144 @@ test.describe('Authentication & Login', () => {
         });
     });
 
+    test.describe('service and disabled account login rejection', () => {
+        test('Service account cannot login via web GUI', async ({ page }) => {
+            const adminPage = new AdminPage(page);
+            const userPage = new UserManagementPage(page);
+            const loginPage = new LoginPage(page);
+            const username = makeTestUsername('service-account');
+
+            await test.step('Establish isolated admin session', async () => {
+                const { cookie } = await apiHelper.login(
+                    ADMIN_USER.username,
+                    ADMIN_USER.password,
+                );
+                const sessionValue = cookie.split('=').slice(1).join('=');
+                const { hostname } = new URL(BASE_URL);
+                await page.context().addCookies([{
+                    name: 'session_token',
+                    value: sessionValue,
+                    domain: hostname,
+                    path: '/',
+                    httpOnly: true,
+                    sameSite: 'Lax',
+                }]);
+                await page.goto('/');
+                await adminPage.waitForAppLoad();
+            });
+
+            await test.step('Navigate to Admin panel Users section', async () => {
+                await adminPage.navigateToUsers();
+            });
+
+            await test.step('Create service account via dialog', async () => {
+                await userPage.createServiceAccount(
+                    username,
+                    'Service Account Test',
+                );
+            });
+
+            await test.step('Wait for service account to appear in users table', async () => {
+                await userPage.waitForUsersTable();
+                await userPage.expectUserInTable(username);
+            });
+
+            await test.step('Close admin panel before logout', async () => {
+                await adminPage.closeAdminPanel();
+            });
+
+            await test.step('Logout as admin', async () => {
+                await adminPage.signOut();
+            });
+
+            await test.step('Navigate to login page', async () => {
+                await loginPage.goto();
+            });
+
+            await test.step('Attempt login with service account credentials', async () => {
+                // TEST_USER_PASSWORD is used as the attempted password;
+                // service accounts cannot log in regardless of the password.
+                await loginPage.fillAndSubmit(username, TEST_USER_PASSWORD);
+            });
+
+            await test.step('Verify login is rejected — error alert is visible', async () => {
+                await loginPage.expectErrorVisible();
+            });
+
+            await test.step('Verify user remains on the login screen', async () => {
+                await loginPage.expectOnLoginScreen();
+            });
+        });
+
+        test('Disabled user cannot login via web GUI', async ({ page }) => {
+            const adminPage = new AdminPage(page);
+            const userPage = new UserManagementPage(page);
+            const loginPage = new LoginPage(page);
+            const username = makeTestUsername('disabled-user');
+
+            await test.step('Establish isolated admin session', async () => {
+                const { cookie } = await apiHelper.login(
+                    ADMIN_USER.username,
+                    ADMIN_USER.password,
+                );
+                const sessionValue = cookie.split('=').slice(1).join('=');
+                const { hostname } = new URL(BASE_URL);
+                await page.context().addCookies([{
+                    name: 'session_token',
+                    value: sessionValue,
+                    domain: hostname,
+                    path: '/',
+                    httpOnly: true,
+                    sameSite: 'Lax',
+                }]);
+                await page.goto('/');
+                await adminPage.waitForAppLoad();
+            });
+
+            await test.step('Navigate to Admin panel Users section', async () => {
+                await adminPage.navigateToUsers();
+            });
+
+            await test.step('Create a new user via dialog', async () => {
+                await userPage.createUser(
+                    username,
+                    TEST_USER_PASSWORD,
+                    'Disabled User Test',
+                );
+            });
+
+            await test.step('Disable the newly created user', async () => {
+                await userPage.waitForUsersTable();
+                await userPage.expectUserInTable(username);
+                await userPage.disableUser(username);
+            });
+
+            await test.step('Close admin panel before logout', async () => {
+                await adminPage.closeAdminPanel();
+            });
+
+            await test.step('Logout as admin', async () => {
+                await adminPage.signOut();
+            });
+
+            await test.step('Navigate to login page', async () => {
+                await loginPage.goto();
+            });
+
+            await test.step('Attempt login with disabled user credentials', async () => {
+                await loginPage.fillAndSubmit(username, TEST_USER_PASSWORD);
+            });
+
+            await test.step('Verify login is rejected — error alert is visible', async () => {
+                await loginPage.expectErrorVisible();
+            });
+
+            await test.step('Verify user remains on the login screen', async () => {
+                await loginPage.expectOnLoginScreen();
+            });
+        });
+    });
+
     test('Invalid login shows error message', async ({ page }) => {
         const loginPage = new LoginPage(page);
 
@@ -160,7 +299,7 @@ test.describe('Authentication & Login', () => {
         });
 
         await test.step('Refresh and verify session persists', async () => {
-            await page.reload({ waitUntil: 'networkidle' });
+            await page.reload({ waitUntil: 'domcontentloaded' });
 
             // Wait for the SPA to evaluate the session cookie and
             // render the appropriate view (header for logged-in,

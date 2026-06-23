@@ -15,28 +15,30 @@ import { BASE_URL } from '../fixtures/test-data';
 /**
  * Page object encapsulating all interactions with the Login page.
  *
- * The Login component renders a form with labelled Username and
- * Password fields, a "Sign In" submit button, and an optional
- * error Alert on authentication failure.
+ * Selector strategy:
+ * - Username field: `data-testid="login-username-input"`
+ * - Password field: `data-testid="login-password-input"`
+ * - Sign In button: `data-testid="login-submit"`
+ * - Error alert: ARIA `role="alert"`
  */
 export class LoginPage extends BasePage {
     // ---------------------------------------------------------------
     // Locators
     // ---------------------------------------------------------------
 
-    /** The username text field (identified by its HTML label). */
+    /** The username text field (identified by data-testid). */
     get usernameField(): Locator {
-        return this.page.getByLabel('Username');
+        return this.page.getByTestId('login-username-input');
     }
 
-    /** The password text field (identified by its HTML label). */
+    /** The password text field (identified by data-testid). */
     get passwordField(): Locator {
-        return this.page.getByLabel('Password');
+        return this.page.getByTestId('login-password-input');
     }
 
-    /** The "Sign In" submit button. */
+    /** The "Sign In" submit button (identified by data-testid). */
     get signInButton(): Locator {
-        return this.page.getByRole('button', { name: /sign in/i });
+        return this.page.getByTestId('login-submit');
     }
 
     /** The error alert displayed on failed login. */

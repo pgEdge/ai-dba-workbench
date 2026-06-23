@@ -254,7 +254,7 @@ jobs:
                   cache: false
 
             - name: Cache Go modules (server)
-              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+              uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
               with:
                   path: |
                       ~/go/pkg/mod
@@ -264,7 +264,7 @@ jobs:
                       ${{ runner.os }}-go-1.26-release-server-
 
             - name: Cache Go modules (collector)
-              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+              uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
               with:
                   path: |
                       ~/go/pkg/mod
@@ -274,7 +274,7 @@ jobs:
                       ${{ runner.os }}-go-1.26-release-collector-
 
             - name: Cache Go modules (alerter)
-              uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+              uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
               with:
                   path: |
                       ~/go/pkg/mod

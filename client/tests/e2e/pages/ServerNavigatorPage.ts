@@ -113,6 +113,13 @@ export class ServerNavigatorPage extends BasePage {
      * bypass Playwright's stability check and fire the click directly,
      * then confirm the dialog has hidden. If the dialog has already
      * auto-dismissed (e.g. after a save on some builds), return early.
+     *
+     * The click uses an explicit 10s timeout so that a missing or
+     * detached close button fails fast instead of inheriting the
+     * test's full timeout (180s in CI). When the click fails (e.g. in
+     * WebKit where the button never appears in the DOM), the fallback
+     * sends Escape — which MUI dialogs accept by default — to dismiss
+     * the dialog and prevent the hang from cascading into later tests.
      */
     async closeEditDialog(): Promise<void> {
         const dialog = this.page.locator('.MuiDialog-paperFullScreen');
@@ -123,12 +130,21 @@ export class ServerNavigatorPage extends BasePage {
             return;
         }
 
-        // force: true bypasses the "element not stable" / "element
-        // detached" actionability checks that block a regular click
-        // while the toolbar is mid-rerender after a save.
-        await this.page
-            .getByRole('button', { name: /close edit server/i })
-            .click({ force: true });
+        try {
+            // force: true bypasses the "element not stable" / "element
+            // detached" actionability checks that block a regular click
+            // while the toolbar is mid-rerender after a save.
+            // timeout: 10_000 caps the wait so a missing button does
+            // not hang for the full test timeout (180s in CI).
+            await this.page
+                .getByRole('button', { name: /close edit server/i })
+                .click({ force: true, timeout: 10_000 });
+        } catch {
+            // Fallback: the close button was not found or not
+            // clickable within 10s (common in WebKit CI). Press
+            // Escape to dismiss the MUI dialog instead.
+            await this.page.keyboard.press('Escape');
+        }
 
         await expect(dialog).toBeHidden({ timeout: 5_000 });
     }

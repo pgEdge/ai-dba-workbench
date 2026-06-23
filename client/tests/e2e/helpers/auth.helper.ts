@@ -75,13 +75,35 @@ export class AuthHelper {
      * `.auth/admin.json` storage state file).  Falls back to a
      * fresh API login when neither source is available.
      *
+     * The env-var cookie is validated with a cheap API call before
+     * reuse; if the session has been evicted from the server's
+     * in-memory store (e.g. after a long-running test accumulated
+     * too many admin sessions), the stale cookie is discarded and
+     * a fresh login is performed instead.
+     *
      * @returns The raw session cookie string.
      */
     async loginAsAdmin(): Promise<string> {
-        // 1. Check the env var set by global setup.
+        // 1. Check the env var set by global setup.  Validate it
+        //    with a lightweight API call so that a session evicted
+        //    from the server's in-memory store (maxSessionsPerUser)
+        //    does not propagate 401 errors to every subsequent test.
         const envCookie = process.env.E2E_ADMIN_COOKIE;
         if (envCookie) {
-            return envCookie;
+            try {
+                const { status } = await this.api.rawGet(
+                    '/api/v1/capabilities',
+                    { Cookie: envCookie },
+                );
+                if (status >= 200 && status < 300) {
+                    return envCookie;
+                }
+            } catch {
+                // Network error or unexpected failure — fall through.
+            }
+            // Cookie is stale; clear it so other callers in this
+            // process do not reuse it either.
+            delete process.env.E2E_ADMIN_COOKIE;
         }
 
         // 2. Try to extract the cookie from the saved storage
@@ -97,6 +119,11 @@ export class AuthHelper {
             ADMIN_USER.username,
             ADMIN_USER.password,
         );
+
+        // Cache the fresh cookie so subsequent calls in the same
+        // worker process reuse it without another login round-trip.
+        process.env.E2E_ADMIN_COOKIE = cookie;
+
         return cookie;
     }
 

@@ -49,9 +49,16 @@ export class ServerNavigatorPage extends BasePage {
 
     /**
      * Click a server row to select it.
+     *
+     * Uses `force: true` to bypass the cluster-header / MuiCollapse
+     * wrapper that intercepts pointer events and causes Playwright to
+     * retry indefinitely (320+ × 500 ms ≈ 180 s timeout) in CI on
+     * Firefox and WebKit.
      */
     async selectServer(name: string): Promise<void> {
-        await this.getServerRow(name).first().click();
+        const row = this.getServerRow(name).first();
+        await expect(row).toBeVisible({ timeout: 15_000 });
+        await row.click({ force: true });
     }
 
     /**

@@ -42,6 +42,45 @@ on:
                     - "17"
                     - "16"
                 default: "18"
+            ai_enabled:
+                description: "Enable AI/LLM tests (requires LLM_API_KEY secret)"
+                type: boolean
+                default: false
+            reasoning_provider:
+                description: "LLM reasoning provider"
+                type: choice
+                options:
+                    - anthropic
+                    - openai
+                    - gemini
+                    - ollama
+                default: anthropic
+            reasoning_model:
+                description: "LLM reasoning model (blank = provider default)"
+                type: string
+                default: ""
+            embedding_provider:
+                description: "LLM embedding provider"
+                type: choice
+                options:
+                    - voyage
+                    - openai
+                    - gemini
+                    - cohere
+                    - ollama
+                default: voyage
+            embedding_model:
+                description: "LLM embedding model (blank = provider default)"
+                type: string
+                default: ""
+            llm_api_key:
+                description: "API key for the reasoning provider (masked in logs)"
+                type: string
+                default: ""
+            llm_embedding_api_key:
+                description: "API key for the embedding provider (blank = same as llm_api_key)"
+                type: string
+                default: ""
 
 jobs:
     e2e:
@@ -73,6 +112,29 @@ jobs:
                     echo "platform_image=${{ inputs.platform_image }}" >> "$GITHUB_OUTPUT"
                     echo "postgres_version=${{ inputs.postgres_version }}" >> "$GITHUB_OUTPUT"
                   fi
+
+            - name: Set LLM API key environment variables
+              if: inputs.ai_enabled
+              run: |
+                  REASONING_KEY="${{ inputs.llm_api_key }}"
+                  EMB_KEY="${{ inputs.llm_embedding_api_key }}"
+                  if [ -z "$EMB_KEY" ]; then EMB_KEY="$REASONING_KEY"; fi
+
+                  # Mask both keys so they never appear in logs.
+                  echo "::add-mask::$REASONING_KEY"
+                  echo "::add-mask::$EMB_KEY"
+
+                  case "${{ inputs.reasoning_provider }}" in
+                    anthropic) echo "E2E_ANTHROPIC_API_KEY=$REASONING_KEY" >> "$GITHUB_ENV" ;;
+                    openai)    echo "E2E_OPENAI_API_KEY=$REASONING_KEY"    >> "$GITHUB_ENV" ;;
+                    gemini)    echo "E2E_GEMINI_API_KEY=$REASONING_KEY"    >> "$GITHUB_ENV" ;;
+                  esac
+                  case "${{ inputs.embedding_provider }}" in
+                    voyage) echo "E2E_VOYAGE_API_KEY=$EMB_KEY" >> "$GITHUB_ENV" ;;
+                    cohere) echo "E2E_COHERE_API_KEY=$EMB_KEY" >> "$GITHUB_ENV" ;;
+                    openai) echo "E2E_OPENAI_API_KEY=$EMB_KEY" >> "$GITHUB_ENV" ;;
+                    gemini) echo "E2E_GEMINI_API_KEY=$EMB_KEY" >> "$GITHUB_ENV" ;;
+                  esac
 
             - name: Setup Node.js
               uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -232,6 +294,11 @@ jobs:
                   PLATFORM_IMAGE: ${{ steps.resolve-mode.outputs.platform_image }}
                   POSTGRES_IMAGE: ${{ env.POSTGRES_IMAGE }}
                   PGDATA_DIR: ${{ env.PGDATA_DIR }}
+                  E2E_AI_ENABLED: ${{ inputs.ai_enabled && 'true' || 'false' }}
+                  E2E_REASONING_PROVIDER: ${{ inputs.reasoning_provider }}
+                  E2E_REASONING_MODEL: ${{ inputs.reasoning_model }}
+                  E2E_EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
+                  E2E_EMBEDDING_MODEL: ${{ inputs.embedding_model }}
               run: npm test
 
             - name: Generate Allure report

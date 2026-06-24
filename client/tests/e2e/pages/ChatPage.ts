@@ -155,21 +155,38 @@ export class ChatPage extends BasePage {
 
     /**
      * Assert that the assistant's response contains an authorization
-     * or permission error. Checks for common error keywords in the
-     * page content after the response has completed.
+     * or permission error. Polls the page's visible text until an
+     * error keyword appears or the timeout expires.
+     *
+     * Uses `document.body.innerText` rather than `page.content()` to
+     * read only rendered, visible text.  `page.content()` returns the
+     * full HTML including attribute values and CSS class names (e.g.
+     * `Mui-error`, `aria-label="..."`) which can be very long and does
+     * NOT contain the chat bubble text when the message element has not
+     * yet been flushed to the DOM — a race that is especially visible
+     * in Firefox CI where the input re-enables before React commits the
+     * assistant message node.
      *
      * @param timeout - Maximum time to wait for error text to appear.
      */
     async expectErrorResponse(timeout: number = 10_000): Promise<void> {
+        // LLMs phrase connection/permission failures in many ways.
+        // The pattern covers explicit auth errors as well as softer
+        // phrasing like "having trouble connecting" or "network issue"
+        // that indicate the assistant could not complete the operation.
         const errorPattern =
-            /the model attempted to call|permission|authorized|forbidden|access denied|not allowed|403|401|unauthorized|error|denied|cannot|unable/i;
+            /the model attempted to call|permission|authorized|forbidden|access denied|not allowed|403|401|unauthorized|error|denied|cannot|unable|trouble|issue|failed|problem/i;
 
         await expect(async () => {
-            const pageContent = await this.page.content();
+            // innerText gives only visible, rendered text — no HTML
+            // tags, attribute strings, or hidden nodes.
+            const text: string = await this.page.evaluate(
+                () => document.body.innerText,
+            );
             expect(
-                pageContent,
+                text,
                 'Expected an authorization/permission error in the chat response',
             ).toMatch(errorPattern);
-        }).toPass({ timeout, intervals: [1_000] });
+        }).toPass({ timeout, intervals: [500] });
     }
 }

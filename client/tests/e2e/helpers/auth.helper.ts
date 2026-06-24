@@ -70,29 +70,28 @@ export class AuthHelper {
     /**
      * Log in as the admin user.
      *
-     * First tries to reuse the session cookie saved by global
-     * setup (either via the E2E_ADMIN_COOKIE env var or the
-     * `.auth/admin.json` storage state file).  Falls back to a
-     * fresh API login when neither source is available.
+     * Tries to reuse the session cookie cached in E2E_ADMIN_COOKIE,
+     * validating it against an authenticated endpoint first.
+     * Falls back to a fresh API login when the cached cookie is
+     * absent, stale, or evicted from the server's in-memory store.
      *
-     * The env-var cookie is validated with a cheap API call before
-     * reuse; if the session has been evicted from the server's
-     * in-memory store (e.g. after a long-running test accumulated
-     * too many admin sessions), the stale cookie is discarded and
-     * a fresh login is performed instead.
+     * NOTE: /api/v1/capabilities is a PUBLIC endpoint and always
+     * returns 200 regardless of session validity.  Use an endpoint
+     * that requires authentication so that an evicted session is
+     * correctly detected as stale.
      *
      * @returns The raw session cookie string.
      */
     async loginAsAdmin(): Promise<string> {
         // 1. Check the env var set by global setup.  Validate it
-        //    with a lightweight API call so that a session evicted
+        //    with an authenticated endpoint so that a session evicted
         //    from the server's in-memory store (maxSessionsPerUser)
-        //    does not propagate 401 errors to every subsequent test.
+        //    is correctly detected and a fresh login is performed.
         const envCookie = process.env.E2E_ADMIN_COOKIE;
         if (envCookie) {
             try {
                 const { status } = await this.api.rawGet(
-                    '/api/v1/capabilities',
+                    '/api/v1/rbac/users',
                     { Cookie: envCookie },
                 );
                 if (status >= 200 && status < 300) {
@@ -106,14 +105,10 @@ export class AuthHelper {
             delete process.env.E2E_ADMIN_COOKIE;
         }
 
-        // 2. Try to extract the cookie from the saved storage
-        //    state file that global setup writes.
-        const saved = AuthHelper.loadCookieFromStorageState();
-        if (saved) {
-            return saved;
-        }
-
-        // 3. Fall back to a fresh login.
+        // 2. Fresh login.  Do NOT fall back to the .auth/admin.json
+        //    storage-state file: it contains the same session value
+        //    as E2E_ADMIN_COOKIE and is equally stale when the env
+        //    cookie failed validation above.
         await this.throttleLogin();
         const { cookie } = await this.api.login(
             ADMIN_USER.username,
@@ -124,38 +119,52 @@ export class AuthHelper {
         // worker process reuse it without another login round-trip.
         process.env.E2E_ADMIN_COOKIE = cookie;
 
+        // Also update .auth/admin.json so that browser-context tests
+        // using `storageState: '.auth/admin.json'` also receive the
+        // fresh session and are not redirected to the login page.
+        AuthHelper.refreshStorageState(cookie);
+
         return cookie;
     }
 
     /**
-     * Read the `.auth/admin.json` storage state file written by
-     * global setup and extract the `session_token` cookie value.
+     * Replace the `session_token` value in `.auth/admin.json` with
+     * the freshly obtained cookie.
      *
-     * Returns the cookie in `session_token=<value>` format, or
-     * `null` when the file is missing or unparseable.
+     * Playwright UI tests that use `test.use({ storageState: '.auth/admin.json' })`
+     * read this file when creating each browser context.  If the admin
+     * session was evicted and a new one was obtained, the file must be
+     * updated so those tests receive a valid cookie rather than being
+     * redirected to the login page.
+     *
+     * Failures here are non-fatal: the update is best-effort.
      */
-    private static loadCookieFromStorageState(): string | null {
+    private static refreshStorageState(cookie: string): void {
         try {
             const statePath = path.resolve(
                 __dirname, '..', '.auth', 'admin.json',
             );
             if (!fs.existsSync(statePath)) {
-                return null;
+                return;
             }
             const raw = fs.readFileSync(statePath, 'utf-8');
             const state = JSON.parse(raw) as {
-                cookies?: Array<{ name: string; value: string }>;
+                cookies?: Array<{ name: string; value: string; [k: string]: unknown }>;
+                origins?: unknown[];
             };
-            const match = state.cookies?.find(
-                (c) => c.name === 'session_token',
-            );
-            if (match) {
-                return `session_token=${match.value}`;
+            if (!Array.isArray(state.cookies)) {
+                return;
+            }
+            // cookie format: "session_token=<value>"
+            const sessionValue = cookie.split('=').slice(1).join('=');
+            const entry = state.cookies.find((c) => c.name === 'session_token');
+            if (entry) {
+                entry.value = sessionValue;
+                fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
             }
         } catch {
-            // Silently fall through to fresh login.
+            // Non-critical — best-effort only.
         }
-        return null;
     }
 
     /**

@@ -187,26 +187,28 @@ export function loadLlmConfig(): LlmConfig {
     );
 
     // --- reasoning ---
+    // Use || to treat empty string (from push-triggered workflow_dispatch
+    // where inputs.reasoning_provider resolves to "") the same as absent.
     const reasoningProviderRaw =
-        process.env['E2E_REASONING_PROVIDER'] ??
+        (process.env['E2E_REASONING_PROVIDER'] || undefined) ??
         yml.reasoning?.provider ??
         'anthropic';
     const reasoningProvider = validateReasoningProvider(reasoningProviderRaw);
 
     const reasoningModel =
-        process.env['E2E_REASONING_MODEL'] ??
+        (process.env['E2E_REASONING_MODEL'] || undefined) ??
         yml.reasoning?.model ??
         'claude-sonnet-4-6';
 
     // --- embedding ---
     const embeddingProviderRaw =
-        process.env['E2E_EMBEDDING_PROVIDER'] ??
+        (process.env['E2E_EMBEDDING_PROVIDER'] || undefined) ??
         yml.embedding?.provider ??
         'voyage';
     const embeddingProvider = validateEmbeddingProvider(embeddingProviderRaw);
 
     const embeddingModel =
-        process.env['E2E_EMBEDDING_MODEL'] ??
+        (process.env['E2E_EMBEDDING_MODEL'] || undefined) ??
         yml.embedding?.model ??
         'voyage-3';
 

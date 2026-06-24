@@ -77,6 +77,86 @@ chmod 600 "${CONFIG_DIR}/dba-alerter-password"
 chown pgedge:pgedge "${CONFIG_DIR}/dba-alerter-password" 2>/dev/null || true
 
 # -----------------------------------------------------------------------
+# Inject LLM configuration when the E2E test runner provides it.
+# E2E_LLM_PROVIDER / E2E_EMBEDDING_PROVIDER are set by workbench-rpm.ts
+# when AI is enabled; the API key is mounted at /etc/pgedge/llm_api_key.
+#
+# The RPM-installed configs already contain an llm: section with default
+# values (provider: ollama). We strip it first to avoid duplicate-key
+# errors, then append a fresh block with the requested provider/model.
+#
+# Server config (flat layout):
+#   llm:
+#     provider: <provider>
+#     <provider>_api_key_file: /etc/pgedge/llm_api_key
+#     model: <model>
+#
+# Alerter config (nested per-provider layout):
+#   llm:
+#     reasoning_provider: <provider>
+#     embedding_provider: <provider>
+#     <reasoning_provider>:
+#       api_key_file: /etc/pgedge/llm_api_key
+#       reasoning_model: <model>
+#       embedding_model: <model>   # only when same as embedding_provider
+#     <embedding_provider>:        # only when different from reasoning
+#       api_key_file: /etc/pgedge/llm_api_key
+#       embedding_model: <model>
+# -----------------------------------------------------------------------
+
+# Remove a top-level YAML section (the section key line plus all its
+# indented content) from FILE.  Uses awk so comments are handled safely.
+_remove_yaml_section() {
+    local file="$1" section="$2"
+    awk -v sec="${section}" '
+        /^[a-z_-]/ { skip = ($0 ~ "^" sec ":") }
+        !skip       { print }
+    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+}
+
+if [ -n "${E2E_LLM_PROVIDER:-}" ]; then
+    R_PROV="${E2E_LLM_PROVIDER}"
+    E_PROV="${E2E_EMBEDDING_PROVIDER:-${R_PROV}}"
+
+    # Strip any existing llm: blocks so we never produce duplicate keys.
+    _remove_yaml_section "${CONFIG_DIR}/ai-dba-server.yaml"  llm
+    _remove_yaml_section "${CONFIG_DIR}/ai-dba-alerter.yaml" llm
+
+    # Append server LLM block (flat layout).
+    echo "[entrypoint] Injecting server LLM config: provider=${R_PROV}"
+    {
+        printf '\nllm:\n'
+        printf '  provider: %s\n' "${R_PROV}"
+        case "${R_PROV}" in
+            anthropic) printf '  anthropic_api_key_file: /etc/pgedge/llm_api_key\n' ;;
+            openai)    printf '  openai_api_key_file: /etc/pgedge/llm_api_key\n' ;;
+            gemini)    printf '  gemini_api_key_file: /etc/pgedge/llm_api_key\n' ;;
+            ollama)    ;; # no key file for ollama
+        esac
+        [ -n "${E2E_LLM_MODEL:-}" ] && printf '  model: %s\n' "${E2E_LLM_MODEL}"
+    } >> "${CONFIG_DIR}/ai-dba-server.yaml"
+
+    # Append alerter LLM block (nested per-provider layout).
+    echo "[entrypoint] Injecting alerter LLM config: reasoning=${R_PROV} embedding=${E_PROV}"
+    {
+        printf '\nllm:\n'
+        printf '  reasoning_provider: %s\n' "${R_PROV}"
+        printf '  embedding_provider: %s\n' "${E_PROV}"
+        printf '  %s:\n' "${R_PROV}"
+        [ "${R_PROV}" != "ollama" ] && printf '    api_key_file: /etc/pgedge/llm_api_key\n'
+        [ "${R_PROV}"  = "ollama" ] && printf '    base_url: http://localhost:11434\n'
+        [ -n "${E2E_LLM_MODEL:-}" ] && printf '    reasoning_model: %s\n' "${E2E_LLM_MODEL}"
+        if [ "${E_PROV}" = "${R_PROV}" ]; then
+            [ -n "${E2E_EMBEDDING_MODEL:-}" ] && printf '    embedding_model: %s\n' "${E2E_EMBEDDING_MODEL}"
+        else
+            printf '  %s:\n' "${E_PROV}"
+            [ "${E_PROV}" != "ollama" ] && printf '    api_key_file: /etc/pgedge/llm_api_key\n'
+            [ -n "${E2E_EMBEDDING_MODEL:-}" ] && printf '    embedding_model: %s\n' "${E2E_EMBEDDING_MODEL}"
+        fi
+    } >> "${CONFIG_DIR}/ai-dba-alerter.yaml"
+fi
+
+# -----------------------------------------------------------------------
 # Patch secret_file paths in server and collector configs.
 # The secret_file path and allow_internal_networks flag are patched
 # (both are safe, unambiguous lines). All DB connection params are

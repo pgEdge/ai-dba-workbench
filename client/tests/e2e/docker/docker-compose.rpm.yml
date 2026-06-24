@@ -41,8 +41,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      E2E_LLM_PROVIDER: ${E2E_LLM_PROVIDER:-}
+      E2E_LLM_MODEL: ${E2E_LLM_MODEL:-}
+      E2E_EMBEDDING_PROVIDER: ${E2E_EMBEDDING_PROVIDER:-}
+      E2E_EMBEDDING_MODEL: ${E2E_EMBEDDING_MODEL:-}
     volumes:
       - workbench-data:/data
+      - ${E2E_SECRET_DIR:-../secret}/llm_api_key:/etc/pgedge/llm_api_key:ro
     ports:
       - "8080:8443"
       - "3000:8444"

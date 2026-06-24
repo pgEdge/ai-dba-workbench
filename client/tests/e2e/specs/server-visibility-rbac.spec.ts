@@ -105,11 +105,6 @@ test.describe('Server Visibility and Ask Ellie RBAC', () => {
             if (process.env['E2E_AI_ENABLED'] !== undefined) {
                 const requested = LLM_CONFIG.enabled;
                 if (requested && !serverEnabled) {
-                    console.warn(
-                        `[server-visibility-rbac] E2E_AI_ENABLED=true but server reports ` +
-                        `ai_enabled=false. Configure the server LLM provider ` +
-                        `(llm.provider + api key) to enable Phase 3. Skipping.`,
-                    );
                     aiEnabled = false;
                 } else {
                     aiEnabled = requested;

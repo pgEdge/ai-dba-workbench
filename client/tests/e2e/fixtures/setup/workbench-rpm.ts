@@ -11,6 +11,7 @@
 import { execSync, spawnSync } from 'child_process';
 import * as path from 'path';
 import { type RepoChannel, type PlatformImage, PLATFORM_BASE_IMAGES } from '../e2e-config';
+import { LLM_CONFIG } from '../llm-config';
 import { ADMIN_USER, API_URL } from '../test-data';
 
 const E2E_DIR = path.join(__dirname, '..', '..');
@@ -46,6 +47,12 @@ export async function setupWorkbenchRPM(
         POSTGRES_PASSWORD: 'postgres',
         RPM_PLATFORM_IMAGE: baseImage,
         REPO_CHANNEL: repoChannel,
+        // Pass LLM settings so the entrypoint can inject them into the
+        // server and alerter configs.
+        E2E_LLM_PROVIDER:       LLM_CONFIG.enabled ? LLM_CONFIG.reasoning.provider  : '',
+        E2E_LLM_MODEL:          LLM_CONFIG.enabled ? LLM_CONFIG.reasoning.model      : '',
+        E2E_EMBEDDING_PROVIDER: LLM_CONFIG.enabled ? LLM_CONFIG.embedding.provider  : '',
+        E2E_EMBEDDING_MODEL:    LLM_CONFIG.enabled ? LLM_CONFIG.embedding.model      : '',
     };
 
     let serverAlreadyUp = false;

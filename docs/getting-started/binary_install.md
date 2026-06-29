@@ -528,8 +528,7 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-Open a browser and navigate to `http://<server-ip>`; provide
-authentication details when the Workbench opens.
+Open a browser and navigate to `http://<server-ip>`; and log in with the username and password you created when you ran the `add-user` command.
 
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
 

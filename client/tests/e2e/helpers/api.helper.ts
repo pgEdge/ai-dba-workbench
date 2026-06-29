@@ -356,12 +356,157 @@ export class ApiHelper {
     }
 
     // -----------------------------------------------------------
+    // Group membership
+    // -----------------------------------------------------------
+
+    async addGroupMember(
+        cookie: string,
+        groupId: number,
+        userId: number,
+    ): Promise<void> {
+        return this.request<void>(
+            'POST',
+            `/api/v1/rbac/groups/${groupId}/members`,
+            { user_id: userId },
+            { cookie },
+        );
+    }
+
+    async removeGroupMember(
+        cookie: string,
+        groupId: number,
+        userId: number,
+    ): Promise<void> {
+        return this.request<void>(
+            'DELETE',
+            `/api/v1/rbac/groups/${groupId}/members/user/${userId}`,
+            undefined,
+            { cookie },
+        );
+    }
+
+    async addGroupMemberGroup(
+        cookie: string,
+        parentGroupId: number,
+        childGroupId: number,
+    ): Promise<void> {
+        return this.request<void>(
+            'POST',
+            `/api/v1/rbac/groups/${parentGroupId}/members`,
+            { group_id: childGroupId },
+            { cookie },
+        );
+    }
+
+    async removeGroupMemberGroup(
+        cookie: string,
+        parentGroupId: number,
+        childGroupId: number,
+    ): Promise<void> {
+        return this.request<void>(
+            'DELETE',
+            `/api/v1/rbac/groups/${parentGroupId}/members/group/${childGroupId}`,
+            undefined,
+            { cookie },
+        );
+    }
+
+    // -----------------------------------------------------------
+    // Group admin permissions
+    // -----------------------------------------------------------
+
+    async grantGroupAdminPermission(
+        cookie: string,
+        groupId: number,
+        permission: string,
+    ): Promise<void> {
+        return this.request<void>(
+            'POST',
+            `/api/v1/rbac/groups/${groupId}/permissions`,
+            { permission },
+            { cookie },
+        );
+    }
+
+    async listGroupAdminPermissions(
+        cookie: string,
+        groupId: number,
+    ): Promise<{ permissions: string[] }> {
+        return this.request<{ permissions: string[] }>(
+            'GET',
+            `/api/v1/rbac/groups/${groupId}/permissions`,
+            undefined,
+            { cookie },
+        );
+    }
+
+    // -----------------------------------------------------------
+    // Group MCP privileges
+    // -----------------------------------------------------------
+
+    async grantGroupMcpPrivilege(
+        cookie: string,
+        groupId: number,
+        privilegeName: string,
+    ): Promise<void> {
+        return this.request<void>(
+            'POST',
+            `/api/v1/rbac/groups/${groupId}/privileges/mcp`,
+            { privilege: privilegeName },
+            { cookie },
+        );
+    }
+
+    // -----------------------------------------------------------
+    // Group connection privileges
+    // -----------------------------------------------------------
+
+    async grantGroupConnectionPrivilege(
+        cookie: string,
+        groupId: number,
+        connectionId: number,
+        accessLevel: string,
+    ): Promise<void> {
+        return this.request<void>(
+            'POST',
+            `/api/v1/rbac/groups/${groupId}/privileges/connections`,
+            { connection_id: connectionId, access_level: accessLevel },
+            { cookie },
+        );
+    }
+
+    async listGroupConnectionPrivileges(
+        cookie: string,
+        groupId: number,
+    ): Promise<{
+        connection_privileges: Array<{
+            connection_id: number;
+            access_level: string;
+        }>;
+    }> {
+        const detail = await this.request<{
+            connection_privileges?: Array<{
+                connection_id: number;
+                access_level: string;
+            }>;
+        }>(
+            'GET',
+            `/api/v1/rbac/groups/${groupId}`,
+            undefined,
+            { cookie },
+        );
+        return {
+            connection_privileges: detail.connection_privileges ?? [],
+        };
+    }
+
+    // -----------------------------------------------------------
     // Connections (for RBAC scope tests)
     // -----------------------------------------------------------
 
     async listConnections(
         authHeader?: { cookie?: string; bearerToken?: string },
-    ): Promise<{ connections: ConnectionResponse[] }> {
+    ): Promise<ConnectionResponse[]> {
         const headers: Record<string, string> = {};
         if (authHeader?.cookie) {
             headers['Cookie'] = authHeader.cookie;
@@ -369,7 +514,7 @@ export class ApiHelper {
         if (authHeader?.bearerToken) {
             headers['Authorization'] = `Bearer ${authHeader.bearerToken}`;
         }
-        return this.requestRaw<{ connections: ConnectionResponse[] }>(
+        return this.requestRaw<ConnectionResponse[]>(
             'GET',
             '/api/v1/connections',
             undefined,

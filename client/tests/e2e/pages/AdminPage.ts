@@ -129,6 +129,17 @@ export class AdminPage extends BasePage {
     }
 
     /**
+     * Navigate to the Admin > Permissions section. Opens the admin
+     * panel if not already open, clicks the Permissions nav item,
+     * and waits for loading to finish.
+     */
+    async navigateToPermissions(): Promise<void> {
+        await this.openAdminPanel();
+        await this.page.getByTestId('admin-panel-item-permissions').click();
+        await this.waitForLoadingToFinish();
+    }
+
+    /**
      * Navigate to the Admin > Probe Defaults section. Opens the
      * admin panel if not already open, clicks "Probe Defaults",
      * and waits for loading to finish.

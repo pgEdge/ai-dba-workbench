@@ -273,4 +273,41 @@ export class GroupManagementPage extends BasePage {
             .getByRole('button', { name: /remove member/i })
             .click();
     }
+
+    // ---------------------------------------------------------------
+    // Privilege / permission assertions (expanded panel)
+    // ---------------------------------------------------------------
+
+    /**
+     * Assert that the given admin permission label is visible in
+     * the expanded group panel.
+     */
+    async expectAdminPermissionVisible(
+        label: string | RegExp,
+        timeout: number = 10_000,
+    ): Promise<void> {
+        await expect(this.page.getByText(label)).toBeVisible({ timeout });
+    }
+
+    /**
+     * Assert that the given MCP privilege label is visible in the
+     * expanded group panel.
+     */
+    async expectMcpPrivilegeVisible(
+        label: string | RegExp,
+        timeout: number = 10_000,
+    ): Promise<void> {
+        await expect(this.page.getByText(label)).toBeVisible({ timeout });
+    }
+
+    /**
+     * Assert that the given connection privilege label is visible
+     * in the expanded group panel.
+     */
+    async expectConnectionPrivilegeVisible(
+        label: string | RegExp,
+        timeout: number = 10_000,
+    ): Promise<void> {
+        await expect(this.page.getByText(label)).toBeVisible({ timeout });
+    }
 }

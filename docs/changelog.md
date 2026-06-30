@@ -21,6 +21,13 @@ project adheres to
   package matching their chosen embedding provider and model, and
   set `database_path` themselves. (#316)
 
+- Update the knowledgebase `database_path` documentation and the
+  example server configuration for the renamed `pgedge-ai-kb`
+  package. The packages install one database per embedding
+  provider and model under `/usr/share/pgedge/pgedge-ai-kb/`,
+  named `kb-<provider>-<model>.db`, and the built-in default
+  still points at the legacy `postgres-mcp-kb` path. (#293)
+
 ### Fixed
 
 - Fix the metrics time-series API (`GET /api/v1/metrics/query`)

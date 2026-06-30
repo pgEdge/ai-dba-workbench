@@ -137,7 +137,7 @@ llm:
 #=====================================================
 knowledgebase:
   enabled: false
-  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
+  # database_path: "/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db"
   embedding_provider: "ollama"
   embedding_model: "nomic-embed-text"
   embedding_ollama_url: "http://localhost:11434"
@@ -522,6 +522,24 @@ llm:
 
 ### Knowledgebase (`knowledgebase`)
 
+The `pgedge-ai-kb` packages install one knowledgebase database
+per embedding provider and model. On Linux these files live in
+`/usr/share/pgedge/pgedge-ai-kb/`, and each file is named
+`kb-<provider>-<model>.db`. The `<provider>` and `<model>` parts
+match the configured `embedding_provider` and `embedding_model`
+values. For the default ollama provider with the
+`nomic-embed-text` model, the file is
+`kb-ollama-nomic-embed-text.db`. The full default path is
+therefore
+`/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db`.
+The exact location can vary by deployment method and operating
+system.
+
+The built-in `database_path` default still points at the legacy
+`/usr/share/pgedge/postgres-mcp-kb/kb.db` location. Set
+`database_path` explicitly when you use the current
+`pgedge-ai-kb` packages, so the server reads the installed file.
+
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
 or `ollama`. The Gemini provider supports `gemini-embedding-001` (the
 default, 3072 dimensions), `gemini-embedding-2`, and
@@ -538,7 +556,7 @@ similarity search.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable knowledgebase |
-| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` | SQLite database path |
+| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` (legacy default; set to the installed `pgedge-ai-kb` file such as `/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db`) | SQLite knowledgebase database path |
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |

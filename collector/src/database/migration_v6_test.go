@@ -80,8 +80,8 @@ func columnTypeName(ctx context.Context, t *testing.T, pool *pgxpool.Pool, table
 	return typeName
 }
 
-// indexAccessMethod returns the access method (e.g. "hnsw") and the
-// indexdef for the named index, or empty strings when it is absent.
+// indexDef returns the indexdef for the named index, or an empty
+// string when the index is absent.
 func indexDef(ctx context.Context, t *testing.T, pool *pgxpool.Pool, name string) string {
 	t.Helper()
 	var def string

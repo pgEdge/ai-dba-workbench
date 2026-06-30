@@ -3440,10 +3440,19 @@ func embeddingColumnTypeName(
 
 // upgradeEmbeddingColumnToHalfvec converts a vector(N) embedding column
 // to halfvec(4000) in place, zero-padding existing rows and rebuilding
-// the HNSW index, all inside a SAVEPOINT. The work is guarded the same
-// way the original migration #1 setup is: a database without pgvector,
-// or with a pgvector too old to support halfvec, degrades to a logged
-// no-op rather than aborting the surrounding migration transaction.
+// the HNSW index, all inside a SAVEPOINT. The SAVEPOINT prevents a
+// failure here from poisoning the outer migration transaction (which
+// would otherwise surface as the opaque SQLSTATE 25P02 on the following
+// statement); it does not swallow the error. A database without pgvector
+// has no embedding column, so the type probe returns an empty string and
+// the upgrade is a clean no-op. A database whose pgvector is too old to
+// provide the halfvec type (halfvec requires pgvector 0.7.0 or newer) but
+// which already holds a vector(N) column is different: the ALTER to
+// halfvec(4000) fails and that error is propagated, aborting migration
+// #6. This is deliberate, because silently leaving the column as
+// vector(N) would only defer the breakage to runtime (the application
+// casts every embedding to ::halfvec on insert and search), so failing
+// the migration loudly is the safer outcome.
 //
 // The function is fully idempotent. It first reads the current column
 // type; it skips every table whose column is already halfvec (or whose

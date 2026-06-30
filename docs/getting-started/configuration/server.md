@@ -556,7 +556,7 @@ similarity search.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable knowledgebase |
-| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` (legacy default; set to the installed `pgedge-ai-kb` file such as `/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db`) | SQLite knowledgebase database path |
+| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` (legacy; see note above) | SQLite knowledgebase database path |
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |

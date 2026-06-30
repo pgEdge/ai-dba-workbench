@@ -54,7 +54,10 @@ jobs:
                   mkdir -p examples/walkthrough/secret
                   openssl rand -base64 32 > examples/walkthrough/secret/ai-dba.secret
                   echo "postgres" > examples/walkthrough/secret/pg-password
-                  echo "" > examples/walkthrough/secret/llm-api-key
+                  # The server treats a configured-but-empty LLM key file as a
+                  # fatal config error, so write a clearly-fake placeholder. The
+                  # smoke test never calls the LLM, so the value is irrelevant.
+                  echo "ci-placeholder-llm-key" > examples/walkthrough/secret/llm-api-key
 
             - name: Start services
               run: docker compose -f examples/walkthrough/docker-compose.yml up -d

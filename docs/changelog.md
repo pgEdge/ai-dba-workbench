@@ -8,6 +8,19 @@ The format is based on
 project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Drop the runtime dependency on a knowledgebase package from the
+  `pgedge-ai-dba-server` package in both the Debian and RPM
+  packaging. The knowledgebase is now published as co-installable
+  `pgedge-ai-kb-<provider>-<model>` packages, one per embedding
+  provider and model, and it remains opt-in and disabled by
+  default. Operators who want the knowledgebase install the
+  package matching their chosen embedding provider and model, and
+  set `database_path` themselves. (#316)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

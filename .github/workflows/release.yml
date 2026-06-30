@@ -76,7 +76,7 @@ jobs:
             apt_ts:     ${{ steps.detect.outputs.apt_ts }}
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Checkout pgedge-detect-build-matrix
               env:
@@ -170,7 +170,7 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Set up Node.js 22
               uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -201,7 +201,7 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Set up Python 3.11
               uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -245,7 +245,7 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Set up Go 1.26
               uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
@@ -446,7 +446,7 @@ jobs:
             COMPONENT_BRANCH:   ${{ needs.determine-repo-type.outputs.effective-tag }}
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Derive os_version from image
               id: cell
@@ -550,7 +550,7 @@ jobs:
             RPM_MATRIX:        ${{ needs.detect-matrix.outputs.rpm_matrix }}
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Download all RPM cell artifacts
               uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -663,7 +663,7 @@ jobs:
             COMPONENT_BRANCH:   ${{ needs.determine-repo-type.outputs.effective-tag }}
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Derive distro from image
               id: cell
@@ -761,7 +761,7 @@ jobs:
             DEB_MATRIX:        ${{ needs.detect-matrix.outputs.deb_matrix }}
         steps:
             - name: Checkout code
-              uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
             - name: Download all DEB cell artifacts
               uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

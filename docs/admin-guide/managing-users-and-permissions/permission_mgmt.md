@@ -8,7 +8,7 @@ view and manage the privileges assigned to a group.
     The Workbench assigns privileges to groups rather than to individual
     accounts; an account gains a privilege by joining a group that holds
     the privilege. For instructions on creating groups and managing their
-    membership, see [Group Management](group.md).
+    membership, see [Group Management](groups.md).
 
 To open the `Permissions` page, navigate through the `Settings` icon to the
 `Administration` console, and select `Permissions` from the navigation pane.
@@ -267,5 +267,5 @@ ID     Type       Identifier                     Description
 
 To review the privileges already assigned to a group, use the
 `-show-group-privileges` command described in
-[Group Management](group.md#managing-group-membership).
+[Group Management](groups.md#managing-group-membership).
 

@@ -109,7 +109,7 @@ flags assign and remove privileges for a group:
   privileges or MCP tool access for a group.
 
 For detailed information about creating groups and managing their membership,
-see [Group Management](group.md).
+see [Group Management](groups.md).
 
 ## Token Scopes
 
@@ -191,7 +191,7 @@ permission model:
 
 - The [Account Management](accounts.md) page describes how to
   create and manage user and service accounts.
-- The [Group Management](group.md) page describes how to create groups and
+- The [Group Management](groups.md) page describes how to create groups and
   manage their membership.
 - The [Token Management](tokens.md) page describes how to create tokens and
   define their scopes.

@@ -25,6 +25,7 @@
     - [Alerter](docs/getting-started/configuration/alerter.md)
     - [Web Client](docs/getting-started/configuration/client.md)
     - [Configuring systemd Services](docs/getting-started/configuration/configure_systemd.md)
+    - [Enabling AI Mode](docs/getting-started/configuration/enable_ai_mode.md)
 - User Guide:
   - [Using the Workbench](docs/user-guide/index.md)
   - Monitoring Dashboards:

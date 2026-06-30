@@ -76,6 +76,7 @@ nav:
       - Alerter: getting-started/configuration/alerter.md
       - Web Client: getting-started/configuration/client.md
       - Configuring systemd Services: getting-started/configuration/configure_systemd.md
+      - Enabling AI Mode: getting-started/configuration/enable_ai_mode.md
 
   - User Guide:
     - Using the Workbench: user-guide/index.md

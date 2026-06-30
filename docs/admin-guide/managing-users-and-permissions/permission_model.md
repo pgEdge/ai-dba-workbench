@@ -45,7 +45,6 @@ request:
 A superuser short-circuits this sequence; the Workbench grants every request
 from a superuser account regardless of group or scope.
 
-
 ## Accounts and Roles
 
 Permissions apply to two kinds of accounts.
@@ -62,7 +61,7 @@ A superuser holds a special role that bypasses all permission checks. This
 allows a superuser to reach every connection, invoke every MCP tool, and
 perform every administrative operation. An administrator may grant the
 superuser role when they create or edit an account. For details on creating
-and managing accounts, see [Creating and Managing Accounts](accounts.md).
+and managing accounts, see [Account Management](accounts.md).
 
 ## Groups and Privileges
 
@@ -112,7 +111,6 @@ flags assign and remove privileges for a group:
 For detailed information about creating groups and managing their membership,
 see [Group Management](group.md).
 
-
 ## Token Scopes
 
 A token carries the permissions of the account that owns it. A token's
@@ -134,7 +132,7 @@ supports three scope types:
 
 Each scope type supports a wildcard that grants access to all items of that
 type the owner holds. A connection scope can lower a token to `read` even when
-the owner holds `read_write` access through a group. 
+the owner holds `read_write` access through a group.
 
 !!! hint
 
@@ -160,7 +158,7 @@ details on creating tokens and setting their scopes, see
 ## Administrative Permissions
 
 Administrative (or `ADMIN`) permissions control access to management
-operations in the Workbench's  `Administration` console and the REST API.
+operations in the Workbench's `Administration` console and the REST API.
 Privileged users assign these permissions through groups, alongside connection
 and MCP privileges. A superuser bypasses these checks and holds every
 administrative permission automatically.
@@ -185,7 +183,6 @@ Each permission allows a specific class of management operation; for example,
 
 For detailed instructions about assigning permissions to a group, see
 [Permission Management](permission_mgmt.md).
-
 
 ## Related Pages
 

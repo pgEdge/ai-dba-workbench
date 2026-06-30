@@ -40,8 +40,6 @@ entry.
 For detailed information about using the Workbench, see the
 [User Guide](../user-guide/index.md).
 
-
-
 The cluster navigator on the left side of the interface provides
 tree-based navigation across groups, clusters, and individual servers.
 Select a node in the navigator to view dashboards, alerts, and AI

@@ -40,7 +40,6 @@ a strength indicator alongside any policy violations. The indicator is a
 usability aid; the server independently re-validates the password before
 storing the bcrypt hash.
 
-
 ## Examples
 
 The following passphrase satisfies every rule because the unrelated words

@@ -29,7 +29,6 @@ manage a Workbench deployment:
 - The `Webhook Channels` tab manages the webhook endpoints that receive alert
   notifications from the Workbench.
 
-
 ## Security Best Practices
 
 The following practices help protect user credentials, API tokens, and active
@@ -60,9 +59,6 @@ Follow these guidelines for session management:
 - Implement proper logout with token deletion.
 - Monitor the server logs for suspicious activity.
 
-
-
-
 ## Understanding Authentication Flow
 
 Interactive users authenticate with a username and password to obtain a
@@ -71,7 +67,7 @@ token expires:
 
 1. A user authenticates with a username and password using the login API.
 
-2. The session receives the session token in the response.
+2. The client receives the session token in the response.
 
 3. The user can use the session token for subsequent requests until the token
    expires.
@@ -85,12 +81,10 @@ In the following example, an API token authenticates a request:
 
 ```bash
 curl -X POST http://localhost:8080/mcp/v1 \
-  -H "Authorization: Bearer O9ms9jqT...GdQ=" \
+  -H "Authorization: Bearer <api_token>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
-
-
 
 ## Error Responses
 

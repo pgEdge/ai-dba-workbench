@@ -148,7 +148,6 @@ the group. Once granted, the new permission is displayed on a new row in the
 To revoke a permission, select the `Delete` icon across from the permission
 name. The console revokes the permission from the group immediately.
 
-
 ### MCP Permissions
 
 You can manage MCP permissions in the Workbench console or at the command
@@ -158,7 +157,7 @@ The `MCP Permissions` section displays the MCP tools and resources that can be
 accessed by the selected group.
 
 The following table lists the MCP tools and resources available for a group,
-organized by category; the `All MCP Privileges` wildcard grants access to 
+organized by category; the `All MCP Privileges` wildcard grants access to
 every tool in the table:
 
 | Group | Tool | Description |

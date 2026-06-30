@@ -33,12 +33,11 @@ that type:
   holds.
 
 The effective access for a scoped token equals the intersection of the owner's
-group-level access and the token scope. 
+group-level access and the token scope.
 
 !!! note
 
     A token cannot exceed the access level of the owner.
-
 
 ## Creating a Token
 
@@ -171,8 +170,8 @@ ID   Hash Prefix        Owner     Super  Svc    Expires          Status
 ### Removing Tokens
 
 You can delete a token in the Workbench console's `Tokens` table or at the
-command line.  To delete a token in the console, select the `Delete` icon
-(the garbage can) at the far-right of a token entry.  A popup opens, asking
+command line. To delete a token in the console, select the `Delete` icon
+(the garbage can) at the far-right of a token entry. A popup opens, asking
 you to confirm that you wish to delete the token:
 
 ![The list of tokens](../../images/delete_token.png)

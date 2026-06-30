@@ -30,7 +30,7 @@ returns a `403 Forbidden` response when the
 authenticated user lacks access to the connection.
 
 For authentication details, see
-[Authentication](../managing-users-and-permissions/permission_model.md).
+[Managing Users and Permissions](../managing-users-and-permissions/permission_model.md).
 
 ## Server Information Endpoint
 

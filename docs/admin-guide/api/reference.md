@@ -60,7 +60,7 @@ Tokens can be one of two types:
   line for programmatic access.
 
 For detailed authentication information, see
-[Authentication](../managing-users-and-permissions/permission_model.md).
+[Managing Users and Permissions](../managing-users-and-permissions/permission_model.md).
 
 ## Interactive API Browser
 

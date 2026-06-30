@@ -67,8 +67,8 @@ Then, select `Add` to add the member and close the popup.
 
 You can also add members at the command line with the `-add-member` command:
 
-- Include the `-username` flag to add a user or service account. 
-- Include the `-member-group` flag to add a nested group. 
+- Include the `-username` flag to add a user or service account.
+- Include the `-member-group` flag to add a nested group.
 
 You must specify only one of these flags; the command rejects both flags if
 used together.
@@ -119,7 +119,7 @@ group.
 
 ![Listing group details in the console](../../images/group_details.png)
 
-The expanded view displays: 
+The expanded view displays:
 
 - The group's members and their account types in the `MEMBERS`
   section.

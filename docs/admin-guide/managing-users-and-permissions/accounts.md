@@ -27,7 +27,6 @@ permission, and authentication details:
 | `group_members` | Tracks user and nested group memberships within each group. |
 | `token_scope` | Restricts tokens to specific connections, MCP privileges, and admin permissions. |
 
-
 ## Adding a User or Service Account
 
 A *User account* authenticates with a username and password to receive a
@@ -40,7 +39,7 @@ at the command line.
 
 To use the Workbench GUI to add an account, authenticate with the Workbench
 console as an administrative user, and select the `Settings` icon in the
-upper-right corner of the Workbench console.  Select Users from the left
+upper-right corner of the Workbench console. Select Users from the left
 navigation pane, and then select the `+ Create User` icon in the upper-right
 corner of the `Users` page.
 
@@ -91,7 +90,7 @@ When prompted, provide the following:
 - Annotation or note (optional)
 
 You can also provide required fields when you use the `-add-user` flag to
-create a user in non-interactive mode. In the following example, the 
+create a user in non-interactive mode. In the following example, the
 `-add-user` command supplies the username, password, and a note in key/value
 pairs:
 
@@ -164,8 +163,8 @@ properties.
 
 To update the details associated with an account in the console, navigate to
 the `Users` page and select the edit icon (the pencil) at the far-right of the
-account listing you wish to modify. The `Edit user` dialog opens, allowing you to
-modify:
+account listing you wish to modify. The `Edit user` dialog opens, allowing
+you to modify:
 
 - the `Password` associated with the account.
 - the `Display Name`.
@@ -264,7 +263,7 @@ The following properties control lockout behavior:
   attempts allowed from a single IP address within the rate-limit window
   before that IP is blocked; the default is `10`.
 - The `max_failed_attempts_before_lockout` setting controls the number of
-  failed authentication attempts before locking  an account; a value of `0`
+  failed authentication attempts before locking an account; a value of `0`
   disables the property.
 - `max_user_token_days` controls the maximum lifetime in days for user-created
   tokens; a value of `0` allows you to use tokens with unlimited lifetime.

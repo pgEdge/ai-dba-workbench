@@ -46,9 +46,16 @@
   - [MCP Tools](docs/user-guide/mcp-tools.md)
 - Administrator's Guide:
   - [Overview](docs/admin-guide/index.md)
-  - [Verifying the Health of Components](docs/admin-guide/verify_health.md)
-  - [Users & Authentication](docs/admin-guide/managing-users-and-permissions/permission_model.md)
+  - Managing Users and Permissions:
+    - [Understanding the Workbench Permission Model](docs/admin-guide/managing-users-and-permissions/permission_model.md)
+    - [Account Management](docs/admin-guide/managing-users-and-permissions/accounts.md)
+    - [Group Management](docs/admin-guide/managing-users-and-permissions/group.md)
+    - [Token Management](docs/admin-guide/managing-users-and-permissions/tokens.md)
+    - [Permission Management](docs/admin-guide/managing-users-and-permissions/permission_mgmt.md)
+  - [Enforcing the Password Policy](docs/admin-guide/password.md)
   - [Connection Management](docs/admin-guide/connections.md)
+  - [TLS & Reverse Proxy](docs/admin-guide/tls-and-reverse-proxy.md)
+  - [Verifying the Health of Components](docs/admin-guide/verify_health.md)
   - [Alert Rules & Thresholds](docs/admin-guide/alert-rules.md)
   - [Notification Channels](docs/admin-guide/notification-channels.md)
   - [Probe Configuration](docs/admin-guide/probes.md)

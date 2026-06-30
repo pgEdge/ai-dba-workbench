@@ -140,6 +140,14 @@ project adheres to
   retry is pending, distinguishing that state from genuinely empty
   data.
 
+- Granting "All Connections" access no longer deletes a group's
+  specific per-connection grants. Previously, adding an All
+  Connections READ grant destructively removed existing
+  per-connection grants, silently reducing a connection's
+  READ/WRITE access to READ; specific and wildcard grants now
+  coexist, and the effective access for each connection is the
+  higher of the two. (#302)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

@@ -8,7 +8,7 @@ Homepage: https://github.com/pgEdge/ai-dba-workbench
 
 Package: pgedge-ai-dba-server
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, pgedge-ai-kb, openssl
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl
 Description: pgEdge AI DBA Server
  Core AI DBA server providing REST API and AI-powered analysis for
  PostgreSQL databases.

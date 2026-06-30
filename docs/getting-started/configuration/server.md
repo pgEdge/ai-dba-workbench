@@ -257,6 +257,7 @@ builtins:
 | `-add-member` | Add a user or group to a group |
 | `-remove-member` | Remove a member from a group |
 | `-group string` | Group name for group commands |
+| `-group-description string` | Group description for add-group |
 | `-member-group string` | Member group for nesting |
 | `-set-superuser` | Set superuser status |
 | `-unset-superuser` | Remove superuser status |

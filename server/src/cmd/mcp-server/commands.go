@@ -121,7 +121,7 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 	// Handle group management commands
 	if f.HasGroupCommand() {
 		if f.AddGroupCmd {
-			if err := addGroupCommand(dataDir, f.GroupName, ""); err != nil {
+			if err := addGroupCommand(dataDir, f.GroupName, f.GroupDescription); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}

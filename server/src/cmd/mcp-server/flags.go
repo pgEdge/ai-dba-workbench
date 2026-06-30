@@ -73,6 +73,7 @@ type Flags struct {
 	AddMemberCmd      bool
 	RemoveMemberCmd   bool
 	GroupName         string
+	GroupDescription  string
 	MemberGroup       string
 	SetSuperuserCmd   bool
 	UnsetSuperuserCmd bool
@@ -157,6 +158,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.AddMemberCmd, "add-member", false, "Add a user or group to a group")
 	flag.BoolVar(&f.RemoveMemberCmd, "remove-member", false, "Remove a user or group from a group")
 	flag.StringVar(&f.GroupName, "group", "", "Group name for group management commands")
+	flag.StringVar(&f.GroupDescription, "group-description", "", "Group description for add-group")
 	flag.StringVar(&f.MemberGroup, "member-group", "", "Member group name (for nested group membership)")
 	flag.BoolVar(&f.SetSuperuserCmd, "set-superuser", false, "Set superuser status for a user")
 	flag.BoolVar(&f.UnsetSuperuserCmd, "unset-superuser", false, "Remove superuser status from a user")

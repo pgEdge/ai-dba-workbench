@@ -387,6 +387,7 @@ knowledgebase:
   #-----------------------------------------------------------------------
 
   # Embedding provider for knowledgebase similarity search
+  # Options: ollama, voyage, openai
   # Default: ollama
   embedding_provider: "ollama"
 

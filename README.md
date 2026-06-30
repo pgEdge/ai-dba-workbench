@@ -49,7 +49,7 @@
   - Managing Users and Permissions:
     - [Understanding the Workbench Permission Model](docs/admin-guide/managing-users-and-permissions/permission_model.md)
     - [Account Management](docs/admin-guide/managing-users-and-permissions/accounts.md)
-    - [Group Management](docs/admin-guide/managing-users-and-permissions/group.md)
+    - [Group Management](docs/admin-guide/managing-users-and-permissions/groups.md)
     - [Token Management](docs/admin-guide/managing-users-and-permissions/tokens.md)
     - [Permission Management](docs/admin-guide/managing-users-and-permissions/permission_mgmt.md)
   - [Enforcing the Password Policy](docs/admin-guide/password.md)

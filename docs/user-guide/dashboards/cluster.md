@@ -48,18 +48,20 @@ with color-coded replication edges. Each edge represents a replication
 relationship between two servers. Use the chevron on the right side of the
 pane heading to expand or collapse the pane.
 
+![Reviewing timeline tooltips](../images/cluster_topology.png)
+
 A colored dot on each node indicates server status; a green dot marks an
 online server. Each node tile displays a label that identifies the server.
 
 The diagram uses the following color scheme for edges:
 
-- Physical and streaming replication edges display in the primary theme color
-  (blue).
-- Spock replication edges display in the warning theme color (orange).
-- Logical replication edges display in the success theme color (green).
+- Physical and streaming replication edges display in blue.
+- Spock replication edges display in orange.
+- Logical replication edges display in green.
 
 Edge labels display the replication type so you can distinguish between
 different replication methods at a glance.
+
 
 ## Monitoring
 

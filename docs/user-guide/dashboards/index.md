@@ -1,14 +1,13 @@
 # Dashboards
 
 The monitoring dashboards provide a hierarchical view of PostgreSQL database
-health and performance. You can navigate through five levels of detail, from a
-fleet-wide estate overview down to individual database objects.
+health and performance. You can navigate through five levels of detail, from
+a fleet-wide estate overview down to individual database objects.
 
-If you have enabled an
-[AI provider](../../getting-started/configuration/enable_ai_mode.md),
-the Workbench will display an informational analysis (the AI Overview) of each
-dashboard that you visit. The overview includes recommended actions designed
-to help ensure that management issues are addressed as needed.
+If you have enabled an [AI provider](../../getting-started/configuration/enable_ai_mode.md),
+the Workbench displays an informational analysis (the `AI Overview`) of each
+dashboard that you visit. The overview includes recommended actions to help ensure that management
+issues receive attention as needed.
 
 ## Dashboard Hierarchy
 
@@ -29,132 +28,264 @@ database hierarchy.
 - The [object dashboard](object.md) provides detailed metrics for a specific
   table, index, or query.
 
+## Using the Cluster Navigator
 
-## Using the AI Overview
+The cluster navigator on the left side of the console provides tree-based
+navigation across groups, clusters, and individual servers. Select a node in
+the navigator to view dashboards, alerts, and AI insights for the selected
+resource.
 
-The AI Overview presents a concise, AI-generated summary of database
-health at the top of the status panel. The summary describes server
-health, active alerts that need attention, and any ongoing or upcoming
-blackouts. When everything is healthy, the overview states so briefly.
+## Reviewing Server Settings
 
-![Reviewing the AI Overview](../images/estate_ai_overview.png)
+Each server node in the cluster navigator displays a gear icon when you hover
+over the node. Click the gear icon to open the `Server Settings` dialog for
+that server. The dialog header reads `Server Settings: <server name>`, and a
+close (`X`) icon in the header dismisses the dialog without saving changes.
 
-The Workbench's AI features are available only when the server is
-configured with a valid LLM provider. See
-[Enabling AI Mode](../../getting-started/configuration/enable_ai_mode.md)
-for configuration details.
+The dialog organizes server configuration into five tabs along a horizontal
+tab bar. The Workbench underlines and highlights the active tab.
 
-The AI overview adapts to your current selection in the cluster navigator.
-The summary reflects one of the following scopes:
+### Using the DETAILS Tab
 
-- The estate scope summarizes health across all monitored servers.
-- The cluster scope summarizes the servers that belong to one cluster.
-- The server scope summarizes a single selected server.
+The `DETAILS` tab presents a form that defines how the Workbench identifies
+and connects to the server. The Name field is required and sets the display
+name for the server. The Description field is a multi-line text area that
+holds optional notes about the server.
 
-A sparkle icon and the "AI Overview" label mark the panel. The body
-displays the summary text and a relative timestamp, such as "Updated 5
-min ago", that shows when the Workbench last generated the summary.
+The `CONNECTION DETAILS` subsection specifies how the collector reaches the
+database. The subsection includes the following fields:
 
-Click the expand or collapse icon on the right of the header to hide or
-show the summary body. The header remains visible when the panel is
-collapsed. The Workbench remembers your choice across sessions.
+- The `Host`, `Port`, `Maintenance Database`, and `Username` fields specify
+  the connection values for the selected server; all values are required.
+- The `Password` is optional; leave the field blank to keep the stored
+  password unchanged, or enter a new password to replace it.
 
-The server regenerates the AI overview when the estate state changes
-significantly. The Workbench receives these updates in real time and
-refreshes the panel without any action from you.
+A collapsible `SSL SETTINGS` section appears below the connection fields and
+remains collapsed by default. Expand this section to configure encrypted
+connection options.
 
-A "(stale)" badge appears next to the label when the current summary
-has aged past its freshness window. Click the refresh icon beside the
-timestamp to request a new summary immediately.
+The `OPTIONS` subsection includes two checkboxes:
 
-While the server prepares the first summary, the panel displays a
-loading placeholder followed by a "Generating overview..." message.
+- The `Monitor this server` checkbox controls whether the collector gathers
+  metrics from the server.
+- The `Share with all users` checkbox makes the server visible to every user
+  of the Workbench.
 
-!!! hint
+Use the `Cancel` and `Save` buttons at the bottom of the dialog to discard or
+retain your changes.
 
-    If a Workbench feature displays a purple brain icon in the
-    object's header, you can select that icon to generate a detailed
-    analysis of the selected object or metrics.
+![Reviewing the Details tab of Server Settings](../../images/server_settings_details.png)
 
-    If a feature displays an amber brain icon, a cached analysis is
-    available for review.
+### Using the CLUSTER Tab
 
+The `CLUSTER` tab shows the server's current cluster assignment and role.
+The tab displays the following fields:
 
-## Using the AI Chart Analysis Feature
+- The `Cluster` field shows the name of the cluster the server belongs to,
+  such as "traffic".
+- The `Replication Type` field shows the replication technology used by
+  the cluster, such as "Spock".
+- The `Role` field shows the server's role within the cluster, or
+  "Not assigned" when the server has no assigned role.
+- The `Membership` field shows how the server joined the cluster, such as
+  "Manual", alongside a badge that repeats the membership type.
 
-The AI chart analysis feature provides LLM-powered insights for any chart or
-KPI tile in the monitoring dashboards. The analysis examines data trends,
-identifies anomalies, and generates actionable recommendations.
+Click the `Configure Cluster` button to open the cluster configuration
+dialog and manage the server's cluster membership.
 
-The Workbench's AI features are available only when the server is
-configured with a valid LLM provider. See
-[Enabling AI Mode](../../getting-started/configuration/enable_ai_mode.md)
-for configuration details.
+![Reviewing the Cluster tab of Server Settings](../../images/server_settings_cluster.png)
 
-Charts, KPI tiles, leaderboards, and the vacuum status section each display a
-brain icon in the upper-right icon. Click the icon to open an analysis dialog
-and start the LLM analysis.
+### Using the ALERT OVERRIDES Tab
 
-The analysis follows these steps:
+The `ALERT OVERRIDES` tab lets you tailor the alert rules for the selected
+server. A table lists the current rules and settings; each row describes one
+alert rule and its threshold. The table contains the following columns:
 
-1. The Workbench checks for a cached analysis result.
-2. The Workbench fetches server context from the connection.
-3. The Workbench fetches timeline events for the time range.
-4. The Workbench serializes the chart data and sends it to the LLM.
-5. The LLM returns a structured analysis report.
+- `Name` identifies the alert rule.
+- `Metric` names the metric the rule monitors.
+- `Condition` specifies the threshold that triggers the alert.
+- `Severity` indicates the alert level, such as "warning".
+- `Enabled` provides a toggle that activates or deactivates the rule for this
+  server.
+- `Actions` provides an edit (pencil) icon that opens the rule for adjustment.
 
-The dialog displays a loading skeleton while the analysis runs. The final
-report renders as formatted markdown.
+The Workbench groups the rows under category headers such as `AVAILABILITY`,
+`CONNECTIONS`, and `LOCKS`; additional categories appear as you scroll through
+the table.
 
-### Analysis Reports
+The following screen capture shows some of the representative rows you might
+find within each category on an `ALERT OVERRIDES` tab.
 
-Each chart analysis report contains a structured assessment that includes:
+![Reviewing the Alert Overrides tab of Server Settings](../../images/server_settings_alert_overrides.png)
 
-- The `Summary` section describes the alert and its impact on the monitored
-  service.
-- The `Analysis` section examines the alert pattern, historical context, and
-  root cause.
-- The `Remediation Steps` section provides step-by-step instructions for
-  resolving the issue.
-- The `Threshold Tuning` section recommends adjustments to alert thresholds
-  where applicable.
-- The `Recommendation` section suggests long-term improvements to prevent
-  recurrence.
+### Using the PROBE CONFIGURATION Tab
 
-### Timeline Event Correlation
+The `PROBE CONFIGURATION` tab controls the probes that collect metrics from
+the server. A table lists the current probes and their settings; each row
+describes one probe and its configuration. The table contains the following
+columns:
 
-The analysis includes timeline events from the chart's time range to identify
-correlations between metric changes and system events. The LLM considers the
-following event types:
+- `Name` identifies the probe.
+- `Description` explains what the probe monitors.
+- `Enabled` provides a toggle that activates or deactivates the probe for
+  this server.
+- `Interval` specifies how often the probe collects data, in seconds.
+- `Retention` specifies how long the Workbench retains the probe's
+  collected data.
+- `Actions` provides an edit (pencil) icon that opens the probe for
+  adjustment.
 
-- Configuration changes to PostgreSQL settings.
-- Alert activations and resolutions.
-- Server restarts and recovery events.
-- Extension installations and upgrades.
-- Blackout periods and maintenance windows.
+The table scrolls to reveal additional probes below the visible rows.
 
-### Running SQL Queries
+The following screen capture shows some of the representative probes and
+their default settings.
 
-SQL code blocks in analysis reports include a play button in the upper right
-corner. Click the play button to execute the query against the chart's
-associated database server. Results appear inline below the code block.
+![Reviewing the Probe Configuration tab of Server Settings](../../images/server_settings_probe_configuration.png)
 
-Write statements such as `ALTER SYSTEM` prompt a confirmation dialog before
-executing. Read-only queries execute immediately.
+### Using the NOTIFICATION CHANNELS Tab
 
-### Caching
+The `NOTIFICATION CHANNELS` tab manages the channels that deliver alert
+notifications for the server. A table lists the available channels and
+their settings; each row describes one channel and its current override
+state. The table contains the following columns:
 
-The Workbench caches chart analysis results on the client side to avoid
-redundant LLM calls.
+- `Name` identifies the notification channel.
+- `Type` shows the channel type, such as email, Slack, Mattermost, or
+  webhook.
+- `Description` shows the channel's optional description.
+- `Estate Default` indicates whether the channel applies to all servers by
+  default.
+- `Enabled` provides a toggle that activates or deactivates the channel for
+  this server, overriding the estate default.
+- `Actions` provides controls for managing the channel's override for this
+  server.
 
-- An amber brain icon indicates that a cached analysis exists for the chart.
-- The cache uses stable identifiers as the cache key; these include the metric
-  description, connection, database, and time range.
-- The cache expires after 30 minutes.
-- Click an amber brain icon to open the cached report instantly.
+If you have not configured any notification channels, the tab displays the
+empty state "No notification channels found."
 
-### Downloading Reports
+![Reviewing the Notification Channels tab of Server Settings](../../images/server_settings_notification_channels.png)
 
-The dialog footer includes a `Download` button that saves the analysis as a
-markdown file. The downloaded file includes the chart details, the full
-analysis report, and a generation timestamp.
+## Reviewing Cluster Settings
+
+Each cluster in the cluster navigator displays a gear icon when you hover
+over the cluster name. Click the gear icon to open the `Cluster Settings`
+dialog for that cluster. The dialog header reads
+`Cluster Settings: <cluster name>`, and a close (X) icon dismisses the
+dialog without saving changes. The Workbench underlines and highlights the
+active tab.
+
+### Using the DETAILS Tab
+
+The `DETAILS` tab presents a form that identifies the cluster and defines its
+replication behavior. The tab includes the following fields:
+
+- The `Name` field displays or modifies the display name for the cluster.
+- The `Description` field is a multi-line text area that holds optional notes
+  about the cluster.
+- The `Replication Type` dropdown specifies the replication technology used
+  for the cluster.
+
+Use the `Cancel` and `Save` buttons at the bottom of the dialog to discard
+or save your changes.
+
+![Reviewing the Details tab of Cluster Settings](../../images/cluster_settings_details.png)
+
+### Using the TOPOLOGY Tab
+
+The `TOPOLOGY` tab presents a visual diagram of the cluster members and lets
+you assign servers and define replication relationships. The diagram displays
+each member node as a tile with a status dot and a role badge that identifies
+the node's role in the cluster.
+
+Use the `ADD SERVER` section to add a new node to the cluster:
+
+- Use the `Server` dropdown to search for and select an unassigned server.
+- Use the `Role` dropdown to set the role the server will hold in the cluster.
+- Use the `+ Add` button to add the selected server to the cluster.
+
+A list of currently assigned servers appears below the `ADD SERVER` section.
+Server details display the server name, a role badge, its host and port, and a
+`Delete` (trash) icon. Select the `Delete` icon to remove the server from
+the cluster.
+
+The `RELATIONSHIPS` section at the bottom of the tab shows the replication
+relationships the topology diagram presents. Use the section's controls
+to define a new relationship between two cluster members:
+
+- Use the `Source` dropdown to select the source node for the relationship.
+- Use the `Target` dropdown to select the target node for the relationship.
+- Use the `Type` dropdown to select the replication type, such as
+  "Replicates with (Spock)".
+- Click `+ Add` to create the relationship between the selected nodes.
+
+![Reviewing the Topology tab of Cluster Settings](../../images/cluster_settings_topology.png)
+
+### Using the ALERT OVERRIDES Tab
+
+The `ALERT OVERRIDES` tab lets you tailor the alert rules for the selected
+cluster. A table lists the current rules and settings; each row describes one
+alert rule and its threshold. The table contains the following columns:
+
+- `Name` identifies the alert rule.
+- `Metric` names the metric the rule monitors.
+- `Condition` specifies the threshold that triggers the alert.
+- `Severity` indicates the alert level, such as "warning".
+- `Enabled` provides a toggle that activates or deactivates the rule for this
+  cluster.
+- `Actions` provides an edit (pencil) icon that opens the rule for adjustment.
+
+The Workbench groups the rows under category headers such as `AVAILABILITY`,
+`CONNECTIONS`, and `LOCKS`; additional categories appear as you scroll through
+the table.
+
+The following screen capture shows some of the representative rows you might
+find within each category on an `ALERT OVERRIDES` tab.
+
+![Reviewing the Alert Overrides tab of Cluster Settings](../../images/cluster_settings_alert_overrides.png)
+
+### Using the PROBE CONFIGURATION Tab
+
+The `PROBE CONFIGURATION` tab controls the probes that collect metrics across
+the cluster. A table lists the current probes and their settings; each row
+describes one probe and its configuration. The table contains the following
+columns:
+
+- `Name` identifies the probe.
+- `Description` explains what the probe monitors.
+- `Enabled` provides a toggle that activates or deactivates the probe for
+  this cluster.
+- `Interval` specifies how often the probe collects data, in seconds.
+- `Retention` specifies how long the Workbench retains the probe's
+  collected data.
+- `Actions` provides an edit (pencil) icon that opens the probe for
+  adjustment.
+
+The table scrolls to reveal additional probes.
+
+The following screen capture shows some of the representative probes and
+their default settings.
+
+![Reviewing the Probe Configuration tab of Cluster Settings](../../images/cluster_settings_probe_configuration.png)
+
+### Using the NOTIFICATION CHANNELS Tab
+
+The `NOTIFICATION CHANNELS` tab manages the channels that deliver alert
+notifications for the cluster. A table lists the available channels and
+their settings; each row describes one channel and its current override
+state. The table contains the following columns:
+
+- `Name` identifies the notification channel.
+- `Type` shows the channel type, such as email, Slack, Mattermost, or
+  webhook.
+- `Description` shows the channel's optional description.
+- `Estate Default` indicates whether the channel applies to all clusters by
+  default.
+- `Enabled` provides a toggle that activates or deactivates the channel for
+  this cluster, overriding the estate default.
+- `Actions` provides controls for managing the channel's override for this
+  cluster.
+
+If you have not configured any notification channels, the tab displays the
+empty state "No notification channels found."
+
+![Reviewing the Notification Channels tab of Cluster Settings](../../images/cluster_settings_notification_channels.png)

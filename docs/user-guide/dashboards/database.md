@@ -9,10 +9,10 @@ tiles to open the dashboard.
 ## Performance Overview
 
 The `Performance Overview` pane summarizes database activity and current
-health. A [time range selector](index.md#selecting-time-ranges) in the dialog
-header lets you choose the period for the displayed metrics; the available
-ranges are `1h`, `6h`, `24h`, `7d`, and `30d`. Use the chevron on the right
-side of the pane heading to expand or collapse the pane.
+health. A time range selector in the dialog header lets you choose the period
+for the displayed metrics; the available ranges are `1h`, `6h`, `24h`, `7d`,
+and `30d`. Use the chevron on the right side of the pane heading to expand or
+collapse the pane.
 
 The pane displays the following tiles:
 

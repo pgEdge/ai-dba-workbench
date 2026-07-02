@@ -11,7 +11,7 @@ identify the pane; a settings icon lets you pin the summary. The pane displays
 a loading skeleton while the Workbench generates the summary.
 
 For details about the AI Overview, see
-[Using the AI Overview](index.md#using-the-ai-overview).
+[Using the AI Overview](../index.md#using-the-ai-overview).
 
 ## Connection Details
 
@@ -32,9 +32,6 @@ The bar displays the following details:
 The `Event Timeline` pane displays monitored events for the server across the
 selected time range. Filter buttons and a time range selector control which
 events the pane displays.
-
-For details about the filter buttons and the time range selector, see
-[Using the Event Timeline](index.md#using-the-event-timeline).
 
 When no events fall within the selected range, the pane displays the message
 `No events in this time range`. The pane suggests that you try expanding the
@@ -66,10 +63,9 @@ checkmark and the message `No active alerts`.
 ## Monitoring
 
 The `Monitoring` pane presents detailed performance data for the server. The
-[time range selector](index.md#selecting-time-ranges) lets you choose the
-period for the displayed metrics; the available ranges are `1h`, `6h`, `24h`,
-`7d`, and `30d`. Use the chevron on the right side of the pane heading to
-expand or collapse the pane.
+time range selector lets you choose the period for the displayed metrics; the
+available ranges are `1h`, `6h`, `24h`, `7d`, and `30d`. Use the chevron on
+the right side of the pane heading to expand or collapse the pane.
 
 The Monitoring pane contains three collapsible sub-panes that group related
 metrics.

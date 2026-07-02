@@ -10,9 +10,6 @@ The `Event Timeline` pane displays monitored events for the servers in the
 cluster across the selected time range. Filter buttons and a time range
 selector control which events the pane displays.
 
-For details about the filter buttons and the time range selector, see
-[Using the Event Timeline](index.md#using-the-event-timeline).
-
 When no events fall within the selected range, the pane displays the message
 `No events in this time range`. The pane suggests that you try expanding the
 time range or adjusting the filters.
@@ -48,7 +45,7 @@ with color-coded replication edges. Each edge represents a replication
 relationship between two servers. Use the chevron on the right side of the
 pane heading to expand or collapse the pane.
 
-![Reviewing timeline tooltips](../images/cluster_topology.png)
+![Reviewing timeline tooltips](../../images/cluster_topology.png)
 
 A colored dot on each node indicates server status; a green dot marks an
 online server. Each node tile displays a label that identifies the server.
@@ -66,9 +63,8 @@ different replication methods at a glance.
 ## Monitoring
 
 The `Monitoring` pane presents replication health and comparative performance
-data for the cluster. The
-[time range selector](index.md#selecting-time-ranges) lets you choose the
-period for the displayed metrics; the available ranges are `1h`, `6h`, `24h`,
+data for the cluster. The time range selector lets you choose the period
+for the displayed metrics; the available ranges are `1h`, `6h`, `24h`,
 `7d`, and `30d`. Use the chevron on the right side of the pane heading to
 expand or collapse the pane.
 

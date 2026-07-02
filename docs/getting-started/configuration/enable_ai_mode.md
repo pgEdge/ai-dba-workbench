@@ -62,5 +62,5 @@ steps to enable AI mode:
     ```
 
 With AI enabled, you will have access to Workbench console features like the 
-[AI Overview](../../user-guide#using-the-ai-overview) 
-and [AI Chart Analysis](../../user-guide#using-the-ai-chart-analysis-feature).
+[AI Overview](../../user-guide/index.md#using-the-ai-overview) 
+and [AI Chart Analysis](../../user-guide/index.md#using-the-ai-chart-analysis-feature).

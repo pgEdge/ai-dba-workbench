@@ -4,19 +4,19 @@ The `ESTATE OVERVIEW` presents a fleet-wide health assessment at a glance. To
 view the `ESTATE OVERVIEW`, select the top-level estate node in the cluster
 navigator.
 
-![Accessing the ESTATE OVERVIEW](../images/open_estate_overview.png)
+![Accessing the ESTATE OVERVIEW](../../images/open_estate_overview.png)
 
 If you have enabled AI, the `ESTATE Overview` displays the
 [AI Overview](../ai/overview.md). The Overview provides a concise, AI-powered
 summary of your database estate with notes about history and recommended
 actions to maintain system health.
 
-![Reviewing the AI Overview](../images/estate_ai_overview.png)
+![Reviewing the AI Overview](../../images/estate_ai_overview.png)
 
 Tiles below the heading of the ESTATE OVERVIEW provide an at-a-glance overview
 of the state of your servers:
 
-![Reviewing the state of your servers](../images/estate_server_state.png)
+![Reviewing the state of your servers](../../images/estate_server_state.png)
 
 - The `OK` tile (green) shows the count of servers that conform to all
   configured alert thresholds.
@@ -44,7 +44,7 @@ button group with the following options:
 The selected time range persists across dashboard navigation. All time-series
 charts and KPI sparklines update when you change the time range.
 
-![The time range selector in the Event Timeline](../images/estate_event_timeline.png)
+![The time range selector in the Event Timeline](../../images/estate_event_timeline.png)
 
 You can use the event timeline to track the following event types by selecting
 or deselecting the colored buttons between the `Event Timeline` label and the
@@ -69,14 +69,14 @@ badge showing the event count; hovering over the icon displays a tooltip that
 lists individual event names and a "+N more" indicator when the group contains
 more than three events.
 
-![Sorting Event Timeline details](../images/event_timeline_details.png)
+![Sorting Event Timeline details](../../images/event_timeline_details.png)
 
 The performance summary tiles below the event timeline provide a quick glance
 into the performance of your estate, selected server, or cluster.  Hover over
 a chart or graph to review detailed information about a specific point in time
 for the selected metric. 
 
-![Reviewing timeline tooltips](../images/estate_timeline_tooltip.png)
+![Reviewing timeline tooltips](../../images/estate_timeline_tooltip.png)
 
 Select an event icon to review a list detailing the events associated with the
 alert; when applicable, the details include the threshold values that caused
@@ -85,7 +85,7 @@ the alert.
 Below the Event Timeline, a set of charts and graphs display estate-wide
 health and performance data.
 
-![Reviewing timeline tooltips](../images/estate_performance_graphs.png)
+![Reviewing timeline tooltips](../../images/estate_performance_graphs.png)
 
 The section includes the following panels:
 
@@ -129,7 +129,7 @@ alerts. When no alerts are active, the panel displays `No active alerts`. A
 brain icon in the top-right corner of the tile opens an AI chart analysis of
 the displayed data.
 
-![Reviewing the health of the estate](../images/estate_health_overview.png)
+![Reviewing the health of the estate](../../images/estate_health_overview.png)
 
 ### Key Performance Indicators
 

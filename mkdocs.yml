@@ -98,6 +98,10 @@ nav:
       - Connecting MCP Clients: user-guide/ai/mcp-clients.md
     - MCP Tools: user-guide/mcp-tools.md
 
+  - Troubleshooting:
+    - Overview: troubleshooting/index.md
+    - Stale Server Status: troubleshooting/stale-server-status.md
+
   - Administrator's Guide:
     - Overview: admin-guide/index.md
     - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md

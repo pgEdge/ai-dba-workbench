@@ -204,6 +204,20 @@ project adheres to
   previously appeared empty or unchecked and were lost when editing;
   the share flag is now persisted by the API. (#304)
 
+- Harden the collector against clean-exit restart loops that could
+  stop the Dashboard from showing Top Queries. The collector now
+  logs which signal triggered its shutdown, rather than exiting
+  silently, and the default monitored probe and pool wait timeout
+  (`monitored_max_wait_seconds`) was raised from 60 to 120 seconds
+  to give slow probes such as `pg_stat_statements` on large
+  monitored databases more headroom before timing out. (#308)
+
+- Harden the shipped Docker Compose collector service by running an
+  init process as PID 1, adding a stop grace period for graceful
+  shutdown, and raising the memory limit modestly from 256M to
+  512M; the collector connection-pool and timeout options are now
+  documented in the sample configuration. (#308)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

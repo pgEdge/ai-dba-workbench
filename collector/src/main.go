@@ -112,9 +112,9 @@ func main() {
 	logger.Startup("Collector is running. Press Ctrl+C to stop.")
 
 	// Wait for shutdown signal
-	waitForShutdown()
+	sig := waitForShutdown()
 
-	logger.Startup("Shutdown signal received, stopping...")
+	logger.Startupf("Received signal %q, shutting down...", sig)
 
 	// Shutdown in proper order to ensure clean connection closure
 	// 1. Stop probe scheduler (no new probe queries)
@@ -230,9 +230,13 @@ func loadConfiguration() (*Config, error) {
 	return config, nil
 }
 
-// waitForShutdown waits for an interrupt signal
-func waitForShutdown() {
+// waitForShutdown waits for an interrupt signal and returns the
+// signal that was received, so the caller can log which signal
+// triggered the shutdown. A clean exit that was previously silent
+// now records the delivered signal, making a future recurrence of
+// the reported clean-exit restart loop diagnosable.
+func waitForShutdown() os.Signal {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+	return <-sigChan
 }

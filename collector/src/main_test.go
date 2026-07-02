@@ -396,11 +396,10 @@ func TestMaybePrintSchemaVersion_WriteError(t *testing.T) {
 }
 
 func TestWaitForShutdown(t *testing.T) {
-	done := make(chan struct{})
+	got := make(chan os.Signal, 1)
 
 	go func() {
-		waitForShutdown()
-		close(done)
+		got <- waitForShutdown()
 	}()
 
 	// Give the goroutine time to install its signal handler before we
@@ -416,8 +415,10 @@ func TestWaitForShutdown(t *testing.T) {
 	}
 
 	select {
-	case <-done:
-		// ok
+	case sig := <-got:
+		if sig != syscall.SIGTERM {
+			t.Errorf("waitForShutdown returned %v, want SIGTERM", sig)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("waitForShutdown did not return after SIGTERM")
 	}

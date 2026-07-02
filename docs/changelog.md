@@ -16,7 +16,15 @@ project adheres to
   description when creating it with `-add-group`, matching the
   description support already available in the web console. (#301)
 
+- Add a `-list-members` CLI flag to the server, which lists the
+  members of the group named with `-group`, including both member
+  users and nested member groups. (#303)
+
 ### Changed
+
+- Extend the `-show-group-privileges` CLI command to also display a
+  group's admin permissions, alongside the MCP and connection
+  privileges it already reports. (#303)
 
 - Drop the runtime dependency on a knowledgebase package from the
   `pgedge-ai-dba-server` package in both the Debian and RPM

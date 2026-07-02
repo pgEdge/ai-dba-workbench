@@ -254,6 +254,7 @@ builtins:
 | `-add-group` | Add a new RBAC group |
 | `-delete-group` | Delete an RBAC group |
 | `-list-groups` | List all RBAC groups |
+| `-list-members` | List the members of a group |
 | `-add-member` | Add a user or group to a group |
 | `-remove-member` | Remove a member from a group |
 | `-group string` | Group name for group commands |

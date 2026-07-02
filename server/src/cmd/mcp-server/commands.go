@@ -160,6 +160,14 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 			return true
 		}
 
+		if f.ListMembersCmd {
+			if err := listGroupMembersCommand(dataDir, f.GroupName); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
+
 		if f.SetSuperuserCmd {
 			if err := setSuperuserCommand(dataDir, f.Username, true); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

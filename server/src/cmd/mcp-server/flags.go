@@ -72,6 +72,7 @@ type Flags struct {
 	ListGroupsCmd     bool
 	AddMemberCmd      bool
 	RemoveMemberCmd   bool
+	ListMembersCmd    bool
 	GroupName         string
 	GroupDescription  string
 	MemberGroup       string
@@ -157,6 +158,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.ListGroupsCmd, "list-groups", false, "List all RBAC groups")
 	flag.BoolVar(&f.AddMemberCmd, "add-member", false, "Add a user or group to a group")
 	flag.BoolVar(&f.RemoveMemberCmd, "remove-member", false, "Remove a user or group from a group")
+	flag.BoolVar(&f.ListMembersCmd, "list-members", false, "List members of a specific group")
 	flag.StringVar(&f.GroupName, "group", "", "Group name for group management commands")
 	flag.StringVar(&f.GroupDescription, "group-description", "", "Group description for add-group")
 	flag.StringVar(&f.MemberGroup, "member-group", "", "Member group name (for nested group membership)")
@@ -287,7 +289,7 @@ func (f *Flags) HasUserCommand() bool {
 // HasGroupCommand returns true if any group management command was specified
 func (f *Flags) HasGroupCommand() bool {
 	return f.AddGroupCmd || f.DeleteGroupCmd || f.ListGroupsCmd ||
-		f.AddMemberCmd || f.RemoveMemberCmd ||
+		f.AddMemberCmd || f.RemoveMemberCmd || f.ListMembersCmd ||
 		f.SetSuperuserCmd || f.UnsetSuperuserCmd
 }
 

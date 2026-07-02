@@ -44,6 +44,10 @@ project adheres to
 
 ### Fixed
 
+- Connection-privilege chips in the Admin Groups and Users panels
+  now show the connection name instead of the internal numeric
+  connection id. (#309)
+
 - Fix the metrics time-series API (`GET /api/v1/metrics/query`)
   silently returning an empty HTTP 200 response, which the web UI
   rendered as a generic "No data available" message, whenever a

@@ -62,7 +62,11 @@ const CONNECTIONS = [{ id: 11, name: 'prod-db' }];
 function setupApiGetRouter(overrides: Record<string, unknown> = {}) {
     const defaults: Record<string, unknown> = {
         '/api/v1/rbac/groups': { groups: GROUPS },
-        '/api/v1/connections': { connections: CONNECTIONS },
+        // The server returns a bare JSON array of connections (see
+        // connection_handlers.go). The fixture must mirror that shape;
+        // a wrapped `{ connections: [...] }` object would mask the
+        // issue #309 regression where the parent decoded the wrong shape.
+        '/api/v1/connections': CONNECTIONS,
     };
     const routes = { ...defaults, ...overrides };
     mockApiGet.mockImplementation((url: string) => {
@@ -521,7 +525,7 @@ describe('AdminGroups', () => {
                     return Promise.resolve({ groups: GROUPS });
                 }
                 if (url === '/api/v1/connections') {
-                    return Promise.resolve({ connections: CONNECTIONS });
+                    return Promise.resolve(CONNECTIONS);
                 }
                 if (url.startsWith('/api/v1/rbac/groups/1/effective')) {
                     return Promise.reject(new Error('perm fail'));
@@ -785,7 +789,7 @@ describe('AdminGroups', () => {
                     return Promise.resolve({ groups: GROUPS });
                 }
                 if (url === '/api/v1/connections') {
-                    return Promise.resolve({ connections: CONNECTIONS });
+                    return Promise.resolve(CONNECTIONS);
                 }
                 if (url === '/api/v1/rbac/groups/1') {
                     return Promise.resolve({

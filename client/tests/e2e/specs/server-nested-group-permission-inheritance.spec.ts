@@ -332,7 +332,17 @@ test.describe('Nested Group Permission Inheritance', () => {
         });
 
         await test.step('Phase 5: remove child group from parent via GUI', async () => {
+            // Wait for the DELETE /members API response before navigating
+            // away; without this the browser cancels the in-flight request
+            // and the membership remains intact in the backend.
+            const responsePromise = page.waitForResponse(
+                (resp) =>
+                    resp.url().includes('/members') &&
+                    resp.request().method() === 'DELETE',
+                { timeout: 10_000 },
+            );
             await groupPage.removeMember(childGroupName);
+            await responsePromise;
             await groupPage.expectMemberNotInList(childGroupName);
         });
 
@@ -350,8 +360,14 @@ test.describe('Nested Group Permission Inheritance', () => {
         });
 
         await test.step('Phase 6: server tree is empty', async () => {
+            // Navigate explicitly to '/' before checking. In Phase 3 the
+            // test selected a server (changing the URL to a server-specific
+            // path); Firefox may resume at that URL after re-login rather
+            // than '/', which can delay or prevent the "no servers" empty
+            // state from rendering. goto('/') forces a fresh root load.
+            await page.goto('/');
             await page.waitForLoadState('load');
-            await navigator.expectEmptyServerTree();
+            await navigator.expectEmptyServerTree(30_000);
         });
 
         await test.step('Phase 6: admin panel shows no admin sections', async () => {
@@ -384,10 +400,13 @@ test.describe('Nested Group Permission Inheritance', () => {
 
         if (aiEnabled) {
             await test.step('Phase 6 (AI): Ellie denies connection tools after revocation', async () => {
+                // Do NOT call waitForResponse: after revocation with no
+                // server selected, the chat panel may unmount the input
+                // element once Ellie responds, causing waitForResponse
+                // ("element not found") to fail in WebKit. Poll body text.
                 await chatPage.openChat();
                 await chatPage.sendMessage('List the available connections.');
-                await chatPage.waitForResponse(60_000);
-                await chatPage.expectErrorResponse(15_000);
+                await chatPage.expectErrorResponse(75_000);
             });
         }
     });

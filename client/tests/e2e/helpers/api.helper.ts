@@ -523,6 +523,36 @@ export class ApiHelper {
     }
 
     // -----------------------------------------------------------
+    // User privileges (for RBAC scope tests)
+    // -----------------------------------------------------------
+
+    async getUserPrivileges(
+        cookie: string,
+        userId: number,
+    ): Promise<{
+        username: string;
+        is_superuser: boolean;
+        groups: string[];
+        mcp_privileges: string[];
+        connection_privileges: Record<string, string>;
+        admin_permissions: string[];
+    }> {
+        return this.request<{
+            username: string;
+            is_superuser: boolean;
+            groups: string[];
+            mcp_privileges: string[];
+            connection_privileges: Record<string, string>;
+            admin_permissions: string[];
+        }>(
+            'GET',
+            `/api/v1/rbac/users/${userId}/privileges`,
+            undefined,
+            { cookie },
+        );
+    }
+
+    // -----------------------------------------------------------
     // MCP tool invocation (for scope enforcement tests)
     // -----------------------------------------------------------
 

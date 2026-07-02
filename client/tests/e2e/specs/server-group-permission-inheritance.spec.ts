@@ -389,8 +389,14 @@ test.describe('Group Permission Inheritance', () => {
         });
 
         await test.step('Phase 6: server tree is empty', async () => {
+            // Navigate explicitly to '/' before checking. In Phase 3 the
+            // test selected a server (changing the URL to a server-specific
+            // path); Firefox may resume at that URL after re-login rather
+            // than '/', which can delay or prevent the "no servers" empty
+            // state from rendering. goto('/') forces a fresh root load.
+            await page.goto('/');
             await page.waitForLoadState('load');
-            await navigator.expectEmptyServerTree();
+            await navigator.expectEmptyServerTree(30_000);
         });
 
         await test.step('Phase 6: admin panel shows no admin sections', async () => {
@@ -455,10 +461,17 @@ test.describe('Group Permission Inheritance', () => {
                 // tool call that requires a connection privilege — Ellie
                 // should respond with an error because no connections are
                 // accessible to this user anymore.
+                //
+                // Do NOT call waitForResponse here: after revocation the
+                // user has no server selected, and the chat panel may
+                // unmount the input element when the LLM responds, causing
+                // waitForResponse ("element not found") to time out.
+                // Poll body text directly instead — expectErrorResponse
+                // uses document.body.innerText which works regardless of
+                // whether the chat input remains in the DOM.
                 await chatPage.openChat();
                 await chatPage.sendMessage('List the available connections.');
-                await chatPage.waitForResponse(60_000);
-                await chatPage.expectErrorResponse(15_000);
+                await chatPage.expectErrorResponse(75_000);
             });
         }
     });

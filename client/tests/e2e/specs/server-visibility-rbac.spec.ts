@@ -217,12 +217,12 @@ test.describe('Server Visibility and Ask Ellie RBAC', () => {
                 await chatPage.sendMessage('List all connections');
             });
 
-            await test.step('Ellie: wait for response', async () => {
-                await chatPage.waitForResponse(30_000);
-            });
-
             await test.step('Ellie: verify authorization error or empty result', async () => {
-                await chatPage.expectErrorResponse(10_000);
+                // Do NOT call waitForResponse here: when Ellie responds
+                // with an error the chat panel may unmount the input
+                // element, causing waitForResponse ("element not found")
+                // to fail in Firefox and WebKit. Poll body text directly.
+                await chatPage.expectErrorResponse(75_000);
             });
         } else {
             await test.step('Ellie: skipped — AI not configured in this environment', async () => {

@@ -174,21 +174,29 @@ func (d *Datastore) CreateClusterGroupWithOwner(ctx context.Context, name string
 	return &g, nil
 }
 
-// UpdateClusterGroup updates an existing cluster group
-func (d *Datastore) UpdateClusterGroup(ctx context.Context, id int, name string, description *string) (*ClusterGroup, error) {
+// UpdateClusterGroup updates an existing cluster group. The name is always
+// applied; description and isShared use partial-update semantics so that a
+// nil pointer preserves the column's current value. This lets callers that
+// omit a field (for example the CLI, or an older client) leave it unchanged
+// rather than nulling it, which matters for the is_shared visibility flag
+// (issue #304). COALESCE keeps the current value when the argument is NULL.
+func (d *Datastore) UpdateClusterGroup(ctx context.Context, id int, name string, description *string, isShared *bool) (*ClusterGroup, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	query := `
         UPDATE cluster_groups
-        SET name = $2, description = $3, updated_at = CURRENT_TIMESTAMP
+        SET name = $2,
+            description = COALESCE($3, description),
+            is_shared = COALESCE($4, is_shared),
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         RETURNING id, name, description, owner_username, owner_token, is_shared,
                   created_at, updated_at
     `
 
 	var g ClusterGroup
-	err := d.pool.QueryRow(ctx, query, id, name, description).Scan(
+	err := d.pool.QueryRow(ctx, query, id, name, description, isShared).Scan(
 		&g.ID, &g.Name, &g.Description, &g.OwnerUsername, &g.OwnerToken,
 		&g.IsShared, &g.CreatedAt, &g.UpdatedAt,
 	)

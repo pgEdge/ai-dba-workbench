@@ -160,23 +160,39 @@ func TestClusterHandler_CreateClusterGroup_Issue207_DeniedSkipsDecode(t *testing
 // datastore deliberately panics if the handler reaches the datastore
 // call, so this test additionally proves the gate path returns to the
 // caller before any datastore work.
+//
+// Since issue #304, createClusterGroup also resolves the creating user
+// via the bearer token to record group ownership, so the request must
+// carry a valid session token in addition to the superuser context that
+// satisfies the admin gate. The token identifies the owner; the context
+// value drives HasAdminPermission.
 func TestClusterHandler_CreateClusterGroup_Issue207_SuperuserAllowed(t *testing.T) {
-	handler, _, cleanup := newIssue207Handler(t)
+	handler, store, cleanup := newIssue207Handler(t)
 	defer cleanup()
+
+	if err := store.CreateUser("issue207_super", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	token, _, err := store.AuthenticateUser("issue207_super", "Password1234")
+	if err != nil {
+		t.Fatalf("Failed to authenticate user: %v", err)
+	}
 
 	body, _ := json.Marshal(ClusterGroupRequest{Name: "AdminGroup"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
 	req = withSuperuser(req)
 	rec := httptest.NewRecorder()
 
 	defer func() {
 		// We intentionally allow a panic here: the nil datastore will
-		// blow up when the handler reaches CreateClusterGroup. The
-		// security contract we are testing is that the handler PASSES
-		// the gate (i.e., does NOT return 403). The integration tests
-		// against a real Postgres cover the success-write path.
+		// blow up when the handler reaches CreateClusterGroupWithOwner.
+		// The security contract we are testing is that the handler
+		// PASSES the gate (i.e., does NOT return 403) and resolves the
+		// owner (does NOT return 401). The integration tests against a
+		// real Postgres cover the success-write path.
 		_ = recover()
 	}()
 	handler.createClusterGroup(rec, req)

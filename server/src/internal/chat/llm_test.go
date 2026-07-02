@@ -397,3 +397,51 @@ func TestSystemPrompt_MentionsCheckpointerSplit(t *testing.T) {
 		}
 	}
 }
+
+// TestSystemPromptRestartGuidance guards the Workbench-component restart
+// guidance added for issue #329. A user asked Ellie how to restart the
+// collector and she hallucinated pgwatch commands; pgwatch is a separate,
+// competing product that appears nowhere in this codebase. The guidance
+// teaches Ellie the Workbench's own component names, that restart steps
+// depend on the deployment method, and that pgwatch is never the answer.
+func TestSystemPromptRestartGuidance(t *testing.T) {
+	// The Workbench's own component identifiers must be present so Ellie
+	// uses the correct binary and packaged service names.
+	for _, id := range []string{
+		"ai-dba-server", "ai-dba-collector", "ai-dba-alerter", "ai-dba-client",
+		"pgedge-ai-dba-server", "pgedge-ai-dba-collector", "pgedge-ai-dba-alerter",
+	} {
+		if !strings.Contains(SystemPrompt, id) {
+			t.Errorf("SystemPrompt should reference the Workbench component "+
+				"identifier %q", id)
+		}
+	}
+
+	// Restart guidance must be framed as deployment-dependent rather than a
+	// single hard-coded command.
+	if !strings.Contains(SystemPrompt, "deployment method") {
+		t.Error("SystemPrompt should explain that restart steps depend on " +
+			"the deployment method")
+	}
+
+	// The correct command shapes for each deployment method should appear.
+	for _, shape := range []string{
+		"systemctl restart pgedge-ai-dba-collector",
+		"docker compose restart collector",
+	} {
+		if !strings.Contains(SystemPrompt, shape) {
+			t.Errorf("SystemPrompt should give the restart command shape %q", shape)
+		}
+	}
+
+	// The hard prohibition against pgwatch must be present. The word pgwatch
+	// intentionally appears in the prohibition sentence, so assert the
+	// guidance is present and paired with a prohibition marker rather than
+	// asserting its absence.
+	if !strings.Contains(SystemPrompt, "pgwatch") {
+		t.Error("SystemPrompt should explicitly name pgwatch in its prohibition")
+	}
+	if !strings.Contains(SystemPrompt, "NEVER suggest, reference, or generate commands for pgwatch") {
+		t.Error("SystemPrompt should forbid ever suggesting pgwatch commands")
+	}
+}

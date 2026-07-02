@@ -49,6 +49,11 @@ project adheres to
   that a token grants the owner's privileges rather than all system
   privileges. (#323)
 
+- Ellie now gives correct, deployment-aware guidance for restarting
+  the Workbench's own components (server, collector, and alerter),
+  and no longer suggests commands for unrelated third-party tooling.
+  (#329)
+
 ### Fixed
 
 - Fix every chat request that included a tool list failing with

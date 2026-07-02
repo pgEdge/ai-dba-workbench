@@ -51,7 +51,7 @@ describe('tokenTypes', () => {
 
         it('exports ALL_ADMIN_OPTION with correct sentinel values', () => {
             expect(ALL_ADMIN_OPTION.id).toBe('*');
-            expect(ALL_ADMIN_OPTION.label).toBe('All Admin Permissions');
+            expect(ALL_ADMIN_OPTION.label).toBe("All the owner's admin permissions");
             expect(ALL_ADMIN_OPTION._isAll).toBe(true);
         });
     });

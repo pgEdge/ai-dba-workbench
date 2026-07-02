@@ -100,7 +100,7 @@ const AdminTokenScopes: React.FC = () => {
 
     const getMcpPrivilegeName = useCallback((id: number) => {
         if (id === -1) {
-            return 'All MCP Privileges';
+            return "All the owner's MCP privileges";
         }
         const priv = mcpPrivileges.find((p) => p.id === id);
         return priv ? priv.identifier : `Privilege ${id}`;

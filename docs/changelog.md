@@ -42,6 +42,13 @@ project adheres to
   named `kb-<provider>-<model>.db`, and the built-in default
   still points at the legacy `postgres-mcp-kb` path. (#293)
 
+- Relabel the token scope options in the API token create and edit
+  screens so they now read "All the owner's MCP privileges" and
+  "All the owner's admin permissions" rather than "All MCP
+  Privileges" and "All Admin Permissions"; the new wording clarifies
+  that a token grants the owner's privileges rather than all system
+  privileges. (#323)
+
 ### Fixed
 
 - Connection-privilege chips in the Admin Groups and Users panels

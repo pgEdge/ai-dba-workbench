@@ -531,7 +531,16 @@ func (d *Datastore) UpdateConnectionFull(ctx context.Context, id int, params Con
 		args = append(args, *params.Username)
 		argNum++
 	}
-	if params.Password != nil {
+	// On update, a nil, empty, or whitespace-only password means "keep the
+	// existing password unchanged"; we silently skip the password_encrypted
+	// column rather than overwriting it with an encrypted blank value. This
+	// mirrors the documented "leave blank to keep unchanged" client behavior,
+	// but is enforced here at the datastore layer as defense-in-depth so a
+	// direct API call with a blank password can never clobber the stored
+	// credential. A genuinely all-whitespace Postgres password is not a
+	// credible real-world case, so treating it as "keep unchanged" is the
+	// safer default.
+	if params.Password != nil && strings.TrimSpace(*params.Password) != "" {
 		if d.serverSecret == "" {
 			return nil, fmt.Errorf("server secret is required to encrypt password")
 		}

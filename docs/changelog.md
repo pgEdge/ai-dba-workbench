@@ -229,6 +229,15 @@ project adheres to
   512M; the collector connection-pool and timeout options are now
   documented in the sample configuration. (#308)
 
+### Security
+
+- Ignore a blank password when updating a database connection, so an
+  empty or whitespace-only password can no longer overwrite the stored
+  credential. The datastore now enforces the "leave blank to keep
+  unchanged" rule server-side as defence-in-depth, rather than relying
+  on the web client alone. The create path, which still requires a
+  non-empty password, is unaffected. (#332)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

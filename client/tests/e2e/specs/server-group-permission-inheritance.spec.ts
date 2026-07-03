@@ -339,11 +339,27 @@ test.describe('Group Permission Inheritance', () => {
                 }).toPass({ timeout: 15_000, intervals: [500] });
             });
 
-            await test.step('Phase 4 (AI): list standby databases — denied or empty', async () => {
+            await test.step('Phase 4 (AI): list standby databases — none accessible', async () => {
                 await chatPage.sendMessage('List the standby databases.');
                 await chatPage.waitForResponse(60_000);
-                // No standbys accessible — expect error or empty result
-                await chatPage.expectErrorResponse(15_000);
+                // The test user only has access to primary-node via RBAC.
+                // Ellie may respond with an explicit error/denial, or may
+                // answer from context that no standbys are visible. Either
+                // outcome is correct — the RBAC invariant is that specific
+                // standby node names must NOT appear in the response.
+                await expect(async () => {
+                    const text: string = await page.evaluate(
+                        () => document.body.innerText,
+                    );
+                    expect(
+                        text,
+                        'Ellie should not reveal standby-node-1 to a restricted user',
+                    ).not.toMatch(/standby-node-1/i);
+                    expect(
+                        text,
+                        'Ellie should not reveal standby-node-2 to a restricted user',
+                    ).not.toMatch(/standby-node-2/i);
+                }).toPass({ timeout: 15_000, intervals: [500] });
             });
 
             await test.step('Phase 4 (AI): count rows — succeeds with a number', async () => {

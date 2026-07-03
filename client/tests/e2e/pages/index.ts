@@ -18,3 +18,4 @@ export { ProbeManagementPage } from './ProbeManagementPage';
 export { AlertManagementPage } from './AlertManagementPage';
 export { NotificationChannelPage } from './NotificationChannelPage';
 export { ThemePage } from './ThemePage';
+export { MonitoringPage } from './MonitoringPage';

@@ -1,13 +1,8 @@
 # Dashboards
 
-The monitoring dashboards provide a hierarchical view of PostgreSQL database
+Monitoring dashboards provide a hierarchical view of PostgreSQL database
 health and performance. You can navigate through five levels of detail, from
 a fleet-wide estate overview down to individual database objects.
-
-If you have enabled an [AI provider](../../getting-started/configuration/enable_ai_mode.md),
-the Workbench displays an informational analysis (the `AI Overview`) of each
-dashboard that you visit. The overview includes recommended actions to help ensure that management
-issues receive attention as needed.
 
 ## Dashboard Hierarchy
 
@@ -17,16 +12,43 @@ elements within each dashboard to move between levels. The cluster navigator
 tree in the Workbench's left pane reflects the estate, cluster, server, and
 database hierarchy.
 
-- The [estate dashboard](estate.md) shows fleet-wide health across all
+- The [ESTATE DASHBOARD](estate.md) shows fleet-wide health across all
   monitored servers.
-- The [cluster dashboard](cluster.md) focuses on replication topology and
+- The [CLUSTER DASHBOARD](cluster.md) focuses on replication topology and
   comparative metrics across cluster members.
-- The [server dashboard](server.md) displays system resources and PostgreSQL
-  performance for a single server.
-- The [database dashboard](database.md) presents table and index leaderboards
-  with vacuum status for one database.
-- The [object dashboard](object.md) provides detailed metrics for a specific
-  table, index, or query.
+- The [SERVER DASHBOARD](server.md) displays system resources and
+  PostgreSQL performance for a single server.
+- The [DATABASE DASHBOARD](database.md) presents table and index
+  leaderboards with vacuum status for one database.
+- The [OBJECT DASHBOARD](object.md) provides detailed metrics for a
+  specific table, index, or query.
+
+## Using the Workbench with an AI Provider
+
+If you have enabled an [AI provider](../../getting-started/configuration/enable_ai_mode.md),
+the Workbench displays an informational analysis (the `AI Overview`) of each
+dashboard that you visit. The overview includes recommended actions to help
+ensure that management issues receive attention as needed.
+
+![Reviewing AI Overview](../images/estate_ai_overview.png)
+
+Select the `Ask Ellie` icon (located in the lower-right corner of the console)
+to open an interactive chat with Ellie.  Ellie uses your AI provider to
+provide help resolving issues with your servers, querying your database,
+understanding the console metrics, and more.
+
+![Using Ask Ellie](../images/ask_ellie.png)
+
+You can easily resize Ellie's pane within the Workbench console to make the
+view more usable; when you're done with Ellie, just click the `X` in the
+upper-right corner to close the pane.
+
+For a full rundown on what Ellie can help with, just ask Ellie:
+
+```
+What can Ask Ellie help with?
+```
+
 
 ## Using the Cluster Navigator
 

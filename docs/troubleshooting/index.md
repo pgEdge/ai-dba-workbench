@@ -27,6 +27,6 @@ workbench to get AI-powered help diagnosing and solving problems.
 The assistant queries your databases, analyzes metrics, and searches
 the pgEdge knowledge base on your behalf. Ask Ellie appears only
 when a valid LLM provider is configured; see
-[Enable AI Mode](../getting-started/configuration/enable_ai_mode.md)
+[Enable AI Mode](../user-guide/ai/index.md#enabling-ai-mode)
 to set one up. For full details, see
 [Ask Ellie](../user-guide/ai/ask-ellie.md).

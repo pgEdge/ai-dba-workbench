@@ -25,7 +25,6 @@
     - [Alerter](docs/getting-started/configuration/alerter.md)
     - [Web Client](docs/getting-started/configuration/client.md)
     - [Configuring systemd Services](docs/getting-started/configuration/configure_systemd.md)
-    - [Enabling AI Mode](docs/getting-started/configuration/enable_ai_mode.md)
 - User Guide:
   - [Using the Workbench](docs/user-guide/index.md)
   - Monitoring Dashboards:
@@ -41,7 +40,8 @@
     - [AI Alert Analysis](docs/user-guide/alerts/ai-analysis.md)
   - [Blackout Management](docs/user-guide/blackouts.md)
   - AI Features:
-    - [AI Overview](docs/user-guide/ai/overview.md)
+    - [AI Overview](docs/user-guide/ai/index.md)
+    - [Enabling AI Mode](docs/user-guide/ai/index.md#enabling-ai-mode)
     - [Ask Ellie](docs/user-guide/ai/ask-ellie.md)
     - [Connecting MCP Clients](docs/user-guide/ai/mcp-clients.md)
   - [MCP Tools](docs/user-guide/mcp-tools.md)

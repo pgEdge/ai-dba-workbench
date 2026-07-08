@@ -76,7 +76,6 @@ nav:
       - Alerter: getting-started/configuration/alerter.md
       - Web Client: getting-started/configuration/client.md
       - Configuring systemd Services: getting-started/configuration/configure_systemd.md
-      - Enabling AI Mode: getting-started/configuration/enable_ai_mode.md
 
   - User Guide:
     - Using the Workbench: user-guide/index.md
@@ -87,13 +86,17 @@ nav:
       - Server Dashboard: user-guide/dashboards/server.md
       - Database Dashboard: user-guide/dashboards/database.md
       - Object Dashboard: user-guide/dashboards/object.md
+    - Dashboard Conventions: user-guide/dashboard-conventions.md
+    - Query Plan: user-guide/query-plan.md
+    - Event Timeline: user-guide/event-timeline.md
+    - Server and Cluster Settings: user-guide/server-cluster-settings.md
     - Alerts:
       - Understanding Alerts: user-guide/alerts/index.md
       - Alert Reference: user-guide/alerts/rule-reference.md
       - AI Alert Analysis: user-guide/alerts/ai-analysis.md
     - Blackout Management: user-guide/blackouts.md
     - AI Features:
-      - AI Overview: user-guide/ai/overview.md
+      - AI Overview: user-guide/ai/index.md
       - Ask Ellie: user-guide/ai/ask-ellie.md
       - Connecting MCP Clients: user-guide/ai/mcp-clients.md
     - MCP Tools: user-guide/mcp-tools.md

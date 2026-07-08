@@ -6,10 +6,10 @@ navigator.
 
 ![Accessing the ESTATE OVERVIEW](../../images/open_estate_overview.png)
 
-If you have enabled AI, the `ESTATE Overview` displays the
-[AI Overview](../ai/overview.md). The Overview provides a concise, AI-powered
-summary of your database estate with notes about history and recommended
-actions to maintain system health.
+If you have configured AI for your Workbench, the `ESTATE Overview` displays
+the [AI Overview](../ai/overview.md). The Overview provides a concise,
+AI-powered summary of your database estate with notes about history and
+recommended actions to maintain system health.
 
 ![Reviewing the AI Overview](../../images/estate_ai_overview.png)
 
@@ -148,6 +148,8 @@ The pane includes the following tiles:
 - The `ACTIVE ALERTS` tile shows the total number of currently active alerts
   across all servers.
 
+![Reviewing the key performance indicators](../../images/estate_key_performance.png)
+
 ### Clusters
 
 The `Clusters` pane displays one tile for each cluster in the estate. Click a
@@ -166,3 +168,5 @@ Each cluster tile displays the following details:
   `primary: 1`, `binary_standby: 1`, and `spock: 1`.
 - An orange badge displays the active alert count when the cluster has active
   alerts.
+
+![Reviewing the estate's clusters](../../images/estate_clusters.png)

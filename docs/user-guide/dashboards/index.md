@@ -49,13 +49,14 @@ For a full rundown on what Ellie can help with, just ask Ellie:
 What can Ask Ellie help with?
 ```
 
-
 ## Using the Cluster Navigator
 
 The cluster navigator on the left side of the console provides tree-based
 navigation across groups, clusters, and individual servers. Select a node in
 the navigator to view dashboards, alerts, and AI insights for the selected
 resource.
+
+![Using the Cluster Navigator](../images/cluster_navigator.png)
 
 ## Reviewing Server Settings
 

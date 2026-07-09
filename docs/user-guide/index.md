@@ -31,28 +31,30 @@ navigate through detailed metrics and alerts, resolving issues that may arise.
 The cluster navigator occupies the left side of the console and provides
 tree-based navigation across groups, clusters, servers, and databases.
 Select a node in the navigator to review or update the dashboards, alerts, and
-AI insights for that scope. Hover over a server or cluster name to reveal a
+AI insights for that scope. 
+
+![The cluster navigator](../images/cluster_navigator.png)
+
+Hover over a server or cluster name to reveal a
 gear icon that opens the `Settings` dialog for the selected object, allowing
 you to review or modify connection details, cluster topology, alert overrides,
 probe configuration, and notification channels.
-
-Click a chevron within a pane to expand or collapse the pane. The Workbench
-retains the expanded or collapsed state across browser sessions.
 
 Several panes, including the `Navigation Pane`, the `Event Timeline`, the
 `Query Plan`, and the `AI Overview`, include a refresh icon. Use the
 refresh icon to force an immediate update instead of waiting for the pane's
 scheduled refresh.
 
-The Workbench includes the following additional interactive features:
+The Workbench console's graphic set includes the following additional
+interactive features:
 
 - Time range selectors, offering 1h, 6h, 24h, 7d, and 30d options,
-  appear on many panes to rescope the displayed data.
+  appear on some panes to rescope the displayed data.
 - Drillable elements let you navigate between dashboard levels; for
   example, clicking a database entry in Database Summaries opens the
   database dashboard, and clicking a server entry in Comparative Metrics
   opens the server dashboard.
-- The Hide monitoring queries toggle on the Top Queries pane filters out
+- The Hide monitoring queries toggle on the `Top Queries` pane filters out
   the Workbench's own monitoring queries.
 - Clicking a tile in the visual query plan diagram opens a popover with
   cost, row estimate, and filter details for that node.
@@ -83,6 +85,8 @@ Charts, KPI tiles, leaderboards, and the vacuum status panes each display a
 brain icon in the upper-right icon. Click the icon to open an analysis dialog
 and start the LLM analysis.
 
+![The introduction of a Chart Analysis](../images/chart_analysis_short.png)
+
 The analysis follows these steps:
 
 1. The Workbench checks for a cached analysis result.
@@ -91,27 +95,16 @@ The analysis follows these steps:
 4. The Workbench serializes the chart data and sends it to the LLM.
 5. The LLM returns a structured analysis report.
 
-The dialog displays a loading skeleton while the analysis runs. The final
-report renders as formatted markdown.
+The AI analysis renders as formatted markdown. Each chart analysis report contains a
+structured assessment that includes a summary and detailed recommendations.
+Trends and patterns for the metrics that are used to generate the graph or
+chart are also included in the report.
 
-### Analysis Reports
+Use the download icon in the upper-right corner of the dialog to download the
+analysis. The downloaded file is in markdown format, and includes the chart
+details, the full analysis report, and a generation timestamp.
 
-Each chart analysis report contains a structured assessment that includes:
-
-- The `Summary` section describes the alert and its impact on the monitored
-  service.
-- The `Analysis` section examines the alert pattern, historical context, and
-  root cause.
-- The `Remediation Steps` section provides step-by-step instructions for
-  resolving the issue.
-- The `Threshold Tuning` section recommends adjustments to alert thresholds
-  where applicable.
-- The `Recommendation` section suggests long-term improvements to prevent
-  recurrence.
-
-### Timeline Event Correlation
-
-The analysis includes timeline events from the chart's time range to identify
+The analysis includes events in the currently selected timeline to identify
 correlations between metric changes and system events. The LLM considers the
 following event types:
 
@@ -121,16 +114,14 @@ following event types:
 - Extension installations and upgrades.
 - Blackout periods and maintenance windows.
 
-### Running SQL Queries
+SQL code blocks included in the analysis report include a play button in the
+upper-right corner. Click the play button to execute the query against the
+chart's associated database server. Results appear inline below the code block.
 
-SQL code blocks in analysis reports include a play button in the upper right
-corner. Click the play button to execute the query against the chart's
-associated database server. Results appear inline below the code block.
+![Executing a Code Block](../images/execute_code_block.png)
 
 Write statements such as `ALTER SYSTEM` prompt a confirmation dialog before
 executing. Read-only queries execute immediately.
-
-### Caching
 
 The Workbench caches chart analysis results on the client side to avoid
 redundant LLM calls.
@@ -141,8 +132,3 @@ redundant LLM calls.
 - The cache expires after 30 minutes.
 - Click an amber brain icon to open the cached report instantly.
 
-### Downloading Reports
-
-The dialog footer includes a `Download` button that saves the analysis as a
-markdown file. The downloaded file includes the chart details, the full
-analysis report, and a generation timestamp.

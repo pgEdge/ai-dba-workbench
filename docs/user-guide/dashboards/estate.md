@@ -7,9 +7,9 @@ view the `ESTATE OVERVIEW`, select the top-level estate node in the
 ![Accessing the ESTATE OVERVIEW](../../images/open_estate_overview.png)
 
 If you have configured AI for your Workbench, the `ESTATE Overview` displays
-the [AI Overview](../ai/index.md). The Overview provides a concise,
-AI-powered summary of your database estate with notes about history and
-recommended actions to maintain system health.
+the [AI Overview](../ai/index.md) just below the header. The Overview provides
+a concise, AI-powered summary of your database estate with notes about history
+and recommended actions to maintain system health.
 
 ![Reviewing the AI Overview](../../images/ai_overview.png)
 
@@ -27,29 +27,27 @@ of the state of your servers:
 - The `CLUSTERS` tile shows the total number of clusters across the estate.
 - The `GROUPS` tile shows the total number of groups in the estate.
 
-## Event Timeline
+Below the status tiles, the `Event Timeline` displays a timeline with
+indicators that show monitored events that have occurred across the monitored
+servers. See [Event Timeline](../event-timeline.md) for details about using
+the time range selector, event type filters, and reviewing event details.
 
-The `Event Timeline` displays a timeline with indicators that show monitored
-events that have occurred across the monitored servers. See
-[Event Timeline](../event-timeline.md) for details on the time range selector,
-event type filters, and reviewing event details.
-
-The summary tiles below the event timeline provide a quick glance into the
-performance of your estate, selected server, or cluster. Hover over a chart or
-graph to review detailed information about a specific point in time for the
-selected metric.
+Tiles below the event timeline provide a quick glance into the performance of
+your selected estate, server, or cluster. Hover over a chart or graph to
+review detailed information about a specific point in time for the selected
+metric.
 
 ![Reviewing timeline tooltips](../../images/estate_performance_graphs.png)
 
-The section includes the following panels:
+The section includes the following charts and graphs:
 
-- The `XID Age` panel lists database and user pairs with their XID age
+- The `XID Age` chart lists database and user pairs with their XID age
   percentage, color-coded to indicate health.
-- The `Cache Hit Ratio` panel displays a headline worst-case ratio and a line
+- The `Cache Hit Ratio` graph displays a headline worst-case ratio and a line
   chart tracking the ratio across the selected time range.
-- The `Transactions` panel displays a dual-line time-series chart showing
+- The `Transactions` graph displays a dual-line time-series chart showing
   commit and rollback activity across the estate.
-- The `Checkpoints` panel displays a chart showing checkpoint activity across
+- The `Checkpoints` graph displays a chart showing checkpoint activity across
   the selected time range.
 
 ## Active Alerts
@@ -63,30 +61,31 @@ estate.
 
     If you've enabled AI in your cluster, you can use the `Analyze with AI`
     icon located at the right of each alert icon to open an AI session with
-    hints that will help resolve the alert.
+    Ellie that will help resolve the alert.
 
 See [Using Alerts](../alerts/index.md) for details on reviewing, acknowledging,
 and analyzing alerts, and for how to find an alert's acknowledgment reason or a
-past alert from the Event Timeline.
-
-
+past alert from the `Event Timeline`.
 
 ## Monitoring
 
 Panes within the `Monitoring` panel present an overview of the estate. See
-[Dashboard Conventions](index.md#time-range-selector) for details on the
-time range selector and expanding or collapsing panes.
+the [Time Range Selector](index.md#time-range-selector) section for details
+on rescoping data and expanding or collapsing panes.
 
 ### Health Overview
 
 The `Health Overview` pane summarizes server status and alert distribution
 across the estate. The left tile displays a donut chart labeled `Server Status`
-that groups servers by health category. The chart legend identifies the `OK`
-category in green, the `Warning` category in orange, and the `Offline` category
-in red.
+that groups servers by health category. The chart legend identifies the
+following categories:
+
+- The `OK` category appears in green.
+- The `Warning` category appears in orange.
+- The `Offline` category appears in red.
 
 The right tile displays an `Alert Distribution` chart that breaks down active
-alerts. When no alerts are active, the panel displays `No active alerts`. A
+alerts. When no alerts are active, the panel displays `No active alerts`. The
 brain icon in the top-right corner of the tile opens an
 [AI chart analysis](../ai/index.md#chart-and-kpi-tile-analysis) of the
 displayed data.
@@ -120,7 +119,7 @@ cluster.
 
 Each cluster tile displays the following details:
 
-- The cluster name identifies the cluster; example names include `development`,
+- The cluster name identifies the cluster; for example,  `development`,
   `management`, and `traffic`.
 - The server count shows the number of servers in the cluster, such as
   `1 server` or `2 servers`.

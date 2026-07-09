@@ -5,17 +5,17 @@ Select a server node in the
 [cluster navigator](index.md#using-the-cluster-navigator) to open the
 dashboard.
 
-## AI Overview
+If you have configured AI for your Workbench, the dashboard displays
+the [AI Overview](../ai/index.md) just below the header. The overview provides
+a concise, AI-powered summary of your object's health, with notes about history
+and recommended actions to maintain system health.
 
-The `AI Overview` pane presents a concise, AI-generated summary of the server's
-health and activity. See [Using AI Features](../ai/index.md) for details on
-the pane's behavior and the full-analysis dialog.
+![Reviewing the AI Overview](../../images/ai_overview.png)
 
-## Connection Details
+Below the AI Overview, a bar displays the connection properties used to
+connect to the server: 
 
-The connection details bar displays the server's connection parameters in a
-non-collapsible bar below the AI Overview. An info icon on the right side of
-the bar provides additional context.
+![Reviewing the connection properties](../../images/connection_properties.png)
 
 The bar displays the following details:
 
@@ -25,17 +25,41 @@ The bar displays the following details:
 - The `USER` field shows the user account used for the connection.
 - The `ROLE` field shows the server's replication role, such as `Primary`.
 
+Select the `info` icon (the small `i` at the right of the pane) to open an
+expanded information pane that details:
+
+- The header includes the server name after the `Server Information:` heading.
+- The `POSTGRESQL` section includes:
+
+    - The PostgreSQL version.
+    - The DATA directory location.
+    - The values currently assigned to the max_connections, max_wal_senders,
+      and max_replication_slots parameters.
+
+- The `DATABASES` section includes details about each database that resides on
+  the server; the information includes the database name, size, and the
+  installed extensions and versions.
+
+- The `CONFIGURATION` section provides the current settings of a number of
+  parameters commonly used when tuning a database.
+
 ## Event Timeline
 
 The `Event Timeline` pane displays monitored events for the server. See
 [Event Timeline](../event-timeline.md) for details on the time range selector,
 event type filters, and reviewing event details.
 
-## Key Performance Indicators
+![Reviewing the event timeline](../../images/event_timeline.png)
+
+Hover over an event on the timeline to retrieve details about a point-in-time
+on the bar.
+
+![Reviewing an event](../../images/event_timeline_details.png)
 
 The `Key Performance Indicator` tiles sit below the event timeline and
-summarize server-wide metrics. Each tile presents a single value and displays
-`No data` when no data is available.
+summarize performance metrics for the selected server in charts and graphs.
+
+![Graph details](../../images/cluster_performance_graphs.png)
 
 The Workbench displays the following tiles:
 
@@ -44,10 +68,18 @@ The Workbench displays the following tiles:
 - The `TRANSACTIONS` tile shows the transaction rate for the server.
 - The `CHECKPOINTS` tile shows the checkpoint activity for the server.
 
+Highlight a point in time on a graph to display the graphed metrics at the
+selected time in a tooltip, or select the brain icon to perform an analysis
+of the graph.
+
+![Graph details](../../images/cluster_performance_graph_detail.png)
+
 ## Active Alerts
 
 The `Active Alerts` pane shows the alerts that are currently active for the
 server.
+
+![Reviewing an alert](../../images/active_alerts.png)
 
 See [Using Alerts](../alerts/index.md) for details on reviewing, acknowledging,
 and analyzing alerts, and for how to find an alert's acknowledgment reason or a
@@ -55,12 +87,10 @@ past alert from the Event Timeline.
 
 ## Monitoring
 
-The `Monitoring` pane presents detailed performance data for the server. See
-[Dashboard Conventions](index.md#time-range-selector) for details on the
-time range selector and expanding or collapsing panes.
+The `Monitoring` pane presents detailed performance data for the selected
+server; collapsible sub-panes group related metrics.
 
-The Monitoring pane contains three collapsible sub-panes that group related
-metrics.
+![Collapsible panes in the Monitoring section](../../images/monitoring_collapsed.png)
 
 ### System Resources
 
@@ -68,14 +98,19 @@ The `System Resources` sub-pane displays operating-system metrics for the host
 that runs the server. Four tiles summarize current resource usage, and each
 tile displays `--` when no data is available.
 
-The sub-pane includes the following tiles:
+![Monitoring System Resources](../../images/system_resources.png)
+
+The pane includes the following tiles:
 
 - The `CPU USAGE` tile shows the current processor utilization as a percentage.
 - The `MEMORY USAGE` tile shows the current memory utilization as a percentage.
 - The `DISK USAGE` tile shows the current disk utilization as a percentage.
 - The `LOAD AVERAGE` tile shows the current system load average.
 
-The sub-pane also displays the following time-series charts:
+Highlight a point on a bar graph for detailed metric about the point-in-time,
+or select the brain icon to perform an in-depth analysis.
+
+The pane also displays the following time-series charts and graphs:
 
 - The `CPU Usage Over Time` chart tracks processor utilization over the
   selected range.

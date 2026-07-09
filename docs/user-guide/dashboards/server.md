@@ -8,8 +8,8 @@ dashboard.
 ## AI Overview
 
 The `AI Overview` pane presents a concise, AI-generated summary of the server's
-health and activity. See [AI Overview](../ai/index.md) for details on the
-pane's behavior and the full-analysis dialog.
+health and activity. See [Using AI Features](../ai/index.md) for details on
+the pane's behavior and the full-analysis dialog.
 
 ## Connection Details
 
@@ -56,8 +56,8 @@ past alert from the Event Timeline.
 ## Monitoring
 
 The `Monitoring` pane presents detailed performance data for the server. See
-[Dashboard Conventions](../dashboard-conventions.md) for details on the time
-range selector and expanding or collapsing panes.
+[Dashboard Conventions](index.md#time-range-selector) for details on the
+time range selector and expanding or collapsing panes.
 
 The Monitoring pane contains three collapsible sub-panes that group related
 metrics.
@@ -164,3 +164,124 @@ reflects a single database context.
 The `Hide monitoring queries` toggle filters out the Workbench's own monitoring
 queries from the list. The toggle is on by default to focus on application
 queries.
+
+## Server Settings
+
+Each server node in the cluster navigator displays a gear icon when you
+hover over the node; click the gear icon to open the `Server Settings`
+dialog. The dialog organizes its settings into a horizontal tab bar, and
+`Cancel` and `Save` buttons at the bottom discard or retain your changes.
+
+### DETAILS Tab
+
+The `DETAILS` tab presents a form that defines how the Workbench identifies
+and connects to the server. The Name field is required and sets the display
+name for the server. The Description field is a multi-line text area that
+holds optional notes about the server.
+
+The `CONNECTION DETAILS` subsection specifies how the collector reaches the
+database. The subsection includes the following fields:
+
+- The `Host`, `Port`, `Maintenance Database`, and `Username` fields specify
+  the connection values for the selected server; all values are required.
+- The `Password` is optional; leave the field blank to keep the stored
+  password unchanged, or enter a new password to replace it.
+
+A collapsible `SSL SETTINGS` section appears below the connection fields and
+remains collapsed by default. Expand this section to configure encrypted
+connection options.
+
+The `OPTIONS` subsection includes two checkboxes:
+
+- The `Monitor this server` checkbox controls whether the collector gathers
+  metrics from the server.
+- The `Share with all users` checkbox makes the server visible to every user
+  of the Workbench.
+
+![Reviewing the Details tab of Server Settings](../../images/server_settings_details.png)
+
+### CLUSTER Tab
+
+The `CLUSTER` tab shows the server's current cluster assignment and role. The
+tab displays the following fields:
+
+- The `Cluster` field shows the name of the cluster the server belongs to,
+  such as "traffic".
+- The `Replication Type` field shows the replication technology used by the
+  cluster, such as "Spock".
+- The `Role` field shows the server's role within the cluster, or "Not
+  assigned" when the server has no assigned role.
+- The `Membership` field shows how the server joined the cluster, such as
+  "Manual", alongside a badge that repeats the membership type.
+
+Click the `Configure Cluster` button to open the cluster configuration dialog
+and manage the server's cluster membership.
+
+![Reviewing the Cluster tab of Server Settings](../../images/server_settings_cluster.png)
+
+### ALERT OVERRIDES Tab
+
+The `ALERT OVERRIDES` tab lets you tailor the alert rules for the selected
+server. A table lists the current rules and settings; each row describes one
+alert rule and its threshold. The table contains the following columns:
+
+- `Name` identifies the alert rule.
+- `Metric` names the metric the rule monitors.
+- `Condition` specifies the threshold that triggers the alert.
+- `Severity` indicates the alert level, such as "warning".
+- `Enabled` provides a toggle that activates or deactivates the rule for the
+  selected server.
+- `Actions` provides an edit (pencil) icon that opens the rule for adjustment.
+
+The Workbench groups the rows under category headers such as `AVAILABILITY`,
+`CONNECTIONS`, and `LOCKS`; additional categories appear as you scroll through
+the table. See [Alert Rules](../../admin-guide/alert-rules.md) for the full
+list of built-in rules and their default thresholds.
+
+![Reviewing the Alert Overrides tab of Server Settings](../../images/server_settings_alert_overrides.png)
+
+### PROBE CONFIGURATION Tab
+
+The `PROBE CONFIGURATION` tab controls the probes that collect metrics for the
+selected server. A table lists the current probes and their settings; each row
+describes one probe and its configuration. The table contains the following
+columns:
+
+- `Name` identifies the probe.
+- `Description` explains what the probe monitors.
+- `Enabled` provides a toggle that activates or deactivates the probe for the
+  selected server.
+- `Interval` specifies how often the probe collects data, in seconds.
+- `Retention` specifies how long the Workbench retains the probe's collected
+  data.
+- `Actions` provides an edit (pencil) icon that opens the probe for adjustment.
+
+The table scrolls to reveal additional probes below the visible rows. See
+[Probe Management](../../admin-guide/probes.md) for the full list of built-in
+probes and their scopes.
+
+![Reviewing the Probe Configuration tab of Server Settings](../../images/server_settings_probe_configuration.png)
+
+### NOTIFICATION CHANNELS Tab
+
+The `NOTIFICATION CHANNELS` tab manages the channels that deliver alert
+notifications for the selected server. A table lists the available channels
+and their settings; each row describes one channel and its current override
+state. The table contains the following columns:
+
+- `Name` identifies the notification channel.
+- `Type` shows the channel type, such as email, Slack, Mattermost, or webhook.
+- `Description` shows the channel's optional description.
+- `Estate Default` indicates whether the channel applies to all servers or
+  clusters by default.
+- `Enabled` provides a toggle that activates or deactivates the channel for
+  the selected server, overriding the estate default.
+- `Actions` provides controls for managing the channel's override for the
+  selected server.
+
+If you have not configured any notification channels, the tab displays the
+empty state "No notification channels found." See
+[Notification Channels](../../admin-guide/notification-channels.md) for the
+full list of supported channel types and how to configure them.
+
+![Reviewing the Notification Channels tab of Server Settings](../../images/server_settings_notification_channels.png)

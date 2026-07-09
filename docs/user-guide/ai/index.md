@@ -1,4 +1,4 @@
-# AI Overview
+# Using AI Features
 
 If you have enabled AI in your workbench instance, the `AI Overview` appears
 at the top of each object-related page in the console, above the status

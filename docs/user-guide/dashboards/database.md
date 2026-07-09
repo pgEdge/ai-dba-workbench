@@ -9,8 +9,8 @@ entry in the server dashboard summary tiles to open the dashboard.
 ## Performance Overview
 
 The `Performance Overview` pane summarizes database activity and current
-health. See [Dashboard Conventions](../dashboard-conventions.md) for details on
-the time range selector and expanding or collapsing panes.
+health. See [Dashboard Conventions](index.md#time-range-selector) for details
+on the time range selector and expanding or collapsing panes.
 
 The pane displays the following tiles:
 

@@ -1,4 +1,4 @@
-# Blackouts
+# Managing Blackouts
 
 Blackouts suppress alert notifications during planned maintenance windows.
 Administrators create blackouts to prevent false alerts while performing
@@ -118,7 +118,7 @@ their permissions.
 
 ## Related Documentation
 
-- [Alerts](alerts/index.md) describes the alert lifecycle and management
+- [Monitoring Alerts](index.md) describes the alert lifecycle and management
   features.
-- [Alert Rule Reference](alerts/rule-reference.md) lists all built-in alert
+- [Alert Rule Reference](rule-reference.md) lists all built-in alert
   rules.

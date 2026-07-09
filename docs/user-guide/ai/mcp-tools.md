@@ -1,4 +1,4 @@
-# MCP Tools and Resources
+# Using Workbench with MCP Tools
 
 The MCP server implements the Model Context Protocol, providing AI assistants
 with standardized access to PostgreSQL systems. Compatible MCP clients can use
@@ -100,6 +100,6 @@ curl -X POST http://localhost:8080/mcp/v1 \
 
 ## Related Documentation
 
-- [Ask Ellie](ai/ask-ellie.md) describes the built-in AI assistant that uses
+- [Ask Ellie](ask-ellie.md) describes the built-in AI assistant that uses
   these tools internally.
-- [AI Overview](ai/index.md) covers AI-powered summaries of database health.
+- [Using AI Features](index.md) covers AI-powered summaries of database health.

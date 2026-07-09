@@ -435,5 +435,5 @@ may be too low for the workload.
 
 Administrators can customize all built-in rules through per-connection
 overrides, which they configure through the admin panel. See the
-[Alerts](index.md) documentation for details on the alert lifecycle and
-management.
+[Monitoring Alerts](index.md) documentation for details on the alert
+lifecycle and management.

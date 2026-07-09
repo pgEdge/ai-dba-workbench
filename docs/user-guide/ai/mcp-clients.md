@@ -176,12 +176,12 @@ the URL is correct, and the token is valid.
 
 ## Available Tools
 
-The [MCP Tools](../mcp-tools.md) page documents the full list of tools and
-resources.
+The [Using Workbench with MCP Tools](mcp-tools.md) page documents the full
+list of tools and resources.
 
 ## Related Documentation
 
 - [Ask Ellie](ask-ellie.md) describes the built-in AI assistant that uses these
   tools internally.
-- [AI Overview](index.md) covers AI-powered summaries of database health and
-  status.
+- [Using AI Features](index.md) covers AI-powered summaries of database health
+  and status.

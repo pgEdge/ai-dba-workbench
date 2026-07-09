@@ -74,8 +74,8 @@ past alert from the Event Timeline.
 ## Monitoring
 
 Panes within the `Monitoring` panel present an overview of the estate. See
-[Dashboard Conventions](../dashboard-conventions.md) for details on the time
-range selector and expanding or collapsing panes.
+[Dashboard Conventions](index.md#time-range-selector) for details on the
+time range selector and expanding or collapsing panes.
 
 ### Health Overview
 

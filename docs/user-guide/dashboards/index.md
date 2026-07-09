@@ -1,4 +1,4 @@
-# Dashboards
+# Reviewing the Monitoring Dashboards
 
 Monitoring dashboards provide a hierarchical view of PostgreSQL database health
 and performance. You can navigate through five levels of detail, from a
@@ -29,7 +29,7 @@ If you have enabled an
 [AI provider](../ai/index.md#enabling-ai-mode), the Workbench
 displays an informational analysis of each dashboard that you visit, and an
 `Ask Ellie` chat assistant for interactive help. See
-[AI Overview](../ai/index.md) and [Ask Ellie](../ai/ask-ellie.md) for
+[Using AI Features](../ai/index.md) and [Ask Ellie](../ai/ask-ellie.md) for
 details.
 
 ## Using the Cluster Navigator
@@ -42,11 +42,32 @@ resource.
 
 ![Using the Cluster Navigator](../../images/cluster_navigator.png)
 
+## Expanding and Collapsing Panes
+
+Monitoring dashboards share a set of common UI conventions across their
+panes. Most panes display a chevron on the right side of the pane heading.
+Click the chevron to expand or collapse the pane.
+
+## Time Range Selector
+
+Many panes include a time range selector that lets you choose the period
+for the displayed metrics. The selector offers the following ranges:
+
+- `1h` displays the last one hour of data.
+- `6h` displays the last six hours of data.
+- `24h` displays the last twenty-four hours of data.
+- `7d` displays the last seven days of data.
+- `30d` displays the last thirty days of data.
+
+This selector is separate from the Event Timeline's own time range
+selector; see [Event Timeline](../event-timeline.md) for details on that
+selector and its event type filters.
+
 ## Reviewing Server and Cluster Settings
 
 Server nodes and clusters in the cluster navigator each display a gear icon
-when you hover over them. Click the gear icon to open the `Server Settings` or
-`Cluster Settings` dialog for that resource. See
-[Server and Cluster Settings](../server-cluster-settings.md) for details on
-each tab, including connection details, cluster topology, alert overrides,
-probe configuration, and notification channels.
+when you hover over them. Click the gear icon to open the settings dialog for
+that resource. See [Server Settings](server.md#server-settings) for the
+server dialog and [Cluster Settings](cluster.md#cluster-settings) for the
+cluster dialog; each topic covers connection details, cluster topology, alert
+overrides, probe configuration, and notification channels.

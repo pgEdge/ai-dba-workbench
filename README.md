@@ -28,25 +28,30 @@
 - User Guide:
   - [Using the Workbench](docs/user-guide/index.md)
   - Monitoring Dashboards:
-    - [Dashboard Overview](docs/user-guide/dashboards/index.md)
+    - [Reviewing the Monitoring Dashboards](docs/user-guide/dashboards/index.md)
     - [Estate Dashboard](docs/user-guide/dashboards/estate.md)
     - [Cluster Dashboard](docs/user-guide/dashboards/cluster.md)
     - [Server Dashboard](docs/user-guide/dashboards/server.md)
     - [Database Dashboard](docs/user-guide/dashboards/database.md)
     - [Object Dashboard](docs/user-guide/dashboards/object.md)
+  - [Query Plan](docs/user-guide/query-plan.md)
+  - [Event Timeline](docs/user-guide/event-timeline.md)
   - Alerts:
-    - [Understanding Alerts](docs/user-guide/alerts/index.md)
+    - [Monitoring Alerts](docs/user-guide/alerts/index.md)
     - [Alert Reference](docs/user-guide/alerts/rule-reference.md)
     - [AI Alert Analysis](docs/user-guide/alerts/ai-analysis.md)
-  - [Blackout Management](docs/user-guide/blackouts.md)
+    - [Managing Blackouts](docs/user-guide/alerts/blackouts.md)
   - AI Features:
-    - [AI Overview](docs/user-guide/ai/index.md)
-    - [Enabling AI Mode](docs/user-guide/ai/index.md#enabling-ai-mode)
+    - [Using AI Features](docs/user-guide/ai/index.md)
     - [Ask Ellie](docs/user-guide/ai/ask-ellie.md)
     - [Connecting MCP Clients](docs/user-guide/ai/mcp-clients.md)
-  - [MCP Tools](docs/user-guide/mcp-tools.md)
+    - [Using Workbench with MCP Tools](docs/user-guide/ai/mcp-tools.md)
+- Troubleshooting:
+  - [Overview](docs/troubleshooting/index.md)
+  - [Stale Server Status](docs/troubleshooting/stale-server-status.md)
 - Administrator's Guide:
   - [Overview](docs/admin-guide/index.md)
+  - [TLS & Reverse Proxy](docs/admin-guide/tls-and-reverse-proxy.md)
   - [Verifying the Health of Components](docs/admin-guide/verify_health.md)
   - [Users & Authentication](docs/admin-guide/authentication.md)
   - [Connection Management](docs/admin-guide/connections.md)
@@ -81,6 +86,8 @@
     - [Architecture](docs/developer-guide/server/architecture.md)
   - Client:
     - [Architecture](docs/developer-guide/client/architecture.md)
+  - End-to-End Testing:
+    - [Overview](docs/developer-guide/e2e/index.md)
   - Design:
     - [Node Role Probe](docs/developer-guide/design/node-role-probe.md)
 - [Changelog](docs/changelog.md)

@@ -1,4 +1,4 @@
-# Alerts
+# Monitoring Alerts
 
 The alert system monitors PostgreSQL metrics and notifies users when a metric
 exceeds its threshold or the alerter detects an anomaly. This guide explains
@@ -134,7 +134,7 @@ the alert.
 During an active blackout period, the alerter suppresses new alerts for the
 affected connection or database. Existing active alerts remain visible during a
 blackout; the blackout only prevents the alerter from creating new alerts. See
-[Blackouts](../blackouts.md) for details on maintenance windows.
+[Managing Blackouts](blackouts.md) for details on maintenance windows.
 
 ## Related Documentation
 

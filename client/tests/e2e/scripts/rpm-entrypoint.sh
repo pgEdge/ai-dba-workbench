@@ -28,9 +28,9 @@ mkdir -p "${LOG_DIR}"
 # -----------------------------------------------------------------------
 echo "[entrypoint] Installed pgEdge AI DBA packages:"
 if command -v rpm >/dev/null 2>&1; then
-    rpm -qa 'pgedge-ai*' | sort | sed 's/^/  /'
+    rpm -qa 'pgedge-ai-dba*' | sort | sed 's/^/  /'
 elif command -v dpkg >/dev/null 2>&1; then
-    dpkg -l 'pgedge-ai*' 2>/dev/null | awk 'NR>2 {print "  " $2, $3}'
+    dpkg -l 'pgedge-ai-dba*' 2>/dev/null | awk 'NR>2 {print "  " $2, $3}'
 else
     echo "  [entrypoint] WARNING: No package manager found to query versions."
 fi

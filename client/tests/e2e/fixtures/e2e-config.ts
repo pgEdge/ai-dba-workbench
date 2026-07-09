@@ -16,7 +16,7 @@ export type InstallMode = 'docker' | 'rpm';
 export type RepoChannel = 'staging' | 'release';
 
 export const VALID_PLATFORM_IMAGES = [
-    'rocky9', 'rocky10', 'rhel9', 'rhel10', 'debian12', 'ubuntu22',
+    'rocky9', 'rocky10', 'rhel9', 'rhel10', 'debian12', 'ubuntu22', 'ubuntu26',
 ] as const;
 export type PlatformImage = typeof VALID_PLATFORM_IMAGES[number];
 
@@ -35,6 +35,7 @@ export const PLATFORM_BASE_IMAGES: Record<PlatformImage, string> = {
     rhel10:   'redhat/ubi10',
     debian12: 'debian:12',
     ubuntu22: 'ubuntu:22.04',
+    ubuntu26: 'ubuntu:26.04',
 };
 
 /** Load, merge, and validate E2E configuration. */

@@ -175,7 +175,7 @@ export class ChatPage extends BasePage {
         // phrasing like "having trouble connecting" or "network issue"
         // that indicate the assistant could not complete the operation.
         const errorPattern =
-            /the model attempted to call|permission|authorized|forbidden|access denied|not allowed|403|401|unauthorized|error|denied|cannot|unable|trouble|issue|failed|problem/i;
+            /the model attempted to call|permission|authorized|forbidden|access denied|not allowed|403|401|unauthorized|error|denied|cannot|can't|unable|don't have a tool|trouble|issue|failed|problem/i;
 
         await expect(async () => {
             // innerText gives only visible, rendered text — no HTML

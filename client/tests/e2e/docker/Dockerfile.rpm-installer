@@ -5,8 +5,11 @@
 # workbench services (server, collector, alerter, nginx client).
 #
 # Build args:
-#   BASE_IMAGE    - Target OS image (default: rockylinux:9)
-#   REPO_CHANNEL  - Repository channel: staging | release (default: release)
+#   BASE_IMAGE              - Target OS image (default: rockylinux:9)
+#   REPO_CHANNEL            - Repository channel: staging | release (default: release)
+#   E2E_EMBEDDING_MODEL     - Embedding model (e.g. voyage-3, text-embedding-3-small)
+#                             When set, the matching pgedge-ai-kb-* package is installed.
+#                             When unset, KB installation is skipped.
 #
 # Build example:
 #   docker build \
@@ -61,11 +64,40 @@ RUN if command -v dnf >/dev/null 2>&1; then \
 # Install pgEdge AI DBA Workbench packages
 # -----------------------------------------------------------------------
 RUN if command -v dnf >/dev/null 2>&1; then \
-        dnf install -y --nogpgcheck 'pgedge-ai*' && dnf clean all; \
+        dnf install -y --nogpgcheck 'pgedge-ai-dba*' && dnf clean all; \
     elif command -v apt-get >/dev/null 2>&1; then \
         apt-get update && \
-        apt-get install -y 'pgedge-ai*' && \
+        apt-get install -y 'pgedge-ai-dba*' && \
         rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# -----------------------------------------------------------------------
+# Install KB package for the configured embedding model (optional).
+# The package is resolved from the model name alone — model names are
+# globally unique across providers so no provider arg is needed.
+# When E2E_EMBEDDING_MODEL is unset, KB installation is skipped.
+# -----------------------------------------------------------------------
+ARG E2E_EMBEDDING_MODEL
+
+RUN case "${E2E_EMBEDDING_MODEL:-}" in \
+        voyage-3)                KB_PKG="pgedge-ai-kb-voyage-voyage-3" ;; \
+        text-embedding-3-small)  KB_PKG="pgedge-ai-kb-openai-text-embedding-3-small" ;; \
+        gemini-embedding-001)    KB_PKG="pgedge-ai-kb-gemini-gemini-embedding-001" ;; \
+        nomic-embed-text)        KB_PKG="pgedge-ai-kb-ollama-nomic-embed-text" ;; \
+        "")                      KB_PKG="" ;; \
+        *)                       echo "[build] WARNING: Unknown embedding model '${E2E_EMBEDDING_MODEL}' — skipping KB package."; KB_PKG="" ;; \
+    esac; \
+    if [ -n "${KB_PKG}" ]; then \
+        echo "[build] Installing KB package: ${KB_PKG}"; \
+        if command -v dnf >/dev/null 2>&1; then \
+            dnf install -y --nogpgcheck "${KB_PKG}" && dnf clean all; \
+        elif command -v apt-get >/dev/null 2>&1; then \
+            apt-get update && \
+            apt-get install -y "${KB_PKG}" && \
+            rm -rf /var/lib/apt/lists/*; \
+        fi; \
+    else \
+        echo "[build] E2E_EMBEDDING_MODEL not set — skipping KB package installation."; \
     fi
 
 # Create data directory used by ai-dba-server.

@@ -21,6 +21,7 @@ on:
                 type: choice
                 options:
                     - ubuntu22
+                    - ubuntu26
                     - debian12
                     - rocky9
                     - rocky10

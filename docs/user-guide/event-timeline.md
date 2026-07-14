@@ -1,4 +1,4 @@
-# Event Timeline
+# Using the Event Timeline
 
 The Event Timeline displays a timeline with indicators that show monitored
 events that have occurred within the selected time range. The Event Timeline

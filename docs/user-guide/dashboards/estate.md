@@ -1,4 +1,4 @@
-# ESTATE OVERVIEW Dashboard
+# Estate Dashboard
 
 The `ESTATE OVERVIEW` presents a fleet-wide health assessment at a glance. To
 view the `ESTATE OVERVIEW`, select the top-level estate node in the

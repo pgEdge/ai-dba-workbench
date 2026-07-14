@@ -1,19 +1,19 @@
 # Server Dashboard
 
-The server dashboard provides detailed metrics for a single PostgreSQL server.
+The SERVER dashboard provides detailed metrics for a single PostgreSQL server.
 Select a server node in the
 [cluster navigator](index.md#using-the-cluster-navigator) to open the
 dashboard.
 
 If you have configured AI for your Workbench, the dashboard displays
 the [AI Overview](../ai/index.md) just below the header. The overview provides
-a concise, AI-powered summary of your object's health, with notes about history
+a concise, AI-powered summary of your server's health, with notes about history
 and recommended actions to maintain system health.
 
 ![Reviewing the AI Overview](../../images/ai_overview.png)
 
 Below the AI Overview, a bar displays the connection properties used to
-connect to the server: 
+connect to the server:
 
 ![Reviewing the connection properties](../../images/connection_properties.png)
 
@@ -200,7 +200,8 @@ The `Hide monitoring queries` toggle filters out the Workbench's own monitoring
 queries from the list. The toggle is on by default to focus on application
 queries.
 
-## Server Settings
+
+## Reviewing Server Settings
 
 Each server node in the cluster navigator displays a gear icon when you
 hover over the node; click the gear icon to open the `Server Settings`

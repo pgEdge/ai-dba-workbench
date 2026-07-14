@@ -1,4 +1,4 @@
-# Alert Rule Reference
+# Alert Reference
 
 This document lists all built-in alert rules included with the alerter. Each
 rule monitors a specific PostgreSQL metric and triggers an alert when the

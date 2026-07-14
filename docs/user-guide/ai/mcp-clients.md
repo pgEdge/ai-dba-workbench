@@ -1,4 +1,4 @@
-# Connecting an MCP Client
+# Connecting MCP Clients
 
 Any MCP-compatible AI tool can connect to the Workbench's MCP server endpoint.
 External clients gain access to the same tools and resources that power the

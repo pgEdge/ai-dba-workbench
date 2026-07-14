@@ -1,4 +1,4 @@
-# Reviewing the Monitoring Dashboards
+# Reviewing the Dashboards
 
 Monitoring dashboards provide a hierarchical view of PostgreSQL database health
 and performance. You can navigate through five levels of detail, from a

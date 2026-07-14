@@ -1,4 +1,4 @@
-# Query Plan
+# Understanding the Query Plan
 
 The query plan section displays in the query detail view of the object
 dashboard, below the AI Overview panel. The section defaults to expanded, and

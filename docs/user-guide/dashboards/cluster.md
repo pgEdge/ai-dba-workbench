@@ -11,18 +11,27 @@ and recommended actions to maintain system health.
 
 ![Reviewing the AI Overview](../../images/ai_overview.png)
 
+Tiles below the heading of the CLUSTER dashboard provide an at-a-glance overview
+of the state of your cluster:
 
-## Event Timeline
+![Reviewing the state of your cluster](../../images/cluster_state.png)
 
-The `Event Timeline` pane displays monitored events for the servers in the
-cluster. See [Event Timeline](../event-timeline.md) for details on the time
-range selector, event type filters, and reviewing event details.
+- The `OK` tile (green) shows the count of servers that conform to all
+  configured alert thresholds.
+- The `WARNING` tile (orange) shows the count of servers with one or more
+  active threshold violations.
+- The `OFFLINE` tile (red) shows the count of servers that the collector cannot
+  reach.
 
-## Key Performance Indicators
+Below the status tiles, the `Event Timeline` displays a timeline with
+indicators that show monitored events that have occurred across the monitored
+servers. See [Event Timeline](../event-timeline.md) for details about using
+the time range selector, event type filters, and reviewing event details.
 
-The `Key Performance Indicator` tiles sit below the event timeline and
-summarize cluster-wide metrics. Each tile presents a single value and displays
-`No data` when no data is available.
+Tiles below the event timeline provide a quick glance into the performance of
+your selected estate, server, or cluster. Hover over a chart or graph to
+review detailed information about a specific point in time for the selected
+metric.
 
 The Workbench displays the following tiles:
 
@@ -31,6 +40,8 @@ The Workbench displays the following tiles:
   cluster.
 - The `TRANSACTIONS` tile shows the transaction rate for the cluster.
 - The `CHECKPOINTS` tile shows the checkpoint activity for the cluster.
+
+![Reviewing cluster performance](../../images/cluster_performance_tiles.png)
 
 ## Active Alerts
 
@@ -67,29 +78,58 @@ different replication methods at a glance.
 ## Monitoring
 
 The `Monitoring` pane presents replication health and comparative performance
-data for the cluster. See [Dashboard Conventions](index.md#time-range-selector)
-for details on the time range selector and expanding or collapsing panes.
+data for the cluster. 
 
 ### Replication Lag
 
-The `Replication Lag` tile tracks replication lag over the selected time range
-for the replication relationships in the cluster. The tile presents the current
-lag values alongside a time-series chart.
+The `Replication Lag` pane tracks replication lag over the selected time
+range for the replication relationships in the cluster. Three tiles at the top
+of the panel present the current lag values in milliseconds; a time-series
+chart below the tiles plots the same metrics over the selected time range.
 
-When the Workbench detects no primary server, the tile displays the message
+The pane displays the following tiles:
+
+- The `WRITE LAG` tile shows the current write lag for the cluster in milliseconds.
+- The `FLUSH LAG` tile shows the current flush lag for the cluster in milliseconds.
+- The `REPLAY LAG` tile shows the current replay lag for the cluster in milliseconds.
+  
+The `Replication Lag Over Time` chart plots the write, flush, and replay lag
+metrics against a time axis; a legend identifies each line by color and label.
+
+![Reviewing replication lag](../../images/cluster_replication_lag.png)
+
+When the Workbench detects no primary server, the graphic displays the message
 `No primary server detected in this cluster.`
 
 ### Comparative Metrics
 
-The `Comparative Metrics` tile presents side-by-side metrics for all servers in
-the cluster. Use the tile to identify performance disparities between cluster
-members. Click a server entry to navigate to the [server dashboard](server.md)
-for that server.
+The `Comparative Metrics` pane presents side-by-side metrics for all servers               
+  in the cluster; use the pane to identify performance disparities between
+  cluster members. The pane arranges four bar charts in a grid, and each chart
+  plots one bar per server, labeled by server name along the x-axis.
 
-## Cluster Settings
+  The pane displays the following charts:
 
-Each cluster in the cluster navigator displays a gear icon when you hover
-over the cluster name; click the gear icon to open the `Cluster Settings`
+  - The `Transaction Rate (commits/sec)` chart shows the commit rate for each
+    server in the cluster.
+  - The `Cache Hit Ratio (%)` chart shows the buffer cache hit ratio for each
+    server in the cluster.
+  - The `Rollback Rate (%)` chart shows the transaction rollback rate for each
+    server in the cluster.
+  - The `Connection Count` chart shows the number of connections for each server
+    in the cluster.
+
+  Hover over a bar to display a tooltip with the server name and the metric's
+  value for that server. Click a server entry to navigate to the
+  [server dashboard](server.md) for that server.
+
+![Reviewing replication lag](../../images/cluster_comparative_metrics.png)
+
+
+## Reviewing Cluster Settings
+
+Each cluster or cluster node displays a gear icon when you hover
+over the object name; click the gear icon to open the `Cluster Settings`
 dialog. The dialog organizes its settings into a horizontal tab bar, and
 `Cancel` and `Save` buttons at the bottom discard or retain your changes.
 

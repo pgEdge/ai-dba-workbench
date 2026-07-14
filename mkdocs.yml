@@ -79,22 +79,22 @@ nav:
 
   - User Guide:
     - Using the Workbench: user-guide/index.md
-    - Monitoring Dashboards:
-      - Reviewing the Monitoring Dashboards: user-guide/dashboards/index.md
+    - Reviewing Dashboards:
+      - Reviewing the Dashboards: user-guide/dashboards/index.md
       - Estate Dashboard: user-guide/dashboards/estate.md
-      - Cluster Dashboard: user-guide/dashboards/cluster.md
       - Server Dashboard: user-guide/dashboards/server.md
+      - Cluster Dashboard: user-guide/dashboards/cluster.md
       - Database Dashboard: user-guide/dashboards/database.md
       - Object Dashboard: user-guide/dashboards/object.md
-    - Query Plan: user-guide/query-plan.md
-    - Event Timeline: user-guide/event-timeline.md
-    - Alerts:
+    - Understanding the Query Plan: user-guide/query-plan.md
+    - Using the Event Timeline: user-guide/event-timeline.md
+    - Managing Alerts:
       - Monitoring Alerts: user-guide/alerts/index.md
       - Alert Reference: user-guide/alerts/rule-reference.md
       - AI Alert Analysis: user-guide/alerts/ai-analysis.md
       - Managing Blackouts: user-guide/alerts/blackouts.md
-    - AI Features:
-      - Using AI Features: user-guide/ai/index.md
+    - Using AI Features:
+      - Enabling AI Features: user-guide/ai/index.md
       - Ask Ellie: user-guide/ai/ask-ellie.md
       - Connecting MCP Clients: user-guide/ai/mcp-clients.md
       - Using Workbench with MCP Tools: user-guide/ai/mcp-tools.md

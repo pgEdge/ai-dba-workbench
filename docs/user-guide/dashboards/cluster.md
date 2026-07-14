@@ -4,6 +4,8 @@ The CLUSTER dashboard focuses on replication health and comparative performance
 across cluster members. To view the cluster dashboard, select a cluster name in
 the [cluster navigator](index.md#using-the-cluster-navigator).
 
+![Reviewing the CLUSTER dashboard](../../images/cluster_dashboard.png)
+
 If you have configured AI for your Workbench, the dashboard displays
 the [AI Overview](../ai/index.md) just below the header. The overview provides
 a concise, AI-powered summary of your object's health, with notes about history

@@ -6,6 +6,8 @@ object. Select a database in the
 dashboard, then click a table, index, or query in the leaderboards to open the
 object dashboard.
 
+![Reviewing the Object dashboard](../../images/object_dashboard.png)
+
 ## Table Detail
 
 The table detail view displays the following metrics:

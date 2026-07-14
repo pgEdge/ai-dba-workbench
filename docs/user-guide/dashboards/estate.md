@@ -4,7 +4,7 @@ The `ESTATE OVERVIEW` presents a fleet-wide health assessment at a glance. To
 view the `ESTATE OVERVIEW`, select the top-level estate node in the
 [cluster navigator](index.md#using-the-cluster-navigator).
 
-![Accessing the ESTATE OVERVIEW](../../images/open_estate_overview.png)
+![Reviewing the ESTATE dashboard](../../images/estate_dashboard.png)
 
 If you have configured AI for your Workbench, the `ESTATE Overview` displays
 the [AI Overview](../ai/index.md) just below the header. The Overview provides

@@ -1,18 +1,18 @@
 # Database Dashboard
 
-The database dashboard presents detailed metrics for a single database. The
-dashboard opens as a modal dialog with an X in the corner to close it; the
-header shows the database name and the server name. Select a database in the
+The database dashboard presents detailed metrics for a single database. Select a database in the
 [cluster navigator](index.md#using-the-cluster-navigator) or click a database
 entry in the server dashboard summary tiles to open the dashboard.
+
+![Reviewing the database dashboard](../../images/database_dashboard.png)
+
+The header displays the database name and the server name; use the `X` in the upper-right
+corner to close the dashboard. 
 
 ## Performance Overview
 
 The `Performance Overview` pane summarizes database activity and current
-health. See the [Time Range Selector](index.md#time-range-selector) section
-for details on rescoping data and expanding or collapsing panes.
-
-The pane displays the following tiles:
+health. The pane displays the following tiles:
 
 - The `DATABASE SIZE` tile shows the total size of the database in a
   human-readable format.
@@ -20,6 +20,8 @@ The pane displays the following tiles:
 - The `TRANSACTIONS` tile shows the total combined commit and rollback count.
 - The `DEAD TUPLE RATIO` tile shows the dead tuple percentage across all
   tables.
+
+![Reviewing the Database Performance Overview](../../images/database_performance_overview.png)
 
 The pane also displays the following time-series charts:
 
@@ -48,6 +50,8 @@ Each row shows the fully qualified table name, a dead tuple count, a relative
 bar indicator, and a row count. Click a table entry to navigate to the
 [object dashboard](object.md) for that table.
 
+![Reviewing the Table Leaderboard](../../images/database_table_leaderboard.png)
+
 An [AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a brain icon sits beside
 the sort buttons. The analysis covers data across all sort categories for the
 listed tables.
@@ -66,6 +70,8 @@ The pane provides the following sort buttons:
 Each row shows the index name, the parent table name on a second line, a scan
 count, a relative bar indicator, and a read count. Click an index entry to
 navigate to the [object dashboard](object.md) for that index.
+
+![Reviewing the Index Leaderboard](../../images/database_index_leaderboard.png)
 
 An [AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a brain icon sits beside
 the sort buttons. The analysis covers data across all index metrics for the
@@ -86,6 +92,9 @@ The table includes the following columns:
 
 The pane displays aging timestamps in amber and red to indicate stale vacuum
 activity. The pane displays `Never` in red when vacuum has never run for a
-table; high `DEAD RATIO` values appear in bold red. An
-[AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a brain icon provides vacuum
+table; high `DEAD RATIO` values appear in bold red. 
+
+![Reviewing the Index Leaderboard](../../images/database_vacuum_status.png)
+
+An [AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a brain icon provides vacuum
 recommendations.

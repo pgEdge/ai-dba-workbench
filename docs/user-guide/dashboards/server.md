@@ -5,6 +5,8 @@ Select a server node in the
 [cluster navigator](index.md#using-the-cluster-navigator) to open the
 dashboard.
 
+![Reviewing the SERVER dashboard](../../images/server_dashboard.png)
+
 If you have configured AI for your Workbench, the dashboard displays
 the [AI Overview](../ai/index.md) just below the header. The overview provides
 a concise, AI-powered summary of your server's health, with notes about history
@@ -43,11 +45,10 @@ expanded information pane that details:
 - The `CONFIGURATION` section provides the current settings of a number of
   parameters commonly used when tuning a database.
 
-## Event Timeline
-
-The `Event Timeline` pane displays monitored events for the server. See
-[Event Timeline](../event-timeline.md) for details on the time range selector,
-event type filters, and reviewing event details.
+Below the status tiles, the `Event Timeline` displays a timeline with
+indicators that show monitored events that have occurred across the monitored
+servers. See [Event Timeline](../event-timeline.md) for details about using
+the time range selector, event type filters, and reviewing event details.
 
 ![Reviewing the event timeline](../../images/event_timeline.png)
 
@@ -59,7 +60,7 @@ on the bar.
 The `Key Performance Indicator` tiles sit below the event timeline and
 summarize performance metrics for the selected server in charts and graphs.
 
-![Graph details](../../images/cluster_performance_graphs.png)
+![Graph details](../../images/server_performance_graphs.png)
 
 The Workbench displays the following tiles:
 
@@ -71,8 +72,6 @@ The Workbench displays the following tiles:
 Highlight a point in time on a graph to display the graphed metrics at the
 selected time in a tooltip, or select the brain icon to perform an analysis
 of the graph.
-
-![Graph details](../../images/cluster_performance_graph_detail.png)
 
 ## Active Alerts
 

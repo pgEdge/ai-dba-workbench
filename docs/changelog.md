@@ -23,6 +23,7 @@ project adheres to
 
 ### Fixed
 
+<<<<<<< HEAD
 - Fix the metrics time-series API (`GET /api/v1/metrics/query`)
   silently returning an empty HTTP 200 response, which the web UI
   rendered as a generic "No data available" message, whenever a
@@ -46,6 +47,20 @@ project adheres to
   these parameters and returns the most recent raw stat rows as
   real column values, validating `order_by` against the table's
   known columns before use.
+
+- Fix the end-to-end test suite intermittently failing at the "Start
+  stack" step. The server logged "collector schema is at v2, server
+  requires at least v4" and then timed out waiting for its health
+  endpoint. The harness script that applies the collector schema
+  stopped the collector as soon as it observed any recorded schema
+  version. A poll that landed between two migrations killed the
+  collector mid-migration, leaving the datastore below the version the
+  server requires. The collector now accepts a
+  `--print-latest-schema-version` flag that reports the newest known
+  schema version without touching any database. The harness asks for
+  that target up front and waits for the datastore to reach it. This
+  change affects test infrastructure only and does not alter
+  application behavior.
 
 ## [1.0.0] - 2026-06-08
 

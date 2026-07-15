@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,6 +30,14 @@ var (
 	// Command line flags
 	configFile = flag.String("config", "", "Path to configuration file")
 	verbose    = flag.Bool("v", false, "Enable verbose logging")
+
+	// printSchemaVersion, when set, makes the collector print the newest
+	// datastore schema version it knows about and exit without touching
+	// the database. The e2e harness uses this to learn the version the
+	// collector will converge to so it can wait for every migration to
+	// finish rather than guessing at a hardcoded count.
+	printSchemaVersion = flag.Bool("print-latest-schema-version", false,
+		"Print the latest datastore schema version this collector knows about and exit")
 
 	// Datastore connection flags
 	pgHost         = flag.String("pg-host", "", "PostgreSQL server hostname or IP address")
@@ -45,6 +54,13 @@ var (
 
 func main() {
 	flag.Parse()
+
+	// Handle --print-latest-schema-version before any logging or
+	// datastore initialization so the number is the only thing written
+	// to stdout and the query needs no live database.
+	if maybePrintSchemaVersion(os.Stdout, *printSchemaVersion) {
+		return
+	}
 
 	// Initialize logger
 	logger.Init()
@@ -114,6 +130,23 @@ func main() {
 	logger.Info("Datastore connection pool closed")
 
 	logger.Startup("Collector stopped")
+}
+
+// maybePrintSchemaVersion writes the latest datastore schema version the
+// collector will converge to onto w and reports whether the caller
+// should exit early. When enabled is false it writes nothing and returns
+// false so main proceeds with normal startup.
+//
+// The logic lives here rather than inline in main so it can be unit-
+// tested without invoking the full daemon startup path. The version is
+// obtained from the schema manager's registered migrations, so it stays
+// correct automatically as new migrations are added.
+func maybePrintSchemaVersion(w io.Writer, enabled bool) bool {
+	if !enabled {
+		return false
+	}
+	fmt.Fprintln(w, database.NewSchemaManager().LatestVersion())
+	return true
 }
 
 // loadConfiguration loads configuration from file, environment, and command line.

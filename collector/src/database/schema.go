@@ -114,6 +114,27 @@ func NewSchemaManager() *SchemaManager {
 	return sm
 }
 
+// LatestVersion returns the highest migration version registered with
+// the schema manager. It reflects the newest schema the collector will
+// converge to once NewDatastore() has applied every pending migration,
+// so callers that need "the version the collector will end up at" can
+// read it without a live database connection or a running migration.
+//
+// The value is derived from the registered migrations, so it stays
+// correct automatically as new migrations are added; nothing needs to
+// track the count separately. It returns 0 when no migrations are
+// registered, which never happens for a SchemaManager built by
+// NewSchemaManager but keeps the helper safe for a zero-value receiver.
+func (sm *SchemaManager) LatestVersion() int {
+	latest := 0
+	for _, m := range sm.migrations {
+		if m.Version > latest {
+			latest = m.Version
+		}
+	}
+	return latest
+}
+
 // registerMigrations registers all available migrations
 func (sm *SchemaManager) registerMigrations() {
 	// Consolidated Migration #1

@@ -10,13 +10,16 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
@@ -315,6 +318,45 @@ func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
 	if cfg.GetServerSecret() != "auto-discovered-secret" {
 		t.Errorf("Secret: got %q, want auto-discovered-secret",
 			cfg.GetServerSecret())
+	}
+}
+
+// TestMaybePrintSchemaVersion_Enabled verifies that when the flag is
+// enabled the helper prints exactly the collector's latest schema
+// version (matching database.SchemaManager.LatestVersion) followed by a
+// newline, and reports that the caller should exit early.
+func TestMaybePrintSchemaVersion_Enabled(t *testing.T) {
+	var buf bytes.Buffer
+
+	if got := maybePrintSchemaVersion(&buf, true); !got {
+		t.Fatal("maybePrintSchemaVersion(enabled=true) = false, want true")
+	}
+
+	want := database.NewSchemaManager().LatestVersion()
+	printed := strings.TrimSpace(buf.String())
+	got, err := strconv.Atoi(printed)
+	if err != nil {
+		t.Fatalf("printed value %q is not an integer: %v", printed, err)
+	}
+	if got != want {
+		t.Errorf("printed version = %d, want %d", got, want)
+	}
+	if buf.String() != strconv.Itoa(want)+"\n" {
+		t.Errorf("output = %q, want %q", buf.String(), strconv.Itoa(want)+"\n")
+	}
+}
+
+// TestMaybePrintSchemaVersion_Disabled verifies that when the flag is
+// not set the helper writes nothing and tells the caller to continue
+// normal startup.
+func TestMaybePrintSchemaVersion_Disabled(t *testing.T) {
+	var buf bytes.Buffer
+
+	if got := maybePrintSchemaVersion(&buf, false); got {
+		t.Error("maybePrintSchemaVersion(enabled=false) = true, want false")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no output, got %q", buf.String())
 	}
 }
 

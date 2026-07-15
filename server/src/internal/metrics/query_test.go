@@ -10,6 +10,7 @@
 package metrics
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -399,6 +400,70 @@ func TestGetCoalescedSelectCols(t *testing.T) {
 			t.Errorf("interval col should use interval default, got %s", cols[1])
 		}
 	})
+}
+
+func TestResolveMetricValue(t *testing.T) {
+	t.Run("finite value is recorded as last known", func(t *testing.T) {
+		lastKnown := map[string]float64{}
+		val, ok := resolveMetricValue(float64(3.5), "1:cpu", lastKnown)
+		if !ok || val != 3.5 {
+			t.Fatalf("got (%v, %v), want (3.5, true)", val, ok)
+		}
+		if lastKnown["1:cpu"] != 3.5 {
+			t.Errorf("lastKnown not updated: %v", lastKnown["1:cpu"])
+		}
+	})
+
+	t.Run("null bucket with no prior value is skipped", func(t *testing.T) {
+		lastKnown := map[string]float64{}
+		_, ok := resolveMetricValue(nil, "1:cpu", lastKnown)
+		if ok {
+			t.Fatalf("expected skip for null with no prior value")
+		}
+		if _, exists := lastKnown["1:cpu"]; exists {
+			t.Errorf("lastKnown should not be populated by a skipped bucket")
+		}
+	})
+
+	t.Run("null bucket carries forward prior value", func(t *testing.T) {
+		lastKnown := map[string]float64{"1:cpu": 7.25}
+		val, ok := resolveMetricValue(nil, "1:cpu", lastKnown)
+		if !ok || val != 7.25 {
+			t.Fatalf("got (%v, %v), want (7.25, true)", val, ok)
+		}
+	})
+
+	nonFinite := []struct {
+		name string
+		in   float64
+	}{
+		{"NaN", math.NaN()},
+		{"+Inf", math.Inf(1)},
+		{"-Inf", math.Inf(-1)},
+	}
+	for _, nf := range nonFinite {
+		t.Run(nf.name+" with no prior value is skipped", func(t *testing.T) {
+			lastKnown := map[string]float64{}
+			_, ok := resolveMetricValue(nf.in, "1:cpu", lastKnown)
+			if ok {
+				t.Fatalf("expected %s to be skipped when no prior value", nf.name)
+			}
+			if _, exists := lastKnown["1:cpu"]; exists {
+				t.Errorf("%s must not poison lastKnown", nf.name)
+			}
+		})
+
+		t.Run(nf.name+" carries forward prior value", func(t *testing.T) {
+			lastKnown := map[string]float64{"1:cpu": 42}
+			val, ok := resolveMetricValue(nf.in, "1:cpu", lastKnown)
+			if !ok || val != 42 {
+				t.Fatalf("got (%v, %v), want (42, true)", val, ok)
+			}
+			if lastKnown["1:cpu"] != 42 {
+				t.Errorf("%s overwrote the last known good value: %v", nf.name, lastKnown["1:cpu"])
+			}
+		})
+	}
 }
 
 func TestToFloat64(t *testing.T) {

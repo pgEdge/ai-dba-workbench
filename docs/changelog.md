@@ -21,6 +21,22 @@ project adheres to
   package matching their chosen embedding provider and model, and
   set `database_path` themselves. (#316)
 
+### Fixed
+
+- Fix the metrics time-series API (`GET /api/v1/metrics/query`)
+  silently returning an empty HTTP 200 response, which the web UI
+  rendered as a generic "No data available" message, whenever a
+  monitored server's metric sample contained a NaN or Infinity value.
+  Go's JSON encoder cannot serialize non-finite floats, so the encode
+  failed silently after the response status had already been sent. The
+  query path now treats a non-finite sample the same way it already
+  treats a missing value from an underlying LEFT JOIN gap; the code
+  carries the last known good value forward when one exists and skips
+  the sample when none does, so a single bad reading degrades
+  gracefully instead of blanking the whole chart. A JSON-encoding
+  failure on this path is now logged loudly rather than silently
+  swallowed, so any future occurrence surfaces in the server logs.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

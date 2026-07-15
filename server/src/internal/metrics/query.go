@@ -12,6 +12,7 @@ package metrics
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -507,18 +508,10 @@ func QueryTimeSeries(
 			}
 
 			for i, col := range metricCols {
-				val, ok := toFloat64(values[i+1])
+				lkKey := fmt.Sprintf("%d:%s", connID, col)
+				val, ok := resolveMetricValue(values[i+1], lkKey, lastKnown)
 				if !ok {
-					// Empty bucket from LEFT JOIN gap - apply LOCF
-					lkKey := fmt.Sprintf("%d:%s", connID, col)
-					if prev, exists := lastKnown[lkKey]; exists {
-						val = prev
-					} else {
-						continue
-					}
-				} else {
-					lkKey := fmt.Sprintf("%d:%s", connID, col)
-					lastKnown[lkKey] = val
+					continue
 				}
 				key := seriesKey{metric: col, connectionID: connID}
 				dataMap[key] = append(dataMap[key], MetricDataPoint{
@@ -683,6 +676,31 @@ func QueryBaselines(
 	}
 
 	return result, nil
+}
+
+// resolveMetricValue converts a scanned bucket value into a plottable float,
+// applying last-observation-carried-forward (LOCF) for gaps. A gap is either a
+// NULL bucket produced by the LEFT JOIN or a non-finite sample (NaN/Inf).
+//
+// Non-finite samples must be treated as gaps rather than plotted: the
+// system_stats extension can emit NaN percentages from a 0/0 delta division,
+// and encoding/json cannot marshal NaN or Inf. Letting such a value through
+// would break the JSON response for every metric in the request, not just the
+// affected bucket. The second return value reports whether a point should be
+// appended; when false the caller skips the bucket.
+func resolveMetricValue(raw any, lkKey string, lastKnown map[string]float64) (float64, bool) {
+	val, ok := toFloat64(raw)
+	if ok && (math.IsNaN(val) || math.IsInf(val, 0)) {
+		ok = false
+	}
+	if !ok {
+		if prev, exists := lastKnown[lkKey]; exists {
+			return prev, true
+		}
+		return 0, false
+	}
+	lastKnown[lkKey] = val
+	return val, true
 }
 
 // toFloat64 converts a scanned database value to float64. It returns

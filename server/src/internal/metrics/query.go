@@ -26,6 +26,20 @@ type MetricFilters struct {
 	DatabaseColumn string // Resolved column name: "datname", "database_name", or ""
 	SchemaName     string
 	TableName      string
+	IndexName      string
+}
+
+// maxLatestRowLimit bounds the number of rows a latest-row query may
+// return, mirroring the bound-checking style applied to bucket counts.
+const maxLatestRowLimit = 100
+
+// latestRowInternalColumns lists bookkeeping columns excluded from
+// latest-row results because callers only need the collected metrics
+// and their dimension keys, not internal storage fields.
+var latestRowInternalColumns = map[string]bool{
+	"connection_id": true,
+	"collected_at":  true,
+	"inserted_at":   true,
 }
 
 // MetricDataPoint represents a single time-value pair in a metric series.
@@ -701,6 +715,310 @@ func resolveMetricValue(raw any, lkKey string, lastKnown map[string]float64) (fl
 	}
 	lastKnown[lkKey] = val
 	return val, true
+}
+
+// ValidateOrder normalizes and validates a sort direction. It accepts
+// "asc" or "desc" case-insensitively and defaults to "desc" when empty.
+func ValidateOrder(order string) (string, error) {
+	order = strings.ToLower(strings.TrimSpace(order))
+	if order == "" {
+		return "desc", nil
+	}
+	if order != "asc" && order != "desc" {
+		return "", fmt.Errorf("invalid order %q: must be asc or desc", order)
+	}
+	return order, nil
+}
+
+// ResolveOrderByColumn validates an order_by request against the
+// discovered metric columns of a probe table and returns the column to
+// sort by. An empty request defaults to collected_at.
+//
+// order_by is validated against the discovered columns here, before the
+// caller quotes it and interpolates it into an ORDER BY clause, because
+// PostgreSQL parameter placeholders cannot bind identifiers; only values
+// drawn from the trusted, discovered column set may reach the SQL text.
+func ResolveOrderByColumn(orderBy string, metricCols []string) (string, error) {
+	orderBy = strings.TrimSpace(orderBy)
+	if orderBy == "" || orderBy == "collected_at" {
+		return "collected_at", nil
+	}
+	for _, col := range metricCols {
+		if col == orderBy {
+			return orderBy, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"invalid order_by %q: must be a metric column of the probe or collected_at",
+		orderBy)
+}
+
+// GetProbeAllColumns discovers every column of a probe table in the
+// metrics schema, returning the column names in ordinal order and a map
+// from column name to its PostgreSQL data type.
+func GetProbeAllColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, map[string]string, error) {
+	query := `
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'metrics'
+            AND table_name = $1
+        ORDER BY ordinal_position
+    `
+
+	rows, err := pool.Query(ctx, query, probeName)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var allCols []string
+	colTypes := make(map[string]string)
+	for rows.Next() {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
+			return nil, nil, err
+		}
+		allCols = append(allCols, name)
+		colTypes[name] = dataType
+	}
+
+	return allCols, colTypes, rows.Err()
+}
+
+// buildLatestRowsQuery constructs a SQL statement that returns the most
+// recent rows of a probe table for the given connections and filters,
+// ordered by the validated orderCol and direction. collected_at DESC is
+// appended as a tiebreaker so equal-ranked rows favor the newest sample.
+func buildLatestRowsQuery(
+	probeName string,
+	outputCols []string,
+	connectionIDs []int,
+	filters MetricFilters,
+	orderCol string,
+	order string,
+	limit int,
+) (string, []any) {
+	var selectParts []string
+	for _, col := range outputCols {
+		selectParts = append(selectParts, QuoteIdentifier(col))
+	}
+
+	var whereClauses []string
+	var args []any
+	argNum := 1
+
+	var connPlaceholders []string
+	for _, id := range connectionIDs {
+		connPlaceholders = append(connPlaceholders, fmt.Sprintf("$%d", argNum))
+		args = append(args, id)
+		argNum++
+	}
+	whereClauses = append(whereClauses,
+		fmt.Sprintf("connection_id IN (%s)", strings.Join(connPlaceholders, ", ")))
+
+	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
+		args = append(args, filters.DatabaseName)
+		argNum++
+	}
+
+	if filters.SchemaName != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("schemaname = $%d", argNum))
+		args = append(args, filters.SchemaName)
+		argNum++
+	}
+
+	if filters.TableName != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("relname = $%d", argNum))
+		args = append(args, filters.TableName)
+		argNum++
+	}
+
+	if filters.IndexName != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("indexrelname = $%d", argNum))
+		args = append(args, filters.IndexName)
+		argNum++
+	}
+
+	query := fmt.Sprintf(`
+        SELECT %s
+        FROM metrics.%s
+        WHERE %s
+        ORDER BY %s %s, collected_at DESC
+        LIMIT $%d
+    `,
+		strings.Join(selectParts, ", "),
+		QuoteIdentifier(probeName),
+		strings.Join(whereClauses, " AND "),
+		QuoteIdentifier(orderCol),
+		order,
+		argNum,
+	)
+	args = append(args, limit)
+
+	return query, args
+}
+
+// QueryLatestRows returns the most recent rows of a probe table as flat
+// maps keyed by column name. Unlike QueryTimeSeries it produces raw row
+// objects rather than bucketed series, so dashboards can read individual
+// column values (including dimension and timestamp columns) directly.
+func QueryLatestRows(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	connectionIDs []int,
+	filters MetricFilters,
+	orderBy string,
+	order string,
+	limit int,
+) ([]map[string]any, error) {
+	if !IsValidIdentifier(probeName) {
+		return nil, fmt.Errorf("invalid probe name %q", probeName)
+	}
+
+	order, err := ValidateOrder(order)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(connectionIDs) == 0 {
+		return nil, fmt.Errorf("at least one connection ID is required")
+	}
+
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > maxLatestRowLimit {
+		limit = maxLatestRowLimit
+	}
+
+	var count int
+	existsQuery := `
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = 'metrics'
+            AND table_name = $1
+            AND table_type = 'BASE TABLE'
+    `
+	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
+		return nil, fmt.Errorf("failed to verify probe: %w", err)
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("probe %q not found", probeName)
+	}
+
+	metricCols, _, err := GetProbeMetricColumns(ctx, pool, probeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get probe columns: %w", err)
+	}
+
+	orderCol, err := ResolveOrderByColumn(orderBy, metricCols)
+	if err != nil {
+		return nil, err
+	}
+
+	allCols, _, err := GetProbeAllColumns(ctx, pool, probeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get probe columns: %w", err)
+	}
+
+	var outputCols []string
+	for _, col := range allCols {
+		if latestRowInternalColumns[col] {
+			continue
+		}
+		outputCols = append(outputCols, col)
+	}
+	if len(outputCols) == 0 {
+		return nil, fmt.Errorf("no columns found in probe %q", probeName)
+	}
+
+	if filters.DatabaseName != "" && filters.DatabaseColumn == "" {
+		dbCol, err := ResolveDatabaseColumn(ctx, pool, probeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve database column: %w", err)
+		}
+		filters.DatabaseColumn = dbCol
+	}
+
+	query, args := buildLatestRowsQuery(
+		probeName, outputCols, connectionIDs, filters, orderCol, order, limit)
+
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query latest rows: %w", err)
+	}
+	defer rows.Close()
+
+	var result []map[string]any
+	for rows.Next() {
+		values := make([]any, len(outputCols))
+		valuePtrs := make([]any, len(outputCols))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		row := make(map[string]any, len(outputCols))
+		for i, col := range outputCols {
+			row[col] = normalizeLatestValue(values[i])
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	if result == nil {
+		result = []map[string]any{}
+	}
+
+	return result, nil
+}
+
+// sanitizeFloat returns nil for non-finite floats. Go's encoding/json
+// cannot marshal NaN or +/-Inf and errors out on the whole payload, so
+// such values are dropped to null to keep the response well-formed.
+func sanitizeFloat(f float64) any {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil
+	}
+	return f
+}
+
+// normalizeLatestValue converts a scanned database value into a
+// JSON-friendly representation, applying non-finite float protection.
+func normalizeLatestValue(v any) any {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case float64:
+		return sanitizeFloat(val)
+	case float32:
+		return sanitizeFloat(float64(val))
+	case time.Time:
+		return val.Format(time.RFC3339)
+	case []byte:
+		return string(val)
+	case pgtype.Numeric:
+		f, ok := toFloat64(val)
+		if !ok {
+			return nil
+		}
+		return sanitizeFloat(f)
+	case pgtype.Interval:
+		f, ok := toFloat64(val)
+		if !ok {
+			return nil
+		}
+		return sanitizeFloat(f)
+	default:
+		return val
+	}
 }
 
 // toFloat64 converts a scanned database value to float64. It returns

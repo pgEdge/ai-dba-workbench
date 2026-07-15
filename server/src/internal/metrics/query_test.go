@@ -10,10 +10,14 @@
 package metrics
 
 import (
+	"context"
 	"math"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestParseTimeRange(t *testing.T) {
@@ -501,4 +505,300 @@ func TestToFloat64(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateOrder(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"asc", "asc", false},
+		{"desc", "desc", false},
+		{"ASC", "asc", false},
+		{"DESC", "desc", false},
+		{"  desc  ", "desc", false},
+		{"", "desc", false},
+		{"sideways", "", true},
+		{"asc; DROP TABLE", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := ValidateOrder(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateOrder(%q) expected error, got nil", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ValidateOrder(%q) unexpected error: %v", tt.input, err)
+			}
+			if got != tt.want {
+				t.Errorf("ValidateOrder(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveOrderByColumn(t *testing.T) {
+	metricCols := []string{"n_live_tup", "n_dead_tup", "seq_scan"}
+
+	t.Run("empty defaults to collected_at", func(t *testing.T) {
+		got, err := ResolveOrderByColumn("", metricCols)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "collected_at" {
+			t.Errorf("got %q, want collected_at", got)
+		}
+	})
+
+	t.Run("collected_at is accepted", func(t *testing.T) {
+		got, err := ResolveOrderByColumn("collected_at", metricCols)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "collected_at" {
+			t.Errorf("got %q, want collected_at", got)
+		}
+	})
+
+	t.Run("whitespace trimmed", func(t *testing.T) {
+		got, err := ResolveOrderByColumn("  n_live_tup  ", metricCols)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "n_live_tup" {
+			t.Errorf("got %q, want n_live_tup", got)
+		}
+	})
+
+	t.Run("valid metric column accepted", func(t *testing.T) {
+		got, err := ResolveOrderByColumn("seq_scan", metricCols)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "seq_scan" {
+			t.Errorf("got %q, want seq_scan", got)
+		}
+	})
+
+	t.Run("unknown column rejected", func(t *testing.T) {
+		_, err := ResolveOrderByColumn("not_a_column", metricCols)
+		if err == nil {
+			t.Fatal("expected error for unknown column")
+		}
+	})
+
+	t.Run("injection attempt rejected", func(t *testing.T) {
+		// A crafted ORDER BY payload must never resolve to a column; it is
+		// not in the discovered metric set, so it is rejected before any
+		// SQL text is built.
+		_, err := ResolveOrderByColumn("1; DROP TABLE metrics.pg_stat_all_tables", metricCols)
+		if err == nil {
+			t.Fatal("expected error for injection attempt")
+		}
+	})
+}
+
+func TestBuildLatestRowsQuery(t *testing.T) {
+	t.Run("connection filter and limit only", func(t *testing.T) {
+		query, args := buildLatestRowsQuery(
+			"pg_stat_all_tables",
+			[]string{"relname", "n_live_tup"},
+			[]int{1},
+			MetricFilters{},
+			"n_live_tup", "desc", 1,
+		)
+
+		if !strings.Contains(query, `metrics."pg_stat_all_tables"`) {
+			t.Error("query should reference the probe table")
+		}
+		if !strings.Contains(query, "connection_id IN ($1)") {
+			t.Error("query should filter by connection_id")
+		}
+		if !strings.Contains(query, `ORDER BY "n_live_tup" desc, collected_at DESC`) {
+			t.Errorf("query should order by quoted column then collected_at, got: %s", query)
+		}
+		if !strings.Contains(query, "LIMIT $2") {
+			t.Error("query should apply LIMIT placeholder")
+		}
+		if len(args) != 2 {
+			t.Fatalf("expected 2 args, got %d", len(args))
+		}
+		if args[0] != 1 || args[1] != 1 {
+			t.Errorf("unexpected args: %v", args)
+		}
+	})
+
+	t.Run("all filters applied", func(t *testing.T) {
+		query, args := buildLatestRowsQuery(
+			"pg_stat_all_indexes",
+			[]string{"indexrelname", "idx_scan"},
+			[]int{2, 3},
+			MetricFilters{
+				DatabaseName:   "northwind",
+				DatabaseColumn: "database_name",
+				SchemaName:     "public",
+				TableName:      "orders",
+				IndexName:      "orders_pkey",
+			},
+			"idx_scan", "asc", 5,
+		)
+
+		if !strings.Contains(query, "connection_id IN ($1, $2)") {
+			t.Error("query should list multiple connection placeholders")
+		}
+		if !strings.Contains(query, `"database_name" = $3`) {
+			t.Error("query should filter by database_name")
+		}
+		if !strings.Contains(query, "schemaname = $4") {
+			t.Error("query should filter by schemaname")
+		}
+		if !strings.Contains(query, "relname = $5") {
+			t.Error("query should filter by relname")
+		}
+		if !strings.Contains(query, "indexrelname = $6") {
+			t.Error("query should filter by indexrelname")
+		}
+		if !strings.Contains(query, `ORDER BY "idx_scan" asc, collected_at DESC`) {
+			t.Errorf("query should order by idx_scan asc, got: %s", query)
+		}
+		if !strings.Contains(query, "LIMIT $7") {
+			t.Error("query should apply LIMIT placeholder at $7")
+		}
+		// 2 connections + 4 filters + 1 limit
+		if len(args) != 7 {
+			t.Fatalf("expected 7 args, got %d", len(args))
+		}
+		if args[6] != 5 {
+			t.Errorf("expected limit arg 5, got %v", args[6])
+		}
+	})
+
+	t.Run("database filter skipped without resolved column", func(t *testing.T) {
+		query, args := buildLatestRowsQuery(
+			"pg_sys_cpu_info",
+			[]string{"cpu_user"},
+			[]int{1},
+			MetricFilters{DatabaseName: "northwind", DatabaseColumn: ""},
+			"collected_at", "desc", 1,
+		)
+
+		if strings.Contains(query, "database_name") || strings.Contains(query, "datname") {
+			t.Error("query should not filter by database when column unresolved")
+		}
+		// 1 connection + 1 limit only
+		if len(args) != 2 {
+			t.Fatalf("expected 2 args, got %d", len(args))
+		}
+	})
+}
+
+func TestQueryLatestRows_ValidationBeforeDB(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("invalid probe name", func(t *testing.T) {
+		_, err := QueryLatestRows(ctx, nil, "bad;name", []int{1},
+			MetricFilters{}, "", "desc", 1)
+		if err == nil {
+			t.Fatal("expected error for invalid probe name")
+		}
+	})
+
+	t.Run("invalid order", func(t *testing.T) {
+		_, err := QueryLatestRows(ctx, nil, "pg_stat_all_tables", []int{1},
+			MetricFilters{}, "", "sideways", 1)
+		if err == nil {
+			t.Fatal("expected error for invalid order")
+		}
+	})
+
+	t.Run("no connections", func(t *testing.T) {
+		_, err := QueryLatestRows(ctx, nil, "pg_stat_all_tables", nil,
+			MetricFilters{}, "", "desc", 1)
+		if err == nil {
+			t.Fatal("expected error for missing connections")
+		}
+	})
+}
+
+func TestSanitizeFloat(t *testing.T) {
+	if got := sanitizeFloat(1.5); got != 1.5 {
+		t.Errorf("sanitizeFloat(1.5) = %v, want 1.5", got)
+	}
+	if got := sanitizeFloat(math.NaN()); got != nil {
+		t.Errorf("sanitizeFloat(NaN) = %v, want nil", got)
+	}
+	if got := sanitizeFloat(math.Inf(1)); got != nil {
+		t.Errorf("sanitizeFloat(+Inf) = %v, want nil", got)
+	}
+	if got := sanitizeFloat(math.Inf(-1)); got != nil {
+		t.Errorf("sanitizeFloat(-Inf) = %v, want nil", got)
+	}
+}
+
+func TestNormalizeLatestValue(t *testing.T) {
+	ts := time.Date(2026, 7, 15, 10, 40, 47, 0, time.UTC)
+
+	tests := []struct {
+		name  string
+		input any
+		want  any
+	}{
+		{"nil", nil, nil},
+		{"int64", int64(1363), int64(1363)},
+		{"float64", float64(2.5), float64(2.5)},
+		{"float32", float32(2.5), float64(2.5)},
+		{"nan float", math.NaN(), nil},
+		{"inf float", math.Inf(1), nil},
+		{"string", "public", "public"},
+		{"bytes", []byte("orders"), "orders"},
+		{"time", ts, ts.Format(time.RFC3339)},
+		{"bool", true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeLatestValue(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeLatestValue(%v) = %v (%T), want %v (%T)",
+					tt.input, got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeLatestValue_PgtypeValues(t *testing.T) {
+	t.Run("valid numeric", func(t *testing.T) {
+		num := pgtype.Numeric{Int: big.NewInt(1363), Exp: 0, Valid: true}
+		got := normalizeLatestValue(num)
+		if got != float64(1363) {
+			t.Errorf("got %v, want 1363", got)
+		}
+	})
+
+	t.Run("null numeric", func(t *testing.T) {
+		got := normalizeLatestValue(pgtype.Numeric{Valid: false})
+		if got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
+
+	t.Run("valid interval", func(t *testing.T) {
+		iv := pgtype.Interval{Microseconds: 2_500_000, Valid: true}
+		got := normalizeLatestValue(iv)
+		if got != float64(2.5) {
+			t.Errorf("got %v, want 2.5", got)
+		}
+	})
+
+	t.Run("null interval treated as zero", func(t *testing.T) {
+		got := normalizeLatestValue(pgtype.Interval{Valid: false})
+		if got != float64(0) {
+			t.Errorf("got %v, want 0", got)
+		}
+	})
 }

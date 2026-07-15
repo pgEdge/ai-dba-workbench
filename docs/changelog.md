@@ -37,6 +37,16 @@ project adheres to
   failure on this path is now logged loudly rather than silently
   swallowed, so any future occurrence surfaces in the server logs.
 
+- Fix blank overview tiles and a Maintenance Info panel stuck on
+  "Never" in the Table and Index object-detail dashboards of the
+  web client. These panels requested the single most recent row of
+  stats through the `limit`, `order_by`, and `order` query
+  parameters, but the metrics API ignored those parameters and
+  returned time-bucketed chart data instead. The API now honors
+  these parameters and returns the most recent raw stat rows as
+  real column values, validating `order_by` against the table's
+  known columns before use.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

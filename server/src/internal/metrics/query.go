@@ -462,6 +462,20 @@ func rateAggExpr(aggregation string, idx int, outputName string) string {
 	return fmt.Sprintf("%s(rate_%d) AS %s", aggregation, idx, alias)
 }
 
+// ratioTupleExpr builds the bucket-level aggregation expression for one
+// tuple-count column feeding the dead-tuple ratio. Only "last" needs
+// distinct handling, mirroring rateAggExpr: it picks the latest sample's
+// value in the bucket so the ratio reflects the most recent live/dead
+// counts. Every other aggregation collapses the bucket with SUM, matching
+// the prior behavior.
+func ratioTupleExpr(aggregation, column string) string {
+	q := QuoteIdentifier(column)
+	if aggregation == "last" {
+		return fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1]", q)
+	}
+	return fmt.Sprintf("SUM(%s)", q)
+}
+
 // BuildDerivedMetricsQuery constructs a time-bucketed SQL query for the
 // derived metrics (per-second rates and the dead-tuple ratio) of a probe.
 // It shares the same bucketing, gap-filling (generate_series), filtering,
@@ -570,20 +584,22 @@ func BuildDerivedMetricsQuery(
 	if hasRatio {
 		// The ratio is expressed on a 0-100 percentage scale (not a 0-1
 		// fraction) to match what the client dashboards render.
+		liveExpr := ratioTupleExpr(aggregation, "n_live_tup")
+		deadExpr := ratioTupleExpr(aggregation, "n_dead_tup")
 		ctes = append(ctes, fmt.Sprintf(`
         ratio_buckets AS (
             SELECT
                 date_bin($1::interval, collected_at, $3) AS bucket_time,
-                CASE WHEN SUM(%[1]s) + SUM(%[2]s) = 0 THEN 0
-                     ELSE SUM(%[2]s)::float
-                          / (SUM(%[1]s) + SUM(%[2]s))::float * 100.0
+                CASE WHEN %[1]s + %[2]s = 0 THEN 0
+                     ELSE %[2]s::float
+                          / (%[1]s + %[2]s)::float * 100.0
                 END AS dead_tuple_ratio
             FROM metrics.%[3]s
             WHERE %[4]s
             GROUP BY date_bin($1::interval, collected_at, $3)
         )`,
-			QuoteIdentifier("n_live_tup"),
-			QuoteIdentifier("n_dead_tup"),
+			liveExpr,
+			deadExpr,
 			QuoteIdentifier(probeName),
 			whereSQL,
 		))
@@ -653,11 +669,20 @@ func classifyMetrics(
 	var derived []DerivedMetric
 	var outputOrder []string
 
+	// A repeated metric name would otherwise be scanned twice and emit
+	// duplicate data points under the same series key; silently drop the
+	// repeat rather than erroring, since the client's intent is unambiguous.
+	seen := make(map[string]struct{}, len(requestedMetrics))
+
 	for _, m := range requestedMetrics {
 		m = strings.TrimSpace(m)
 		if !IsValidIdentifier(m) {
 			return nil, nil, nil, fmt.Errorf("invalid metric name %q", m)
 		}
+		if _, exists := seen[m]; exists {
+			continue
+		}
+		seen[m] = struct{}{}
 
 		switch {
 		case available[m]:

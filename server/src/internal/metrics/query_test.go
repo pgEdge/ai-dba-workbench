@@ -945,6 +945,38 @@ func TestClassifyMetrics(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("duplicate metric names deduplicated", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			[]string{
+				"seq_scan", "seq_scan",
+				"idx_scan_per_sec", "idx_scan_per_sec",
+				"dead_tuple_ratio", "dead_tuple_ratio",
+			},
+			tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 1 || raw[0] != "seq_scan" {
+			t.Errorf("expected raw [seq_scan], got %v", raw)
+		}
+		if len(derived) != 2 {
+			t.Fatalf("expected 2 derived, got %d: %v", len(derived), derived)
+		}
+		if derived[0].OutputName != "idx_scan_per_sec" ||
+			derived[1].OutputName != "dead_tuple_ratio" {
+			t.Errorf("unexpected derived: %v", derived)
+		}
+		want := []string{"seq_scan", "idx_scan_per_sec", "dead_tuple_ratio"}
+		if len(order) != len(want) {
+			t.Fatalf("expected order %v, got %v", want, order)
+		}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+			}
+		}
+	})
 }
 
 func TestBuildLatestRowsQuery(t *testing.T) {
@@ -1482,7 +1514,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 
 	t.Run("sub-second bucket width clamped", func(t *testing.T) {
 		tinyEnd := start.Add(time.Second)
-		query, _, err := BuildDerivedMetricsQuery(
+		query, args, err := BuildDerivedMetricsQuery(
 			"pg_stat_all_tables",
 			[]DerivedMetric{{
 				OutputName: "seq_scan_per_sec",
@@ -1495,6 +1527,81 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		}
 		if !strings.Contains(query, "rate_buckets") {
 			t.Error("query should still build with clamped bucket width")
+		}
+		if len(args) == 0 || args[0] != "1 seconds" {
+			t.Errorf("expected clamped bucket interval %q, got %v",
+				"1 seconds", args)
+		}
+	})
+
+	t.Run("dead_tuple_ratio last uses latest sample not SUM", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "dead_tuple_ratio",
+				Kind:       DerivedDeadTupleRatio,
+			}},
+			1, start, end, 60, "last", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`(array_agg("n_live_tup" ORDER BY collected_at DESC))[1]`,
+			`(array_agg("n_dead_tup" ORDER BY collected_at DESC))[1]`,
+			`END AS dead_tuple_ratio`,
+			`* 100.0`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, `SUM("n_live_tup")`) ||
+			strings.Contains(query, `SUM("n_dead_tup")`) {
+			t.Errorf("last aggregation should not SUM tuple counts:\n%s", query)
+		}
+	})
+
+	for _, agg := range []string{"avg", "sum", "max"} {
+		t.Run("dead_tuple_ratio "+agg+" uses SUM", func(t *testing.T) {
+			query, _, err := BuildDerivedMetricsQuery(
+				"pg_stat_all_tables",
+				[]DerivedMetric{{
+					OutputName: "dead_tuple_ratio",
+					Kind:       DerivedDeadTupleRatio,
+				}},
+				1, start, end, 60, agg, MetricFilters{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, c := range []string{
+				`SUM("n_live_tup")`,
+				`SUM("n_dead_tup")`,
+			} {
+				if !strings.Contains(query, c) {
+					t.Errorf("query missing %q\n---\n%s", c, query)
+				}
+			}
+			if strings.Contains(query, `array_agg("n_dead_tup"`) {
+				t.Errorf("%s aggregation should not use array_agg:\n%s",
+					agg, query)
+			}
+		})
+	}
+}
+
+func TestRatioTupleExpr(t *testing.T) {
+	t.Run("standard aggregation uses SUM", func(t *testing.T) {
+		expr := ratioTupleExpr("avg", "n_dead_tup")
+		if expr != `SUM("n_dead_tup")` {
+			t.Errorf("unexpected expr: %s", expr)
+		}
+	})
+
+	t.Run("last aggregation uses ordered array_agg", func(t *testing.T) {
+		expr := ratioTupleExpr("last", "n_live_tup")
+		want := `(array_agg("n_live_tup" ORDER BY collected_at DESC))[1]`
+		if expr != want {
+			t.Errorf("expected %q, got %q", want, expr)
 		}
 	})
 }

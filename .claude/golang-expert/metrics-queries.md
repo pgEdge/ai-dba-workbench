@@ -122,7 +122,72 @@ paths that need a failing query (for example the exists-check branch in
 the scan-error branch in `scanLatestRows` is driven by passing fewer
 output columns than the query returns.
 
+## Derived Metrics in QueryTimeSeries (server)
+
+`QueryTimeSeries` in `server/src/internal/metrics/query.go` serves both raw
+stored columns and computed (derived) metrics from a single request.
+`classifyMetrics` splits the requested metric names, preserving request
+order, into three results: raw column names, a `[]DerivedMetric`, and the
+combined output order. The routing rules are deliberate and order-sensitive:
+
+- A name matching a real numeric column is always a raw metric; a real
+  column wins even when it ends in `_per_sec`.
+- A name ending in `_per_sec` whose prefix is a real numeric column becomes
+  a `DerivedPerSec` rate (delta of the counter over elapsed seconds).
+- The literal `dead_tuple_ratio` is accepted only when the probe exposes
+  both `n_live_tup` and `n_dead_tup`; it is a 0-100 percentage.
+- A repeated name is silently de-duplicated; anything else is a client
+  error.
+
+`BuildDerivedMetricsQuery` builds the derived SQL. It shares the bucketing,
+gap-filling (`generate_series`), filtering, and `$N` argument layout of
+`BuildMetricsQuery`, so the caller scans and applies LOCF identically for
+raw and derived series. Per-second base columns must stay validated against
+the discovered column set and `QuoteIdentifier`-wrapped; never interpolate a
+caller-supplied metric name that has not passed `classifyMetrics`. Negative
+counter deltas (resets/restarts) and non-positive elapsed times are dropped
+to NULL so they never yield a bogus rate.
+
+Both the raw and derived branches feed the shared `scanSeriesRows` helper,
+which scans a bucket-time-plus-N-values result set, applies LOCF per
+connection and metric name via `lastKnown`, and treats a NULL bucket or a
+non-finite sample as a gap.
+
+### NaN/Inf handling: finiteFloat, not resolveMetricValue
+
+Non-finite samples (NaN, +/-Inf) must be treated as gaps, never plotted,
+because `encoding/json` cannot marshal them and one bad value would blank
+the whole response. This guard lives in `toFloat64` via the `finiteFloat`
+helper: `toFloat64` returns `(0, false)` for a non-finite float64/float32/
+`pgtype.Numeric`, and `scanSeriesRows` then treats `!ok` as a gap (LOCF
+carry-forward, or skip when there is no prior value). An earlier design
+(#339) guarded NaN/Inf in a `resolveMetricValue` helper inside the scan
+loop; that was retired in favour of guarding inside `toFloat64`, because the
+`toFloat64` guard is broader and benefits every caller, including the
+latest-row path's `normalizeLatestValue`/`sanitizeFloat`. Do not
+reintroduce `resolveMetricValue`. Note that `toFloat64` still converts
+`pgtype.Interval` through `intervalToSeconds` (handling Days/Months); the
+`finiteFloat` guard and `intervalToSeconds` are independent and both must
+remain.
+
+### Derived-path integration tests
+
+The derived path and `scanSeriesRows` are covered by
+`server/src/internal/metrics/query_timeseries_db_test.go` (same gating
+convention as `query_db_test.go`). Its fixture inserts minute-spaced samples
+with counters rising 60 per minute (a clean 1.0/sec rate) and constant
+live/dead tuple counts (a steady 10% ratio), then exercises raw, `_per_sec`,
+`dead_tuple_ratio`, and mixed requests end-to-end. The two `scanSeriesRows`
+error returns in `QueryTimeSeries` are driven deterministically by passing
+an aggregation that names no SQL function, which makes the built query fail
+at execution; `scanSeriesRows`'s own `pool.Query` and `rows.Scan` error
+branches are driven by a cancelled context and a destination-count mismatch
+respectively.
+
 ## Related Issues
 
 - #56: Alerter FK violations when calculating baselines for deleted
   connections.
+- #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to
+  `QueryTimeSeries` to fix blank Activity Charts; retired #339's
+  `resolveMetricValue` in favour of the `finiteFloat` guard in `toFloat64`.

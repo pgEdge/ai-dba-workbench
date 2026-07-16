@@ -3455,8 +3455,15 @@ func embeddingColumnTypeName(
 // the migration loudly is the safer outcome.
 //
 // The function is fully idempotent. It first reads the current column
-// type; it skips every table whose column is already halfvec (or whose
-// table/column does not exist), so re-running migration #6 is a no-op.
+// type; it skips every table whose column is already the exact target
+// type halfvec(4000) (or whose table/column does not exist), so
+// re-running migration #6 is a no-op. A column already sitting at a
+// different halfvec width (for example a partially migrated or manually
+// created halfvec(1536)) is not treated as done: the application pads
+// and casts every embedding to halfvec(4000) on insert and search, so a
+// mismatched width would only break at runtime. The function therefore
+// fails loudly on any halfvec width other than 4000 rather than
+// silently skipping it.
 //
 // The padding expression mirrors the cast the application performs, so
 // stored vectors and freshly inserted vectors share an identical layout:
@@ -3474,12 +3481,22 @@ func upgradeEmbeddingColumnToHalfvec(
 		}
 
 		// Nothing to do when the table/column is absent (fresh installs
-		// already create halfvec) or the column is already halfvec.
+		// already create halfvec) or the column is already the exact
+		// target type.
 		if typeName == "" {
 			return nil
 		}
-		if strings.HasPrefix(typeName, "halfvec") {
+		if typeName == "halfvec(4000)" {
 			return nil
+		}
+		if strings.HasPrefix(typeName, "halfvec") {
+			// Some other halfvec width: a partial or manual migration
+			// left the column at the wrong dimension. The application
+			// casts every embedding to halfvec(4000), so a mismatched
+			// width would only break at runtime; fail loudly here.
+			return fmt.Errorf(
+				"unexpected halfvec width %q for %s.%s; expected halfvec(4000)",
+				typeName, table, column)
 		}
 		if !strings.HasPrefix(typeName, "vector") {
 			// An unexpected type: leave it untouched rather than risk a

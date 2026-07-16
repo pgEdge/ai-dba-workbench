@@ -434,6 +434,95 @@ func TestUpgradeEmbeddingColumn_AbsentAndUnexpectedType(t *testing.T) {
 	}
 }
 
+// TestUpgradeEmbeddingColumn_WrongHalfvecWidth proves that a column
+// already sitting at a halfvec width other than the 4000-dim target is
+// rejected rather than silently treated as migrated. The application
+// pads and casts every embedding to halfvec(4000), so a stray
+// halfvec(1536) would only fail at runtime; the migration must catch it.
+func TestUpgradeEmbeddingColumn_WrongHalfvecWidth(t *testing.T) {
+	ctx := context.Background()
+	pool, conn := getTestConnection(t)
+	if pool == nil {
+		return
+	}
+	defer pool.Close()
+	defer conn.Release()
+
+	cleanupTestSchema(t, pool)
+	defer cleanupTestSchema(t, pool)
+
+	if _, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+		t.Skipf("pgvector not installable: %v", err)
+	}
+	if !pgvectorHasHalfvec(ctx, t, pool) {
+		t.Skip("pgvector build lacks halfvec; skipping")
+	}
+
+	// A column already at the wrong halfvec width simulates a partial or
+	// manual migration; the upgrade must refuse it rather than skip it.
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS wrong_width CASCADE;
+		CREATE TABLE wrong_width (id BIGSERIAL PRIMARY KEY, embedding halfvec(1536))
+	`); err != nil {
+		t.Fatalf("create wrong_width: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP TABLE IF EXISTS wrong_width CASCADE`); err != nil {
+			t.Logf("drop wrong_width: %v", err)
+		}
+	}()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin wrong-width: %v", err)
+	}
+	err = upgradeEmbeddingColumnToHalfvec(ctx, tx,
+		"wrong_width", "embedding", "wrong_width_idx",
+		"CREATE INDEX IF NOT EXISTS wrong_width_idx ON wrong_width USING hnsw (embedding halfvec_cosine_ops)",
+	)
+	if err == nil {
+		t.Errorf("expected error for halfvec width other than 4000")
+	} else if !strings.Contains(err.Error(), "unexpected halfvec width") {
+		t.Errorf("error should name the unexpected halfvec width, got: %v", err)
+	}
+	if rbErr := tx.Rollback(ctx); rbErr != nil {
+		t.Logf("rollback wrong-width tx: %v", rbErr)
+	}
+
+	// A column already at the exact target type is a clean no-op, proving
+	// the strict guard still lets a correctly migrated column pass.
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS right_width CASCADE;
+		CREATE TABLE right_width (id BIGSERIAL PRIMARY KEY, embedding halfvec(4000))
+	`); err != nil {
+		t.Fatalf("create right_width: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP TABLE IF EXISTS right_width CASCADE`); err != nil {
+			t.Logf("drop right_width: %v", err)
+		}
+	}()
+
+	tx2, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin right-width: %v", err)
+	}
+	if err := upgradeEmbeddingColumnToHalfvec(ctx, tx2,
+		"right_width", "embedding", "right_width_idx",
+		"CREATE INDEX IF NOT EXISTS right_width_idx ON right_width USING hnsw (embedding halfvec_cosine_ops)",
+	); err != nil {
+		if rbErr := tx2.Rollback(ctx); rbErr != nil {
+			t.Logf("rollback right-width tx: %v", rbErr)
+		}
+		t.Fatalf("halfvec(4000) column should be a no-op, got: %v", err)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatalf("commit right-width no-op: %v", err)
+	}
+}
+
 // TestUpgradeEmbeddingColumn_StepFailures covers the conversion error
 // branches: a malformed CREATE INDEX statement after a successful column
 // conversion, and an ALTER that cannot complete because a stored vector

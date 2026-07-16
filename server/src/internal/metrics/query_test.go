@@ -975,3 +975,112 @@ func TestNormalizeLatestValue_PgtypeValues(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateLatestRowParams(t *testing.T) {
+	t.Run("invalid probe name", func(t *testing.T) {
+		_, _, err := validateLatestRowParams("bad;name", []int{1}, "desc", 1)
+		if err == nil {
+			t.Fatal("expected error for invalid probe name")
+		}
+	})
+
+	t.Run("invalid order", func(t *testing.T) {
+		_, _, err := validateLatestRowParams("pg_stat_all_tables", []int{1}, "sideways", 1)
+		if err == nil {
+			t.Fatal("expected error for invalid order")
+		}
+	})
+
+	t.Run("no connections", func(t *testing.T) {
+		_, _, err := validateLatestRowParams("pg_stat_all_tables", nil, "desc", 1)
+		if err == nil {
+			t.Fatal("expected error for missing connections")
+		}
+	})
+
+	t.Run("empty order defaults to desc", func(t *testing.T) {
+		order, _, err := validateLatestRowParams("pg_stat_all_tables", []int{1}, "", 10)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if order != "desc" {
+			t.Errorf("got order %q, want desc", order)
+		}
+	})
+
+	t.Run("order normalized to lowercase", func(t *testing.T) {
+		order, _, err := validateLatestRowParams("pg_stat_all_tables", []int{1}, "ASC", 10)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if order != "asc" {
+			t.Errorf("got order %q, want asc", order)
+		}
+	})
+
+	t.Run("limit below one clamped up", func(t *testing.T) {
+		_, limit, err := validateLatestRowParams("pg_stat_all_tables", []int{1}, "desc", 0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if limit != 1 {
+			t.Errorf("got limit %d, want 1", limit)
+		}
+	})
+
+	t.Run("limit above max clamped down", func(t *testing.T) {
+		_, limit, err := validateLatestRowParams(
+			"pg_stat_all_tables", []int{1}, "desc", maxLatestRowLimit+50)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if limit != maxLatestRowLimit {
+			t.Errorf("got limit %d, want %d", limit, maxLatestRowLimit)
+		}
+	})
+
+	t.Run("valid limit passes through", func(t *testing.T) {
+		_, limit, err := validateLatestRowParams("pg_stat_all_tables", []int{1, 2}, "desc", 25)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if limit != 25 {
+			t.Errorf("got limit %d, want 25", limit)
+		}
+	})
+}
+
+func TestSelectLatestOutputColumns(t *testing.T) {
+	t.Run("internal columns removed", func(t *testing.T) {
+		allCols := []string{
+			"connection_id", "collected_at", "inserted_at",
+			"relname", "n_live_tup",
+		}
+		got := selectLatestOutputColumns(allCols)
+		want := []string{"relname", "n_live_tup"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("index %d: got %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("order preserved and no columns filtered", func(t *testing.T) {
+		allCols := []string{"a", "b", "c"}
+		got := selectLatestOutputColumns(allCols)
+		if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+			t.Errorf("got %v, want [a b c]", got)
+		}
+	})
+
+	t.Run("all internal columns yields empty", func(t *testing.T) {
+		allCols := []string{"connection_id", "collected_at", "inserted_at"}
+		got := selectLatestOutputColumns(allCols)
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", got)
+		}
+	})
+}

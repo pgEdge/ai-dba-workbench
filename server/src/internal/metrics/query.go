@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -860,31 +861,26 @@ func buildLatestRowsQuery(
 	return query, args
 }
 
-// QueryLatestRows returns the most recent rows of a probe table as flat
-// maps keyed by column name. Unlike QueryTimeSeries it produces raw row
-// objects rather than bucketed series, so dashboards can read individual
-// column values (including dimension and timestamp columns) directly.
-func QueryLatestRows(
-	ctx context.Context,
-	pool *pgxpool.Pool,
+// validateLatestRowParams validates and normalizes the caller-supplied
+// parameters for a latest-rows query. It returns the normalized sort
+// direction and the row limit clamped to [1, maxLatestRowLimit].
+func validateLatestRowParams(
 	probeName string,
 	connectionIDs []int,
-	filters MetricFilters,
-	orderBy string,
 	order string,
 	limit int,
-) ([]map[string]any, error) {
+) (string, int, error) {
 	if !IsValidIdentifier(probeName) {
-		return nil, fmt.Errorf("invalid probe name %q", probeName)
+		return "", 0, fmt.Errorf("invalid probe name %q", probeName)
 	}
 
-	order, err := ValidateOrder(order)
+	normalizedOrder, err := ValidateOrder(order)
 	if err != nil {
-		return nil, err
+		return "", 0, err
 	}
 
 	if len(connectionIDs) == 0 {
-		return nil, fmt.Errorf("at least one connection ID is required")
+		return "", 0, fmt.Errorf("at least one connection ID is required")
 	}
 
 	if limit < 1 {
@@ -894,6 +890,33 @@ func QueryLatestRows(
 		limit = maxLatestRowLimit
 	}
 
+	return normalizedOrder, limit, nil
+}
+
+// selectLatestOutputColumns filters bookkeeping columns out of a probe's
+// full column set, leaving only the columns returned to callers.
+func selectLatestOutputColumns(allCols []string) []string {
+	var outputCols []string
+	for _, col := range allCols {
+		if latestRowInternalColumns[col] {
+			continue
+		}
+		outputCols = append(outputCols, col)
+	}
+	return outputCols
+}
+
+// discoverLatestRowColumns verifies the probe table exists, discovers its
+// output columns, resolves the order_by column against them, and resolves
+// the database filter column. It mutates filters.DatabaseColumn in place
+// when a database filter is requested but the column is not yet known.
+func discoverLatestRowColumns(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	orderBy string,
+	filters *MetricFilters,
+) ([]string, string, error) {
 	var count int
 	existsQuery := `
         SELECT COUNT(*) FROM information_schema.tables
@@ -902,26 +925,20 @@ func QueryLatestRows(
             AND table_type = 'BASE TABLE'
     `
 	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
-		return nil, fmt.Errorf("failed to verify probe: %w", err)
+		return nil, "", fmt.Errorf("failed to verify probe: %w", err)
 	}
 	if count == 0 {
-		return nil, fmt.Errorf("probe %q not found", probeName)
+		return nil, "", fmt.Errorf("probe %q not found", probeName)
 	}
 
 	allCols, _, err := GetProbeAllColumns(ctx, pool, probeName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get probe columns: %w", err)
+		return nil, "", fmt.Errorf("failed to get probe columns: %w", err)
 	}
 
-	var outputCols []string
-	for _, col := range allCols {
-		if latestRowInternalColumns[col] {
-			continue
-		}
-		outputCols = append(outputCols, col)
-	}
+	outputCols := selectLatestOutputColumns(allCols)
 	if len(outputCols) == 0 {
-		return nil, fmt.Errorf("no columns found in probe %q", probeName)
+		return nil, "", fmt.Errorf("no columns found in probe %q", probeName)
 	}
 
 	// order_by is validated against the full set of returned columns, not
@@ -929,27 +946,26 @@ func QueryLatestRows(
 	// timestamp columns (e.g. last_vacuum) that appear in the response.
 	orderCol, err := ResolveOrderByColumn(orderBy, outputCols)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if filters.DatabaseName != "" && filters.DatabaseColumn == "" {
 		dbCol, err := ResolveDatabaseColumn(ctx, pool, probeName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve database column: %w", err)
+			return nil, "", fmt.Errorf("failed to resolve database column: %w", err)
 		}
 		filters.DatabaseColumn = dbCol
 	}
 
-	query, args := buildLatestRowsQuery(
-		probeName, outputCols, connectionIDs, filters, orderCol, order, limit)
+	return outputCols, orderCol, nil
+}
 
-	rows, err := pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query latest rows: %w", err)
-	}
-	defer rows.Close()
-
-	var result []map[string]any
+// scanLatestRows reads every row from rows into flat maps keyed by the
+// given output columns, normalizing each scanned value for JSON output.
+// It always returns a non-nil slice so callers emit an empty JSON array
+// rather than null when the query yields no rows.
+func scanLatestRows(rows pgx.Rows, outputCols []string) ([]map[string]any, error) {
+	result := []map[string]any{}
 	for rows.Next() {
 		values := make([]any, len(outputCols))
 		valuePtrs := make([]any, len(outputCols))
@@ -971,11 +987,52 @@ func QueryLatestRows(
 		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 
-	if result == nil {
-		result = []map[string]any{}
+	return result, nil
+}
+
+// QueryLatestRows returns the most recent rows of a probe table as flat
+// maps keyed by column name. Unlike QueryTimeSeries it produces raw row
+// objects rather than bucketed series, so dashboards can read individual
+// column values (including dimension and timestamp columns) directly.
+func QueryLatestRows(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	connectionIDs []int,
+	filters MetricFilters,
+	orderBy string,
+	order string,
+	limit int,
+) ([]map[string]any, error) {
+	order, limit, err := validateLatestRowParams(probeName, connectionIDs, order, limit)
+	if err != nil {
+		return nil, err
 	}
 
-	return result, nil
+	outputCols, orderCol, err := discoverLatestRowColumns(
+		ctx, pool, probeName, orderBy, &filters)
+	if err != nil {
+		return nil, err
+	}
+
+	query, args := buildLatestRowsQuery(
+		probeName, outputCols, connectionIDs, filters, orderCol, order, limit)
+
+	// This is not a SQL injection risk despite passing a non-literal query
+	// string: the only identifiers interpolated into the text are probeName,
+	// orderCol, and the output column names, each of which is validated
+	// against a live-discovered allow-list (the information_schema.tables
+	// existence check, ResolveOrderByColumn, and GetProbeAllColumns) and then
+	// QuoteIdentifier-wrapped before it reaches the query. Every runtime
+	// value (connection IDs, filter strings, and the limit) is bound through
+	// $N placeholders in args and is never concatenated into the SQL text.
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query latest rows: %w", err)
+	}
+	defer rows.Close()
+
+	return scanLatestRows(rows, outputCols)
 }
 
 // sanitizeFloat returns nil for non-finite floats. Go's encoding/json

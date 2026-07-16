@@ -99,6 +99,16 @@ func (h *MetricsHandler) handleMetricsQuery(
 		return
 	}
 
+	// Latest-row mode: when the caller supplies limit and/or order_by,
+	// return the most recent raw rows instead of a bucketed time series.
+	// The two modes produce genuinely different response shapes.
+	limitStr := ParseQueryString(r, "limit")
+	orderByParam := ParseQueryString(r, "order_by")
+	if limitStr != "" || orderByParam != "" {
+		h.handleLatestRows(w, r, connectionIDs, probeName, limitStr, orderByParam)
+		return
+	}
+
 	// Parse time_range (default "1h")
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
@@ -163,6 +173,72 @@ func (h *MetricsHandler) handleMetricsQuery(
 	result, err := metrics.QueryTimeSeries(
 		ctx, pool, probeName, connectionIDs, timeRange,
 		filters, buckets, aggregation, requestedMetrics)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, result)
+}
+
+// handleLatestRows serves the latest-row variant of GET
+// /api/v1/metrics/query, returning the most recent raw rows for the probe
+// table as flat JSON objects keyed by column name.
+func (h *MetricsHandler) handleLatestRows(
+	w http.ResponseWriter,
+	r *http.Request,
+	connectionIDs []int,
+	probeName string,
+	limitStr string,
+	orderByParam string,
+) {
+	// Parse limit (default 1) following the bounds-checking style used
+	// for buckets: reject anything outside the accepted range.
+	limit := 1
+	if limitStr != "" {
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 1 || l > 100 {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid limit: must be between 1 and 100")
+			return
+		}
+		limit = l
+	}
+
+	// Reject syntactically invalid order_by before column discovery; the
+	// semantic column-existence check happens against discovered columns
+	// inside QueryLatestRows.
+	if orderByParam != "" && !metrics.IsValidIdentifier(orderByParam) {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid order_by: must contain only letters, numbers, and underscores")
+		return
+	}
+
+	// Parse order (default "desc") against an asc/desc allow-list.
+	order := strings.ToLower(ParseQueryString(r, "order"))
+	if order == "" {
+		order = "desc"
+	}
+	if order != "asc" && order != "desc" {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid order: must be asc or desc")
+		return
+	}
+
+	filters := metrics.MetricFilters{
+		DatabaseName: ParseQueryString(r, "database_name"),
+		SchemaName:   ParseQueryString(r, "schema_name"),
+		TableName:    ParseQueryString(r, "table_name"),
+		IndexName:    ParseQueryString(r, "index_name"),
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pool := h.datastore.GetPool()
+	result, err := metrics.QueryLatestRows(
+		ctx, pool, probeName, connectionIDs, filters,
+		orderByParam, order, limit)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return

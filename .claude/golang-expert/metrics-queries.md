@@ -71,6 +71,57 @@ Metrics tables live under the `metrics` schema
 both read from `connections` by unqualified name; do not add schema
 qualifiers unless the caller's search_path requires it.
 
+## Latest-Row Queries (server)
+
+`server/src/internal/metrics/query.go` exposes a latest-row query path
+alongside the bucketed `QueryTimeSeries`. It returns the most recent raw
+rows of a probe table as flat `map[string]any` objects keyed by real
+column name, so dashboards can read individual dimension and timestamp
+values directly. The public entry point is `QueryLatestRows`; it is
+decomposed into small, separately testable helpers:
+
+- `validateLatestRowParams` validates the probe name, sort direction, and
+  connection list, and clamps the limit to `[1, maxLatestRowLimit]` (100).
+- `discoverLatestRowColumns` confirms the probe exists, discovers its
+  columns via `GetProbeAllColumns`, strips bookkeeping columns with
+  `selectLatestOutputColumns` (`connection_id`, `collected_at`,
+  `inserted_at`), resolves `order_by` against the discovered columns with
+  `ResolveOrderByColumn`, and resolves the database filter column with
+  `ResolveDatabaseColumn` when a `DatabaseName` filter is set.
+- `buildLatestRowsQuery` assembles the SQL; `scanLatestRows` reads rows
+  into flat maps, normalising each value through `normalizeLatestValue`
+  (RFC3339 for `time.Time`, `sanitizeFloat` dropping NaN/Inf to JSON
+  null, `pgtype.Numeric`/`pgtype.Interval` collapsed to seconds/float).
+
+### Identifier safety and the Codacy suppression
+
+Latest-row SQL interpolates only identifiers drawn from a live-discovered
+allow-list: the probe name is checked against
+`information_schema.tables`, the `order_by` column against
+`GetProbeAllColumns`, and every one is `QuoteIdentifier`-wrapped. All
+runtime values bind through `$N` placeholders. golangci-lint/gosec is
+satisfied without a `//nolint`, but Codacy's Opengrep flags the
+`pool.Query(ctx, query, args...)` call in `QueryLatestRows` as
+`go_sql_rule-concat-sqli`. That is a false positive; it is cleared with a
+`// nosemgrep: go_sql_rule-concat-sqli` line immediately above the call,
+kept alongside the existing justification comment. Use `nosemgrep`, not
+`//nolint:gosec`, for Opengrep-only findings.
+
+### Integration tests
+
+DB-executing metrics functions are covered by integration tests in
+`server/src/internal/metrics/query_db_test.go` (package `metrics`, so
+they can exercise unexported helpers). They follow the api package's
+gating convention: skip when `SKIP_DB_TESTS` is set or
+`TEST_AI_WORKBENCH_SERVER` is unset, connect via `pgxpool`, and skip on
+ping failure, so they run in the Server CI jobs and skip cleanly with no
+database. Each test builds its own fixture probe table in the `metrics`
+schema with a representative column mix and drops it on cleanup. Error
+paths that need a failing query (for example the exists-check branch in
+`discoverLatestRowColumns`) are driven with an already-cancelled context;
+the scan-error branch in `scanLatestRows` is driven by passing fewer
+output columns than the query returns.
+
 ## Related Issues
 
 - #56: Alerter FK violations when calculating baselines for deleted

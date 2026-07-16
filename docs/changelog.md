@@ -23,7 +23,6 @@ project adheres to
 
 ### Fixed
 
-<<<<<<< HEAD
 - Fix the metrics time-series API (`GET /api/v1/metrics/query`)
   silently returning an empty HTTP 200 response, which the web UI
   rendered as a generic "No data available" message, whenever a

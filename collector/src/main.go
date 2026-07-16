@@ -57,8 +57,15 @@ func main() {
 
 	// Handle --print-latest-schema-version before any logging or
 	// datastore initialization so the number is the only thing written
-	// to stdout and the query needs no live database.
-	if maybePrintSchemaVersion(os.Stdout, *printSchemaVersion) {
+	// to stdout and the query needs no live database. A write failure
+	// must exit non-zero: the e2e harness reads this number from stdout
+	// and a silent exit 0 with no output would hide the failure from
+	// the collector's own side.
+	if handled, err := maybePrintSchemaVersion(os.Stdout, *printSchemaVersion); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to print latest schema version: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -134,19 +141,22 @@ func main() {
 
 // maybePrintSchemaVersion writes the latest datastore schema version the
 // collector will converge to onto w and reports whether the caller
-// should exit early. When enabled is false it writes nothing and returns
-// false so main proceeds with normal startup.
+// should exit early along with any write error. When enabled is false it
+// writes nothing and returns (false, nil) so main proceeds with normal
+// startup.
 //
 // The logic lives here rather than inline in main so it can be unit-
 // tested without invoking the full daemon startup path. The version is
 // obtained from the schema manager's registered migrations, so it stays
-// correct automatically as new migrations are added.
-func maybePrintSchemaVersion(w io.Writer, enabled bool) bool {
+// correct automatically as new migrations are added. The write error is
+// propagated so the caller can exit non-zero: the e2e harness relies on
+// this stdout value, so a swallowed failure would mislead it.
+func maybePrintSchemaVersion(w io.Writer, enabled bool) (bool, error) {
 	if !enabled {
-		return false
+		return false, nil
 	}
-	fmt.Fprintln(w, database.NewSchemaManager().LatestVersion())
-	return true
+	_, err := fmt.Fprintln(w, database.NewSchemaManager().LatestVersion())
+	return true, err
 }
 
 // loadConfiguration loads configuration from file, environment, and command line.

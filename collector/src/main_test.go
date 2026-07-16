@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -328,7 +329,11 @@ func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
 func TestMaybePrintSchemaVersion_Enabled(t *testing.T) {
 	var buf bytes.Buffer
 
-	if got := maybePrintSchemaVersion(&buf, true); !got {
+	handled, err := maybePrintSchemaVersion(&buf, true)
+	if err != nil {
+		t.Fatalf("maybePrintSchemaVersion(enabled=true) error = %v, want nil", err)
+	}
+	if !handled {
 		t.Fatal("maybePrintSchemaVersion(enabled=true) = false, want true")
 	}
 
@@ -352,11 +357,41 @@ func TestMaybePrintSchemaVersion_Enabled(t *testing.T) {
 func TestMaybePrintSchemaVersion_Disabled(t *testing.T) {
 	var buf bytes.Buffer
 
-	if got := maybePrintSchemaVersion(&buf, false); got {
+	handled, err := maybePrintSchemaVersion(&buf, false)
+	if err != nil {
+		t.Errorf("maybePrintSchemaVersion(enabled=false) error = %v, want nil", err)
+	}
+	if handled {
 		t.Error("maybePrintSchemaVersion(enabled=false) = true, want false")
 	}
 	if buf.Len() != 0 {
 		t.Errorf("expected no output, got %q", buf.String())
+	}
+}
+
+// failingWriter is an io.Writer whose Write always fails. It lets the
+// test drive the error path of maybePrintSchemaVersion without needing
+// a real closed file descriptor or broken pipe.
+type failingWriter struct{}
+
+func (failingWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+// TestMaybePrintSchemaVersion_WriteError verifies that a write failure is
+// surfaced to the caller: the helper still reports the request was
+// handled (so main does not fall through to normal startup) but returns
+// the underlying error so main can exit non-zero.
+func TestMaybePrintSchemaVersion_WriteError(t *testing.T) {
+	handled, err := maybePrintSchemaVersion(failingWriter{}, true)
+	if !handled {
+		t.Error("maybePrintSchemaVersion(enabled=true) handled = false, want true")
+	}
+	if err == nil {
+		t.Fatal("maybePrintSchemaVersion(enabled=true) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "write failed") {
+		t.Errorf("error = %v, want it to contain 'write failed'", err)
 	}
 }
 

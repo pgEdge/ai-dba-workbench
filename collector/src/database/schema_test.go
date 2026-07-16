@@ -304,29 +304,23 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 }
 
-// TestLatestVersion verifies that LatestVersion reports the highest
-// version among the registered migrations and that it matches the
-// maximum version discovered by scanning the migration slice directly.
-// This keeps the e2e harness's "wait for full convergence" signal
-// correct automatically as migrations are added.
+// TestLatestVersion verifies that LatestVersion computes the maximum
+// registered migration version rather than trusting registration order.
+// The migrations are deliberately supplied out of order (2, 5, 3) so a
+// regression that simply returned the last-registered version would fail
+// this test; only a real max scan yields 5. This keeps the e2e harness's
+// "wait for full convergence" signal correct as migrations are added.
 func TestLatestVersion(t *testing.T) {
-	sm := NewSchemaManager()
-
-	// Derive the expected maximum straight from the registered
-	// migrations so the assertion never needs a hardcoded number.
-	want := 0
-	for _, m := range sm.migrations {
-		if m.Version > want {
-			want = m.Version
-		}
+	sm := &SchemaManager{
+		migrations: []Migration{
+			{Version: 2},
+			{Version: 5},
+			{Version: 3},
+		},
 	}
 
-	if want == 0 {
-		t.Fatal("no migrations registered; cannot validate LatestVersion")
-	}
-
-	if got := sm.LatestVersion(); got != want {
-		t.Errorf("LatestVersion() = %d, want %d", got, want)
+	if got := sm.LatestVersion(); got != 5 {
+		t.Errorf("LatestVersion() = %d, want 5", got)
 	}
 }
 

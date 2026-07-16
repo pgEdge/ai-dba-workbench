@@ -47,6 +47,20 @@ project adheres to
   real column values, validating `order_by` against the table's
   known columns before use.
 
+- Fix the end-to-end test suite intermittently failing at the "Start
+  stack" step. The server logged "collector schema is at v2, server
+  requires at least v4" and then timed out waiting for its health
+  endpoint. The harness script that applies the collector schema
+  stopped the collector as soon as it observed any recorded schema
+  version. A poll that landed between two migrations killed the
+  collector mid-migration, leaving the datastore below the version the
+  server requires. The collector now accepts a
+  `--print-latest-schema-version` flag that reports the newest known
+  schema version without touching any database. The harness asks for
+  that target up front and waits for the datastore to reach it. This
+  change affects test infrastructure only and does not alter
+  application behavior.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

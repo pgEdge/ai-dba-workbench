@@ -304,6 +304,36 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 }
 
+// TestLatestVersion verifies that LatestVersion computes the maximum
+// registered migration version rather than trusting registration order.
+// The migrations are deliberately supplied out of order (2, 5, 3) so a
+// regression that simply returned the last-registered version would fail
+// this test; only a real max scan yields 5. This keeps the e2e harness's
+// "wait for full convergence" signal correct as migrations are added.
+func TestLatestVersion(t *testing.T) {
+	sm := &SchemaManager{
+		migrations: []Migration{
+			{Version: 2},
+			{Version: 5},
+			{Version: 3},
+		},
+	}
+
+	if got := sm.LatestVersion(); got != 5 {
+		t.Errorf("LatestVersion() = %d, want 5", got)
+	}
+}
+
+// TestLatestVersionEmpty verifies the zero-value / no-migration guard so
+// a manager with no registered migrations reports 0 rather than
+// panicking or returning a stale value.
+func TestLatestVersionEmpty(t *testing.T) {
+	sm := &SchemaManager{}
+	if got := sm.LatestVersion(); got != 0 {
+		t.Errorf("LatestVersion() with no migrations = %d, want 0", got)
+	}
+}
+
 func TestMigrateFromScratch(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)

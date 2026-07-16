@@ -908,16 +908,6 @@ func QueryLatestRows(
 		return nil, fmt.Errorf("probe %q not found", probeName)
 	}
 
-	metricCols, _, err := GetProbeMetricColumns(ctx, pool, probeName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get probe columns: %w", err)
-	}
-
-	orderCol, err := ResolveOrderByColumn(orderBy, metricCols)
-	if err != nil {
-		return nil, err
-	}
-
 	allCols, _, err := GetProbeAllColumns(ctx, pool, probeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get probe columns: %w", err)
@@ -932,6 +922,14 @@ func QueryLatestRows(
 	}
 	if len(outputCols) == 0 {
 		return nil, fmt.Errorf("no columns found in probe %q", probeName)
+	}
+
+	// order_by is validated against the full set of returned columns, not
+	// just the numeric metrics, so callers can sort by dimension and
+	// timestamp columns (e.g. last_vacuum) that appear in the response.
+	orderCol, err := ResolveOrderByColumn(orderBy, outputCols)
+	if err != nil {
+		return nil, err
 	}
 
 	if filters.DatabaseName != "" && filters.DatabaseColumn == "" {
@@ -1085,8 +1083,7 @@ func toFloat64(v any) (float64, bool) {
 			// NULL interval means no lag reported; treat as zero
 			return 0, true
 		}
-		// Convert interval to total seconds
-		return float64(val.Microseconds) / 1_000_000.0, true
+		return intervalToSeconds(val), true
 	case *pgtype.Interval:
 		if val == nil {
 			return 0, true
@@ -1095,8 +1092,22 @@ func toFloat64(v any) (float64, bool) {
 			// NULL interval means no lag reported; treat as zero
 			return 0, true
 		}
-		return float64(val.Microseconds) / 1_000_000.0, true
+		return intervalToSeconds(*val), true
 	default:
 		return 0, false
 	}
+}
+
+// intervalToSeconds converts a pgtype.Interval to total seconds. It
+// follows PostgreSQL's interval-to-scalar convention where one day is
+// 86400 seconds and one month is 30 days; the Days and Months components
+// are included so intervals larger than a day are not silently truncated.
+func intervalToSeconds(iv pgtype.Interval) float64 {
+	const (
+		secondsPerDay   = 86_400.0
+		secondsPerMonth = 30.0 * secondsPerDay
+	)
+	return float64(iv.Microseconds)/1_000_000.0 +
+		float64(iv.Days)*secondsPerDay +
+		float64(iv.Months)*secondsPerMonth
 }

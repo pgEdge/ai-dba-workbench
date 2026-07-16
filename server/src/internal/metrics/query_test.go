@@ -507,6 +507,154 @@ func TestToFloat64(t *testing.T) {
 	}
 }
 
+func TestToFloat64_PointerAndNumeric(t *testing.T) {
+	var wrapped any = float64(3.5)
+	var wrappedNil any
+
+	tests := []struct {
+		name       string
+		input      any
+		expected   float64
+		expectedOk bool
+	}{
+		{"any pointer to float64", &wrapped, 3.5, true},
+		{"any pointer to nil", &wrappedNil, 0, false},
+		{"nil any pointer", (*any)(nil), 0, false},
+		{
+			name:       "valid numeric",
+			input:      pgtype.Numeric{Int: big.NewInt(42), Exp: 0, Valid: true},
+			expected:   42,
+			expectedOk: true,
+		},
+		{
+			name:       "invalid numeric",
+			input:      pgtype.Numeric{Valid: false},
+			expected:   0,
+			expectedOk: false,
+		},
+		{
+			name:       "pointer valid numeric",
+			input:      &pgtype.Numeric{Int: big.NewInt(7), Exp: 0, Valid: true},
+			expected:   7,
+			expectedOk: true,
+		},
+		{
+			name:       "pointer invalid numeric",
+			input:      &pgtype.Numeric{Valid: false},
+			expected:   0,
+			expectedOk: false,
+		},
+		{"nil numeric pointer", (*pgtype.Numeric)(nil), 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := toFloat64(tt.input)
+			if ok != tt.expectedOk {
+				t.Errorf("toFloat64(%v) ok = %v, want %v",
+					tt.input, ok, tt.expectedOk)
+			}
+			if result != tt.expected {
+				t.Errorf("toFloat64(%v) = %v, want %v",
+					tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestToFloat64_Interval(t *testing.T) {
+	const (
+		secondsPerDay   = 86_400.0
+		secondsPerMonth = 30.0 * secondsPerDay
+	)
+
+	tests := []struct {
+		name       string
+		input      any
+		expected   float64
+		expectedOk bool
+	}{
+		{
+			name:       "microseconds only",
+			input:      pgtype.Interval{Microseconds: 2_500_000, Valid: true},
+			expected:   2.5,
+			expectedOk: true,
+		},
+		{
+			name:       "days included",
+			input:      pgtype.Interval{Days: 2, Valid: true},
+			expected:   2 * secondsPerDay,
+			expectedOk: true,
+		},
+		{
+			name:       "months included",
+			input:      pgtype.Interval{Months: 3, Valid: true},
+			expected:   3 * secondsPerMonth,
+			expectedOk: true,
+		},
+		{
+			name: "combined micros days months",
+			input: pgtype.Interval{
+				Microseconds: 1_500_000,
+				Days:         2,
+				Months:       1,
+				Valid:        true,
+			},
+			expected:   1.5 + 2*secondsPerDay + secondsPerMonth,
+			expectedOk: true,
+		},
+		{
+			name:       "null interval treated as zero",
+			input:      pgtype.Interval{Valid: false},
+			expected:   0,
+			expectedOk: true,
+		},
+		{
+			name: "pointer combined micros days months",
+			input: &pgtype.Interval{
+				Microseconds: 500_000,
+				Days:         1,
+				Months:       2,
+				Valid:        true,
+			},
+			expected:   0.5 + secondsPerDay + 2*secondsPerMonth,
+			expectedOk: true,
+		},
+		{
+			name:       "pointer days and months",
+			input:      &pgtype.Interval{Days: 5, Months: 1, Valid: true},
+			expected:   5*secondsPerDay + secondsPerMonth,
+			expectedOk: true,
+		},
+		{
+			name:       "nil pointer treated as zero",
+			input:      (*pgtype.Interval)(nil),
+			expected:   0,
+			expectedOk: true,
+		},
+		{
+			name:       "pointer null interval treated as zero",
+			input:      &pgtype.Interval{Valid: false},
+			expected:   0,
+			expectedOk: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := toFloat64(tt.input)
+			if ok != tt.expectedOk {
+				t.Errorf("toFloat64(%v) ok = %v, want %v",
+					tt.input, ok, tt.expectedOk)
+			}
+			if result != tt.expected {
+				t.Errorf("toFloat64(%v) = %v, want %v",
+					tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestValidateOrder(t *testing.T) {
 	tests := []struct {
 		input   string
@@ -543,7 +691,12 @@ func TestValidateOrder(t *testing.T) {
 }
 
 func TestResolveOrderByColumn(t *testing.T) {
-	metricCols := []string{"n_live_tup", "n_dead_tup", "seq_scan"}
+	// The caller passes the full set of returned columns, which mixes
+	// numeric metrics with dimension and timestamp columns.
+	metricCols := []string{
+		"n_live_tup", "n_dead_tup", "seq_scan",
+		"relname", "schemaname", "last_vacuum", "last_autovacuum",
+	}
 
 	t.Run("empty defaults to collected_at", func(t *testing.T) {
 		got, err := ResolveOrderByColumn("", metricCols)
@@ -582,6 +735,26 @@ func TestResolveOrderByColumn(t *testing.T) {
 		}
 		if got != "seq_scan" {
 			t.Errorf("got %q, want seq_scan", got)
+		}
+	})
+
+	t.Run("dimension column accepted", func(t *testing.T) {
+		got, err := ResolveOrderByColumn("relname", metricCols)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "relname" {
+			t.Errorf("got %q, want relname", got)
+		}
+	})
+
+	t.Run("timestamp column accepted", func(t *testing.T) {
+		got, err := ResolveOrderByColumn("last_vacuum", metricCols)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "last_vacuum" {
+			t.Errorf("got %q, want last_vacuum", got)
 		}
 	})
 

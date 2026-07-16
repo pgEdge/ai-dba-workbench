@@ -307,6 +307,23 @@ func TestBuildMetricsQuery(t *testing.T) {
 			t.Error("last aggregation should use array_agg")
 		}
 	})
+
+	t.Run("sub-second bucket width clamped", func(t *testing.T) {
+		tinyEnd := start.Add(time.Second)
+		query, _, err := BuildMetricsQuery(
+			"pg_stat_database",
+			[]string{"xact_commit"},
+			map[string]string{"xact_commit": "bigint"},
+			1, start, tinyEnd, 60, "avg",
+			MetricFilters{},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, "date_bin($1::interval") {
+			t.Error("query should still build with clamped bucket width")
+		}
+	})
 }
 
 func TestGetAggSelectCols(t *testing.T) {
@@ -406,70 +423,6 @@ func TestGetCoalescedSelectCols(t *testing.T) {
 	})
 }
 
-func TestResolveMetricValue(t *testing.T) {
-	t.Run("finite value is recorded as last known", func(t *testing.T) {
-		lastKnown := map[string]float64{}
-		val, ok := resolveMetricValue(float64(3.5), "1:cpu", lastKnown)
-		if !ok || val != 3.5 {
-			t.Fatalf("got (%v, %v), want (3.5, true)", val, ok)
-		}
-		if lastKnown["1:cpu"] != 3.5 {
-			t.Errorf("lastKnown not updated: %v", lastKnown["1:cpu"])
-		}
-	})
-
-	t.Run("null bucket with no prior value is skipped", func(t *testing.T) {
-		lastKnown := map[string]float64{}
-		_, ok := resolveMetricValue(nil, "1:cpu", lastKnown)
-		if ok {
-			t.Fatalf("expected skip for null with no prior value")
-		}
-		if _, exists := lastKnown["1:cpu"]; exists {
-			t.Errorf("lastKnown should not be populated by a skipped bucket")
-		}
-	})
-
-	t.Run("null bucket carries forward prior value", func(t *testing.T) {
-		lastKnown := map[string]float64{"1:cpu": 7.25}
-		val, ok := resolveMetricValue(nil, "1:cpu", lastKnown)
-		if !ok || val != 7.25 {
-			t.Fatalf("got (%v, %v), want (7.25, true)", val, ok)
-		}
-	})
-
-	nonFinite := []struct {
-		name string
-		in   float64
-	}{
-		{"NaN", math.NaN()},
-		{"+Inf", math.Inf(1)},
-		{"-Inf", math.Inf(-1)},
-	}
-	for _, nf := range nonFinite {
-		t.Run(nf.name+" with no prior value is skipped", func(t *testing.T) {
-			lastKnown := map[string]float64{}
-			_, ok := resolveMetricValue(nf.in, "1:cpu", lastKnown)
-			if ok {
-				t.Fatalf("expected %s to be skipped when no prior value", nf.name)
-			}
-			if _, exists := lastKnown["1:cpu"]; exists {
-				t.Errorf("%s must not poison lastKnown", nf.name)
-			}
-		})
-
-		t.Run(nf.name+" carries forward prior value", func(t *testing.T) {
-			lastKnown := map[string]float64{"1:cpu": 42}
-			val, ok := resolveMetricValue(nf.in, "1:cpu", lastKnown)
-			if !ok || val != 42 {
-				t.Fatalf("got (%v, %v), want (42, true)", val, ok)
-			}
-			if lastKnown["1:cpu"] != 42 {
-				t.Errorf("%s overwrote the last known good value: %v", nf.name, lastKnown["1:cpu"])
-			}
-		})
-	}
-}
-
 func TestToFloat64(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -490,6 +443,10 @@ func TestToFloat64(t *testing.T) {
 		{"uint16", uint16(25), 25, true},
 		{"uint8", uint8(12), 12, true},
 		{"string", "abc", 0, false},
+		{"nan", math.NaN(), 0, false},
+		{"pos_inf", math.Inf(1), 0, false},
+		{"neg_inf", math.Inf(-1), 0, false},
+		{"float32_nan", float32(math.NaN()), 0, false},
 	}
 
 	for _, tt := range tests {
@@ -556,6 +513,36 @@ func TestToFloat64_PointerAndNumeric(t *testing.T) {
 			}
 			if result != tt.expected {
 				t.Errorf("toFloat64(%v) = %v, want %v",
+					tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFiniteFloat(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      float64
+		expected   float64
+		expectedOk bool
+	}{
+		{"zero", 0, 0, true},
+		{"positive", 3.14, 3.14, true},
+		{"negative", -2.5, -2.5, true},
+		{"nan", math.NaN(), 0, false},
+		{"pos_inf", math.Inf(1), 0, false},
+		{"neg_inf", math.Inf(-1), 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := finiteFloat(tt.input)
+			if ok != tt.expectedOk {
+				t.Errorf("finiteFloat(%v) ok = %v, want %v",
+					tt.input, ok, tt.expectedOk)
+			}
+			if result != tt.expected {
+				t.Errorf("finiteFloat(%v) = %v, want %v",
 					tt.input, result, tt.expected)
 			}
 		})
@@ -772,6 +759,222 @@ func TestResolveOrderByColumn(t *testing.T) {
 		_, err := ResolveOrderByColumn("1; DROP TABLE metrics.pg_stat_all_tables", metricCols)
 		if err == nil {
 			t.Fatal("expected error for injection attempt")
+		}
+	})
+}
+
+// tableCols mimics the numeric metric columns discovered for the
+// pg_stat_all_tables probe, which the table dashboards depend on.
+var tableCols = []string{
+	"seq_scan", "idx_scan", "n_tup_ins", "n_tup_upd", "n_tup_del",
+	"n_tup_hot_upd", "n_live_tup", "n_dead_tup",
+}
+
+func TestClassifyMetrics(t *testing.T) {
+	t.Run("empty request returns all columns as raw", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			nil, []string{"seq_scan", "idx_scan"}, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 0 {
+			t.Errorf("expected no derived metrics, got %d", len(derived))
+		}
+		if len(raw) != 2 || len(order) != 2 {
+			t.Errorf("expected 2 raw/order entries, got %d/%d",
+				len(raw), len(order))
+		}
+		if order[0] != "seq_scan" || order[1] != "idx_scan" {
+			t.Errorf("unexpected order: %v", order)
+		}
+	})
+
+	t.Run("raw column accepted", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			[]string{"seq_scan"}, tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 1 || raw[0] != "seq_scan" {
+			t.Errorf("expected raw [seq_scan], got %v", raw)
+		}
+		if len(derived) != 0 {
+			t.Errorf("expected no derived, got %v", derived)
+		}
+		if len(order) != 1 || order[0] != "seq_scan" {
+			t.Errorf("unexpected order: %v", order)
+		}
+	})
+
+	t.Run("valid per_sec base accepted", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			[]string{"seq_scan_per_sec"}, tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 0 {
+			t.Errorf("expected no raw columns, got %v", raw)
+		}
+		if len(derived) != 1 {
+			t.Fatalf("expected 1 derived, got %d", len(derived))
+		}
+		if derived[0].Kind != DerivedPerSec {
+			t.Errorf("expected DerivedPerSec, got %v", derived[0].Kind)
+		}
+		if derived[0].BaseColumn != "seq_scan" {
+			t.Errorf("expected base seq_scan, got %q", derived[0].BaseColumn)
+		}
+		if derived[0].OutputName != "seq_scan_per_sec" {
+			t.Errorf("unexpected output name %q", derived[0].OutputName)
+		}
+		if len(order) != 1 || order[0] != "seq_scan_per_sec" {
+			t.Errorf("unexpected order: %v", order)
+		}
+	})
+
+	t.Run("per_sec suffix on non-column rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"bogus_per_sec"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error for non-column per_sec base")
+		}
+		if !strings.Contains(err.Error(), "bogus_per_sec") {
+			t.Errorf("error should name the metric, got %q", err.Error())
+		}
+	})
+
+	t.Run("bare per_sec suffix rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"_per_sec"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error for bare _per_sec")
+		}
+	})
+
+	t.Run("real column ending in per_sec wins over derived", func(t *testing.T) {
+		cols := []string{"seq_scan", "custom_per_sec"}
+		raw, derived, _, err := classifyMetrics(
+			[]string{"custom_per_sec"}, cols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 0 {
+			t.Errorf("expected raw treatment, got derived %v", derived)
+		}
+		if len(raw) != 1 || raw[0] != "custom_per_sec" {
+			t.Errorf("expected raw [custom_per_sec], got %v", raw)
+		}
+	})
+
+	t.Run("dead_tuple_ratio accepted when both columns present", func(t *testing.T) {
+		_, derived, order, err := classifyMetrics(
+			[]string{"dead_tuple_ratio"}, tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Kind != DerivedDeadTupleRatio {
+			t.Fatalf("expected 1 dead-tuple-ratio derived, got %v", derived)
+		}
+		if derived[0].OutputName != "dead_tuple_ratio" {
+			t.Errorf("unexpected output name %q", derived[0].OutputName)
+		}
+		if len(order) != 1 || order[0] != "dead_tuple_ratio" {
+			t.Errorf("unexpected order: %v", order)
+		}
+	})
+
+	t.Run("dead_tuple_ratio rejected when columns missing", func(t *testing.T) {
+		cols := []string{"seq_scan", "n_live_tup"} // no n_dead_tup
+		_, _, _, err := classifyMetrics(
+			[]string{"dead_tuple_ratio"}, cols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error when n_dead_tup missing")
+		}
+		if !strings.Contains(err.Error(), "n_dead_tup") {
+			t.Errorf("error should mention required columns, got %q",
+				err.Error())
+		}
+	})
+
+	t.Run("unknown metric rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"nonexistent"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error for unknown metric")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("expected not-found error, got %q", err.Error())
+		}
+	})
+
+	t.Run("invalid identifier rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"bad-name"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error for invalid identifier")
+		}
+		if !strings.Contains(err.Error(), "invalid metric name") {
+			t.Errorf("expected invalid-identifier error, got %q", err.Error())
+		}
+	})
+
+	t.Run("mixed raw and derived preserves order", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			[]string{"seq_scan", "idx_scan_per_sec", "dead_tuple_ratio"},
+			tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 1 || raw[0] != "seq_scan" {
+			t.Errorf("expected raw [seq_scan], got %v", raw)
+		}
+		if len(derived) != 2 {
+			t.Fatalf("expected 2 derived, got %d", len(derived))
+		}
+		if derived[0].Kind != DerivedPerSec ||
+			derived[0].BaseColumn != "idx_scan" {
+			t.Errorf("expected idx_scan per_sec first, got %v", derived[0])
+		}
+		if derived[1].Kind != DerivedDeadTupleRatio {
+			t.Errorf("expected dead_tuple_ratio second, got %v", derived[1])
+		}
+		want := []string{"seq_scan", "idx_scan_per_sec", "dead_tuple_ratio"}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+			}
+		}
+	})
+
+	t.Run("duplicate metric names deduplicated", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			[]string{
+				"seq_scan", "seq_scan",
+				"idx_scan_per_sec", "idx_scan_per_sec",
+				"dead_tuple_ratio", "dead_tuple_ratio",
+			},
+			tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 1 || raw[0] != "seq_scan" {
+			t.Errorf("expected raw [seq_scan], got %v", raw)
+		}
+		if len(derived) != 2 {
+			t.Fatalf("expected 2 derived, got %d: %v", len(derived), derived)
+		}
+		if derived[0].OutputName != "idx_scan_per_sec" ||
+			derived[1].OutputName != "dead_tuple_ratio" {
+			t.Errorf("unexpected derived: %v", derived)
+		}
+		want := []string{"seq_scan", "idx_scan_per_sec", "dead_tuple_ratio"}
+		if len(order) != len(want) {
+			t.Fatalf("expected order %v, got %v", want, order)
+		}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+			}
 		}
 	})
 }
@@ -1081,6 +1284,324 @@ func TestSelectLatestOutputColumns(t *testing.T) {
 		got := selectLatestOutputColumns(allCols)
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty", got)
+		}
+	})
+}
+
+func TestRateAggExpr(t *testing.T) {
+	t.Run("standard aggregation", func(t *testing.T) {
+		expr := rateAggExpr("avg", 2, "seq_scan_per_sec")
+		if expr != `avg(rate_2) AS "seq_scan_per_sec"` {
+			t.Errorf("unexpected expr: %s", expr)
+		}
+	})
+
+	t.Run("last aggregation filters nulls", func(t *testing.T) {
+		expr := rateAggExpr("last", 0, "idx_scan_per_sec")
+		if !strings.Contains(expr, "array_agg(rate_0 ORDER BY collected_at DESC)") {
+			t.Errorf("last should use ordered array_agg, got %s", expr)
+		}
+		if !strings.Contains(expr, "FILTER (WHERE rate_0 IS NOT NULL)") {
+			t.Errorf("last should filter NULL rates, got %s", expr)
+		}
+		if !strings.Contains(expr, `AS "idx_scan_per_sec"`) {
+			t.Errorf("last should alias output, got %s", expr)
+		}
+	})
+}
+
+func TestBuildDerivedMetricsQuery(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
+
+	t.Run("empty derived rejected", func(t *testing.T) {
+		_, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables", nil, 1, start, end, 60, "avg",
+			MetricFilters{})
+		if err == nil {
+			t.Fatal("expected error for empty derived slice")
+		}
+	})
+
+	t.Run("single per_sec rate", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "seq_scan_per_sec",
+				BaseColumn: "seq_scan",
+				Kind:       DerivedPerSec,
+			}},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		checks := []string{
+			`metrics."pg_stat_all_tables"`,
+			`SUM("seq_scan") AS total_0`,
+			`LAG(SUM("seq_scan")) OVER (ORDER BY collected_at) AS prev_0`,
+			`EXTRACT(EPOCH FROM collected_at`,
+			`CASE WHEN (total_0 - prev_0) >= 0 AND elapsed_sec > 0`,
+			`(total_0 - prev_0)::float / elapsed_sec`,
+			`avg(rate_0) AS "seq_scan_per_sec"`,
+			`generate_series($3::timestamptz, $4::timestamptz, $1::interval)`,
+			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
+			`rate_buckets."seq_scan_per_sec"`,
+			`connection_id = $2`,
+		}
+		for _, c := range checks {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, "ratio_buckets") {
+			t.Error("query should not reference ratio_buckets")
+		}
+		if len(args) != 4 {
+			t.Errorf("expected 4 args, got %d", len(args))
+		}
+		if args[1] != 1 {
+			t.Errorf("expected connection_id=1, got %v", args[1])
+		}
+	})
+
+	t.Run("multiple per_sec rates", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{
+				{OutputName: "n_tup_ins_per_sec", BaseColumn: "n_tup_ins", Kind: DerivedPerSec},
+				{OutputName: "n_tup_upd_per_sec", BaseColumn: "n_tup_upd", Kind: DerivedPerSec},
+			},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`SUM("n_tup_ins") AS total_0`,
+			`SUM("n_tup_upd") AS total_1`,
+			"rate_0", "rate_1",
+			`avg(rate_0) AS "n_tup_ins_per_sec"`,
+			`avg(rate_1) AS "n_tup_upd_per_sec"`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q", c)
+			}
+		}
+	})
+
+	t.Run("dead_tuple_ratio uses 0-100 scale", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "dead_tuple_ratio",
+				Kind:       DerivedDeadTupleRatio,
+			}},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`SUM("n_live_tup")`,
+			`SUM("n_dead_tup")`,
+			`* 100.0`,
+			`END AS dead_tuple_ratio`,
+			`ratio_buckets.dead_tuple_ratio`,
+			`LEFT JOIN ratio_buckets ON all_buckets.bucket_time = ratio_buckets.bucket_time`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, "rate_buckets") {
+			t.Error("ratio-only query should not reference rate_buckets")
+		}
+		if len(args) != 4 {
+			t.Errorf("expected 4 args, got %d", len(args))
+		}
+	})
+
+	t.Run("mixed per_sec and ratio", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{
+				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
+				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
+			},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			"rate_samples AS", "rate_buckets AS", "ratio_buckets AS",
+			`rate_buckets."seq_scan_per_sec"`,
+			"ratio_buckets.dead_tuple_ratio",
+			"LEFT JOIN rate_buckets", "LEFT JOIN ratio_buckets",
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q", c)
+			}
+		}
+		// The per_sec output must precede the ratio output.
+		iRate := strings.Index(query, `rate_buckets."seq_scan_per_sec"`)
+		iRatio := strings.Index(query, "ratio_buckets.dead_tuple_ratio")
+		if iRate < 0 || iRatio < 0 || iRate > iRatio {
+			t.Errorf("output columns out of order: rate=%d ratio=%d",
+				iRate, iRatio)
+		}
+	})
+
+	t.Run("filters add args and clauses", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "seq_scan_per_sec",
+				BaseColumn: "seq_scan",
+				Kind:       DerivedPerSec,
+			}},
+			1, start, end, 60, "avg",
+			MetricFilters{
+				DatabaseName:   "mydb",
+				DatabaseColumn: "database_name",
+				SchemaName:     "public",
+				TableName:      "users",
+			})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`"database_name" = $5`,
+			"schemaname = $6",
+			"relname = $7",
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing filter %q", c)
+			}
+		}
+		if len(args) != 7 {
+			t.Errorf("expected 7 args, got %d", len(args))
+		}
+	})
+
+	t.Run("last aggregation on rate", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "seq_scan_per_sec",
+				BaseColumn: "seq_scan",
+				Kind:       DerivedPerSec,
+			}},
+			1, start, end, 60, "last", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, "array_agg(rate_0 ORDER BY collected_at DESC)") {
+			t.Errorf("last aggregation should use array_agg, got:\n%s", query)
+		}
+		if !strings.Contains(query, "FILTER (WHERE rate_0 IS NOT NULL)") {
+			t.Error("last aggregation should filter NULL rates")
+		}
+	})
+
+	t.Run("unknown derived kind rejected", func(t *testing.T) {
+		_, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{OutputName: "weird", Kind: DerivedMetricKind(99)}},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err == nil {
+			t.Fatal("expected error for unknown derived kind")
+		}
+	})
+
+	t.Run("sub-second bucket width clamped", func(t *testing.T) {
+		tinyEnd := start.Add(time.Second)
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "seq_scan_per_sec",
+				BaseColumn: "seq_scan",
+				Kind:       DerivedPerSec,
+			}},
+			1, start, tinyEnd, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, "rate_buckets") {
+			t.Error("query should still build with clamped bucket width")
+		}
+		if len(args) == 0 || args[0] != "1 seconds" {
+			t.Errorf("expected clamped bucket interval %q, got %v",
+				"1 seconds", args)
+		}
+	})
+
+	t.Run("dead_tuple_ratio last uses latest sample not SUM", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "dead_tuple_ratio",
+				Kind:       DerivedDeadTupleRatio,
+			}},
+			1, start, end, 60, "last", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`(array_agg("n_live_tup" ORDER BY collected_at DESC))[1]`,
+			`(array_agg("n_dead_tup" ORDER BY collected_at DESC))[1]`,
+			`END AS dead_tuple_ratio`,
+			`* 100.0`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, `SUM("n_live_tup")`) ||
+			strings.Contains(query, `SUM("n_dead_tup")`) {
+			t.Errorf("last aggregation should not SUM tuple counts:\n%s", query)
+		}
+	})
+
+	for _, agg := range []string{"avg", "sum", "max"} {
+		t.Run("dead_tuple_ratio "+agg+" uses SUM", func(t *testing.T) {
+			query, _, err := BuildDerivedMetricsQuery(
+				"pg_stat_all_tables",
+				[]DerivedMetric{{
+					OutputName: "dead_tuple_ratio",
+					Kind:       DerivedDeadTupleRatio,
+				}},
+				1, start, end, 60, agg, MetricFilters{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, c := range []string{
+				`SUM("n_live_tup")`,
+				`SUM("n_dead_tup")`,
+			} {
+				if !strings.Contains(query, c) {
+					t.Errorf("query missing %q\n---\n%s", c, query)
+				}
+			}
+			if strings.Contains(query, `array_agg("n_dead_tup"`) {
+				t.Errorf("%s aggregation should not use array_agg:\n%s",
+					agg, query)
+			}
+		})
+	}
+}
+
+func TestRatioTupleExpr(t *testing.T) {
+	t.Run("standard aggregation uses SUM", func(t *testing.T) {
+		expr := ratioTupleExpr("avg", "n_dead_tup")
+		if expr != `SUM("n_dead_tup")` {
+			t.Errorf("unexpected expr: %s", expr)
+		}
+	})
+
+	t.Run("last aggregation uses ordered array_agg", func(t *testing.T) {
+		expr := ratioTupleExpr("last", "n_live_tup")
+		want := `(array_agg("n_live_tup" ORDER BY collected_at DESC))[1]`
+		if expr != want {
+			t.Errorf("expected %q, got %q", want, expr)
 		}
 	})
 }

@@ -61,6 +61,23 @@ project adheres to
   change affects test infrastructure only and does not alter
   application behavior.
 
+- Fix the Activity Charts on the Table and Index object-detail
+  dashboards rendering permanently blank, with the messages "No tuple
+  operation data available", "No scan data available", and "No dead
+  tuple data available" appearing even when the monitored server had
+  completely normal, healthy activity. Those charts request computed
+  metrics, including per-second rates such as sequential scans, index
+  scans, and inserted, updated, or deleted rows, together with a
+  dead-tuple percentage. The metrics API understood only literal, raw
+  stored columns and could not compute a rate or a ratio, so it
+  rejected these requests with an error that the web client silently
+  rendered as missing data. The metrics API now computes a per-second
+  rate for any counter column a dashboard requests by name; a request
+  for `seq_scan_per_sec` computes the rate of change of the underlying
+  `seq_scan` counter between samples. The API also computes a
+  dead-tuple ratio metric for tables, reusing the rate and ratio
+  calculations already applied elsewhere in the product. (#342)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

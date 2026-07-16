@@ -21,6 +21,31 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// DerivedMetricKind enumerates the computed metric types the generic
+// time-series query path supports in addition to raw columns.
+type DerivedMetricKind int
+
+const (
+	// DerivedPerSec is a per-second rate computed from the delta of a
+	// cumulative counter column between consecutive samples.
+	DerivedPerSec DerivedMetricKind = iota
+	// DerivedDeadTupleRatio is the dead-tuple percentage computed from the
+	// n_live_tup and n_dead_tup columns.
+	DerivedDeadTupleRatio
+)
+
+// DerivedMetric describes a single computed metric to include in a query.
+type DerivedMetric struct {
+	// OutputName is the metric name returned to the client, e.g.
+	// "seq_scan_per_sec" or "dead_tuple_ratio".
+	OutputName string
+	// BaseColumn is the source counter column for a per-second rate. It is
+	// empty for DerivedDeadTupleRatio.
+	BaseColumn string
+	// Kind selects how the metric is computed.
+	Kind DerivedMetricKind
+}
+
 // MetricFilters holds optional dimension filters for metric queries.
 type MetricFilters struct {
 	DatabaseName   string
@@ -342,40 +367,8 @@ func BuildMetricsQuery(
 		bucketWidth = time.Second
 	}
 
-	// Build WHERE clause
-	var whereClauses []string
-	queryArgs := []any{
-		fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
-		connectionID,
-		timeStart,
-		timeEnd,
-	}
-	argNum := 5
-
-	whereClauses = append(whereClauses, "connection_id = $2")
-	whereClauses = append(whereClauses, "collected_at >= $3")
-	whereClauses = append(whereClauses, "collected_at <= $4")
-
-	// Add optional filters
-	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
-		whereClauses = append(whereClauses,
-			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
-		queryArgs = append(queryArgs, filters.DatabaseName)
-		argNum++
-	}
-
-	if filters.SchemaName != "" {
-		whereClauses = append(whereClauses,
-			fmt.Sprintf("schemaname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.SchemaName)
-		argNum++
-	}
-
-	if filters.TableName != "" {
-		whereClauses = append(whereClauses,
-			fmt.Sprintf("relname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.TableName)
-	}
+	whereSQL, queryArgs := metricQueryBase(
+		connectionID, timeStart, timeEnd, bucketWidth, filters)
 
 	query := fmt.Sprintf(`
         WITH data_buckets AS (
@@ -398,11 +391,334 @@ func BuildMetricsQuery(
     `,
 		strings.Join(GetAggSelectCols(metricCols, aggregation), ", "),
 		QuoteIdentifier(probeName),
-		strings.Join(whereClauses, " AND "),
+		whereSQL,
 		strings.Join(GetQualifiedSelectCols(metricCols, "data_buckets"), ", "),
 	)
 
 	return query, queryArgs, nil
+}
+
+// metricQueryBase builds the shared WHERE clause and the leading query
+// arguments used by both the raw-column and derived-metric query builders.
+// The returned args are, in order: the bucket interval string, the
+// connection ID, the start time, the end time, and then any filter values.
+// The WHERE clause references $2, $3, $4 and any filter placeholders from $5.
+func metricQueryBase(
+	connectionID int,
+	timeStart, timeEnd time.Time,
+	bucketWidth time.Duration,
+	filters MetricFilters,
+) (string, []any) {
+	queryArgs := []any{
+		fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
+		connectionID,
+		timeStart,
+		timeEnd,
+	}
+	argNum := 5
+
+	whereClauses := []string{
+		"connection_id = $2",
+		"collected_at >= $3",
+		"collected_at <= $4",
+	}
+
+	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
+		queryArgs = append(queryArgs, filters.DatabaseName)
+		argNum++
+	}
+
+	if filters.SchemaName != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("schemaname = $%d", argNum))
+		queryArgs = append(queryArgs, filters.SchemaName)
+		argNum++
+	}
+
+	if filters.TableName != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("relname = $%d", argNum))
+		queryArgs = append(queryArgs, filters.TableName)
+	}
+
+	return strings.Join(whereClauses, " AND "), queryArgs
+}
+
+// rateAggExpr builds the bucket-level aggregation expression for one
+// per-second rate column. The inner per-sample rate is exposed as rate_<idx>
+// in the rate_samples CTE. NULL per-sample rates (counter resets or invalid
+// elapsed times) are ignored by the standard aggregates; for "last" they are
+// filtered out explicitly so a reset never becomes the reported value.
+func rateAggExpr(aggregation string, idx int, outputName string) string {
+	alias := QuoteIdentifier(outputName)
+	if aggregation == "last" {
+		return fmt.Sprintf(
+			"(array_agg(rate_%d ORDER BY collected_at DESC) "+
+				"FILTER (WHERE rate_%d IS NOT NULL))[1] AS %s",
+			idx, idx, alias)
+	}
+	return fmt.Sprintf("%s(rate_%d) AS %s", aggregation, idx, alias)
+}
+
+// ratioTupleExpr builds the bucket-level aggregation expression for one
+// tuple-count column feeding the dead-tuple ratio. Only "last" needs
+// distinct handling, mirroring rateAggExpr: it picks the latest sample's
+// value in the bucket so the ratio reflects the most recent live/dead
+// counts. Every other aggregation collapses the bucket with SUM, matching
+// the prior behavior.
+func ratioTupleExpr(aggregation, column string) string {
+	q := QuoteIdentifier(column)
+	if aggregation == "last" {
+		return fmt.Sprintf("(array_agg(%s ORDER BY collected_at DESC))[1]", q)
+	}
+	return fmt.Sprintf("SUM(%s)", q)
+}
+
+// BuildDerivedMetricsQuery constructs a time-bucketed SQL query for the
+// derived metrics (per-second rates and the dead-tuple ratio) of a probe.
+// It shares the same bucketing, gap-filling (generate_series), filtering,
+// and argument layout as BuildMetricsQuery, so the caller can scan and apply
+// LOCF identically. Output columns follow the order of the derived slice.
+func BuildDerivedMetricsQuery(
+	probeName string,
+	derived []DerivedMetric,
+	connectionID int,
+	timeStart, timeEnd time.Time,
+	buckets int,
+	aggregation string,
+	filters MetricFilters,
+) (string, []any, error) {
+	if len(derived) == 0 {
+		return "", nil, fmt.Errorf("no derived metrics requested")
+	}
+
+	duration := timeEnd.Sub(timeStart)
+	bucketWidth := duration / time.Duration(buckets)
+	if bucketWidth < time.Second {
+		bucketWidth = time.Second
+	}
+
+	whereSQL, queryArgs := metricQueryBase(
+		connectionID, timeStart, timeEnd, bucketWidth, filters)
+
+	var perSec []DerivedMetric
+	hasRatio := false
+	for _, d := range derived {
+		switch d.Kind {
+		case DerivedPerSec:
+			perSec = append(perSec, d)
+		case DerivedDeadTupleRatio:
+			hasRatio = true
+		default:
+			return "", nil, fmt.Errorf(
+				"unknown derived metric kind for %q", d.OutputName)
+		}
+	}
+
+	var ctes []string
+	var joins []string
+
+	if len(perSec) > 0 {
+		var innerCols []string
+		var sampleCols []string
+		var bucketCols []string
+		for i, d := range perSec {
+			qb := QuoteIdentifier(d.BaseColumn)
+			innerCols = append(innerCols,
+				fmt.Sprintf("SUM(%s) AS total_%d", qb, i),
+				fmt.Sprintf(
+					"LAG(SUM(%s)) OVER (ORDER BY collected_at) AS prev_%d",
+					qb, i))
+			// Discard negative deltas (a counter reset from pg_stat_reset()
+			// or a server restart) and non-positive elapsed times (duplicate
+			// or out-of-order samples) so neither yields a bogus rate; such
+			// rows become NULL and are dropped by the bucket aggregate.
+			sampleCols = append(sampleCols, fmt.Sprintf(
+				"CASE WHEN (total_%d - prev_%d) >= 0 AND elapsed_sec > 0 "+
+					"THEN (total_%d - prev_%d)::float / elapsed_sec "+
+					"END AS rate_%d", i, i, i, i, i))
+			bucketCols = append(bucketCols,
+				rateAggExpr(aggregation, i, d.OutputName))
+		}
+
+		ctes = append(ctes, fmt.Sprintf(`
+        rate_samples AS (
+            SELECT
+                collected_at,
+                %s
+            FROM (
+                SELECT
+                    collected_at,
+                    %s,
+                    EXTRACT(EPOCH FROM collected_at
+                        - LAG(collected_at) OVER (ORDER BY collected_at)
+                    ) AS elapsed_sec
+                FROM metrics.%s
+                WHERE %s
+                GROUP BY collected_at
+            ) samples
+        )`,
+			strings.Join(sampleCols, ",\n                "),
+			strings.Join(innerCols, ",\n                    "),
+			QuoteIdentifier(probeName),
+			whereSQL,
+		))
+
+		ctes = append(ctes, fmt.Sprintf(`
+        rate_buckets AS (
+            SELECT
+                date_bin($1::interval, collected_at, $3) AS bucket_time,
+                %s
+            FROM rate_samples
+            GROUP BY date_bin($1::interval, collected_at, $3)
+        )`,
+			strings.Join(bucketCols, ",\n                "),
+		))
+
+		joins = append(joins,
+			"LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time")
+	}
+
+	if hasRatio {
+		// The ratio is expressed on a 0-100 percentage scale (not a 0-1
+		// fraction) to match what the client dashboards render.
+		liveExpr := ratioTupleExpr(aggregation, "n_live_tup")
+		deadExpr := ratioTupleExpr(aggregation, "n_dead_tup")
+		ctes = append(ctes, fmt.Sprintf(`
+        ratio_buckets AS (
+            SELECT
+                date_bin($1::interval, collected_at, $3) AS bucket_time,
+                CASE WHEN %[1]s + %[2]s = 0 THEN 0
+                     ELSE %[2]s::float
+                          / (%[1]s + %[2]s)::float * 100.0
+                END AS dead_tuple_ratio
+            FROM metrics.%[3]s
+            WHERE %[4]s
+            GROUP BY date_bin($1::interval, collected_at, $3)
+        )`,
+			liveExpr,
+			deadExpr,
+			QuoteIdentifier(probeName),
+			whereSQL,
+		))
+
+		joins = append(joins,
+			"LEFT JOIN ratio_buckets ON all_buckets.bucket_time = ratio_buckets.bucket_time")
+	}
+
+	var selectCols []string
+	for _, d := range derived {
+		switch d.Kind {
+		case DerivedPerSec:
+			selectCols = append(selectCols,
+				"rate_buckets."+QuoteIdentifier(d.OutputName))
+		case DerivedDeadTupleRatio:
+			selectCols = append(selectCols, "ratio_buckets.dead_tuple_ratio")
+		}
+	}
+
+	ctes = append(ctes, `
+        all_buckets AS (
+            SELECT generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS bucket_time
+        )`)
+
+	query := fmt.Sprintf(`
+        WITH %s
+        SELECT
+            all_buckets.bucket_time,
+            %s
+        FROM all_buckets
+        %s
+        ORDER BY all_buckets.bucket_time
+    `,
+		strings.Join(ctes, ","),
+		strings.Join(selectCols, ",\n            "),
+		strings.Join(joins, "\n        "),
+	)
+
+	return query, queryArgs, nil
+}
+
+// classifyMetrics splits the requested metric names into raw columns and
+// derived metrics while preserving request order. When no metrics are
+// requested, all discovered numeric columns are treated as raw metrics.
+//
+// A name that matches a real numeric column is a raw metric (a real column
+// always wins, even if it happens to end in "_per_sec"). A name ending in
+// "_per_sec" whose prefix is a real numeric column becomes a per-second
+// rate. The literal name "dead_tuple_ratio" is accepted only when the probe
+// exposes both n_live_tup and n_dead_tup. Anything else is a client error.
+func classifyMetrics(
+	requestedMetrics []string,
+	metricCols []string,
+	probeName string,
+) ([]string, []DerivedMetric, []string, error) {
+	available := make(map[string]bool, len(metricCols))
+	for _, c := range metricCols {
+		available[c] = true
+	}
+
+	if len(requestedMetrics) == 0 {
+		order := append([]string(nil), metricCols...)
+		return metricCols, nil, order, nil
+	}
+
+	var rawCols []string
+	var derived []DerivedMetric
+	var outputOrder []string
+
+	// A repeated metric name would otherwise be scanned twice and emit
+	// duplicate data points under the same series key; silently drop the
+	// repeat rather than erroring, since the client's intent is unambiguous.
+	seen := make(map[string]struct{}, len(requestedMetrics))
+
+	for _, m := range requestedMetrics {
+		m = strings.TrimSpace(m)
+		if !IsValidIdentifier(m) {
+			return nil, nil, nil, fmt.Errorf("invalid metric name %q", m)
+		}
+		if _, exists := seen[m]; exists {
+			continue
+		}
+		seen[m] = struct{}{}
+
+		switch {
+		case available[m]:
+			rawCols = append(rawCols, m)
+			outputOrder = append(outputOrder, m)
+		case strings.HasSuffix(m, "_per_sec"):
+			base := strings.TrimSuffix(m, "_per_sec")
+			if !available[base] {
+				return nil, nil, nil, fmt.Errorf(
+					"metric %q not found in probe %q: no numeric column %q "+
+						"to compute a per-second rate", m, probeName, base)
+			}
+			derived = append(derived, DerivedMetric{
+				OutputName: m,
+				BaseColumn: base,
+				Kind:       DerivedPerSec,
+			})
+			outputOrder = append(outputOrder, m)
+		case m == "dead_tuple_ratio":
+			if !available["n_live_tup"] || !available["n_dead_tup"] {
+				return nil, nil, nil, fmt.Errorf(
+					"metric %q not supported for probe %q: requires "+
+						"n_live_tup and n_dead_tup columns", m, probeName)
+			}
+			derived = append(derived, DerivedMetric{
+				OutputName: m,
+				Kind:       DerivedDeadTupleRatio,
+			})
+			outputOrder = append(outputOrder, m)
+		default:
+			return nil, nil, nil, fmt.Errorf(
+				"metric %q not found in probe %q", m, probeName)
+		}
+	}
+
+	return rawCols, derived, outputOrder, nil
 }
 
 // QueryTimeSeries executes a metrics query and returns the results as
@@ -449,28 +765,14 @@ func QueryTimeSeries(
 		return nil, fmt.Errorf("failed to get probe columns: %w", err)
 	}
 
-	// Filter to requested metrics if specified
-	if len(requestedMetrics) > 0 {
-		available := make(map[string]bool, len(metricCols))
-		for _, col := range metricCols {
-			available[col] = true
-		}
-
-		var filtered []string
-		for _, m := range requestedMetrics {
-			m = strings.TrimSpace(m)
-			if !IsValidIdentifier(m) {
-				return nil, fmt.Errorf("invalid metric name %q", m)
-			}
-			if !available[m] {
-				return nil, fmt.Errorf("metric %q not found in probe %q", m, probeName)
-			}
-			filtered = append(filtered, m)
-		}
-		metricCols = filtered
+	// Split requested metrics into raw columns and derived metrics.
+	rawCols, derived, outputOrder, err := classifyMetrics(
+		requestedMetrics, metricCols, probeName)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(metricCols) == 0 {
+	if len(outputOrder) == 0 {
 		return nil, fmt.Errorf("no numeric metrics found in probe %q", probeName)
 	}
 
@@ -484,81 +786,61 @@ func QueryTimeSeries(
 	}
 
 	// Collect data across all connections
-	type seriesKey struct {
-		metric       string
-		connectionID int
-	}
 	dataMap := make(map[seriesKey][]MetricDataPoint)
 
 	// Track last known value per metric column for LOCF
 	lastKnown := make(map[string]float64)
 
 	for _, connID := range connectionIDs {
-		query, queryArgs, err := BuildMetricsQuery(
-			probeName, metricCols, colTypes, connID, timeStart, timeEnd,
-			buckets, aggregation, filters)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build query: %w", err)
-		}
-
-		rows, err := pool.Query(ctx, query, queryArgs...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query metrics for connection %d: %w", connID, err)
-		}
-
-		for rows.Next() {
-			values := make([]any, len(metricCols)+1)
-			valuePtrs := make([]any, len(metricCols)+1)
-			var bucketTime time.Time
-			valuePtrs[0] = &bucketTime
-			for i := range metricCols {
-				var v any
-				values[i+1] = &v
-				valuePtrs[i+1] = &values[i+1]
+		if len(rawCols) > 0 {
+			query, queryArgs, err := BuildMetricsQuery(
+				probeName, rawCols, colTypes, connID, timeStart, timeEnd,
+				buckets, aggregation, filters)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build query: %w", err)
 			}
-
-			if err := rows.Scan(valuePtrs...); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("failed to scan row: %w", err)
-			}
-
-			for i, col := range metricCols {
-				lkKey := fmt.Sprintf("%d:%s", connID, col)
-				val, ok := resolveMetricValue(values[i+1], lkKey, lastKnown)
-				if !ok {
-					continue
-				}
-				key := seriesKey{metric: col, connectionID: connID}
-				dataMap[key] = append(dataMap[key], MetricDataPoint{
-					Time:  bucketTime,
-					Value: val,
-				})
+			if err := scanSeriesRows(ctx, pool, query, queryArgs, rawCols,
+				connID, dataMap, lastKnown); err != nil {
+				return nil, err
 			}
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("error iterating results: %w", err)
+
+		if len(derived) > 0 {
+			query, queryArgs, err := BuildDerivedMetricsQuery(
+				probeName, derived, connID, timeStart, timeEnd,
+				buckets, aggregation, filters)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build derived query: %w", err)
+			}
+			names := make([]string, len(derived))
+			for i, d := range derived {
+				names[i] = d.OutputName
+			}
+			if err := scanSeriesRows(ctx, pool, query, queryArgs, names,
+				connID, dataMap, lastKnown); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	// Build result series
+	// Build result series in the requested metric order.
 	var result []MetricSeries
-	for _, col := range metricCols {
+	for _, metric := range outputOrder {
 		for _, connID := range connectionIDs {
-			key := seriesKey{metric: col, connectionID: connID}
+			key := seriesKey{metric: metric, connectionID: connID}
 			data := dataMap[key]
 			if data == nil {
 				data = []MetricDataPoint{}
 			}
 
-			name := col
+			name := metric
 			if len(connectionIDs) > 1 {
-				name = fmt.Sprintf("%s (conn %d)", col, connID)
+				name = fmt.Sprintf("%s (conn %d)", metric, connID)
 			}
 
 			result = append(result, MetricSeries{
 				Name:   name,
-				Metric: col,
+				Metric: metric,
 				Data:   data,
 				Unit:   "",
 			})
@@ -566,6 +848,71 @@ func QueryTimeSeries(
 	}
 
 	return result, nil
+}
+
+// seriesKey identifies a metric series by name and connection.
+type seriesKey struct {
+	metric       string
+	connectionID int
+}
+
+// scanSeriesRows executes a bucketed metrics query whose first selected
+// column is the bucket time followed by one column per name in names, then
+// accumulates the values into dataMap. NULL buckets (LEFT JOIN gaps or
+// discarded derived samples) are filled with Last Observation Carried
+// Forward using lastKnown, keyed per connection and metric name.
+func scanSeriesRows(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	query string,
+	queryArgs []any,
+	names []string,
+	connID int,
+	dataMap map[seriesKey][]MetricDataPoint,
+	lastKnown map[string]float64,
+) error {
+	rows, err := pool.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to query metrics for connection %d: %w", connID, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		values := make([]any, len(names)+1)
+		valuePtrs := make([]any, len(names)+1)
+		var bucketTime time.Time
+		valuePtrs[0] = &bucketTime
+		for i := range names {
+			var v any
+			values[i+1] = &v
+			valuePtrs[i+1] = &values[i+1]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		for i, name := range names {
+			lkKey := fmt.Sprintf("%d:%s", connID, name)
+			val, ok := toFloat64(values[i+1])
+			if !ok {
+				if prev, exists := lastKnown[lkKey]; exists {
+					val = prev
+				} else {
+					continue
+				}
+			} else {
+				lastKnown[lkKey] = val
+			}
+			key := seriesKey{metric: name, connectionID: connID}
+			dataMap[key] = append(dataMap[key], MetricDataPoint{
+				Time:  bucketTime,
+				Value: val,
+			})
+		}
+	}
+
+	return rows.Err()
 }
 
 // QueryBaselines retrieves aggregated baseline statistics for the given
@@ -691,31 +1038,6 @@ func QueryBaselines(
 	}
 
 	return result, nil
-}
-
-// resolveMetricValue converts a scanned bucket value into a plottable float,
-// applying last-observation-carried-forward (LOCF) for gaps. A gap is either a
-// NULL bucket produced by the LEFT JOIN or a non-finite sample (NaN/Inf).
-//
-// Non-finite samples must be treated as gaps rather than plotted: the
-// system_stats extension can emit NaN percentages from a 0/0 delta division,
-// and encoding/json cannot marshal NaN or Inf. Letting such a value through
-// would break the JSON response for every metric in the request, not just the
-// affected bucket. The second return value reports whether a point should be
-// appended; when false the caller skips the bucket.
-func resolveMetricValue(raw any, lkKey string, lastKnown map[string]float64) (float64, bool) {
-	val, ok := toFloat64(raw)
-	if ok && (math.IsNaN(val) || math.IsInf(val, 0)) {
-		ok = false
-	}
-	if !ok {
-		if prev, exists := lastKnown[lkKey]; exists {
-			return prev, true
-		}
-		return 0, false
-	}
-	lastKnown[lkKey] = val
-	return val, true
 }
 
 // ValidateOrder normalizes and validates a sort direction. It accepts
@@ -1077,8 +1399,19 @@ func normalizeLatestValue(v any) any {
 	}
 }
 
+// finiteFloat reports a float only when it is finite. NaN and +/-Inf are
+// rejected because encoding/json cannot marshal them; a non-finite value
+// would otherwise break the entire JSON response for every series in the
+// request. A rejected value is treated as a gap and handled by LOCF.
+func finiteFloat(f float64) (float64, bool) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
+}
+
 // toFloat64 converts a scanned database value to float64. It returns
-// false when the value cannot be converted.
+// false when the value cannot be converted or is not finite.
 func toFloat64(v any) (float64, bool) {
 	if v == nil {
 		return 0, false
@@ -1094,9 +1427,9 @@ func toFloat64(v any) (float64, bool) {
 
 	switch val := v.(type) {
 	case float64:
-		return val, true
+		return finiteFloat(val)
 	case float32:
-		return float64(val), true
+		return finiteFloat(float64(val))
 	case int64:
 		return float64(val), true
 	case int32:
@@ -1123,7 +1456,7 @@ func toFloat64(v any) (float64, bool) {
 		if !f.Valid {
 			return 0, false
 		}
-		return f.Float64, true
+		return finiteFloat(f.Float64)
 	case *pgtype.Numeric:
 		if val == nil {
 			return 0, false
@@ -1135,7 +1468,7 @@ func toFloat64(v any) (float64, bool) {
 		if !f.Valid {
 			return 0, false
 		}
-		return f.Float64, true
+		return finiteFloat(f.Float64)
 	case pgtype.Interval:
 		if !val.Valid {
 			// NULL interval means no lag reported; treat as zero

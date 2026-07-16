@@ -1026,6 +1026,7 @@ func QueryLatestRows(
 	// QuoteIdentifier-wrapped before it reaches the query. Every runtime
 	// value (connection IDs, filter strings, and the limit) is bound through
 	// $N placeholders in args and is never concatenated into the SQL text.
+	// nosemgrep: go_sql_rule-concat-sqli
 	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest rows: %w", err)

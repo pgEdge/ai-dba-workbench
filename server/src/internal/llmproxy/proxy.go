@@ -472,7 +472,7 @@ func (c *Config) onResponse(r *http.Request, info proxy.ResponseInfo) {
 		return
 	}
 	tokenHash := auth.GetTokenHashFromContext(r.Context())
-	tracing.LogLLMResponse(tokenHash, tokenHash, info.RequestID, info.Response.Content, 0)
+	tracing.LogLLMResponse(tokenHash, tokenHash, info.RequestID, info.Response.Content, info.Duration)
 }
 
 // onError logs request errors when tracing is enabled, reproducing the

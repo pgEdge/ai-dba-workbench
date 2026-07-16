@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
@@ -768,11 +769,15 @@ func TestTracingHooks_Enabled(t *testing.T) {
 			},
 		},
 	})
+	// A non-zero upstream Duration must be threaded from ResponseInfo
+	// into the tracer. The tracer records it as duration_ms, so a
+	// 1500ms upstream call is expected to appear as "duration_ms":1500.
 	cfg.onResponse(req, proxy.ResponseInfo{
 		RequestID: "rid",
 		Response: &pgllm.ChatResponse{
 			Content: []pgllm.ContentBlock{{Type: pgllm.BlockText, Text: "the answer"}},
 		},
+		Duration: 1500 * time.Millisecond,
 	})
 	cfg.onError(req, proxy.ErrorInfo{RequestID: "rid", Err: errors.New("kaboom")})
 
@@ -792,6 +797,11 @@ func TestTracingHooks_Enabled(t *testing.T) {
 	}
 	if !strings.Contains(out, "kaboom") {
 		t.Errorf("expected error in trace output")
+	}
+	// Prove the LLM-response duration was forwarded rather than the old
+	// hardcoded zero: the response entry must carry the 1500ms value.
+	if !strings.Contains(out, `"duration_ms":1500`) {
+		t.Errorf("expected forwarded response duration_ms:1500 in trace output, got: %s", out)
 	}
 }
 

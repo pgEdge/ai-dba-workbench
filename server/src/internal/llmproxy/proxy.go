@@ -270,6 +270,56 @@ func (c *Config) providerOptions(name, apiKey, baseURL string) pgllm.Options {
 	return opts
 }
 
+// BuildClientOptions constructs the library Options for a direct
+// (non-proxy) LLM client that targets c.Provider. It is the single
+// source of truth for the per-provider credential selection, custom-header
+// wiring, and timeout-only-when-positive rule shared by the overview and
+// server-info analysis paths, mirroring the proxy shim's providerOptions.
+//
+// Unlike providerOptions (which serves the streaming gateway and applies
+// the operator-configured MaxTokens/Temperature only when positive), the
+// analysis callers always supply their own positive MaxTokens and
+// Temperature constants, so both are set unconditionally from the
+// arguments. The caller is responsible for guarding a nil *Config or an
+// empty Provider before calling; this method assumes c is non-nil.
+//
+// Header-loading failures are logged to stderr and treated as no headers,
+// so a header misconfiguration never blocks analysis. The returned Options
+// still needs pgllm.NewClient(c.Provider, opts) at the call site so each
+// caller keeps its own client-construction error logging.
+func (c *Config) BuildClientOptions(maxTokens int, temperature float64) pgllm.Options {
+	var apiKey, baseURL string
+	switch c.Provider {
+	case "anthropic":
+		apiKey, baseURL = c.AnthropicAPIKey, c.AnthropicBaseURL
+	case "openai":
+		apiKey, baseURL = c.OpenAIAPIKey, c.OpenAIBaseURL
+	case "gemini":
+		apiKey, baseURL = c.GeminiAPIKey, c.GeminiBaseURL
+	case "ollama":
+		baseURL = c.OllamaURL
+	}
+
+	headers, err := getProviderHeaders(c.LLMConfig, c.Provider)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", c.Provider, err)
+		headers = nil
+	}
+
+	opts := pgllm.Options{
+		APIKey:        apiKey,
+		Model:         c.Model,
+		BaseURL:       baseURL,
+		CustomHeaders: headers,
+		MaxTokens:     pgllm.Int(maxTokens),
+		Temperature:   pgllm.Float(temperature),
+	}
+	if c.LLMConfig != nil && c.LLMConfig.TimeoutSeconds > 0 {
+		opts.RequestTimeout = time.Duration(c.LLMConfig.TimeoutSeconds) * time.Second
+	}
+	return opts
+}
+
 // authorize is the proxy's Authorize hook. The public discovery
 // endpoints (providers/models/health) require no credentials, matching
 // the old behavior that let the login page list providers. Every other

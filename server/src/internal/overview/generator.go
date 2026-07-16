@@ -539,40 +539,10 @@ func (g *Generator) createLLMClient() (pgllm.Client, error) {
 
 	provider := g.llmConfig.Provider
 
-	headers, err := g.getProviderHeaders(provider)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to get %s provider headers: %v\n", provider, err)
-	}
-
-	var apiKey, baseURL string
-	switch provider {
-	case "anthropic":
-		apiKey = g.llmConfig.AnthropicAPIKey
-		baseURL = g.llmConfig.AnthropicBaseURL
-	case "openai":
-		apiKey = g.llmConfig.OpenAIAPIKey
-		baseURL = g.llmConfig.OpenAIBaseURL
-	case "gemini":
-		apiKey = g.llmConfig.GeminiAPIKey
-		baseURL = g.llmConfig.GeminiBaseURL
-	case "ollama":
-		baseURL = g.llmConfig.OllamaURL
-	}
-
-	opts := pgllm.Options{
-		APIKey:        apiKey,
-		Model:         g.llmConfig.Model,
-		BaseURL:       baseURL,
-		CustomHeaders: headers,
-		MaxTokens:     pgllm.Int(llmMaxTokens),
-		Temperature:   pgllm.Float(llmTemperature),
-	}
-	// Honor the operator-configured request timeout, matching the proxy
-	// shim's providerOptions. Only set it when positive so a zero/unset
-	// value leaves the library default in place.
-	if g.llmConfig.LLMConfig != nil && g.llmConfig.LLMConfig.TimeoutSeconds > 0 {
-		opts.RequestTimeout = time.Duration(g.llmConfig.LLMConfig.TimeoutSeconds) * time.Second
-	}
+	// Credential selection, custom-header wiring, and the
+	// timeout-only-when-positive rule live in the shared llmproxy helper
+	// so the overview and server-info analysis paths stay in lock-step.
+	opts := g.llmConfig.BuildClientOptions(llmMaxTokens, llmTemperature)
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {
@@ -580,15 +550,6 @@ func (g *Generator) createLLMClient() (pgllm.Client, error) {
 		return nil, err
 	}
 	return client, nil
-}
-
-// getProviderHeaders retrieves custom headers for the given provider from the
-// LLMConfig. Returns nil if the config is nil or if header loading fails.
-func (g *Generator) getProviderHeaders(provider string) (map[string]string, error) {
-	if g.llmConfig == nil || g.llmConfig.LLMConfig == nil {
-		return nil, nil
-	}
-	return g.llmConfig.LLMConfig.GetProviderHeaders(provider)
 }
 
 // extractTextFromResponse walks the LLM response content blocks and

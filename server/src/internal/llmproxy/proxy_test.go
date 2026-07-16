@@ -1196,3 +1196,140 @@ func TestProviderOptions_NoLLMConfig(t *testing.T) {
 		t.Errorf("expected nil MaxTokens when unset, got %v", opts.MaxTokens)
 	}
 }
+
+// -----------------------------------------------------------------------
+// BuildClientOptions — shared credential/options builder for the direct
+// (non-proxy) analysis clients used by overview and server-info.
+// -----------------------------------------------------------------------
+
+// TestBuildClientOptions_ProviderCredentialSelection verifies that each
+// provider branch selects the matching API key and base URL, that unknown
+// providers select neither, and that the caller-supplied max-tokens and
+// temperature are always applied along with the shared model.
+func TestBuildClientOptions_ProviderCredentialSelection(t *testing.T) {
+	cfg := &Config{
+		Model:            "shared-model",
+		AnthropicAPIKey:  "anthropic-key",
+		AnthropicBaseURL: "http://anthropic",
+		OpenAIAPIKey:     "openai-key",
+		OpenAIBaseURL:    "http://openai",
+		GeminiAPIKey:     "gemini-key",
+		GeminiBaseURL:    "http://gemini",
+		OllamaURL:        "http://ollama",
+	}
+
+	tests := []struct {
+		provider    string
+		wantAPIKey  string
+		wantBaseURL string
+	}{
+		{"anthropic", "anthropic-key", "http://anthropic"},
+		{"openai", "openai-key", "http://openai"},
+		{"gemini", "gemini-key", "http://gemini"},
+		{"ollama", "", "http://ollama"},
+		{"unknown", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg.Provider = tc.provider
+			opts := cfg.BuildClientOptions(1234, 0.25)
+			if opts.APIKey != tc.wantAPIKey {
+				t.Errorf("APIKey: got %q, want %q", opts.APIKey, tc.wantAPIKey)
+			}
+			if opts.BaseURL != tc.wantBaseURL {
+				t.Errorf("BaseURL: got %q, want %q", opts.BaseURL, tc.wantBaseURL)
+			}
+			if opts.Model != "shared-model" {
+				t.Errorf("Model: got %q, want %q", opts.Model, "shared-model")
+			}
+			if opts.MaxTokens == nil || *opts.MaxTokens != 1234 {
+				t.Errorf("MaxTokens: got %v, want 1234", opts.MaxTokens)
+			}
+			if opts.Temperature == nil || *opts.Temperature != 0.25 {
+				t.Errorf("Temperature: got %v, want 0.25", opts.Temperature)
+			}
+		})
+	}
+}
+
+// TestBuildClientOptions_TimeoutAndHeaders verifies that a positive
+// configured timeout is applied and that provider-specific custom headers
+// are wired into the returned Options.
+func TestBuildClientOptions_TimeoutAndHeaders(t *testing.T) {
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "m",
+		AnthropicAPIKey: "k",
+		LLMConfig: &config.LLMConfig{
+			TimeoutSeconds:         45,
+			AnthropicCustomHeaders: map[string]string{"X-Test": "value"},
+		},
+	}
+	opts := cfg.BuildClientOptions(100, 0.5)
+	if opts.RequestTimeout.Seconds() != 45 {
+		t.Errorf("RequestTimeout: got %v, want 45s", opts.RequestTimeout)
+	}
+	if opts.CustomHeaders["X-Test"] != "value" {
+		t.Errorf("CustomHeaders: got %v, want X-Test=value", opts.CustomHeaders)
+	}
+}
+
+// TestBuildClientOptions_NoLLMConfig verifies the nil-LLMConfig guard: no
+// headers are loaded and no timeout is applied, while the caller-supplied
+// max-tokens and temperature are still set.
+func TestBuildClientOptions_NoLLMConfig(t *testing.T) {
+	cfg := &Config{Provider: "openai", Model: "m", OpenAIAPIKey: "k"}
+	opts := cfg.BuildClientOptions(50, 0.1)
+	if opts.CustomHeaders != nil {
+		t.Errorf("expected nil headers with no LLMConfig, got %v", opts.CustomHeaders)
+	}
+	if opts.RequestTimeout != 0 {
+		t.Errorf("expected zero timeout with no LLMConfig, got %v", opts.RequestTimeout)
+	}
+	if opts.MaxTokens == nil || *opts.MaxTokens != 50 {
+		t.Errorf("MaxTokens: got %v, want 50", opts.MaxTokens)
+	}
+	if opts.Temperature == nil || *opts.Temperature != 0.1 {
+		t.Errorf("Temperature: got %v, want 0.1", opts.Temperature)
+	}
+}
+
+// TestBuildClientOptions_HeaderLoadErrorTreatedAsNoHeaders verifies that a
+// header-loading failure (here, a header sourced from an unreadable file)
+// is logged and treated as no headers so it never blocks analysis.
+func TestBuildClientOptions_HeaderLoadErrorTreatedAsNoHeaders(t *testing.T) {
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "m",
+		AnthropicAPIKey: "k",
+		LLMConfig: &config.LLMConfig{
+			CustomHeadersFiles: map[string]string{
+				"X-From-File": "/nonexistent/does/not/exist/header",
+			},
+		},
+	}
+	opts := cfg.BuildClientOptions(10, 0.2)
+	if opts.CustomHeaders != nil {
+		t.Errorf("expected nil headers when header loading fails, got %v", opts.CustomHeaders)
+	}
+	if opts.APIKey != "k" {
+		t.Errorf("APIKey: got %q, want %q", opts.APIKey, "k")
+	}
+}
+
+// TestBuildClientOptions_ZeroTimeoutNotApplied verifies that a zero or
+// unset TimeoutSeconds leaves RequestTimeout at the library default (0),
+// matching the timeout-only-when-positive rule.
+func TestBuildClientOptions_ZeroTimeoutNotApplied(t *testing.T) {
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "m",
+		AnthropicAPIKey: "k",
+		LLMConfig:       &config.LLMConfig{TimeoutSeconds: 0},
+	}
+	opts := cfg.BuildClientOptions(10, 0.2)
+	if opts.RequestTimeout != 0 {
+		t.Errorf("expected zero timeout when TimeoutSeconds=0, got %v", opts.RequestTimeout)
+	}
+}

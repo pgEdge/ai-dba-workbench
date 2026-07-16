@@ -816,40 +816,10 @@ func parseDatabaseAnalysisResponse(
 func (h *ServerInfoHandler) createLLMClient() (pgllm.Client, error) {
 	provider := h.llmConfig.Provider
 
-	headers, err := h.getProviderHeaders(provider)
-	if err != nil {
-		log.Printf("[ERROR] Failed to get %s provider headers: %v", provider, err)
-	}
-
-	var apiKey, baseURL string
-	switch provider {
-	case "anthropic":
-		apiKey = h.llmConfig.AnthropicAPIKey
-		baseURL = h.llmConfig.AnthropicBaseURL
-	case "openai":
-		apiKey = h.llmConfig.OpenAIAPIKey
-		baseURL = h.llmConfig.OpenAIBaseURL
-	case "gemini":
-		apiKey = h.llmConfig.GeminiAPIKey
-		baseURL = h.llmConfig.GeminiBaseURL
-	case "ollama":
-		baseURL = h.llmConfig.OllamaURL
-	}
-
-	opts := pgllm.Options{
-		APIKey:        apiKey,
-		Model:         h.llmConfig.Model,
-		BaseURL:       baseURL,
-		CustomHeaders: headers,
-		MaxTokens:     pgllm.Int(llmAnalysisMaxTokens),
-		Temperature:   pgllm.Float(llmAnalysisTemperature),
-	}
-	// Honor the operator-configured request timeout, matching the proxy
-	// shim's providerOptions. Only set it when positive so a zero/unset
-	// value leaves the library default in place.
-	if h.llmConfig.LLMConfig != nil && h.llmConfig.LLMConfig.TimeoutSeconds > 0 {
-		opts.RequestTimeout = time.Duration(h.llmConfig.LLMConfig.TimeoutSeconds) * time.Second
-	}
+	// Credential selection, custom-header wiring, and the
+	// timeout-only-when-positive rule live in the shared llmproxy helper
+	// so the overview and server-info analysis paths stay in lock-step.
+	opts := h.llmConfig.BuildClientOptions(llmAnalysisMaxTokens, llmAnalysisTemperature)
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {
@@ -857,15 +827,6 @@ func (h *ServerInfoHandler) createLLMClient() (pgllm.Client, error) {
 		return nil, err
 	}
 	return client, nil
-}
-
-// getProviderHeaders retrieves custom headers for the given provider from the
-// LLMConfig. Returns nil if the config is nil or if header loading fails.
-func (h *ServerInfoHandler) getProviderHeaders(provider string) (map[string]string, error) {
-	if h.llmConfig == nil || h.llmConfig.LLMConfig == nil {
-		return nil, nil
-	}
-	return h.llmConfig.LLMConfig.GetProviderHeaders(provider)
 }
 
 // pgEncodingName converts a PostgreSQL encoding integer to its name.

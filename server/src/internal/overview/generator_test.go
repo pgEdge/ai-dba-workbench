@@ -971,6 +971,24 @@ func TestCreateLLMClient_MissingProviderReturnsError(t *testing.T) {
 	}
 }
 
+func TestCreateLLMClient_UnknownProviderReturnsError(t *testing.T) {
+	// A non-empty but unregistered provider passes the empty-provider
+	// guard yet fails pgllm.NewClient; the construction error must surface
+	// to the caller rather than yielding a client.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider: "does-not-exist",
+		Model:    "m",
+	})
+
+	client, err := g.createLLMClient()
+	if err == nil {
+		t.Fatal("expected an error for an unregistered provider")
+	}
+	if client != nil {
+		t.Errorf("expected nil client for an unregistered provider, got %T", client)
+	}
+}
+
 func TestCreateLLMClient_NilConfigReturnsError(t *testing.T) {
 	// NewGenerator accepts a nil *llmproxy.Config when AI is disabled or the
 	// LLM config is omitted. createLLMClient must not panic dereferencing the

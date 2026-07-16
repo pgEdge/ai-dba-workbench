@@ -10,7 +10,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,6 +115,49 @@ func TestRespondJSON(t *testing.T) {
 
 			if tt.checkBody != nil {
 				tt.checkBody(t, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRespondJSON_EncodeError(t *testing.T) {
+	// json cannot marshal NaN/Inf; RespondJSON must not panic and must log
+	// the failure loudly rather than swallowing it into a silent empty body.
+	nonEncodable := []struct {
+		name string
+		data any
+	}{
+		{"NaN", map[string]float64{"value": math.NaN()}},
+		{"+Inf", map[string]float64{"value": math.Inf(1)}},
+		{"-Inf", map[string]float64{"value": math.Inf(-1)}},
+	}
+
+	for _, tc := range nonEncodable {
+		t.Run(tc.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			origOut := log.Writer()
+			origFlags := log.Flags()
+			log.SetOutput(&logBuf)
+			log.SetFlags(0)
+			t.Cleanup(func() {
+				log.SetOutput(origOut)
+				log.SetFlags(origFlags)
+			})
+
+			rec := httptest.NewRecorder()
+
+			RespondJSON(rec, http.StatusOK, tc.data)
+
+			if rec.Code != http.StatusOK {
+				t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+			}
+
+			logged := logBuf.String()
+			if !strings.Contains(logged, "[ERROR]") {
+				t.Errorf("expected an [ERROR] log entry, got %q", logged)
+			}
+			if !strings.Contains(logged, "RespondJSON") {
+				t.Errorf("expected log to name RespondJSON, got %q", logged)
 			}
 		})
 	}

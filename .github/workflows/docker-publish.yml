@@ -82,7 +82,7 @@ jobs:
                       type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
 
             - name: Build and push
-              uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+              uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
               with:
                   context: .
                   file: server/Dockerfile
@@ -136,7 +136,7 @@ jobs:
                       type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
 
             - name: Build and push
-              uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+              uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
               with:
                   context: .
                   file: collector/Dockerfile
@@ -190,7 +190,7 @@ jobs:
                       type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
 
             - name: Build and push
-              uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+              uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
               with:
                   context: .
                   file: alerter/Dockerfile
@@ -244,7 +244,7 @@ jobs:
                       type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
 
             - name: Build and push
-              uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+              uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
               with:
                   context: .
                   file: client/Dockerfile

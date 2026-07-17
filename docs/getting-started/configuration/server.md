@@ -376,6 +376,15 @@ default, 3072 dimensions), `gemini-embedding-2`, and
 availability varies by Gemini API key tier; run ListModels to verify
 which embedding models a given key can access.
 
+The configured `model` must not produce vectors with more than 4000
+dimensions. The server stores chat memory embeddings as `halfvec(4000)`
+and zero-pads each embedding to 4000 dimensions; 4000 is pgvector's
+HNSW index limit for the `halfvec` type. The server rejects a model
+that exceeds 4000 dimensions with a clear error rather than truncating
+the vector. Storing embeddings as `halfvec` requires pgvector `0.7.0`
+or newer; upgrading an existing installation against an older pgvector
+causes the embedding-column migration to fail.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable embeddings |

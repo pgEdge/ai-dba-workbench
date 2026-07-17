@@ -214,6 +214,13 @@ embedding:
   #   - openai: text-embedding-3-small
   #   - gemini: gemini-embedding-001
   #   - ollama: nomic-embed-text
+  #
+  # The configured embedding model must not produce vectors with
+  # more than 4000 dimensions. Embeddings are stored as halfvec(4000)
+  # and zero-padded to 4000 dimensions, which is pgvector's HNSW index
+  # limit for the halfvec type. Models that exceed 4000 dimensions are
+  # not supported; the server rejects such a model with an error rather
+  # than truncating the vector.
   model: "nomic-embed-text"
 
   #-----------------------------------------------------------------------

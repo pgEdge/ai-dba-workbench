@@ -310,6 +310,13 @@ llm:
   # Provider to use for generating embeddings (tier 2)
   # Options: ollama, openai, gemini, voyage
   # Default: ollama
+  #
+  # The configured embedding model must not produce vectors with
+  # more than 4000 dimensions. Anomaly embeddings are stored as
+  # halfvec(4000) and zero-padded to 4000 dimensions, which is
+  # pgvector's HNSW index limit for the halfvec type. Models that
+  # exceed 4000 dimensions are not supported; such a model is rejected
+  # with an error rather than truncating the vector.
   embedding_provider: ollama
 
   # Provider to use for reasoning/classification (tier 3)

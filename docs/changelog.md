@@ -78,6 +78,19 @@ project adheres to
   dead-tuple ratio metric for tables, reusing the rate and ratio
   calculations already applied elsewhere in the product. (#342)
 
+- Fix embedding storage rejecting non-OpenAI providers with a
+  dimension-mismatch error. The chat memory and anomaly detection
+  embedding columns were hardcoded to `vector(1536)`, OpenAI's
+  dimension, which broke Gemini (3072), Voyage (1024 or 512), and
+  Ollama (384, 768, or 1024). The columns are now `halfvec(4000)`,
+  and the workbench zero-pads every embedding to 4000 dimensions, so
+  embeddings from any supported provider store and compare correctly.
+  This widening introduces a hard ceiling: an embedding model that
+  produces vectors with more than 4000 dimensions is not supported,
+  because 4000 is pgvector's HNSW index limit for the `halfvec` type.
+  The workbench rejects such a model with a clear error rather than
+  truncating the vector. (#294)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

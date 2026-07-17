@@ -13,6 +13,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	embeddingpkg "github.com/pgedge/ai-workbench/pkg/embedding"
 )
 
 // scanAcknowledgedAnomalyAlert scans all 15 fields from a query row into an
@@ -112,14 +114,21 @@ func (d *Datastore) UpdateAnomalyCandidate(ctx context.Context, c *AnomalyCandid
 
 // StoreAnomalyEmbedding stores an embedding for an anomaly candidate
 func (d *Datastore) StoreAnomalyEmbedding(ctx context.Context, candidateID int64, embedding []float32, modelName string) error {
-	// Convert []float32 to PostgreSQL vector format
-	vectorStr := float32SliceToVectorString(embedding)
+	// Zero-pad to the fixed halfvec width so any provider's embedding
+	// fits the column; reject vectors above the supported maximum.
+	padded, err := embeddingpkg.PadTo(embedding, embeddingpkg.MaxDimensions)
+	if err != nil {
+		return err
+	}
 
-	_, err := d.pool.Exec(ctx, `
+	// Convert []float32 to PostgreSQL vector format
+	vectorStr := float32SliceToVectorString(padded)
+
+	_, err = d.pool.Exec(ctx, `
 		INSERT INTO anomaly_embeddings (candidate_id, embedding, model_name)
-		VALUES ($1, $2::vector, $3)
+		VALUES ($1, $2::halfvec, $3)
 		ON CONFLICT (candidate_id) DO UPDATE
-		SET embedding = $2::vector, model_name = $3, created_at = CURRENT_TIMESTAMP
+		SET embedding = $2::halfvec, model_name = $3, created_at = CURRENT_TIMESTAMP
 	`, candidateID, vectorStr, modelName)
 
 	if err != nil {
@@ -143,13 +152,20 @@ func (d *Datastore) StoreAnomalyEmbedding(ctx context.Context, candidateID int64
 // FindSimilarAnomalies finds past anomalies similar to the given embedding
 // Returns candidates with similarity scores above threshold, excluding the current candidate
 func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float32, excludeCandidateID int64, threshold float64, limit int) ([]*SimilarAnomaly, error) {
+	// Pad the query vector to the same fixed width as the stored
+	// vectors so cosine distance is computed over identical layouts.
+	padded, err := embeddingpkg.PadTo(embedding, embeddingpkg.MaxDimensions)
+	if err != nil {
+		return nil, err
+	}
+
 	// Convert []float32 to PostgreSQL vector format
-	vectorStr := float32SliceToVectorString(embedding)
+	vectorStr := float32SliceToVectorString(padded)
 
 	rows, err := d.pool.Query(ctx, `
 		SELECT
 			c.id,
-			1 - (e.embedding <=> $1::vector) as similarity,
+			1 - (e.embedding <=> $1::halfvec) as similarity,
 			c.final_decision,
 			c.metric_name,
 			c.context
@@ -158,7 +174,7 @@ func (d *Datastore) FindSimilarAnomalies(ctx context.Context, embedding []float3
 		WHERE c.id != $2
 		  AND c.processed_at IS NOT NULL
 		  AND c.final_decision IS NOT NULL
-		ORDER BY e.embedding <=> $1::vector
+		ORDER BY e.embedding <=> $1::halfvec
 		LIMIT $3
 	`, vectorStr, excludeCandidateID, limit)
 	if err != nil {

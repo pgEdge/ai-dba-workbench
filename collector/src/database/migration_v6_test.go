@@ -147,11 +147,8 @@ func TestMigrationV6_FreshSchemaUsesHalfvec(t *testing.T) {
 		{"anomaly_embeddings", "idx_anomaly_embeddings_vector"},
 	} {
 		typeName := columnTypeName(ctx, t, pool, tc.table, "embedding")
-		if !strings.HasPrefix(typeName, "halfvec") {
-			t.Errorf("%s.embedding type = %q, want halfvec(...)", tc.table, typeName)
-		}
-		if !strings.Contains(typeName, "4000") {
-			t.Errorf("%s.embedding type = %q, want width 4000", tc.table, typeName)
+		if typeName != "halfvec(4000)" {
+			t.Errorf("%s.embedding type = %q, want halfvec(4000)", tc.table, typeName)
 		}
 		def := indexDef(ctx, t, pool, tc.index)
 		if def == "" {
@@ -281,7 +278,7 @@ func TestMigrationV6_UpgradesLegacyVectorColumns(t *testing.T) {
 	// Columns must now be halfvec(4000) with rebuilt halfvec indexes.
 	for _, l := range legacy {
 		typeName := columnTypeName(ctx, t, pool, l.table, "embedding")
-		if !strings.HasPrefix(typeName, "halfvec") || !strings.Contains(typeName, "4000") {
+		if typeName != "halfvec(4000)" {
 			t.Errorf("%s.embedding type = %q, want halfvec(4000)", l.table, typeName)
 		}
 		def := indexDef(ctx, t, pool, l.index)

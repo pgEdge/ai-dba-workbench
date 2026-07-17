@@ -3051,7 +3051,7 @@ func (sm *SchemaManager) registerMigrations() {
 				"chat_memories", "embedding",
 				"idx_chat_memories_embedding",
 				"CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding "+
-					"ON chat_memories USING hnsw (embedding halfvec_cosine_ops)",
+					"ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops)",
 			); err != nil {
 				return fmt.Errorf(
 					"failed to widen chat_memories.embedding: %w", err)
@@ -3061,7 +3061,7 @@ func (sm *SchemaManager) registerMigrations() {
 				"anomaly_embeddings", "embedding",
 				"idx_anomaly_embeddings_vector",
 				"CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector "+
-					"ON anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops)",
+					"ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops)",
 			); err != nil {
 				return fmt.Errorf(
 					"failed to widen anomaly_embeddings.embedding: %w", err)
@@ -3339,7 +3339,7 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			CREATE EXTENSION IF NOT EXISTS vector;
 
-			CREATE TABLE IF NOT EXISTS anomaly_embeddings (
+			CREATE TABLE IF NOT EXISTS public.anomaly_embeddings (
 				id BIGSERIAL PRIMARY KEY,
 				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
 				embedding halfvec(4000),
@@ -3348,13 +3348,13 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 				UNIQUE(candidate_id)
 			);
 
-			COMMENT ON TABLE anomaly_embeddings IS
+			COMMENT ON TABLE public.anomaly_embeddings IS
 				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
 
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
-				ON anomaly_embeddings(candidate_id);
+				ON public.anomaly_embeddings(candidate_id);
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
-				ON anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
+				ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
 		`); err != nil {
 			return fmt.Errorf("pgvector schema setup: %w", err)
 		}
@@ -3381,14 +3381,14 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 func runChatMemoryEmbeddingSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "chat_memories_embedding_setup", func() error {
 		_, err := tx.Exec(ctx, `
-			ALTER TABLE chat_memories
+			ALTER TABLE public.chat_memories
 				ADD COLUMN IF NOT EXISTS embedding halfvec(4000);
 
-			COMMENT ON COLUMN chat_memories.embedding IS
+			COMMENT ON COLUMN public.chat_memories.embedding IS
 				'Vector embedding for similarity search, zero-padded to a fixed width';
 
 			CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
-				ON chat_memories USING hnsw (embedding halfvec_cosine_ops);
+				ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops);
 		`)
 		if err != nil {
 			return fmt.Errorf(
@@ -3509,7 +3509,7 @@ func upgradeEmbeddingColumnToHalfvec(
 		// Drop the old vector_cosine_ops HNSW index before changing the
 		// column type; the operator class no longer matches afterwards.
 		if _, err := tx.Exec(ctx,
-			fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)); err != nil {
+			fmt.Sprintf("DROP INDEX IF EXISTS public.%s", indexName)); err != nil {
 			return fmt.Errorf("drop index %s: %w", indexName, err)
 		}
 
@@ -3517,7 +3517,7 @@ func upgradeEmbeddingColumnToHalfvec(
 		// dimensions and preserving NULLs. The cast goes through the
 		// real[] representation so array_fill can append the padding.
 		alter := fmt.Sprintf(`
-			ALTER TABLE %s
+			ALTER TABLE public.%s
 				ALTER COLUMN %s TYPE halfvec(4000)
 				USING CASE
 					WHEN %s IS NULL THEN NULL

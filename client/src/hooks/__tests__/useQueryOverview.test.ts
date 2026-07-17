@@ -145,10 +145,10 @@ describe('useQueryOverview', () => {
         const callArgs = mockApiFetch.mock.calls[0];
         const body = JSON.parse(callArgs[1].body);
 
-        expect(body.system).toContain('PostgreSQL expert');
+        expect(body.system_prompt).toContain('PostgreSQL expert');
         expect(body.messages).toHaveLength(1);
         expect(body.messages[0].role).toBe('user');
-        expect(body.messages[0].content).toContain('SELECT * FROM users');
+        expect(body.messages[0].content[0].text).toContain('SELECT * FROM users');
     });
 
     it('calls setAnalysis with text from LLM response on success', async () => {
@@ -308,7 +308,7 @@ describe('useQueryOverview', () => {
         });
 
         const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
-        expect(body.messages[0].content).toContain('90.0%');
+        expect(body.messages[0].content[0].text).toContain('90.0%');
     });
 
     it('truncates long query text in user message', async () => {
@@ -322,9 +322,10 @@ describe('useQueryOverview', () => {
         });
 
         const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
-        expect(body.messages[0].content).toContain('...');
+        expect(body.messages[0].content[0].text).toContain('...');
         // The truncated text should be at most 200 characters plus ellipsis
-        const queryLine = body.messages[0].content.split('\n')[0];
+        const queryLine =
+            body.messages[0].content[0].text.split('\n')[0];
         expect(queryLine.length).toBeLessThan(220);
     });
 });

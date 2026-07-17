@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
@@ -297,10 +298,7 @@ func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, que
 	}
 
 	// Convert float64 to float32
-	vector32 := make([]float32, len(vector))
-	for i, v := range vector {
-		vector32[i] = float32(v)
-	}
+	vector32 := vec.Float64ToFloat32(vector)
 
 	return vector32, embCfg.Provider, nil
 }
@@ -435,12 +433,12 @@ func deserializeEmbedding(data []byte) []float32 {
 		return nil
 	}
 
-	vec := make([]float32, len(data)/4)
-	for i := range vec {
+	out := make([]float32, len(data)/4)
+	for i := range out {
 		bits := binary.LittleEndian.Uint32(data[i*4:])
-		vec[i] = math.Float32frombits(bits)
+		out[i] = math.Float32frombits(bits)
 	}
-	return vec
+	return out
 }
 
 func cosineSimilarity(a, b []float32) float64 {

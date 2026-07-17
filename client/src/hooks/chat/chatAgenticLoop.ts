@@ -24,6 +24,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../../types/llm';
+import { normaliseMessages } from '../../types/llm';
 import type { APIMessage, ToolDefinition } from './chatTypes';
 
 /**
@@ -189,9 +190,9 @@ export async function runAgenticLoop(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                messages: currentMessages,
+                messages: normaliseMessages(currentMessages),
                 tools: availableTools,
-                system: systemPrompt,
+                system_prompt: systemPrompt,
             }),
             signal: abortSignal,
         });
@@ -219,7 +220,7 @@ export async function runAgenticLoop(
                 availableTools.map(t => t.name),
             );
             const allUnknown = toolUses.every(
-                t => !availableNames.has(t.name ?? ''),
+                t => !availableNames.has(t.tool_use?.name ?? ''),
             );
             if (allUnknown) {
                 const finalMessage: ChatMessageData = {
@@ -284,7 +285,7 @@ export async function runAgenticLoop(
         let trippedErrorText = '';
 
         for (const toolUse of toolUses) {
-            const toolName = toolUse.name ?? 'unknown';
+            const toolName = toolUse.tool_use?.name ?? 'unknown';
 
             // Mark tool as running in the activity tracker
             const activity: ToolActivity = {
@@ -300,8 +301,8 @@ export async function runAgenticLoop(
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        name: toolUse.name,
-                        arguments: toolUse.input,
+                        name: toolUse.tool_use?.name,
+                        arguments: toolUse.tool_use?.input,
                     }),
                     signal: abortSignal,
                 });
@@ -326,8 +327,8 @@ export async function runAgenticLoop(
 
                 toolResults.push({
                     type: 'tool_result',
-                    tool_use_id: toolUse.id ?? '',
-                    content: resultText,
+                    tool_use_id: toolUse.tool_use?.id ?? '',
+                    text: resultText,
                     is_error: toolData.isError || undefined,
                 });
 
@@ -354,8 +355,8 @@ export async function runAgenticLoop(
 
                 toolResults.push({
                     type: 'tool_result',
-                    tool_use_id: toolUse.id ?? '',
-                    content: errMsg,
+                    tool_use_id: toolUse.tool_use?.id ?? '',
+                    text: errMsg,
                     is_error: true,
                 });
 

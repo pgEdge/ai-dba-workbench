@@ -179,9 +179,12 @@ describe('useChartAnalysis', () => {
         const callArgs = mockApiFetch.mock.calls[0];
         const body = JSON.parse(callArgs[1].body);
 
-        expect(body.system).toContain('PostgreSQL database expert');
+        expect(body.system_prompt).toContain('PostgreSQL database expert');
+        expect(body.system).toBeUndefined();
         expect(body.messages).toHaveLength(1);
         expect(body.messages[0].role).toBe('user');
+        expect(Array.isArray(body.messages[0].content)).toBe(true);
+        expect(body.messages[0].content[0].type).toBe('text');
     });
 
     it('analyze includes chart data in user message', async () => {
@@ -192,7 +195,7 @@ describe('useChartAnalysis', () => {
         });
 
         const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
-        const userMessage = body.messages[0].content;
+        const userMessage = body.messages[0].content[0].text;
 
         expect(userMessage).toContain('CPU Usage');
         expect(userMessage).toContain('Connection: Production DB');
@@ -220,7 +223,7 @@ describe('useChartAnalysis', () => {
         });
 
         const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
-        const userMessage = body.messages[0].content;
+        const userMessage = body.messages[0].content[0].text;
 
         expect(userMessage).toContain('Min: 10');
         expect(userMessage).toContain('Max: 50');
@@ -378,7 +381,7 @@ describe('useChartAnalysis', () => {
         });
 
         const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
-        expect(body.messages[0].content).toContain('No data points');
+        expect(body.messages[0].content[0].text).toContain('No data points');
     });
 
     it('fetches connection context when connectionId is provided', async () => {
@@ -447,7 +450,7 @@ describe('useChartAnalysis', () => {
         });
 
         const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
-        const userMessage = body.messages[0].content;
+        const userMessage = body.messages[0].content[0].text;
 
         expect(userMessage).toContain('Series "series1"');
         expect(userMessage).toContain('Series "series2"');

@@ -15,6 +15,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -141,7 +142,7 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 					if err != nil {
 						log.Printf("WARNING: store_memory: failed to generate embedding: %v", err)
 					} else if len(vector) > 0 {
-						embeddingVec = float64sToFloat32s(vector)
+						embeddingVec = vec.Float64ToFloat32(vector)
 						modelName = provider.ModelName()
 					}
 				}
@@ -177,13 +178,4 @@ func StoreMemoryTool(memoryStore *memory.Store, cfg *config.Config, rbacChecker 
 			return mcp.NewToolSuccess(sb.String())
 		},
 	}
-}
-
-// float64sToFloat32s converts a slice of float64 values to float32.
-func float64sToFloat32s(src []float64) []float32 {
-	dst := make([]float32, len(src))
-	for i, v := range src {
-		dst[i] = float32(v)
-	}
-	return dst
 }

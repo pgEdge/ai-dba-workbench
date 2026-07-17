@@ -383,10 +383,23 @@ knowledgebase:
   enabled: false
 
   # Path to SQLite knowledgebase database
-  # Defaults to the pgEdge package install path; only set this to
-  # override the default location.
+  #
+  # The pgedge-ai-kb packages install one database file per
+  # embedding provider and model into
+  # /usr/share/pgedge/pgedge-ai-kb/ on Linux. Each file is named
+  # kb-<provider>-<model>.db, where <provider> and <model> match
+  # the embedding_provider and embedding_model configured below.
+  # For the default ollama provider with the nomic-embed-text
+  # model, the file is kb-ollama-nomic-embed-text.db, giving the
+  # path /usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db.
+  # The exact location can vary by deployment method (native
+  # package, Docker, or manual install) and operating system.
+  #
+  # The built-in default still points at the legacy
+  # postgres-mcp-kb location, so set database_path explicitly when
+  # using the current pgedge-ai-kb packages.
   # Default: /usr/share/pgedge/postgres-mcp-kb/kb.db
-  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
+  # database_path: "/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db"
 
   #-----------------------------------------------------------------------
   # Knowledgebase Embedding Configuration

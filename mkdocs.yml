@@ -99,10 +99,16 @@ nav:
 
   - Administrator's Guide:
     - Overview: admin-guide/index.md
+    - Managing Users and Permissions:
+      - Understanding the Workbench Permission Model: admin-guide/managing-users-and-permissions/permission_model.md
+      - Account Management: admin-guide/managing-users-and-permissions/accounts.md
+      - Group Management: admin-guide/managing-users-and-permissions/groups.md
+      - Token Management: admin-guide/managing-users-and-permissions/tokens.md
+      - Permission Management: admin-guide/managing-users-and-permissions/permission_mgmt.md
+    - Enforcing the Password Policy: admin-guide/password.md
+    - Connection Management: admin-guide/connections.md
     - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md
     - Verifying the Health of Components: admin-guide/verify_health.md
-    - Users & Authentication: admin-guide/authentication.md
-    - Connection Management: admin-guide/connections.md
     - Alert Rules & Thresholds: admin-guide/alert-rules.md
     - Notification Channels: admin-guide/notification-channels.md
     - Probe Configuration: admin-guide/probes.md

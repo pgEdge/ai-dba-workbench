@@ -37,8 +37,8 @@ entry.
 
 ![Adding a server definition](../images/add_server.png)
 
-For detailed information about using the Workbench, see the
-[User Guide](../user-guide/index.md).
+For detailed information about the monitoring dashboards, see
+[Dashboards](dashboards/index.md).
 
 The cluster navigator on the left side of the interface provides
 tree-based navigation across groups, clusters, and individual servers.

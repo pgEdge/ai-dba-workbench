@@ -74,7 +74,7 @@ You must specify only one of these flags; the command rejects both flags if
 used together.
 
 In the following example, the `-add-group` command creates the
-`dba-team` group; then, the `-add-member` command then adds the user `alice`
+`dba-team` group; the `-add-member` command then adds the user `alice`
 to it:
 
 ```bash

@@ -249,10 +249,10 @@ http:
     rate_limit_window_minutes: 15
     rate_limit_max_attempts: 10
     # Account lockout settings
-    max_failed_attempts_before_lockout: 5  # 0 = disabled
+    max_failed_attempts_before_lockout: 10  # 0 = disabled
     # API token restrictions
     # Superuser-owned tokens are exempt from this limit
-    max_user_token_days: 90  # 0 = unlimited
+    max_user_token_days: 0  # 0 = unlimited
 ```
 
 The following properties control lockout behavior:

@@ -387,7 +387,7 @@ knowledgebase:
   #-----------------------------------------------------------------------
 
   # Embedding provider for knowledgebase similarity search
-  # The Embedding provider must be one of the following: ollama, voyage, openai
+  # The Embedding provider must be one of the following: ollama, voyage, openai, gemini
   # Default: ollama
   embedding_provider: "ollama"
 

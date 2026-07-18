@@ -41,6 +41,7 @@ import BlackoutPanel from '../BlackoutPanel';
 import AlertAnalysisDialog from '../AlertAnalysisDialog';
 import ServerAnalysisDialog from '../ServerAnalysisDialog';
 import { hasCachedServerAnalysis } from '../../hooks/useServerAnalysis';
+import { useRetryingFetch } from '../../hooks/useRetryingFetch';
 import type { ServerSelection, ClusterSelection } from '../../types/selection';
 import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
@@ -145,6 +146,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     // place, so a minimal MUI Snackbar+Alert is rendered here.
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const { clearOverlays } = useDashboard();
+    // fetchAlertsData guards on user/selection internally and reports
+    // success in those cases, so no separate enabled gate is needed
+    // here; passing lastRefresh as the reset key lets a manual refresh
+    // pre-empt any pending backoff.
+    const { run: runAlertsFetch } = useRetryingFetch({
+        resetKey: lastRefresh,
+    });
 
     // Clear dashboard overlay stack when the selection changes
     useEffect(() => {
@@ -382,11 +390,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     };
 
     // Fetch alerts data function
-    const fetchAlertsData = useCallback(async () => {
+    const fetchAlertsData = useCallback(async (): Promise<boolean> => {
         if (!user || !selection) {
             setAlerts([]);
             setLoading(false);
-            return;
+            return true;
         }
 
         // For server selections, require a valid ID
@@ -394,7 +402,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             logger.warn('Server selection missing ID, skipping alert fetch');
             setAlerts([]);
             setLoading(false);
-            return;
+            return true;
         }
 
         // Only show loading on initial fetch to prevent flashing (use ref to avoid re-renders)
@@ -433,9 +441,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             }
             setAlerts(merged);
             initialLoadDoneRef.current = true;
+            return true;
         } catch (err) {
             logger.error('Error fetching alerts:', err);
             setAlerts([]);
+            return false;
         } finally {
             setLoading(false);
         }
@@ -534,10 +544,13 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         initialLoadDoneRef.current = false;
     }, [selection?.type, selection?.id]);
 
-    // Fetch alerts on selection change or cluster data refresh
+    // Fetch alerts on selection change or cluster data refresh.
+    // Routes through the retry controller so a transient failure
+    // self-heals with capped exponential backoff instead of leaving
+    // the panel stuck on stale or empty data.
     useEffect(() => {
-        fetchAlertsData();
-    }, [fetchAlertsData, lastRefresh]);
+        void runAlertsFetch(fetchAlertsData);
+    }, [runAlertsFetch, fetchAlertsData, lastRefresh]);
 
     // Count only active (non-acknowledged) alerts for the header indicator
     const activeAlertCount = useMemo(() => {

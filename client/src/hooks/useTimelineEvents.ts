@@ -13,6 +13,7 @@ import { useAuth } from '../contexts/useAuth';
 import { useClusterData } from '../contexts/useClusterData';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import { useRetryingFetch } from './useRetryingFetch';
 
 export interface TimelineEvent {
     id: number;
@@ -47,6 +48,8 @@ export interface UseTimelineEventsReturn {
     error: string | null;
     refetch: () => Promise<void>;
     totalCount: number;
+    /** True while an automatic retry is pending after a failed fetch. */
+    retrying: boolean;
 }
 
 interface TimelineApiResponse {
@@ -114,6 +117,10 @@ export const useTimelineEvents = ({
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+    const { run, retrying } = useRetryingFetch({
+        resetKey: lastRefresh,
+        enabled: enabled && !!user,
+    });
 
     // Create a stable string representation of eventTypes for dependency comparison
     // This ensures the callback is recreated when event types change, regardless of
@@ -151,8 +158,8 @@ export const useTimelineEvents = ({
     /**
      * Fetch timeline events from the API
      */
-    const fetchEvents = useCallback(async (): Promise<void> => {
-        if (!user || !enabled) {return;}
+    const fetchEvents = useCallback(async (): Promise<boolean> => {
+        if (!user || !enabled) {return true;}
 
         // Only show loading state on the very first fetch ever (use ref to avoid re-renders)
         if (!initialLoadDoneRef.current) {
@@ -169,6 +176,7 @@ export const useTimelineEvents = ({
                 setTotalCount(data.total_count ?? 0);
                 initialLoadDoneRef.current = true;
             }
+            return true;
         } catch (err) {
             logger.error('Error fetching timeline events:', err);
             if (isMountedRef.current) {
@@ -176,6 +184,7 @@ export const useTimelineEvents = ({
                 setEvents([]);
                 setTotalCount(0);
             }
+            return false;
         } finally {
             if (isMountedRef.current) {
                 setLoading(false);
@@ -184,11 +193,12 @@ export const useTimelineEvents = ({
     }, [user, enabled, buildQueryString]);
 
     /**
-     * Manual refetch function
+     * Manual refetch function. Routes through the retry controller so a
+     * manual refresh resets any pending backoff schedule.
      */
-    const refetch = useCallback((): Promise<void> => {
-        return fetchEvents();
-    }, [fetchEvents]);
+    const refetch = useCallback(async (): Promise<void> => {
+        await run(fetchEvents);
+    }, [run, fetchEvents]);
 
     // Reset initial load state when connection changes
     useEffect(() => {
@@ -202,13 +212,13 @@ export const useTimelineEvents = ({
         isMountedRef.current = true;
 
         if (enabled && user) {
-            void fetchEvents();
+            void run(fetchEvents);
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [enabled, user, fetchEvents, lastRefresh]);
+    }, [enabled, user, run, fetchEvents, lastRefresh]);
 
     return {
         events,
@@ -216,6 +226,7 @@ export const useTimelineEvents = ({
         error,
         refetch,
         totalCount,
+        retrying,
     };
 };
 

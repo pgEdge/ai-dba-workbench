@@ -443,6 +443,13 @@ The probe consolidates data from
 - Use Cases: Table usage analysis, vacuum monitoring,
   I/O analysis, cache effectiveness
 
+The probe also records the total on-disk size of each
+table. The `table_size` column reports the size in
+bytes from `pg_table_size`, which covers heap, TOAST,
+and free space map storage while excluding indexes.
+The `table_size_pretty` column reports the same value
+as a human-readable string from `pg_size_pretty`.
+
 **Columns Collected**: relid, schemaname, relname,
 seq_scan, seq_tup_read, idx_scan, idx_tup_fetch,
 n_tup_ins, n_tup_upd, n_tup_del, n_tup_hot_upd,
@@ -452,7 +459,8 @@ last_analyze, last_autoanalyze, vacuum_count,
 autovacuum_count, analyze_count,
 autoanalyze_count, heap_blks_read, heap_blks_hit,
 idx_blks_read, idx_blks_hit, toast_blks_read,
-toast_blks_hit, tidx_blks_read, tidx_blks_hit
+toast_blks_hit, tidx_blks_read, tidx_blks_hit,
+table_size, table_size_pretty
 
 ### pg_stat_all_indexes
 
@@ -470,10 +478,16 @@ from `pg_statio_all_indexes`.
 - Use Cases: Index usage analysis, unused index
   detection, I/O analysis
 
+The probe also records the on-disk size of each index.
+The `index_size` column reports the size in bytes from
+`pg_relation_size`, and the `index_size_pretty` column
+reports the same value as a human-readable string from
+`pg_size_pretty`.
+
 **Columns Collected**: relid, indexrelid,
 schemaname, relname, indexrelname, idx_scan,
 idx_tup_read, idx_tup_fetch, idx_blks_read,
-idx_blks_hit
+idx_blks_hit, index_size, index_size_pretty
 
 ### pg_statio_all_sequences
 

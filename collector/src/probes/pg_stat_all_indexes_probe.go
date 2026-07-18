@@ -52,7 +52,9 @@ func (p *PgStatAllIndexesProbe) GetQueryForVersion(pgVersion int) string {
                 s.idx_tup_read,
                 s.idx_tup_fetch,
                 io.idx_blks_read,
-                io.idx_blks_hit
+                io.idx_blks_hit,
+                pg_relation_size(s.indexrelid) AS index_size,
+                pg_size_pretty(pg_relation_size(s.indexrelid)) AS index_size_pretty
             FROM pg_stat_all_indexes s
             LEFT JOIN pg_statio_all_indexes io ON s.indexrelid = io.indexrelid
             ORDER BY s.schemaname, s.relname, s.indexrelname
@@ -71,7 +73,9 @@ func (p *PgStatAllIndexesProbe) GetQueryForVersion(pgVersion int) string {
             s.idx_tup_read,
             s.idx_tup_fetch,
             io.idx_blks_read,
-            io.idx_blks_hit
+            io.idx_blks_hit,
+            pg_relation_size(s.indexrelid) AS index_size,
+            pg_size_pretty(pg_relation_size(s.indexrelid)) AS index_size_pretty
         FROM pg_stat_all_indexes s
         LEFT JOIN pg_statio_all_indexes io ON s.indexrelid = io.indexrelid
         ORDER BY s.schemaname, s.relname, s.indexrelname
@@ -107,6 +111,7 @@ func (p *PgStatAllIndexesProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		"relid", "indexrelid", "schemaname", "relname", "indexrelname",
 		"idx_scan", "last_idx_scan", "idx_tup_read", "idx_tup_fetch",
 		"idx_blks_read", "idx_blks_hit",
+		"index_size", "index_size_pretty",
 	}
 
 	// Build values array
@@ -133,6 +138,8 @@ func (p *PgStatAllIndexesProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 			metric["idx_tup_fetch"],
 			metric["idx_blks_read"],
 			metric["idx_blks_hit"],
+			metric["index_size"],
+			metric["index_size_pretty"],
 		}
 		values = append(values, row)
 	}

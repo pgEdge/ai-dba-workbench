@@ -46,6 +46,17 @@ func TestPgStatAllIndexesProbe_Surface(t *testing.T) {
 	if p.GetQuery() == "" {
 		t.Error("default GetQuery should not be empty")
 	}
+	// Both version branches must collect index size identically.
+	for _, q := range []string{pre16, post16} {
+		for _, s := range []string{
+			"pg_relation_size(s.indexrelid) AS index_size",
+			"pg_size_pretty(pg_relation_size(s.indexrelid)) AS index_size_pretty",
+		} {
+			if !strings.Contains(q, s) {
+				t.Errorf("GetQueryForVersion missing %q", s)
+			}
+		}
+	}
 }
 
 func TestPgStatAllIndexesProbe_StoreEmpty(t *testing.T) {

@@ -979,11 +979,66 @@ func TestClassifyMetrics(t *testing.T) {
 	})
 }
 
+func TestLatestEntityKeyColumns(t *testing.T) {
+	tests := []struct {
+		name       string
+		outputCols []string
+		colTypes   map[string]string
+		want       []string
+	}{
+		{
+			name:       "table probe keys on text and name columns",
+			outputCols: []string{"database_name", "schemaname", "relname", "n_live_tup", "seq_scan"},
+			colTypes: map[string]string{
+				"database_name": "text",
+				"schemaname":    "name",
+				"relname":       "name",
+				"n_live_tup":    "bigint",
+				"seq_scan":      "bigint",
+			},
+			want: []string{"database_name", "schemaname", "relname"},
+		},
+		{
+			name:       "varchar columns count as entity keys",
+			outputCols: []string{"label", "value"},
+			colTypes:   map[string]string{"label": "character varying", "value": "numeric"},
+			want:       []string{"label"},
+		},
+		{
+			name:       "no text columns yields no keys",
+			outputCols: []string{"cpu_user", "cpu_system"},
+			colTypes:   map[string]string{"cpu_user": "double precision", "cpu_system": "double precision"},
+			want:       nil,
+		},
+		{
+			name:       "preserves output column order",
+			outputCols: []string{"relname", "schemaname"},
+			colTypes:   map[string]string{"relname": "name", "schemaname": "name"},
+			want:       []string{"relname", "schemaname"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := latestEntityKeyColumns(tt.outputCols, tt.colTypes)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("index %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestBuildLatestRowsQuery(t *testing.T) {
-	t.Run("connection filter and limit only", func(t *testing.T) {
+	t.Run("entity-key probe wraps in DISTINCT ON", func(t *testing.T) {
 		query, args := buildLatestRowsQuery(
 			"pg_stat_all_tables",
 			[]string{"relname", "n_live_tup"},
+			map[string]string{"relname": "name", "n_live_tup": "bigint"},
 			[]int{1},
 			MetricFilters{},
 			"n_live_tup", "desc", 1,
@@ -995,8 +1050,17 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, "connection_id IN ($1)") {
 			t.Error("query should filter by connection_id")
 		}
+		// The inner query reduces each entity (keyed by the text/name
+		// column relname) to its newest sample via DISTINCT ON.
+		if !strings.Contains(query, `DISTINCT ON ("relname")`) {
+			t.Errorf("query should use DISTINCT ON the entity key, got: %s", query)
+		}
+		if !strings.Contains(query, `ORDER BY "relname", collected_at DESC`) {
+			t.Errorf("inner query should order by entity key then collected_at DESC, got: %s", query)
+		}
+		// The outer query ranks the per-entity latest rows by order_by.
 		if !strings.Contains(query, `ORDER BY "n_live_tup" desc, collected_at DESC`) {
-			t.Errorf("query should order by quoted column then collected_at, got: %s", query)
+			t.Errorf("outer query should rank by order_by column, got: %s", query)
 		}
 		if !strings.Contains(query, "LIMIT $2") {
 			t.Error("query should apply LIMIT placeholder")
@@ -1013,6 +1077,7 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		query, args := buildLatestRowsQuery(
 			"pg_stat_all_indexes",
 			[]string{"indexrelname", "idx_scan"},
+			map[string]string{"indexrelname": "name", "idx_scan": "bigint"},
 			[]int{2, 3},
 			MetricFilters{
 				DatabaseName:   "northwind",
@@ -1039,8 +1104,11 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, "indexrelname = $6") {
 			t.Error("query should filter by indexrelname")
 		}
+		if !strings.Contains(query, `DISTINCT ON ("indexrelname")`) {
+			t.Errorf("query should use DISTINCT ON the index entity key, got: %s", query)
+		}
 		if !strings.Contains(query, `ORDER BY "idx_scan" asc, collected_at DESC`) {
-			t.Errorf("query should order by idx_scan asc, got: %s", query)
+			t.Errorf("query should rank by idx_scan asc, got: %s", query)
 		}
 		if !strings.Contains(query, "LIMIT $7") {
 			t.Error("query should apply LIMIT placeholder at $7")
@@ -1054,10 +1122,11 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("database filter skipped without resolved column", func(t *testing.T) {
+	t.Run("no entity-key columns falls back to flat collected_at ordering", func(t *testing.T) {
 		query, args := buildLatestRowsQuery(
 			"pg_sys_cpu_info",
 			[]string{"cpu_user"},
+			map[string]string{"cpu_user": "double precision"},
 			[]int{1},
 			MetricFilters{DatabaseName: "northwind", DatabaseColumn: ""},
 			"collected_at", "desc", 1,
@@ -1065,6 +1134,15 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 
 		if strings.Contains(query, "database_name") || strings.Contains(query, "datname") {
 			t.Error("query should not filter by database when column unresolved")
+		}
+		// With no text/name entity keys, the query must not use DISTINCT ON;
+		// the whole filtered set is a single logical entity ordered by
+		// collected_at so the newest sample stays first.
+		if strings.Contains(query, "DISTINCT ON") {
+			t.Errorf("query should not use DISTINCT ON without entity keys, got: %s", query)
+		}
+		if !strings.Contains(query, `ORDER BY "collected_at" desc, collected_at DESC`) {
+			t.Errorf("query should order by collected_at, got: %s", query)
 		}
 		// 1 connection + 1 limit only
 		if len(args) != 2 {

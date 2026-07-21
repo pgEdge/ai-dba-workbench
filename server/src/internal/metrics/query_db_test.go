@@ -80,12 +80,20 @@ type fixtureRow struct {
 // table with a representative column mix: bookkeeping columns, dimension
 // columns, numeric metrics, a timestamp column, an interval column, a
 // numeric column, and a double-precision column able to hold NaN. It
-// inserts three connection-1 rows and returns a cleanup that drops the
-// table. The three rows are:
+// inserts connection-1 rows for three distinct entities and returns a
+// cleanup that drops the table.
 //
-//	A: collected_at now-2m, n_live_tup 100, last_vacuum set, replay_lag 1s, nan 1.0
-//	B: collected_at now-1m, n_live_tup 300, last_vacuum set, replay_lag NULL, nan NaN
-//	C: collected_at now,    n_live_tup 200, last_vacuum NULL, replay_lag NULL, nan 2.0
+// The public.orders entity has three samples and models the stale-latest-row
+// regression: its most recent sample (200) is numerically smaller than an
+// older sample (300), so any query that ranks by the historical maximum of
+// n_live_tup would wrongly surface the older 300 row as "latest".
+//
+//	A: orders    now-2m, n_live_tup 100, last_vacuum set, replay_lag 1s, nan 1.0
+//	B: orders    now-1m, n_live_tup 300, last_vacuum set, replay_lag NULL, nan NaN
+//	C: orders    now,    n_live_tup 200, last_vacuum NULL, replay_lag NULL, nan 2.0
+//	D: customers now-90s, n_live_tup 400
+//	E: customers now-30s, n_live_tup 500 (customers' latest sample)
+//	F: products  now-45s, n_live_tup 50  (products' only sample)
 func setupLatestRowsFixture(t *testing.T, pool *pgxpool.Pool) func() {
 	t.Helper()
 	ctx := context.Background()
@@ -141,6 +149,24 @@ func setupLatestRowsFixture(t *testing.T, pool *pgxpool.Pool) func() {
 			replayLag:  nil,
 			nanMetric:  2.0,
 		},
+		{
+			collectedAt: now.Add(-90 * time.Second),
+			dbName:      "northwind", schema: "public", relname: "customers",
+			nLiveTup: 400, nDeadTup: 5, seqScan: 2, someRatio: 1.0,
+			lastVacuum: nil, replayLag: nil, nanMetric: 3.0,
+		},
+		{
+			collectedAt: now.Add(-30 * time.Second),
+			dbName:      "northwind", schema: "public", relname: "customers",
+			nLiveTup: 500, nDeadTup: 8, seqScan: 4, someRatio: 1.5,
+			lastVacuum: nil, replayLag: nil, nanMetric: 4.0,
+		},
+		{
+			collectedAt: now.Add(-45 * time.Second),
+			dbName:      "northwind", schema: "public", relname: "products",
+			nLiveTup: 50, nDeadTup: 1, seqScan: 1, someRatio: 0.5,
+			lastVacuum: nil, replayLag: nil, nanMetric: 5.0,
+		},
 	}
 
 	insert := `INSERT INTO metrics."` + latestRowsTestProbe + `"
@@ -179,7 +205,7 @@ func TestQueryLatestRows_Integration(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("happy path single newest row", func(t *testing.T) {
+	t.Run("happy path newest entity row", func(t *testing.T) {
 		result, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
 			[]int{1}, MetricFilters{}, "", "desc", 1)
 		if err != nil {
@@ -197,9 +223,10 @@ func TestQueryLatestRows_Integration(t *testing.T) {
 			}
 		}
 
-		// The newest row (collected_at now) has n_live_tup 200.
+		// Default order_by is collected_at; the entity with the newest
+		// sample is orders (collected_at now, n_live_tup 200).
 		if got := toInt64(t, row["n_live_tup"]); got != 200 {
-			t.Errorf("n_live_tup = %v, want 200 (newest row)", row["n_live_tup"])
+			t.Errorf("n_live_tup = %v, want 200 (orders' newest row)", row["n_live_tup"])
 		}
 		if row["relname"] != "orders" {
 			t.Errorf("relname = %v, want orders", row["relname"])
@@ -209,17 +236,70 @@ func TestQueryLatestRows_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("limit honored and order by collected_at desc", func(t *testing.T) {
+	// This is the exact regression the fix targets: a single entity whose
+	// most recent sample (200) is numerically smaller than an older sample
+	// (300). TableDetail.tsx requests limit=1 & order_by=n_live_tup desc, so
+	// the buggy "rank across all history by n_live_tup" query returned the
+	// stale 300 row (with its stale last_vacuum) forever. The corrected query
+	// must return the newest sample (200) regardless of order_by.
+	t.Run("single entity returns newest row not historical max", func(t *testing.T) {
+		filters := MetricFilters{SchemaName: "public", TableName: "orders"}
 		result, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
-			[]int{1}, MetricFilters{}, "", "desc", 3)
+			[]int{1}, filters, "n_live_tup", "desc", 1)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 row for orders, got %d", len(result))
+		}
+		row := result[0]
+		if got := toInt64(t, row["n_live_tup"]); got != 200 {
+			t.Errorf("n_live_tup = %d, want 200 (newest), not 300 (historical max)", got)
+		}
+		// Row C (the newest) has a NULL last_vacuum; the stale historical
+		// max row B had last_vacuum set, so a non-nil value here would prove
+		// the stale row leaked through.
+		if row["last_vacuum"] != nil {
+			t.Errorf("last_vacuum = %v, want nil (newest row's value)", row["last_vacuum"])
+		}
+	})
+
+	t.Run("multi-entity ranked by each entity latest sample", func(t *testing.T) {
+		result, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
+			[]int{1}, MetricFilters{}, "n_live_tup", "desc", 10)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// One row per distinct entity (orders, customers, products), ranked
+		// by each entity's own latest n_live_tup DESC: customers 500,
+		// orders 200 (NOT its historical 300), products 50.
+		if len(result) != 3 {
+			t.Fatalf("expected 3 entity rows, got %d", len(result))
+		}
+		wantVal := []int64{500, 200, 50}
+		wantRel := []string{"customers", "orders", "products"}
+		for i := range wantVal {
+			if got := toInt64(t, result[i]["n_live_tup"]); got != wantVal[i] {
+				t.Errorf("row %d n_live_tup = %d, want %d", i, got, wantVal[i])
+			}
+			if result[i]["relname"] != wantRel[i] {
+				t.Errorf("row %d relname = %v, want %s", i, result[i]["relname"], wantRel[i])
+			}
+		}
+	})
+
+	t.Run("multi-entity default order by collected_at desc", func(t *testing.T) {
+		result, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
+			[]int{1}, MetricFilters{}, "", "desc", 10)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(result) != 3 {
-			t.Fatalf("expected 3 rows, got %d", len(result))
+			t.Fatalf("expected 3 entity rows, got %d", len(result))
 		}
-		// collected_at DESC => C(200), B(300), A(100)
-		want := []int64{200, 300, 100}
+		// Per-entity latest by collected_at DESC: orders (now, 200),
+		// customers (now-30s, 500), products (now-45s, 50).
+		want := []int64{200, 500, 50}
 		for i, w := range want {
 			if got := toInt64(t, result[i]["n_live_tup"]); got != w {
 				t.Errorf("row %d n_live_tup = %d, want %d", i, got, w)
@@ -227,36 +307,19 @@ func TestQueryLatestRows_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("order_by real column honored", func(t *testing.T) {
-		result, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
-			[]int{1}, MetricFilters{}, "n_live_tup", "desc", 3)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(result) != 3 {
-			t.Fatalf("expected 3 rows, got %d", len(result))
-		}
-		// n_live_tup DESC => 300, 200, 100
-		want := []int64{300, 200, 100}
-		for i, w := range want {
-			if got := toInt64(t, result[i]["n_live_tup"]); got != w {
-				t.Errorf("row %d n_live_tup = %d, want %d", i, got, w)
-			}
-		}
-	})
-
-	t.Run("limit clamped above max still returns all rows", func(t *testing.T) {
+	t.Run("limit clamped above max still returns one row per entity", func(t *testing.T) {
 		result, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
 			[]int{1}, MetricFilters{}, "", "asc", maxLatestRowLimit+10)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(result) != 3 {
-			t.Fatalf("expected 3 rows, got %d", len(result))
+			t.Fatalf("expected 3 entity rows, got %d", len(result))
 		}
-		// asc by collected_at => A(100), B(300), C(200)
-		if got := toInt64(t, result[0]["n_live_tup"]); got != 100 {
-			t.Errorf("first row n_live_tup = %d, want 100", got)
+		// Per-entity latest by collected_at ASC: products (now-45s, 50),
+		// customers (now-30s, 500), orders (now, 200).
+		if got := toInt64(t, result[0]["n_live_tup"]); got != 50 {
+			t.Errorf("first row n_live_tup = %d, want 50 (oldest latest sample)", got)
 		}
 	})
 
@@ -267,7 +330,7 @@ func TestQueryLatestRows_Integration(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(result) != 3 {
-			t.Fatalf("expected 3 rows for northwind, got %d", len(result))
+			t.Fatalf("expected 3 entity rows for northwind, got %d", len(result))
 		}
 
 		none, err := QueryLatestRows(ctx, pool, latestRowsTestProbe,
@@ -307,7 +370,7 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 
 	t.Run("resolves output and order_by columns", func(t *testing.T) {
 		filters := MetricFilters{}
-		outputCols, orderCol, err := discoverLatestRowColumns(
+		outputCols, colTypes, orderCol, err := discoverLatestRowColumns(
 			ctx, pool, latestRowsTestProbe, "n_live_tup", &filters)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -325,11 +388,19 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 				t.Errorf("output columns should include %q", col)
 			}
 		}
+		// colTypes must carry the data types the entity-key detection relies
+		// on so the caller can build the DISTINCT ON grouping.
+		if colTypes["relname"] != "name" {
+			t.Errorf("colTypes[relname] = %q, want name", colTypes["relname"])
+		}
+		if colTypes["n_live_tup"] != "bigint" {
+			t.Errorf("colTypes[n_live_tup] = %q, want bigint", colTypes["n_live_tup"])
+		}
 	})
 
 	t.Run("resolves database filter column", func(t *testing.T) {
 		filters := MetricFilters{DatabaseName: "northwind"}
-		_, _, err := discoverLatestRowColumns(
+		_, _, _, err := discoverLatestRowColumns(
 			ctx, pool, latestRowsTestProbe, "", &filters)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -341,7 +412,7 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 
 	t.Run("unknown order_by rejected", func(t *testing.T) {
 		filters := MetricFilters{}
-		_, _, err := discoverLatestRowColumns(
+		_, _, _, err := discoverLatestRowColumns(
 			ctx, pool, latestRowsTestProbe, "nope", &filters)
 		if err == nil {
 			t.Fatal("expected error for unknown order_by")
@@ -350,7 +421,7 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 
 	t.Run("missing probe rejected", func(t *testing.T) {
 		filters := MetricFilters{}
-		_, _, err := discoverLatestRowColumns(
+		_, _, _, err := discoverLatestRowColumns(
 			ctx, pool, "does_not_exist_probe", "", &filters)
 		if err == nil {
 			t.Fatal("expected error for missing probe")
@@ -370,7 +441,7 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 		defer dropTable(ctx, pool, latestRowsInternalOnly)
 
 		filters := MetricFilters{}
-		_, _, err := discoverLatestRowColumns(
+		_, _, _, err := discoverLatestRowColumns(
 			ctx, pool, latestRowsInternalOnly, "", &filters)
 		if err == nil {
 			t.Fatal("expected error for probe with no output columns")
@@ -381,7 +452,7 @@ func TestDiscoverLatestRowColumns_Integration(t *testing.T) {
 		cctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		filters := MetricFilters{}
-		_, _, err := discoverLatestRowColumns(
+		_, _, _, err := discoverLatestRowColumns(
 			cctx, pool, latestRowsTestProbe, "", &filters)
 		if err == nil {
 			t.Fatal("expected error from canceled context")
@@ -403,7 +474,7 @@ func TestScanLatestRows_Integration(t *testing.T) {
 		}
 		query := `SELECT relname, some_ratio, last_vacuum, replay_lag, nan_metric
             FROM metrics."` + latestRowsTestProbe + `"
-            WHERE connection_id = 1
+            WHERE connection_id = 1 AND relname = 'orders'
             ORDER BY collected_at ASC`
 		rows, err := pool.Query(ctx, query)
 		if err != nil {

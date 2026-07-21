@@ -148,6 +148,25 @@ project adheres to
   coexist, and the effective access for each connection is the
   higher of the two. (#302)
 
+- Fix the Table and Index object-detail dashboards showing stale,
+  pre-maintenance values in their overview tiles and Maintenance Info
+  panel indefinitely, even after the collector recorded fresh, correct
+  data. Running ANALYZE on a table corrected its live-tuple-count
+  estimate downward, yet the dashboard kept showing the old, larger
+  count and a stale or missing Last Analyze value. The latest-row mode
+  of the metrics API (`GET /api/v1/metrics/query` with `limit` and
+  `order_by`) ranked the table's entire history by the requested
+  `order_by` column and used `collected_at` only to break exact ties,
+  so it returned whichever historical sample had the highest column
+  value rather than the most recent sample. Any column that can
+  decrease over time, such as a tuple count after ANALYZE, VACUUM, or
+  DELETE, or a dead-tuple count after VACUUM, could therefore return a
+  permanently stale historical row. The query now reduces to each
+  monitored entity's newest sample by `collected_at` first, then ranks
+  those already-latest rows by the requested `order_by` column, so a
+  request filtered to one table or index always returns that entity's
+  true latest sample regardless of the sort column.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

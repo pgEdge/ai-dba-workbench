@@ -1038,7 +1038,7 @@ func TestEntityKeyColumns(t *testing.T) {
 			want: []string{"database_name", "schemaname", "relname"},
 		},
 		{
-			// Index-probe analogue of the above (index_size_pretty).
+			// Index-probe analog of the above (index_size_pretty).
 			name: "index _pretty value column is excluded",
 			outputCols: []string{
 				"database_name", "schemaname", "relname", "indexrelname",
@@ -1131,12 +1131,12 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, "connection_id IN ($1)") {
 			t.Error("query should filter by connection_id")
 		}
-		// The inner query reduces each entity (keyed by the text/name
-		// column relname) to its newest sample via DISTINCT ON.
-		if !strings.Contains(query, `DISTINCT ON ("relname")`) {
-			t.Errorf("query should use DISTINCT ON the entity key, got: %s", query)
+		// The inner query reduces each entity (keyed by connection_id plus
+		// the text/name column relname) to its newest sample via DISTINCT ON.
+		if !strings.Contains(query, `DISTINCT ON (connection_id, "relname")`) {
+			t.Errorf("query should use DISTINCT ON connection_id and the entity key, got: %s", query)
 		}
-		if !strings.Contains(query, `ORDER BY "relname", collected_at DESC`) {
+		if !strings.Contains(query, `ORDER BY connection_id, "relname", collected_at DESC`) {
 			t.Errorf("inner query should order by entity key then collected_at DESC, got: %s", query)
 		}
 		// The outer query ranks the per-entity latest rows by order_by.
@@ -1185,8 +1185,8 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, "indexrelname = $6") {
 			t.Error("query should filter by indexrelname")
 		}
-		if !strings.Contains(query, `DISTINCT ON ("indexrelname")`) {
-			t.Errorf("query should use DISTINCT ON the index entity key, got: %s", query)
+		if !strings.Contains(query, `DISTINCT ON (connection_id, "indexrelname")`) {
+			t.Errorf("query should use DISTINCT ON connection_id and the index entity key, got: %s", query)
 		}
 		if !strings.Contains(query, `ORDER BY "idx_scan" asc, collected_at DESC`) {
 			t.Errorf("query should rank by idx_scan asc, got: %s", query)
@@ -1203,27 +1203,38 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("no entity-key columns falls back to flat collected_at ordering", func(t *testing.T) {
+	t.Run("no text entity keys still keys DISTINCT ON connection_id", func(t *testing.T) {
+		// A probe with only numeric metric columns (e.g. pg_sys_cpu_info) has
+		// no text/name entity keys, yet connection_id alone must still key the
+		// DISTINCT ON so distinct connections never collapse into one row. The
+		// order_by is a real metric column, not collected_at, so the outer
+		// ranking is a genuine ORDER BY on that column rather than a no-op
+		// duplication of collected_at.
 		query, args := buildLatestRowsQuery(
 			"pg_sys_cpu_info",
 			[]string{"cpu_user"},
 			map[string]string{"cpu_user": "double precision"},
 			[]int{1},
 			MetricFilters{DatabaseName: "northwind", DatabaseColumn: ""},
-			"collected_at", "desc", 1,
+			"cpu_user", "desc", 1,
 		)
 
 		if strings.Contains(query, "database_name") || strings.Contains(query, "datname") {
 			t.Error("query should not filter by database when column unresolved")
 		}
-		// With no text/name entity keys, the query must not use DISTINCT ON;
-		// the whole filtered set is a single logical entity ordered by
-		// collected_at so the newest sample stays first.
-		if strings.Contains(query, "DISTINCT ON") {
-			t.Errorf("query should not use DISTINCT ON without entity keys, got: %s", query)
+		// Even without text/name entity keys, connection_id alone keys the
+		// DISTINCT ON so distinct connections stay separate entities.
+		if !strings.Contains(query, "DISTINCT ON (connection_id)") {
+			t.Errorf("query should use DISTINCT ON (connection_id), got: %s", query)
 		}
-		if !strings.Contains(query, `ORDER BY "collected_at" desc, collected_at DESC`) {
-			t.Errorf("query should order by collected_at, got: %s", query)
+		// The inner query reduces each connection to its newest sample.
+		if !strings.Contains(query, "ORDER BY connection_id, collected_at DESC") {
+			t.Errorf("inner query should order by connection_id then collected_at DESC, got: %s", query)
+		}
+		// The outer query ranks the per-connection latest rows by the
+		// requested metric column, proving it is not a collected_at no-op.
+		if !strings.Contains(query, `ORDER BY "cpu_user" desc, collected_at DESC`) {
+			t.Errorf("outer query should rank by cpu_user desc, got: %s", query)
 		}
 		// 1 connection + 1 limit only
 		if len(args) != 2 {

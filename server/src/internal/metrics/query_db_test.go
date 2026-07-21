@@ -31,6 +31,7 @@ import (
 const (
 	latestRowsTestProbe    = "pg_stat_all_tables_latest_test"
 	latestRowsInternalOnly = "internal_only_latest_test"
+	latestRowsNoEntityKey  = "pg_sys_metric_latest_test"
 )
 
 // newLatestRowsTestPool connects to the test database named by
@@ -356,6 +357,103 @@ func TestQueryLatestRows_Integration(t *testing.T) {
 			[]int{1}, MetricFilters{}, "", "desc", 1)
 		if err == nil {
 			t.Fatal("expected error for missing probe")
+		}
+	})
+}
+
+// setupNoEntityKeyFixture creates a probe table with no text/name dimension
+// columns, only bookkeeping columns and numeric metrics. It models a
+// system-level probe such as pg_sys_cpu_info where the whole per-connection
+// series is a single logical entity keyed solely on connection_id.
+//
+// The three connection-1 samples are crafted so the newest sample (by
+// collected_at) is NOT the historical maximum of cpu_user: an older sample
+// peaks at 99 while the newest reads 50. A query that ranked the full history
+// by cpu_user DESC (the original staleness bug) would surface the stale 99;
+// the corrected query reduces to the newest sample first and must return 50.
+func setupNoEntityKeyFixture(t *testing.T, pool *pgxpool.Pool) func() {
+	t.Helper()
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS metrics"); err != nil {
+		t.Fatalf("failed to create metrics schema: %v", err)
+	}
+
+	dropTable(ctx, pool, latestRowsNoEntityKey)
+
+	ddl := `CREATE TABLE metrics."` + latestRowsNoEntityKey + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        inserted_at   timestamp without time zone NOT NULL DEFAULT now(),
+        cpu_user      double precision
+    )`
+	if _, err := pool.Exec(ctx, ddl); err != nil {
+		t.Fatalf("failed to create no-entity-key fixture table: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	samples := []struct {
+		collectedAt time.Time
+		cpuUser     float64
+	}{
+		{now.Add(-2 * time.Minute), 90.0},
+		{now.Add(-1 * time.Minute), 99.0}, // historical maximum
+		{now, 50.0},                       // newest sample, but not the max
+	}
+
+	insert := `INSERT INTO metrics."` + latestRowsNoEntityKey + `"
+        (connection_id, collected_at, cpu_user) VALUES ($1, $2, $3)`
+	for i, s := range samples {
+		if _, err := pool.Exec(ctx, insert, 1, s.collectedAt, s.cpuUser); err != nil {
+			dropTable(ctx, pool, latestRowsNoEntityKey)
+			t.Fatalf("failed to insert no-entity-key fixture row %d: %v", i, err)
+		}
+	}
+
+	return func() { dropTable(context.Background(), pool, latestRowsNoEntityKey) }
+}
+
+// TestQueryLatestRows_NoEntityKeyIntegration exercises the DISTINCT ON
+// (connection_id) path for a probe with no text/name entity-key columns. It
+// proves that ranking by a real metric column still returns the newest sample
+// by collected_at, not the historical maximum of that column.
+func TestQueryLatestRows_NoEntityKeyIntegration(t *testing.T) {
+	pool, closePool := newLatestRowsTestPool(t)
+	defer closePool()
+	cleanup := setupNoEntityKeyFixture(t, pool)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// order_by=cpu_user desc, limit=1. Under the old fallback the query
+	// ranked the whole history by cpu_user DESC and returned the stale 99;
+	// the corrected query reduces to the newest sample (50) first.
+	t.Run("metric order_by returns newest sample not historical max", func(t *testing.T) {
+		result, err := QueryLatestRows(ctx, pool, latestRowsNoEntityKey,
+			[]int{1}, MetricFilters{}, "cpu_user", "desc", 1)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result))
+		}
+		if got := toInt64(t, result[0]["cpu_user"]); got != 50 {
+			t.Errorf("cpu_user = %d, want 50 (newest sample), not 99 (historical max)", got)
+		}
+	})
+
+	// The default order_by (collected_at) must also return the newest sample.
+	t.Run("default order_by returns newest sample", func(t *testing.T) {
+		result, err := QueryLatestRows(ctx, pool, latestRowsNoEntityKey,
+			[]int{1}, MetricFilters{}, "", "desc", 1)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result))
+		}
+		if got := toInt64(t, result[0]["cpu_user"]); got != 50 {
+			t.Errorf("cpu_user = %d, want 50 (newest sample)", got)
 		}
 	})
 }

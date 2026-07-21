@@ -1160,17 +1160,22 @@ func GetProbeAllColumns(ctx context.Context, pool *pgxpool.Pool, probeName strin
 // connections and filters.
 //
 // "Most recent" always means the greatest collected_at, never the historical
-// maximum of orderCol. When the probe exposes entity-key columns (the
-// text/name dimension columns), an inner DISTINCT ON reduces the matching
-// rows to each entity's newest sample before the outer query ranks those
-// per-entity latest rows by orderCol and applies the limit. A filter that
-// pins a single entity therefore yields exactly that entity's newest row
-// regardless of orderCol, and a broad multi-entity request ranks each
-// entity by its own latest sample rather than by any stale historical peak.
+// maximum of orderCol. An inner DISTINCT ON reduces the matching rows to each
+// entity's newest sample (ordered by collected_at DESC) before the outer
+// query ranks those per-entity latest rows by orderCol and applies the limit.
+// A filter that pins a single entity therefore yields exactly that entity's
+// newest row regardless of orderCol, and a broad multi-entity request ranks
+// each entity by its own latest sample rather than by any stale historical
+// peak.
 //
-// When the probe has no entity-key columns the whole filtered set is a
-// single logical entity, so the query simply orders by collected_at DESC
-// and limits, which likewise keeps the newest sample first.
+// The entity key always includes connection_id, plus any text/name dimension
+// columns (schemaname, relname, indexrelname, ...) the probe exposes. Keying
+// on connection_id is essential: without it, two different monitored servers
+// that happen to have a table with the same schema+table name would collapse
+// into a single DISTINCT ON group, silently dropping one connection's latest
+// sample. connection_id is present on every probe table, so the entity key is
+// never empty and one query shape serves every probe, whether or not it has
+// text/name dimension columns.
 func buildLatestRowsQuery(
 	probeName string,
 	outputCols []string,
@@ -1227,44 +1232,25 @@ func buildLatestRowsQuery(
 
 	whereClause := strings.Join(whereClauses, " AND ")
 
-	entityKeys := EntityKeyColumns(outputCols, colTypes)
+	// connection_id is always part of the entity key so that two monitored
+	// servers sharing a schema+table name never collapse into one DISTINCT ON
+	// group. Any text/name dimension columns the probe exposes extend the key.
+	distinctParts := []string{"connection_id"}
+	for _, col := range EntityKeyColumns(outputCols, colTypes) {
+		distinctParts = append(distinctParts, QuoteIdentifier(col))
+	}
+	distinctClause := strings.Join(distinctParts, ", ")
 
-	var query string
-	if len(entityKeys) == 0 {
-		// No entity-key columns: the whole filtered set is a single logical
-		// entity, so the newest row is simply the one with the greatest
-		// collected_at. Ranking by orderCol only reorders the most recent
-		// samples; the #1 row is always the true latest.
-		query = fmt.Sprintf(`
-        SELECT %s
-        FROM metrics.%s
-        WHERE %s
-        ORDER BY %s %s, collected_at DESC
-        LIMIT $%d
-    `,
-			selectClause,
-			QuoteIdentifier(probeName),
-			whereClause,
-			QuoteIdentifier(orderCol),
-			order,
-			argNum,
-		)
-	} else {
-		// Reduce to each entity's newest sample first (DISTINCT ON ordered by
-		// collected_at DESC), then rank those per-entity latest rows by
-		// orderCol. collected_at is carried through the inner select so the
-		// default order_by (collected_at) and the DISTINCT ON tiebreak both
-		// resolve, while the outer select returns only the caller's columns.
-		var distinctParts []string
-		for _, col := range entityKeys {
-			distinctParts = append(distinctParts, QuoteIdentifier(col))
-		}
-		distinctClause := strings.Join(distinctParts, ", ")
-
-		query = fmt.Sprintf(`
+	// Reduce to each entity's newest sample first (DISTINCT ON ordered by
+	// collected_at DESC), then rank those per-entity latest rows by orderCol.
+	// connection_id and collected_at are carried through the inner select so
+	// the DISTINCT ON, its collected_at tiebreak, and the default order_by
+	// (collected_at) all resolve, while the outer select returns only the
+	// caller's columns.
+	query := fmt.Sprintf(`
         SELECT %s
         FROM (
-            SELECT DISTINCT ON (%s) %s, collected_at
+            SELECT DISTINCT ON (%s) %s, connection_id, collected_at
             FROM metrics.%s
             WHERE %s
             ORDER BY %s, collected_at DESC
@@ -1272,17 +1258,16 @@ func buildLatestRowsQuery(
         ORDER BY %s %s, collected_at DESC
         LIMIT $%d
     `,
-			selectClause,
-			distinctClause,
-			selectClause,
-			QuoteIdentifier(probeName),
-			whereClause,
-			distinctClause,
-			QuoteIdentifier(orderCol),
-			order,
-			argNum,
-		)
-	}
+		selectClause,
+		distinctClause,
+		selectClause,
+		QuoteIdentifier(probeName),
+		whereClause,
+		distinctClause,
+		QuoteIdentifier(orderCol),
+		order,
+		argNum,
+	)
 	args = append(args, limit)
 
 	return query, args

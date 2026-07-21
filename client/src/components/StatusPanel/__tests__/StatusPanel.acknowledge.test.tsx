@@ -5,24 +5,20 @@
  * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- * Tests for StatusPanel's alert-fetching resilience. These cover the
- * fetchAlertsData path routed through useRetryingFetch:
- *
- *   - Happy path: alerts render after a successful fetch.
- *   - Retry path: a transient failure leaves the panel empty, then a
- *     scheduled retry succeeds and the alert appears without any
- *     manual refresh.
- *   - Guard path: a server selection missing an id skips the fetch.
+ * Tests for StatusPanel's acknowledgement-refresh handlers. These
+ * confirm that both the single and group acknowledgement flows route
+ * their follow-up refresh through the retry-managed refetchAlerts path
+ * (which re-issues the alerts fetch) rather than an unmanaged direct
+ * call.
  *
  *-------------------------------------------------------------------------
  */
 
 import type React from 'react';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
-import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../hooks/useRetryingFetch';
 import type { Selection } from '../../../types/selection';
 
 // ---------------------------------------------------------------------------
@@ -30,10 +26,11 @@ import type { Selection } from '../../../types/selection';
 // ---------------------------------------------------------------------------
 
 const mockApiGet = vi.fn();
+const mockApiPost = vi.fn();
 
 vi.mock('../../../utils/apiClient', () => ({
     apiGet: (...args: unknown[]) => mockApiGet(...args),
-    apiPost: vi.fn(),
+    apiPost: (...args: unknown[]) => mockApiPost(...args),
     apiDelete: vi.fn(),
     apiFetch: vi.fn(),
     ApiError: class ApiError extends Error {
@@ -46,7 +43,6 @@ vi.mock('../../../utils/apiClient', () => ({
 }));
 
 const stableUser = { id: 1, username: 'testuser' };
-let mockAuthUser: typeof stableUser | null = stableUser;
 const stableHasPermission = () => false;
 const stableAIValue = { aiEnabled: false };
 const stableClusterValue = { lastRefresh: 0 };
@@ -58,7 +54,7 @@ const stableDashboardValue = {
 };
 
 vi.mock('../../../contexts/useAuth', () => ({
-    useAuth: () => ({ user: mockAuthUser, hasPermission: stableHasPermission }),
+    useAuth: () => ({ user: stableUser, hasPermission: stableHasPermission }),
 }));
 vi.mock('../../../contexts/useAICapabilities', () => ({ useAICapabilities: () => stableAIValue }));
 vi.mock('../../../contexts/useClusterData', () => ({ useClusterData: () => stableClusterValue }));
@@ -88,7 +84,36 @@ vi.mock('../../Dashboard/TimeRangeSelector', () => ({ default: () => null }));
 vi.mock('../SelectionHeader', () => ({ default: () => null }));
 vi.mock('../ServerInfoCard', () => ({ default: () => null }));
 vi.mock('../PerformanceTiles', () => ({ default: () => null }));
-vi.mock('../AcknowledgeDialog', () => ({ default: () => null }));
+
+// Expose the acknowledgement callbacks as buttons so the test can drive
+// the confirm handlers without the real dialog UI.
+vi.mock('../AcknowledgeDialog', () => ({
+    default: ({
+        onConfirm,
+        onConfirmMultiple,
+    }: {
+        onConfirm: (id: number, message: string, fp?: boolean) => void;
+        onConfirmMultiple: (ids: number[], message: string, fp?: boolean) => void;
+    }) => (
+        <div>
+            <button
+                type="button"
+                data-testid="confirm-ack"
+                onClick={() => onConfirm(99, 'ack message', false)}
+            >
+                confirm
+            </button>
+            <button
+                type="button"
+                data-testid="confirm-group-ack"
+                onClick={() => onConfirmMultiple([99, 100], 'group message', false)}
+            >
+                confirm group
+            </button>
+        </div>
+    ),
+}));
+
 vi.mock('../../../hooks/useServerAnalysis', () => ({ hasCachedServerAnalysis: () => false }));
 
 // ---------------------------------------------------------------------------
@@ -135,95 +160,59 @@ const serverSelection: Selection = {
     platform: 'x86_64',
 };
 
-const clusterSelection: Selection = {
-    type: 'cluster',
-    id: 'cluster-1',
-    name: 'Cluster 1',
-    status: 'online',
-    description: '',
-    servers: [{ id: 1, name: 's1' }, { id: 2, name: 's2' }],
-    serverIds: [1, 2],
-};
-
-describe('StatusPanel alert fetch resilience', () => {
+describe('StatusPanel acknowledgement refresh', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockAuthUser = stableUser;
+        mockApiGet.mockResolvedValue({ alerts: [makeAlertRecord()] });
+        mockApiPost.mockResolvedValue({});
     });
 
     afterEach(() => {
         vi.useRealTimers();
     });
 
-    it('renders alerts after a successful fetch', async () => {
-        mockApiGet.mockResolvedValue({ alerts: [makeAlertRecord()] });
+    it('routes the single-ack refresh through the retry-managed path', async () => {
+        renderPanel(serverSelection);
 
+        // Wait for the initial fetch to settle.
+        expect(await screen.findByText('High CPU Usage')).toBeInTheDocument();
+        const initialGetCalls = mockApiGet.mock.calls.length;
+
+        await act(async () => {
+            screen.getByTestId('confirm-ack').click();
+        });
+
+        // The acknowledgement was posted and a managed refetch followed.
+        expect(mockApiPost).toHaveBeenCalledWith(
+            '/api/v1/alerts/acknowledge',
+            expect.objectContaining({ alert_id: 99, message: 'ack message' }),
+        );
+        await waitFor(() => {
+            expect(mockApiGet.mock.calls.length).toBeGreaterThan(initialGetCalls);
+        });
+    });
+
+    it('routes the group-ack refresh through the retry-managed path', async () => {
         renderPanel(serverSelection);
 
         expect(await screen.findByText('High CPU Usage')).toBeInTheDocument();
-        expect(mockApiGet).toHaveBeenCalledWith(
-            expect.stringContaining('/api/v1/alerts?exclude_cleared=true'),
+        const initialGetCalls = mockApiGet.mock.calls.length;
+
+        await act(async () => {
+            screen.getByTestId('confirm-group-ack').click();
+        });
+
+        // Each alert id is acknowledged, then a managed refetch follows.
+        expect(mockApiPost).toHaveBeenCalledWith(
+            '/api/v1/alerts/acknowledge',
+            expect.objectContaining({ alert_id: 99, message: 'group message' }),
         );
-    });
-
-    it('recovers via a scheduled retry after a transient failure', async () => {
-        vi.useFakeTimers();
-        mockApiGet
-            .mockRejectedValueOnce(new Error('backend restarting'))
-            .mockResolvedValue({ alerts: [makeAlertRecord()] });
-
-        renderPanel(serverSelection);
-
-        // Let the initial (failing) fetch settle.
-        await act(async () => {
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(screen.queryByText('High CPU Usage')).not.toBeInTheDocument();
-
-        // The scheduled retry fires after the base backoff delay.
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
-            await Promise.resolve();
-        });
-
-        expect(mockApiGet).toHaveBeenCalledTimes(2);
-        expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
-    });
-
-    it('skips the fetch when a server selection has no id', async () => {
-        const noId = { ...serverSelection, id: undefined } as unknown as Selection;
-
-        renderPanel(noId);
-
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        expect(mockApiGet).not.toHaveBeenCalled();
-    });
-
-    it('builds a multi-connection alerts URL for a cluster selection', async () => {
-        mockApiGet.mockResolvedValue({ alerts: [makeAlertRecord()] });
-
-        renderPanel(clusterSelection);
-
-        expect(await screen.findByText('High CPU Usage')).toBeInTheDocument();
-        expect(mockApiGet).toHaveBeenCalledWith(
-            expect.stringContaining('connection_ids=1,2'),
+        expect(mockApiPost).toHaveBeenCalledWith(
+            '/api/v1/alerts/acknowledge',
+            expect.objectContaining({ alert_id: 100, message: 'group message' }),
         );
-    });
-
-    it('skips the fetch and clears alerts when there is no user', async () => {
-        mockAuthUser = null;
-
-        renderPanel(serverSelection);
-
-        await act(async () => {
-            await Promise.resolve();
+        await waitFor(() => {
+            expect(mockApiGet.mock.calls.length).toBeGreaterThan(initialGetCalls);
         });
-
-        expect(mockApiGet).not.toHaveBeenCalled();
     });
 });

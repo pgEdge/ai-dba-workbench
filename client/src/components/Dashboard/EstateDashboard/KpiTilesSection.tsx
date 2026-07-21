@@ -91,27 +91,32 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
 
             if (!isMountedRef.current) { return true; }
 
+            // A non-OK response is a real failure. Surface it so the
+            // retry controller reschedules the fetch instead of silently
+            // rendering zero/partial KPI data as if the load succeeded.
+            if (!perfResponse.ok || !alertsResponse.ok) {
+                if (isMountedRef.current) {
+                    setError('Failed to fetch KPI data');
+                }
+                return false;
+            }
+
+            const perfData = await perfResponse.json();
+            const alertsData = await alertsResponse.json();
+
             let totalConnections = 0;
             let transactionRate = 0;
+            const connections = perfData.connections || [];
 
-            if (perfResponse.ok) {
-                const perfData = await perfResponse.json();
-                const connections = perfData.connections || [];
+            connections.forEach((conn: Record<string, unknown>) => {
+                totalConnections += 1;
+                const txns = conn.transactions as Record<string, unknown> | undefined;
+                if (txns && typeof txns.commits_per_sec === 'number') {
+                    transactionRate += txns.commits_per_sec;
+                }
+            });
 
-                connections.forEach((conn: Record<string, unknown>) => {
-                    totalConnections += 1;
-                    const txns = conn.transactions as Record<string, unknown> | undefined;
-                    if (txns && typeof txns.commits_per_sec === 'number') {
-                        transactionRate += txns.commits_per_sec;
-                    }
-                });
-            }
-
-            let alertCount = 0;
-            if (alertsResponse.ok) {
-                const alertsData = await alertsResponse.json();
-                alertCount = (alertsData.alerts || []).length;
-            }
+            const alertCount = (alertsData.alerts || []).length;
 
             setAggregate({
                 totalServers,

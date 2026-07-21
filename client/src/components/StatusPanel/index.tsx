@@ -357,7 +357,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 false_positive: falsePositive,
             });
             // Refresh alerts to show updated status
-            fetchAlertsData();
+            void refetchAlerts();
         } catch (err) {
             logger.error('Error acknowledging alert:', err);
         } finally {
@@ -379,7 +379,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     false_positive: falsePositive,
                 });
             }
-            fetchAlertsData();
+            void refetchAlerts();
         } catch (err) {
             logger.error('Error acknowledging alerts:', err);
         } finally {
@@ -451,6 +451,15 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         }
     }, [user, selection, transformAlerts]);
 
+    // Retry-managed entry point for refreshing alerts. Every caller that
+    // wants fresh alert data should route through this wrapper rather
+    // than invoking fetchAlertsData directly, so a transient failure at
+    // any call site self-heals with capped exponential backoff instead
+    // of silently leaving stale or empty data behind.
+    const refetchAlerts = useCallback((): Promise<boolean> => {
+        return runAlertsFetch(fetchAlertsData);
+    }, [runAlertsFetch, fetchAlertsData]);
+
     // Handle unacknowledging an alert.
     //
     // Applies an optimistic update that immediately clears the
@@ -507,7 +516,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             await apiDelete(`/api/v1/alerts/acknowledge?alert_id=${alertId}`);
             // Reconcile with server truth and beat the race with the
             // periodic cluster refresh.
-            await fetchAlertsData();
+            await refetchAlerts();
         } catch (err) {
             // Roll back the optimistic update.
             if (previousAlert) {
@@ -532,7 +541,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                 return next;
             });
         }
-    }, [user, fetchAlertsData]);
+    }, [user, refetchAlerts]);
 
     const isUnacknowledging = useCallback(
         (id: number | string) => unacknowledgingIds.has(id),
@@ -549,8 +558,8 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     // self-heals with capped exponential backoff instead of leaving
     // the panel stuck on stale or empty data.
     useEffect(() => {
-        void runAlertsFetch(fetchAlertsData);
-    }, [runAlertsFetch, fetchAlertsData, lastRefresh]);
+        void refetchAlerts();
+    }, [refetchAlerts, lastRefresh]);
 
     // Count only active (non-acknowledged) alerts for the header indicator
     const activeAlertCount = useMemo(() => {

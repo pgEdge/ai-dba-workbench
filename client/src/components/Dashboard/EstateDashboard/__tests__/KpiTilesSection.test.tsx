@@ -152,7 +152,10 @@ describe('KpiTilesSection', () => {
         expect(screen.getByText('Total Servers')).toBeInTheDocument();
     });
 
-    it('tolerates a non-ok performance response', async () => {
+    it('treats a non-ok performance response as a failure and retries', async () => {
+        vi.useFakeTimers();
+        // First attempt: the performance call is non-OK, so the whole
+        // fetch must fail rather than rendering zero/partial data.
         mockApiFetch.mockImplementation((url: string) =>
             url.includes('/alerts')
                 ? Promise.resolve(okResponse(alertsBody))
@@ -161,11 +164,30 @@ describe('KpiTilesSection', () => {
 
         renderSection([1]);
 
-        await screen.findByText('Active Alerts');
-        // Alert count still renders from the successful alerts call.
-        await waitFor(() => {
-            expect(screen.getByText('3')).toBeInTheDocument();
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
         });
+
+        // The failure surfaces as the reconnecting indicator; no KPI
+        // tiles are shown from the partial data.
+        expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
+        expect(screen.queryByText('Active Alerts')).not.toBeInTheDocument();
+
+        // The scheduled retry now sees both calls succeed and recovers.
+        mockApiFetch.mockImplementation((url: string) =>
+            url.includes('/alerts')
+                ? Promise.resolve(okResponse(alertsBody))
+                : Promise.resolve(okResponse(perfBody)),
+        );
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+
+        expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument();
+        expect(screen.getByText('Active Alerts')).toBeInTheDocument();
+        expect(screen.getByText('3')).toBeInTheDocument();
     });
 
     it('shows a reconnecting indicator while retrying after a failure', async () => {

@@ -278,6 +278,87 @@ describe('useRetryingFetch', () => {
         expect(fetchFn).toHaveBeenCalledTimes(4);
     });
 
+    it('ignores a stale in-flight attempt superseded by a fresh run', async () => {
+        // The first attempt never resolves until we release it manually,
+        // modelling a slow request still in flight when a fresh run wins.
+        let resolveFirst: ((value: boolean) => void) | undefined;
+        const firstPromise = new Promise<boolean>((res) => {
+            resolveFirst = res;
+        });
+        const fetchFn = vi
+            .fn()
+            .mockReturnValueOnce(firstPromise)
+            .mockResolvedValueOnce(true);
+
+        const { result } = renderHook(() => useRetryingFetch());
+
+        // Kick off the first attempt; it stays pending.
+        let firstRun: Promise<boolean> | undefined;
+        act(() => {
+            firstRun = result.current.run(fetchFn);
+        });
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+
+        // A fresh run supersedes the in-flight attempt and succeeds.
+        await act(async () => {
+            await result.current.run(fetchFn);
+        });
+        expect(fetchFn).toHaveBeenCalledTimes(2);
+        expect(result.current.retrying).toBe(false);
+
+        // Now the stale first attempt resolves with a FAILURE. Its result
+        // must be ignored: no retry scheduled, retrying stays false.
+        await act(async () => {
+            resolveFirst?.(false);
+            await firstRun;
+        });
+        expect(result.current.retrying).toBe(false);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_MAX_DELAY_MS * 2);
+        });
+        // No extra fetch fired from a stale-scheduled retry.
+        expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('ignores a stale in-flight attempt superseded by a resetKey change', async () => {
+        let resolveFirst: ((value: boolean) => void) | undefined;
+        const firstPromise = new Promise<boolean>((res) => {
+            resolveFirst = res;
+        });
+        const fetchFn = vi.fn().mockReturnValueOnce(firstPromise);
+
+        const { result, rerender } = renderHook(
+            ({ key }) => useRetryingFetch({ resetKey: key }),
+            { initialProps: { key: 1 } },
+        );
+
+        let firstRun: Promise<boolean> | undefined;
+        act(() => {
+            firstRun = result.current.run(fetchFn);
+        });
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+
+        // A manual refresh (resetKey change) supersedes the in-flight
+        // attempt while its fetch promise is still pending.
+        rerender({ key: 2 });
+        await flushMicrotasks();
+        expect(result.current.retrying).toBe(false);
+
+        // The now-stale attempt resolves with a failure and is ignored.
+        await act(async () => {
+            resolveFirst?.(false);
+            await firstRun;
+        });
+        expect(result.current.retrying).toBe(false);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_MAX_DELAY_MS * 2);
+        });
+        // Only the original attempt ran; the stale failure scheduled nothing.
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
     it('clears the pending timer on unmount', async () => {
         const fetchFn = vi.fn().mockResolvedValue(false);
         const { result, unmount } = renderHook(() => useRetryingFetch());

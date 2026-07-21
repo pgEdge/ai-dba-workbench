@@ -90,6 +90,13 @@ export function useRetryingFetch(
     const [retrying, setRetrying] = useState<boolean>(false);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const failureCountRef = useRef<number>(0);
+    // Monotonic attempt generation. Each execute() captures the value
+    // current at its start; run(), cancel(), and a resetKey change bump
+    // it. When an in-flight fetch resolves, its captured generation is
+    // compared against the current one so a stale attempt (superseded by
+    // a fresh run, a cancel, or a reset while its promise was pending)
+    // is ignored instead of mutating failure/retry state.
+    const generationRef = useRef<number>(0);
     const fetchFnRef = useRef<RetryableFetch | null>(null);
     const executeRef = useRef<() => Promise<boolean>>(() => Promise.resolve(false));
     const mountedRef = useRef<boolean>(true);
@@ -105,6 +112,9 @@ export function useRetryingFetch(
 
     const cancel = useCallback((): void => {
         clearTimer();
+        // Invalidate any in-flight attempt so a late failure cannot
+        // resurrect the retry loop after an explicit cancel.
+        generationRef.current += 1;
         failureCountRef.current = 0;
         if (mountedRef.current) {
             setRetrying(false);
@@ -126,6 +136,9 @@ export function useRetryingFetch(
             return false;
         }
 
+        // Capture the generation this attempt belongs to before awaiting.
+        const generation = generationRef.current;
+
         let success = false;
         try {
             success = await fetchFn();
@@ -137,6 +150,15 @@ export function useRetryingFetch(
         // we neither schedule an orphaned retry nor call setState on an
         // unmounted component.
         if (!mountedRef.current || !enabledRef.current) {
+            return success;
+        }
+
+        // Ignore a stale attempt whose generation was superseded while
+        // its fetch promise was still pending (a fresh run, a cancel, or
+        // a resetKey change). Acting on it would wrongly increment the
+        // failure count and schedule a retry for an already-resolved
+        // situation.
+        if (generation !== generationRef.current) {
             return success;
         }
 
@@ -164,7 +186,9 @@ export function useRetryingFetch(
         (fetchFn: RetryableFetch): Promise<boolean> => {
             fetchFnRef.current = fetchFn;
             // A fresh invocation supersedes any pending retry so a
-            // manual refresh always starts from a clean schedule.
+            // manual refresh always starts from a clean schedule. Bumping
+            // the generation also invalidates any older in-flight attempt.
+            generationRef.current += 1;
             failureCountRef.current = 0;
             clearTimer();
             setRetrying(false);
@@ -177,6 +201,9 @@ export function useRetryingFetch(
     // manual refresh). The consuming effect re-invokes run separately,
     // so this only needs to clear pending retries.
     useEffect(() => {
+        // Invalidate any in-flight attempt so a late failure from before
+        // the reset cannot restart the backoff after the manual refresh.
+        generationRef.current += 1;
         failureCountRef.current = 0;
         clearTimer();
         setRetrying(false);

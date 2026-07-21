@@ -979,7 +979,7 @@ func TestClassifyMetrics(t *testing.T) {
 	})
 }
 
-func TestLatestEntityKeyColumns(t *testing.T) {
+func TestEntityKeyColumns(t *testing.T) {
 	tests := []struct {
 		name       string
 		outputCols []string
@@ -1016,11 +1016,63 @@ func TestLatestEntityKeyColumns(t *testing.T) {
 			colTypes:   map[string]string{"relname": "name", "schemaname": "name"},
 			want:       []string{"relname", "schemaname"},
 		},
+		{
+			// Simulates PR #343's additions (table_size /
+			// table_size_pretty). The text-typed *_pretty value column
+			// must NOT join the entity key, or different historical
+			// rendered sizes would fragment one table into many and
+			// reproduce the latest-row staleness bug.
+			name: "text-typed _pretty value column is excluded",
+			outputCols: []string{
+				"database_name", "schemaname", "relname",
+				"table_size", "table_size_pretty", "n_live_tup",
+			},
+			colTypes: map[string]string{
+				"database_name":     "text",
+				"schemaname":        "name",
+				"relname":           "name",
+				"table_size":        "bigint",
+				"table_size_pretty": "text",
+				"n_live_tup":        "bigint",
+			},
+			want: []string{"database_name", "schemaname", "relname"},
+		},
+		{
+			// Index-probe analogue of the above (index_size_pretty).
+			name: "index _pretty value column is excluded",
+			outputCols: []string{
+				"database_name", "schemaname", "relname", "indexrelname",
+				"index_size", "index_size_pretty", "idx_scan",
+			},
+			colTypes: map[string]string{
+				"database_name":     "character varying",
+				"schemaname":        "name",
+				"relname":           "name",
+				"indexrelname":      "name",
+				"index_size":        "bigint",
+				"index_size_pretty": "text",
+				"idx_scan":          "bigint",
+			},
+			want: []string{
+				"database_name", "schemaname", "relname", "indexrelname",
+			},
+		},
+		{
+			name:       "internal bookkeeping columns are excluded",
+			outputCols: []string{"connection_id", "collected_at", "inserted_at", "datname"},
+			colTypes: map[string]string{
+				"connection_id": "integer",
+				"collected_at":  "timestamp with time zone",
+				"inserted_at":   "timestamp with time zone",
+				"datname":       "name",
+			},
+			want: []string{"datname"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := latestEntityKeyColumns(tt.outputCols, tt.colTypes)
+			got := EntityKeyColumns(tt.outputCols, tt.colTypes)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
@@ -1028,6 +1080,35 @@ func TestLatestEntityKeyColumns(t *testing.T) {
 				if got[i] != tt.want[i] {
 					t.Errorf("index %d: got %q, want %q", i, got[i], tt.want[i])
 				}
+			}
+		})
+	}
+}
+
+// TestIsEntityKeyColumn exercises the single-column predicate directly,
+// covering each type branch and both exclusion signals.
+func TestIsEntityKeyColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		colName  string
+		dataType string
+		want     bool
+	}{
+		{"text identity column", "schemaname", "name", true},
+		{"varchar identity column", "database_name", "character varying", true},
+		{"plain text column", "relname", "text", true},
+		{"numeric value column", "n_live_tup", "bigint", false},
+		{"timestamp column", "last_vacuum", "timestamp with time zone", false},
+		{"text _pretty value column", "table_size_pretty", "text", false},
+		{"internal bookkeeping column", "collected_at", "timestamp with time zone", false},
+		{"internal connection_id", "connection_id", "integer", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsEntityKeyColumn(tt.colName, tt.dataType); got != tt.want {
+				t.Errorf("IsEntityKeyColumn(%q, %q) = %v, want %v",
+					tt.colName, tt.dataType, got, tt.want)
 			}
 		})
 	}

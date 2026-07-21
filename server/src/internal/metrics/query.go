@@ -199,6 +199,53 @@ func IsMetricColumn(name, dataType string) bool {
 	return false
 }
 
+// IsEntityKeyColumn reports whether a probe output column is an
+// entity-key (identity/dimension) column that identifies a distinct
+// monitored entity, as opposed to a metric value or an internal
+// bookkeeping column. Entity keys are the text/name-typed dimension
+// columns such as schemaname, relname, indexrelname, database_name,
+// and datname.
+//
+// Text type alone is not sufficient: some value columns are text yet
+// vary over time for a fixed entity. This codebase renders a raw
+// numeric value column as a human-readable string in a companion
+// column whose name ends in "_pretty" (e.g. table_size_pretty for
+// table_size, index_size_pretty for index_size, via pg_size_pretty).
+// Such columns are values, not identity, so treating them as entity
+// keys would fragment one real entity into several by its changing
+// rendered size and defeat any DISTINCT ON reduction. They are
+// therefore excluded here even though they are text. No genuine
+// identity column in the schema ends in "_pretty", so the exclusion
+// is a pure bug fix that changes nothing for existing probes.
+func IsEntityKeyColumn(name, dataType string) bool {
+	if latestRowInternalColumns[name] {
+		return false
+	}
+	if strings.HasSuffix(name, "_pretty") {
+		return false
+	}
+	switch dataType {
+	case "text", "character varying", "name":
+		return true
+	default:
+		return false
+	}
+}
+
+// EntityKeyColumns returns the entity-key (identity/dimension) columns
+// among cols, preserving their input order. It is the single source of
+// truth shared by every latest-row path so that the DISTINCT ON entity
+// grouping never drifts between call sites.
+func EntityKeyColumns(cols []string, colTypes map[string]string) []string {
+	var keys []string
+	for _, col := range cols {
+		if IsEntityKeyColumn(col, colTypes[col]) {
+			keys = append(keys, col)
+		}
+	}
+	return keys
+}
+
 // IsValidIdentifier checks whether a string is a valid SQL identifier.
 func IsValidIdentifier(s string) bool {
 	if s == "" {
@@ -1108,23 +1155,6 @@ func GetProbeAllColumns(ctx context.Context, pool *pgxpool.Pool, probeName strin
 	return allCols, colTypes, rows.Err()
 }
 
-// latestEntityKeyColumns identifies the entity-key (dimension) columns of a
-// probe table from its output columns and their data types. These are the
-// text/name-typed columns that identify a distinct monitored entity, e.g.
-// schemaname + relname for a table probe or schemaname + indexrelname for an
-// index probe. They mirror the dimension columns used by the latest-snapshot
-// endpoint so both latest-row paths group by the same entity keys.
-func latestEntityKeyColumns(outputCols []string, colTypes map[string]string) []string {
-	var keys []string
-	for _, col := range outputCols {
-		switch colTypes[col] {
-		case "text", "character varying", "name":
-			keys = append(keys, col)
-		}
-	}
-	return keys
-}
-
 // buildLatestRowsQuery constructs a SQL statement that returns the most
 // recent row of a probe table per monitored entity for the given
 // connections and filters.
@@ -1197,7 +1227,7 @@ func buildLatestRowsQuery(
 
 	whereClause := strings.Join(whereClauses, " AND ")
 
-	entityKeys := latestEntityKeyColumns(outputCols, colTypes)
+	entityKeys := EntityKeyColumns(outputCols, colTypes)
 
 	var query string
 	if len(entityKeys) == 0 {

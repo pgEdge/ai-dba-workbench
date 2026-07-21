@@ -137,6 +137,13 @@ func TestMigrationV7_ColumnsCascadeToExistingPartition(t *testing.T) {
 				"FOR VALUES FROM ('%s') TO ('%s')",
 			childIdent, parentIdent, partitionStart, partitionEnd,
 		)
+		// This is not a SQL injection risk despite passing a non-literal
+		// DDL string: ddl is built entirely from hardcoded test constants
+		// (partitionStart, partitionEnd, partitionSuffix) and from
+		// childIdent/parentIdent, which are produced by pgx's own
+		// Identifier.Sanitize() safe identifier-quoting. No user input or
+		// untrusted external data is involved in this construction.
+		// nosemgrep: go_sql_rule-concat-sqli
 		if _, err := pool.Exec(ctx, ddl); err != nil {
 			t.Fatalf("create partition %s_%s: %v", table, partitionSuffix, err)
 		}

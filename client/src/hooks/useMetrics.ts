@@ -57,6 +57,10 @@ const buildMetricsUrl = (params: MetricQueryParams): string => {
         searchParams.append('table_name', params.tableName);
     }
 
+    if (params.indexName) {
+        searchParams.append('index_name', params.indexName);
+    }
+
     if (params.buckets !== undefined) {
         searchParams.append('buckets', params.buckets.toString());
     }

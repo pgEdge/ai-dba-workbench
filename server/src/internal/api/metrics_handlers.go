@@ -125,6 +125,7 @@ func (h *MetricsHandler) handleMetricsQuery(
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
+		IndexName:    ParseQueryString(r, "index_name"),
 	}
 
 	// Parse buckets (default 150)

@@ -45,6 +45,8 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) func() {
 
 	dropTable(ctx, pool, timeSeriesTestProbe)
 
+	// indexrelname carries the index dimension so the IndexName filter can be
+	// exercised end-to-end, mirroring the pg_stat_all_indexes probe shape.
 	ddl := `CREATE TABLE metrics."` + timeSeriesTestProbe + `" (
         connection_id integer NOT NULL,
         collected_at  timestamp with time zone NOT NULL,
@@ -52,6 +54,7 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) func() {
         database_name text,
         schemaname    name,
         relname       name,
+        indexrelname  name,
         seq_scan      bigint,
         idx_scan      bigint,
         n_tup_ins     bigint,
@@ -82,12 +85,12 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) func() {
 
 	insert := `INSERT INTO metrics."` + timeSeriesTestProbe + `"
         (connection_id, collected_at, database_name, schemaname, relname,
-         seq_scan, idx_scan, n_tup_ins, n_live_tup, n_dead_tup)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+         indexrelname, seq_scan, idx_scan, n_tup_ins, n_live_tup, n_dead_tup)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	for i, s := range samples {
 		_, err := pool.Exec(ctx, insert,
 			1, now.Add(s.offset), "northwind", "public", "orders",
-			s.seqScan, s.idxScan, s.nTupIns, 90, 10)
+			"pk_orders", s.seqScan, s.idxScan, s.nTupIns, 90, 10)
 		if err != nil {
 			dropTable(ctx, pool, timeSeriesTestProbe)
 			t.Fatalf("failed to insert fixture sample %d: %v", i, err)
@@ -470,6 +473,70 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		s := seriesByMetric(t, series, "n_live_tup")
 		if len(s.Data) == 0 {
 			t.Fatal("expected data for matching database filter")
+		}
+	})
+
+	t.Run("index_name filter yields per-sec data for the Scan Activity chart", func(t *testing.T) {
+		// This reproduces the fixed bug: the Index detail dashboard requests
+		// idx_scan_per_sec scoped to a single index. With IndexName plumbed
+		// through metricQueryBase, the matching index returns real rate data.
+		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, "1h",
+			MetricFilters{SchemaName: "public", TableName: "orders", IndexName: "pk_orders"},
+			60, "avg", []string{"idx_scan_per_sec"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "idx_scan_per_sec")
+		if len(s.Data) == 0 {
+			t.Fatal("expected rate data for the matching index name")
+		}
+		sawExpected := false
+		for _, p := range s.Data {
+			if p.Value < 0 {
+				t.Errorf("rate point = %v, want non-negative", p.Value)
+			}
+			if p.Value >= 0.9 && p.Value <= 1.1 {
+				sawExpected = true
+			}
+		}
+		if !sawExpected {
+			t.Errorf("expected an idx_scan rate near 1.0/sec, got %v", s.Data)
+		}
+	})
+
+	t.Run("index_name filter narrows out non-matching indexes", func(t *testing.T) {
+		// A different index name matches no rows, so the series is present but
+		// empty; this is what previously happened for every index because the
+		// filter was silently dropped and the wrong dimension was queried.
+		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, "1h",
+			MetricFilters{IndexName: "some_other_index"},
+			60, "avg", []string{"idx_scan_per_sec"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "idx_scan_per_sec")
+		if len(s.Data) != 0 {
+			t.Errorf("expected no data for a non-matching index, got %d points",
+				len(s.Data))
+		}
+	})
+
+	t.Run("raw column request honors index_name filter", func(t *testing.T) {
+		// The raw-column path shares metricQueryBase, so IndexName must scope
+		// it too; a non-matching index yields an empty raw series.
+		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, "1h",
+			MetricFilters{IndexName: "no_such_index"},
+			60, "avg", []string{"idx_scan"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "idx_scan")
+		if len(s.Data) != 0 {
+			t.Errorf("expected no raw data for a non-matching index, got %d points",
+				len(s.Data))
 		}
 	})
 }

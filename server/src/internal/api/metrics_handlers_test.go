@@ -191,3 +191,29 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidTimeRange(t *testing.T) {
 		t.Errorf("unexpected error: %q", resp.Error)
 	}
 }
+
+func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
+	// A valid time_range keeps the handler on the time-series path long
+	// enough to build the MetricFilters (including the index_name parse the
+	// Index detail dashboard's Scan Activity chart relies on); an invalid
+	// buckets value then bails before any datastore access. This proves the
+	// index_name filter is parsed on the time-series path, not just the
+	// latest-row path.
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=pg_stat_all_indexes&time_range=1h"+
+			"&index_name=pk_orders&buckets=9999", nil)
+	rec := httptest.NewRecorder()
+
+	handler := &MetricsHandler{}
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusBadRequest, rec.Code)
+	}
+	if resp := decodeError(t, rec); resp.Error !=
+		"Invalid buckets: must be between 1 and 500" {
+		t.Errorf("unexpected error: %q", resp.Error)
+	}
+}

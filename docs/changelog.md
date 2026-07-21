@@ -167,6 +167,19 @@ project adheres to
   request filtered to one table or index always returns that entity's
   true latest sample regardless of the sort column.
 
+- Fix the Index object-detail dashboard's Scan Activity chart always
+  showing "No index scan data available" for every index. The web
+  client sent the index's own name as the `table_name` query
+  parameter, but the metrics time-series query filtered on `relname`,
+  so no table ever matched an index name and the request returned no
+  rows. The time-series query path also had no way to filter by index
+  name, so a table with several indexes would have blended all of
+  their scan activity together. The metrics API
+  (`GET /api/v1/metrics/query`) now filters on `indexrelname`, the
+  client's metrics-fetching hook accepts a new `indexName` parameter,
+  and the Scan Activity chart sends it instead of misusing the
+  table-name parameter.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

@@ -172,8 +172,16 @@ func TestMigrationV7_ColumnsCascadeToExistingPartition(t *testing.T) {
 	}
 }
 
-// TestMigrationV7_Idempotent verifies that v7 can be applied twice
-// without error and records exactly one schema_version row.
+// TestMigrationV7_Idempotent verifies that v7's Up statements are truly
+// idempotent: they can execute a second time against columns that already
+// exist without error. To exercise this, the test rewinds only the
+// schema_version row for v7 WITHOUT dropping the columns the first run
+// added, then re-runs Migrate so v7's Up executes again over the existing
+// columns. This genuinely fails if the ADD COLUMN IF NOT EXISTS statements
+// were changed to plain ADD COLUMN (which would error "column already
+// exists" on the second execution). A plain double-Migrate would not catch
+// that regression, because Migrate skips any version already recorded in
+// schema_version and would never run Up twice.
 func TestMigrationV7_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)
@@ -190,8 +198,34 @@ func TestMigrationV7_Idempotent(t *testing.T) {
 	if err := sm.Migrate(conn); err != nil {
 		t.Fatalf("first Migrate failed: %v", err)
 	}
+
+	// Rewind only the schema_version row for v7, leaving the columns the
+	// first run added in place. This forces Migrate to re-run v7's Up
+	// against already-present columns, exercising real idempotency.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM schema_version WHERE version = 7`); err != nil {
+		t.Fatalf("rewind v7 schema_version row: %v", err)
+	}
+
 	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("second Migrate failed: %v", err)
+		t.Fatalf("second Migrate (re-running v7 Up) failed: %v", err)
+	}
+
+	// Confirm the re-run left the columns intact and recorded exactly one
+	// schema_version row for v7.
+	for _, c := range []struct {
+		table  string
+		column string
+	}{
+		{"pg_stat_all_tables", "table_size"},
+		{"pg_stat_all_tables", "table_size_pretty"},
+		{"pg_stat_all_indexes", "index_size"},
+		{"pg_stat_all_indexes", "index_size_pretty"},
+	} {
+		if _, ok := columnType(ctx, t, pool, "metrics", c.table, c.column); !ok {
+			t.Errorf("metrics.%s.%s missing after re-running v7 Up",
+				c.table, c.column)
+		}
 	}
 
 	var v7Count int

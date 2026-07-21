@@ -80,9 +80,9 @@ project adheres to
   genuinely never reached the datastore rather than failing at query
   time as the two prior dashboard fixes did. The `pg_stat_all_tables`
   probe now collects `table_size` and `table_size_pretty` through
-  `pg_table_size`, which covers heap, TOAST, and free space map
-  storage while excluding the indexes that the index probe reports
-  separately. The `pg_stat_all_indexes` probe now collects `index_size`
+  `pg_table_size`, which covers heap, TOAST, free space map, and
+  visibility map storage while excluding the indexes that the index
+  probe reports separately. The `pg_stat_all_indexes` probe now collects `index_size`
   and `index_size_pretty` through `pg_relation_size` for each index.
   Collector schema migration Version 7 adds the four new columns to the
   `metrics.pg_stat_all_tables` and `metrics.pg_stat_all_indexes`

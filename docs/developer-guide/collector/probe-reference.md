@@ -446,7 +446,8 @@ The probe consolidates data from
 The probe also records the total on-disk size of each
 table. The `table_size` column reports the size in
 bytes from `pg_table_size`, which covers heap, TOAST,
-and free space map storage while excluding indexes.
+free space map, and visibility map storage while
+excluding indexes.
 The `table_size_pretty` column reports the same value
 as a human-readable string from `pg_size_pretty`.
 

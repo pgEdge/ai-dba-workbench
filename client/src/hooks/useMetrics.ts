@@ -127,7 +127,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
     // Reset initial load state when params change
     useEffect(() => {
         initialLoadDoneRef.current = false;
-    }, [params?.probeName, params?.connectionId, params?.timeRange]);
+    }, [params?.probeName, params?.connectionId, params?.timeRange, params?.indexName]);
 
     // Fetch when dependencies change or refresh is triggered
     useEffect(() => {

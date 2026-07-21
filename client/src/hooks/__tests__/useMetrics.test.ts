@@ -301,6 +301,64 @@ describe('useMetrics', () => {
         });
     });
 
+    it('resets initial load state when indexName changes so loading flashes again', async () => {
+        // Initial index resolves immediately.
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const { result, rerender } = renderHook(
+            ({ params }) => useMetrics(params),
+            {
+                initialProps: {
+                    params: {
+                        probeName: 'pg_stat_all_indexes',
+                        timeRange: '24h',
+                        connectionId: 5,
+                        indexName: 'pk_orders',
+                    },
+                },
+            },
+        );
+
+        // Wait for initial load to complete.
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+        expect(result.current.loading).toBe(false);
+
+        // Switching to a different index should reset initialLoadDoneRef,
+        // so the next fetch flashes loading to true (no stale data shown).
+        let resolvePromise: (value: unknown) => void;
+        mockApiGet.mockImplementationOnce(() =>
+            new Promise(resolve => {
+                resolvePromise = resolve;
+            }),
+        );
+
+        rerender({
+            params: {
+                probeName: 'pg_stat_all_indexes',
+                timeRange: '24h',
+                connectionId: 5,
+                indexName: 'idx_customers_email',
+            },
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(true);
+        });
+
+        await act(async () => {
+            resolvePromise!(makeMetricSeries());
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        const url = mockApiGet.mock.calls[1][0];
+        expect(url).toContain('index_name=idx_customers_email');
+    });
+
     it('does not flash loading on auto-refresh after initial load', async () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 

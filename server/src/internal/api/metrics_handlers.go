@@ -17,16 +17,38 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
+
+// timeSeriesQueryFunc matches the signature of metrics.QueryTimeSeries.
+// Tests inject a fake to assert the parsed MetricFilters (notably the
+// IndexName the Index detail dashboard's Scan Activity chart depends on)
+// actually reach the query layer, without requiring a live pool.
+type timeSeriesQueryFunc func(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	connectionIDs []int,
+	timeRange string,
+	filters metrics.MetricFilters,
+	buckets int,
+	aggregation string,
+	requestedMetrics []string,
+) ([]metrics.MetricSeries, error)
 
 // MetricsHandler handles REST API endpoints for monitoring dashboard
 // metric queries and baselines.
 type MetricsHandler struct {
 	datastore *database.Datastore
 	authStore *auth.AuthStore
+
+	// queryTimeSeriesFn performs the time-series query. When nil the
+	// handler falls back to metrics.QueryTimeSeries; tests substitute a
+	// fake to capture the MetricFilters reaching the query layer.
+	queryTimeSeriesFn timeSeriesQueryFunc
 }
 
 // NewMetricsHandler creates a new MetricsHandler.
@@ -171,7 +193,11 @@ func (h *MetricsHandler) handleMetricsQuery(
 	defer cancel()
 
 	pool := h.datastore.GetPool()
-	result, err := metrics.QueryTimeSeries(
+	queryFn := h.queryTimeSeriesFn
+	if queryFn == nil {
+		queryFn = metrics.QueryTimeSeries
+	}
+	result, err := queryFn(
 		ctx, pool, probeName, connectionIDs, timeRange,
 		filters, buckets, aggregation, requestedMetrics)
 	if err != nil {

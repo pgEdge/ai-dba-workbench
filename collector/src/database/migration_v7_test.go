@@ -68,9 +68,7 @@ func TestMigrationV7_RelationSizeColumnsExist(t *testing.T) {
 		wantType string
 	}{
 		{"pg_stat_all_tables", "table_size", "bigint"},
-		{"pg_stat_all_tables", "table_size_pretty", "text"},
 		{"pg_stat_all_indexes", "index_size", "bigint"},
-		{"pg_stat_all_indexes", "index_size_pretty", "text"},
 	}
 	for _, c := range cases {
 		got, ok := columnType(ctx, t, pool, "metrics", c.table, c.column)
@@ -114,11 +112,9 @@ func TestMigrationV7_ColumnsCascadeToExistingPartition(t *testing.T) {
 	// a partition exists at the moment ADD COLUMN runs on the parent.
 	if _, err := pool.Exec(ctx, `
 		ALTER TABLE metrics.pg_stat_all_tables
-			DROP COLUMN IF EXISTS table_size,
-			DROP COLUMN IF EXISTS table_size_pretty;
+			DROP COLUMN IF EXISTS table_size;
 		ALTER TABLE metrics.pg_stat_all_indexes
-			DROP COLUMN IF EXISTS index_size,
-			DROP COLUMN IF EXISTS index_size_pretty;
+			DROP COLUMN IF EXISTS index_size;
 		DELETE FROM schema_version WHERE version = 7;
 	`); err != nil {
 		t.Fatalf("rewind to pre-v7 state: %v", err)
@@ -160,9 +156,7 @@ func TestMigrationV7_ColumnsCascadeToExistingPartition(t *testing.T) {
 		column string
 	}{
 		{"pg_stat_all_tables_" + partitionSuffix, "table_size"},
-		{"pg_stat_all_tables_" + partitionSuffix, "table_size_pretty"},
 		{"pg_stat_all_indexes_" + partitionSuffix, "index_size"},
-		{"pg_stat_all_indexes_" + partitionSuffix, "index_size_pretty"},
 	}
 	for _, c := range childCases {
 		if _, ok := columnType(ctx, t, pool, "metrics", c.table, c.column); !ok {
@@ -218,9 +212,7 @@ func TestMigrationV7_Idempotent(t *testing.T) {
 		column string
 	}{
 		{"pg_stat_all_tables", "table_size"},
-		{"pg_stat_all_tables", "table_size_pretty"},
 		{"pg_stat_all_indexes", "index_size"},
-		{"pg_stat_all_indexes", "index_size_pretty"},
 	} {
 		if _, ok := columnType(ctx, t, pool, "metrics", c.table, c.column); !ok {
 			t.Errorf("metrics.%s.%s missing after re-running v7 Up",

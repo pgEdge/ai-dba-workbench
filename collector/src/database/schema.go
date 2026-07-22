@@ -3085,22 +3085,16 @@ func (sm *SchemaManager) registerMigrations() {
 
 			_, err := tx.Exec(ctx, `
 				ALTER TABLE metrics.pg_stat_all_tables
-					ADD COLUMN IF NOT EXISTS table_size BIGINT,
-					ADD COLUMN IF NOT EXISTS table_size_pretty TEXT;
+					ADD COLUMN IF NOT EXISTS table_size BIGINT;
 
 				COMMENT ON COLUMN metrics.pg_stat_all_tables.table_size IS
 					'On-disk size of the table in bytes as reported by pg_table_size: heap plus TOAST plus free-space and visibility maps. Indexes are excluded because they are reported per index in metrics.pg_stat_all_indexes; TOAST is included so tables with large or toasted columns are not undercounted.';
-				COMMENT ON COLUMN metrics.pg_stat_all_tables.table_size_pretty IS
-					'Human-readable rendering of table_size produced by pg_size_pretty (for example, 128 MB). Precomputed in SQL so clients can display it without their own byte-formatting logic.';
 
 				ALTER TABLE metrics.pg_stat_all_indexes
-					ADD COLUMN IF NOT EXISTS index_size BIGINT,
-					ADD COLUMN IF NOT EXISTS index_size_pretty TEXT;
+					ADD COLUMN IF NOT EXISTS index_size BIGINT;
 
 				COMMENT ON COLUMN metrics.pg_stat_all_indexes.index_size IS
 					'On-disk size of the index in bytes as reported by pg_relation_size, the standard index size figure covering the index relation''s main fork.';
-				COMMENT ON COLUMN metrics.pg_stat_all_indexes.index_size_pretty IS
-					'Human-readable rendering of index_size produced by pg_size_pretty (for example, 32 MB). Precomputed in SQL so clients can display it without their own byte-formatting logic.';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to add relation-size columns to metrics tables: %w", err)

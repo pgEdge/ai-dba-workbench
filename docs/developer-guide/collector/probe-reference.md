@@ -448,8 +448,6 @@ table. The `table_size` column reports the size in
 bytes from `pg_table_size`, which covers heap, TOAST,
 free space map, and visibility map storage while
 excluding indexes.
-The `table_size_pretty` column reports the same value
-as a human-readable string from `pg_size_pretty`.
 
 **Columns Collected**: relid, schemaname, relname,
 seq_scan, seq_tup_read, idx_scan, idx_tup_fetch,
@@ -461,7 +459,7 @@ autovacuum_count, analyze_count,
 autoanalyze_count, heap_blks_read, heap_blks_hit,
 idx_blks_read, idx_blks_hit, toast_blks_read,
 toast_blks_hit, tidx_blks_read, tidx_blks_hit,
-table_size, table_size_pretty
+table_size
 
 ### pg_stat_all_indexes
 
@@ -481,14 +479,12 @@ from `pg_statio_all_indexes`.
 
 The probe also records the on-disk size of each index.
 The `index_size` column reports the size in bytes from
-`pg_relation_size`, and the `index_size_pretty` column
-reports the same value as a human-readable string from
-`pg_size_pretty`.
+`pg_relation_size`.
 
 **Columns Collected**: relid, indexrelid,
 schemaname, relname, indexrelname, idx_scan,
 idx_tup_read, idx_tup_fetch, idx_blks_read,
-idx_blks_hit, index_size, index_size_pretty
+idx_blks_hit, index_size
 
 ### pg_statio_all_sequences
 

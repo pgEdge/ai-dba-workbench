@@ -49,7 +49,10 @@ export function buildLineOptions(
         legend: buildLegend(options.showLegend ?? true),
         grid: buildGrid(),
         xAxis: buildXAxis(data.categories),
-        yAxis: buildYAxis(data.series.map((s) => s.data)),
+        yAxis: buildYAxis(
+            data.series.map((s) => s.data),
+            options.stacked,
+        ),
         dataZoom: buildDataZoom(options.enableZoom ?? false),
         series,
     };

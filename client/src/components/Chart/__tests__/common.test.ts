@@ -234,6 +234,111 @@ describe('buildYAxis range padding', () => {
     });
 });
 
+describe('buildYAxis stacked range padding', () => {
+    interface YAxisOpts {
+        type: string;
+        axisLabel: { formatter: (value: number) => string };
+        min?: number;
+        max?: number;
+    }
+
+    it('pads around the cumulative total for flat stacked series', () => {
+        // Regression: a stacked checkpoint-write breakdown holds two
+        // series each flat at 100. The rendered stacked total is a
+        // flat 200, so the padded range must bound ~200 rather than
+        // the raw per-point value of 100 (which clipped the top off).
+        const yAxis = buildYAxis(
+            [
+                [100, 100, 100],
+                [100, 100, 100],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(180);
+        expect(yAxis.max).toBeCloseTo(220);
+    });
+
+    it('uses raw per-point values when stacking is disabled', () => {
+        // The same data unstacked stays degenerate at 100, proving the
+        // stacking flag is what shifts the range to the cumulative sum.
+        const yAxis = buildYAxis([
+            [100, 100, 100],
+            [100, 100, 100],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(90);
+        expect(yAxis.max).toBeCloseTo(110);
+    });
+
+    it('behaves identically to non-stacked for a single series', () => {
+        const stacked = buildYAxis(
+            [[100, 100, 100]],
+            true,
+        ) as unknown as YAxisOpts;
+        const flat = buildYAxis([
+            [100, 100, 100],
+        ]) as unknown as YAxisOpts;
+        expect(stacked.min).toBe(flat.min);
+        expect(stacked.max).toBe(flat.max);
+        expect(stacked.min).toBeCloseTo(90);
+        expect(stacked.max).toBeCloseTo(110);
+    });
+
+    it('leaves auto-scaling intact when stacked totals vary', () => {
+        // Per-point sums are 100 then 200, a non-degenerate range, so
+        // no synthetic min/max is emitted even though each raw series
+        // is individually flat.
+        const yAxis = buildYAxis(
+            [
+                [100, 100],
+                [0, 100],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('sums only available indices for ragged stacked series', () => {
+        // The second series is shorter; the trailing index sums just
+        // the first series. Totals are 30, 30, 30 -> flat at 30.
+        const yAxis = buildYAxis(
+            [
+                [10, 10, 30],
+                [20, 20],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(27);
+        expect(yAxis.max).toBeCloseTo(33);
+    });
+
+    it('skips stacked points where every series is non-finite', () => {
+        // Index 1 is non-finite across both series and is ignored; the
+        // remaining totals are a flat 50, so the range pads around 50.
+        const yAxis = buildYAxis(
+            [
+                [30, NaN, 30],
+                [20, Infinity, 20],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(45);
+        expect(yAxis.max).toBeCloseTo(55);
+    });
+
+    it('omits min/max when all stacked points are non-finite', () => {
+        const yAxis = buildYAxis(
+            [
+                [NaN, Infinity],
+                [-Infinity, NaN],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+});
+
 describe('buildTooltip formatter', () => {
     interface TooltipOpts {
         show: boolean;

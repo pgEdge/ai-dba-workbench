@@ -172,8 +172,19 @@ export function buildXAxis(categories?: string[]): object {
  * range is padded around the flat value so the series stays visible.
  * For any non-degenerate range no `min`/`max` is emitted, so ECharts
  * auto-scaling is preserved exactly as before.
+ *
+ * When `stacked` is true the series are drawn on top of one another,
+ * so the rendered height at each x-index is the cumulative sum across
+ * all series at that index rather than any single raw value. The
+ * degenerate-range check therefore inspects those per-index sums; a
+ * stacked chart whose totals are flat (e.g. two series each holding
+ * steady at 100, summing to a flat 200) is then padded around the
+ * real stacked total instead of the smaller raw per-point value.
  */
-export function buildYAxis(seriesData?: number[][]): object {
+export function buildYAxis(
+    seriesData?: number[][],
+    stacked?: boolean,
+): object {
     const axis: {
         type: string;
         axisLabel: { formatter: (value: number) => string };
@@ -189,12 +200,39 @@ export function buildYAxis(seriesData?: number[][]): object {
     let min = Infinity;
     let max = -Infinity;
     let hasValue = false;
-    for (const series of seriesData ?? []) {
-        for (const value of series) {
-            if (!Number.isFinite(value)) {continue;}
-            hasValue = true;
-            if (value < min) {min = value;}
-            if (value > max) {max = value;}
+    const observe = (value: number) => {
+        hasValue = true;
+        if (value < min) {min = value;}
+        if (value > max) {max = value;}
+    };
+
+    const series = seriesData ?? [];
+    if (stacked) {
+        // Stacked series render as a cumulative total at each x-index,
+        // so sum the finite values across all series at that index.
+        // Ragged series contribute only where they have a point; an
+        // index with no finite value across any series is skipped.
+        let maxLen = 0;
+        for (const s of series) {
+            if (s.length > maxLen) {maxLen = s.length;}
+        }
+        for (let i = 0; i < maxLen; i++) {
+            let sum = 0;
+            let finiteAtIndex = false;
+            for (const s of series) {
+                const value = s[i];
+                if (!Number.isFinite(value)) {continue;}
+                sum += value;
+                finiteAtIndex = true;
+            }
+            if (finiteAtIndex) {observe(sum);}
+        }
+    } else {
+        for (const s of series) {
+            for (const value of s) {
+                if (!Number.isFinite(value)) {continue;}
+                observe(value);
+            }
         }
     }
 

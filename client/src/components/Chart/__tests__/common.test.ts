@@ -337,6 +337,71 @@ describe('buildYAxis stacked range padding', () => {
         expect(yAxis).not.toHaveProperty('min');
         expect(yAxis).not.toHaveProperty('max');
     });
+
+    it('preserves the real span for a flat mixed-sign stacked chart', () => {
+        // Regression: ECharts stacks a positive series upward from zero
+        // and a negative series downward from the same baseline, so a
+        // series flat at +100 and another flat at -100 render a real
+        // ~200-unit span from -100 to +100. Summing them into one
+        // scalar netted the totals to a flat 0 and collapsed the axis to
+        // a tiny [-1, 1] window; the positive and negative totals must
+        // be tracked separately so the true span survives. The range is
+        // non-degenerate (-100 != 100), so no synthetic min/max is
+        // emitted and ECharts auto-scales across the full span.
+        const yAxis = buildYAxis(
+            [
+                [100, 100],
+                [-100, -100],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('leaves auto-scaling intact for varying mixed-sign stacks', () => {
+        // Positive totals climb 50 -> 80 while the negative total holds
+        // at -30. The observed range spans -30 to 80, which is already
+        // non-degenerate, so no synthetic padding is applied.
+        const yAxis = buildYAxis(
+            [
+                [50, 80],
+                [-30, -30],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('pads around the negative total for an all-negative stack', () => {
+        // No positive value appears, so the zero baseline is never
+        // observed; the flat negative total of -50 pads like the
+        // non-stacked flat-negative case rather than snapping to zero.
+        const yAxis = buildYAxis(
+            [
+                [-20, -20],
+                [-30, -30],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(-55);
+        expect(yAxis.max).toBeCloseTo(-45);
+    });
+
+    it('pads a fixed range around an all-zero stacked series', () => {
+        // Neither sign is present, so the flat zero baseline is observed
+        // and padded to the same fixed [-1, 1] window as the
+        // non-stacked flat-zero case.
+        const yAxis = buildYAxis(
+            [
+                [0, 0, 0],
+            ],
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBe(-1);
+        expect(yAxis.max).toBe(1);
+    });
 });
 
 describe('buildTooltip formatter', () => {

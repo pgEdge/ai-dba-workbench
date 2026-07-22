@@ -174,12 +174,20 @@ export function buildXAxis(categories?: string[]): object {
  * auto-scaling is preserved exactly as before.
  *
  * When `stacked` is true the series are drawn on top of one another,
- * so the rendered height at each x-index is the cumulative sum across
- * all series at that index rather than any single raw value. The
- * degenerate-range check therefore inspects those per-index sums; a
- * stacked chart whose totals are flat (e.g. two series each holding
- * steady at 100, summing to a flat 200) is then padded around the
- * real stacked total instead of the smaller raw per-point value.
+ * so the rendered height at each x-index is the cumulative total across
+ * all series at that index rather than any single raw value. ECharts
+ * stacks positive values upward from the zero baseline and negative
+ * values downward from that same baseline, so the two signs do not net
+ * against one another. The per-index positive and negative totals are
+ * therefore accumulated separately: the positive total is the top of
+ * the rendered stack and the negative total is the bottom. A sign that
+ * never appears anywhere in the data is not folded into the observed
+ * range, so a single-sign stacked chart (e.g. one series flat at 100)
+ * still pads tightly around its real total rather than being anchored
+ * to a spurious zero baseline. A mixed-sign stacked chart (e.g. one
+ * series flat at +100 and another at -100) is bounded by both the
+ * positive and negative totals, preserving its true ~200-unit span
+ * instead of collapsing to a tiny window around a netted zero.
  */
 export function buildYAxis(
     seriesData?: number[][],
@@ -208,24 +216,46 @@ export function buildYAxis(
 
     const series = seriesData ?? [];
     if (stacked) {
-        // Stacked series render as a cumulative total at each x-index,
-        // so sum the finite values across all series at that index.
-        // Ragged series contribute only where they have a point; an
-        // index with no finite value across any series is skipped.
+        // Stacked series render as a cumulative total at each x-index.
+        // ECharts stacks positive values upward and negative values
+        // downward from a shared zero baseline, so the two signs are
+        // accumulated separately: the positive total is the top of the
+        // stack and the negative total is the bottom. A first pass
+        // records the longest series and whether either sign occurs
+        // anywhere; a sign that never appears is not folded into the
+        // observed range, keeping single-sign stacks padded tightly
+        // around their real total rather than anchored to a spurious
+        // zero baseline.
         let maxLen = 0;
+        let hasPositive = false;
+        let hasNegative = false;
         for (const s of series) {
             if (s.length > maxLen) {maxLen = s.length;}
+            for (const value of s) {
+                if (!Number.isFinite(value)) {continue;}
+                if (value > 0) {hasPositive = true;}
+                else if (value < 0) {hasNegative = true;}
+            }
         }
         for (let i = 0; i < maxLen; i++) {
-            let sum = 0;
+            let posSum = 0;
+            let negSum = 0;
             let finiteAtIndex = false;
             for (const s of series) {
                 const value = s[i];
                 if (!Number.isFinite(value)) {continue;}
-                sum += value;
                 finiteAtIndex = true;
+                if (value > 0) {posSum += value;}
+                else if (value < 0) {negSum += value;}
             }
-            if (finiteAtIndex) {observe(sum);}
+            if (!finiteAtIndex) {continue;}
+            // Observe each sign's total only when that sign is present
+            // somewhere in the data. When neither sign occurs the index
+            // holds only finite zeros, so observe the flat zero baseline
+            // so an all-zero stacked series still pads to a visible range.
+            if (hasPositive) {observe(posSum);}
+            if (hasNegative) {observe(negSum);}
+            if (!hasPositive && !hasNegative) {observe(0);}
         }
     } else {
         for (const s of series) {

@@ -618,6 +618,55 @@ func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
 	}
 }
 
+// TestRBACCheckerSpecificThenAllConnections covers issue #302 at the
+// resolver level: when specific grants are made FIRST and the wildcard is
+// granted afterwards, the specific access levels must still apply. This is
+// the reverse grant order of TestRBACCheckerAllConnectionsHigherLevel and is
+// the sequence that previously wiped the specific grants.
+func TestRBACCheckerSpecificThenAllConnections(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	const (
+		connA = 1
+		connB = 2
+		connC = 3
+	)
+
+	// Specific grants first, wildcard last (reverse of the sibling test).
+	store.GrantConnectionPrivilege(groupID, connA, AccessLevelRead)
+	store.GrantConnectionPrivilege(groupID, connB, AccessLevelReadWrite)
+	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Connection B keeps read_write (specific grant survives the wildcard).
+	canAccess, level := checker.CanAccessConnection(ctx, connB)
+	if !canAccess || level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for connection B, got canAccess=%v level=%q", canAccess, level)
+	}
+
+	// Connection A keeps read (specific grant survives the wildcard).
+	canAccess, level = checker.CanAccessConnection(ctx, connA)
+	if !canAccess || level != AccessLevelRead {
+		t.Errorf("Expected read for connection A, got canAccess=%v level=%q", canAccess, level)
+	}
+
+	// Connection C has no specific grant and falls back to the wildcard read.
+	canAccess, level = checker.CanAccessConnection(ctx, connC)
+	if !canAccess || level != AccessLevelRead {
+		t.Errorf("Expected read for connection C via wildcard, got canAccess=%v level=%q", canAccess, level)
+	}
+}
+
 // =============================================================================
 // GetEffectivePrivileges with Token Scoping Tests
 // =============================================================================

@@ -123,6 +123,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(false);
     const initialLoadDoneRef = React.useRef(false);
+    // Tracks mount state so a late fetch resolution never calls setState
+    // on an unmounted component. Set false in an unmount cleanup below.
+    const isMountedRef = useRef(true);
     const localAnalysisRef = React.useRef<Map<number, string>>(new Map());
     const [blackoutMgmtOpen, setBlackoutMgmtOpen] = useState(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
@@ -158,6 +161,15 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     useEffect(() => {
         clearOverlays();
     }, [selection?.type, selection?.id, clearOverlays]);
+
+    // Track mount state so late fetch resolutions can bail out before
+    // calling setState on an unmounted component.
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
 
     const statusColors = useMemo(() => getStatusColors(theme), [theme]);
 
@@ -439,15 +451,25 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
                     localAnalysisRef.current.delete(a.id);
                 }
             }
+            // A late resolution after unmount must not touch state; a
+            // superseded/unmounted attempt is not a failure, so report
+            // success to keep it out of the retry schedule.
+            if (!isMountedRef.current) {
+                return true;
+            }
             setAlerts(merged);
             initialLoadDoneRef.current = true;
             return true;
         } catch (err) {
             logger.error('Error fetching alerts:', err);
-            setAlerts([]);
+            if (isMountedRef.current) {
+                setAlerts([]);
+            }
             return false;
         } finally {
-            setLoading(false);
+            if (isMountedRef.current) {
+                setLoading(false);
+            }
         }
     }, [user, selection, transformAlerts]);
 

@@ -92,8 +92,10 @@ export const usePerformanceSummary = (
                 throw new Error(errorData.error || `Failed to fetch performance data: ${response.status}`);
             }
 
+            const result: PerformanceSummaryData = await response.json();
+            // Re-check mount state after the final await so a late
+            // resolution cannot call setState on an unmounted component.
             if (isMountedRef.current) {
-                const result: PerformanceSummaryData = await response.json();
                 setData(result);
                 initialLoadDoneRef.current = true;
             }

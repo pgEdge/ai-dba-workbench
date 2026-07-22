@@ -118,6 +118,11 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
 
             const alertCount = (alertsData.alerts || []).length;
 
+            // A late resolution after unmount must not touch state; a
+            // superseded/unmounted attempt is not a failure, so report
+            // success to keep it out of the retry schedule.
+            if (!isMountedRef.current) { return true; }
+
             setAggregate({
                 totalServers,
                 totalConnections,

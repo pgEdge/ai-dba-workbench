@@ -127,6 +127,11 @@ export const useTimelineEvents = ({
     // array reference equality issues
     const eventTypesKey = eventTypes ? eventTypes.slice().sort().join(',') : '';
 
+    // Stable string representation of connectionIds for the same reason: a
+    // parent passing a new-but-equal array each render must not force a
+    // redundant refetch through buildQueryString's identity changing.
+    const connectionIdsKey = connectionIds ? connectionIds.slice().sort().join(',') : '';
+
     /**
      * Build the query string for the API request
      */
@@ -153,7 +158,7 @@ export const useTimelineEvents = ({
 
         return params.toString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [connectionId, connectionIds, timeRange, eventTypesKey]);
+    }, [connectionId, connectionIdsKey, timeRange, eventTypesKey]);
 
     /**
      * Fetch timeline events from the API
@@ -203,7 +208,7 @@ export const useTimelineEvents = ({
     // Reset initial load state when connection changes
     useEffect(() => {
         initialLoadDoneRef.current = false;
-    }, [connectionId, connectionIds]);
+    }, [connectionId, connectionIdsKey]);
 
     // Fetch when dependencies change
     // Note: fetchEvents already captures connectionId, connectionIds, timeRange, eventTypes via buildQueryString

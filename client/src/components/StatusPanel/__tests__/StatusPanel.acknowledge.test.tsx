@@ -15,10 +15,11 @@
  */
 
 import type React from 'react';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { ThemeProvider } from '@mui/material';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createPgedgeTheme } from '../../../theme/pgedgeTheme';
+import { DEFAULT_RETRY_BASE_DELAY_MS } from '../../../hooks/useRetryingFetch';
 import type { Selection } from '../../../types/selection';
 
 // ---------------------------------------------------------------------------
@@ -171,38 +172,84 @@ describe('StatusPanel acknowledgement refresh', () => {
         vi.useRealTimers();
     });
 
-    it('routes the single-ack refresh through the retry-managed path', async () => {
+    // Flush a handful of microtask turns so a chained
+    // post-then-refetch settles under fake timers without advancing the
+    // clock (the scheduled retry itself is driven separately).
+    const flushMicrotasks = async (turns = 8): Promise<void> => {
+        for (let i = 0; i < turns; i += 1) {
+            await Promise.resolve();
+        }
+    };
+
+    it('reschedules the single-ack refresh through the retry controller', async () => {
+        vi.useFakeTimers();
+        // Initial load succeeds and renders the active alert.
+        mockApiGet.mockResolvedValue({ alerts: [makeAlertRecord()] });
+
         renderPanel(serverSelection);
 
-        // Wait for the initial fetch to settle.
-        expect(await screen.findByText('High CPU Usage')).toBeInTheDocument();
-        const initialGetCalls = mockApiGet.mock.calls.length;
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
+
+        // The post-acknowledgement alerts refresh fails on its first
+        // attempt, then recovers on the scheduled retry. A bare
+        // unmanaged fetchAlertsData() would clear the list and never
+        // bring the alert back, so this exercises the retry controller
+        // rather than merely a follow-up fetch.
+        mockApiGet.mockReset();
+        mockApiGet
+            .mockRejectedValueOnce(new Error('backend restarting'))
+            .mockResolvedValue({ alerts: [makeAlertRecord()] });
 
         await act(async () => {
             screen.getByTestId('confirm-ack').click();
+            await flushMicrotasks();
         });
 
-        // The acknowledgement was posted and a managed refetch followed.
+        // The acknowledgement was posted and the failed refresh cleared
+        // the list, so nothing renders while the retry is pending.
         expect(mockApiPost).toHaveBeenCalledWith(
             '/api/v1/alerts/acknowledge',
             expect.objectContaining({ alert_id: 99, message: 'ack message' }),
         );
-        await waitFor(() => {
-            expect(mockApiGet.mock.calls.length).toBeGreaterThan(initialGetCalls);
+        expect(screen.queryByText('High CPU Usage')).not.toBeInTheDocument();
+
+        // Only a retry scheduled by the controller can bring the alert
+        // back after the base backoff delay.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+            await flushMicrotasks();
         });
+
+        expect(mockApiGet).toHaveBeenCalledTimes(2);
+        expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
     });
 
-    it('routes the group-ack refresh through the retry-managed path', async () => {
+    it('reschedules the group-ack refresh through the retry controller', async () => {
+        vi.useFakeTimers();
+        mockApiGet.mockResolvedValue({ alerts: [makeAlertRecord()] });
+
         renderPanel(serverSelection);
 
-        expect(await screen.findByText('High CPU Usage')).toBeInTheDocument();
-        const initialGetCalls = mockApiGet.mock.calls.length;
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
+
+        mockApiGet.mockReset();
+        mockApiGet
+            .mockRejectedValueOnce(new Error('backend restarting'))
+            .mockResolvedValue({ alerts: [makeAlertRecord()] });
 
         await act(async () => {
             screen.getByTestId('confirm-group-ack').click();
+            await flushMicrotasks();
         });
 
-        // Each alert id is acknowledged, then a managed refetch follows.
+        // Each alert id was acknowledged, and the failed refresh cleared
+        // the list while the retry is pending.
         expect(mockApiPost).toHaveBeenCalledWith(
             '/api/v1/alerts/acknowledge',
             expect.objectContaining({ alert_id: 99, message: 'group message' }),
@@ -211,8 +258,14 @@ describe('StatusPanel acknowledgement refresh', () => {
             '/api/v1/alerts/acknowledge',
             expect.objectContaining({ alert_id: 100, message: 'group message' }),
         );
-        await waitFor(() => {
-            expect(mockApiGet.mock.calls.length).toBeGreaterThan(initialGetCalls);
+        expect(screen.queryByText('High CPU Usage')).not.toBeInTheDocument();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+            await flushMicrotasks();
         });
+
+        expect(mockApiGet).toHaveBeenCalledTimes(2);
+        expect(screen.getByText('High CPU Usage')).toBeInTheDocument();
     });
 });

@@ -215,6 +215,37 @@ describe('StatusPanel alert fetch resilience', () => {
         );
     });
 
+    it('bails out of the terminal state update when unmounted mid-fetch', async () => {
+        // Hold the alerts fetch pending so the component can unmount
+        // while fetchAlertsData is still awaiting its response.
+        let resolveGet: (value: unknown) => void = () => {};
+        mockApiGet.mockImplementation(
+            () => new Promise(resolve => { resolveGet = resolve; }),
+        );
+
+        const { unmount } = renderPanel(serverSelection);
+
+        // Let the fetch start and reach the pending await.
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        // Unmount while the request is still in flight.
+        unmount();
+
+        // Resolving now drives fetchAlertsData past its await into the
+        // post-unmount guard, which returns without touching state.
+        await act(async () => {
+            resolveGet({ alerts: [makeAlertRecord()] });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        // The guard prevented a setState on the unmounted component, so
+        // nothing was rendered.
+        expect(screen.queryByText('High CPU Usage')).not.toBeInTheDocument();
+    });
+
     it('skips the fetch and clears alerts when there is no user', async () => {
         mockAuthUser = null;
 

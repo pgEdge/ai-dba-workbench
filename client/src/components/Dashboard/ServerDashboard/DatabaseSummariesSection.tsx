@@ -278,7 +278,8 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                 </Typography>
                             </Box>
 
-                            {db.cache_hit_ratio?.time_series && (
+                            {db.cache_hit_ratio?.time_series
+                                && db.cache_hit_ratio.time_series.length > 0 ? (
                                 <Box sx={{ height: 30, mt: 0.5, mb: 5 }}>
                                     <Sparkline
                                         data={toSparklineData(
@@ -289,6 +290,23 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                         )}
                                         height={30}
                                     />
+                                </Box>
+                            ) : (
+                                <Box sx={{
+                                    height: 30,
+                                    mt: 0.5,
+                                    mb: 5,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                }}>
+                                    <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                        sx={{ fontStyle: 'italic' }}
+                                    >
+                                        No history yet
+                                    </Typography>
                                 </Box>
                             )}
 

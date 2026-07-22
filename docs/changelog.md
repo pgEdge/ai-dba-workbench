@@ -180,6 +180,17 @@ project adheres to
   and the Scan Activity chart sends it instead of misusing the
   table-name parameter.
 
+- Fix several dashboard charts rendering blank whenever their time
+  series was perfectly flat, most visibly the Cache Hit Ratio Over
+  Time chart for a new, essentially read-only sample database whose
+  ratio held steady at 100% for its whole history. A flat series gave
+  the value axis a zero-height range, with `min` equal to `max`, so
+  the line or area had nothing to draw against and the chart appeared
+  empty. The value axis now pads a small visible range around a flat
+  value so the series renders, and it does so in a baseline-aware way
+  for zero-anchored charts, such as bars and stacked or area fills, so
+  their fill still renders from zero. (#336)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

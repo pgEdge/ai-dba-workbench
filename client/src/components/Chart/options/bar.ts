@@ -37,7 +37,13 @@ export function buildBarOptions(
     }));
 
     const categoryAxis = buildXAxis(data.categories);
-    const valueAxis = buildYAxis();
+    // Bars always grow from the zero baseline, so the value axis is
+    // zero-anchored regardless of whether the series are stacked.
+    const valueAxis = buildYAxis(
+        data.series.map((s) => s.data),
+        options.stacked,
+        true,
+    );
 
     return {
         tooltip: buildTooltip(options.showTooltip ?? true),

@@ -49,7 +49,14 @@ export function buildLineOptions(
         legend: buildLegend(options.showLegend ?? true),
         grid: buildGrid(),
         xAxis: buildXAxis(data.categories),
-        yAxis: buildYAxis(),
+        // A line fills from the zero baseline when it is stacked or
+        // carries an area fill, so the value axis is zero-anchored in
+        // either case; a plain line keeps its tight degenerate window.
+        yAxis: buildYAxis(
+            data.series.map((s) => s.data),
+            options.stacked,
+            Boolean(options.stacked || options.areaFill),
+        ),
         dataZoom: buildDataZoom(options.enableZoom ?? false),
         series,
     };

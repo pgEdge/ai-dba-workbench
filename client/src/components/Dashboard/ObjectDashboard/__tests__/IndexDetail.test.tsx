@@ -15,7 +15,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import IndexDetail from '../IndexDetail';
 import type { IndexDetailData } from '../types';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricSeries } from '../../types';
+import type { MetricSeries, MetricQueryParams } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -47,8 +47,15 @@ let mockMetricsReturn: UseMetricsReturn = {
     error: null,
     refetch: vi.fn(),
 };
+// Spy that captures the params IndexDetail hands to useMetrics for the
+// Scan Activity chart, so the routing tests can assert the query is scoped
+// to the index (indexName) rather than misrouted into tableName.
+const mockUseMetrics = vi.fn();
 vi.mock('../../../../hooks/useMetrics', () => ({
-    useMetrics: () => mockMetricsReturn,
+    useMetrics: (params: MetricQueryParams | null) => {
+        mockUseMetrics(params);
+        return mockMetricsReturn;
+    },
 }));
 
 vi.mock('../../../../contexts/useAICapabilities', () => ({
@@ -293,5 +300,37 @@ describe('IndexDetail', () => {
         renderIndexDetail();
 
         expect(mockApiFetch).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------------
+    // Scan Activity chart query routing (guards PR #353's fix)
+    //
+    // The regression these guard: the index name was previously sent to the
+    // chart query as tableName, which filtered relname = the index name and
+    // returned no rows. The fix scopes the query via indexName instead.
+    // -----------------------------------------------------------------------
+
+    it('scopes the chart query to the index via indexName', () => {
+        // A never-resolving latest-row fetch keeps the component in its
+        // pending state so no async updates fire; useMetrics is still
+        // invoked with the chart params during the initial render.
+        mockApiFetch.mockReturnValue(new Promise(() => {}));
+
+        renderIndexDetail();
+
+        const params = mockUseMetrics.mock.calls[0][0] as MetricQueryParams;
+        expect(params.probeName).toBe('pg_stat_all_indexes');
+        expect(params.indexName).toBe('users_pkey');
+        expect(params.metrics).toEqual(['idx_scan_per_sec']);
+        expect(params.schemaName).toBe('public');
+    });
+
+    it('does not misroute the index name into tableName', () => {
+        mockApiFetch.mockReturnValue(new Promise(() => {}));
+
+        renderIndexDetail();
+
+        const params = mockUseMetrics.mock.calls[0][0] as MetricQueryParams;
+        expect(params.tableName).toBeUndefined();
     });
 });

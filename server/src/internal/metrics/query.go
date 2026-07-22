@@ -500,6 +500,8 @@ func metricQueryBase(
 		whereClauses = append(whereClauses,
 			fmt.Sprintf("indexrelname = $%d", argNum))
 		queryArgs = append(queryArgs, filters.IndexName)
+		// No argNum++ here: IndexName is the last filter. A new filter
+		// added below must add argNum++ above first.
 	}
 
 	return strings.Join(whereClauses, " AND "), queryArgs

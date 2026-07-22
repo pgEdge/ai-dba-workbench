@@ -10,6 +10,12 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add a `-group-description` CLI flag that sets a group's
+  description when creating it with `-add-group`, matching the
+  description support already available in the web console. (#301)
+
 ### Changed
 
 - Drop the runtime dependency on a knowledgebase package from the

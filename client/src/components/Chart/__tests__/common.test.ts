@@ -127,6 +127,8 @@ describe('buildXAxis formatter', () => {
 describe('buildYAxis formatter', () => {
     interface YAxisOpts {
         axisLabel: { formatter: (value: number) => string };
+        min?: number;
+        max?: number;
     }
 
     it('formats billions with B suffix', () => {
@@ -154,6 +156,81 @@ describe('buildYAxis formatter', () => {
     it('rounds non-integer small numbers to 1 decimal', () => {
         const yAxis = buildYAxis() as unknown as YAxisOpts;
         expect(yAxis.axisLabel.formatter(3.14159)).toBe('3.1');
+    });
+});
+
+describe('buildYAxis range padding', () => {
+    interface YAxisOpts {
+        type: string;
+        axisLabel: { formatter: (value: number) => string };
+        min?: number;
+        max?: number;
+    }
+
+    it('omits min/max when no series data is supplied', () => {
+        const yAxis = buildYAxis() as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('omits min/max when every point is non-finite', () => {
+        const yAxis = buildYAxis([
+            [NaN, Infinity, -Infinity],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('leaves auto-scaling intact for a varied series', () => {
+        const yAxis = buildYAxis([
+            [10, 20, 30],
+            [15, 25],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('pads a proportional range around a flat non-zero series', () => {
+        // Regression: a brand-new read-only database reports a
+        // cache-hit-ratio that is a flat 100.0 for its whole history.
+        const yAxis = buildYAxis([
+            [100, 100, 100, 100],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(90);
+        expect(yAxis.max).toBeCloseTo(110);
+        expect(Number(yAxis.max) - Number(yAxis.min)).toBeGreaterThan(0);
+    });
+
+    it('pads a fixed range around a flat zero series', () => {
+        const yAxis = buildYAxis([
+            [0, 0, 0],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBe(-1);
+        expect(yAxis.max).toBe(1);
+    });
+
+    it('pads proportionally for a flat large-scale series', () => {
+        const yAxis = buildYAxis([
+            [1e9, 1e9],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(9e8);
+        expect(yAxis.max).toBeCloseTo(1.1e9);
+    });
+
+    it('pads around a flat negative series without collapsing', () => {
+        const yAxis = buildYAxis([
+            [-50, -50],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(-55);
+        expect(yAxis.max).toBeCloseTo(-45);
+    });
+
+    it('ignores non-finite points when computing the range', () => {
+        const yAxis = buildYAxis([
+            [NaN, 100, Infinity, 100],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(90);
+        expect(yAxis.max).toBeCloseTo(110);
     });
 });
 

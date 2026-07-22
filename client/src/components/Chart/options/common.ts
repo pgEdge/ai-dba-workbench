@@ -163,13 +163,49 @@ export function buildXAxis(categories?: string[]): object {
     };
 }
 
-export function buildYAxis(): object {
-    return {
+/**
+ * Builds the numeric value axis. When `seriesData` is supplied the
+ * range of the data is inspected; if every finite point shares the
+ * same value the axis would otherwise collapse to a zero-height range
+ * (`min === max`), leaving ECharts nothing to interpolate against so
+ * the line/area renders as blank. In that degenerate case a synthetic
+ * range is padded around the flat value so the series stays visible.
+ * For any non-degenerate range no `min`/`max` is emitted, so ECharts
+ * auto-scaling is preserved exactly as before.
+ */
+export function buildYAxis(seriesData?: number[][]): object {
+    const axis: {
+        type: string;
+        axisLabel: { formatter: (value: number) => string };
+        min?: number;
+        max?: number;
+    } = {
         type: 'value',
         axisLabel: {
             formatter: formatNumericValue,
         },
     };
+
+    let min = Infinity;
+    let max = -Infinity;
+    let hasValue = false;
+    for (const series of seriesData ?? []) {
+        for (const value of series) {
+            if (!Number.isFinite(value)) {continue;}
+            hasValue = true;
+            if (value < min) {min = value;}
+            if (value > max) {max = value;}
+        }
+    }
+
+    if (hasValue && min === max) {
+        const flat = min;
+        const padding = flat === 0 ? 1 : Math.abs(flat) * 0.1;
+        axis.min = flat - padding;
+        axis.max = flat + padding;
+    }
+
+    return axis;
 }
 
 export function buildDataZoom(enabled: boolean): object[] {

@@ -37,7 +37,7 @@ export function buildBarOptions(
     }));
 
     const categoryAxis = buildXAxis(data.categories);
-    const valueAxis = buildYAxis();
+    const valueAxis = buildYAxis(data.series.map((s) => s.data));
 
     return {
         tooltip: buildTooltip(options.showTooltip ?? true),

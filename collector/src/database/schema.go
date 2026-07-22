@@ -3071,6 +3071,39 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #7: Add relation-size columns to the table and index
+	// metrics tables so the object-detail dashboards can report storage
+	// footprint alongside the access statistics already collected for the
+	// same relations. The columns land on the partitioned parent tables;
+	// PostgreSQL 14-18 propagate ADD COLUMN to existing and future
+	// partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     7,
+		Description: "Add table_size and index_size columns to table and index metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_stat_all_tables
+					ADD COLUMN IF NOT EXISTS table_size BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.table_size IS
+					'On-disk size of the table in bytes as reported by pg_table_size: heap plus TOAST plus free-space and visibility maps. Indexes are excluded because they are reported per index in metrics.pg_stat_all_indexes; TOAST is included so tables with large or toasted columns are not undercounted.';
+
+				ALTER TABLE metrics.pg_stat_all_indexes
+					ADD COLUMN IF NOT EXISTS index_size BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_stat_all_indexes.index_size IS
+					'On-disk size of the index in bytes as reported by pg_relation_size, the standard index size figure covering the index relation''s main fork.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add relation-size columns to metrics tables: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations

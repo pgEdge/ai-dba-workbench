@@ -35,7 +35,8 @@ func TestPgStatAllTablesProbe_Surface(t *testing.T) {
 	}
 	q := p.GetQuery()
 	for _, s := range []string{"pg_stat_all_tables", "pg_statio_all_tables",
-		"n_live_tup", "n_dead_tup", "vacuum_count"} {
+		"n_live_tup", "n_dead_tup", "vacuum_count",
+		"pg_table_size(s.relid) AS table_size"} {
 		if !strings.Contains(q, s) {
 			t.Errorf("GetQuery missing %q", s)
 		}

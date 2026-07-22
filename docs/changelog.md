@@ -74,6 +74,23 @@ project adheres to
   change affects test infrastructure only and does not alter
   application behavior.
 
+- Fix the Table Size and Index Size fields rendering permanently as
+  "--" on the Table and Index object-detail dashboards of the web
+  client. No collector probe ever gathered relation size, so the value
+  genuinely never reached the datastore rather than failing at query
+  time as the two prior dashboard fixes did. The `pg_stat_all_tables`
+  probe now collects `table_size` via `pg_table_size`, which covers
+  heap, TOAST, free space map, and visibility map storage whilst
+  excluding indexes. The `pg_stat_all_indexes` probe now collects
+  `index_size` via `pg_relation_size` for each index. Both values are
+  stored as raw byte counts that the web client formats for display.
+  Collector schema migration Version 7 adds the two new columns to the
+  `metrics.pg_stat_all_tables` and `metrics.pg_stat_all_indexes`
+  partitioned parent tables, and PostgreSQL propagates them to every
+  existing and future partition automatically. The web client's
+  existing latest-row request reads the new columns with no further
+  server or client changes.
+
 - Fix the Activity Charts on the Table and Index object-detail
   dashboards rendering permanently blank, with the messages "No tuple
   operation data available", "No scan data available", and "No dead

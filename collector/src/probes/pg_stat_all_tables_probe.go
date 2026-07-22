@@ -63,7 +63,12 @@ func (p *PgStatAllTablesProbe) GetQuery() string {
             io.toast_blks_read,
             io.toast_blks_hit,
             io.tidx_blks_read,
-            io.tidx_blks_hit
+            io.tidx_blks_hit,
+            -- pg_table_size covers heap + TOAST + FSM/VM but excludes
+            -- indexes, which the pg_stat_all_indexes probe reports
+            -- separately per index; pg_total_relation_size would
+            -- double-count indexes and pg_relation_size would drop TOAST.
+            pg_table_size(s.relid) AS table_size
         FROM pg_stat_all_tables s
         LEFT JOIN pg_statio_all_tables io ON s.relid = io.relid
         ORDER BY s.schemaname, s.relname
@@ -106,6 +111,7 @@ func (p *PgStatAllTablesProbe) Store(ctx context.Context, datastoreConn *pgxpool
 		"idx_blks_read", "idx_blks_hit",
 		"toast_blks_read", "toast_blks_hit",
 		"tidx_blks_read", "tidx_blks_hit",
+		"table_size",
 	}
 
 	// Build values array
@@ -150,6 +156,7 @@ func (p *PgStatAllTablesProbe) Store(ctx context.Context, datastoreConn *pgxpool
 			metric["toast_blks_hit"],
 			metric["tidx_blks_read"],
 			metric["tidx_blks_hit"],
+			metric["table_size"],
 		}
 		values = append(values, row)
 	}

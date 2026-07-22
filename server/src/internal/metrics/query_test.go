@@ -979,11 +979,147 @@ func TestClassifyMetrics(t *testing.T) {
 	})
 }
 
+func TestEntityKeyColumns(t *testing.T) {
+	tests := []struct {
+		name       string
+		outputCols []string
+		colTypes   map[string]string
+		want       []string
+	}{
+		{
+			name:       "table probe keys on text and name columns",
+			outputCols: []string{"database_name", "schemaname", "relname", "n_live_tup", "seq_scan"},
+			colTypes: map[string]string{
+				"database_name": "text",
+				"schemaname":    "name",
+				"relname":       "name",
+				"n_live_tup":    "bigint",
+				"seq_scan":      "bigint",
+			},
+			want: []string{"database_name", "schemaname", "relname"},
+		},
+		{
+			name:       "varchar columns count as entity keys",
+			outputCols: []string{"label", "value"},
+			colTypes:   map[string]string{"label": "character varying", "value": "numeric"},
+			want:       []string{"label"},
+		},
+		{
+			name:       "no text columns yields no keys",
+			outputCols: []string{"cpu_user", "cpu_system"},
+			colTypes:   map[string]string{"cpu_user": "double precision", "cpu_system": "double precision"},
+			want:       nil,
+		},
+		{
+			name:       "preserves output column order",
+			outputCols: []string{"relname", "schemaname"},
+			colTypes:   map[string]string{"relname": "name", "schemaname": "name"},
+			want:       []string{"relname", "schemaname"},
+		},
+		{
+			// Simulates PR #343's additions (table_size /
+			// table_size_pretty). The text-typed *_pretty value column
+			// must NOT join the entity key, or different historical
+			// rendered sizes would fragment one table into many and
+			// reproduce the latest-row staleness bug.
+			name: "text-typed _pretty value column is excluded",
+			outputCols: []string{
+				"database_name", "schemaname", "relname",
+				"table_size", "table_size_pretty", "n_live_tup",
+			},
+			colTypes: map[string]string{
+				"database_name":     "text",
+				"schemaname":        "name",
+				"relname":           "name",
+				"table_size":        "bigint",
+				"table_size_pretty": "text",
+				"n_live_tup":        "bigint",
+			},
+			want: []string{"database_name", "schemaname", "relname"},
+		},
+		{
+			// Index-probe analog of the above (index_size_pretty).
+			name: "index _pretty value column is excluded",
+			outputCols: []string{
+				"database_name", "schemaname", "relname", "indexrelname",
+				"index_size", "index_size_pretty", "idx_scan",
+			},
+			colTypes: map[string]string{
+				"database_name":     "character varying",
+				"schemaname":        "name",
+				"relname":           "name",
+				"indexrelname":      "name",
+				"index_size":        "bigint",
+				"index_size_pretty": "text",
+				"idx_scan":          "bigint",
+			},
+			want: []string{
+				"database_name", "schemaname", "relname", "indexrelname",
+			},
+		},
+		{
+			name:       "internal bookkeeping columns are excluded",
+			outputCols: []string{"connection_id", "collected_at", "inserted_at", "datname"},
+			colTypes: map[string]string{
+				"connection_id": "integer",
+				"collected_at":  "timestamp with time zone",
+				"inserted_at":   "timestamp with time zone",
+				"datname":       "name",
+			},
+			want: []string{"datname"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EntityKeyColumns(tt.outputCols, tt.colTypes)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("index %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestIsEntityKeyColumn exercises the single-column predicate directly,
+// covering each type branch and both exclusion signals.
+func TestIsEntityKeyColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		colName  string
+		dataType string
+		want     bool
+	}{
+		{"text identity column", "schemaname", "name", true},
+		{"varchar identity column", "database_name", "character varying", true},
+		{"plain text column", "relname", "text", true},
+		{"numeric value column", "n_live_tup", "bigint", false},
+		{"timestamp column", "last_vacuum", "timestamp with time zone", false},
+		{"text _pretty value column", "table_size_pretty", "text", false},
+		{"internal bookkeeping column", "collected_at", "timestamp with time zone", false},
+		{"internal connection_id", "connection_id", "integer", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsEntityKeyColumn(tt.colName, tt.dataType); got != tt.want {
+				t.Errorf("IsEntityKeyColumn(%q, %q) = %v, want %v",
+					tt.colName, tt.dataType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildLatestRowsQuery(t *testing.T) {
-	t.Run("connection filter and limit only", func(t *testing.T) {
+	t.Run("entity-key probe wraps in DISTINCT ON", func(t *testing.T) {
 		query, args := buildLatestRowsQuery(
 			"pg_stat_all_tables",
 			[]string{"relname", "n_live_tup"},
+			map[string]string{"relname": "name", "n_live_tup": "bigint"},
 			[]int{1},
 			MetricFilters{},
 			"n_live_tup", "desc", 1,
@@ -995,8 +1131,17 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, "connection_id IN ($1)") {
 			t.Error("query should filter by connection_id")
 		}
+		// The inner query reduces each entity (keyed by connection_id plus
+		// the text/name column relname) to its newest sample via DISTINCT ON.
+		if !strings.Contains(query, `DISTINCT ON (connection_id, "relname")`) {
+			t.Errorf("query should use DISTINCT ON connection_id and the entity key, got: %s", query)
+		}
+		if !strings.Contains(query, `ORDER BY connection_id, "relname", collected_at DESC`) {
+			t.Errorf("inner query should order by entity key then collected_at DESC, got: %s", query)
+		}
+		// The outer query ranks the per-entity latest rows by order_by.
 		if !strings.Contains(query, `ORDER BY "n_live_tup" desc, collected_at DESC`) {
-			t.Errorf("query should order by quoted column then collected_at, got: %s", query)
+			t.Errorf("outer query should rank by order_by column, got: %s", query)
 		}
 		if !strings.Contains(query, "LIMIT $2") {
 			t.Error("query should apply LIMIT placeholder")
@@ -1013,6 +1158,7 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		query, args := buildLatestRowsQuery(
 			"pg_stat_all_indexes",
 			[]string{"indexrelname", "idx_scan"},
+			map[string]string{"indexrelname": "name", "idx_scan": "bigint"},
 			[]int{2, 3},
 			MetricFilters{
 				DatabaseName:   "northwind",
@@ -1039,8 +1185,11 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if !strings.Contains(query, "indexrelname = $6") {
 			t.Error("query should filter by indexrelname")
 		}
+		if !strings.Contains(query, `DISTINCT ON (connection_id, "indexrelname")`) {
+			t.Errorf("query should use DISTINCT ON connection_id and the index entity key, got: %s", query)
+		}
 		if !strings.Contains(query, `ORDER BY "idx_scan" asc, collected_at DESC`) {
-			t.Errorf("query should order by idx_scan asc, got: %s", query)
+			t.Errorf("query should rank by idx_scan asc, got: %s", query)
 		}
 		if !strings.Contains(query, "LIMIT $7") {
 			t.Error("query should apply LIMIT placeholder at $7")
@@ -1054,17 +1203,38 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("database filter skipped without resolved column", func(t *testing.T) {
+	t.Run("no text entity keys still keys DISTINCT ON connection_id", func(t *testing.T) {
+		// A probe with only numeric metric columns (e.g. pg_sys_cpu_info) has
+		// no text/name entity keys, yet connection_id alone must still key the
+		// DISTINCT ON so distinct connections never collapse into one row. The
+		// order_by is a real metric column, not collected_at, so the outer
+		// ranking is a genuine ORDER BY on that column rather than a no-op
+		// duplication of collected_at.
 		query, args := buildLatestRowsQuery(
 			"pg_sys_cpu_info",
 			[]string{"cpu_user"},
+			map[string]string{"cpu_user": "double precision"},
 			[]int{1},
 			MetricFilters{DatabaseName: "northwind", DatabaseColumn: ""},
-			"collected_at", "desc", 1,
+			"cpu_user", "desc", 1,
 		)
 
 		if strings.Contains(query, "database_name") || strings.Contains(query, "datname") {
 			t.Error("query should not filter by database when column unresolved")
+		}
+		// Even without text/name entity keys, connection_id alone keys the
+		// DISTINCT ON so distinct connections stay separate entities.
+		if !strings.Contains(query, "DISTINCT ON (connection_id)") {
+			t.Errorf("query should use DISTINCT ON (connection_id), got: %s", query)
+		}
+		// The inner query reduces each connection to its newest sample.
+		if !strings.Contains(query, "ORDER BY connection_id, collected_at DESC") {
+			t.Errorf("inner query should order by connection_id then collected_at DESC, got: %s", query)
+		}
+		// The outer query ranks the per-connection latest rows by the
+		// requested metric column, proving it is not a collected_at no-op.
+		if !strings.Contains(query, `ORDER BY "cpu_user" desc, collected_at DESC`) {
+			t.Errorf("outer query should rank by cpu_user desc, got: %s", query)
 		}
 		// 1 connection + 1 limit only
 		if len(args) != 2 {

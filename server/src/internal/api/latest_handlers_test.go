@@ -151,6 +151,32 @@ func TestBuildDimensionColumns(t *testing.T) {
 			},
 			want: []string{"datname"},
 		},
+		{
+			// Simulates PR #343 adding table_size / table_size_pretty to
+			// the leaderboard table. The text-typed *_pretty rendering is
+			// a value, not identity; including it in DISTINCT ON would
+			// fragment one table across its changing rendered sizes and
+			// silently corrupt the leaderboard ranking. It must be
+			// excluded even though it is text.
+			name: "text _pretty value column excluded from dimensions",
+			allColumns: []string{
+				"connection_id", "collected_at", "inserted_at",
+				"database_name", "schemaname", "relname",
+				"table_size", "table_size_pretty", "n_live_tup",
+			},
+			colTypes: map[string]string{
+				"connection_id":     "integer",
+				"collected_at":      "timestamp with time zone",
+				"inserted_at":       "timestamp with time zone",
+				"database_name":     "text",
+				"schemaname":        "name",
+				"relname":           "name",
+				"table_size":        "bigint",
+				"table_size_pretty": "text",
+				"n_live_tup":        "bigint",
+			},
+			want: []string{"database_name", "schemaname", "relname"},
+		},
 	}
 
 	for _, tt := range tests {

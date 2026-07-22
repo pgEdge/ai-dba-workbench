@@ -199,6 +199,53 @@ func IsMetricColumn(name, dataType string) bool {
 	return false
 }
 
+// IsEntityKeyColumn reports whether a probe output column is an
+// entity-key (identity/dimension) column that identifies a distinct
+// monitored entity, as opposed to a metric value or an internal
+// bookkeeping column. Entity keys are the text/name-typed dimension
+// columns such as schemaname, relname, indexrelname, database_name,
+// and datname.
+//
+// Text type alone is not sufficient: some value columns are text yet
+// vary over time for a fixed entity. This codebase renders a raw
+// numeric value column as a human-readable string in a companion
+// column whose name ends in "_pretty" (e.g. table_size_pretty for
+// table_size, index_size_pretty for index_size, via pg_size_pretty).
+// Such columns are values, not identity, so treating them as entity
+// keys would fragment one real entity into several by its changing
+// rendered size and defeat any DISTINCT ON reduction. They are
+// therefore excluded here even though they are text. No genuine
+// identity column in the schema ends in "_pretty", so the exclusion
+// is a pure bug fix that changes nothing for existing probes.
+func IsEntityKeyColumn(name, dataType string) bool {
+	if latestRowInternalColumns[name] {
+		return false
+	}
+	if strings.HasSuffix(name, "_pretty") {
+		return false
+	}
+	switch dataType {
+	case "text", "character varying", "name":
+		return true
+	default:
+		return false
+	}
+}
+
+// EntityKeyColumns returns the entity-key (identity/dimension) columns
+// among cols, preserving their input order. It is the single source of
+// truth shared by every latest-row path so that the DISTINCT ON entity
+// grouping never drifts between call sites.
+func EntityKeyColumns(cols []string, colTypes map[string]string) []string {
+	var keys []string
+	for _, col := range cols {
+		if IsEntityKeyColumn(col, colTypes[col]) {
+			keys = append(keys, col)
+		}
+	}
+	return keys
+}
+
 // IsValidIdentifier checks whether a string is a valid SQL identifier.
 func IsValidIdentifier(s string) bool {
 	if s == "" {
@@ -1109,12 +1156,37 @@ func GetProbeAllColumns(ctx context.Context, pool *pgxpool.Pool, probeName strin
 }
 
 // buildLatestRowsQuery constructs a SQL statement that returns the most
-// recent rows of a probe table for the given connections and filters,
-// ordered by the validated orderCol and direction. collected_at DESC is
-// appended as a tiebreaker so equal-ranked rows favor the newest sample.
+// recent row of a probe table per monitored entity for the given
+// connections and filters.
+//
+// "Most recent" always means the greatest collected_at, never the historical
+// maximum of orderCol. An inner DISTINCT ON reduces the matching rows to each
+// entity's newest sample (ordered by collected_at DESC) before the outer
+// query ranks those per-entity latest rows by orderCol and applies the limit.
+// A filter that pins a single entity therefore yields exactly that entity's
+// newest row regardless of orderCol, and a broad multi-entity request ranks
+// each entity by its own latest sample rather than by any stale historical
+// peak.
+//
+// The entity key always includes connection_id, plus any text/name dimension
+// columns (schemaname, relname, indexrelname, ...) the probe exposes. Keying
+// on connection_id is essential: without it, two different monitored servers
+// that happen to have a table with the same schema+table name would collapse
+// into a single DISTINCT ON group, silently dropping one connection's latest
+// sample. connection_id is present on every probe table, so the entity key is
+// never empty and one query shape serves every probe, whether or not it has
+// text/name dimension columns.
+//
+// Precondition: outputCols must already have the internal bookkeeping columns
+// (connection_id, collected_at, inserted_at) stripped by
+// selectLatestOutputColumns. The inner subquery appends connection_id and
+// collected_at itself, so if outputCols still contained them the subquery
+// would emit duplicate column labels and the outer references would be
+// ambiguous, breaking the query.
 func buildLatestRowsQuery(
 	probeName string,
 	outputCols []string,
+	colTypes map[string]string,
 	connectionIDs []int,
 	filters MetricFilters,
 	orderCol string,
@@ -1125,6 +1197,7 @@ func buildLatestRowsQuery(
 	for _, col := range outputCols {
 		selectParts = append(selectParts, QuoteIdentifier(col))
 	}
+	selectClause := strings.Join(selectParts, ", ")
 
 	var whereClauses []string
 	var args []any
@@ -1164,16 +1237,40 @@ func buildLatestRowsQuery(
 		argNum++
 	}
 
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	// connection_id is always part of the entity key so that two monitored
+	// servers sharing a schema+table name never collapse into one DISTINCT ON
+	// group. Any text/name dimension columns the probe exposes extend the key.
+	distinctParts := []string{"connection_id"}
+	for _, col := range EntityKeyColumns(outputCols, colTypes) {
+		distinctParts = append(distinctParts, QuoteIdentifier(col))
+	}
+	distinctClause := strings.Join(distinctParts, ", ")
+
+	// Reduce to each entity's newest sample first (DISTINCT ON ordered by
+	// collected_at DESC), then rank those per-entity latest rows by orderCol.
+	// connection_id and collected_at are carried through the inner select so
+	// the DISTINCT ON, its collected_at tiebreak, and the default order_by
+	// (collected_at) all resolve, while the outer select returns only the
+	// caller's columns.
 	query := fmt.Sprintf(`
         SELECT %s
-        FROM metrics.%s
-        WHERE %s
+        FROM (
+            SELECT DISTINCT ON (%s) %s, connection_id, collected_at
+            FROM metrics.%s
+            WHERE %s
+            ORDER BY %s, collected_at DESC
+        ) latest
         ORDER BY %s %s, collected_at DESC
         LIMIT $%d
     `,
-		strings.Join(selectParts, ", "),
+		selectClause,
+		distinctClause,
+		selectClause,
 		QuoteIdentifier(probeName),
-		strings.Join(whereClauses, " AND "),
+		whereClause,
+		distinctClause,
 		QuoteIdentifier(orderCol),
 		order,
 		argNum,
@@ -1238,7 +1335,7 @@ func discoverLatestRowColumns(
 	probeName string,
 	orderBy string,
 	filters *MetricFilters,
-) ([]string, string, error) {
+) ([]string, map[string]string, string, error) {
 	var count int
 	existsQuery := `
         SELECT COUNT(*) FROM information_schema.tables
@@ -1247,20 +1344,20 @@ func discoverLatestRowColumns(
             AND table_type = 'BASE TABLE'
     `
 	if err := pool.QueryRow(ctx, existsQuery, probeName).Scan(&count); err != nil {
-		return nil, "", fmt.Errorf("failed to verify probe: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to verify probe: %w", err)
 	}
 	if count == 0 {
-		return nil, "", fmt.Errorf("probe %q not found", probeName)
+		return nil, nil, "", fmt.Errorf("probe %q not found", probeName)
 	}
 
-	allCols, _, err := GetProbeAllColumns(ctx, pool, probeName)
+	allCols, colTypes, err := GetProbeAllColumns(ctx, pool, probeName)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get probe columns: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to get probe columns: %w", err)
 	}
 
 	outputCols := selectLatestOutputColumns(allCols)
 	if len(outputCols) == 0 {
-		return nil, "", fmt.Errorf("no columns found in probe %q", probeName)
+		return nil, nil, "", fmt.Errorf("no columns found in probe %q", probeName)
 	}
 
 	// order_by is validated against the full set of returned columns, not
@@ -1268,18 +1365,18 @@ func discoverLatestRowColumns(
 	// timestamp columns (e.g. last_vacuum) that appear in the response.
 	orderCol, err := ResolveOrderByColumn(orderBy, outputCols)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 
 	if filters.DatabaseName != "" && filters.DatabaseColumn == "" {
 		dbCol, err := ResolveDatabaseColumn(ctx, pool, probeName)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to resolve database column: %w", err)
+			return nil, nil, "", fmt.Errorf("failed to resolve database column: %w", err)
 		}
 		filters.DatabaseColumn = dbCol
 	}
 
-	return outputCols, orderCol, nil
+	return outputCols, colTypes, orderCol, nil
 }
 
 // scanLatestRows reads every row from rows into flat maps keyed by the
@@ -1312,10 +1409,14 @@ func scanLatestRows(rows pgx.Rows, outputCols []string) ([]map[string]any, error
 	return result, nil
 }
 
-// QueryLatestRows returns the most recent rows of a probe table as flat
-// maps keyed by column name. Unlike QueryTimeSeries it produces raw row
-// objects rather than bucketed series, so dashboards can read individual
-// column values (including dimension and timestamp columns) directly.
+// QueryLatestRows returns the newest row per monitored entity of a probe
+// table as flat maps keyed by column name. Unlike QueryTimeSeries it
+// produces raw row objects rather than bucketed series, so dashboards can
+// read individual column values (including dimension and timestamp columns)
+// directly. "Newest" always means the greatest collected_at: a filter that
+// pins a single entity yields exactly that entity's latest sample, and
+// order_by only ranks the per-entity latest rows, never selecting a stale
+// historical peak.
 func QueryLatestRows(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -1331,23 +1432,24 @@ func QueryLatestRows(
 		return nil, err
 	}
 
-	outputCols, orderCol, err := discoverLatestRowColumns(
+	outputCols, colTypes, orderCol, err := discoverLatestRowColumns(
 		ctx, pool, probeName, orderBy, &filters)
 	if err != nil {
 		return nil, err
 	}
 
 	query, args := buildLatestRowsQuery(
-		probeName, outputCols, connectionIDs, filters, orderCol, order, limit)
+		probeName, outputCols, colTypes, connectionIDs, filters, orderCol, order, limit)
 
 	// This is not a SQL injection risk despite passing a non-literal query
 	// string: the only identifiers interpolated into the text are probeName,
-	// orderCol, and the output column names, each of which is validated
-	// against a live-discovered allow-list (the information_schema.tables
-	// existence check, ResolveOrderByColumn, and GetProbeAllColumns) and then
-	// QuoteIdentifier-wrapped before it reaches the query. Every runtime
-	// value (connection IDs, filter strings, and the limit) is bound through
-	// $N placeholders in args and is never concatenated into the SQL text.
+	// orderCol, the output column names, and the entity-key (DISTINCT ON)
+	// columns, each of which is validated against a live-discovered allow-list
+	// (the information_schema.tables existence check, ResolveOrderByColumn, and
+	// GetProbeAllColumns) and then QuoteIdentifier-wrapped before it reaches the
+	// query. Every runtime value (connection IDs, filter strings, and the
+	// limit) is bound through $N placeholders in args and is never concatenated
+	// into the SQL text.
 	// nosemgrep: go_sql_rule-concat-sqli
 	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {

@@ -173,6 +173,18 @@ export function buildXAxis(categories?: string[]): object {
  * For any non-degenerate range no `min`/`max` is emitted, so ECharts
  * auto-scaling is preserved exactly as before.
  *
+ * The shape of that synthetic degenerate range depends on whether the
+ * chart is `zeroAnchored`. A chart is zero-anchored when its marks fill
+ * from the `y = 0` baseline: bars always grow from zero, and lines do so
+ * when they are stacked or carry an area fill. ECharts clips series to
+ * the axis extent, so for a zero-anchored chart the padded range must
+ * still include zero (a flat +100 pads to `[0, 110]`, a flat -100 to
+ * `[-110, 0]`, and a flat 0 to `[-1, 1]`); otherwise the fill or bar
+ * would be lopped off at the baseline. For a plain line (no fill, no
+ * stack) the range stays a tight window centred on the flat value
+ * (a flat 100 pads to `[90, 110]`), which keeps a bare line visible
+ * without wasting vertical space down to an irrelevant zero baseline.
+ *
  * When `stacked` is true the series are drawn on top of one another,
  * so the rendered height at each x-index is the cumulative total across
  * all series at that index rather than any single raw value. ECharts
@@ -192,6 +204,7 @@ export function buildXAxis(categories?: string[]): object {
 export function buildYAxis(
     seriesData?: number[][],
     stacked?: boolean,
+    zeroAnchored?: boolean,
 ): object {
     const axis: {
         type: string;
@@ -269,8 +282,18 @@ export function buildYAxis(
     if (hasValue && min === max) {
         const flat = min;
         const padding = flat === 0 ? 1 : Math.abs(flat) * 0.1;
-        axis.min = flat - padding;
-        axis.max = flat + padding;
+        if (zeroAnchored) {
+            // The chart's marks fill from the zero baseline, so the
+            // padded range must span zero to avoid clipping the fill or
+            // bar at that baseline.
+            axis.min = Math.min(0, flat - padding);
+            axis.max = Math.max(0, flat + padding);
+        } else {
+            // A plain line has no baseline fill, so a tight window
+            // centred on the flat value keeps it visible.
+            axis.min = flat - padding;
+            axis.max = flat + padding;
+        }
     }
 
     return axis;

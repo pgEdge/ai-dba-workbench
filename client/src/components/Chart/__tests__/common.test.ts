@@ -242,19 +242,24 @@ describe('buildYAxis stacked range padding', () => {
         max?: number;
     }
 
-    it('pads around the cumulative total for flat stacked series', () => {
+    it('pads a baseline-inclusive range around the cumulative total for flat stacked series', () => {
         // Regression: a stacked checkpoint-write breakdown holds two
         // series each flat at 100. The rendered stacked total is a
         // flat 200, so the padded range must bound ~200 rather than
         // the raw per-point value of 100 (which clipped the top off).
+        // A stacked chart is zero-anchored (its fill grows from the
+        // zero baseline), so the padded range must also include zero:
+        // the window runs from 0 up to ~220 rather than excluding the
+        // baseline with a tight [180, 220].
         const yAxis = buildYAxis(
             [
                 [100, 100, 100],
                 [100, 100, 100],
             ],
             true,
+            true,
         ) as unknown as YAxisOpts;
-        expect(yAxis.min).toBeCloseTo(180);
+        expect(yAxis.min).toBe(0);
         expect(yAxis.max).toBeCloseTo(220);
     });
 
@@ -269,17 +274,17 @@ describe('buildYAxis stacked range padding', () => {
         expect(yAxis.max).toBeCloseTo(110);
     });
 
-    it('behaves identically to non-stacked for a single series', () => {
+    it('pads a baseline-inclusive range for a single-sign flat stacked series', () => {
+        // A single series flat at 100 stacks to a flat total of 100.
+        // Because the stacked area fills from the zero baseline, the
+        // degenerate range must include zero, giving [0, 110] rather
+        // than the tight [90, 110] a plain line would use.
         const stacked = buildYAxis(
             [[100, 100, 100]],
             true,
+            true,
         ) as unknown as YAxisOpts;
-        const flat = buildYAxis([
-            [100, 100, 100],
-        ]) as unknown as YAxisOpts;
-        expect(stacked.min).toBe(flat.min);
-        expect(stacked.max).toBe(flat.max);
-        expect(stacked.min).toBeCloseTo(90);
+        expect(stacked.min).toBe(0);
         expect(stacked.max).toBeCloseTo(110);
     });
 
@@ -374,33 +379,105 @@ describe('buildYAxis stacked range padding', () => {
         expect(yAxis).not.toHaveProperty('max');
     });
 
-    it('pads around the negative total for an all-negative stack', () => {
-        // No positive value appears, so the zero baseline is never
-        // observed; the flat negative total of -50 pads like the
-        // non-stacked flat-negative case rather than snapping to zero.
+    it('pads a baseline-inclusive range down to the negative total for an all-negative stack', () => {
+        // No positive value appears, so the observed flat total is the
+        // negative sum of -50. A stacked area is zero-anchored, so the
+        // padded range must run from the padded negative total up to
+        // the zero baseline: [-55, 0] rather than a tight [-55, -45].
         const yAxis = buildYAxis(
             [
                 [-20, -20],
                 [-30, -30],
             ],
             true,
+            true,
         ) as unknown as YAxisOpts;
         expect(yAxis.min).toBeCloseTo(-55);
-        expect(yAxis.max).toBeCloseTo(-45);
+        expect(yAxis.max).toBe(0);
     });
 
     it('pads a fixed range around an all-zero stacked series', () => {
         // Neither sign is present, so the flat zero baseline is observed
-        // and padded to the same fixed [-1, 1] window as the
-        // non-stacked flat-zero case.
+        // and padded to the fixed [-1, 1] window; the zero-anchored
+        // range already straddles the baseline so it is unchanged.
         const yAxis = buildYAxis(
             [
                 [0, 0, 0],
             ],
             true,
+            true,
         ) as unknown as YAxisOpts;
         expect(yAxis.min).toBe(-1);
         expect(yAxis.max).toBe(1);
+    });
+});
+
+describe('buildYAxis zero-anchored range padding', () => {
+    interface YAxisOpts {
+        type: string;
+        axisLabel: { formatter: (value: number) => string };
+        min?: number;
+        max?: number;
+    }
+
+    it('includes the zero baseline for a flat positive zero-anchored series', () => {
+        // A zero-anchored chart (bar, stacked line, or area fill) whose
+        // marks grow from y = 0 must keep the baseline in view, so a
+        // flat 100 pads to [0, 110] rather than the tight [90, 110].
+        const yAxis = buildYAxis(
+            [[100, 100, 100]],
+            false,
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBe(0);
+        expect(yAxis.max).toBeCloseTo(110);
+    });
+
+    it('includes the zero baseline for a flat negative zero-anchored series', () => {
+        // A flat -100 fill hangs from the baseline, so the padded range
+        // runs from the padded value up to zero: [-110, 0].
+        const yAxis = buildYAxis(
+            [[-100, -100]],
+            false,
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(-110);
+        expect(yAxis.max).toBe(0);
+    });
+
+    it('pads a fixed range straddling zero for a flat zero zero-anchored series', () => {
+        const yAxis = buildYAxis(
+            [[0, 0, 0]],
+            false,
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBe(-1);
+        expect(yAxis.max).toBe(1);
+    });
+
+    it('keeps a plain-line flat positive series in a tight window', () => {
+        // Regression guard for issue #336: a plain line (no stack, no
+        // area fill) is not zero-anchored, so it keeps the tight
+        // centred window and does not waste height down to zero.
+        const yAxis = buildYAxis(
+            [[100, 100, 100, 100]],
+            false,
+            false,
+        ) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(90);
+        expect(yAxis.max).toBeCloseTo(110);
+    });
+
+    it('leaves auto-scaling intact for non-degenerate zero-anchored data', () => {
+        // The zero-anchored flag only reshapes the degenerate padded
+        // range; a varied series still emits no synthetic min/max.
+        const yAxis = buildYAxis(
+            [[10, 20, 30]],
+            false,
+            true,
+        ) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
     });
 });
 

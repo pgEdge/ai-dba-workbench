@@ -68,6 +68,15 @@ const DB_NAME_SX = {
     mb: 0.5,
 };
 
+/** Base dimensions for the cache hit ratio chart area; shared by the
+ *  sparkline and the "No history yet" placeholder so the layout stays
+ *  in lockstep between the two states. */
+const CHART_BOX_SX = {
+    height: 30,
+    mt: 0.5,
+    mb: 5,
+};
+
 /**
  * Determine color for cache hit ratio.
  */
@@ -280,7 +289,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
 
                             {db.cache_hit_ratio?.time_series
                                 && db.cache_hit_ratio.time_series.length > 0 ? (
-                                <Box sx={{ height: 30, mt: 0.5, mb: 5 }}>
+                                <Box sx={CHART_BOX_SX}>
                                     <Sparkline
                                         data={toSparklineData(
                                             db.cache_hit_ratio.time_series
@@ -293,9 +302,7 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                 </Box>
                             ) : (
                                 <Box sx={{
-                                    height: 30,
-                                    mt: 0.5,
-                                    mb: 5,
+                                    ...CHART_BOX_SX,
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',

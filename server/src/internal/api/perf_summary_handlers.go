@@ -843,15 +843,14 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 			log.Printf("[DEBUG] Error scanning database stats: %v", err)
 			continue
 		}
+		// Only queryDatabaseSizes may create entries; the latest
+		// pg_database snapshot is the source of truth for which
+		// databases currently exist. Skip rows for databases absent
+		// from that snapshot (e.g. recently dropped databases whose
+		// historical rows still linger in pg_stat_database).
 		db, exists := dbMap[name]
 		if !exists {
-			db = &DatabaseSummary{
-				DatabaseName: name,
-				CacheHitRatio: CacheHitRatioData{
-					TimeSeries: []CacheHitRatioPoint{},
-				},
-			}
-			dbMap[name] = db
+			continue
 		}
 		db.ActiveConnections = numBackends
 		total := blksHit + blksRead
@@ -899,15 +898,11 @@ func (h *PerfSummaryHandler) queryDeadTupleRatios(
 			log.Printf("[DEBUG] Error scanning dead tuple ratio: %v", err)
 			continue
 		}
+		// Only queryDatabaseSizes may create entries; skip databases
+		// absent from the latest pg_database snapshot.
 		db, exists := dbMap[name]
 		if !exists {
-			db = &DatabaseSummary{
-				DatabaseName: name,
-				CacheHitRatio: CacheHitRatioData{
-					TimeSeries: []CacheHitRatioPoint{},
-				},
-			}
-			dbMap[name] = db
+			continue
 		}
 		db.DeadTupleRatio = roundTo(ratio, 2)
 	}
@@ -966,15 +961,11 @@ func (h *PerfSummaryHandler) queryTransactionRates(
 			log.Printf("[DEBUG] Error scanning transaction rate: %v", err)
 			continue
 		}
+		// Only queryDatabaseSizes may create entries; skip databases
+		// absent from the latest pg_database snapshot.
 		db, exists := dbMap[name]
 		if !exists {
-			db = &DatabaseSummary{
-				DatabaseName: name,
-				CacheHitRatio: CacheHitRatioData{
-					TimeSeries: []CacheHitRatioPoint{},
-				},
-			}
-			dbMap[name] = db
+			continue
 		}
 		db.TransactionRate = roundTo(rate, 1)
 	}
@@ -1022,15 +1013,14 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 			continue
 		}
 		pt.Value = roundTo(pt.Value, 2)
+		// Only queryDatabaseSizes may create entries. This query scans
+		// the entire requested time range, so it can still see rows for
+		// a database that was dropped partway through the window. Skip
+		// such databases so their historical samples do not resurrect a
+		// ghost card for a database that no longer exists (issue #362).
 		db, exists := dbMap[name]
 		if !exists {
-			db = &DatabaseSummary{
-				DatabaseName: name,
-				CacheHitRatio: CacheHitRatioData{
-					TimeSeries: []CacheHitRatioPoint{},
-				},
-			}
-			dbMap[name] = db
+			continue
 		}
 		db.CacheHitRatio.TimeSeries = append(
 			db.CacheHitRatio.TimeSeries, pt)

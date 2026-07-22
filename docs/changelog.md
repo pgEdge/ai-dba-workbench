@@ -121,6 +121,25 @@ project adheres to
   The workbench rejects such a model with a clear error rather than
   truncating the vector. (#294)
 
+- Fix the Estate Overview dashboard's KPI tiles (XID Age, Cache Hit
+  Ratio, Transactions, and Checkpoints) and Event Timeline getting
+  stuck on "No data" indefinitely after a brief backend restart or
+  any transient API failure. Recovering required the user to click the
+  sidebar's Refresh button or reload the page, because nothing retried
+  on its own. The client uses no React Query or SWR; every panel hook
+  refetched only when a single shared `lastRefresh` timestamp changed,
+  and that timestamp advanced only when the sidebar's
+  `GET /api/v1/clusters` call succeeded. A transient failure in an
+  individual panel's fetch, or in the shared refresh call itself, left
+  the affected panels blank with no automatic recovery. A shared
+  `useRetryingFetch` hook now provides capped exponential backoff (3s,
+  6s, 12s, 24s, capped at 45s) for the Event Timeline, the
+  performance-summary tiles, the Estate KPI tiles, and the alerts
+  panel. A manual refresh always pre-empts any pending retry, and the
+  Estate KPI tiles show a subtle "Reconnecting..." indicator while a
+  retry is pending, distinguishing that state from genuinely empty
+  data.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

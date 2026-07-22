@@ -21,6 +21,7 @@ import { formatNumber } from '../../../utils/formatters';
 import { KPI_GRID_SX } from '../styles';
 import { countEstateServers } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
+import { useRetryingFetch } from '../../../hooks/useRetryingFetch';
 import type { EstateSelection } from '../../../types/selection';
 
 interface KpiTilesSectionProps {
@@ -62,12 +63,16 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+    const { run, retrying } = useRetryingFetch({
+        resetKey: lastRefresh,
+        enabled: !!user && serverIds.length > 0,
+    });
 
     const totalServers = useMemo(() => countEstateServers(selection), [selection]);
     const serverIdsKey = serverIds.join(',');
 
-    const fetchAggregateData = useCallback(async (): Promise<void> => {
-        if (!user || serverIds.length === 0) { return; }
+    const fetchAggregateData = useCallback(async (): Promise<boolean> => {
+        if (!user || serverIds.length === 0) { return true; }
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -84,29 +89,39 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
                 ),
             ]);
 
-            if (!isMountedRef.current) { return; }
+            if (!isMountedRef.current) { return true; }
+
+            // A non-OK response is a real failure. Surface it so the
+            // retry controller reschedules the fetch instead of silently
+            // rendering zero/partial KPI data as if the load succeeded.
+            if (!perfResponse.ok || !alertsResponse.ok) {
+                if (isMountedRef.current) {
+                    setError('Failed to fetch KPI data');
+                }
+                return false;
+            }
+
+            const perfData = await perfResponse.json();
+            const alertsData = await alertsResponse.json();
 
             let totalConnections = 0;
             let transactionRate = 0;
+            const connections = perfData.connections || [];
 
-            if (perfResponse.ok) {
-                const perfData = await perfResponse.json();
-                const connections = perfData.connections || [];
+            connections.forEach((conn: Record<string, unknown>) => {
+                totalConnections += 1;
+                const txns = conn.transactions as Record<string, unknown> | undefined;
+                if (txns && typeof txns.commits_per_sec === 'number') {
+                    transactionRate += txns.commits_per_sec;
+                }
+            });
 
-                connections.forEach((conn: Record<string, unknown>) => {
-                    totalConnections += 1;
-                    const txns = conn.transactions as Record<string, unknown> | undefined;
-                    if (txns && typeof txns.commits_per_sec === 'number') {
-                        transactionRate += txns.commits_per_sec;
-                    }
-                });
-            }
+            const alertCount = (alertsData.alerts || []).length;
 
-            let alertCount = 0;
-            if (alertsResponse.ok) {
-                const alertsData = await alertsResponse.json();
-                alertCount = (alertsData.alerts || []).length;
-            }
+            // A late resolution after unmount must not touch state; a
+            // superseded/unmounted attempt is not a failure, so report
+            // success to keep it out of the retry schedule.
+            if (!isMountedRef.current) { return true; }
 
             setAggregate({
                 totalServers,
@@ -116,11 +131,13 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
             });
 
             initialLoadDoneRef.current = true;
+            return true;
         } catch (err) {
             logger.error('Error fetching estate KPI data:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch KPI data');
             }
+            return false;
         } finally {
             if (isMountedRef.current) {
                 setLoading(false);
@@ -136,13 +153,13 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
         isMountedRef.current = true;
 
         if (user && serverIds.length > 0) {
-            void fetchAggregateData();
+            void run(fetchAggregateData);
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [user, serverIds.length, fetchAggregateData, lastRefresh]);
+    }, [user, serverIds.length, run, fetchAggregateData, lastRefresh]);
 
     if (loading && !initialLoadDoneRef.current) {
         return (
@@ -154,8 +171,8 @@ const KpiTilesSection: React.FC<KpiTilesSectionProps> = ({ selection, serverIds 
 
     if (error) {
         return (
-            <Typography sx={ERROR_SX}>
-                {error}
+            <Typography sx={ERROR_SX} role="status">
+                {retrying ? 'Reconnecting…' : error}
             </Typography>
         );
     }

@@ -145,7 +145,7 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
         connectionId,
         databaseName,
         schemaName,
-        tableName: objectName,
+        indexName: objectName,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',

@@ -128,6 +128,7 @@ export interface MetricQueryParams {
     databaseName?: string;
     schemaName?: string;
     tableName?: string;
+    indexName?: string;
     timeRange: TimeRange;
     buckets?: number;
     aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'last';

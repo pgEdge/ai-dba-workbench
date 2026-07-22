@@ -488,6 +488,20 @@ func metricQueryBase(
 		whereClauses = append(whereClauses,
 			fmt.Sprintf("relname = $%d", argNum))
 		queryArgs = append(queryArgs, filters.TableName)
+		argNum++
+	}
+
+	// IndexName filters on indexrelname, mirroring the SchemaName/TableName
+	// filters above. Like those, it applies no probe-column-existence check:
+	// if the probe table has no indexrelname column the query simply fails at
+	// execution time, exactly as an unsupported schemaname/relname filter
+	// would. This keeps the validation semantics identical across dimensions.
+	if filters.IndexName != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("indexrelname = $%d", argNum))
+		queryArgs = append(queryArgs, filters.IndexName)
+		// No argNum++ here: IndexName is the last filter. A new filter
+		// added below must add argNum++ above first.
 	}
 
 	return strings.Join(whereClauses, " AND "), queryArgs

@@ -10,10 +10,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 func TestNewMetricsHandler(t *testing.T) {
@@ -189,5 +195,94 @@ func TestHandleMetricsQuery_TimeSeriesMode_InvalidTimeRange(t *testing.T) {
 	if resp := decodeError(t, rec); resp.Error !=
 		"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d" {
 		t.Errorf("unexpected error: %q", resp.Error)
+	}
+}
+
+func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
+	// The Index detail dashboard's Scan Activity chart relies on the
+	// time-series path forwarding index_name into MetricFilters.IndexName.
+	// Inject a fake query function to capture the filters the handler
+	// actually passes downstream; the request uses only valid parameters
+	// so the handler reaches the query layer instead of short-circuiting
+	// on a validation error. This test fails if index_name parsing on the
+	// time-series path is removed or broken.
+	var gotFilters metrics.MetricFilters
+	called := false
+	handler := &MetricsHandler{
+		datastore: &database.Datastore{},
+		queryTimeSeriesFn: func(
+			_ context.Context,
+			_ *pgxpool.Pool,
+			_ string,
+			_ []int,
+			_ string,
+			filters metrics.MetricFilters,
+			_ int,
+			_ string,
+			_ []string,
+		) ([]metrics.MetricSeries, error) {
+			called = true
+			gotFilters = filters
+			return []metrics.MetricSeries{}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=pg_stat_all_indexes&time_range=1h"+
+			"&index_name=pk_orders", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if !called {
+		t.Fatal("expected time-series query function to be called")
+	}
+	if gotFilters.IndexName != "pk_orders" {
+		t.Errorf("expected IndexName %q reaching the query layer, got %q",
+			"pk_orders", gotFilters.IndexName)
+	}
+}
+
+func TestHandleMetricsQuery_TimeSeriesMode_DefaultQueryFn(t *testing.T) {
+	// Exercises the nil-queryTimeSeriesFn fallback: a handler built without
+	// an injected query function must resolve to metrics.QueryTimeSeries. A
+	// real pool lets that default run; an unknown probe makes the query
+	// return an error the handler maps to 400, proving the default wiring
+	// reaches the query layer instead of relying on the injected seam.
+	if os.Getenv("SKIP_DB_TESTS") != "" {
+		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+	}
+	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	if connStr == "" {
+		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping datastore integration test")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		t.Skipf("Could not connect to test database: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		t.Skipf("Test database ping failed: %v", err)
+	}
+
+	handler := &MetricsHandler{datastore: database.NewTestDatastore(pool)}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=zzz_no_such_probe&time_range=1h", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
 }

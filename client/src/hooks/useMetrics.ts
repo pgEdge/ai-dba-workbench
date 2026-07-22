@@ -57,6 +57,10 @@ const buildMetricsUrl = (params: MetricQueryParams): string => {
         searchParams.append('table_name', params.tableName);
     }
 
+    if (params.indexName) {
+        searchParams.append('index_name', params.indexName);
+    }
+
     if (params.buckets !== undefined) {
         searchParams.append('buckets', params.buckets.toString());
     }
@@ -123,7 +127,14 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
     // Reset initial load state when params change
     useEffect(() => {
         initialLoadDoneRef.current = false;
-    }, [params?.probeName, params?.connectionId, params?.timeRange]);
+    }, [
+        params?.probeName,
+        params?.connectionId,
+        params?.timeRange,
+        params?.indexName,
+        params?.tableName,
+        params?.schemaName,
+    ]);
 
     // Fetch when dependencies change or refresh is triggered
     useEffect(() => {

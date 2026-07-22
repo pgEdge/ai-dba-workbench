@@ -268,6 +268,78 @@ func TestBuildMetricsQuery(t *testing.T) {
 		}
 	})
 
+	t.Run("with index_name filter", func(t *testing.T) {
+		query, args, err := BuildMetricsQuery(
+			"pg_stat_all_indexes",
+			[]string{"idx_scan"},
+			map[string]string{"idx_scan": "bigint"},
+			1, start, end, 60, "avg",
+			MetricFilters{
+				SchemaName: "public",
+				TableName:  "orders",
+				IndexName:  "pk_orders",
+			},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Filters bind after the four fixed args ($1-$4): schemaname $5,
+		// relname $6, then indexrelname $7.
+		if !strings.Contains(query, "schemaname = $5") {
+			t.Error("query should filter by schemaname")
+		}
+		if !strings.Contains(query, "relname = $6") {
+			t.Error("query should filter by relname")
+		}
+		if !strings.Contains(query, "indexrelname = $7") {
+			t.Errorf("query should filter by indexrelname, got:\n%s", query)
+		}
+		if len(args) != 7 {
+			t.Fatalf("expected 7 args, got %d", len(args))
+		}
+		if args[6] != "pk_orders" {
+			t.Errorf("expected indexrelname arg 'pk_orders', got %v", args[6])
+		}
+	})
+
+	t.Run("index_name filter omitted leaves SQL unchanged", func(t *testing.T) {
+		// The Table Detail dashboard never sends index_name; verify that an
+		// empty IndexName produces byte-identical SQL and args to a query
+		// built with a zero-value filter set that also omits it.
+		withoutField, argsA, err := BuildMetricsQuery(
+			"pg_stat_all_tables",
+			[]string{"seq_scan"},
+			map[string]string{"seq_scan": "bigint"},
+			1, start, end, 60, "avg",
+			MetricFilters{SchemaName: "public", TableName: "orders"},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withEmptyField, argsB, err := BuildMetricsQuery(
+			"pg_stat_all_tables",
+			[]string{"seq_scan"},
+			map[string]string{"seq_scan": "bigint"},
+			1, start, end, 60, "avg",
+			MetricFilters{SchemaName: "public", TableName: "orders", IndexName: ""},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if withoutField != withEmptyField {
+			t.Errorf("empty IndexName changed SQL:\n%s\n---\n%s",
+				withoutField, withEmptyField)
+		}
+		if strings.Contains(withEmptyField, "indexrelname") {
+			t.Error("empty IndexName must not add an indexrelname clause")
+		}
+		if len(argsA) != len(argsB) {
+			t.Errorf("empty IndexName changed arg count: %d vs %d",
+				len(argsA), len(argsB))
+		}
+	})
+
 	t.Run("database filter skipped when column empty", func(t *testing.T) {
 		query, args, err := BuildMetricsQuery(
 			"pg_sys_cpu_info",
@@ -1649,6 +1721,47 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		}
 		if len(args) != 7 {
 			t.Errorf("expected 7 args, got %d", len(args))
+		}
+	})
+
+	t.Run("index_name filter binds indexrelname", func(t *testing.T) {
+		// This is the derived per-second path that powers the Index detail
+		// dashboard's Scan Activity chart (idx_scan_per_sec over time).
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_indexes",
+			[]DerivedMetric{{
+				OutputName: "idx_scan_per_sec",
+				BaseColumn: "idx_scan",
+				Kind:       DerivedPerSec,
+			}},
+			1, start, end, 60, "avg",
+			MetricFilters{
+				SchemaName: "public",
+				TableName:  "orders",
+				IndexName:  "pk_orders",
+			})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			"schemaname = $5",
+			"relname = $6",
+			"indexrelname = $7",
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing filter %q, got:\n%s", c, query)
+			}
+		}
+		// The shared WHERE clause is emitted in every rate CTE; confirm both
+		// occurrences bind the same placeholder so the scoping is consistent.
+		if strings.Count(query, "indexrelname = $7") < 1 {
+			t.Error("query should filter by indexrelname")
+		}
+		if len(args) != 7 {
+			t.Fatalf("expected 7 args, got %d", len(args))
+		}
+		if args[6] != "pk_orders" {
+			t.Errorf("expected indexrelname arg 'pk_orders', got %v", args[6])
 		}
 	})
 

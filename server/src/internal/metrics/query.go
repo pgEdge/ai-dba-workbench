@@ -1176,6 +1176,13 @@ func GetProbeAllColumns(ctx context.Context, pool *pgxpool.Pool, probeName strin
 // sample. connection_id is present on every probe table, so the entity key is
 // never empty and one query shape serves every probe, whether or not it has
 // text/name dimension columns.
+//
+// Precondition: outputCols must already have the internal bookkeeping columns
+// (connection_id, collected_at, inserted_at) stripped by
+// selectLatestOutputColumns. The inner subquery appends connection_id and
+// collected_at itself, so if outputCols still contained them the subquery
+// would emit duplicate column labels and the outer references would be
+// ambiguous, breaking the query.
 func buildLatestRowsQuery(
 	probeName string,
 	outputCols []string,

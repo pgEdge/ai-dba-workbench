@@ -111,7 +111,7 @@ describe('EffectivePermissionsPanel', () => {
         expect(screen.getByText('Manage Groups')).toBeInTheDocument();
     });
 
-    it('does not display admin permissions when isSuperuser is false', () => {
+    it('displays group-inherited admin permissions for a non-superuser', () => {
         const adminPermissions = ['manage_users', 'manage_groups'];
 
         renderWithTheme(
@@ -121,7 +121,26 @@ describe('EffectivePermissionsPanel', () => {
             />
         );
 
+        // A non-superuser who has admin permissions inherited via group
+        // membership must still see the Admin section and its chips.
+        const adminSection = screen.getByTestId('admin-permissions-section');
+        expect(screen.getByText('Admin')).toBeInTheDocument();
+        expect(within(adminSection).getByText('Manage Users')).toBeInTheDocument();
+        expect(within(adminSection).getByText('Manage Groups')).toBeInTheDocument();
+    });
+
+    it('does not display admin section for a non-superuser with no admin permissions', () => {
+        renderWithTheme(
+            <EffectivePermissionsPanel
+                adminPermissions={[]}
+                isSuperuser={false}
+            />
+        );
+
+        // With neither superuser status nor any admin permissions there is
+        // nothing to show, so the Admin card is omitted entirely.
         expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('admin-permissions-section')).not.toBeInTheDocument();
     });
 
     it('displays "All Admin Permissions" for wildcard permission', () => {

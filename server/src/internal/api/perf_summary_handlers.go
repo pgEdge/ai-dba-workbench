@@ -148,6 +148,110 @@ var validTopQueryOrderColumns = map[string]bool{
 	"shared_blks_read": true,
 }
 
+// workbenchInternalExclusionClause filters pg_stat_statements rows that
+// represent AI DBA Workbench's own internal traffic rather than genuine
+// activity on the monitored database. Because the ai_workbench metadata
+// database shares its PostgreSQL instance with monitored databases,
+// instance-wide pg_stat_statements captures Workbench's own overhead. The
+// clause removes three categories of that internal traffic:
+//
+//  1. Collector probe SELECTs, which the collector wraps in a marker
+//     column literal (ai_dba_wb_probe) before running them against the
+//     monitored database (see collector/src/probes/base.go).
+//  2. The collector's own batched writes into the internal metrics schema,
+//     emitted as INSERT INTO "metrics"."<table>" ... via pgx.Identifier,
+//     which quotes both the schema and table identifiers.
+//  3. The alerter's and server's own reads of the internal metrics schema,
+//     hand-authored as unquoted metrics.<table> references (for example
+//     the alerter's slow_query_count and age_percent CTEs in
+//     alerter/src/internal/database/metric_registry.go).
+//
+// Categories 2 and 3 match the "metrics" schema qualifier combined with
+// the pg_ / spock_ table-name prefixes that every internal metrics table
+// uses by convention, in both the unquoted (hand-written SQL) and quoted
+// (pgx.Identifier) forms. Matching the table-name prefix rather than the
+// bare "metrics" schema avoids hiding a genuinely monitored database that
+// happens to expose its own application schema named "metrics": the pg_
+// prefix is reserved by PostgreSQL and spock_ is the Spock extension's
+// namespace, so a collision with real user tables is effectively
+// impossible. The trailing underscore is escaped so LIKE treats it as a
+// literal rather than a single-character wildcard.
+//
+// This fragment contains only hardcoded literals and never interpolates
+// user input, so it is safe to splice into the query with fmt.Sprintf.
+const workbenchInternalExclusionClause = `AND pss.query NOT LIKE '%ai_dba_wb_probe%'
+              AND pss.query NOT LIKE '%metrics.pg\_%' ESCAPE '\'
+              AND pss.query NOT LIKE '%metrics.spock\_%' ESCAPE '\'
+              AND pss.query NOT LIKE '%"metrics"."pg\_%' ESCAPE '\'
+              AND pss.query NOT LIKE '%"metrics"."spock\_%' ESCAPE '\'`
+
+// buildTopQueriesQuery assembles the SQL and positional arguments for the
+// top-queries lookup. orderBy and order must already be validated against
+// their whitelists by the caller, since they are interpolated directly into
+// the ORDER BY clause. queryID, when non-empty, is bound as a positional
+// parameter rather than interpolated. When excludeCollector is true, the
+// hardcoded workbenchInternalExclusionClause is appended to hide Workbench's
+// own internal traffic. No user-supplied string is ever spliced into the
+// query text; only whitelisted literals and positional placeholders are.
+func buildTopQueriesQuery(
+	connID, limit int,
+	queryID, orderBy, order string,
+	excludeCollector bool,
+) (string, []any) {
+	// Build optional queryid filter clause.
+	queryIDClause := ""
+	args := []any{connID, limit}
+	if queryID != "" {
+		queryIDClause = fmt.Sprintf(
+			"AND pss.queryid::text = $%d", len(args)+1)
+		args = append(args, queryID)
+	}
+
+	// Build optional clause to exclude Workbench-internal traffic (collector
+	// probe SELECTs, collector metrics-store writes, and alerter/server
+	// metrics-store reads). See workbenchInternalExclusionClause.
+	excludeCollectorClause := ""
+	if excludeCollector {
+		excludeCollectorClause = workbenchInternalExclusionClause
+	}
+
+	// Safe to use string formatting for ORDER BY because orderBy and order
+	// are validated against whitelists by the caller.
+	query := fmt.Sprintf(`
+        WITH db_names AS (
+            SELECT DISTINCT datid, datname
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND datid IS NOT NULL
+              AND datname IS NOT NULL
+        ),
+        deduped AS (
+            SELECT DISTINCT ON (pss.queryid)
+                pss.queryid::text,
+                COALESCE(dn.datname, pss.database_name) AS database_name,
+                pss.query, pss.calls, pss.total_exec_time,
+                pss.mean_exec_time, pss.rows,
+                pss.shared_blks_hit, pss.shared_blks_read
+            FROM metrics.pg_stat_statements pss
+            LEFT JOIN db_names dn ON pss.dbid = dn.datid
+            WHERE pss.connection_id = $1
+              AND pss.collected_at = (
+                  SELECT MAX(collected_at)
+                  FROM metrics.pg_stat_statements
+                  WHERE connection_id = $1
+              )
+              %s
+              %s
+            ORDER BY pss.queryid
+        )
+        SELECT * FROM deduped
+        ORDER BY %s %s
+        LIMIT $2
+    `, queryIDClause, excludeCollectorClause, orderBy, order)
+
+	return query, args
+}
+
 // NewPerfSummaryHandler creates a new performance summary handler.
 func NewPerfSummaryHandler(
 	datastore *database.Datastore,
@@ -1117,54 +1221,8 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
 
-	// Safe to use string formatting for ORDER BY because orderBy and order
-	// are validated against whitelists above.
-	// Build optional queryid filter clause.
-	queryIDClause := ""
-	args := []any{connID, limit}
-	if queryID != "" {
-		queryIDClause = fmt.Sprintf(
-			"AND pss.queryid::text = $%d", len(args)+1)
-		args = append(args, queryID)
-	}
-
-	// Build optional clause to exclude collector probe queries.
-	excludeCollectorClause := ""
-	if excludeCollector {
-		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
-	}
-
-	query := fmt.Sprintf(`
-        WITH db_names AS (
-            SELECT DISTINCT datid, datname
-            FROM metrics.pg_stat_activity
-            WHERE connection_id = $1
-              AND datid IS NOT NULL
-              AND datname IS NOT NULL
-        ),
-        deduped AS (
-            SELECT DISTINCT ON (pss.queryid)
-                pss.queryid::text,
-                COALESCE(dn.datname, pss.database_name) AS database_name,
-                pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.rows,
-                pss.shared_blks_hit, pss.shared_blks_read
-            FROM metrics.pg_stat_statements pss
-            LEFT JOIN db_names dn ON pss.dbid = dn.datid
-            WHERE pss.connection_id = $1
-              AND pss.collected_at = (
-                  SELECT MAX(collected_at)
-                  FROM metrics.pg_stat_statements
-                  WHERE connection_id = $1
-              )
-              %s
-              %s
-            ORDER BY pss.queryid
-        )
-        SELECT * FROM deduped
-        ORDER BY %s %s
-        LIMIT $2
-    `, queryIDClause, excludeCollectorClause, orderBy, order)
+	query, args := buildTopQueriesQuery(
+		connID, limit, queryID, orderBy, order, excludeCollector)
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {

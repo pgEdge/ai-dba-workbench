@@ -39,10 +39,15 @@ func NewClusterHandler(datastore *database.Datastore, authStore *auth.AuthStore,
 	}
 }
 
-// ClusterGroupRequest is the request body for creating/updating cluster groups
+// ClusterGroupRequest is the request body for creating/updating cluster
+// groups. IsShared is a pointer so an omitted field (nil) can be
+// distinguished from an explicit false, which matters for partial updates:
+// on update, a nil IsShared preserves the group's current visibility rather
+// than forcing it private (issue #304).
 type ClusterGroupRequest struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description,omitempty"`
+	IsShared    *bool   `json:"is_shared,omitempty"`
 }
 
 // ClusterRequest is the request body for creating/updating clusters
@@ -536,10 +541,24 @@ func (h *ClusterHandler) createClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Resolve the creating user so the new group records its owner. This
+	// mirrors updateClusterGroup's use of getUserInfoCompat and lets the
+	// owner-fallback authorization on update/delete apply to groups the
+	// user creates (issue #304).
+	username, _, err := getUserInfoCompat(r, h.authStore)
+	if err != nil {
+		RespondError(w, http.StatusUnauthorized, "Invalid or missing authentication token")
+		return
+	}
+
+	// is_shared defaults to false when the field is omitted; only an
+	// explicit true opts the group into visibility for all users.
+	isShared := req.IsShared != nil && *req.IsShared
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	group, err := h.datastore.CreateClusterGroup(ctx, req.Name, req.Description)
+	group, err := h.datastore.CreateClusterGroupWithOwner(ctx, req.Name, req.Description, &username, isShared)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create cluster group %s: %v", req.Name, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to create cluster group")
@@ -589,7 +608,13 @@ func (h *ClusterHandler) updateClusterGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	group, err := h.datastore.UpdateClusterGroup(ctx, id, req.Name, req.Description)
+	// Partial-update semantics: a nil Description or IsShared preserves the
+	// existing column value rather than clearing it, so a client that sends
+	// only some fields does not accidentally null the others (issue #304).
+	// The owner/manage_connections permission check above has already run,
+	// so no is_shared visibility change reaches the datastore for a caller
+	// who is neither the owner nor an admin.
+	group, err := h.datastore.UpdateClusterGroup(ctx, id, req.Name, req.Description, req.IsShared)
 	if err != nil {
 		log.Printf("[ERROR] Failed to update cluster group (id=%d): %v", id, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to update cluster group")

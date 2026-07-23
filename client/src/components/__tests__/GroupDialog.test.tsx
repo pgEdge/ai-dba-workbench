@@ -189,6 +189,22 @@ describe('GroupDialog', () => {
             );
         });
 
+        it('pre-populates the share checkbox from is_shared for superusers', () => {
+            renderWithTheme(
+                <GroupDialog
+                    {...defaultProps}
+                    mode="edit"
+                    isSuperuser={true}
+                    group={editGroup}
+                />
+            );
+            expect(
+                screen.getByRole('checkbox', {
+                    name: /share with all users/i,
+                })
+            ).toBeChecked();
+        });
+
         it('shows AlertOverridesPanel with numeric scope id when Alert overrides tab is clicked', async () => {
             const user = userEvent.setup({ delay: null });
             renderWithTheme(

@@ -82,6 +82,7 @@ describe('ClusterActionsContext', () => {
     describe('auth gating', () => {
         it.each([
             ['updateGroupName', ['group-1', 'new']],
+            ['updateGroup', ['group-1', { name: 'new' }]],
             ['updateClusterName', ['cluster-1', 'x', 'group-1']],
             ['updateServerName', [1, 'x']],
             ['getServer', [1]],
@@ -213,6 +214,57 @@ describe('ClusterActionsContext', () => {
                 '/api/v1/cluster-groups/group-auto-some_key-123',
                 { name: 'X' },
             );
+        });
+    });
+
+    describe('updateGroup', () => {
+        it('PUTs the full body to the numeric id and refetches', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroup('group-42', {
+                    name: 'Prod',
+                    description: 'The production estate',
+                    is_shared: true,
+                });
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/42',
+                {
+                    name: 'Prod',
+                    description: 'The production estate',
+                    is_shared: true,
+                },
+            );
+            expect(mockFetchClusterData).toHaveBeenCalled();
+        });
+
+        it('forwards the full "group-auto..." token for auto-detected groups', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await act(async () => {
+                await result.current.updateGroup('group-auto-key', {
+                    name: 'Auto',
+                    description: '',
+                    is_shared: false,
+                });
+            });
+
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/cluster-groups/group-auto-key',
+                { name: 'Auto', description: '', is_shared: false },
+            );
+            expect(mockFetchClusterData).toHaveBeenCalled();
+        });
+
+        it('rejects ids that are neither numeric nor auto-detected', async () => {
+            const { result } = renderHook(() => useClusterActions(), { wrapper });
+
+            await expect(
+                result.current.updateGroup('group-named', { name: 'Bad' }),
+            ).rejects.toThrow('Invalid group ID');
+            expect(mockApiPut).not.toHaveBeenCalled();
         });
     });
 

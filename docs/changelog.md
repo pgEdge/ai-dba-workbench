@@ -199,6 +199,11 @@ project adheres to
   for zero-anchored charts, such as bars and stacked or area fills, so
   their fill still renders from zero. (#336)
 
+- Fix the Cluster Group settings dialog so it shows and preserves a
+  group's description and its "Share with all users" setting, which
+  previously appeared empty or unchecked and were lost when editing;
+  the share flag is now persisted by the API. (#304)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

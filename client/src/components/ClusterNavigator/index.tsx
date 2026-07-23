@@ -48,7 +48,7 @@ import GroupDialog from '../GroupDialog';
 import ClusterConfigDialog from '../ClusterConfigDialog';
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import AddMenu from '../AddMenu';
-import { apiFetch } from '../../utils/apiClient';
+import { apiFetch, apiGet } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 
 // Import sub-components
@@ -60,6 +60,7 @@ import {
     loadFromStorage,
     saveToStorage,
     formatRelativeTime,
+    parseGroupNumericId,
 } from './utils';
 import StatusIndicator from './StatusIndicator';
 import GroupItem from './GroupItem';
@@ -437,6 +438,7 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
     const { user } = useAuth();
     const {
         updateGroupName,
+        updateGroup,
         updateClusterName,
         updateServerName,
         getServer,
@@ -547,8 +549,12 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         if (groupDialogMode === 'create') {
             await createGroup(groupData);
         } else {
-            // For edit, we just update the name using existing function
-            await updateGroupName(editingGroup!.id, groupData.name);
+            // For edit, persist the name, description, and sharing flag.
+            await updateGroup(editingGroup!.id, {
+                name: groupData.name,
+                description: groupData.description,
+                is_shared: groupData.is_shared,
+            });
         }
         setGroupDialogOpen(false);
     };
@@ -565,9 +571,36 @@ const ClusterNavigator: React.FC<ClusterNavigatorProps> = ({
         setDeleteDialogOpen(true);
     };
 
-    // Handler for configuring a group (opens edit dialog on Alert Overrides tab)
-    const handleConfigureGroup = (group: GroupData) => {
-        setEditingGroup(group);
+    // Handler for configuring a group (opens edit dialog on the Details tab).
+    // The topology tree (GET /api/v1/clusters) never carries a group's
+    // description or is_shared flag, so for database-backed groups we fetch
+    // the full detail row first and seed the dialog with it. Auto-detected
+    // groups have no detail endpoint, so the passed-in object is used as-is.
+    const handleConfigureGroup = async (group: GroupData) => {
+        let editing: GroupData & { id: string } = group;
+
+        const numericId = parseGroupNumericId(group.id);
+        if (numericId !== undefined) {
+            try {
+                const detail = await apiGet<{
+                    name?: string;
+                    description?: string;
+                    is_shared?: boolean;
+                }>(`/api/v1/cluster-groups/${numericId}`);
+                editing = {
+                    ...group,
+                    name: detail.name ?? group.name,
+                    description: detail.description,
+                    is_shared: detail.is_shared,
+                };
+            } catch (err) {
+                logger.error('Failed to get group details:', err);
+                // Fall back to the limited topology data we already have.
+                editing = group;
+            }
+        }
+
+        setEditingGroup(editing);
         setGroupDialogMode('edit');
         setGroupDialogInitialTab(0);
         setGroupDialogOpen(true);

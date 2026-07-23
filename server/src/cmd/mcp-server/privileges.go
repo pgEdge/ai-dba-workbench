@@ -268,6 +268,22 @@ func showGroupPrivilegesCommand(dataDir, groupName string) error {
 		}
 	}
 
+	// Admin permissions are stored separately from GroupWithPrivileges,
+	// so fetch them with a dedicated store call (mirroring the API handler).
+	adminPerms, err := store.ListGroupAdminPermissions(group.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get admin permissions: %w", err)
+	}
+
+	if len(adminPerms) == 0 {
+		fmt.Println("\nAdmin Permissions: None")
+	} else {
+		fmt.Println("\nAdmin Permissions:")
+		for _, perm := range adminPerms {
+			fmt.Printf("  - %s\n", perm)
+		}
+	}
+
 	fmt.Println(strings.Repeat("=", 70) + "\n")
 
 	return nil

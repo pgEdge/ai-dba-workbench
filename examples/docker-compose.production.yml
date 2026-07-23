@@ -59,12 +59,18 @@ services:
             - ../docker/config/ai-dba-collector.yaml:/etc/pgedge/ai-dba-collector.yaml:ro
             - ../docker/secret/ai-dba.secret:/etc/pgedge/ai-dba.secret:ro
             - ../docker/secret/pg-password:/etc/pgedge/pg-password:ro
+        # Run an init process as PID 1 for robust signal forwarding
+        # and zombie reaping.
+        init: true
+        # Give the collector time to close its connection pools during
+        # its multi-step graceful shutdown before the container is killed.
+        stop_grace_period: 30s
         restart: unless-stopped
         deploy:
             resources:
                 limits:
                     cpus: '0.5'
-                    memory: 256M
+                    memory: 512M
         logging:
             driver: json-file
             options:

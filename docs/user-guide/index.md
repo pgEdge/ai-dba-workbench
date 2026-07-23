@@ -2,12 +2,12 @@
 
 The pgEdge AI DBA Workbench provides a browser-based interface for
 monitoring and managing PostgreSQL database estates. This section of the
-guide covers the features available to users of the web client.
+guide covers the features available to users of the web client. For example:
 
-- [Reviewing the Monitoring Dashboards](dashboards/index.md) describes
+- [Reviewing Dashboards](dashboards/index.md) describes
   the monitoring dashboard hierarchy and the metrics each level
   displays.
-- [Monitoring Alerts](alerts/index.md) explains how to view,
+- [Managing Alerts](alerts/index.md) explains how to view,
   acknowledge, and manage alerts in the web interface.
 - [Using AI Features](ai/index.md) covers AI-powered summaries,
   analysis, and the Ask Ellie assistant.
@@ -42,8 +42,8 @@ probe configuration, and notification channels.
 
 Several panes, including the `Navigation Pane`, the `Event Timeline`, the
 `Query Plan`, and the `AI Overview`, include a refresh icon. Use the
-refresh icon to force an immediate update instead of waiting for the pane's
-scheduled refresh.
+refresh icon to force an immediate update of the properties to reflect the
+latest polled metrics (by default, metrics are collected every 5 minutes).
 
 The Workbench console's graphic set includes the following additional
 interactive features:
@@ -63,8 +63,8 @@ interactive features:
 
     If you have enabled AI in the Workbench, a purple brain icon appears on
     charts, KPI tiles, leaderboards, and queries. Click the icon to access
-    an AI analysis dialog. The analysis uses an agentic LLM loop that
-    gathers context and produces actionable recommendations. A purple brain
+    an AI analysis that uses an agentic LLM loop to
+    gather context and produce actionable recommendations. A purple brain
     icon indicates no analysis has run yet; an amber brain icon indicates a
     cached analysis is available for instant review.
 

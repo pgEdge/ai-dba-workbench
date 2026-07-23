@@ -90,7 +90,10 @@ function installListMocks(overrides?: ListMockOverrides): void {
             return Promise.resolve({ users: overrides?.users ?? mockUsers });
         }
         if (url === '/api/v1/connections') {
-            return Promise.resolve({ connections: [] });
+            // The server returns a bare JSON array of connections (see
+            // connection_handlers.go); mirror that shape so the fixture
+            // does not mask the issue #309 regression.
+            return Promise.resolve([]);
         }
         if (/^\/api\/v1\/rbac\/users\/\d+\/privileges$/.test(url)) {
             if (overrides?.privilegesRejection) {
@@ -991,7 +994,7 @@ describe('AdminUsers', () => {
                     return Promise.resolve({ users: mockUsers });
                 }
                 if (url === '/api/v1/connections') {
-                    return Promise.resolve({ connections: [] });
+                    return Promise.resolve([]);
                 }
                 if (/^\/api\/v1\/rbac\/users\/\d+\/privileges$/.test(url)) {
                     return Promise.reject('plain string reject');

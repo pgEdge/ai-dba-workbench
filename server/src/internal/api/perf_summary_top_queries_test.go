@@ -97,82 +97,122 @@ func newTopQueriesTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	return pool, cleanup
 }
 
-// topQueryFixture describes one seeded pg_stat_statements row and whether the
-// exclude_collector filter is expected to hide it.
+// testMaintenanceDBName is the configured maintenance (datastore) database
+// name the tests thread into the handler. Rows attributed to this database
+// represent the Workbench's own traffic and must be excluded when
+// exclude_collector is set, regardless of query-text shape (issue #366).
+const testMaintenanceDBName = "ai_workbench"
+
+// testMonitoredDBName is a genuinely-monitored database whose rows must
+// survive the exclude_collector filter unless individually marked as a
+// collector probe.
+const testMonitoredDBName = "northwind"
+
+// topQueryFixture describes one seeded pg_stat_statements row, the database
+// it is attributed to, and whether the exclude_collector filter is expected
+// to hide it.
 type topQueryFixture struct {
 	queryid          int64
+	databaseName     string
 	query            string
 	excludedByToggle bool
 }
 
-// topQueriesFixtures is the seed set covering every branch of the exclusion
-// clause plus genuine user traffic that must never be filtered.
+// topQueriesFixtures is the seed set covering the database-identity
+// exclusion (all maintenance-database traffic, regardless of query text),
+// the surviving probe-marker exclusion (marker-tagged probes against a
+// different monitored database), and genuine user traffic that must never
+// be filtered -- including monitored-database queries whose text
+// superficially resembles internal metrics access.
 var topQueriesFixtures = []topQueryFixture{
 	{
-		// Collector probe SELECT: wrapped in the ai_dba_wb_probe marker.
-		queryid: 1,
-		query: "SELECT 'ai_dba_wb_probe' AS ai_dba_wb_probe, subq.* " +
-			"FROM (SELECT * FROM pg_stat_activity) AS subq",
+		// New unfilterable case #1 from issue #366: a schema-introspection
+		// query whose schema/table names arrive as bound parameters, so no
+		// query-text pattern could ever match it. Caught only by the
+		// database-identity check because it runs on the maintenance DB.
+		queryid:      1,
+		databaseName: testMaintenanceDBName,
+		query: "SELECT column_name, data_type FROM " +
+			"information_schema.columns WHERE table_schema = $2 " +
+			"AND table_name = $1 ORDER BY ordinal_position",
+		excludedByToggle: true,
+	},
+	{
+		// New unfilterable case #2 from issue #366: a third quoting style
+		// (unquoted schema, quoted table) that #365's patterns did not
+		// anticipate. Caught by the database-identity check.
+		queryid:      2,
+		databaseName: testMaintenanceDBName,
+		query: `WITH data_buckets AS (SELECT date_bin('1 hour', ` +
+			`collected_at, now()) AS bucket FROM ` +
+			`metrics."pg_stat_statements") SELECT * FROM data_buckets`,
 		excludedByToggle: true,
 	},
 	{
 		// Collector metrics-store write: pgx.Identifier quotes both the
-		// schema and table (metrics.pg_stat_statements).
-		queryid: 2,
+		// schema and table. Now caught by the database-identity check.
+		queryid:      3,
+		databaseName: testMaintenanceDBName,
 		query: `INSERT INTO "metrics"."pg_stat_statements" ` +
 			`("connection_id", "query") VALUES ($1, $2)`,
 		excludedByToggle: true,
 	},
 	{
-		// Collector metrics-store write into a spock_* table.
-		queryid: 3,
-		query: `INSERT INTO "metrics"."spock_exception_log" ` +
-			`("connection_id") VALUES ($1)`,
-		excludedByToggle: true,
-	},
-	{
 		// Alerter slow_query_count read: unquoted metrics.pg_stat_statements.
-		queryid: 4,
+		// Now caught by the database-identity check.
+		queryid:      4,
+		databaseName: testMaintenanceDBName,
 		query: "WITH recent_statements AS (SELECT connection_id, queryid " +
 			"FROM metrics.pg_stat_statements WHERE collected_at > NOW()) " +
 			"SELECT count(*) FROM recent_statements",
 		excludedByToggle: true,
 	},
 	{
-		// Alerter age_percent read: unquoted metrics.pg_settings.
-		queryid: 5,
-		query: "WITH freeze_settings AS (SELECT connection_id " +
-			"FROM metrics.pg_settings WHERE name = $1) " +
-			"SELECT * FROM freeze_settings",
+		// Collector probe SELECT wrapped in the ai_dba_wb_probe marker,
+		// running against a DIFFERENT monitored database. The
+		// database-identity check cannot catch it (its database_name is not
+		// the maintenance DB), so the surviving probe-marker clause must.
+		queryid:      5,
+		databaseName: testMonitoredDBName,
+		query: "SELECT 'ai_dba_wb_probe' AS ai_dba_wb_probe, subq.* " +
+			"FROM (SELECT * FROM pg_stat_activity) AS subq",
 		excludedByToggle: true,
 	},
 	{
 		// Genuine user query on a monitored database: no relation to the
 		// metrics schema and no probe marker. Must never be filtered.
 		queryid:          6,
+		databaseName:     testMonitoredDBName,
 		query:            "SELECT * FROM orders WHERE customer_id = $1",
 		excludedByToggle: false,
 	},
 	{
-		// Genuine user query against an external application schema that
-		// happens to be named "metrics" but whose table is not a pg_/spock_
-		// internal table. Must never be filtered (false-positive guard).
+		// Genuine user query on a monitored database against an application
+		// schema that happens to be named "metrics". Must never be filtered.
 		queryid:          7,
+		databaseName:     testMonitoredDBName,
 		query:            "SELECT count(*) FROM metrics.events WHERE ts > $1",
 		excludedByToggle: false,
 	},
 	{
-		// External table whose name starts with "pgx"; the escaped
-		// underscore in the LIKE pattern means metrics.pg_ does not match
-		// metrics.pgx_data, so this genuine query is not filtered.
-		queryid:          8,
-		query:            "SELECT * FROM metrics.pgx_data WHERE id = $1",
+		// Genuine user query on a monitored database whose text is
+		// indistinguishable from internal metrics access
+		// (metrics."pg_stat_statements"). Under the old text-pattern
+		// approach this would have been wrongly filtered; the
+		// database-identity approach correctly preserves it because it is
+		// attributed to a monitored database, not the maintenance DB.
+		queryid:      8,
+		databaseName: testMonitoredDBName,
+		query: `SELECT * FROM metrics."pg_stat_statements" ` +
+			`WHERE queryid = $1`,
 		excludedByToggle: false,
 	},
 }
 
 // seedTopQueriesFixtures inserts every fixture row at the same latest
 // collected_at so the handler's MAX(collected_at) filter keeps all of them.
+// Each row is attributed to its fixture's database so the database-identity
+// exclusion can be exercised.
 func seedTopQueriesFixtures(
 	t *testing.T, pool *pgxpool.Pool, connID int, collectedAt time.Time,
 ) {
@@ -184,9 +224,10 @@ func seedTopQueriesFixtures(
                 (connection_id, database_name, dbid, queryid, query, calls,
                  rows, total_exec_time, mean_exec_time, shared_blks_hit,
                  shared_blks_read, collected_at)
-            VALUES ($1, 'ai_workbench', 0, $2, $3, 10, 5, 100.0, 10.0, 1, 1,
-                    $4)`,
-			connID, f.queryid, f.query, collectedAt); err != nil {
+            VALUES ($1, $2, 0, $3, $4, 10, 5, 100.0, 10.0, 1, 1,
+                    $5)`,
+			connID, f.databaseName, f.queryid, f.query,
+			collectedAt); err != nil {
 			t.Fatalf("seed statement %d failed: %v", f.queryid, err)
 		}
 	}
@@ -201,7 +242,8 @@ func runTopQueries(
 	ctx := context.Background()
 
 	query, args := buildTopQueriesQuery(
-		connID, 100, "", "total_exec_time", "desc", excludeCollector)
+		connID, 100, "", "total_exec_time", "desc",
+		testMaintenanceDBName, excludeCollector)
 
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -234,11 +276,15 @@ func runTopQueries(
 }
 
 // TestTopQueries_Issue364_ExcludeCollector verifies that with the
-// exclude_collector toggle on, all three categories of Workbench-internal
-// traffic (collector probe SELECTs, collector metrics-store writes, and
-// alerter/server metrics-store reads) are filtered, while genuine user
-// queries -- including those against an unrelated external schema named
-// "metrics" -- are preserved.
+// exclude_collector toggle on, every category of Workbench-internal
+// traffic is filtered: all traffic attributed to the maintenance database
+// (collector metrics-store writes, alerter/server metrics-store reads, and
+// -- per issue #366 -- parameterized schema-introspection queries and
+// mixed-quoting metrics access that no text pattern could catch), plus
+// marker-tagged collector probes running against a different monitored
+// database. Genuine user queries on a monitored database are preserved,
+// including one whose text is indistinguishable from internal metrics
+// access, proving the filter keys on database identity rather than text.
 func TestTopQueries_Issue364_ExcludeCollector(t *testing.T) {
 	pool, cleanup := newTopQueriesTestPool(t)
 	defer cleanup()
@@ -300,7 +346,8 @@ func TestTopQueries_Issue364_HandlerHTTP(t *testing.T) {
 	collectedAt := time.Now().UTC().Add(-time.Minute)
 	seedTopQueriesFixtures(t, pool, connID, collectedAt)
 
-	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	h := NewPerfSummaryHandler(
+		database.NewTestDatastore(pool), nil, testMaintenanceDBName)
 
 	do := func(exclude string) []TopQueryRow {
 		url := "/api/v1/metrics/top-queries?connection_id=" +
@@ -379,7 +426,8 @@ func TestTopQueries_HandlerQueryError(t *testing.T) {
 		t.Fatalf("teardown failed: %v", err)
 	}
 
-	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	h := NewPerfSummaryHandler(
+		database.NewTestDatastore(pool), nil, testMaintenanceDBName)
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/top-queries?connection_id=1", nil)
 	rec := httptest.NewRecorder()
@@ -416,7 +464,8 @@ func TestTopQueries_HandlerScanError(t *testing.T) {
 		t.Fatalf("seed bad row: %v", err)
 	}
 
-	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	h := NewPerfSummaryHandler(
+		database.NewTestDatastore(pool), nil, testMaintenanceDBName)
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/top-queries?connection_id="+strconv.Itoa(connID), nil)
 	rec := httptest.NewRecorder()
@@ -449,7 +498,8 @@ func TestTopQueries_HandlerBeginTxError(t *testing.T) {
 	}
 	pool.Close() // BeginTx on a closed pool fails.
 
-	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	h := NewPerfSummaryHandler(
+		database.NewTestDatastore(pool), nil, testMaintenanceDBName)
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/top-queries?connection_id=1", nil)
 	rec := httptest.NewRecorder()
@@ -510,7 +560,8 @@ func TestTopQueries_HandlerParamValidationDB(t *testing.T) {
 	pool, cleanup := newTopQueriesTestPool(t)
 	defer cleanup()
 
-	h := NewPerfSummaryHandler(database.NewTestDatastore(pool), nil)
+	h := NewPerfSummaryHandler(
+		database.NewTestDatastore(pool), nil, testMaintenanceDBName)
 	cases := []struct {
 		name string
 		url  string
@@ -546,39 +597,83 @@ func TestTopQueries_HandlerParamValidationDB(t *testing.T) {
 }
 
 // TestBuildTopQueriesQuery_ClauseSelection asserts, without touching a
-// database, that the exclusion fragment is present only when requested and
-// that the optional queryid filter is bound as a positional parameter rather
-// than interpolated.
+// database, that the probe-marker and database-identity exclusions are
+// present only when requested, that the maintenance database name is bound
+// as a positional parameter (never interpolated), and that the optional
+// queryid filter is likewise bound positionally.
 func TestBuildTopQueriesQuery_ClauseSelection(t *testing.T) {
-	// Without exclusion the internal clause must be absent.
-	q, args := buildTopQueriesQuery(1, 10, "", "calls", "asc", false)
+	const identityFrag = "COALESCE(dn.datname, pss.database_name) <>"
+
+	// Without exclusion neither clause must be present.
+	q, args := buildTopQueriesQuery(
+		1, 10, "", "calls", "asc", testMaintenanceDBName, false)
 	if strings.Contains(q, "ai_dba_wb_probe") {
-		t.Errorf("exclusion clause present when not requested")
+		t.Errorf("probe-marker clause present when not requested")
+	}
+	if strings.Contains(q, identityFrag) {
+		t.Errorf("database-identity clause present when not requested")
 	}
 	if len(args) != 2 {
 		t.Errorf("expected 2 args, got %d", len(args))
 	}
 
-	// With exclusion the full internal clause must be spliced in.
-	q, _ = buildTopQueriesQuery(1, 10, "", "calls", "asc", true)
+	// With exclusion and a maintenance DB name, both the probe-marker
+	// clause and the database-identity clause must be spliced in, and the
+	// maintenance name must be bound as $3 rather than interpolated.
+	q, args = buildTopQueriesQuery(
+		1, 10, "", "calls", "asc", testMaintenanceDBName, true)
+	if !strings.Contains(q, "ai_dba_wb_probe") {
+		t.Errorf("probe-marker clause missing when requested")
+	}
+	if !strings.Contains(q, identityFrag+" $3") {
+		t.Errorf("database-identity clause not bound at $3: %q", q)
+	}
+	if strings.Contains(q, testMaintenanceDBName) {
+		t.Errorf("maintenance DB name interpolated into query text: %q", q)
+	}
+	if len(args) != 3 || args[2] != testMaintenanceDBName {
+		t.Errorf("maintenance DB name not bound positionally: %#v", args)
+	}
+
+	// The removed text-pattern fragments must no longer appear.
 	for _, frag := range []string{
-		"ai_dba_wb_probe",
 		`metrics.pg\_`,
 		`metrics.spock\_`,
 		`"metrics"."pg\_`,
 		`"metrics"."spock\_`,
 	} {
-		if !strings.Contains(q, frag) {
-			t.Errorf("exclusion clause missing fragment %q", frag)
+		if strings.Contains(q, frag) {
+			t.Errorf("obsolete text-pattern fragment still present: %q",
+				frag)
 		}
 	}
 
-	// A queryid filter must be added as a positional parameter.
-	q, args = buildTopQueriesQuery(1, 10, "42", "calls", "asc", false)
+	// With exclusion but an empty maintenance DB name, only the
+	// probe-marker clause applies and no extra argument is bound.
+	q, args = buildTopQueriesQuery(1, 10, "", "calls", "asc", "", true)
+	if !strings.Contains(q, "ai_dba_wb_probe") {
+		t.Errorf("probe-marker clause missing with empty maintenance name")
+	}
+	if strings.Contains(q, identityFrag) {
+		t.Errorf("database-identity clause present with empty name")
+	}
+	if len(args) != 2 {
+		t.Errorf("expected 2 args with empty maintenance name, got %d",
+			len(args))
+	}
+
+	// A queryid filter must be added as a positional parameter, and with
+	// exclusion enabled the maintenance name must follow it at $4.
+	q, args = buildTopQueriesQuery(
+		1, 10, "42", "calls", "asc", testMaintenanceDBName, true)
 	if !strings.Contains(q, "pss.queryid::text = $3") {
 		t.Errorf("queryid filter not bound positionally: %q", q)
 	}
-	if len(args) != 3 || args[2] != "42" {
-		t.Errorf("queryid not appended to args: %#v", args)
+	if !strings.Contains(q, identityFrag+" $4") {
+		t.Errorf("maintenance name not bound at $4 after queryid: %q", q)
+	}
+	if len(args) != 4 || args[2] != "42" ||
+		args[3] != testMaintenanceDBName {
+		t.Errorf("args not appended in order: %#v", args)
 	}
 }

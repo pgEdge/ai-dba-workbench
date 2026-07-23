@@ -96,7 +96,7 @@ func newDatabaseSummariesTestHandler(
 	}
 
 	ds := database.NewTestDatastore(pool)
-	handler := NewPerfSummaryHandler(ds, nil)
+	handler := NewPerfSummaryHandler(ds, nil, "")
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(),
 			databaseSummariesTestSchemaTeardown)

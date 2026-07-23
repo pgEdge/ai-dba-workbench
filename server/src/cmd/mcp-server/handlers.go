@@ -195,8 +195,16 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		timelineHandler := api.NewTimelineHandler(deps.Datastore, deps.AuthStore, rbacChecker)
 		registerDatastoreHandler(mux, timelineHandler, authWrapper, "Timeline events", deps.Datastore)
 
-		// Performance summary endpoint (for performance dashboard)
-		perfHandler := api.NewPerfSummaryHandler(deps.Datastore, deps.AuthStore)
+		// Performance summary endpoint (for performance dashboard).
+		// Pass the configured maintenance (datastore) database name so the
+		// top-queries endpoint can filter the Workbench's own traffic when
+		// exclude_collector is set (issue #366).
+		maintenanceDBName := ""
+		if deps.Config != nil && deps.Config.Database != nil {
+			maintenanceDBName = deps.Config.Database.Database
+		}
+		perfHandler := api.NewPerfSummaryHandler(
+			deps.Datastore, deps.AuthStore, maintenanceDBName)
 		registerDatastoreHandler(mux, perfHandler, authWrapper, "Performance summary", deps.Datastore)
 
 		// Metrics query endpoints (for monitoring dashboards)

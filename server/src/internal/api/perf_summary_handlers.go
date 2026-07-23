@@ -38,6 +38,14 @@ var validTimeRanges = map[string]time.Duration{
 type PerfSummaryHandler struct {
 	datastore *database.Datastore
 	authStore *auth.AuthStore
+
+	// maintenanceDBName is the server's configured maintenance (datastore)
+	// database name (config database.database, e.g. "ai_workbench"). Rows
+	// attributed to this database are the Workbench's own traffic and are
+	// filtered from top-queries results when exclude_collector is set. It
+	// is captured at construction time; the value is fixed once the server
+	// starts. An empty value disables the database-identity filter.
+	maintenanceDBName string
 }
 
 // PerfSummaryResponse is the top-level JSON response.
@@ -148,54 +156,55 @@ var validTopQueryOrderColumns = map[string]bool{
 	"shared_blks_read": true,
 }
 
-// workbenchInternalExclusionClause filters pg_stat_statements rows that
-// represent AI DBA Workbench's own internal traffic rather than genuine
-// activity on the monitored database. Because the ai_workbench metadata
-// database shares its PostgreSQL instance with monitored databases,
-// instance-wide pg_stat_statements captures Workbench's own overhead. The
-// clause removes three categories of that internal traffic:
+// workbenchProbeExclusionClause filters pg_stat_statements rows that the
+// collector generates while probing OTHER monitored databases. Because
+// pg_stat_statements is instance-wide, a collector probe that runs against
+// a genuinely-monitored database is attributed to that database, so a
+// database-identity check against the Workbench maintenance database alone
+// cannot catch it. The collector wraps every probe SELECT in a marker
+// column literal (ai_dba_wb_probe) before executing it (see
+// collector/src/probes/base.go), which this clause matches.
 //
-//  1. Collector probe SELECTs, which the collector wraps in a marker
-//     column literal (ai_dba_wb_probe) before running them against the
-//     monitored database (see collector/src/probes/base.go).
-//  2. The collector's own batched writes into the internal metrics schema,
-//     emitted as INSERT INTO "metrics"."<table>" ... via pgx.Identifier,
-//     which quotes both the schema and table identifiers.
-//  3. The alerter's and server's own reads of the internal metrics schema,
-//     hand-authored as unquoted metrics.<table> references (for example
-//     the alerter's slow_query_count and age_percent CTEs in
-//     alerter/src/internal/database/metric_registry.go).
+// This clause complements the database-identity exclusion applied in
+// buildTopQueriesQuery. The identity check removes ALL traffic attributed
+// to the maintenance database itself -- the collector's metrics-store
+// writes (INSERT INTO "metrics"."<table>" ...), the alerter's and server's
+// metrics-store reads (metrics.<table> ...), and schema-introspection
+// queries whose table names arrive as bound parameters -- categorically,
+// regardless of query-text shape, quoting style, or parameterization. That
+// makes the earlier query-text patterns for metrics.pg_/metrics.spock_
+// redundant: none of the maintenance database's own traffic is ever
+// genuine end-user activity, and the only Workbench traffic that lands in
+// a different (monitored) database is the marker-tagged probe SELECT this
+// clause handles. See issue #366.
 //
-// Categories 2 and 3 match the "metrics" schema qualifier combined with
-// the pg_ / spock_ table-name prefixes that every internal metrics table
-// uses by convention, in both the unquoted (hand-written SQL) and quoted
-// (pgx.Identifier) forms. Matching the table-name prefix rather than the
-// bare "metrics" schema avoids hiding a genuinely monitored database that
-// happens to expose its own application schema named "metrics": the pg_
-// prefix is reserved by PostgreSQL and spock_ is the Spock extension's
-// namespace, so a collision with real user tables is effectively
-// impossible. The trailing underscore is escaped so LIKE treats it as a
-// literal rather than a single-character wildcard.
-//
-// This fragment contains only hardcoded literals and never interpolates
+// This fragment contains only a hardcoded literal and never interpolates
 // user input, so it is safe to splice into the query with fmt.Sprintf.
-const workbenchInternalExclusionClause = `AND pss.query NOT LIKE '%ai_dba_wb_probe%'
-              AND pss.query NOT LIKE '%metrics.pg\_%' ESCAPE '\'
-              AND pss.query NOT LIKE '%metrics.spock\_%' ESCAPE '\'
-              AND pss.query NOT LIKE '%"metrics"."pg\_%' ESCAPE '\'
-              AND pss.query NOT LIKE '%"metrics"."spock\_%' ESCAPE '\'`
+const workbenchProbeExclusionClause = `AND pss.query NOT LIKE '%ai_dba_wb_probe%'`
 
 // buildTopQueriesQuery assembles the SQL and positional arguments for the
 // top-queries lookup. orderBy and order must already be validated against
 // their whitelists by the caller, since they are interpolated directly into
 // the ORDER BY clause. queryID, when non-empty, is bound as a positional
-// parameter rather than interpolated. When excludeCollector is true, the
-// hardcoded workbenchInternalExclusionClause is appended to hide Workbench's
-// own internal traffic. No user-supplied string is ever spliced into the
-// query text; only whitelisted literals and positional placeholders are.
+// parameter rather than interpolated.
+//
+// When excludeCollector is true, two complementary filters hide the
+// Workbench's own traffic. First, every row whose resolved database_name
+// matches maintenanceDBName -- the server's configured maintenance
+// (datastore) database -- is removed via a bound-parameter comparison;
+// none of that database's own traffic is ever genuine end-user activity,
+// so this catches the collector's metrics-store writes, the
+// alerter/server metrics-store reads, and schema-introspection queries
+// regardless of query-text shape or quoting. Second, the hardcoded
+// workbenchProbeExclusionClause removes marker-tagged collector probe
+// SELECTs that run against OTHER monitored databases, which the
+// database-identity check cannot catch. maintenanceDBName is bound as a
+// positional parameter; when it is empty only the probe-marker clause is
+// applied. No user-supplied string is ever spliced into the query text;
+// only whitelisted literals and positional placeholders are.
 func buildTopQueriesQuery(
 	connID, limit int,
-	queryID, orderBy, order string,
+	queryID, orderBy, order, maintenanceDBName string,
 	excludeCollector bool,
 ) (string, []any) {
 	// Build optional queryid filter clause.
@@ -207,12 +216,22 @@ func buildTopQueriesQuery(
 		args = append(args, queryID)
 	}
 
-	// Build optional clause to exclude Workbench-internal traffic (collector
-	// probe SELECTs, collector metrics-store writes, and alerter/server
-	// metrics-store reads). See workbenchInternalExclusionClause.
+	// Build optional clause to exclude Workbench-internal traffic. The
+	// database-identity check (COALESCE(dn.datname, pss.database_name)
+	// against the configured maintenance database) removes all traffic on
+	// the maintenance database itself; the probe-marker clause removes the
+	// collector's marker-tagged probes against other monitored databases.
 	excludeCollectorClause := ""
 	if excludeCollector {
-		excludeCollectorClause = workbenchInternalExclusionClause
+		clauses := []string{workbenchProbeExclusionClause}
+		if maintenanceDBName != "" {
+			clauses = append(clauses, fmt.Sprintf(
+				"AND COALESCE(dn.datname, pss.database_name) <> $%d",
+				len(args)+1))
+			args = append(args, maintenanceDBName)
+		}
+		excludeCollectorClause = strings.Join(clauses,
+			"\n              ")
 	}
 
 	// Safe to use string formatting for ORDER BY because orderBy and order
@@ -253,13 +272,18 @@ func buildTopQueriesQuery(
 }
 
 // NewPerfSummaryHandler creates a new performance summary handler.
+// maintenanceDBName is the configured maintenance (datastore) database
+// name used to filter the Workbench's own traffic from top-queries
+// results; pass an empty string to disable that database-identity filter.
 func NewPerfSummaryHandler(
 	datastore *database.Datastore,
 	authStore *auth.AuthStore,
+	maintenanceDBName string,
 ) *PerfSummaryHandler {
 	return &PerfSummaryHandler{
-		datastore: datastore,
-		authStore: authStore,
+		datastore:         datastore,
+		authStore:         authStore,
+		maintenanceDBName: maintenanceDBName,
 	}
 }
 
@@ -1222,7 +1246,8 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
 
 	query, args := buildTopQueriesQuery(
-		connID, limit, queryID, orderBy, order, excludeCollector)
+		connID, limit, queryID, orderBy, order,
+		h.maintenanceDBName, excludeCollector)
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {

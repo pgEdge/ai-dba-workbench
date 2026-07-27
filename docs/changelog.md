@@ -52,7 +52,11 @@ project adheres to
 - Ellie now gives correct, deployment-aware guidance for restarting
   the Workbench's own components (server, collector, and alerter),
   and no longer suggests commands for unrelated third-party tooling.
-  (#329)
+  The web client sends its own copy of Ellie's system prompt on
+  every request, which always takes precedence over the server's
+  default; both copies now carry the same guidance, since fixing
+  only the server default left the client-facing bug unchanged for
+  real users. (#329)
 
 ### Fixed
 

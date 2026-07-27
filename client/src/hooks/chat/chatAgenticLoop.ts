@@ -24,7 +24,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../../types/llm';
-import { normaliseMessages } from '../../types/llm';
+import { normaliseMessages, normaliseTools } from '../../types/llm';
 import type { APIMessage, ToolDefinition } from './chatTypes';
 
 /**
@@ -191,7 +191,7 @@ export async function runAgenticLoop(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 messages: normaliseMessages(currentMessages),
-                tools: availableTools,
+                tools: normaliseTools(availableTools),
                 system_prompt: systemPrompt,
             }),
             signal: abortSignal,

@@ -493,10 +493,55 @@ describe('runAgenticLoop', () => {
                             ],
                         },
                     ],
-                    tools,
+                    tools: [
+                        {
+                            name: 'test_tool',
+                            description: 'A test tool',
+                            input_schema: {
+                                type: 'object',
+                                properties: {},
+                                required: [],
+                            },
+                        },
+                    ],
                     system_prompt: baseOptions.systemPrompt,
                 }),
             });
+        });
+
+        it('sends tools with a snake_case input_schema key, not the internal camelCase inputSchema (issue #370)', async () => {
+            // Regression guard: the library `llm/proxy` chat endpoint
+            // decodes tools into a struct tagged `json:"input_schema"`.
+            // Sending the app's internal camelCase `inputSchema` field
+            // verbatim causes the schema to silently unmarshal to nil, and
+            // Anthropic rejects the resulting empty schema. This exercises
+            // the Server/Query/Alert analysis call site. See issue #370.
+            const tools = [
+                {
+                    name: 'test_tool',
+                    description: 'A test tool',
+                    inputSchema: { type: 'object', properties: {}, required: [] },
+                },
+            ];
+
+            mockApiFetch.mockResolvedValueOnce(
+                createMockResponse({
+                    content: [{ type: 'text', text: 'Response' }],
+                }),
+            );
+
+            await runAgenticLoop({
+                ...baseOptions,
+                messages: [{ role: 'user', content: 'Test query' }],
+                tools,
+            });
+
+            const call = mockApiFetch.mock.calls[0];
+            const body = JSON.parse(call[1].body as string);
+
+            expect(body.tools.length).toBe(1);
+            expect(body.tools[0].input_schema).toBeDefined();
+            expect(body.tools[0].inputSchema).toBeUndefined();
         });
 
         it('omits tools from request when tools array is empty', async () => {

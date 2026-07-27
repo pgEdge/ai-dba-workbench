@@ -19,7 +19,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../types/llm';
-import { normaliseMessages } from '../types/llm';
+import { normaliseMessages, normaliseTools } from '../types/llm';
 
 export interface AgenticLoopOptions {
     /** Initial messages (typically a single user message). */
@@ -66,7 +66,7 @@ export async function runAgenticLoop(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 messages: normaliseMessages(messages),
-                tools: tools.length > 0 ? tools : undefined,
+                tools: tools.length > 0 ? normaliseTools(tools) : undefined,
                 system_prompt: systemPrompt,
             }),
         });

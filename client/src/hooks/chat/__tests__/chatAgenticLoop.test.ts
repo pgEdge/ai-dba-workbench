@@ -760,7 +760,35 @@ describe('chatAgenticLoop', () => {
                 ]);
                 expect(body.system_prompt).toBe('Be helpful');
                 expect(body.system).toBeUndefined();
-                expect(body.tools).toEqual(params.availableTools);
+                expect(body.tools).toEqual(
+                    params.availableTools.map(t => ({
+                        name: t.name,
+                        description: t.description,
+                        input_schema: t.inputSchema,
+                    })),
+                );
+            });
+
+            it('sends tools with a snake_case input_schema key, not the internal camelCase inputSchema (issue #370)', async () => {
+                // Regression guard: the library `llm/proxy` chat endpoint
+                // decodes tools into a struct tagged `json:"input_schema"`.
+                // Sending the app's internal camelCase `inputSchema` field
+                // verbatim causes the schema to silently unmarshal to nil,
+                // and Anthropic rejects the resulting empty schema. See
+                // issue #370.
+                const mockFetch = createMockFetch([createTextResponse('Hi')]);
+                const params = createLoopParams({ fetchFn: mockFetch });
+
+                await runAgenticLoop(params);
+
+                const call = mockFetch.mock.calls[0];
+                const body = JSON.parse(call[1]?.body as string);
+
+                expect(body.tools.length).toBeGreaterThan(0);
+                for (const tool of body.tools) {
+                    expect(tool.input_schema).toBeDefined();
+                    expect(tool.inputSchema).toBeUndefined();
+                }
             });
 
             it('sends correct request body to tool call endpoint', async () => {

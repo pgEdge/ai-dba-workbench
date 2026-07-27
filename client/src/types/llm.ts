@@ -128,3 +128,46 @@ export interface ToolInputSchema {
     properties: Record<string, { type: string; description: string }>;
     required: string[];
 }
+
+/**
+ * Wire shape of a tool definition sent to the library `llm/proxy` chat
+ * endpoint. The endpoint decodes the request body into the vendored
+ * `pgedge-go-llm-lib` package's `llm.Tool` struct, which tags its input
+ * schema field `json:"input_schema"` (snake_case); the app's own
+ * internal tool types use camelCase `inputSchema` instead, so this
+ * shape exists purely to describe the post-normalisation wire format.
+ */
+export interface LLMTool {
+    name: string;
+    description: string;
+    input_schema: unknown;
+}
+
+/**
+ * Normalise an array of app-internal tool definitions into the
+ * snake_case wire shape required by the library `llm/proxy` chat
+ * endpoint. See {@link LLMTool}.
+ *
+ * The app's internal tool types (`ToolDefinition`, `AnalysisTool`)
+ * carry a camelCase `inputSchema` field, but the vendored
+ * `pgedge-go-llm-lib` decodes `tools[].input_schema` (snake_case).
+ * Without this rename, `encoding/json` silently drops the schema for
+ * every tool, since an underscore is not a case-only difference and
+ * Go's JSON decoder has no fallback match. See issue #370.
+ *
+ * @param tools - The app-internal tool definitions to normalise.
+ * @returns Tool definitions with a snake_case `input_schema` field.
+ */
+export function normaliseTools(
+    tools: Array<{
+        name: string;
+        description: string;
+        inputSchema: unknown;
+    }>,
+): LLMTool[] {
+    return tools.map(t => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema,
+    }));
+}

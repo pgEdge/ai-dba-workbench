@@ -39,6 +39,53 @@ describe('chatConstants', () => {
         it('contains security instructions', () => {
             expect(SYSTEM_PROMPT).toContain('CRITICAL - Security and identity');
         });
+
+        // Regression guard for issue #329: a user asked Ellie how to
+        // restart the Workbench Collector and she hallucinated pgwatch
+        // commands, a separate, competing product that appears nowhere
+        // in this codebase. The original fix only updated the server's
+        // default prompt (server/src/internal/chat/llm.go's
+        // SystemPrompt), but the web client always sends this constant
+        // explicitly, so that default never applied to real chat
+        // traffic and the bug was still live for real users. This
+        // mirrors the equivalent Go test, TestSystemPromptRestartGuidance
+        // in server/src/internal/chat/llm_test.go.
+        it('references the Workbench component identifiers', () => {
+            for (const id of [
+                'ai-dba-server',
+                'ai-dba-collector',
+                'ai-dba-alerter',
+                'ai-dba-client',
+                'pgedge-ai-dba-server',
+                'pgedge-ai-dba-collector',
+                'pgedge-ai-dba-alerter',
+            ]) {
+                expect(SYSTEM_PROMPT).toContain(id);
+            }
+        });
+
+        it('explains that restart steps depend on the deployment method', () => {
+            expect(SYSTEM_PROMPT).toContain('deployment method');
+        });
+
+        it('gives the correct restart command shape for systemd, Docker Compose, and manual/binary deployments', () => {
+            // There is no single universal "restart" command for an
+            // arbitrarily-supervised manual process, so the guidance must
+            // give a concrete first step (finding the process) rather than
+            // a fabricated command.
+            expect(SYSTEM_PROMPT).toContain(
+                'systemctl restart pgedge-ai-dba-collector',
+            );
+            expect(SYSTEM_PROMPT).toContain('docker compose restart collector');
+            expect(SYSTEM_PROMPT).toContain('ps aux | grep ai-dba-collector');
+        });
+
+        it('hard-prohibits suggesting pgwatch commands', () => {
+            expect(SYSTEM_PROMPT).toContain('pgwatch');
+            expect(SYSTEM_PROMPT).toContain(
+                'NEVER suggest, reference, or generate commands for pgwatch',
+            );
+        });
     });
 
     describe('CHAT_TOOLS', () => {

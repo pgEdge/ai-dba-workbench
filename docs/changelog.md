@@ -51,6 +51,20 @@ project adheres to
 
 ### Fixed
 
+- Fix every chat request that included a tool list failing with
+  `anthropic (400): tools.0.custom.input_schema: Input does not
+  match the expected shape`, which broke Ask Ellie and the Server,
+  Query, and Alert analysis panels for any interaction requiring a
+  tool call. The client built each tool with a camelCase
+  `inputSchema` field, but `POST /api/v1/llm/chat` decodes its
+  request body via the vendored `pgedge-go-llm-lib` package, whose
+  wire contract expects snake_case `input_schema`; the mismatched
+  key silently unmarshalled to an empty schema for every tool,
+  which Anthropic then rejected outright. The client now normalises
+  tool definitions to the library's wire shape before sending them,
+  mirroring the existing message normalisation added in the same
+  migration. (#370)
+
 - Connection-privilege chips in the Admin Groups and Users panels
   now show the connection name instead of the internal numeric
   connection id. (#309)

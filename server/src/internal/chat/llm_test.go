@@ -401,9 +401,10 @@ func TestSystemPrompt_MentionsCheckpointerSplit(t *testing.T) {
 // TestSystemPromptRestartGuidance guards the Workbench-component restart
 // guidance added for issue #329. A user asked Ellie how to restart the
 // collector and she hallucinated pgwatch commands; pgwatch is a separate,
-// competing product that appears nowhere in this codebase. The guidance
-// teaches Ellie the Workbench's own component names, that restart steps
-// depend on the deployment method, and that pgwatch is never the answer.
+// competing product and is not a Workbench component, so it is never the
+// correct restart target. The guidance teaches Ellie the Workbench's own
+// component names, that restart steps depend on the deployment method,
+// and hard-prohibits ever suggesting pgwatch.
 func TestSystemPromptRestartGuidance(t *testing.T) {
 	// The Workbench's own component identifiers must be present so Ellie
 	// uses the correct binary and packaged service names.
@@ -424,10 +425,15 @@ func TestSystemPromptRestartGuidance(t *testing.T) {
 			"the deployment method")
 	}
 
-	// The correct command shapes for each deployment method should appear.
+	// The correct command shapes for each deployment method should appear,
+	// including the manual/binary path: there is no single universal
+	// "restart" command for an arbitrarily-supervised process, so the
+	// guidance must give a concrete first step (finding the process) rather
+	// than a fabricated command.
 	for _, shape := range []string{
 		"systemctl restart pgedge-ai-dba-collector",
 		"docker compose restart collector",
+		"ps aux | grep ai-dba-collector",
 	} {
 		if !strings.Contains(SystemPrompt, shape) {
 			t.Errorf("SystemPrompt should give the restart command shape %q", shape)

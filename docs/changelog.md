@@ -50,8 +50,9 @@ project adheres to
   privileges. (#323)
 
 - Ellie now gives correct, deployment-aware guidance for restarting
-  the Workbench's own components (server, collector, and alerter),
-  and no longer suggests commands for unrelated third-party tooling.
+  the Workbench's own components (server, collector, alerter, and
+  web client), and no longer suggests commands for unrelated
+  third-party tooling.
   The web client sends its own copy of Ellie's system prompt on
   every request, which always takes precedence over the server's
   default; both copies now carry the same guidance, since fixing

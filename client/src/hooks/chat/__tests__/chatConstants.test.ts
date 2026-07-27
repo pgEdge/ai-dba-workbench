@@ -68,11 +68,16 @@ describe('chatConstants', () => {
             expect(SYSTEM_PROMPT).toContain('deployment method');
         });
 
-        it('gives the correct restart command shape for systemd and Docker Compose', () => {
+        it('gives the correct restart command shape for systemd, Docker Compose, and manual/binary deployments', () => {
+            // There is no single universal "restart" command for an
+            // arbitrarily-supervised manual process, so the guidance must
+            // give a concrete first step (finding the process) rather than
+            // a fabricated command.
             expect(SYSTEM_PROMPT).toContain(
                 'systemctl restart pgedge-ai-dba-collector',
             );
             expect(SYSTEM_PROMPT).toContain('docker compose restart collector');
+            expect(SYSTEM_PROMPT).toContain('ps aux | grep ai-dba-collector');
         });
 
         it('hard-prohibits suggesting pgwatch commands', () => {

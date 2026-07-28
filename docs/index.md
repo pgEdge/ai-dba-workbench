@@ -3,7 +3,12 @@
 The AI DBA Workbench consists of four components that work together to provide
 monitoring, alerting, and AI-powered database management.
 
-## Data Collection Layer
+![Architecture diagram showing the four AI DBA Workbench components, the
+Collector, MCP Server, Alerter, and Client, sharing a central datastore and
+connecting to monitored PostgreSQL servers, AI assistants and LLM providers,
+and notification channels](images/architecture.png)
+
+## Data Collection Layer <img src="images/icon-data-collection.svg" alt="" width="28" style="vertical-align:middle; margin-left:6px;">
 
 The Collector continuously monitors PostgreSQL servers and collects metrics
 into a centralized datastore. The Collector provides the following features:
@@ -16,7 +21,7 @@ into a centralized datastore. The Collector provides the following features:
   policies.
 - The Collector secures connections with encryption and SSL/TLS support.
 
-## Intelligence Layer
+## Intelligence Layer <img src="images/icon-intelligence.svg" alt="" width="28" style="vertical-align:middle; margin-left:6px;">
 
 The MCP Server implements the Model Context Protocol and provides AI assistants
 with standardized access to PostgreSQL systems. The MCP Server provides the
@@ -29,7 +34,7 @@ following features:
 - The LLM proxy supports Anthropic, OpenAI, Gemini, and Ollama providers.
 - The server preserves chat context through conversation history management.
 
-## Alert Monitoring Layer
+## Alert Monitoring Layer <img src="images/icon-alert-monitoring.svg" alt="" width="28" style="vertical-align:middle; margin-left:6px;">
 
 The Alerter evaluates collected metrics against thresholds and uses AI-powered
 anomaly detection to generate alerts. The Alerter provides the following
@@ -42,7 +47,7 @@ features:
 - The Alerter delivers notifications via email, Slack, Mattermost, and
   webhooks.
 
-## Presentation Layer
+## Presentation Layer <img src="images/icon-presentation.svg" alt="" width="28" style="vertical-align:middle; margin-left:6px;">
 
 The Client provides a web-based user interface for cluster monitoring and
 management. The Client provides the following features:

@@ -10,7 +10,12 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useQueryPlan } from '../useQueryPlan';
+import {
+    useQueryPlan,
+    classifyExplainSupport,
+    NON_EXPLAINABLE_PLAN_MESSAGE,
+    PLANLESS_STATEMENT_MESSAGE,
+} from '../useQueryPlan';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -471,5 +476,303 @@ describe('useQueryPlan', () => {
         for (const body of bodies) {
             expect(body.database_name).toBe('my_database');
         }
+    });
+
+    it('short-circuits non-explainable statements without an API call', async () => {
+        const { result } = renderHook(() =>
+            useQueryPlan(
+                `VACUUM (ANALYZE, VERBOSE) t_${testCounter}`,
+                1,
+                'testdb',
+            ),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        expect(mockApiFetch).not.toHaveBeenCalled();
+        expect(result.current.textPlan).toBeNull();
+        expect(result.current.jsonPlan).toBeNull();
+        expect(result.current.loading).toBe(false);
+        expect(result.current.error).toBe(
+            NON_EXPLAINABLE_PLAN_MESSAGE,
+        );
+    });
+
+    it('short-circuits an empty query without an API call', async () => {
+        const { result } = renderHook(() =>
+            useQueryPlan('   \n  ', 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        expect(mockApiFetch).not.toHaveBeenCalled();
+        expect(result.current.error).toBe(
+            NON_EXPLAINABLE_PLAN_MESSAGE,
+        );
+    });
+
+    it.each([
+        'REFRESH MATERIALIZED VIEW mv',
+        'refresh materialized view mv',
+        'REFRESH   MATERIALIZED  VIEW CONCURRENTLY mv',
+    ])(
+        'short-circuits planless statement %j without an API call',
+        async (query: string) => {
+            const { result } = renderHook(() =>
+                useQueryPlan(
+                    `${query}_${testCounter}`, 1, 'testdb',
+                ),
+            );
+
+            await act(async () => {
+                result.current.fetch();
+            });
+
+            expect(mockApiFetch).not.toHaveBeenCalled();
+            expect(result.current.textPlan).toBeNull();
+            expect(result.current.jsonPlan).toBeNull();
+            expect(result.current.loading).toBe(false);
+            expect(result.current.error).toBe(
+                PLANLESS_STATEMENT_MESSAGE,
+            );
+        },
+    );
+
+    it('explains a bare TABLE statement', async () => {
+        const planText = 'Seq Scan on foo';
+        const jsonStr = JSON.stringify(
+            [{ Plan: { 'Node Type': 'Seq Scan' } }],
+        );
+
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeQueryResponse([[planText]]),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([[jsonStr]]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`TABLE foo_${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.textPlan).toBe(planText);
+        });
+
+        expect(mockApiFetch).toHaveBeenCalledTimes(2);
+        expect(result.current.error).toBeNull();
+    });
+
+    it('reports no plan structure for a utility JSON response', async () => {
+        const planText = 'Utility statements have no plan structure';
+
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeQueryResponse([[planText]]),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse(
+                    [[JSON.stringify(['Utility Statement'])]],
+                ),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT ${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        // The JSON plan is rejected rather than being handed to
+        // the tree renderer as an array of bare strings.
+        expect(result.current.jsonPlan).toBeNull();
+        expect(result.current.textPlan).toBe(planText);
+    });
+
+    it('rejects a JSON response that is not an array', async () => {
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeErrorResponse('text error'),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([['{"Plan": {}}']]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT ${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.error).not.toBeNull();
+        });
+
+        expect(result.current.jsonPlan).toBeNull();
+        expect(result.current.error).toContain(
+            'no plan structure',
+        );
+    });
+
+    it('accepts a JSON array of bare plan objects', async () => {
+        const bare = [{ 'Node Type': 'Result' }];
+
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeErrorResponse('text error'),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([[JSON.stringify(bare)]]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT ${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.jsonPlan).not.toBeNull();
+        });
+
+        expect(
+            result.current.jsonPlan?.[0]['Node Type'],
+        ).toBe('Result');
+    });
+});
+
+describe('classifyExplainSupport', () => {
+    const explainable = [
+        'SELECT 1',
+        'select 1',
+        '  \n\t SELECT 1',
+        'SELECT 1  \n ',
+        '(SELECT 1)',
+        '( SELECT 1 UNION SELECT 2 )',
+        'INSERT INTO t VALUES (1)',
+        'UPDATE t SET a = 1',
+        'DELETE FROM t',
+        'MERGE INTO t USING s ON t.id = s.id',
+        'VALUES (1), (2)',
+        'EXECUTE my_plan(1)',
+        'DECLARE c CURSOR FOR SELECT 1',
+        'WITH cte AS (SELECT 1) SELECT * FROM cte',
+        'TABLE foo',
+        'table  foo',
+        '  ( TABLE foo )',
+        '/* tag */ TABLE public.foo',
+        '-- app: reports\nSELECT 1',
+        '--comment\n-- another\n  SELECT 1',
+        '/* tag: worker */ SELECT 1',
+        '/* multi\nline */\nSELECT 1',
+        '/* a */ -- b\n (SELECT 1)',
+        'CREATE TABLE t AS SELECT 1',
+        'create table t as select 1',
+        'CREATE TABLE t (a, b) AS SELECT 1, 2',
+        'CREATE TEMP TABLE t AS SELECT 1',
+        'CREATE TEMPORARY TABLE t AS VALUES (1)',
+        'CREATE UNLOGGED TABLE t AS SELECT 1',
+        'CREATE GLOBAL TEMPORARY TABLE t AS SELECT 1',
+        'CREATE TABLE t AS (SELECT 1)',
+        'CREATE TABLE t AS WITH c AS (SELECT 1) SELECT * FROM c',
+        'CREATE TABLE t AS EXECUTE p',
+        'CREATE MATERIALIZED VIEW mv AS SELECT 1',
+        'create materialized view if not exists mv as select 1',
+    ];
+
+    for (const stmt of explainable) {
+        it(`treats as planned: ${JSON.stringify(stmt)}`, () => {
+            expect(classifyExplainSupport(stmt)).toBe('plan');
+        });
+    }
+
+    const planless = [
+        'REFRESH MATERIALIZED VIEW mv',
+        'refresh materialized view mv',
+        'REFRESH   MATERIALIZED\n  VIEW CONCURRENTLY public.mv',
+        '/* tag */ REFRESH MATERIALIZED VIEW mv',
+    ];
+
+    for (const stmt of planless) {
+        it(`treats as planless: ${JSON.stringify(stmt)}`, () => {
+            expect(classifyExplainSupport(stmt)).toBe(
+                'planless',
+            );
+        });
+    }
+
+    const nonExplainable = [
+        '',
+        '   ',
+        '\n\t ',
+        '-- only a comment',
+        '/* only a comment */',
+        '/* unterminated comment',
+        'VACUUM',
+        'vacuum',
+        'VACUUM (ANALYZE, VERBOSE)',
+        'VACUUM FULL public.users',
+        'ANALYZE',
+        'ANALYZE public.users',
+        'REINDEX INDEX users_pkey',
+        'CLUSTER users USING users_pkey',
+        'CHECKPOINT',
+        'TRUNCATE users',
+        'COPY users TO STDOUT',
+        'SET work_mem = \'64MB\'',
+        'SHOW all',
+        'BEGIN',
+        'COMMIT',
+        'GRANT SELECT ON users TO bob',
+        'CREATE INDEX idx ON users (id)',
+        'CREATE UNIQUE INDEX idx ON users (id)',
+        'CREATE TABLE t (a int, b int)',
+        'CREATE TABLE t (a int GENERATED ALWAYS AS (1) STORED)',
+        'CREATE TABLE t (a int GENERATED BY DEFAULT AS IDENTITY)',
+        'CREATE VIEW v AS SELECT 1',
+        'DROP TABLE t',
+        'ALTER TABLE t ADD COLUMN a int',
+        'SELECTIVE_FUNCTION()',
+        'LISTEN channel',
+        '-- SELECT 1',
+        '/* SELECT 1 */',
+        'TABLES',
+        'TABLESAMPLE bernoulli (10)',
+        'REFRESH MATERIALIZED VIEWS_LIST',
+        'REFRESHING something',
+    ];
+
+    for (const stmt of nonExplainable) {
+        it(`treats as unsupported: ${JSON.stringify(stmt)}`, () => {
+            expect(classifyExplainSupport(stmt)).toBe(
+                'unsupported',
+            );
+        });
+    }
+
+    it('tolerates a null-ish query', () => {
+        expect(
+            classifyExplainSupport(
+                undefined as unknown as string,
+            ),
+        ).toBe('unsupported');
     });
 });

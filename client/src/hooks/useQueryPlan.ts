@@ -107,6 +107,154 @@ function hasParameters(query: string): boolean {
 }
 
 /**
+ * Message shown when the captured statement is one that
+ * PostgreSQL's EXPLAIN cannot accept.
+ */
+export const NON_EXPLAINABLE_PLAN_MESSAGE =
+    'Query plans are not available for this type of statement. '
+    + 'PostgreSQL can only explain SELECT, INSERT, UPDATE, '
+    + 'DELETE, and similar data statements, not maintenance or '
+    + 'utility commands such as VACUUM, ANALYZE, or REINDEX.';
+
+/**
+ * Message shown when PostgreSQL's EXPLAIN accepts the statement
+ * but reports no plan structure for it.
+ */
+export const PLANLESS_STATEMENT_MESSAGE =
+    'PostgreSQL accepts this statement for EXPLAIN but produces '
+    + 'no query plan for it, because it runs as a utility '
+    + 'command.';
+
+/**
+ * How PostgreSQL's EXPLAIN treats a captured statement.
+ */
+export type ExplainSupport =
+    /** EXPLAIN accepts the statement and returns a plan. */
+    | 'plan'
+    /** EXPLAIN accepts the statement but returns no plan. */
+    | 'planless'
+    /** EXPLAIN rejects the statement with a syntax error. */
+    | 'unsupported';
+
+/**
+ * Leading keywords for which PostgreSQL's EXPLAIN returns a
+ * plan.  TABLE is included because a bare `TABLE foo` is just a
+ * SELECT in disguise and plans exactly like one; the word
+ * boundary keeps `TABLESAMPLE` and similar tokens out, and a
+ * CREATE TABLE ... AS is handled separately below.  WITH is
+ * included because a CTE almost always fronts a SELECT or DML
+ * statement; reliably identifying the inner statement would
+ * need balanced-paren parsing rather than a regex, so we allow
+ * it and preserve the pre-existing behaviour.
+ */
+const EXPLAINABLE_LEADING_KEYWORDS =
+    /^(?:select|insert|update|delete|merge|values|table|execute|declare|with)\b/i;
+
+/**
+ * Statements that EXPLAIN parses but executes as utility
+ * commands, so the server answers with 'Utility statements have
+ * no plan structure' rather than a plan.
+ */
+const PLANLESS_PATTERN =
+    /^refresh\s+materialized\s+view\b/i;
+
+/** CREATE MATERIALIZED VIEW ... AS <query>. */
+const CREATE_MATVIEW_PATTERN =
+    /^create\s+(?:or\s+replace\s+)?materialized\s+view\b/i;
+
+/**
+ * CREATE [TEMP|UNLOGGED] TABLE ... AS <query>.  The trailing
+ * query keyword is required so that a plain CREATE TABLE with,
+ * say, a GENERATED ALWAYS AS column is not misread as a CTAS.
+ */
+const CREATE_TABLE_AS_PATTERN =
+    /^create\s+(?:global\s+|local\s+)?(?:temp(?:orary)?\s+|unlogged\s+)?table\b[\s\S]*?\bas\s+\(?\s*(?:select|values|table|execute|with)\b/i;
+
+/**
+ * Strip leading whitespace, SQL comments, and opening
+ * parentheses so that the statement's first keyword can be
+ * inspected.  pg_stat_statements text is often prefixed with a
+ * framework tag comment or wrapped in parentheses.
+ */
+function stripLeadingNoise(query: string): string {
+    let text = query;
+
+    for (;;) {
+        const trimmed = text.replace(/^[\s(]+/, '');
+        if (trimmed !== text) {
+            text = trimmed;
+            continue;
+        }
+        if (text.startsWith('--')) {
+            const newline = text.indexOf('\n');
+            text = newline === -1 ? '' : text.slice(newline + 1);
+            continue;
+        }
+        if (text.startsWith('/*')) {
+            const close = text.indexOf('*/');
+            text = close === -1 ? '' : text.slice(close + 2);
+            continue;
+        }
+        return text;
+    }
+}
+
+/**
+ * Classify how PostgreSQL's EXPLAIN treats the given statement.
+ * This is deliberately an allowlist of the leading keywords
+ * EXPLAIN supports rather than a denylist of utility commands:
+ * pg_stat_statements records utility statements such as VACUUM
+ * or REINDEX alongside DML, and an allowlist fails safe by
+ * treating anything unrecognised as unsupported instead of
+ * surfacing a raw syntax error from the server.
+ */
+export function classifyExplainSupport(
+    query: string,
+): ExplainSupport {
+    const text = stripLeadingNoise(query ?? '');
+    if (text === '') {
+        return 'unsupported';
+    }
+    if (PLANLESS_PATTERN.test(text)) {
+        return 'planless';
+    }
+    if (
+        EXPLAINABLE_LEADING_KEYWORDS.test(text)
+        || CREATE_MATVIEW_PATTERN.test(text)
+        || CREATE_TABLE_AS_PATTERN.test(text)
+    ) {
+        return 'plan';
+    }
+    return 'unsupported';
+}
+
+/**
+ * Pull the plan nodes out of a parsed EXPLAIN FORMAT JSON
+ * response.  PostgreSQL answers with [{ "Plan": { ... } }] for a
+ * planned statement, but a utility statement that EXPLAIN
+ * accepts yields [ "Utility Statement" ], so check the shape
+ * before trusting it and return null when no plan is present.
+ */
+function extractJsonPlan(parsed: unknown): PlanNode[] | null {
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+        return null;
+    }
+    const entries = parsed.filter(
+        (entry): entry is Record<string, unknown> =>
+            typeof entry === 'object' && entry !== null,
+    );
+    if (entries.length !== parsed.length) {
+        return null;
+    }
+    if (entries[0].Plan) {
+        return entries.map(
+            entry => entry.Plan as PlanNode,
+        );
+    }
+    return entries as unknown as PlanNode[];
+}
+
+/**
  * Execute an EXPLAIN query via the standard query endpoint.
  */
 async function fetchExplain(
@@ -187,6 +335,24 @@ export function useQueryPlan(
         const conn = connRef.current;
         const db = dbRef.current;
 
+        // Utility statements such as VACUUM are tracked by
+        // pg_stat_statements but cannot be wrapped in EXPLAIN,
+        // and a few others parse but yield no plan, so
+        // short-circuit both rather than issuing a request that
+        // cannot usefully succeed.
+        const support = classifyExplainSupport(q);
+        if (support !== 'plan') {
+            setTextPlan(null);
+            setJsonPlan(null);
+            setLoading(false);
+            setError(
+                support === 'planless'
+                    ? PLANLESS_STATEMENT_MESSAGE
+                    : NON_EXPLAINABLE_PLAN_MESSAGE,
+            );
+            return;
+        }
+
         const cacheKey = computeCacheKey(q, conn, db);
 
         // Check the cache first.
@@ -231,20 +397,15 @@ export function useQueryPlan(
                         const parsed = JSON.parse(
                             jsonResult.value,
                         );
-                        // PostgreSQL JSON EXPLAIN returns
-                        // [{ "Plan": { ... } }].
-                        if (
-                            Array.isArray(parsed)
-                            && parsed.length > 0
-                            && parsed[0].Plan
-                        ) {
-                            newJsonPlan = parsed.map(
-                                (
-                                    entry: { Plan: PlanNode },
-                                ) => entry.Plan,
-                            );
+                        const extracted =
+                            extractJsonPlan(parsed);
+                        if (extracted) {
+                            newJsonPlan = extracted;
                         } else {
-                            newJsonPlan = parsed;
+                            errors.push(
+                                'JSON plan: the response '
+                                + 'contains no plan structure',
+                            );
                         }
                     } catch {
                         errors.push(

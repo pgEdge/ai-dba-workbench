@@ -10,7 +10,7 @@
 
 import type React from 'react';
 import { renderHook, act } from '@testing-library/react';
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, it, expect, afterEach } from 'vitest';
 import { DashboardProvider } from '../DashboardContext';
 import { useDashboard } from '../useDashboard';
 import type { OverlayEntry } from '../../components/Dashboard/types';
@@ -83,7 +83,13 @@ describe('DashboardContext', () => {
             });
         });
 
-        it('setCustomTimeRange preserves the range and sets custom values', () => {
+        /*
+         * setCustomTimeRange used to preserve the previous preset range,
+         * which left the query layer unable to tell that an arbitrary
+         * window was in force. It now switches the range to 'custom'
+         * (issue #345).
+         */
+        it('setCustomTimeRange switches the range to custom', () => {
             const { result } = renderHook(() => useDashboard(), { wrapper });
 
             act(() => {
@@ -92,7 +98,7 @@ describe('DashboardContext', () => {
 
             expect(result.current.timeRange.customStart).toBe('2026-01-01');
             expect(result.current.timeRange.customEnd).toBe('2026-01-02');
-            expect(result.current.timeRange.range).toBe('1h');
+            expect(result.current.timeRange.range).toBe('custom');
         });
     });
 
@@ -117,6 +123,37 @@ describe('DashboardContext', () => {
 
             expect(result.current.autoRefresh.intervalMs).toBe(5000);
             expect(result.current.autoRefresh.enabled).toBe(true);
+        });
+
+        it('is not suspended for a preset range', () => {
+            const { result } = renderHook(() => useDashboard(), { wrapper });
+
+            expect(result.current.autoRefreshSuspended).toBe(false);
+        });
+
+        it('is suspended whilst a custom range is active', () => {
+            const { result } = renderHook(() => useDashboard(), { wrapper });
+
+            act(() => {
+                result.current.setCustomTimeRange('2026-01-01', '2026-01-02');
+            });
+
+            expect(result.current.autoRefreshSuspended).toBe(true);
+            // The user's own preference is left untouched.
+            expect(result.current.autoRefresh.enabled).toBe(true);
+        });
+
+        it('resumes when the range returns to a preset', () => {
+            const { result } = renderHook(() => useDashboard(), { wrapper });
+
+            act(() => {
+                result.current.setCustomTimeRange('2026-01-01', '2026-01-02');
+            });
+            act(() => {
+                result.current.setTimeRange('6h');
+            });
+
+            expect(result.current.autoRefreshSuspended).toBe(false);
         });
     });
 
@@ -255,6 +292,52 @@ describe('DashboardContext', () => {
             });
 
             expect(result.current.refreshTrigger).toBe(0);
+        });
+
+        it('auto-refresh does not fire whilst a custom range is active', () => {
+            vi.useFakeTimers();
+
+            const { result } = renderHook(() => useDashboard(), { wrapper });
+
+            act(() => {
+                result.current.setCustomTimeRange(
+                    '2026-01-01T00:00:00Z',
+                    '2026-01-02T00:00:00Z',
+                );
+            });
+
+            act(() => {
+                vi.advanceTimersByTime(120000);
+            });
+
+            expect(result.current.refreshTrigger).toBe(0);
+        });
+
+        it('auto-refresh resumes after leaving a custom range', () => {
+            vi.useFakeTimers();
+
+            const { result } = renderHook(() => useDashboard(), { wrapper });
+
+            act(() => {
+                result.current.setCustomTimeRange(
+                    '2026-01-01T00:00:00Z',
+                    '2026-01-02T00:00:00Z',
+                );
+            });
+            act(() => {
+                vi.advanceTimersByTime(60000);
+            });
+
+            expect(result.current.refreshTrigger).toBe(0);
+
+            act(() => {
+                result.current.setTimeRange('24h');
+            });
+            act(() => {
+                vi.advanceTimersByTime(30000);
+            });
+
+            expect(result.current.refreshTrigger).toBe(1);
         });
 
         it('auto-refresh uses the updated interval', () => {

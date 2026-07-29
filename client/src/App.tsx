@@ -11,6 +11,8 @@ import type React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
 import { Box, CircularProgress, CssBaseline, type PaletteMode } from '@mui/material';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/useAuth';
 import { ClusterProvider } from './contexts/ClusterContext';
@@ -236,11 +238,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ onToggleTheme }) => {
 
 const App = () => {
     return (
-        <ErrorBoundary>
-            <AuthProvider>
-                <AppContent />
-            </AuthProvider>
-        </ErrorBoundary>
+        // LocalizationProvider supplies the dayjs adapter that the
+        // date-time pickers (for example the custom time range popover)
+        // require; it sits at the root so every picker inherits it.
+        <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <ErrorBoundary>
+                <AuthProvider>
+                    <AppContent />
+                </AuthProvider>
+            </ErrorBoundary>
+        </LocalizationProvider>
     );
 };
 

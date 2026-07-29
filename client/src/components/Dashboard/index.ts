@@ -11,6 +11,7 @@
 export { default as MetricOverlay } from './MetricOverlay';
 export { default as Sparkline } from './Sparkline';
 export { default as TimeRangeSelector } from './TimeRangeSelector';
+export { default as CustomTimeRangePopover } from './CustomTimeRangePopover';
 export { default as CollapsibleSection } from './CollapsibleSection';
 export { default as KpiTile } from './KpiTile';
 export { default as ServerDashboard } from './ServerDashboard';

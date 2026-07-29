@@ -15,6 +15,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // TimelineHandler handles REST API requests for timeline events
@@ -84,6 +85,16 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 
 	// Validate time range
 	if !ValidateTimeRange(w, filter.StartTime, filter.EndTime) {
+		return
+	}
+
+	// Cap the span. The timeline picker can now request an arbitrary
+	// absolute window, so an unbounded span would let a single request
+	// scan the whole of history. The cap matches the one the metrics
+	// endpoint applies to its custom windows.
+	if filter.EndTime.Sub(filter.StartTime) > metrics.MaxCustomTimeSpan {
+		RespondError(w, http.StatusBadRequest,
+			"invalid time range: span must not exceed 366 days")
 		return
 	}
 

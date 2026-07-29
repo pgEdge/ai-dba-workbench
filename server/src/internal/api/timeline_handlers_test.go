@@ -14,6 +14,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 func TestNewTimelineHandler(t *testing.T) {
@@ -182,6 +185,80 @@ func TestTimelineHandler_HandleTimelineEvents_InvalidTimeRange(t *testing.T) {
 
 	if response.Error != "end_time must be after start_time" {
 		t.Errorf("Expected error about time range, got %q", response.Error)
+	}
+}
+
+// TestTimelineHandler_HandleTimelineEvents_SpanCap covers the maximum
+// span check. Every accepted case carries a deliberately invalid
+// event_types value, because a request that clears validation would go
+// on to dereference the nil datastore; an event_type error therefore
+// proves the span itself was accepted.
+func TestTimelineHandler_HandleTimelineEvents_SpanCap(t *testing.T) {
+	handler := NewTimelineHandler(nil, nil, nil)
+
+	const spanError = "invalid time range: span must not exceed 366 days"
+	start := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		span       time.Duration
+		expectSpan bool
+	}{
+		{
+			name:       "well within the cap",
+			span:       24 * time.Hour,
+			expectSpan: false,
+		},
+		{
+			name:       "one second under the cap",
+			span:       metrics.MaxCustomTimeSpan - time.Second,
+			expectSpan: false,
+		},
+		{
+			name:       "exactly at the cap",
+			span:       metrics.MaxCustomTimeSpan,
+			expectSpan: false,
+		},
+		{
+			name:       "one second over the cap",
+			span:       metrics.MaxCustomTimeSpan + time.Second,
+			expectSpan: true,
+		},
+		{
+			name:       "a decade",
+			span:       3650 * 24 * time.Hour,
+			expectSpan: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/v1/timeline/events?start_time=" +
+				start.Format(time.RFC3339) + "&end_time=" +
+				start.Add(tt.span).Format(time.RFC3339) +
+				"&event_types=invalid_type"
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			rec := httptest.NewRecorder()
+
+			handler.handleTimelineEvents(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("Expected status %d, got %d",
+					http.StatusBadRequest, rec.Code)
+			}
+
+			var response ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+
+			if tt.expectSpan && response.Error != spanError {
+				t.Errorf("Expected error %q, got %q", spanError, response.Error)
+			}
+			if !tt.expectSpan && response.Error == spanError {
+				t.Errorf("Span of %v was rejected by the cap unexpectedly", tt.span)
+			}
+		})
 	}
 }
 

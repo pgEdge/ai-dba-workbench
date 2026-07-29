@@ -248,21 +248,44 @@ Two further conventions matter when reading `metrics.pg_stat_activity`:
   arrived over a Unix-domain socket, which is worth labelling as local
   rather than unknown.
 
-### Whitelisted SQL fragments instead of interpolated columns
+### Compose query variants as compile-time constants, not with Sprintf
 
-Where an endpoint lets the caller choose a grouping or an ordering, keep
-the mapping from parameter value to SQL fragment in a package-level map
-of constants (`connectionGroupByColumns`) and pull the SQL out into a
-pure builder (`buildConnectionGroupsSQL`) that takes the parameter and
-returns `(query string, args []any)`. The builder touches no database,
-so the whole SQL surface is unit-testable without one; see
-`perf_summary_connection_groups_sql_test.go`, which asserts both the
-per-grouping fragments and, in `_NoUserValuesInSQL`, that no
-caller-supplied value ever reaches the query text. The builder falls
-back to the default grouping for an unrecognised value rather than
-interpolating it; the handler still rejects unknown values with a 400
-first, listing the accepted values from a sorted key helper so the
-message is stable despite Go's randomised map iteration.
+Where an endpoint lets the caller choose a grouping or an ordering, do not
+build the SQL with a runtime `fmt.Sprintf` over whitelisted fragments. Go
+permits constant concatenation, so assemble one complete `const` per
+variant instead: a shared head, a shared tail, and the per-variant
+expressions spliced between them with `+`. `connection-groups` is the
+worked example, with `connectionGroupsQueryHead`,
+`connectionGroupsQueryLabelSuffix` and `connectionGroupsQueryTail` shared
+across `connectionGroupsQueryByUser`, `…ByClient` and `…ByDatabase`, and a
+`map[string]string` (`connectionGroupQueries`) mapping the accepted
+parameter values to the finished queries. `buildConnectionGroupsSQL` then
+degenerates to a map lookup returning `(query string, args []any)`, with
+the default variant as the fallback for an unrecognised key; the handler
+still rejects unknown values with a 400 first, listing the accepted values
+from a sorted key helper so the message is stable despite Go's randomised
+map iteration.
+
+This is worth doing for three reasons. The whitelist property becomes a
+compiler guarantee rather than a convention, since there is no expression
+anywhere that could splice a caller-supplied value into SQL. The `%%`
+escaping wrinkle in `LIKE 'idle in transaction%'` disappears with the
+format string. And Codacy's Opengrep `go_sql_rule-concat-sqli` rule fires
+Error-level on `tx.Query(ctx, query, args...)` whenever `query` came from a
+`Sprintf`, even with every value bound; removing the pattern clears the
+finding on its merits instead of needing a `nosemgrep` suppression. Prefer
+this shape over `nosemgrep` for new code where the variants are a small
+fixed set; the existing `nosemgrep` in `internal/metrics/query.go` remains
+appropriate there, because its identifiers are discovered from
+`information_schema` at run time and genuinely cannot be constants.
+
+One caveat: the `LIMIT` cannot be formatted from a Go integer constant
+inside a constant expression, so the literal is written into the tail and a
+test (`TestBuildConnectionGroupsSQL_GroupLimit`) asserts it stays in step
+with `maxConnectionGroups`. `TestConnectionGroupQueriesShareOneBody`
+likewise asserts the variants still share one head and tail, so nobody
+quietly turns three composed constants into three divergent copies of a
+30-line query.
 
 ### Sanitise every logged error, consistently
 

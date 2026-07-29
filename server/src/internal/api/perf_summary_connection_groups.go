@@ -46,19 +46,6 @@ type ConnectionGroupRow struct {
 	Other             int64   `json:"other"`
 }
 
-// connectionGroupSpec holds the whitelisted SQL fragments used to build the
-// grouping key and the per-group client hostname for one group_by value.
-// Both fragments are compile-time constants; no user-supplied value is ever
-// placed in either of them.
-type connectionGroupSpec struct {
-	// labelExpr is the expression that produces the group label.
-	labelExpr string
-	// hostnameExpr is the aggregate that produces the group's client
-	// hostname, or a typed NULL for groupings where a hostname is
-	// meaningless.
-	hostnameExpr string
-}
-
 // defaultConnectionGroupBy is the group_by value used when the caller omits
 // the parameter.
 const defaultConnectionGroupBy = "user"
@@ -73,37 +60,107 @@ const defaultConnectionGroupBy = "user"
 // and no roll-up row is synthesized for the remainder.
 const maxConnectionGroups = 200
 
-// connectionGroupByColumns is the whitelist of accepted group_by values,
-// mapped to the SQL fragments each one selects. A value absent from this map
-// is rejected with a 400 before any SQL is built.
-var connectionGroupByColumns = map[string]connectionGroupSpec{
-	// A backend with no recorded role name is grouped under a placeholder
-	// rather than silently dropped.
-	"user": {
-		labelExpr:    `COALESCE(NULLIF(usename, ''), '(unknown)')`,
-		hostnameExpr: `NULL::text`,
-	},
-	// A NULL client_addr means the backend arrived over a Unix-domain
-	// socket, so it is labeled "local" rather than treated as unknown.
-	// host() is used in preference to a plain ::text cast because casting
-	// an inet to text appends the netmask, which would label every client
-	// as "192.0.2.10/32" rather than "192.0.2.10".
-	"client": {
-		labelExpr:    `COALESCE(host(client_addr), 'local')`,
-		hostnameExpr: `MIN(client_hostname)`,
-	},
-	"database": {
-		labelExpr:    `COALESCE(NULLIF(datname, ''), '(none)')`,
-		hostnameExpr: `NULL::text`,
-	},
+// The connection-groups query is assembled entirely at compile time. The
+// query body lives once, in connectionGroupsQueryHead and
+// connectionGroupsQueryTail, and each grouping's complete query is a single
+// untyped string constant formed by concatenating those with the two
+// expressions that differ per grouping. Nothing is formatted at run time, so
+// the whitelist property is enforced by the compiler rather than by
+// convention: there is no code path by which a caller-supplied value could
+// reach the query text, and static analysers have no taint path to follow.
+//
+// Every runtime value binds as a placeholder: $1 is the connection ID and
+// $2/$3 are the window bounds.
+const connectionGroupsQueryHead = `
+        WITH latest AS (
+            SELECT MAX(collected_at) AS collected_at
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND collected_at >= $2
+              AND collected_at <= $3
+        ),
+        snapshot AS (
+            SELECT psa.usename, psa.datname, psa.client_addr,
+                   psa.client_hostname, psa.state, psa.collected_at
+            FROM metrics.pg_stat_activity psa
+            JOIN latest l ON psa.collected_at = l.collected_at
+            WHERE psa.connection_id = $1
+              AND psa.collected_at >= $2
+              AND psa.collected_at <= $3
+              AND psa.backend_type = 'client backend'
+        )
+        SELECT `
+
+// connectionGroupsQueryLabelSuffix joins the grouping's label expression to
+// its client-hostname expression.
+const connectionGroupsQueryLabelSuffix = ` AS group_label,
+               `
+
+// connectionGroupsQueryTail carries the state buckets, the ordering and the
+// group cap. The LIMIT is written as a literal because a constant expression
+// cannot format an integer; TestBuildConnectionGroupsSQL_GroupLimit asserts it
+// stays in step with maxConnectionGroups.
+const connectionGroupsQueryTail = ` AS client_hostname,
+               MAX(collected_at) AS collected_at,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE state = 'active') AS active,
+               COUNT(*) FILTER (WHERE state = 'idle') AS idle,
+               COUNT(*) FILTER (
+                   WHERE state LIKE 'idle in transaction%'
+               ) AS idle_in_transaction,
+               COUNT(*) FILTER (
+                   WHERE state IS NULL
+                      OR (state <> 'active'
+                          AND state <> 'idle'
+                          AND state NOT LIKE 'idle in transaction%')
+               ) AS other
+        FROM snapshot
+        GROUP BY group_label
+        ORDER BY total DESC, group_label ASC
+        LIMIT 200
+    `
+
+// The three complete queries. A backend with no recorded role name, and one
+// with no recorded database, are each grouped under a placeholder label rather
+// than being silently dropped.
+const connectionGroupsQueryByUser = connectionGroupsQueryHead +
+	`COALESCE(NULLIF(usename, ''), '(unknown)')` +
+	connectionGroupsQueryLabelSuffix +
+	`NULL::text` +
+	connectionGroupsQueryTail
+
+// A NULL client_addr means the backend arrived over a Unix-domain socket, so
+// it is labeled "local" rather than treated as unknown. host() is used in
+// preference to a plain ::text cast because casting an inet to text appends
+// the netmask, which would label every client as "192.0.2.10/32" rather than
+// "192.0.2.10".
+const connectionGroupsQueryByClient = connectionGroupsQueryHead +
+	`COALESCE(host(client_addr), 'local')` +
+	connectionGroupsQueryLabelSuffix +
+	`MIN(client_hostname)` +
+	connectionGroupsQueryTail
+
+const connectionGroupsQueryByDatabase = connectionGroupsQueryHead +
+	`COALESCE(NULLIF(datname, ''), '(none)')` +
+	connectionGroupsQueryLabelSuffix +
+	`NULL::text` +
+	connectionGroupsQueryTail
+
+// connectionGroupQueries is the whitelist of accepted group_by values, mapped
+// to the complete query each one runs. A value absent from this map is
+// rejected with a 400 before any query is selected.
+var connectionGroupQueries = map[string]string{
+	"user":     connectionGroupsQueryByUser,
+	"client":   connectionGroupsQueryByClient,
+	"database": connectionGroupsQueryByDatabase,
 }
 
 // sortedConnectionGroupByValues returns the accepted group_by values in
 // alphabetical order, so that the 400 response wording is stable rather than
 // dependent on Go's randomized map iteration order.
 func sortedConnectionGroupByValues() []string {
-	values := make([]string, 0, len(connectionGroupByColumns))
-	for value := range connectionGroupByColumns {
+	values := make([]string, 0, len(connectionGroupQueries))
+	for value := range connectionGroupQueries {
 		values = append(values, value)
 	}
 	sort.Strings(values)
@@ -135,59 +192,21 @@ func connectionGroupByError() string {
 // Measured against a 90-partition table with a generic plan, the bounds cut
 // the snapshot Append from 90 sub-plans to 2.
 //
-// Only whitelisted SQL constants are interpolated into the query text; the
-// connection ID and both window bounds are bound as $1, $2 and $3. An
-// unrecognized groupBy falls back to the default grouping. Callers validate
-// groupBy against connectionGroupByColumns and reject unknown values with a
-// 400, so that fallback is a defensive measure rather than a reachable path.
+// The returned query is one of three compile-time constants, so no value of
+// any kind is formatted into it; the connection ID and both window bounds are
+// bound as $1, $2 and $3. An unrecognized groupBy falls back to the default
+// grouping. Callers validate groupBy against connectionGroupQueries and reject
+// unknown values with a 400, so that fallback is a defensive measure rather
+// than a reachable path.
 func buildConnectionGroupsSQL(
 	groupBy string,
 	connectionID int,
 	startTime, endTime time.Time,
 ) (string, []any) {
-	spec, ok := connectionGroupByColumns[groupBy]
+	query, ok := connectionGroupQueries[groupBy]
 	if !ok {
-		spec = connectionGroupByColumns[defaultConnectionGroupBy]
+		query = connectionGroupQueries[defaultConnectionGroupBy]
 	}
-
-	query := fmt.Sprintf(`
-        WITH latest AS (
-            SELECT MAX(collected_at) AS collected_at
-            FROM metrics.pg_stat_activity
-            WHERE connection_id = $1
-              AND collected_at >= $2
-              AND collected_at <= $3
-        ),
-        snapshot AS (
-            SELECT psa.usename, psa.datname, psa.client_addr,
-                   psa.client_hostname, psa.state, psa.collected_at
-            FROM metrics.pg_stat_activity psa
-            JOIN latest l ON psa.collected_at = l.collected_at
-            WHERE psa.connection_id = $1
-              AND psa.collected_at >= $2
-              AND psa.collected_at <= $3
-              AND psa.backend_type = 'client backend'
-        )
-        SELECT %s AS group_label,
-               %s AS client_hostname,
-               MAX(collected_at) AS collected_at,
-               COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE state = 'active') AS active,
-               COUNT(*) FILTER (WHERE state = 'idle') AS idle,
-               COUNT(*) FILTER (
-                   WHERE state LIKE 'idle in transaction%%'
-               ) AS idle_in_transaction,
-               COUNT(*) FILTER (
-                   WHERE state IS NULL
-                      OR (state <> 'active'
-                          AND state <> 'idle'
-                          AND state NOT LIKE 'idle in transaction%%')
-               ) AS other
-        FROM snapshot
-        GROUP BY group_label
-        ORDER BY total DESC, group_label ASC
-        LIMIT %d
-    `, spec.labelExpr, spec.hostnameExpr, maxConnectionGroups)
 
 	return query, []any{connectionID, startTime, endTime}
 }
@@ -227,7 +246,7 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 	if groupBy == "" {
 		groupBy = defaultConnectionGroupBy
 	}
-	if _, ok := connectionGroupByColumns[groupBy]; !ok {
+	if _, ok := connectionGroupQueries[groupBy]; !ok {
 		RespondError(w, http.StatusBadRequest, connectionGroupByError())
 		return
 	}

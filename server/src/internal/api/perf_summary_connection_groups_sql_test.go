@@ -119,7 +119,10 @@ func TestBuildConnectionGroupsSQL_UnknownGroupByFallsBackToDefault(t *testing.T)
 
 // TestBuildConnectionGroupsSQL_NoUserValuesInSQL proves that no caller-supplied
 // value reaches the query text: the connection ID and both window bounds are
-// bound as $1, $2 and $3, and a hostile group_by string never appears.
+// bound as $1, $2 and $3, and a hostile group_by string never appears. The
+// query text is built entirely from compile-time constants, so the builder can
+// only ever return one of the three pre-built queries; the test asserts that
+// identity as well, which is the strongest statement of the property.
 func TestBuildConnectionGroupsSQL_NoUserValuesInSQL(t *testing.T) {
 	const hostile = "user'; DROP TABLE metrics.pg_stat_activity; --"
 	const connID = 987654
@@ -134,6 +137,16 @@ func TestBuildConnectionGroupsSQL_NoUserValuesInSQL(t *testing.T) {
 			t.Errorf("query must not contain user value %q\nquery: %s",
 				fragment, query)
 		}
+	}
+
+	// Whatever the caller passes, the result must be one of the constants
+	// verbatim, not merely a string that happens to look similar.
+	switch query {
+	case connectionGroupsQueryByUser, connectionGroupsQueryByClient,
+		connectionGroupsQueryByDatabase:
+	default:
+		t.Errorf("query is not one of the three pre-built constants\n"+
+			"query: %s", query)
 	}
 
 	for _, placeholder := range []string{"$1", "$2", "$3"} {
@@ -183,11 +196,34 @@ func TestBuildConnectionGroupsSQL_StructuralInvariants(t *testing.T) {
 		}
 	}
 
-	// The LIKE patterns must use a single literal percent sign; a stray
-	// doubled percent would be a fmt.Sprintf escaping bug.
+	// The LIKE patterns must use a single literal percent sign. Nothing is
+	// format-printed any more, so a doubled percent can no longer arise from
+	// escaping, but the assertion still guards the SQL that actually ships.
 	if strings.Contains(query, "%%") {
-		t.Errorf("query contains an unescaped doubled percent\nquery: %s",
-			query)
+		t.Errorf("query contains a doubled percent\nquery: %s", query)
+	}
+}
+
+// TestConnectionGroupQueriesShareOneBody verifies that the three per-grouping
+// constants really are composed from the shared head and tail rather than
+// having drifted into three independently maintained copies of the query. Every
+// query must start with the same head and end with the same tail, and differ
+// only in the two spliced expressions.
+func TestConnectionGroupQueriesShareOneBody(t *testing.T) {
+	for groupBy, query := range connectionGroupQueries {
+		if !strings.HasPrefix(query, connectionGroupsQueryHead) {
+			t.Errorf("%s query does not start with the shared head", groupBy)
+		}
+		if !strings.HasSuffix(query, connectionGroupsQueryTail) {
+			t.Errorf("%s query does not end with the shared tail", groupBy)
+		}
+		middle := strings.TrimSuffix(
+			strings.TrimPrefix(query, connectionGroupsQueryHead),
+			connectionGroupsQueryTail)
+		if strings.Count(middle, connectionGroupsQueryLabelSuffix) != 1 {
+			t.Errorf("%s query middle %q must contain exactly one label "+
+				"suffix", groupBy, middle)
+		}
 	}
 }
 
@@ -197,7 +233,7 @@ func TestBuildConnectionGroupsSQL_StructuralInvariants(t *testing.T) {
 // partitioned on collected_at, so without those predicates the planner keeps
 // every retained partition in the plan.
 func TestBuildConnectionGroupsSQL_PartitionPruningBounds(t *testing.T) {
-	for groupBy := range connectionGroupByColumns {
+	for groupBy := range connectionGroupQueries {
 		t.Run(groupBy, func(t *testing.T) {
 			query, _ := buildConnectionGroupsSQL(groupBy, 1, cgTestStart,
 				cgTestEnd)
@@ -225,7 +261,7 @@ func TestBuildConnectionGroupsSQL_GroupLimit(t *testing.T) {
 			maxConnectionGroups)
 	}
 
-	for groupBy := range connectionGroupByColumns {
+	for groupBy := range connectionGroupQueries {
 		query, _ := buildConnectionGroupsSQL(groupBy, 1, cgTestStart,
 			cgTestEnd)
 		want := fmt.Sprintf("LIMIT %d", maxConnectionGroups)
@@ -255,7 +291,7 @@ func TestSortedConnectionGroupByValues(t *testing.T) {
 // drifting out of the whitelist, which would make an omitted group_by
 // unusable.
 func TestDefaultConnectionGroupByIsWhitelisted(t *testing.T) {
-	if _, ok := connectionGroupByColumns[defaultConnectionGroupBy]; !ok {
+	if _, ok := connectionGroupQueries[defaultConnectionGroupBy]; !ok {
 		t.Fatalf("default group_by %q is not in the whitelist",
 			defaultConnectionGroupBy)
 	}

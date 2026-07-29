@@ -317,6 +317,28 @@ describe('useConnectionGroups', () => {
         expect(result.current.groups).toHaveLength(1);
     });
 
+    it('makes no request on demand once the user has gone away',
+        async () => {
+            mockApiGet.mockResolvedValue(makeResponse());
+
+            const { result, rerender } = renderHook(
+                () => useConnectionGroups(params),
+            );
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+            });
+
+            mockUser = null;
+            rerender();
+
+            await act(async () => {
+                result.current.refetch();
+            });
+
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+
     it('refetches on demand', async () => {
         mockApiGet.mockResolvedValue(makeResponse());
 

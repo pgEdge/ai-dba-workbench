@@ -35,6 +35,46 @@ export interface UseConnectionGroupsReturn {
     refetch: () => void;
 }
 
+/** Fallback message used when a rejection carries no usable text. */
+const FETCH_ERROR_FALLBACK = 'Failed to fetch connection groups';
+
+/**
+ * Build the request URL for a grouping, or return null when the
+ * parameters are incomplete and no request should be made.
+ */
+const buildRequestUrl = (
+    connectionId: number | undefined,
+    groupBy: ConnectionGroupBy | undefined,
+    timeRange: TimeRange | undefined,
+): string | null => {
+    if (connectionId === undefined || !groupBy || !timeRange) {
+        return null;
+    }
+
+    const searchParams = new URLSearchParams({
+        connection_id: connectionId.toString(),
+        group_by: groupBy,
+        time_range: timeRange,
+    });
+    return `/api/v1/metrics/connection-groups?${searchParams.toString()}`;
+};
+
+/**
+ * Normalise a response payload into the shape the hook exposes. The
+ * server contract allows a null `collected_at`, and a malformed or
+ * absent `groups` field is defensively treated as an empty list.
+ */
+const normaliseResponse = (
+    payload: ConnectionGroupsResponse,
+): { groups: ConnectionGroupRow[]; collectedAt: string | null } => ({
+    groups: Array.isArray(payload.groups) ? payload.groups : [],
+    collectedAt: payload.collected_at ?? null,
+});
+
+/** Derive the message to surface for a failed request. */
+const describeFetchError = (err: unknown): string =>
+    (err as Error).message || FETCH_ERROR_FALLBACK;
+
 /**
  * Fetch active connection counts for a server, grouped by database
  * user, client address, or database, taken from the most recent
@@ -67,22 +107,10 @@ export const useConnectionGroups = (
     const timeRange = params?.timeRange;
 
     const fetchData = useCallback(async (): Promise<void> => {
-        if (
-            !userRef.current
-            || connectionId === undefined
-            || !groupBy
-            || !timeRange
-        ) {
-            return;
-        }
+        if (!userRef.current) { return; }
 
-        const searchParams = new URLSearchParams({
-            connection_id: connectionId.toString(),
-            group_by: groupBy,
-            time_range: timeRange,
-        });
-        const url =
-            `/api/v1/metrics/connection-groups?${searchParams.toString()}`;
+        const url = buildRequestUrl(connectionId, groupBy, timeRange);
+        if (!url) { return; }
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -91,21 +119,18 @@ export const useConnectionGroups = (
 
         try {
             const result = await apiGet<ConnectionGroupsResponse>(url);
+            const { groups: rows, collectedAt: snapshot } =
+                normaliseResponse(result);
 
             if (isMountedRef.current) {
-                setGroups(
-                    Array.isArray(result.groups) ? result.groups : [],
-                );
-                setCollectedAt(result.collected_at ?? null);
+                setGroups(rows);
+                setCollectedAt(snapshot);
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
             logger.error('Error fetching connection groups:', err);
             if (isMountedRef.current) {
-                setError(
-                    (err as Error).message
-                    || 'Failed to fetch connection groups',
-                );
+                setError(describeFetchError(err));
                 setGroups([]);
                 setCollectedAt(null);
             }

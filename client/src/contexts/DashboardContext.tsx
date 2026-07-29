@@ -27,6 +27,13 @@ export interface DashboardContextValue {
     autoRefresh: AutoRefreshConfig;
     setAutoRefreshEnabled: (enabled: boolean) => void;
     setAutoRefreshInterval: (intervalMs: number) => void;
+    /**
+     * True whilst auto-refresh is suspended because a custom time range
+     * is active. The value is derived rather than stored, so the user's
+     * own autoRefresh.enabled preference is untouched and resumes as
+     * soon as they return to a preset range.
+     */
+    autoRefreshSuspended: boolean;
 
     /** Overlay stack */
     overlayStack: OverlayEntry[];
@@ -76,11 +83,11 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
     }, []);
 
     const setCustomTimeRange = useCallback((start: string, end: string): void => {
-        setTimeRangeState(prev => ({
-            ...prev,
+        setTimeRangeState({
+            range: 'custom',
             customStart: start,
             customEnd: end,
-        }));
+        });
     }, []);
 
     const setAutoRefreshEnabled = useCallback((enabled: boolean): void => {
@@ -112,16 +119,23 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
         triggerRefreshRef.current = triggerRefresh;
     }, [triggerRefresh]);
 
+    /*
+     * Auto-refresh is suspended whilst a custom range is active, because
+     * re-fetching a fixed historical window returns identical data on
+     * every poll.
+     */
+    const autoRefreshSuspended = timeRange.range === 'custom';
+
     // Auto-refresh interval effect
     useEffect(() => {
-        if (!autoRefresh.enabled) { return; }
+        if (!autoRefresh.enabled || autoRefreshSuspended) { return; }
 
         const intervalId = setInterval(() => {
             triggerRefreshRef.current();
         }, autoRefresh.intervalMs);
 
         return () => { clearInterval(intervalId); };
-    }, [autoRefresh.enabled, autoRefresh.intervalMs]);
+    }, [autoRefresh.enabled, autoRefresh.intervalMs, autoRefreshSuspended]);
 
     const currentOverlay = overlayStack.length > 0
         ? overlayStack[overlayStack.length - 1]
@@ -134,6 +148,7 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
         autoRefresh,
         setAutoRefreshEnabled,
         setAutoRefreshInterval,
+        autoRefreshSuspended,
         overlayStack,
         currentOverlay,
         pushOverlay,
@@ -148,6 +163,7 @@ export const DashboardProvider = ({ children }: DashboardProviderProps): React.R
         autoRefresh,
         setAutoRefreshEnabled,
         setAutoRefreshInterval,
+        autoRefreshSuspended,
         overlayStack,
         currentOverlay,
         pushOverlay,

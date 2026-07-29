@@ -14,8 +14,12 @@
 
 import type { Selection } from '../../types/selection';
 
-/** Time range options for metric queries */
-export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
+/**
+ * Time range options for metric queries. The 'custom' member denotes an
+ * arbitrary window whose bounds are carried by the customStart and
+ * customEnd fields of TimeRangeState.
+ */
+export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom';
 
 /** Dashboard hierarchy levels */
 export type DashboardLevel = 'estate' | 'cluster' | 'server' | 'database' | 'object';

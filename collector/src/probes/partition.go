@@ -79,10 +79,13 @@ var partitionExistsQuery = sqlmarker.Tag(`
 // pgx.Identifier, and the range bounds are formatted from time.Time
 // values, so no caller-supplied text reaches the statement verbatim.
 //
-// #nosec G201 - the table name comes from a probe definition, both
-// identifiers are quoted by pgx.Identifier, and DDL cannot bind an
-// identifier as a placeholder.
+// The G201 suppression below sits on the formatting call itself rather
+// than on this comment, because a doc-comment annotation would silence
+// the rule for the whole function body.
 func createPartitionSQL(partitionName, tableName string, weekStart, weekEnd time.Time) string {
+	// #nosec G201 -- the table name comes from a probe definition, both
+	// identifiers are quoted by pgx.Identifier, and DDL cannot bind an
+	// identifier as a placeholder.
 	return sqlmarker.Tag(fmt.Sprintf(`
         CREATE TABLE IF NOT EXISTS %s
         PARTITION OF %s
@@ -105,11 +108,14 @@ func dropPartitionSQL(partitionName string) string {
 // per connection. The relation name is quoted with pgx.Identifier
 // because a table cannot be named by a bind parameter.
 //
-// #nosec G201 - the table name comes from a probe definition and is
-// quoted by pgx.Identifier; a relation cannot be bound as a
-// placeholder.
+// The G201 suppression below sits on the formatting call itself rather
+// than on this comment, because a doc-comment annotation would silence
+// the rule for the whole function body.
 func protectedPartitionsQuery(tableName string) string {
 	table := pgx.Identifier{"metrics", tableName}.Sanitize()
+	// #nosec G201 -- the table name comes from a probe definition and is
+	// quoted by pgx.Identifier; a relation cannot be bound as a
+	// placeholder.
 	return sqlmarker.Tag(fmt.Sprintf(`
         SELECT DISTINCT
             c.relname AS partition_name

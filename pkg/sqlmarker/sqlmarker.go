@@ -69,7 +69,19 @@ const Comment = "/* " + Marker + " */"
 // does not parse SQL; it only locates the leading token, and returns
 // sql unchanged when the input is empty, whitespace-only, or does not
 // begin with an alphabetic keyword (for example a parenthesised
-// sub-select or a statement already prefixed with a comment).
+// sub-select or a statement already prefixed with a comment). Where sql
+// is a semicolon-separated batch, only the first statement is tagged,
+// because Tag locates a single leading token.
+//
+// One input class would be corrupted rather than merely left alone: a
+// string-literal prefix letter at the very start of sql, as in E'x',
+// B'1011', X'1f', U&'x', or N'x'. The prefix letter and the opening
+// quote must be adjacent, so inserting the marker between them changes
+// the meaning; on PostgreSQL 18, SELECT E /* m */ 'x' fails with
+// `type "e" does not exist`. No guard is needed because the class is
+// unreachable: no valid statement begins with a bare string literal, and
+// every call site passes SQL that begins with a keyword. Do not start
+// passing caller-composed fragments to Tag without revisiting this.
 func Tag(sql string) string {
 	if strings.Contains(sql, Marker) {
 		return sql

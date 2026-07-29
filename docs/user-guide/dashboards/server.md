@@ -57,3 +57,10 @@ The "Hide monitoring queries" toggle filters out the
 workbench's own monitoring queries from the list. The
 toggle is on by default to focus on application
 queries.
+
+The toggle is a display convenience rather than a
+security or audit control. The filter matches a marker
+comment in the statement text, so a database user who
+can run arbitrary SQL can hide a query by including
+that marker. Switching the toggle off restores the
+full list of statements.

@@ -274,10 +274,13 @@ func getDefaultInterval(probeName string) int {
 // pgx.Identifier rather than bound: a relation cannot be supplied as a
 // placeholder. The connection ID is bound as $1.
 //
-// #nosec G201 - the probe name is not user-provided; it comes from the
-// probe definitions compiled into the collector, and it is quoted by
-// pgx.Identifier.
+// The G201 suppression below sits on the formatting call itself rather
+// than on this comment, because a doc-comment annotation would silence
+// the rule for the whole function body.
 func lastCollectionTimeQuery(probeName string) string {
+	// #nosec G201 -- the probe name is not user-provided; it comes from
+	// the probe definitions compiled into the collector, and it is
+	// quoted by pgx.Identifier.
 	return sqlmarker.Tag(fmt.Sprintf(`
         SELECT MAX(collected_at)
         FROM %s

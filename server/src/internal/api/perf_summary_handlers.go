@@ -52,9 +52,16 @@ const probeMarkerAlias = "ai_dba_wb_probe"
 // deliberately does not exclude the datastore database wholesale: users
 // legitimately run their own tools against that database and expect to
 // see them here.
-const excludeWorkbenchQueriesClause = "AND pss.query NOT LIKE '%" +
-	probeMarkerAlias + "%' AND pss.query NOT LIKE '%" +
-	sqlmarker.Marker + "%'"
+//
+// The pss.query IS NULL arm is not redundant. metrics.pg_stat_statements
+// stores query as a nullable column, and PostgreSQL evaluates
+// NULL NOT LIKE '...' to NULL rather than true, so without that arm any
+// row whose query text was not captured would be filtered out. A row we
+// cannot positively identify as Workbench traffic must be shown rather
+// than hidden, so NULL query text survives the filter.
+const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
+	"pss.query NOT LIKE '%" + probeMarkerAlias + "%' AND " +
+	"pss.query NOT LIKE '%" + sqlmarker.Marker + "%'))"
 
 // validTimeRanges maps time_range parameter values to their duration.
 var validTimeRanges = map[string]time.Duration{
@@ -1062,20 +1069,53 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	}
 }
 
+// defaultTopQueryOrderBy and defaultTopQueryOrder are the ordering used
+// when no ordering is requested, and the fallback buildTopQueriesQuery
+// substitutes for anything it cannot validate.
+const (
+	defaultTopQueryOrderBy = "total_exec_time"
+	defaultTopQueryOrder   = "desc"
+)
+
+// safeTopQueryOrdering maps a requested ORDER BY column and direction on
+// to a pair that is safe to interpolate into SQL, substituting the
+// defaults for anything not on the whitelists.
+//
+// handleTopQueries already rejects invalid values with HTTP 400, so in
+// practice this function never substitutes anything. It exists so that
+// the injection-safety property of buildTopQueriesQuery is local to the
+// code that does the interpolating rather than depending on a caller a
+// call frame away: any future caller, or any future relaxation of the
+// handler's parsing, still cannot reach the ORDER BY clause with
+// arbitrary text.
+func safeTopQueryOrdering(orderBy, order string) (string, string) {
+	if !validTopQueryOrderColumns[orderBy] {
+		orderBy = defaultTopQueryOrderBy
+	}
+	if order != "asc" && order != "desc" {
+		order = defaultTopQueryOrder
+	}
+	return orderBy, order
+}
+
 // buildTopQueriesQuery builds the pg_stat_statements query behind the
 // Top Queries panel, returning the statement and its bind arguments.
 //
 // The connection ID, row limit, and queryid filter are all bound
-// parameters. The ORDER BY column and direction are interpolated, which
-// is safe only because handleTopQueries validates both against
-// whitelists before calling this function, and the optional
-// Workbench-internal exclusion is a compile-time constant clause.
+// parameters. The ORDER BY column and direction are interpolated, so
+// both are passed through safeTopQueryOrdering first and can only ever
+// be whitelisted values; the optional Workbench-internal exclusion is a
+// compile-time constant clause. Callers are still expected to reject
+// invalid ordering parameters themselves, as handleTopQueries does with
+// HTTP 400, rather than relying on the silent fallback here.
 func buildTopQueriesQuery(
 	connID, limit int,
 	queryID string,
 	excludeCollector bool,
 	orderBy, order string,
 ) (string, []any) {
+	orderBy, order = safeTopQueryOrdering(orderBy, order)
+
 	// Build optional queryid filter clause.
 	queryIDClause := ""
 	args := []any{connID, limit}
@@ -1173,7 +1213,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// Parse and validate order_by
 	orderBy := ParseQueryString(r, "order_by")
 	if orderBy == "" {
-		orderBy = "total_exec_time"
+		orderBy = defaultTopQueryOrderBy
 	}
 	if !validTopQueryOrderColumns[orderBy] {
 		RespondError(w, http.StatusBadRequest,
@@ -1185,7 +1225,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// Parse and validate order direction
 	order := strings.ToLower(ParseQueryString(r, "order"))
 	if order == "" {
-		order = "desc"
+		order = defaultTopQueryOrder
 	}
 	if order != "asc" && order != "desc" {
 		RespondError(w, http.StatusBadRequest,
@@ -1228,13 +1268,21 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	results := make([]TopQueryRow, 0)
 	for rows.Next() {
 		var row TopQueryRow
+		// query is nullable in metrics.pg_stat_statements, so it is
+		// scanned through a pointer; a row whose text was not captured
+		// is still reported, with an empty query string, rather than
+		// being dropped as an unscannable row.
+		var queryText *string
 		if err := rows.Scan(
-			&row.QueryID, &row.DatabaseName, &row.Query, &row.Calls,
+			&row.QueryID, &row.DatabaseName, &queryText, &row.Calls,
 			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning top query row: %v", err)
 			continue
+		}
+		if queryText != nil {
+			row.Query = *queryText
 		}
 		results = append(results, row)
 	}

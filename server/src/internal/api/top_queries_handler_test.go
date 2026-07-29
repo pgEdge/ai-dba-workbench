@@ -231,6 +231,74 @@ func TestHandleTopQueries_ExcludesWorkbenchQueries(t *testing.T) {
 	}
 }
 
+// TestHandleTopQueries_NullQueryRetained asserts that a row whose query
+// text was not captured survives the "Hide monitoring queries" filter.
+// The query column is nullable, and NULL NOT LIKE '...' evaluates to
+// NULL rather than true, so a naive pair of NOT LIKE tests would hide
+// every such row; a row we cannot positively identify as Workbench
+// traffic must be shown instead.
+func TestHandleTopQueries_NullQueryRetained(t *testing.T) {
+	handler, connID, cleanup := newTopQueriesHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	pool := handler.datastore.GetPool()
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE metrics.pg_stat_statements ALTER COLUMN query
+			DROP NOT NULL
+	`); err != nil {
+		t.Fatalf("relax constraint: %v", err)
+	}
+
+	var collectedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT max(collected_at) FROM metrics.pg_stat_statements
+	`).Scan(&collectedAt); err != nil {
+		t.Fatalf("read collected_at: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO metrics.pg_stat_statements (
+			connection_id, collected_at, queryid, dbid, database_name,
+			query, calls, total_exec_time, mean_exec_time, rows,
+			shared_blks_hit, shared_blks_read)
+		VALUES ($1, $2, 100, NULL, 'appdb', NULL, 3, 5.0, 1.5, 2, 0, 0)
+	`, connID, collectedAt); err != nil {
+		t.Fatalf("seed null-query row: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.handleTopQueries(rec, superuserRequest(fmt.Sprintf(
+		"/api/v1/metrics/top-queries?connection_id=%d"+
+			"&exclude_collector=true", connID)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rows := decodeTopQueries(t, rec)
+	var sawNull bool
+	for _, row := range rows {
+		if row.QueryID == "100" {
+			sawNull = true
+			if row.Query != "" {
+				t.Errorf("query = %q, want the empty string for a NULL "+
+					"query", row.Query)
+			}
+		}
+	}
+	if !sawNull {
+		for _, row := range rows {
+			t.Logf("returned: %s %q", row.QueryID, row.Query)
+		}
+		t.Errorf("the NULL-query row was filtered out by the exclusion")
+	}
+	// The user workload row must still be there, and the two Workbench
+	// rows must still be gone.
+	if len(rows) != 2 {
+		t.Errorf("filtered rows = %d, want 2 (user workload plus the "+
+			"NULL-query row)", len(rows))
+	}
+}
+
 // TestHandleTopQueries_QueryIDAndOrdering covers the queryid filter, the
 // limit clamps, and the ordering parameters.
 func TestHandleTopQueries_QueryIDAndOrdering(t *testing.T) {

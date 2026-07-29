@@ -44,6 +44,97 @@ func TestExcludeWorkbenchQueriesClause(t *testing.T) {
 		t.Errorf("probeMarkerAlias = %q; it must match WrapQuery in the "+
 			"collector's probes package", probeMarkerAlias)
 	}
+	// A NULL query must survive the filter. NULL NOT LIKE '...' is NULL,
+	// not true, so the clause needs an explicit IS NULL arm; see the
+	// clause's own comment.
+	if !strings.Contains(excludeWorkbenchQueriesClause, "pss.query IS NULL OR") {
+		t.Errorf("clause must let a NULL query through: %s",
+			excludeWorkbenchQueriesClause)
+	}
+}
+
+// TestSafeTopQueryOrdering asserts that the ordering pair interpolated
+// into the ORDER BY clause is whitelisted at the point of use, so the
+// injection-safety property does not depend on the caller.
+func TestSafeTopQueryOrdering(t *testing.T) {
+	tests := []struct {
+		name          string
+		orderBy       string
+		order         string
+		wantOrderBy   string
+		wantOrder     string
+		wantSanitized bool
+	}{
+		{
+			name:        "valid pair passes through",
+			orderBy:     "calls",
+			order:       "asc",
+			wantOrderBy: "calls",
+			wantOrder:   "asc",
+		},
+		{
+			name:          "empty values fall back",
+			wantOrderBy:   defaultTopQueryOrderBy,
+			wantOrder:     defaultTopQueryOrder,
+			wantSanitized: true,
+		},
+		{
+			name:          "injected column falls back",
+			orderBy:       "calls; DROP TABLE connections --",
+			order:         "asc",
+			wantOrderBy:   defaultTopQueryOrderBy,
+			wantOrder:     "asc",
+			wantSanitized: true,
+		},
+		{
+			name:          "injected direction falls back",
+			orderBy:       "rows",
+			order:         "desc; DROP TABLE connections --",
+			wantOrderBy:   "rows",
+			wantOrder:     defaultTopQueryOrder,
+			wantSanitized: true,
+		},
+		{
+			name:          "uppercase direction is not accepted",
+			orderBy:       "rows",
+			order:         "DESC",
+			wantOrderBy:   "rows",
+			wantOrder:     defaultTopQueryOrder,
+			wantSanitized: true,
+		},
+		{
+			name:          "unknown column falls back",
+			orderBy:       "wal_bytes",
+			order:         "desc",
+			wantOrderBy:   defaultTopQueryOrderBy,
+			wantOrder:     "desc",
+			wantSanitized: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotOrderBy, gotOrder := safeTopQueryOrdering(tt.orderBy, tt.order)
+			if gotOrderBy != tt.wantOrderBy || gotOrder != tt.wantOrder {
+				t.Fatalf("safeTopQueryOrdering(%q, %q) = (%q, %q), "+
+					"want (%q, %q)", tt.orderBy, tt.order,
+					gotOrderBy, gotOrder, tt.wantOrderBy, tt.wantOrder)
+			}
+
+			// The builder must apply the same fallback, so no
+			// unwhitelisted text can ever reach the ORDER BY clause.
+			query, _ := buildTopQueriesQuery(
+				1, 10, "", false, tt.orderBy, tt.order)
+			want := "ORDER BY " + tt.wantOrderBy + " " + tt.wantOrder
+			if !strings.Contains(query, want) {
+				t.Errorf("query is missing %q: %s", want, query)
+			}
+			if tt.wantSanitized && strings.Contains(query, "DROP TABLE") {
+				t.Errorf("unvalidated ordering text reached the query: %s",
+					query)
+			}
+		})
+	}
 }
 
 // TestBuildTopQueriesQuery covers every combination of the optional

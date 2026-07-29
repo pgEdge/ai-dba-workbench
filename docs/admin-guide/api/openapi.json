@@ -5883,6 +5883,22 @@
             }
           },
           {
+            "name": "index_name",
+            "in": "query",
+            "description": "Filter by index name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "queryid",
+            "in": "query",
+            "description": "Filter by query ID; only valid for probes with a queryid column",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "buckets",
             "in": "query",
             "description": "Number of time buckets",
@@ -5920,6 +5936,91 @@
           },
           "400": {
             "description": "Invalid query parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/metrics/query-stats": {
+      "get": {
+        "summary": "Get period-scoped query statistics",
+        "description": "Returns the average execution time, call count, and total execution time of a single query over the requested time range, computed from the deltas between consecutive pg_stat_statements samples",
+        "operationId": "getQueryStats",
+        "tags": [
+          "Metrics"
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "queryid",
+            "in": "query",
+            "description": "Query ID to report on",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Period-scoped query statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
             "content": {
               "application/json": {
                 "schema": {
@@ -12115,6 +12216,35 @@
           }
         }
       },
+      "QueryStatsResponse": {
+        "type": "object",
+        "properties": {
+          "avg_exec_time": {
+            "type": "number",
+            "description": "Average execution time in ms over the requested period, or null when there is no usable data",
+            "nullable": true
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Calls made during the requested period"
+          },
+          "queryid": {
+            "type": "string",
+            "description": "Query ID the statistics apply to"
+          },
+          "total_exec_time": {
+            "type": "number",
+            "description": "Execution time in ms accumulated during the requested period"
+          }
+        },
+        "required": [
+          "queryid",
+          "avg_exec_time",
+          "calls",
+          "total_exec_time"
+        ]
+      },
       "RBACGroup": {
         "type": "object",
         "properties": {
@@ -12698,9 +12828,17 @@
             "type": "string",
             "description": "Database name where the query was executed"
           },
+          "max_exec_time": {
+            "type": "number",
+            "description": "Maximum execution time in ms"
+          },
           "mean_exec_time": {
             "type": "number",
             "description": "Mean execution time in ms"
+          },
+          "min_exec_time": {
+            "type": "number",
+            "description": "Minimum execution time in ms"
           },
           "query": {
             "type": "string",
@@ -12729,6 +12867,10 @@
           "total_exec_time": {
             "type": "number",
             "description": "Total execution time in ms"
+          },
+          "username": {
+            "type": "string",
+            "description": "Database role that ran the query; empty when the role could not be resolved"
           }
         }
       },

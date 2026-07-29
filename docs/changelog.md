@@ -32,6 +32,22 @@ project adheres to
   `X-Total-Count` response header that reports the total number of
   matching rows; the JSON response body is unchanged. (#335)
 
+- Add per-query detail to the query drill-down on the object
+  dashboard. The drill-down now shows minimum and maximum
+  execution time as KPI tiles, and adds an average execution
+  time tile scoped to the selected time range and labelled with
+  that range, such as "Avg Time (Last 24h)". The cumulative
+  lifetime average is now labelled "Mean Time (All Time)" so
+  that users can tell the two figures apart. The drill-down also
+  shows the database role that ran the query beside the query
+  text, and displays "Unknown" when the role cannot be resolved.
+  The API gained a `GET /api/v1/metrics/query-stats` endpoint
+  that returns the period-scoped average execution time for a
+  single query, an optional `queryid` filter on
+  `GET /api/v1/metrics/query`, and the `username`,
+  `min_exec_time`, and `max_exec_time` fields on
+  `GET /api/v1/metrics/top-queries` rows. (#350)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a
@@ -72,6 +88,12 @@ project adheres to
   real users. (#329)
 
 ### Fixed
+
+- Fix the execution time and call count charts in the query
+  drill-down aggregating across every statement on the
+  connection. The charts sent no query filter, so they reported
+  connection-wide totals rather than the selected query; both
+  charts now filter by the query under inspection. (#350)
 
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not

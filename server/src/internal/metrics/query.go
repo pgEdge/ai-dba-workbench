@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,7 +54,17 @@ type MetricFilters struct {
 	SchemaName     string
 	TableName      string
 	IndexName      string
+	// QueryID pins the query to a single pg_stat_statements statement. It
+	// only applies to probe tables that carry a queryid column; callers
+	// reject it against any other probe before building the query, so an
+	// unsupported filter yields a clear error rather than a SQL failure.
+	QueryID string
 }
+
+// QueryIDColumn is the probe column the QueryID filter matches against. It is
+// compared as text so that a client can pass the 64-bit identifier as a JSON
+// string without losing precision.
+const QueryIDColumn = "queryid"
 
 // maxLatestRowLimit bounds the number of rows a latest-row query may
 // return, mirroring the bound-checking style applied to bucket counts.
@@ -334,6 +345,61 @@ func ResolveDatabaseColumn(ctx context.Context, pool *pgxpool.Pool, probeName st
 	return col, nil
 }
 
+// ProbeHasColumn reports whether a probe table in the metrics schema has a
+// column of the given name.
+func ProbeHasColumn(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName, column string,
+) (bool, error) {
+	query := `
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'metrics'
+            AND table_name = $1
+            AND column_name = $2
+    `
+
+	var count int
+	if err := pool.QueryRow(ctx, query, probeName, column).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// errQueryIDUnsupported is the error returned when a queryid filter is
+// requested against a probe that has no queryid column. Handlers surface it
+// to the caller as a 400, so the message must read as user-facing text.
+func errQueryIDUnsupported(probeName string) error {
+	return fmt.Errorf("probe %q does not support the queryid filter", probeName)
+}
+
+// checkQueryIDFilter verifies that a requested queryid filter can be applied
+// to the probe table. Filtering on a column the table does not have would
+// otherwise reach PostgreSQL as an undefined-column error, so the check is
+// made up front and reported in terms the caller can act on.
+func checkQueryIDFilter(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	filters MetricFilters,
+) error {
+	if filters.QueryID == "" {
+		return nil
+	}
+
+	hasColumn, err := ProbeHasColumn(ctx, pool, probeName, QueryIDColumn)
+	if err != nil {
+		return fmt.Errorf("failed to resolve queryid column: %w", err)
+	}
+	if !hasColumn {
+		return errQueryIDUnsupported(probeName)
+	}
+
+	return nil
+}
+
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
 // identifiers to prevent SQL injection.
 func GetAggSelectCols(metricCols []string, aggregation string) []string {
@@ -500,7 +566,20 @@ func metricQueryBase(
 		whereClauses = append(whereClauses,
 			fmt.Sprintf("indexrelname = $%d", argNum))
 		queryArgs = append(queryArgs, filters.IndexName)
-		// No argNum++ here: IndexName is the last filter. A new filter
+		argNum++
+	}
+
+	// QueryID is cast to text so a client may send the identifier as a
+	// string. Unlike the dimension filters above it is checked against the
+	// probe's columns before the query is built (see checkQueryIDFilter),
+	// because it is the only filter a dashboard applies to a probe chosen
+	// by the caller rather than implied by the panel.
+	if filters.QueryID != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("%s::text = $%d",
+				QuoteIdentifier(QueryIDColumn), argNum))
+		queryArgs = append(queryArgs, filters.QueryID)
+		// No argNum++ here: QueryID is the last filter. A new filter
 		// added below must add argNum++ above first.
 	}
 
@@ -844,6 +923,10 @@ func QueryTimeSeries(
 			return nil, fmt.Errorf("failed to resolve database column: %w", err)
 		}
 		filters.DatabaseColumn = dbCol
+	}
+
+	if err := checkQueryIDFilter(ctx, pool, probeName, filters); err != nil {
+		return nil, err
 	}
 
 	// Collect data across all connections
@@ -1251,6 +1334,13 @@ func buildLatestRowsQuery(
 		argNum++
 	}
 
+	if filters.QueryID != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s::text = $%d",
+			QuoteIdentifier(QueryIDColumn), argNum))
+		args = append(args, filters.QueryID)
+		argNum++
+	}
+
 	whereClause := strings.Join(whereClauses, " AND ")
 
 	// connection_id is always part of the entity key so that two monitored
@@ -1388,6 +1478,14 @@ func discoverLatestRowColumns(
 			return nil, nil, "", fmt.Errorf("failed to resolve database column: %w", err)
 		}
 		filters.DatabaseColumn = dbCol
+	}
+
+	// The queryid filter is checked against the columns already discovered
+	// above rather than with a fresh catalog lookup, so a probe without a
+	// queryid column is rejected with the same message the time-series path
+	// produces, and without a second round trip.
+	if filters.QueryID != "" && !slices.Contains(allCols, QueryIDColumn) {
+		return nil, nil, "", errQueryIDUnsupported(probeName)
 	}
 
 	return outputCols, colTypes, orderCol, nil

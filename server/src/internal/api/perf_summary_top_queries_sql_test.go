@@ -20,20 +20,31 @@ import (
 // including the closing parenthesis of the latest-snapshot subquery. The
 // optional filter clauses and the trailing ORDER BY follow it.
 const topQueriesCTEHead = "WITH db_names AS ( " +
-	"SELECT DISTINCT datid, datname " +
+	"SELECT DISTINCT ON (datid) datid, datname " +
 	"FROM metrics.pg_stat_activity " +
 	"WHERE connection_id = $1 " +
 	"AND datid IS NOT NULL " +
 	"AND datname IS NOT NULL " +
+	"ORDER BY datid, collected_at DESC " +
+	"), user_names AS ( " +
+	"SELECT DISTINCT ON (usesysid) usesysid, usename " +
+	"FROM metrics.pg_stat_activity " +
+	"WHERE connection_id = $1 " +
+	"AND usesysid IS NOT NULL " +
+	"AND usename IS NOT NULL " +
+	"ORDER BY usesysid, collected_at DESC " +
 	"), deduped AS ( " +
 	"SELECT DISTINCT ON (pss.queryid) " +
 	"pss.queryid::text, " +
 	"COALESCE(dn.datname, pss.database_name) AS database_name, " +
+	"COALESCE(un.usename, '') AS username, " +
 	"pss.query, pss.calls, pss.total_exec_time, " +
-	"pss.mean_exec_time, pss.rows, " +
+	"pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time, " +
+	"pss.rows, " +
 	"pss.shared_blks_hit, pss.shared_blks_read " +
 	"FROM metrics.pg_stat_statements pss " +
 	"LEFT JOIN db_names dn ON pss.dbid = dn.datid " +
+	"LEFT JOIN user_names un ON pss.userid = un.usesysid " +
 	"WHERE pss.connection_id = $1 " +
 	"AND pss.collected_at = ( " +
 	"SELECT MAX(collected_at) " +

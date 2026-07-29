@@ -142,12 +142,15 @@ func (h *MetricsHandler) handleMetricsQuery(
 		return
 	}
 
-	// Parse optional filters
+	// Parse optional filters. QueryID pins the series to a single
+	// pg_stat_statements statement; without it the Query detail dashboard's
+	// charts would aggregate every statement on the connection.
 	filters := metrics.MetricFilters{
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
 		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      ParseQueryString(r, "queryid"),
 	}
 
 	// Parse buckets (default 150)
@@ -257,6 +260,7 @@ func (h *MetricsHandler) handleLatestRows(
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
 		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      ParseQueryString(r, "queryid"),
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

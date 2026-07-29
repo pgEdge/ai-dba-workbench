@@ -129,6 +129,11 @@ export interface MetricQueryParams {
     schemaName?: string;
     tableName?: string;
     indexName?: string;
+    /**
+     * pg_stat_statements query identifier; scopes a series to a single
+     * statement rather than aggregating across the whole connection.
+     */
+    queryid?: string;
     timeRange: TimeRange;
     buckets?: number;
     aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'last';

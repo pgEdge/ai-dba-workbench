@@ -15,6 +15,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +294,91 @@ func TestTopQueries_OffsetPaging(t *testing.T) {
 	}
 }
 
+// seedTiedTopQueriesFixture inserts seven statements that all share the same
+// total_exec_time, calls, and rows values. The main fixture deliberately uses
+// a unique value per column so its ordering assertions are readable, which
+// means it cannot exercise tie handling; this fixture exists purely so that
+// paging over ties can be tested.
+func seedTiedTopQueriesFixture(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+
+	latest := time.Now().UTC().Add(-1 * time.Minute)
+
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO metrics.pg_stat_statements
+        (connection_id, collected_at, queryid, dbid, database_name, query,
+         calls, total_exec_time, mean_exec_time, rows,
+         shared_blks_hit, shared_blks_read)
+        VALUES
+        ($1, $2, 2001, 100, 'alpha', 'SELECT a', 5, 100, 20, 7, 1, 1),
+        ($1, $2, 2002, 100, 'alpha', 'SELECT b', 5, 100, 20, 7, 1, 1),
+        ($1, $2, 2003, 100, 'alpha', 'SELECT c', 5, 100, 20, 7, 1, 1),
+        ($1, $2, 2004, 100, 'alpha', 'SELECT d', 5, 100, 20, 7, 1, 1),
+        ($1, $2, 2005, 100, 'alpha', 'SELECT e', 5, 100, 20, 7, 1, 1),
+        ($1, $2, 2006, 100, 'alpha', 'SELECT f', 5, 100, 20, 7, 1, 1),
+        ($1, $2, 2007, 100, 'alpha', 'SELECT g', 5, 100, 20, 7, 1, 1)`,
+		topQueriesConnID, latest); err != nil {
+		t.Fatalf("tied fixture seed failed: %v", err)
+	}
+}
+
+// TestTopQueries_PagingOverTiedValues walks a result set in which every row
+// ties on the ordering column. The ORDER BY carries a queryid tiebreaker, so
+// the sort is a total order and successive pages must visit every row exactly
+// once; without the tiebreaker Postgres is free to return tied rows in any
+// order per statement, which would let a page repeat or drop a row.
+func TestTopQueries_PagingOverTiedValues(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTiedTopQueriesFixture(t, pool)
+
+	all := []string{"2001", "2002", "2003", "2004", "2005", "2006", "2007"}
+
+	orders := []struct {
+		name  string
+		query string
+	}{
+		{"descending", "connection_id=4242&limit=2&offset="},
+		{"ascending", "connection_id=4242&order=asc&limit=2&offset="},
+		{"ordered by calls", "connection_id=4242&order_by=calls&limit=2" +
+			"&offset="},
+	}
+
+	for _, ord := range orders {
+		t.Run(ord.name, func(t *testing.T) {
+			seen := make([]string, 0, len(all))
+			for offset := 0; offset < len(all); offset += 2 {
+				rows, total := decodeTopQueries(t, callTopQueries(t, h,
+					ord.query+strconv.Itoa(offset)))
+				if total != "7" {
+					t.Fatalf("X-Total-Count = %q at offset %d, want \"7\"",
+						total, offset)
+				}
+				seen = append(seen, queryIDs(rows)...)
+			}
+
+			// Every row is visited exactly once across the pages: the
+			// tiebreaker makes the paged sort deterministic.
+			if len(seen) != len(all) {
+				t.Fatalf("paging visited %d rows, want %d: %v", len(seen),
+					len(all), seen)
+			}
+			sorted := append([]string(nil), seen...)
+			sort.Strings(sorted)
+			if !reflect.DeepEqual(sorted, all) {
+				t.Fatalf("paging visited %v, want each of %v exactly once",
+					seen, all)
+			}
+
+			// The tiebreaker sorts ascending by queryid, so with every row
+			// tied on the primary key the pages come back in queryid order.
+			if !reflect.DeepEqual(seen, all) {
+				t.Errorf("page order = %v, want %v", seen, all)
+			}
+		})
+	}
+}
+
 // TestTopQueries_DatabaseNameFilter verifies the filter matches the resolved
 // database name exactly, that it feeds into X-Total-Count, and that it
 // composes with offset and the other filters.
@@ -334,6 +422,78 @@ func TestTopQueries_DatabaseNameFilter(t *testing.T) {
 			[]string{}, "0"},
 		{"SQL metacharacters are bound, not interpolated",
 			"connection_id=4242&database_name=alpha%27%20OR%20%271%27%3D%271",
+			[]string{}, "0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, total := decodeTopQueries(t, callTopQueries(t, h, tc.query))
+			if len(rows) != len(tc.want) {
+				t.Fatalf("got %d rows, want %d: %#v", len(rows), len(tc.want),
+					rows)
+			}
+			if total != tc.total {
+				t.Errorf("X-Total-Count = %q, want %q", total, tc.total)
+			}
+			got := queryIDs(rows)
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("rows = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestTopQueries_QueryIDWithDatabaseName exercises the combination that
+// pushes the database filter onto the $3 placeholder, because the queryid
+// filter has already consumed $2. It walks that path with the collector
+// exclusion and with paging as well, so a placeholder-numbering mistake
+// would surface as a wrong row set rather than passing unnoticed.
+func TestTopQueries_QueryIDWithDatabaseName(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+		total string
+	}{
+		{"matching pair", "connection_id=4242&queryid=1003&database_name=alpha",
+			[]string{"1003"}, "1"},
+		{"resolved name on the stale row",
+			"connection_id=4242&queryid=1005&database_name=beta",
+			[]string{"1005"}, "1"},
+		{"stale raw name does not match",
+			"connection_id=4242&queryid=1005&database_name=stale-name",
+			[]string{}, "0"},
+		{"mismatched pair",
+			"connection_id=4242&queryid=1003&database_name=beta",
+			[]string{}, "0"},
+		{"with exclude_collector",
+			"connection_id=4242&queryid=1006&database_name=beta" +
+				"&exclude_collector=true",
+			[]string{}, "0"},
+		{"with paging",
+			"connection_id=4242&queryid=1003&database_name=alpha" +
+				"&limit=1&offset=0",
+			[]string{"1003"}, "1"},
+		{"offset past the single match",
+			"connection_id=4242&queryid=1003&database_name=alpha&offset=1",
+			[]string{}, "1"},
+		{"ascending order",
+			"connection_id=4242&queryid=1002&database_name=alpha" +
+				"&order_by=calls&order=asc",
+			[]string{"1002"}, "1"},
+		{"database metacharacters stay bound",
+			"connection_id=4242&queryid=1003" +
+				"&database_name=alpha%27%20OR%20%271%27%3D%271",
+			[]string{}, "0"},
+		{"queryid metacharacters stay bound",
+			"connection_id=4242&database_name=alpha" +
+				"&queryid=1003%27%20OR%20%271%27%3D%271",
 			[]string{}, "0"},
 	}
 

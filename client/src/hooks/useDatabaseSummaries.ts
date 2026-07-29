@@ -27,6 +27,48 @@ export interface UseDatabaseSummariesResult {
     error: string | null;
 }
 
+/** Build the database-summaries endpoint URL for a connection. */
+const buildSummariesUrl = (
+    connectionId: number,
+    timeRange: string,
+): string => (
+    `/api/v1/metrics/database-summaries`
+    + `?connection_id=${connectionId}&time_range=${timeRange}`
+);
+
+/**
+ * Throw a descriptive error when the response reports a failure.
+ *
+ * The server sends a JSON body with an `error` field for most
+ * failures; when the body is missing or unparseable, fall back to a
+ * message built from the HTTP status.
+ */
+const assertResponseOk = async (response: Response): Promise<void> => {
+    if (response.ok) { return; }
+
+    const errorData = await response.json().catch(
+        () => ({})
+    ) as { error?: string };
+
+    throw new Error(
+        errorData.error
+        ?? `Failed to fetch database summaries: ${response.status}`
+    );
+};
+
+/** Read the summaries from a successful response body. */
+const extractDatabases = async (
+    response: Response,
+): Promise<DatabaseSummary[]> => {
+    const result: ServerPerformanceSummary = await response.json();
+    return result.databases ?? [];
+};
+
+/** Convert a thrown value into a message suitable for display. */
+const toErrorMessage = (err: unknown): string => (
+    (err as Error).message || 'Failed to fetch database summaries'
+);
+
 /**
  * Fetch the per-database performance summaries for a connection.
  *
@@ -60,8 +102,7 @@ export const useDatabaseSummaries = (
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
-        const url = `/api/v1/metrics/database-summaries`
-            + `?connection_id=${connectionId}&time_range=${timeRange}`;
+        const url = buildSummariesUrl(connectionId, timeRange);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -70,29 +111,16 @@ export const useDatabaseSummaries = (
 
         try {
             const response = await apiFetch(url);
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(
-                    () => ({})
-                ) as { error?: string };
-                throw new Error(
-                    errorData.error
-                    ?? `Failed to fetch database summaries: ${response.status}`
-                );
-            }
+            await assertResponseOk(response);
 
             if (isMountedRef.current) {
-                const result: ServerPerformanceSummary = await response.json();
-                setDatabases(result.databases ?? []);
+                setDatabases(await extractDatabases(response));
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
             logger.error('Error fetching database summaries:', err);
             if (isMountedRef.current) {
-                setError(
-                    (err as Error).message
-                    || 'Failed to fetch database summaries'
-                );
+                setError(toErrorMessage(err));
                 setDatabases([]);
             }
         } finally {

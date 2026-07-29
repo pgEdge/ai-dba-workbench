@@ -3,6 +3,13 @@
 This document provides a complete reference for all
 built-in probes in the Collector.
 
+Each probe reads its source views with the credentials
+stored against the monitored connection. The
+[Monitored Database Privileges](../../getting-started/configuration/monitored-database-privileges.md)
+document describes the PostgreSQL grants those probes
+require, and lists the probes that return no data when
+the monitoring role lacks them.
+
 ## Probe Categories
 
 The Collector organizes probes into two categories:

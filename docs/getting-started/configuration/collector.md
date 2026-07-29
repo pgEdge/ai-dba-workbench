@@ -303,6 +303,13 @@ file requires re-entering all monitored connection passwords. Do not
 manually encrypt passwords; use the MCP server API to create and
 manage connections with passwords.
 
+The credentials stored against a monitored connection belong to a
+PostgreSQL role on the monitored server, which is separate from the
+datastore role configured above. The
+[Monitored Database Privileges](monitored-database-privileges.md)
+document describes the grants that role needs, including the
+`pg_monitor` predefined role and the per-database `CONNECT` privilege.
+
 ## Command-Line Flags
 
 The following table lists all available command-line flags.

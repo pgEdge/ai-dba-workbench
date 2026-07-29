@@ -9,6 +9,7 @@
  */
 
 import { EVENT_TYPE_CONFIG } from './config';
+import { resolveTimeRangeBounds } from '../../utils/timelineRange';
 
 /**
  * Resolve a dotted path like 'primary.main' from the theme palette
@@ -96,34 +97,13 @@ export const calculatePosition = (eventTime, startTime, endTime) => {
 };
 
 /**
- * Get time range boundaries
+ * Get time range boundaries for either a rolling preset or an arbitrary
+ * window. The calculation itself lives in utils/timelineRange.ts, which
+ * the fetch layer in hooks/useTimelineEvents.ts also uses, so that the
+ * bounds the canvas draws and the bounds the API is queried with cannot
+ * drift apart.
  */
-export const getTimeRangeBounds = (timeRange) => {
-    const now = new Date();
-    let startTime;
-
-    switch (timeRange) {
-        case '1h':
-            startTime = new Date(now.getTime() - 60 * 60 * 1000);
-            break;
-        case '6h':
-            startTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-            break;
-        case '24h':
-            startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            break;
-        case '7d':
-            startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            break;
-        case '30d':
-            startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            break;
-        default:
-            startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    }
-
-    return { startTime, endTime: now };
-};
+export const getTimeRangeBounds = (timeRange) => resolveTimeRangeBounds(timeRange);
 
 /**
  * Cluster nearby events

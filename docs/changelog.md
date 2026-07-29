@@ -40,10 +40,11 @@ project adheres to
   window is held in memory only, so it is neither persisted nor
   reflected in the page URL, and a reload returns to the last
   preset.
-  The time-series charts and the event timeline honour a custom
-  window, including the charts on the query detail overlay. The
-  query leaderboards and the performance and database summary
-  tiles do not yet follow the selector. (#345)
+  The time-series charts honour the dashboard window, including
+  the charts on the query detail overlay, whilst the event
+  timeline honours the independent window set on its own control.
+  The query leaderboards and the performance and database summary
+  tiles do not yet follow the dashboard selector. (#345)
 
 ### Changed
 

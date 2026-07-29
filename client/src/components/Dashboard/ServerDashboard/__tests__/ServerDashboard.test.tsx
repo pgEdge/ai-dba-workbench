@@ -57,6 +57,21 @@ vi.mock('../DatabaseSummariesSection', () => ({
     ),
 }));
 
+vi.mock('../ConnectionsSection', () => ({
+    default: ({ connectionId, connectionName }: {
+        connectionId: number;
+        connectionName?: string;
+    }) => (
+        <div
+            data-testid="connections-section"
+            data-connection-id={connectionId}
+            data-connection-name={connectionName}
+        >
+            Connections Content
+        </div>
+    ),
+}));
+
 vi.mock('../TopQueriesSection', () => ({
     default: ({ connectionId }: { connectionId: number }) => (
         <div data-testid="top-queries-section" data-connection-id={connectionId}>
@@ -115,7 +130,29 @@ describe('ServerDashboard', () => {
         expect(screen.getByTestId('postgres-overview-section')).toBeInTheDocument();
         expect(screen.getByTestId('wal-replication-section')).toBeInTheDocument();
         expect(screen.getByTestId('database-summaries-section')).toBeInTheDocument();
+        expect(screen.getByTestId('connections-section')).toBeInTheDocument();
         expect(screen.getByTestId('top-queries-section')).toBeInTheDocument();
+    });
+
+    it('renders the Connections section after Database Summaries', () => {
+        const { container } = renderServerDashboard(createSelection(1));
+
+        const testIds = Array.from(
+            container.querySelectorAll('[data-testid]'),
+        ).map(el => el.getAttribute('data-testid'));
+
+        expect(testIds.indexOf('connections-section')).toBe(
+            testIds.indexOf('database-summaries-section') + 1,
+        );
+    });
+
+    it('passes connectionName to ConnectionsSection', () => {
+        renderServerDashboard(createSelection(1, 'Production Server'));
+
+        expect(screen.getByTestId('connections-section')).toHaveAttribute(
+            'data-connection-name',
+            'Production Server',
+        );
     });
 
     it('passes connectionId to all sections', () => {
@@ -134,6 +171,10 @@ describe('ServerDashboard', () => {
             '42',
         );
         expect(screen.getByTestId('database-summaries-section')).toHaveAttribute(
+            'data-connection-id',
+            '42',
+        );
+        expect(screen.getByTestId('connections-section')).toHaveAttribute(
             'data-connection-id',
             '42',
         );

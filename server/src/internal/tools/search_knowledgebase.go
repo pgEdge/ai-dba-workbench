@@ -303,6 +303,73 @@ func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, que
 	return vector32, embCfg.Provider, nil
 }
 
+// kbEmbeddingColumns is the fixed allow-list of embedding columns that
+// searchKB understands, in a stable order. Knowledgebase files vary by
+// vintage: older ones carry no gemini_embedding column at all, and a
+// provider-specific build may carry only one of these columns. Every
+// column name that reaches the generated SQL comes from this literal
+// list, never from user input or configuration, so interpolating the
+// selected names into the statement remains injection-safe.
+var kbEmbeddingColumns = []string{
+	"openai_embedding",
+	"voyage_embedding",
+	"ollama_embedding",
+	"gemini_embedding",
+}
+
+// kbProviderColumn maps a configured embedding provider onto the column
+// holding that provider's vectors. Unrecognized providers fall through
+// to openai, matching the historic behavior of this tool.
+func kbProviderColumn(provider string) string {
+	switch strings.ToLower(provider) {
+	case "voyage":
+		return "voyage_embedding"
+	case "ollama":
+		return "ollama_embedding"
+	case "gemini":
+		return "gemini_embedding"
+	default: // openai
+		return "openai_embedding"
+	}
+}
+
+// kbProviderName renders an embedding column as its provider name, for
+// use in user-facing error messages.
+func kbProviderName(column string) string {
+	return strings.TrimSuffix(column, "_embedding")
+}
+
+// kbPresentEmbeddingColumns probes the chunks table and returns the
+// subset of kbEmbeddingColumns that the knowledgebase file actually
+// carries, preserving the allow-list order. A missing or unreadable
+// chunks table surfaces as an error from the probe itself.
+func kbPresentEmbeddingColumns(db *sql.DB) ([]string, error) {
+	// LIMIT 0 fetches the column metadata without reading any rows.
+	rows, err := db.Query(`SELECT * FROM chunks LIMIT 0`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect chunks table: %w", err)
+	}
+	defer rows.Close()
+
+	names, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect chunks table: %w", err)
+	}
+
+	existing := make(map[string]bool, len(names))
+	for _, name := range names {
+		existing[name] = true
+	}
+
+	var present []string
+	for _, column := range kbEmbeddingColumns {
+		if existing[column] {
+			present = append(present, column)
+		}
+	}
+	return present, nil
+}
+
 func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVersions []string, topN int, provider string) ([]KBSearchResult, error) {
 	// Open database
 	db, err := sql.Open("sqlite", kbPath)
@@ -311,14 +378,52 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 	}
 	defer db.Close()
 
-	// Build query. The IN clauses are extended only with hard-coded "?"
-	// placeholder strings; the actual project name/version values flow in
-	// via the args slice and are bound as query parameters, never
-	// interpolated into SQL, so this is safe from SQL injection.
+	// Work out which embedding columns this knowledgebase carries, and
+	// confirm the configured provider is among them. Selecting a column
+	// that does not exist would otherwise fail with a bare SQLite "no
+	// such column" error.
+	presentColumns, err := kbPresentEmbeddingColumns(db)
+	if err != nil {
+		return nil, fmt.Errorf("%w (knowledgebase %q)", err, kbPath)
+	}
+
+	providerColumn := kbProviderColumn(provider)
+	providerIndex := -1
+	availableProviders := make([]string, 0, len(presentColumns))
+	for i, column := range presentColumns {
+		if column == providerColumn {
+			providerIndex = i
+		}
+		availableProviders = append(availableProviders, kbProviderName(column))
+	}
+	if providerIndex < 0 {
+		if len(availableProviders) == 0 {
+			return nil, fmt.Errorf(
+				"knowledgebase %q carries no embeddings at all (the chunks table has none of the "+
+					"supported embedding columns: %s), so it cannot be searched with provider %q",
+				kbPath, strings.Join(kbEmbeddingColumns, ", "), kbProviderName(providerColumn))
+		}
+		return nil, fmt.Errorf(
+			"knowledgebase %q carries no %q embeddings (it has no %s column; embeddings present: %s); "+
+				"the configured knowledgebase embedding provider must match the provider used to build the "+
+				"knowledgebase, so either rebuild the knowledgebase with %q embeddings or configure one of: %s",
+			kbPath, kbProviderName(providerColumn), providerColumn,
+			strings.Join(availableProviders, ", "), kbProviderName(providerColumn),
+			strings.Join(availableProviders, ", "))
+	}
+
+	// Build query. The embedding column list is assembled solely from the
+	// hard-coded kbEmbeddingColumns allow-list, and the IN clauses are
+	// extended only with hard-coded "?" placeholder strings; the actual
+	// project name/version values flow in via the args slice and are
+	// bound as query parameters, never interpolated into SQL, so this is
+	// safe from SQL injection.
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString(`
         SELECT text, title, section, project_name, project_version, file_path,
-               openai_embedding, voyage_embedding, ollama_embedding
+               `)
+	queryBuilder.WriteString(strings.Join(presentColumns, ", "))
+	queryBuilder.WriteString(`
         FROM chunks
         WHERE 1=1
     `)
@@ -349,46 +454,35 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 	}
 
 	query := queryBuilder.String()
-	rows, err := db.Query(query, args...) //nolint:gosec // G202: IN-clause is built from hard-coded "?" placeholders; values are bound parameters
+	rows, err := db.Query(query, args...) //nolint:gosec // G202: column list comes from the kbEmbeddingColumns allow-list and the IN-clause is built from hard-coded "?" placeholders; values are bound parameters
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 	defer rows.Close()
 
 	var results []KBSearchResult
+	var rowCount, emptyProviderRows int
 
 	for rows.Next() {
 		var text, title, section, pName, pVersion, filePath string
-		var openaiBlob, voyageBlob, ollamaBlob []byte
+		blobs := make([][]byte, len(presentColumns))
 
-		err := rows.Scan(&text, &title, &section, &pName, &pVersion, &filePath,
-			&openaiBlob, &voyageBlob, &ollamaBlob)
-		if err != nil {
+		scanTargets := []any{&text, &title, &section, &pName, &pVersion, &filePath}
+		for i := range blobs {
+			scanTargets = append(scanTargets, &blobs[i])
+		}
+		if err := rows.Scan(scanTargets...); err != nil {
 			continue
 		}
+		rowCount++
 
-		// Select appropriate embedding based on provider
-		var embBlob []byte
-		switch strings.ToLower(provider) {
-		case "voyage":
-			embBlob = voyageBlob
-		case "ollama":
-			embBlob = ollamaBlob
-		default: // openai
-			embBlob = openaiBlob
-		}
-
+		// Use the configured provider's embedding only; substituting
+		// another provider's vectors would silently compare vectors of
+		// differing dimensions and rank every row identically.
+		embBlob := blobs[providerIndex]
 		if len(embBlob) == 0 {
-			// Try other providers if selected one is empty
-			if len(openaiBlob) > 0 {
-				embBlob = openaiBlob
-			} else if len(voyageBlob) > 0 {
-				embBlob = voyageBlob
-			} else if len(ollamaBlob) > 0 {
-				embBlob = ollamaBlob
-			} else {
-				continue // No embeddings available
-			}
+			emptyProviderRows++
+			continue
 		}
 
 		// Deserialize embedding
@@ -413,6 +507,19 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating search results: %w", err)
+	}
+
+	// Distinguish an empty knowledgebase, or a filter that matched
+	// nothing, from a knowledgebase whose rows carry no embeddings for
+	// the configured provider; the latter is a misconfiguration and
+	// deserves an explicit error rather than a bland "no results".
+	if len(results) == 0 && rowCount > 0 && emptyProviderRows == rowCount {
+		return nil, fmt.Errorf(
+			"knowledgebase %q has an empty %s column for all %d matching chunks, so it carries no %q "+
+				"embeddings; rebuild the knowledgebase with %q embeddings or configure a provider whose "+
+				"embeddings it contains",
+			kbPath, providerColumn, rowCount, kbProviderName(providerColumn),
+			kbProviderName(providerColumn))
 	}
 
 	// Sort by similarity (descending)

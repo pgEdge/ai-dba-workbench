@@ -82,6 +82,23 @@ project adheres to
   honours a custom time range through the same `time_start` and
   `time_end` parameters as the metrics query endpoint. (#346)
 
+- Add per-query detail to the query drill-down on the object
+  dashboard. The drill-down now shows minimum and maximum
+  execution time as KPI tiles, and adds an average execution
+  time tile scoped to the selected time range and labelled with
+  that range, such as "Avg Time (Last 24h)". The cumulative
+  lifetime average is now labelled "Mean Time (All Time)" so
+  that users can tell the two figures apart. The drill-down also
+  shows the database role that ran the query beside the query
+  text, and displays "Unknown" when the role cannot be resolved.
+  The API gained a `GET /api/v1/metrics/query-stats` endpoint
+  that returns the period-scoped average execution time for a
+  single query, and the `username`, `min_exec_time`, and
+  `max_exec_time` fields on `GET /api/v1/metrics/top-queries`
+  rows. The `queryid` parameter of that endpoint and of the new
+  one must now be a 64-bit integer; any other value is rejected
+  with a `400` instead of matching nothing. (#350)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a

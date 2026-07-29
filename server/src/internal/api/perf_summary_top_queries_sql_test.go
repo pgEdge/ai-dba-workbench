@@ -20,20 +20,31 @@ import (
 // including the closing parenthesis of the latest-snapshot subquery. The
 // optional filter clauses and the trailing ORDER BY follow it.
 const topQueriesCTEHead = "WITH db_names AS ( " +
-	"SELECT DISTINCT datid, datname " +
+	"SELECT DISTINCT ON (datid) datid, datname " +
 	"FROM metrics.pg_stat_activity " +
 	"WHERE connection_id = $1 " +
 	"AND datid IS NOT NULL " +
 	"AND datname IS NOT NULL " +
+	"ORDER BY datid, collected_at DESC " +
+	"), user_names AS ( " +
+	"SELECT DISTINCT ON (usesysid) usesysid, usename " +
+	"FROM metrics.pg_stat_activity " +
+	"WHERE connection_id = $1 " +
+	"AND usesysid IS NOT NULL " +
+	"AND usename IS NOT NULL " +
+	"ORDER BY usesysid, collected_at DESC " +
 	"), deduped AS ( " +
 	"SELECT DISTINCT ON (pss.queryid) " +
 	"pss.queryid::text, " +
 	"COALESCE(dn.datname, pss.database_name) AS database_name, " +
+	"COALESCE(un.usename, '') AS username, " +
 	"pss.query, pss.calls, pss.total_exec_time, " +
-	"pss.mean_exec_time, pss.rows, " +
+	"pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time, " +
+	"pss.rows, " +
 	"pss.shared_blks_hit, pss.shared_blks_read " +
 	"FROM metrics.pg_stat_statements pss " +
 	"LEFT JOIN db_names dn ON pss.dbid = dn.datid " +
+	"LEFT JOIN user_names un ON pss.userid = un.usesysid " +
 	"WHERE pss.connection_id = $1 " +
 	"AND pss.collected_at = ( " +
 	"SELECT MAX(collected_at) " +
@@ -67,7 +78,6 @@ func joinSQL(parts ...string) string {
 func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 	const (
 		connID       = 42
-		queryID      = "1234567890"
 		databaseName = "alpha"
 		limit        = 25
 		offset       = 50
@@ -77,9 +87,13 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		excludeSQL = excludeWorkbenchQueriesClause
 	)
 
+	// queryID is a variable rather than a constant so that its address
+	// can be taken: the builder receives the parsed identifier as *int64.
+	var queryID int64 = 1234567890
+
 	tests := []struct {
 		name             string
-		queryID          string
+		queryID          *int64
 		databaseName     string
 		excludeCollector bool
 		wantFilters      string
@@ -122,26 +136,26 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		},
 		{
 			name:           "queryid only",
-			queryID:        queryID,
-			wantFilters:    "AND pss.queryid::text = $2",
+			queryID:        &queryID,
+			wantFilters:    "AND pss.queryid = $2",
 			wantTail:       "LIMIT $3 OFFSET $4",
 			wantFilterArgs: []any{connID, queryID},
 			wantPageArgs:   []any{connID, queryID, limit, offset},
 		},
 		{
 			name:             "queryid and exclude collector",
-			queryID:          queryID,
+			queryID:          &queryID,
 			excludeCollector: true,
-			wantFilters:      "AND pss.queryid::text = $2 " + excludeSQL,
+			wantFilters:      "AND pss.queryid = $2 " + excludeSQL,
 			wantTail:         "LIMIT $3 OFFSET $4",
 			wantFilterArgs:   []any{connID, queryID},
 			wantPageArgs:     []any{connID, queryID, limit, offset},
 		},
 		{
 			name:           "queryid and database name",
-			queryID:        queryID,
+			queryID:        &queryID,
 			databaseName:   databaseName,
-			wantFilters:    "AND pss.queryid::text = $2",
+			wantFilters:    "AND pss.queryid = $2",
 			wantDBClause:   "WHERE database_name = $3",
 			wantTail:       "LIMIT $4 OFFSET $5",
 			wantFilterArgs: []any{connID, queryID, databaseName},
@@ -150,10 +164,10 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		},
 		{
 			name:             "queryid, database name and exclude collector",
-			queryID:          queryID,
+			queryID:          &queryID,
 			databaseName:     databaseName,
 			excludeCollector: true,
-			wantFilters:      "AND pss.queryid::text = $2 " + excludeSQL,
+			wantFilters:      "AND pss.queryid = $2 " + excludeSQL,
 			wantDBClause:     "WHERE database_name = $3",
 			wantTail:         "LIMIT $4 OFFSET $5",
 			wantFilterArgs:   []any{connID, queryID, databaseName},
@@ -203,7 +217,7 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 		for dirToken, direction := range validTopQueryOrderDirections {
 			t.Run(token+"_"+dirToken, func(t *testing.T) {
 				_, pageSQL, _, _ := buildTopQueriesSQL(
-					1, "", "", false, column, direction, 10, 0)
+					1, nil, "", false, column, direction, 10, 0)
 				want := "ORDER BY " + column + " " + direction +
 					", queryid LIMIT $2 OFFSET $3"
 				if got := normaliseSQL(pageSQL); !strings.HasSuffix(got,
@@ -219,8 +233,9 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 // slice is a copy rather than an alias of the filter arguments, so appending
 // the limit and offset cannot disturb the count query's arguments.
 func TestBuildTopQueriesSQL_ArgumentsAreIndependent(t *testing.T) {
+	var queryID int64 = 99
 	_, _, filterArgs, pageArgs := buildTopQueriesSQL(
-		7, "99", "beta", true, "calls", "ASC", 5, 10)
+		7, &queryID, "beta", true, "calls", "ASC", 5, 10)
 
 	if len(filterArgs) != 3 {
 		t.Fatalf("filterArgs = %#v, want three entries", filterArgs)
@@ -234,18 +249,19 @@ func TestBuildTopQueriesSQL_ArgumentsAreIndependent(t *testing.T) {
 
 // TestBuildTopQueriesSQL_NoUserValuesInSQL is a belt-and-braces check that
 // no caller-supplied value reaches the statement text; each one must appear
-// only in the argument slices.
+// only in the argument slices. The queryid is an int64 by the time it
+// reaches the builder, so the handler's parser is what keeps SQL text out
+// of it; here it is checked for the same reason as the numeric limit and
+// offset, namely that its decimal form is never interpolated.
 func TestBuildTopQueriesSQL_NoUserValuesInSQL(t *testing.T) {
-	const (
-		evilQueryID = "1 OR 1=1"
-		evilDBName  = "alpha'; DROP TABLE metrics.pg_stat_statements; --"
-	)
+	const evilDBName = "alpha'; DROP TABLE metrics.pg_stat_statements; --"
+	var evilQueryID int64 = 8675309
 
 	countSQL, pageSQL, filterArgs, pageArgs := buildTopQueriesSQL(
-		31337, evilQueryID, evilDBName, true, "rows", "ASC", 11, 22)
+		31337, &evilQueryID, evilDBName, true, "rows", "ASC", 11, 22)
 
 	for _, sql := range []string{countSQL, pageSQL} {
-		for _, value := range []string{evilQueryID, evilDBName, "31337",
+		for _, value := range []string{"8675309", evilDBName, "31337",
 			"11", "22"} {
 			if strings.Contains(sql, value) {
 				t.Errorf("generated SQL contains user value %q:\n%s", value,

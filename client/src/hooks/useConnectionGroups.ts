@@ -101,6 +101,15 @@ export const useConnectionGroups = (
     const userRef = useRef(user);
     userRef.current = user;
 
+    /*
+     * Monotonic request counter. Each call to fetchData claims the next
+     * value and only commits its outcome whilst it still holds the
+     * latest one, so a slow response for a superseded grouping, period,
+     * or connection cannot overwrite fresher state once the user has
+     * moved on.
+     */
+    const requestIdRef = useRef<number>(0);
+
     const isLoggedIn = !!user;
     const connectionId = params?.connectionId;
     const groupBy = params?.groupBy;
@@ -112,6 +121,15 @@ export const useConnectionGroups = (
         const url = buildRequestUrl(connectionId, groupBy, timeRange);
         if (!url) { return; }
 
+        const requestId = ++requestIdRef.current;
+
+        /**
+         * Whether this request may still commit: the hook must be
+         * mounted and no later request may have started since.
+         */
+        const isCurrent = (): boolean =>
+            isMountedRef.current && requestIdRef.current === requestId;
+
         if (!initialLoadDoneRef.current) {
             setLoading(true);
         }
@@ -122,20 +140,20 @@ export const useConnectionGroups = (
             const { groups: rows, collectedAt: snapshot } =
                 normaliseResponse(result);
 
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setGroups(rows);
                 setCollectedAt(snapshot);
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
             logger.error('Error fetching connection groups:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError(describeFetchError(err));
                 setGroups([]);
                 setCollectedAt(null);
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }

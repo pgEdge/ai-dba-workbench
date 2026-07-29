@@ -5853,7 +5853,23 @@
           {
             "name": "time_range",
             "in": "query",
-            "description": "Time range (1h, 6h, 24h, 7d, 30d)",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom); custom requires time_start and time_end",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
             "schema": {
               "type": "string"
             }
@@ -9195,7 +9211,7 @@
           {
             "name": "start_time",
             "in": "query",
-            "description": "Start time (RFC3339)",
+            "description": "Start time (RFC3339). The span between start_time and end_time must not exceed 366 days",
             "required": true,
             "schema": {
               "type": "string"
@@ -9204,7 +9220,7 @@
           {
             "name": "end_time",
             "in": "query",
-            "description": "End time (RFC3339)",
+            "description": "End time (RFC3339). Must be after start_time, and no more than 366 days after it",
             "required": true,
             "schema": {
               "type": "string"

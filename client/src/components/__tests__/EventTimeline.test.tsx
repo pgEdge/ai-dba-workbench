@@ -289,6 +289,50 @@ describe('EventTimeline Component', () => {
                 })
             );
         });
+
+        it('removes one event type whilst others remain selected', () => {
+            render(<EventTimeline selection={mockServerSelection} />);
+
+            fireEvent.click(screen.getByText('Config'));
+            fireEvent.click(screen.getByText('Alert'));
+            fireEvent.click(screen.getByText('Alert'));
+
+            expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    eventTypes: ['config_change'],
+                })
+            );
+        });
+
+        it('returns to all when the last selected chip is deselected', () => {
+            render(<EventTimeline selection={mockServerSelection} />);
+
+            fireEvent.click(screen.getByText('Config'));
+            fireEvent.click(screen.getByText('Config'));
+
+            expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    eventTypes: ['all'],
+                })
+            );
+        });
+
+        it('collapses to all once every chip is selected', () => {
+            render(<EventTimeline selection={mockServerSelection} />);
+
+            // Starting from 'all', selecting every chip in turn ends with
+            // the full set, which the header collapses back to 'all'.
+            ['Config', 'HBA', 'Ident', 'Restart', 'Alert', 'Cleared',
+                'Acked', 'Extension', 'Blackouts'].forEach((label) => {
+                fireEvent.click(screen.getByText(label));
+            });
+
+            expect(useTimelineEventsModule.useTimelineEvents).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    eventTypes: ['all'],
+                })
+            );
+        });
     });
 
     describe('Connection ID Handling', () => {
@@ -462,7 +506,12 @@ describe('EventTimeline Component', () => {
             expect(toggleGroup).toBeInTheDocument();
 
             const buttons = within(toggleGroup).getAllByRole('button');
-            expect(buttons.length).toBe(5); // 1h, 6h, 24h, 7d, 30d
+            expect(buttons.length).toBe(6); // 1h, 6h, 24h, 7d, 30d, Custom
+            expect(
+                within(toggleGroup).getByRole('button', {
+                    name: 'Select custom time range',
+                }),
+            ).toBeInTheDocument();
         });
 
         it('event markers have tooltips for accessibility', () => {

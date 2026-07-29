@@ -14,6 +14,10 @@ import { useClusterData } from '../contexts/useClusterData';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 import { useRetryingFetch } from './useRetryingFetch';
+import {
+    resolveTimeRangeBounds,
+    type TimelineTimeRange,
+} from '../utils/timelineRange';
 
 export interface TimelineEvent {
     id: number;
@@ -26,13 +30,13 @@ export interface TimelineEvent {
     [key: string]: unknown;
 }
 
-interface CustomTimeRange {
-    start: Date;
-    end: Date;
-}
-
-export type TimeRangePreset = '1h' | '6h' | '24h' | '7d' | '30d';
-export type TimeRange = TimeRangePreset | CustomTimeRange;
+/*
+ * The range types live in utils/timelineRange.ts alongside the bounds
+ * calculation; they are re-exported here because existing callers import
+ * them from this hook.
+ */
+export type { CustomTimeRange, TimeRangePreset } from '../utils/timelineRange';
+export type TimeRange = TimelineTimeRange;
 
 export interface UseTimelineEventsOptions {
     connectionId?: number | null;
@@ -58,44 +62,15 @@ interface TimelineApiResponse {
 }
 
 /**
- * Calculate start and end times based on the time range parameter
+ * Calculate start and end times based on the time range parameter,
+ * expressed as the ISO strings the timeline API expects.
  */
 const calculateTimeRange = (timeRange: TimeRange): { startTime: string; endTime: string } => {
-    const now = new Date();
-    let startTime: Date | string;
-    let endTime: Date | string = now;
-
-    if (typeof timeRange === 'object' && 'start' in timeRange && 'end' in timeRange) {
-        // Custom range with start and end dates
-        startTime = timeRange.start;
-        endTime = timeRange.end;
-    } else {
-        // Predefined ranges
-        switch (timeRange) {
-            case '1h':
-                startTime = new Date(now.getTime() - 60 * 60 * 1000);
-                break;
-            case '6h':
-                startTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-                break;
-            case '24h':
-                startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-                break;
-            case '7d':
-                startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                break;
-            case '30d':
-                startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                break;
-            default:
-                // Default to last 24 hours
-                startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        }
-    }
+    const { startTime, endTime } = resolveTimeRangeBounds(timeRange);
 
     return {
-        startTime: startTime instanceof Date ? startTime.toISOString() : startTime,
-        endTime: endTime instanceof Date ? endTime.toISOString() : endTime,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
     };
 };
 

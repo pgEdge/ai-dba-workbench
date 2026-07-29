@@ -27,6 +27,14 @@ import (
 
 const timeSeriesTestProbe = "pg_stat_all_tables_ts_test"
 
+// lastHourWindow returns the resolved window these tests query over. It
+// matches what the HTTP boundary produces for time_range=1h, which is the
+// window the fixture samples are placed inside.
+func lastHourWindow() TimeWindow {
+	now := time.Now().UTC()
+	return TimeWindow{Start: now.Add(-time.Hour), End: now}
+}
+
 // setupTimeSeriesFixture creates the metrics schema (if absent) and a probe
 // table carrying the counter and tuple columns the table dashboards depend
 // on. It inserts four connection-1 samples spaced one minute apart across the
@@ -203,7 +211,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("raw column request", func(t *testing.T) {
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", []string{"n_live_tup"})
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"n_live_tup"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -229,7 +237,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("per_sec rate request", func(t *testing.T) {
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg",
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_per_sec"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -263,7 +271,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("per_sec rate with last aggregation", func(t *testing.T) {
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "last",
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "last",
 			[]string{"idx_scan_per_sec"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -288,7 +296,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("dead_tuple_ratio request", func(t *testing.T) {
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg",
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"dead_tuple_ratio"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -321,7 +329,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	t.Run("mixed raw and derived preserves request order", func(t *testing.T) {
 		requested := []string{"n_live_tup", "seq_scan_per_sec", "dead_tuple_ratio"}
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", requested)
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", requested)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -338,7 +346,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("empty request returns all numeric columns", func(t *testing.T) {
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", nil)
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -352,24 +360,16 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("unknown metric rejected", func(t *testing.T) {
 		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg",
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"not_a_real_metric"})
 		if err == nil {
 			t.Fatal("expected error for unknown metric")
 		}
 	})
 
-	t.Run("invalid time range rejected", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "bogus", MetricFilters{}, 60, "avg", []string{"seq_scan"})
-		if err == nil {
-			t.Fatal("expected error for invalid time range")
-		}
-	})
-
 	t.Run("missing probe rejected", func(t *testing.T) {
 		_, err := QueryTimeSeries(ctx, pool, "does_not_exist_probe",
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", []string{"seq_scan"})
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error for missing probe")
 		}
@@ -377,7 +377,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("invalid probe name rejected", func(t *testing.T) {
 		_, err := QueryTimeSeries(ctx, pool, "bad-name",
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", []string{"seq_scan"})
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error for invalid probe name")
 		}
@@ -387,7 +387,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		cctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := QueryTimeSeries(cctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", []string{"seq_scan"})
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error from canceled context")
 		}
@@ -398,7 +398,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// connection must still tag every series name with its connection
 		// and emit an empty series for the connection without data.
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1, 2}, "1h", MetricFilters{}, 60, "avg", []string{"n_live_tup"})
+			[]int{1, 2}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"n_live_tup"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -435,7 +435,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		defer dropTable(ctx, pool, internalOnly)
 
 		_, err := QueryTimeSeries(ctx, pool, internalOnly,
-			[]int{1}, "1h", MetricFilters{}, 60, "avg", nil)
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", nil)
 		if err == nil {
 			t.Fatal("expected error for probe with no numeric metrics")
 		}
@@ -445,7 +445,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// An aggregation that names no real SQL function makes the built raw
 		// query fail at execution, exercising the raw-path error return.
 		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "no_such_agg",
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "no_such_agg",
 			[]string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error from failing raw query")
@@ -456,7 +456,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// The same invalid aggregation makes the derived rate query fail at
 		// execution, exercising the derived-path error return.
 		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{}, 60, "no_such_agg",
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "no_such_agg",
 			[]string{"seq_scan_per_sec"})
 		if err == nil {
 			t.Fatal("expected error from failing derived query")
@@ -465,7 +465,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("database filter resolves and narrows", func(t *testing.T) {
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h", MetricFilters{DatabaseName: "northwind"}, 60,
+			[]int{1}, lastHourWindow(), MetricFilters{DatabaseName: "northwind"}, 60,
 			"avg", []string{"n_live_tup"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -481,7 +481,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// idx_scan_per_sec scoped to a single index. With IndexName plumbed
 		// through metricQueryBase, the matching index returns real rate data.
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h",
+			[]int{1}, lastHourWindow(),
 			MetricFilters{SchemaName: "public", TableName: "orders", IndexName: "pk_orders"},
 			60, "avg", []string{"idx_scan_per_sec"})
 		if err != nil {
@@ -510,7 +510,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// empty; this is what previously happened for every index because the
 		// filter was silently dropped and the wrong dimension was queried.
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h",
+			[]int{1}, lastHourWindow(),
 			MetricFilters{IndexName: "some_other_index"},
 			60, "avg", []string{"idx_scan_per_sec"})
 		if err != nil {
@@ -527,7 +527,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// The raw-column path shares metricQueryBase, so IndexName must scope
 		// it too; a non-matching index yields an empty raw series.
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, "1h",
+			[]int{1}, lastHourWindow(),
 			MetricFilters{IndexName: "no_such_index"},
 			60, "avg", []string{"idx_scan"})
 		if err != nil {

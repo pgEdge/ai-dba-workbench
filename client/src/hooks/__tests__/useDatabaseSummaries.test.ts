@@ -110,6 +110,44 @@ describe('useDatabaseSummaries', () => {
         });
     });
 
+    it('falls back to a generic message for an empty error', async () => {
+        mockApiFetch.mockRejectedValue(new Error(''));
+
+        const { result } = renderHook(() => useDatabaseSummaries(1));
+
+        await waitFor(() => {
+            expect(result.current.error).toBe(
+                'Failed to fetch database summaries',
+            );
+        });
+        expect(result.current.databases).toEqual([]);
+    });
+
+    it('does not update state after unmounting', async () => {
+        let resolveFetch: (value: Partial<Response>) => void = () => {};
+        mockApiFetch.mockReturnValue(new Promise<Partial<Response>>(
+            (resolve) => { resolveFetch = resolve; },
+        ));
+
+        const parse = vi.fn(() => Promise.resolve({
+            databases: [summary('appdb')],
+        }));
+
+        const { result, unmount } = renderHook(
+            () => useDatabaseSummaries(1),
+        );
+
+        unmount();
+        resolveFetch({ ok: true, json: parse });
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        expect(parse).not.toHaveBeenCalled();
+        expect(result.current.databases).toEqual([]);
+        expect(result.current.loading).toBe(true);
+    });
+
     it('does not fetch when no user is logged in', async () => {
         mockUser.mockReturnValue(null);
         mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));

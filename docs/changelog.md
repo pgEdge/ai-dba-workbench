@@ -68,8 +68,12 @@ project adheres to
   statements alongside `SELECT` and DML, a Top Queries row can hold
   text such as a bare `VACUUM`, `ANALYZE`, or `REINDEX`. The panel
   now reports that query plans are not available for that type of
-  statement, and no longer attempts a request that cannot
-  succeed. (#368)
+  statement, and no longer attempts a request that cannot succeed.
+  Statements that PostgreSQL can plan, including a bare `TABLE`, are
+  unaffected and still show their plans. Where PostgreSQL accepts a
+  statement but returns no plan, as with
+  `REFRESH MATERIALIZED VIEW`, the panel now says so plainly instead
+  of showing the database's internal notice. (#368)
 
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not

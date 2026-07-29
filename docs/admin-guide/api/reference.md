@@ -212,7 +212,7 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/metrics/query` | Query metric data points. |
+| GET | `/api/v1/metrics/query` | Query metric data points over a preset or custom time window. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
@@ -309,6 +309,61 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | POST | `/api/v1/chat/compact` | Compact chat history. |
 | GET | `/health` | Check server health (no auth required). |
+
+## Metric Time Windows
+
+The `/api/v1/metrics/query` endpoint accepts either a
+rolling preset or an explicit window. The following
+parameters select the window:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `time_range` | No | The window selector: `1h`, `6h`, `24h`, `7d`, `30d`, or `custom`. The default is `1h`. |
+| `time_start` | For `custom` | The start of the window as an RFC 3339 timestamp. |
+| `time_end` | For `custom` | The end of the window as an RFC 3339 timestamp. |
+
+A preset selects a rolling window that ends at the
+present moment; the server ignores `time_start` and
+`time_end` for every preset. The `custom` value selects
+the window between the two supplied timestamps instead.
+
+The server validates a custom window against the
+following rules, and returns status 400 with an
+explanatory message when a request breaks one:
+
+- The request must supply both `time_start` and
+  `time_end`.
+- Both timestamps must parse as RFC 3339 values.
+- The end must fall strictly after the start.
+- The start must fall before the present moment.
+- The span must not exceed 366 days.
+
+The server clamps an end time in the future to the
+present moment rather than rejecting the request,
+because a picker set to the current day often overshoots
+by a few minutes. The span limit protects the server
+because the bucket width derives from the span; an
+unbounded window would let a single request scan an
+arbitrary amount of history.
+
+In the following example, the `curl` command queries CPU
+metrics for an eight-hour window in the past:
+
+```bash
+QUERY="probe_name=pg_sys_cpu_info&connection_id=1"
+WINDOW="time_range=custom&time_start=2026-07-01T09:00:00Z"
+WINDOW="$WINDOW&time_end=2026-07-01T17:00:00Z"
+
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+     "https://localhost:8080/api/v1/metrics/query?$QUERY&$WINDOW"
+```
+
+Only `/api/v1/metrics/query` supports a custom window.
+The `/api/v1/metrics/performance-summary` and
+`/api/v1/metrics/database-summaries` endpoints accept the
+presets alone, and `/api/v1/metrics/top-queries` has no
+time dimension; that endpoint always reports the latest
+collected sample.
 
 ## Error Responses
 

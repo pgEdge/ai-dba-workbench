@@ -11,6 +11,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -241,6 +242,51 @@ func TestBuildOpenAPISpec_SecurityRequirements(t *testing.T) {
 
 		if op != nil && len(op.Security) > 0 {
 			t.Errorf("Expected no security requirement on %s %s", method, path)
+		}
+	}
+}
+
+func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
+	// The custom time-range feature is only discoverable through the spec,
+	// so /metrics/query must document both timestamps and advertise the
+	// custom value on time_range. The perf-summary paths keep the preset
+	// list, since they do not accept a custom window.
+	spec := BuildOpenAPISpec()
+
+	op := spec.Paths["/metrics/query"].Get
+	if op == nil {
+		t.Fatal("Expected GET operation on /metrics/query")
+	}
+
+	params := make(map[string]string, len(op.Parameters))
+	for _, p := range op.Parameters {
+		params[p.Name] = p.Description
+	}
+
+	for _, name := range []string{"time_start", "time_end"} {
+		desc, ok := params[name]
+		if !ok {
+			t.Errorf("Expected %s query parameter on /metrics/query", name)
+			continue
+		}
+		if !strings.Contains(desc, "RFC 3339") {
+			t.Errorf("Expected %s description to mention RFC 3339, got %q",
+				name, desc)
+		}
+	}
+	if desc := params["time_range"]; !strings.Contains(desc, "custom") {
+		t.Errorf("Expected time_range description to mention custom, got %q",
+			desc)
+	}
+
+	perfOp := spec.Paths["/metrics/performance-summary"].Get
+	if perfOp == nil {
+		t.Fatal("Expected GET operation on /metrics/performance-summary")
+	}
+	for _, p := range perfOp.Parameters {
+		if p.Name == "time_start" || p.Name == "time_end" {
+			t.Errorf("Unexpected %s parameter on /metrics/performance-summary",
+				p.Name)
 		}
 	}
 }

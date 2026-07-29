@@ -30,12 +30,26 @@ export interface UseBaselinesReturn {
 
 /**
  * Build the query URL for the metrics API from the given parameters.
+ *
+ * The bounds of a custom window are not part of MetricQueryParams; they
+ * come from DashboardContext, so that consumers need only pass the range
+ * they already pass. They are emitted only for the 'custom' range, which
+ * is the sole range for which the server accepts them.
  */
-const buildMetricsUrl = (params: MetricQueryParams): string => {
+const buildMetricsUrl = (
+    params: MetricQueryParams,
+    customStart?: string,
+    customEnd?: string,
+): string => {
     const searchParams = new URLSearchParams();
 
     searchParams.append('probe_name', params.probeName);
     searchParams.append('time_range', params.timeRange);
+
+    if (params.timeRange === 'custom' && customStart && customEnd) {
+        searchParams.append('time_start', customStart);
+        searchParams.append('time_end', customEnd);
+    }
 
     if (params.connectionId !== undefined) {
         searchParams.append('connection_id', params.connectionId.toString());
@@ -83,7 +97,9 @@ const buildMetricsUrl = (params: MetricQueryParams): string => {
  */
 export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn => {
     const { user } = useAuth();
-    const { refreshTrigger } = useDashboard();
+    const { refreshTrigger, timeRange } = useDashboard();
+    const customStart = timeRange?.customStart;
+    const customEnd = timeRange?.customEnd;
     const [data, setData] = useState<MetricSeries[] | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -93,7 +109,16 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
     const fetchData = useCallback(async (): Promise<void> => {
         if (!user || !params) { return; }
 
-        const url = buildMetricsUrl(params);
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (params.timeRange === 'custom' && (!customStart || !customEnd)) {
+            return;
+        }
+
+        const url = buildMetricsUrl(params, customStart, customEnd);
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -118,7 +143,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
                 setLoading(false);
             }
         }
-    }, [user, params]);
+    }, [user, params, customStart, customEnd]);
 
     const refetch = useCallback((): void => {
         void fetchData();
@@ -134,6 +159,10 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         params?.indexName,
         params?.tableName,
         params?.schemaName,
+        // A new custom window is as much a change of query as a new
+        // preset is, so the loading state must show for it too.
+        customStart,
+        customEnd,
     ]);
 
     // Fetch when dependencies change or refresh is triggered
@@ -147,7 +176,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         return () => {
             isMountedRef.current = false;
         };
-    }, [user, params, fetchData, refreshTrigger]);
+    }, [user, params, fetchData, refreshTrigger, customStart, customEnd]);
 
     return { data, loading, error, refetch };
 };

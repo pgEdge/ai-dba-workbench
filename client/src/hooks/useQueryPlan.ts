@@ -107,6 +107,86 @@ function hasParameters(query: string): boolean {
 }
 
 /**
+ * Message shown when the captured statement is one that
+ * PostgreSQL's EXPLAIN cannot accept.
+ */
+export const NON_EXPLAINABLE_PLAN_MESSAGE =
+    'Query plans are not available for this type of statement. '
+    + 'PostgreSQL can only explain SELECT, INSERT, UPDATE, '
+    + 'DELETE, and similar data statements, not maintenance or '
+    + 'utility commands such as VACUUM, ANALYZE, or REINDEX.';
+
+/**
+ * Leading keywords that PostgreSQL's EXPLAIN accepts directly.
+ * WITH is included because a CTE almost always fronts a SELECT
+ * or DML statement; reliably identifying the inner statement
+ * would need balanced-paren parsing rather than a regex, so we
+ * allow it and preserve the pre-existing behaviour.
+ */
+const EXPLAINABLE_LEADING_KEYWORDS =
+    /^(?:select|insert|update|delete|merge|values|execute|declare|with)\b/i;
+
+/** CREATE MATERIALIZED VIEW ... AS <query>. */
+const CREATE_MATVIEW_PATTERN =
+    /^create\s+(?:or\s+replace\s+)?materialized\s+view\b/i;
+
+/**
+ * CREATE [TEMP|UNLOGGED] TABLE ... AS <query>.  The trailing
+ * query keyword is required so that a plain CREATE TABLE with,
+ * say, a GENERATED ALWAYS AS column is not misread as a CTAS.
+ */
+const CREATE_TABLE_AS_PATTERN =
+    /^create\s+(?:global\s+|local\s+)?(?:temp(?:orary)?\s+|unlogged\s+)?table\b[\s\S]*?\bas\s+\(?\s*(?:select|values|table|execute|with)\b/i;
+
+/**
+ * Strip leading whitespace, SQL comments, and opening
+ * parentheses so that the statement's first keyword can be
+ * inspected.  pg_stat_statements text is often prefixed with a
+ * framework tag comment or wrapped in parentheses.
+ */
+function stripLeadingNoise(query: string): string {
+    let text = query;
+
+    for (;;) {
+        const trimmed = text.replace(/^[\s(]+/, '');
+        if (trimmed !== text) {
+            text = trimmed;
+            continue;
+        }
+        if (text.startsWith('--')) {
+            const newline = text.indexOf('\n');
+            text = newline === -1 ? '' : text.slice(newline + 1);
+            continue;
+        }
+        if (text.startsWith('/*')) {
+            const close = text.indexOf('*/');
+            text = close === -1 ? '' : text.slice(close + 2);
+            continue;
+        }
+        return text;
+    }
+}
+
+/**
+ * Report whether PostgreSQL's EXPLAIN accepts the given
+ * statement.  This is deliberately an allowlist of the leading
+ * keywords EXPLAIN supports rather than a denylist of utility
+ * commands: pg_stat_statements records utility statements such
+ * as VACUUM or REINDEX alongside DML, and an allowlist fails
+ * safe by treating anything unrecognised as non-explainable
+ * instead of surfacing a raw syntax error from the server.
+ */
+export function isExplainableStatement(query: string): boolean {
+    const text = stripLeadingNoise(query ?? '');
+    if (text === '') {
+        return false;
+    }
+    return EXPLAINABLE_LEADING_KEYWORDS.test(text)
+        || CREATE_MATVIEW_PATTERN.test(text)
+        || CREATE_TABLE_AS_PATTERN.test(text);
+}
+
+/**
  * Execute an EXPLAIN query via the standard query endpoint.
  */
 async function fetchExplain(
@@ -186,6 +266,18 @@ export function useQueryPlan(
         const q = queryRef.current;
         const conn = connRef.current;
         const db = dbRef.current;
+
+        // Utility statements such as VACUUM are tracked by
+        // pg_stat_statements but cannot be wrapped in EXPLAIN,
+        // so short-circuit rather than issuing a request that
+        // would fail with a syntax error.
+        if (!isExplainableStatement(q)) {
+            setTextPlan(null);
+            setJsonPlan(null);
+            setLoading(false);
+            setError(NON_EXPLAINABLE_PLAN_MESSAGE);
+            return;
+        }
 
         const cacheKey = computeCacheKey(q, conn, db);
 

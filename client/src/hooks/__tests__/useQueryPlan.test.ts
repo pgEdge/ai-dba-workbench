@@ -12,8 +12,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import {
     useQueryPlan,
-    isExplainableStatement,
+    classifyExplainSupport,
     NON_EXPLAINABLE_PLAN_MESSAGE,
+    PLANLESS_STATEMENT_MESSAGE,
 } from '../useQueryPlan';
 
 // ---------------------------------------------------------------------------
@@ -513,9 +514,152 @@ describe('useQueryPlan', () => {
             NON_EXPLAINABLE_PLAN_MESSAGE,
         );
     });
+
+    it.each([
+        'REFRESH MATERIALIZED VIEW mv',
+        'refresh materialized view mv',
+        'REFRESH   MATERIALIZED  VIEW CONCURRENTLY mv',
+    ])(
+        'short-circuits planless statement %j without an API call',
+        async (query: string) => {
+            const { result } = renderHook(() =>
+                useQueryPlan(
+                    `${query}_${testCounter}`, 1, 'testdb',
+                ),
+            );
+
+            await act(async () => {
+                result.current.fetch();
+            });
+
+            expect(mockApiFetch).not.toHaveBeenCalled();
+            expect(result.current.textPlan).toBeNull();
+            expect(result.current.jsonPlan).toBeNull();
+            expect(result.current.loading).toBe(false);
+            expect(result.current.error).toBe(
+                PLANLESS_STATEMENT_MESSAGE,
+            );
+        },
+    );
+
+    it('explains a bare TABLE statement', async () => {
+        const planText = 'Seq Scan on foo';
+        const jsonStr = JSON.stringify(
+            [{ Plan: { 'Node Type': 'Seq Scan' } }],
+        );
+
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeQueryResponse([[planText]]),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([[jsonStr]]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`TABLE foo_${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.textPlan).toBe(planText);
+        });
+
+        expect(mockApiFetch).toHaveBeenCalledTimes(2);
+        expect(result.current.error).toBeNull();
+    });
+
+    it('reports no plan structure for a utility JSON response', async () => {
+        const planText = 'Utility statements have no plan structure';
+
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeQueryResponse([[planText]]),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse(
+                    [[JSON.stringify(['Utility Statement'])]],
+                ),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT ${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        // The JSON plan is rejected rather than being handed to
+        // the tree renderer as an array of bare strings.
+        expect(result.current.jsonPlan).toBeNull();
+        expect(result.current.textPlan).toBe(planText);
+    });
+
+    it('rejects a JSON response that is not an array', async () => {
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeErrorResponse('text error'),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([['{"Plan": {}}']]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT ${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.error).not.toBeNull();
+        });
+
+        expect(result.current.jsonPlan).toBeNull();
+        expect(result.current.error).toContain(
+            'no plan structure',
+        );
+    });
+
+    it('accepts a JSON array of bare plan objects', async () => {
+        const bare = [{ 'Node Type': 'Result' }];
+
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeErrorResponse('text error'),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([[JSON.stringify(bare)]]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT ${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.jsonPlan).not.toBeNull();
+        });
+
+        expect(
+            result.current.jsonPlan?.[0]['Node Type'],
+        ).toBe('Result');
+    });
 });
 
-describe('isExplainableStatement', () => {
+describe('classifyExplainSupport', () => {
     const explainable = [
         'SELECT 1',
         'select 1',
@@ -531,6 +675,10 @@ describe('isExplainableStatement', () => {
         'EXECUTE my_plan(1)',
         'DECLARE c CURSOR FOR SELECT 1',
         'WITH cte AS (SELECT 1) SELECT * FROM cte',
+        'TABLE foo',
+        'table  foo',
+        '  ( TABLE foo )',
+        '/* tag */ TABLE public.foo',
         '-- app: reports\nSELECT 1',
         '--comment\n-- another\n  SELECT 1',
         '/* tag: worker */ SELECT 1',
@@ -551,8 +699,23 @@ describe('isExplainableStatement', () => {
     ];
 
     for (const stmt of explainable) {
-        it(`treats as explainable: ${JSON.stringify(stmt)}`, () => {
-            expect(isExplainableStatement(stmt)).toBe(true);
+        it(`treats as planned: ${JSON.stringify(stmt)}`, () => {
+            expect(classifyExplainSupport(stmt)).toBe('plan');
+        });
+    }
+
+    const planless = [
+        'REFRESH MATERIALIZED VIEW mv',
+        'refresh materialized view mv',
+        'REFRESH   MATERIALIZED\n  VIEW CONCURRENTLY public.mv',
+        '/* tag */ REFRESH MATERIALIZED VIEW mv',
+    ];
+
+    for (const stmt of planless) {
+        it(`treats as planless: ${JSON.stringify(stmt)}`, () => {
+            expect(classifyExplainSupport(stmt)).toBe(
+                'planless',
+            );
         });
     }
 
@@ -591,19 +754,25 @@ describe('isExplainableStatement', () => {
         'LISTEN channel',
         '-- SELECT 1',
         '/* SELECT 1 */',
+        'TABLES',
+        'TABLESAMPLE bernoulli (10)',
+        'REFRESH MATERIALIZED VIEWS_LIST',
+        'REFRESHING something',
     ];
 
     for (const stmt of nonExplainable) {
-        it(`treats as non-explainable: ${JSON.stringify(stmt)}`, () => {
-            expect(isExplainableStatement(stmt)).toBe(false);
+        it(`treats as unsupported: ${JSON.stringify(stmt)}`, () => {
+            expect(classifyExplainSupport(stmt)).toBe(
+                'unsupported',
+            );
         });
     }
 
     it('tolerates a null-ish query', () => {
         expect(
-            isExplainableStatement(
+            classifyExplainSupport(
                 undefined as unknown as string,
             ),
-        ).toBe(false);
+        ).toBe('unsupported');
     });
 });

@@ -215,6 +215,13 @@ guard, not a nicety: `BuildMetricsQuery` derives the bucket width from
 the span, so an unbounded window turns one request into an arbitrarily
 large scan.
 
+`MaxCustomTimeSpan` is shared, not metrics-only.
+`GET /api/v1/timeline/events` takes absolute `start_time` and `end_time`
+values, so it imports the same constant from the `metrics` package and
+rejects an over-long span with the identical message, `invalid time
+range: span must not exceed 366 days`. Do not declare a second cap; the
+`api` package already depends on `metrics`, so there is no cycle.
+
 `GET /api/v1/metrics/query` accepts `time_range=custom` alongside
 `time_start` and `time_end`, and maps any resolution error to `400`.
 The performance-summary and database-summary handlers in

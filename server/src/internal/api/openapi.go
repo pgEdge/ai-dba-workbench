@@ -2234,8 +2234,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Timeline"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamStringRequired("start_time", "Start time (RFC3339)"),
-					queryParamStringRequired("end_time", "End time (RFC3339)"),
+					queryParamStringRequired("start_time", "Start time (RFC3339). The span between start_time and end_time must not exceed 366 days"),
+					queryParamStringRequired("end_time", "End time (RFC3339). Must be after start_time, and no more than 366 days after it"),
 					queryParamInt("connection_id", "Filter by connection ID"),
 					queryParamString("connection_ids", "Filter by multiple connection IDs (comma-separated)"),
 					queryParamString("event_types", "Filter by event types (comma-separated)"),

@@ -9,8 +9,8 @@
  */
 
 import type React from 'react';
-import { screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { screen, fireEvent, act } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import renderWithTheme from '../../../test/renderWithTheme';
@@ -221,6 +221,83 @@ describe('TimeRangeSelector', () => {
             expect(
                 screen.getByLabelText(/auto-refresh is paused/i),
             ).toBeInTheDocument();
+        });
+
+        it('names the paused indicator for assistive technology', () => {
+            renderTimeRangeSelector({ start: START, end: END });
+
+            fireEvent.click(screen.getByRole('button', { name: 'seed' }));
+
+            const indicator = screen.getByRole('img', {
+                name: /auto-refresh is paused whilst a custom time range is active/i,
+            });
+            expect(indicator).toBeInTheDocument();
+            // The name must not depend on the tooltip being shown, so the
+            // anchor itself is not hidden from the accessibility tree.
+            expect(indicator).not.toHaveAttribute('aria-hidden', 'true');
+        });
+
+        it('makes the paused indicator keyboard focusable', () => {
+            renderTimeRangeSelector({ start: START, end: END });
+
+            fireEvent.click(screen.getByRole('button', { name: 'seed' }));
+
+            const indicator = screen.getByRole('img', {
+                name: /auto-refresh is paused/i,
+            });
+            expect(indicator).toHaveAttribute('tabindex', '0');
+
+            indicator.focus();
+            expect(indicator).toHaveFocus();
+        });
+
+        it('shows the paused tooltip when the indicator is focused', async () => {
+            /*
+             * MUI only opens a tooltip for focus it judges "visible", which
+             * it derives from the `:focus-visible` pseudo-class. jsdom
+             * reports that pseudo-class as false for every element, so stub
+             * it to track the active element, emulating the keyboard focus a
+             * real browser reports.
+             */
+            const nativeMatches = Element.prototype.matches;
+            const matchesSpy = vi
+                .spyOn(Element.prototype, 'matches')
+                .mockImplementation(function (
+                    this: Element,
+                    selector: string,
+                ) {
+                    if (selector === ':focus-visible') {
+                        return document.activeElement === this;
+                    }
+                    return nativeMatches.call(this, selector);
+                });
+
+            try {
+                renderTimeRangeSelector({ start: START, end: END });
+
+                fireEvent.click(
+                    screen.getByRole('button', { name: 'seed' }),
+                );
+
+                const indicator = screen.getByRole('img', {
+                    name: /auto-refresh is paused/i,
+                });
+                const tooltipText =
+                    /^Auto-refresh is paused whilst a custom time range is active$/;
+                expect(
+                    screen.queryByText(tooltipText),
+                ).not.toBeInTheDocument();
+
+                act(() => {
+                    indicator.focus();
+                });
+
+                expect(
+                    await screen.findByText(tooltipText),
+                ).toBeInTheDocument();
+            } finally {
+                matchesSpy.mockRestore();
+            }
         });
 
         it('returns to a preset and clears the custom display', () => {

@@ -74,7 +74,14 @@ type OpenAPIRequestBody struct {
 // OpenAPIResponse describes a single response.
 type OpenAPIResponse struct {
 	Description string                      `json:"description"`
+	Headers     map[string]OpenAPIHeader    `json:"headers,omitempty"`
 	Content     map[string]OpenAPIMediaType `json:"content,omitempty"`
+}
+
+// OpenAPIHeader describes a single response header.
+type OpenAPIHeader struct {
+	Description string         `json:"description,omitempty"`
+	Schema      *OpenAPISchema `json:"schema,omitempty"`
 }
 
 // OpenAPIMediaType describes a media type.
@@ -3409,14 +3416,17 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
 					queryParamIntRequired("connection_id", "Connection ID"),
-					queryParamInt("limit", "Maximum number of queries to return"),
+					queryParamInt("limit", "Maximum number of queries to return (default 10, max 100)"),
+					queryParamInt("offset", "Number of rows to skip for pagination (default 0, must be zero or greater)"),
 					queryParamString("order_by", "Column to sort by"),
 					queryParamString("order", "Sort order (asc or desc)"),
 					queryParamString("queryid", "Filter by specific query ID"),
+					queryParamString("database_name", "Filter by exact database name"),
 					queryParamBool("exclude_collector", "Exclude collector queries"),
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": jsonArrayResponse("TopQueryRow", "Top queries"),
+					"200": jsonArrayResponseWithHeaders("TopQueryRow", "Top queries",
+						totalCountHeader("Total number of matching queries, ignoring limit and offset")),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
@@ -4145,6 +4155,29 @@ func jsonResponse(schemaRef, description string) OpenAPIResponse {
 			"application/json": {
 				Schema: &OpenAPISchema{Ref: "#/components/schemas/" + schemaRef},
 			},
+		},
+	}
+}
+
+// jsonArrayResponseWithHeaders builds a JSON array response that also
+// documents one or more response headers, such as the X-Total-Count
+// pagination total.
+func jsonArrayResponseWithHeaders(
+	itemSchemaRef, description string,
+	headers map[string]OpenAPIHeader,
+) OpenAPIResponse {
+	resp := jsonArrayResponse(itemSchemaRef, description)
+	resp.Headers = headers
+	return resp
+}
+
+// totalCountHeader documents the X-Total-Count response header carrying the
+// number of rows matching the request filters, ignoring limit and offset.
+func totalCountHeader(description string) map[string]OpenAPIHeader {
+	return map[string]OpenAPIHeader{
+		"X-Total-Count": {
+			Description: description,
+			Schema:      &OpenAPISchema{Type: "integer"},
 		},
 	}
 }

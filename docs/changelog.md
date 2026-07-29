@@ -20,6 +20,14 @@ project adheres to
   members of the group named with `-group`, including both member
   users and nested member groups. (#303)
 
+- Add a Monitored Database Privileges page to the configuration
+  documentation, describing the PostgreSQL grants a monitoring role
+  needs on a monitored instance. The page recommends a
+  least-privilege role based on `pg_monitor` plus per-database
+  `CONNECT`, covers the optional `pg_stat_statements`, `system_stats`,
+  and Spock grants, and documents the coverage gaps that remain
+  without superuser access. (#351)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a

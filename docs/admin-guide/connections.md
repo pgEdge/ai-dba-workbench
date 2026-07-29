@@ -39,6 +39,19 @@ the Collector for encrypting connection passwords. For
 full configuration details, see the
 [Server Configuration](../getting-started/configuration/server.md).
 
+## Monitored Server Privileges
+
+Each connection stores the credentials of a PostgreSQL
+role on the monitored server. Before creating a
+connection, grant that role the privileges the
+Workbench needs, which are the `pg_monitor` predefined
+role and `CONNECT` on every database you want to
+monitor. The
+[Monitored Database Privileges](../getting-started/configuration/monitored-database-privileges.md)
+document covers the least-privilege grants, the
+optional extensions, and the gaps that remain without
+superuser access.
+
 ## REST API Endpoints
 
 All endpoints require authentication via Bearer token.
@@ -227,3 +240,6 @@ standard JSON format:
   access control.
 - [API Reference](api/reference.md) provides
   interactive API documentation.
+- [Monitored Database Privileges](../getting-started/configuration/monitored-database-privileges.md)
+  describes the PostgreSQL grants a monitored role
+  needs.

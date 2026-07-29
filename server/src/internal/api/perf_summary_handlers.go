@@ -172,6 +172,8 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 			authWrapper(HandleNotConfigured("Database summaries")))
 		mux.HandleFunc("/api/v1/metrics/top-queries",
 			authWrapper(HandleNotConfigured("Top queries")))
+		mux.HandleFunc("/api/v1/metrics/connection-groups",
+			authWrapper(HandleNotConfigured("Connection groups")))
 		return
 	}
 
@@ -181,6 +183,8 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 		authWrapper(h.handleDatabaseSummaries))
 	mux.HandleFunc("/api/v1/metrics/top-queries",
 		authWrapper(h.handleTopQueries))
+	mux.HandleFunc("/api/v1/metrics/connection-groups",
+		authWrapper(h.handleConnectionGroups))
 }
 
 // handlePerfSummary handles GET /api/v1/metrics/performance-summary

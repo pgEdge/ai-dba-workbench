@@ -1381,6 +1381,36 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"shared_blks_read": {Type: "integer", Format: "int64", Description: "Shared blocks read"},
 			},
 		},
+		"ConnectionGroupsResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"collected_at": {
+					Type:        "string",
+					Format:      "date-time",
+					Nullable:    true,
+					Description: "Timestamp of the snapshot the counts were taken from, or null when no snapshot was found in the time range",
+				},
+				"groups": {
+					Type:        "array",
+					Description: "Connection counts per group, ordered by total descending then group label ascending, capped at 200 groups",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/ConnectionGroupRow"},
+				},
+			},
+			Required: []string{"collected_at", "groups"},
+		},
+		"ConnectionGroupRow": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"group_label":         {Type: "string", Description: "Group label: the user name, client address or database name"},
+				"client_hostname":     {Type: "string", Nullable: true, Description: "Reverse-resolved client hostname, populated only for the client grouping"},
+				"total":               {Type: "integer", Format: "int64", Description: "Total client connections in the group"},
+				"active":              {Type: "integer", Format: "int64", Description: "Connections in the active state"},
+				"idle":                {Type: "integer", Format: "int64", Description: "Connections in the idle state"},
+				"idle_in_transaction": {Type: "integer", Format: "int64", Description: "Connections idle in transaction, including the aborted variant"},
+				"other":               {Type: "integer", Format: "int64", Description: "Connections in any other state, including an unknown state"},
+			},
+			Required: []string{"group_label", "total", "active", "idle", "idle_in_transaction", "other"},
+		},
 		"LatestSnapshotResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
@@ -3417,6 +3447,27 @@ func buildPaths() map[string]OpenAPIPathItem {
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponse("TopQueryRow", "Top queries"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/connection-groups": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get connection counts grouped by user, client or database",
+				Description: "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups",
+				OperationID: "getConnectionGroups",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamString("group_by", "Grouping key: user, client or database (default: user)"),
+					queryParamString("time_range", "Time range: 1h, 6h, 24h, 7d or 30d (default: 24h)"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ConnectionGroupsResponse", "Connection counts by group"),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),

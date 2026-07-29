@@ -59,6 +59,11 @@ project adheres to
   only the server default left the client-facing bug unchanged for
   real users. (#329)
 
+- Run the tests for the shared `pkg` module from the root `make test`
+  and `make test-all` targets, which previously skipped that module
+  entirely. This change affects test infrastructure only and does not
+  alter application behavior. (#364)
+
 ### Fixed
 
 - Fix every chat request that included a tool list failing with
@@ -252,6 +257,20 @@ project adheres to
   shutdown, and raising the memory limit modestly from 256M to
   512M; the collector connection-pool and timeout options are now
   documented in the sample configuration. (#308)
+
+- Fix the "Hide monitoring queries" toggle on the Server dashboard's
+  Top Queries panel failing to hide most of the Workbench's own query
+  overhead. Only the collector's probe queries against monitored
+  databases carried a marker, so the Workbench's own traffic against
+  the metadata datastore stayed in the panel whenever that datastore
+  shared a PostgreSQL instance with the monitored databases, which is
+  the usual deployment. The toggle now also hides the collector's
+  bulk `metrics.*` inserts, partition maintenance, and
+  change-detection reads, together with the alerter's
+  metric-evaluation queries. Each of the Workbench's own statements is
+  tagged individually rather than excluding the metadata database
+  wholesale, so queries that other tools run against that same
+  database remain visible in the panel. (#364)
 
 ### Security
 

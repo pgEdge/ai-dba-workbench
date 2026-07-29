@@ -38,11 +38,15 @@ the datastore session's `TimeZone` setting cannot reinterpret them.
 Use the layout `"2006-01-02 15:04:05Z07:00"` with a UTC value; Go
 emits `Z` for UTC which Postgres accepts as a timestamptz literal.
 
-The shared helper lives at
-`collector/src/probes/base.go`:
+The shared helpers live at
+`collector/src/probes/partition.go`:
 
 - `weeklyPartitionBounds(t time.Time) (nameSuffix string, from, to time.Time)`
 - `const partitionBoundLayout = "2006-01-02 15:04:05Z07:00"`
+- `createPartitionSQL`, `dropPartitionSQL`, `protectedPartitionsQuery`,
+  and `partitionCandidatesQuery`, which build every partition
+  maintenance statement and tag it as Workbench-internal; see
+  `internal-query-markers.md`.
 
 Unit tests in `collector/src/probes/base_test.go` cover the known
 off-by-one timezone cases (Sunday-in-UTC that looks like Monday in a
@@ -78,11 +82,17 @@ error `"conn busy"`. This is distinct from pool exhaustion, which
 surfaces as an acquire timeout.
 
 `DropExpiredPartitions` in
-`collector/src/probes/base.go` previously tripped this by calling
+`collector/src/probes/partition.go` previously tripped this by calling
 `conn.Exec(ctx, dropSQL)` inside a `for rows.Next()` loop that was
 iterating the partition catalog on the same connection. It was
 fixed (issue #62) by reading the catalog query fully into a slice,
 letting the Rows close, and only then issuing the DROP statements.
+
+The partition helpers take the `DatastoreQuerier` interface rather than
+`*pgxpool.Conn`. `*pgxpool.Conn` satisfies it, so callers are
+unaffected, but unit tests can inject a fake that records the SQL
+issued and returns errors from `Query`, `Scan`, and `Exec`. Prefer that
+over an integration test when covering an error branch.
 
 Rules for the datastore connection shared across a GC pass:
 

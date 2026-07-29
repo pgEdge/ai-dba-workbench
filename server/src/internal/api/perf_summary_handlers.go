@@ -20,10 +20,41 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
+
+// probeMarkerAlias is the synthetic column alias that the collector
+// wraps around every read-only probe query it runs against a monitored
+// database; see WrapQuery in the collector's probes package. The
+// collector is a separate Go module, so the value is repeated here
+// rather than imported. Keep the two in step.
+const probeMarkerAlias = "ai_dba_wb_probe"
+
+// excludeWorkbenchQueriesClause filters out the Workbench's own
+// statements from the Top Queries panel when the caller asks to hide
+// monitoring queries.
+//
+// Two markers are needed. The collector's probe queries against
+// monitored databases carry probeMarkerAlias as a column alias, whilst
+// the Workbench's statements against its own datastore (the collector's
+// bulk metrics writes and partition maintenance, and the alerter's
+// metric-evaluation queries) carry sqlmarker.Marker as an in-statement
+// comment. Because the datastore usually shares a PostgreSQL instance
+// with the databases being monitored, pg_stat_statements captures both
+// classes, and before the second marker existed the datastore traffic
+// leaked through this filter (GitHub issue #364).
+//
+// The clause is a compile-time constant built from two constants, so it
+// carries no user input and needs no bound parameters. Note that it
+// deliberately does not exclude the datastore database wholesale: users
+// legitimately run their own tools against that database and expect to
+// see them here.
+const excludeWorkbenchQueriesClause = "AND pss.query NOT LIKE '%" +
+	probeMarkerAlias + "%' AND pss.query NOT LIKE '%" +
+	sqlmarker.Marker + "%'"
 
 // validTimeRanges maps time_range parameter values to their duration.
 var validTimeRanges = map[string]time.Duration{
@@ -1031,6 +1062,72 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	}
 }
 
+// buildTopQueriesQuery builds the pg_stat_statements query behind the
+// Top Queries panel, returning the statement and its bind arguments.
+//
+// The connection ID, row limit, and queryid filter are all bound
+// parameters. The ORDER BY column and direction are interpolated, which
+// is safe only because handleTopQueries validates both against
+// whitelists before calling this function, and the optional
+// Workbench-internal exclusion is a compile-time constant clause.
+func buildTopQueriesQuery(
+	connID, limit int,
+	queryID string,
+	excludeCollector bool,
+	orderBy, order string,
+) (string, []any) {
+	// Build optional queryid filter clause.
+	queryIDClause := ""
+	args := []any{connID, limit}
+	if queryID != "" {
+		queryIDClause = fmt.Sprintf(
+			"AND pss.queryid::text = $%d", len(args)+1)
+		args = append(args, queryID)
+	}
+
+	// Build optional clause to exclude Workbench-internal queries,
+	// covering both the collector's probe queries and the collector's
+	// and alerter's own datastore traffic.
+	excludeCollectorClause := ""
+	if excludeCollector {
+		excludeCollectorClause = excludeWorkbenchQueriesClause
+	}
+
+	query := fmt.Sprintf(`
+        WITH db_names AS (
+            SELECT DISTINCT datid, datname
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND datid IS NOT NULL
+              AND datname IS NOT NULL
+        ),
+        deduped AS (
+            SELECT DISTINCT ON (pss.queryid)
+                pss.queryid::text,
+                COALESCE(dn.datname, pss.database_name) AS database_name,
+                pss.query, pss.calls, pss.total_exec_time,
+                pss.mean_exec_time, pss.rows,
+                pss.shared_blks_hit, pss.shared_blks_read
+            FROM metrics.pg_stat_statements pss
+            LEFT JOIN db_names dn ON pss.dbid = dn.datid
+            WHERE pss.connection_id = $1
+              AND pss.collected_at = (
+                  SELECT MAX(collected_at)
+                  FROM metrics.pg_stat_statements
+                  WHERE connection_id = $1
+              )
+              %s
+              %s
+            ORDER BY pss.queryid
+        )
+        SELECT * FROM deduped
+        ORDER BY %s %s
+        LIMIT $2
+    `, queryIDClause, excludeCollectorClause, orderBy, order)
+
+	return query, args
+}
+
 // handleTopQueries handles GET /api/v1/metrics/top-queries
 func (h *PerfSummaryHandler) handleTopQueries(
 	w http.ResponseWriter,
@@ -1117,54 +1214,8 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
 
-	// Safe to use string formatting for ORDER BY because orderBy and order
-	// are validated against whitelists above.
-	// Build optional queryid filter clause.
-	queryIDClause := ""
-	args := []any{connID, limit}
-	if queryID != "" {
-		queryIDClause = fmt.Sprintf(
-			"AND pss.queryid::text = $%d", len(args)+1)
-		args = append(args, queryID)
-	}
-
-	// Build optional clause to exclude collector probe queries.
-	excludeCollectorClause := ""
-	if excludeCollector {
-		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
-	}
-
-	query := fmt.Sprintf(`
-        WITH db_names AS (
-            SELECT DISTINCT datid, datname
-            FROM metrics.pg_stat_activity
-            WHERE connection_id = $1
-              AND datid IS NOT NULL
-              AND datname IS NOT NULL
-        ),
-        deduped AS (
-            SELECT DISTINCT ON (pss.queryid)
-                pss.queryid::text,
-                COALESCE(dn.datname, pss.database_name) AS database_name,
-                pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.rows,
-                pss.shared_blks_hit, pss.shared_blks_read
-            FROM metrics.pg_stat_statements pss
-            LEFT JOIN db_names dn ON pss.dbid = dn.datid
-            WHERE pss.connection_id = $1
-              AND pss.collected_at = (
-                  SELECT MAX(collected_at)
-                  FROM metrics.pg_stat_statements
-                  WHERE connection_id = $1
-              )
-              %s
-              %s
-            ORDER BY pss.queryid
-        )
-        SELECT * FROM deduped
-        ORDER BY %s %s
-        LIMIT $2
-    `, queryIDClause, excludeCollectorClause, orderBy, order)
+	query, args := buildTopQueriesQuery(
+		connID, limit, queryID, excludeCollector, orderBy, order)
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {

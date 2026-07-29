@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/utils"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // probeMarkerColumn is the column name injected by WrapQuery into
@@ -68,8 +69,11 @@ func HasDataChanged(
 			"failed to compute current metrics hash: %w", err)
 	}
 
+	// The stored-snapshot read runs against the Workbench's own
+	// datastore, so tag it as internal to keep it out of the Top
+	// Queries panel when monitoring queries are hidden.
 	rows, err := datastoreConn.Query(
-		ctx, fetchStoredQuery, connectionID)
+		ctx, sqlmarker.Tag(fetchStoredQuery), connectionID)
 	if err != nil {
 		return false, fmt.Errorf(
 			"failed to query most recent data: %w", err)

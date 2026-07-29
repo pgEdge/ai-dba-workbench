@@ -42,6 +42,26 @@ const TOGGLE_BUTTON_SX = {
     minWidth: 36,
 };
 
+/**
+ * Wording for the auto-refresh pause indicator, shared between the tooltip
+ * and the accessible name so that pointer and assistive-technology users
+ * receive exactly the same explanation.
+ */
+const AUTO_REFRESH_SUSPENDED_LABEL =
+    'Auto-refresh is paused whilst a custom time range is active';
+
+/**
+ * The indicator is purely informational, so it is anchored on a focusable
+ * span rather than the icon itself: the span reliably takes keyboard focus
+ * across browsers (SVG focus handling is inconsistent), which lets the
+ * tooltip open on focus as well as hover, whilst inline-flex keeps the
+ * rendered layout identical to the bare icon.
+ */
+const AUTO_REFRESH_SUSPENDED_ANCHOR_SX = {
+    display: 'inline-flex',
+    alignItems: 'center',
+};
+
 /** Compact display format for an applied custom window */
 const WINDOW_FORMAT = 'DD MMM HH:mm';
 
@@ -143,14 +163,25 @@ const TimeRangeSelector: React.FC = () => {
             </ToggleButtonGroup>
             {/*
               * Auto-refresh keeps polling on presets but is suspended for a
-              * custom window; the Tooltip title doubles as the icon's
-              * accessible name, so it explains the pause to every user.
+              * custom window. The anchor span carries role="img" and the
+              * accessible name, so screen readers announce the pause without
+              * needing the tooltip at all, and its tabIndex lets keyboard
+              * users focus it to read the same explanation a pointer user
+              * gets on hover.
               */}
             {autoRefreshSuspended && (
-                <Tooltip title="Auto-refresh is paused whilst a custom time range is active">
-                    <PauseCircleOutlineIcon
-                        sx={AUTO_REFRESH_SUSPENDED_ICON_SX}
-                    />
+                <Tooltip title={AUTO_REFRESH_SUSPENDED_LABEL}>
+                    <Box
+                        component="span"
+                        role="img"
+                        aria-label={AUTO_REFRESH_SUSPENDED_LABEL}
+                        tabIndex={0}
+                        sx={AUTO_REFRESH_SUSPENDED_ANCHOR_SX}
+                    >
+                        <PauseCircleOutlineIcon
+                            sx={AUTO_REFRESH_SUSPENDED_ICON_SX}
+                        />
+                    </Box>
                 </Tooltip>
             )}
             <CustomTimeRangePopover

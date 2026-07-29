@@ -430,7 +430,9 @@ func (d *Datastore) GetAlertRuleByName(ctx context.Context, name string) (*Alert
 // cluster as the given connection, including their latest node role.
 // Returns an empty slice if the connection has no cluster.
 func (d *Datastore) GetClusterPeers(ctx context.Context, connectionID int) ([]*ClusterPeerInfo, error) {
-	rows, err := d.pool.Query(ctx, `
+	// Tagged internal: this reads metrics.pg_node_role on the
+	// Workbench's own datastore on every alert evaluation cycle.
+	rows, err := d.queryInternal(ctx, `
 		SELECT c.id, c.name, COALESCE(lr.primary_role, 'unknown')
 		FROM connections c
 		LEFT JOIN LATERAL (

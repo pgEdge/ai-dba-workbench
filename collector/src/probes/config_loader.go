@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // loadProbeConfigsQuery is the SELECT used by LoadProbeConfigs.
@@ -263,18 +264,28 @@ func getDefaultInterval(probeName string) int {
 	return 300 // Default 5 minutes
 }
 
+// lastCollectionTimeQuery builds the query used by
+// GetLastCollectionTime. The statement runs against the Workbench's own
+// datastore on every scheduling decision, so it is tagged as
+// Workbench-internal to keep it out of the server's Top Queries panel
+// when monitoring queries are hidden.
+//
+// #nosec G201 - the probe name is not user-provided; it comes from the
+// probe definitions compiled into the collector.
+func lastCollectionTimeQuery(probeName string) string {
+	return sqlmarker.Tag(fmt.Sprintf(`
+        SELECT MAX(collected_at)
+        FROM metrics.%s
+        WHERE connection_id = $1
+    `, probeName))
+}
+
 // GetLastCollectionTime queries the last collection timestamp for a probe/connection pair
 // Returns the timestamp of the most recent metrics collection, or zero time if no data exists
 func GetLastCollectionTime(ctx context.Context, conn *pgxpool.Conn, probeName string, connectionID int) (time.Time, error) {
-	tableName := fmt.Sprintf("metrics.%s", probeName)
-
 	// Query the maximum collected_at timestamp for this probe and connection
 	var lastCollected *time.Time
-	query := fmt.Sprintf(`
-        SELECT MAX(collected_at)
-        FROM %s
-        WHERE connection_id = $1
-    `, tableName)
+	query := lastCollectionTimeQuery(probeName)
 
 	err := conn.QueryRow(ctx, query, connectionID).Scan(&lastCollected)
 	if err != nil {

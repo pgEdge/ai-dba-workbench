@@ -62,9 +62,18 @@ export interface QueryDetailData {
     calls: number;
     total_exec_time: number;
     mean_exec_time: number;
+    /** Fastest recorded execution, in milliseconds. */
+    min_exec_time: number;
+    /** Slowest recorded execution, in milliseconds. */
+    max_exec_time: number;
     rows: number;
     shared_blks_hit: number;
     shared_blks_read: number;
+    /**
+     * Database role that executed the statement; empty when the
+     * collector could not resolve the role OID to a name.
+     */
+    username: string;
 }
 
 /**

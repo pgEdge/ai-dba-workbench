@@ -10673,6 +10673,7 @@
         },
         "required": [
           "group_label",
+          "client_hostname",
           "total",
           "active",
           "idle",

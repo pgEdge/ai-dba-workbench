@@ -468,6 +468,78 @@ func TestConnectionGroups_GroupCapTruncatesSmallestGroups(t *testing.T) {
 	}
 }
 
+// TestConnectionGroups_ResponseKeysMatchOpenAPIRequired verifies that the keys
+// the handler actually serializes are exactly the ones the OpenAPI schemas
+// declare as required. Neither response struct tags any field omitempty, so
+// every key is always present, including client_hostname as null for the user
+// grouping; the schemas must say so, or a strict or code-generated client will
+// disagree with the server.
+func TestConnectionGroups_ResponseKeysMatchOpenAPIRequired(t *testing.T) {
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	defer cleanup()
+
+	const connID = 515
+	now := time.Now().UTC()
+	seedConnectionGroupsFixture(t, pool, connID, now.Add(-1*time.Minute),
+		now.Add(-6*time.Minute))
+
+	rec := doConnectionGroupsRequest(h,
+		fmt.Sprintf("connection_id=%d&group_by=user", connID), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code,
+			rec.Body.String())
+	}
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &top); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(top["groups"], &rows); err != nil {
+		t.Fatalf("failed to decode groups: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected at least one group in the fixture")
+	}
+
+	schemas := BuildOpenAPISpec().Components.Schemas
+	assertRequiredMatchesKeys(t, "ConnectionGroupsResponse",
+		schemas["ConnectionGroupsResponse"].Required, top)
+	assertRequiredMatchesKeys(t, "ConnectionGroupRow",
+		schemas["ConnectionGroupRow"].Required, rows[0])
+
+	// The user grouping must still emit client_hostname, as null.
+	if got := string(rows[0]["client_hostname"]); got != "null" {
+		t.Errorf("client_hostname = %s, want null for the user grouping", got)
+	}
+}
+
+// assertRequiredMatchesKeys checks that a schema's required list and the keys
+// actually serialized are the same set, in both directions.
+func assertRequiredMatchesKeys(
+	t *testing.T,
+	schemaName string,
+	required []string,
+	serialized map[string]json.RawMessage,
+) {
+	t.Helper()
+
+	requiredSet := make(map[string]bool, len(required))
+	for _, name := range required {
+		requiredSet[name] = true
+		if _, ok := serialized[name]; !ok {
+			t.Errorf("%s declares %q required, but the handler did not "+
+				"emit it", schemaName, name)
+		}
+	}
+	for name := range serialized {
+		if !requiredSet[name] {
+			t.Errorf("%s emits %q unconditionally, but the schema does not "+
+				"list it as required", schemaName, name)
+		}
+	}
+}
+
 // TestConnectionGroups_EmptyResult verifies the documented empty shape when a
 // connection has no pg_stat_activity rows at all.
 func TestConnectionGroups_EmptyResult(t *testing.T) {

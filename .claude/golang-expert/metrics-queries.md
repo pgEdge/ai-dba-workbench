@@ -257,9 +257,10 @@ variant instead: a shared head, a shared tail, and the per-variant
 expressions spliced between them with `+`. `connection-groups` is the
 worked example, with `connectionGroupsQueryHead`,
 `connectionGroupsQueryLabelSuffix` and `connectionGroupsQueryTail` shared
-across `connectionGroupsQueryByUser`, `…ByClient` and `…ByDatabase`, and a
-`map[string]string` (`connectionGroupQueries`) mapping the accepted
-parameter values to the finished queries. `buildConnectionGroupsSQL` then
+across the three finished queries (`connectionGroupsQueryByUser`,
+`connectionGroupsQueryByClient` and `connectionGroupsQueryByDatabase`), and
+a `map[string]string` (`connectionGroupQueries`) mapping the accepted
+parameter values to those queries. `buildConnectionGroupsSQL` then
 degenerates to a map lookup returning `(query string, args []any)`, with
 the default variant as the fallback for an unrecognised key; the handler
 still rejects unknown values with a 400 first, listing the accepted values

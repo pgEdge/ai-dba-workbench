@@ -1409,7 +1409,13 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"idle_in_transaction": {Type: "integer", Format: "int64", Description: "Connections idle in transaction, including the aborted variant"},
 				"other":               {Type: "integer", Format: "int64", Description: "Connections in any other state, including an unknown state"},
 			},
-			Required: []string{"group_label", "total", "active", "idle", "idle_in_transaction", "other"},
+			// Every field is emitted unconditionally: ConnectionGroupRow
+			// tags none of them omitempty, so client_hostname is always
+			// present, as null for the user and database groupings. In
+			// OpenAPI required and nullable are orthogonal, so a key that
+			// is always present but may be null is correctly described as
+			// both.
+			Required: []string{"group_label", "client_hostname", "total", "active", "idle", "idle_in_transaction", "other"},
 		},
 		"LatestSnapshotResponse": {
 			Type: "object",

@@ -74,6 +74,30 @@ const makeResponse = (
     collectedAt: string | null = '2026-07-29T10:00:00Z',
 ) => ({ collected_at: collectedAt, groups });
 
+interface Deferred<T> {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (reason: unknown) => void;
+}
+
+/**
+ * A promise whose settlement the test controls, so two overlapping
+ * requests can be resolved in a chosen order.
+ */
+const makeDeferred = <T,>(): Deferred<T> => {
+    let resolveFn: (value: T) => void = () => {};
+    let rejectFn: (reason: unknown) => void = () => {};
+    const promise = new Promise<T>((resolve, reject) => {
+        resolveFn = resolve;
+        rejectFn = reject;
+    });
+    return {
+        promise,
+        resolve: value => { resolveFn(value); },
+        reject: reason => { rejectFn(reason); },
+    };
+};
+
 /** Extract a query parameter from the most recent request URL. */
 const paramOf = (callIndex: number, name: string): string | null => {
     const url = mockApiGet.mock.calls[callIndex][0] as string;
@@ -353,6 +377,130 @@ describe('useConnectionGroups', () => {
         });
 
         expect(mockApiGet).toHaveBeenCalledTimes(2);
+    });
+
+    describe('overlapping requests', () => {
+        /**
+         * Start a request for the default grouping, then switch to the
+         * client grouping, leaving both requests in flight. Returns the
+         * deferreds so the test can settle them out of order.
+         */
+        const startOverlappingRequests = async () => {
+            const first = makeDeferred<unknown>();
+            const second = makeDeferred<unknown>();
+            mockApiGet.mockReturnValueOnce(first.promise);
+            mockApiGet.mockReturnValueOnce(second.promise);
+
+            const hook = renderHook(
+                ({ p }: { p: ConnectionGroupsParams }) =>
+                    useConnectionGroups(p),
+                { initialProps: { p: params } },
+            );
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+            });
+
+            hook.rerender({ p: { ...params, groupBy: 'client' } });
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(2);
+            });
+
+            return { ...hook, first, second };
+        };
+
+        it('keeps the newer data when a stale response lands late',
+            async () => {
+                const { result, first, second } =
+                    await startOverlappingRequests();
+
+                await act(async () => {
+                    second.resolve(makeResponse(
+                        [makeGroupRow({ group_label: '192.0.2.10' })],
+                        '2026-07-29T11:00:00Z',
+                    ));
+                });
+
+                await waitFor(() => {
+                    expect(result.current.groups).toHaveLength(1);
+                });
+                expect(result.current.groups[0].group_label)
+                    .toBe('192.0.2.10');
+
+                await act(async () => {
+                    first.resolve(makeResponse(
+                        [makeGroupRow({ group_label: 'app_rw' })],
+                        '2026-07-29T10:00:00Z',
+                    ));
+                });
+
+                expect(result.current.groups).toHaveLength(1);
+                expect(result.current.groups[0].group_label)
+                    .toBe('192.0.2.10');
+                expect(result.current.collectedAt)
+                    .toBe('2026-07-29T11:00:00Z');
+                expect(result.current.error).toBeNull();
+            });
+
+        it('does not let a stale response clear a newer error',
+            async () => {
+                const { result, first, second } =
+                    await startOverlappingRequests();
+
+                await act(async () => {
+                    second.reject(new Error('newer failure'));
+                });
+
+                await waitFor(() => {
+                    expect(result.current.error).toBe('newer failure');
+                });
+
+                await act(async () => {
+                    first.resolve(makeResponse());
+                });
+
+                expect(result.current.error).toBe('newer failure');
+                expect(result.current.groups).toEqual([]);
+                expect(result.current.collectedAt).toBeNull();
+            });
+
+        it('does not let a stale response clear the spinner',
+            async () => {
+                const { result, first } = await startOverlappingRequests();
+
+                expect(result.current.loading).toBe(true);
+
+                await act(async () => {
+                    first.resolve(makeResponse());
+                });
+
+                expect(result.current.loading).toBe(true);
+                expect(result.current.groups).toEqual([]);
+            });
+
+        it('does not let a stale rejection set an error over newer data',
+            async () => {
+                const { result, first, second } =
+                    await startOverlappingRequests();
+
+                await act(async () => {
+                    second.resolve(makeResponse(
+                        [makeGroupRow({ group_label: 'local' })],
+                    ));
+                });
+
+                await waitFor(() => {
+                    expect(result.current.groups).toHaveLength(1);
+                });
+
+                await act(async () => {
+                    first.reject(new Error('stale failure'));
+                });
+
+                expect(result.current.error).toBeNull();
+                expect(result.current.groups[0].group_label).toBe('local');
+            });
     });
 
     it('ignores a response that lands after unmount', async () => {

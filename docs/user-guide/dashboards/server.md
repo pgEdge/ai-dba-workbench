@@ -57,3 +57,17 @@ The "Hide monitoring queries" toggle filters out the
 workbench's own monitoring queries from the list. The
 toggle is on by default to focus on application
 queries.
+
+The panel header includes a database filter when the
+connection monitors more than one database. The filter
+defaults to "All databases"; selecting a single
+database restricts the list to queries that ran
+against that database.
+
+The panel footer includes a pager that lets users move
+through the full result set. The "Rows per page"
+selector offers 10, 20, 50, or 100 rows and defaults
+to 20 rows. The previous and next controls move
+between pages, and the "Showing X-Y of Z" indicator
+reports the range of rows on the current page and the
+total number of matching queries.

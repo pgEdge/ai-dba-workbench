@@ -9,26 +9,23 @@
  */
 
 import type React from 'react';
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { ViewList as ViewListIcon } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
-import { useAuth } from '../../../contexts/useAuth';
-import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/useDashboard';
+import { useDatabaseSummaries } from '../../../hooks/useDatabaseSummaries';
 import CollapsibleSection from '../CollapsibleSection';
 import Sparkline from '../Sparkline';
 import { getDashboardTileSx } from '../styles';
 import type { MetricDataPoint } from '../types';
 import { formatNumber } from '../../../utils/formatters';
-import { logger } from '../../../utils/logger';
 import type {
     ServerSectionProps,
     DatabaseSummary,
-    ServerPerformanceSummary,
 } from './types';
 
 /** Grid layout for database summary cards */
@@ -105,80 +102,12 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
     connectionId,
     connectionName,
 }) => {
-    const { user } = useAuth();
     const { refreshTrigger, pushOverlay } = useDashboard();
     const theme = useTheme();
 
-    const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
-    const isMountedRef = useRef<boolean>(true);
-    const initialLoadDoneRef = useRef<boolean>(false);
-    const userRef = useRef(user);
-    userRef.current = user;
-
-    const isLoggedIn = !!user;
-
-    const fetchData = useCallback(async (): Promise<void> => {
-        if (!userRef.current) { return; }
-
-        const url = `/api/v1/metrics/database-summaries`
-            + `?connection_id=${connectionId}&time_range=24h`;
-
-        if (!initialLoadDoneRef.current) {
-            setLoading(true);
-        }
-        setError(null);
-
-        try {
-            const response = await apiFetch(url);
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(
-                    () => ({})
-                ) as { error?: string };
-                throw new Error(
-                    errorData.error
-                    ?? `Failed to fetch database summaries: ${response.status}`
-                );
-            }
-
-            if (isMountedRef.current) {
-                const result: ServerPerformanceSummary = await response.json();
-                setDatabases(result.databases ?? []);
-                initialLoadDoneRef.current = true;
-            }
-        } catch (err) {
-            logger.error('Error fetching database summaries:', err);
-            if (isMountedRef.current) {
-                setError(
-                    (err as Error).message
-                    || 'Failed to fetch database summaries'
-                );
-                setDatabases([]);
-            }
-        } finally {
-            if (isMountedRef.current) {
-                setLoading(false);
-            }
-        }
-    }, [connectionId]);
-
-    useEffect(() => {
-        initialLoadDoneRef.current = false;
-    }, [connectionId]);
-
-    useEffect(() => {
-        isMountedRef.current = true;
-
-        if (isLoggedIn) {
-            fetchData();
-        }
-
-        return () => {
-            isMountedRef.current = false;
-        };
-    }, [isLoggedIn, fetchData, refreshTrigger]);
+    const { databases, loading, error } = useDatabaseSummaries(
+        connectionId, refreshTrigger
+    );
 
     const tileSx = useMemo(() => getDashboardTileSx(theme), [theme]);
 

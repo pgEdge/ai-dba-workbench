@@ -5977,7 +5977,15 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of queries to return",
+            "description": "Maximum number of queries to return (default 10, max 100)",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of rows to skip for pagination (default 0, must be zero or greater)",
             "schema": {
               "type": "integer"
             }
@@ -6007,6 +6015,14 @@
             }
           },
           {
+            "name": "database_name",
+            "in": "query",
+            "description": "Filter by exact database name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "exclude_collector",
             "in": "query",
             "description": "Exclude collector queries",
@@ -6018,6 +6034,14 @@
         "responses": {
           "200": {
             "description": "Top queries",
+            "headers": {
+              "X-Total-Count": {
+                "description": "Total number of matching queries, ignoring limit and offset",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

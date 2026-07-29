@@ -34,10 +34,11 @@ hierarchy.
 
 ## Time Range Selector
 
-The time range selector controls the time window for
-all charts in the monitoring section. The selector
-appears as a toggle button group with the following
-options:
+The time range selector controls the time window for the
+time-series charts in the monitoring section. The event
+timeline carries a separate control of its own. The
+selector appears as a toggle button group with the
+following options:
 
 - 1h displays the last one hour of data.
 - 6h displays the last six hours of data.
@@ -79,10 +80,14 @@ so a browser reload returns to the last preset.
 
 ### Views That Honour the Selector
 
-The time-series charts and the event timeline follow the
-selected range, including the two charts on the query
-detail overlay. The headline statistics on that overlay
-report the latest collected sample instead.
+The time-series charts follow the dashboard time range,
+including the two charts on the query detail overlay. The
+headline statistics on that overlay report the latest
+collected sample instead.
+
+The event timeline follows its own independent range,
+which the dashboard selector never changes. The timeline
+supports a custom window through that separate control.
 
 The query leaderboards and the performance and database
 summary tiles do not follow the selector. The
@@ -98,7 +103,8 @@ performance summary tiles in the monitoring section.
 The timeline header carries its own range control,
 offering the same five presets and a Custom option that
 opens the same picker. The timeline range is independent
-of the dashboard time range selector.
+of the dashboard time range selector; changing either one
+leaves the other exactly as it was.
 
 The event timeline tracks the following event types:
 

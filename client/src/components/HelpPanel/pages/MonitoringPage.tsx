@@ -166,7 +166,7 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
         <Box sx={styles.indentedBlock}>
             <FeatureItem
                 title="Time Range Selector"
-                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, 30 days, or Custom. The selected range applies to all charts in the monitoring section."
+                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, 30 days, or Custom. The selected range applies to the time-series charts in the monitoring section; the event timeline has a separate control of its own."
             />
             <FeatureItem
                 title="Custom Time Range"
@@ -182,7 +182,7 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
             />
             <FeatureItem
                 title="Event Timeline"
-                description="A timeline below the charts shows configuration changes, alerts, server restarts, and other notable events in the selected time range. The timeline has its own range control, including a Custom option."
+                description="A timeline below the charts shows configuration changes, alerts, server restarts, and other notable events in its own selected time range. The timeline has an independent range control, including a Custom option, so the dashboard time range selector does not move the timeline."
             />
         </Box>
 

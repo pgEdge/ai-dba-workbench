@@ -212,7 +212,7 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/metrics/query` | Query metric data points over a preset or custom time window. |
+| GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
@@ -313,14 +313,16 @@ The API provides endpoints in the following categories.
 ## Metric Time Windows
 
 The `/api/v1/metrics/query` endpoint accepts either a
-rolling preset or an explicit window. The following
+rolling preset or an explicit window. The `time_range`
+parameter takes one of the `1h`, `6h`, `24h`, `7d`, and
+`30d` presets, or the value `custom`; the following
 parameters select the window:
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `time_range` | No | The window selector: `1h`, `6h`, `24h`, `7d`, `30d`, or `custom`. The default is `1h`. |
-| `time_start` | For `custom` | The start of the window as an RFC 3339 timestamp. |
-| `time_end` | For `custom` | The end of the window as an RFC 3339 timestamp. |
+| `time_range` | No | The window selector; defaults to `1h`. |
+| `time_start` | For `custom` | The window start, as RFC 3339. |
+| `time_end` | For `custom` | The window end, as RFC 3339. |
 
 A preset selects a rolling window that ends at the
 present moment; the server ignores `time_start` and

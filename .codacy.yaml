@@ -50,6 +50,20 @@ engines:
   # false positive that Codacy's own classifier scores at 95-98%
   # confidence. Excluded from Opengrep only; every other Codacy
   # engine (gosec, golangci-lint, etc.) still scans these files.
+  #
+  # The same rule also fires on `go_sql_rule-concat-sqli` wherever a
+  # statement is assembled from fragments, even when the assembly is
+  # provably safe. `perf_summary_handlers.go` builds the top-queries
+  # count and page statements in `buildTopQueriesSQL`, which
+  # interpolates only whitelisted identifiers -- the sort column and
+  # direction come from `validTopQueryOrderColumns` and
+  # `validTopQueryOrderDirections`, so the SQL can contain none but
+  # those constants -- together with the `$N` placeholder positions it
+  # generates itself. Every caller-supplied value (connection ID,
+  # queryid, database name, limit, offset) is bound as a parameter
+  # and appears only in the argument slices, and the numbering of all
+  # eight clause combinations is asserted by
+  # `perf_summary_top_queries_sql_test.go`.
   opengrep:
     exclude_paths:
       - 'alerter/src/internal/database/anomaly_queries.go'
@@ -57,6 +71,7 @@ engines:
       - 'alerter/src/internal/engine/baselines_test.go'
       - 'collector/src/database/migration_v6_test.go'
       - 'collector/src/database/schema.go'
+      - 'server/src/internal/api/perf_summary_handlers.go'
       - 'server/src/internal/tools/get_metric_baselines.go'
 
   # Codacy's ESLint8 ruleset enables eslint-plugin-xss and
@@ -319,6 +334,7 @@ engines:
       - 'client/src/hooks/__tests__/useAnalysisState.test.ts'
       - 'client/src/hooks/__tests__/useChartAnalysis.test.ts'
       - 'client/src/hooks/__tests__/useChat.test.ts'
+      - 'client/src/hooks/__tests__/useDatabaseSummaries.test.ts'
       - 'client/src/hooks/__tests__/useMenu.test.ts'
       - 'client/src/hooks/__tests__/useMetrics.test.ts'
       - 'client/src/hooks/__tests__/useOverviewSSE.test.ts'
@@ -442,6 +458,8 @@ engines:
       - 'server/src/internal/api/mcp_tool_handlers_test.go'
       - 'server/src/internal/api/notification_channel_handlers_test.go'
       - 'server/src/internal/api/openapi_test.go'
+      - 'server/src/internal/api/perf_summary_top_queries_sql_test.go'
+      - 'server/src/internal/api/perf_summary_top_queries_test.go'
       - 'server/src/internal/api/probe_config_handlers_test.go'
       - 'server/src/internal/api/query_handlers_test.go'
       - 'server/src/internal/api/rbac_group_privilege_handlers_test.go'
@@ -507,6 +525,7 @@ engines:
       - 'server/src/internal/database/visibility_lister_test.go'
       - 'server/src/internal/llmproxy/proxy_test.go'
       - 'server/src/internal/logging/logging_test.go'
+      - 'server/src/internal/mcp/cors_middleware_test.go'
       - 'server/src/internal/mcp/helpers_test.go'
       - 'server/src/internal/mcp/http_server_test.go'
       - 'server/src/internal/mcp/server_test.go'

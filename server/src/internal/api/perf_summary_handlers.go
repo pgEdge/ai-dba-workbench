@@ -15,6 +15,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,14 +139,25 @@ type TopQueryRow struct {
 	SharedBlksRead int64   `json:"shared_blks_read"`
 }
 
-// validTopQueryOrderColumns is the whitelist of allowed order_by columns.
-var validTopQueryOrderColumns = map[string]bool{
-	"total_exec_time":  true,
-	"calls":            true,
-	"mean_exec_time":   true,
-	"rows":             true,
-	"shared_blks_hit":  true,
-	"shared_blks_read": true,
+// validTopQueryOrderColumns maps each accepted order_by request value to the
+// literal column name that may be interpolated into an ORDER BY clause. The
+// map value, never the request string, is what reaches the SQL text, so the
+// generated statement can only ever contain one of these six constants.
+var validTopQueryOrderColumns = map[string]string{
+	"total_exec_time":  "total_exec_time",
+	"calls":            "calls",
+	"mean_exec_time":   "mean_exec_time",
+	"rows":             "rows",
+	"shared_blks_hit":  "shared_blks_hit",
+	"shared_blks_read": "shared_blks_read",
+}
+
+// validTopQueryOrderDirections maps each accepted order request value to the
+// literal sort direction interpolated into the ORDER BY clause, on the same
+// principle as validTopQueryOrderColumns.
+var validTopQueryOrderDirections = map[string]string{
+	"asc":  "ASC",
+	"desc": "DESC",
 }
 
 // NewPerfSummaryHandler creates a new performance summary handler.
@@ -1031,6 +1043,114 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	}
 }
 
+// buildTopQueriesSQL assembles the two statements behind the top-queries
+// endpoint and the argument slices that go with them. It is the only place
+// in this file where SQL text is composed, and it is deliberately pure so
+// that the clause selection and the $N placeholder numbering can be tested
+// without a database.
+//
+// The only values interpolated into the statement text are orderCol and
+// orderDir, which callers must resolve through validTopQueryOrderColumns and
+// validTopQueryOrderDirections respectively, plus the generated placeholder
+// positions. Every caller-supplied value (connID, queryID, databaseName,
+// limit, offset) is bound as a parameter and appears in the returned
+// argument slices, never in the SQL.
+//
+// filterArgs serves the count statement; pageArgs is filterArgs followed by
+// the limit and offset, so the two statements share identical placeholder
+// numbering for the filters.
+func buildTopQueriesSQL(
+	connID int,
+	queryID, databaseName string,
+	excludeCollector bool,
+	orderCol, orderDir string,
+	limit, offset int,
+) (countSQL, pageSQL string, filterArgs, pageArgs []any) {
+	// Optional queryid filter, applied inside the CTE.
+	queryIDClause := ""
+	filterArgs = []any{connID}
+	if queryID != "" {
+		queryIDClause = fmt.Sprintf(
+			"AND pss.queryid::text = $%d", len(filterArgs)+1)
+		filterArgs = append(filterArgs, queryID)
+	}
+
+	// Optional clause to exclude collector probe queries. It contains no
+	// caller-supplied data at all.
+	excludeCollectorClause := ""
+	if excludeCollector {
+		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
+	}
+
+	// The database filter is applied to the outer select so that it matches
+	// the resolved database name (the COALESCE below), not the raw
+	// pss.database_name column.
+	databaseClause := ""
+	if databaseName != "" {
+		databaseClause = fmt.Sprintf(
+			"WHERE database_name = $%d", len(filterArgs)+1)
+		filterArgs = append(filterArgs, databaseName)
+	}
+
+	cte := fmt.Sprintf(`
+        WITH db_names AS (
+            SELECT DISTINCT datid, datname
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND datid IS NOT NULL
+              AND datname IS NOT NULL
+        ),
+        deduped AS (
+            SELECT DISTINCT ON (pss.queryid)
+                pss.queryid::text,
+                COALESCE(dn.datname, pss.database_name) AS database_name,
+                pss.query, pss.calls, pss.total_exec_time,
+                pss.mean_exec_time, pss.rows,
+                pss.shared_blks_hit, pss.shared_blks_read
+            FROM metrics.pg_stat_statements pss
+            LEFT JOIN db_names dn ON pss.dbid = dn.datid
+            WHERE pss.connection_id = $1
+              AND pss.collected_at = (
+                  SELECT MAX(collected_at)
+                  FROM metrics.pg_stat_statements
+                  WHERE connection_id = $1
+              )
+              %s
+              %s
+            ORDER BY pss.queryid
+        )`, queryIDClause, excludeCollectorClause)
+
+	// The total is obtained with a separate COUNT(*) over the same CTE
+	// rather than a COUNT(*) OVER () window on the page query. A window
+	// count would come back on the data rows themselves, so it would be
+	// unavailable whenever the requested offset runs past the end of the
+	// result set, which is exactly the case a paging client needs the total
+	// for.
+	countSQL = cte + "\n        SELECT COUNT(*) FROM deduped " + databaseClause
+
+	pageArgs = make([]any, 0, len(filterArgs)+2)
+	pageArgs = append(pageArgs, filterArgs...)
+	limitPos := len(pageArgs) + 1
+	pageArgs = append(pageArgs, limit, offset)
+
+	// The ORDER BY carries a queryid tiebreaker so that the sort is a total
+	// order rather than a partial one. Without it, rows tying on the
+	// selected column could come back in any order, and successive pages of
+	// the same result set could then repeat a row or skip one entirely. The
+	// CTE dedupes with DISTINCT ON (pss.queryid), so queryid is unique
+	// across the result set and is therefore sufficient on its own; the
+	// cast in the CTE keeps the output column named queryid, which is what
+	// this clause resolves against.
+	pageSQL = fmt.Sprintf(`%s
+        SELECT * FROM deduped
+        %s
+        ORDER BY %s %s, queryid
+        LIMIT $%d OFFSET $%d
+    `, cte, databaseClause, orderCol, orderDir, limitPos, limitPos+1)
+
+	return countSQL, pageSQL, filterArgs, pageArgs
+}
+
 // handleTopQueries handles GET /api/v1/metrics/top-queries
 func (h *PerfSummaryHandler) handleTopQueries(
 	w http.ResponseWriter,
@@ -1073,24 +1193,46 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		limit = 100
 	}
 
-	// Parse and validate order_by
+	// Parse offset (default 0). Unlike limit, a negative offset is
+	// rejected rather than clamped, because it almost always signals a
+	// paging bug in the caller rather than a harmless over-request.
+	// ParseOffsetWithDefault is not used here: it silently falls back to
+	// the default for invalid input, whereas this endpoint reports bad
+	// parameters in the same style as limit.
+	offset := 0
+	if o, ok := ParseQueryInt(w, r, "offset"); ok {
+		offset = o
+	} else if r.URL.Query().Get("offset") != "" {
+		return // ParseQueryInt already sent error
+	}
+	if offset < 0 {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid offset: must be zero or greater")
+		return
+	}
+
+	// Parse and validate order_by. orderCol is the whitelisted constant
+	// taken from the map, not the request string.
 	orderBy := ParseQueryString(r, "order_by")
 	if orderBy == "" {
 		orderBy = "total_exec_time"
 	}
-	if !validTopQueryOrderColumns[orderBy] {
+	orderCol, ok := validTopQueryOrderColumns[orderBy]
+	if !ok {
 		RespondError(w, http.StatusBadRequest,
 			"Invalid order_by: must be one of total_exec_time, calls, "+
 				"mean_exec_time, rows, shared_blks_hit, shared_blks_read")
 		return
 	}
 
-	// Parse and validate order direction
+	// Parse and validate order direction, resolved to a constant in the
+	// same way as the order column.
 	order := strings.ToLower(ParseQueryString(r, "order"))
 	if order == "" {
 		order = "desc"
 	}
-	if order != "asc" && order != "desc" {
+	orderDir, ok := validTopQueryOrderDirections[order]
+	if !ok {
 		RespondError(w, http.StatusBadRequest,
 			"Invalid order: must be asc or desc")
 		return
@@ -1101,6 +1243,10 @@ func (h *PerfSummaryHandler) handleTopQueries(
 
 	// Parse optional exclude_collector filter
 	excludeCollector := r.URL.Query().Get("exclude_collector") == "true"
+
+	// Parse optional database_name filter. The value is always bound as a
+	// parameter, never interpolated into the SQL text.
+	databaseName := ParseQueryString(r, "database_name")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1115,61 +1261,32 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			"Failed to query top queries")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	// Roll back with a non-cancelable context so a canceled request
+	// context cannot trigger the pgx v5 close-of-closed-channel panic
+	// described in jackc/pgx#2470, which would leak the pooled
+	// connection in an aborted-transaction state. This endpoint takes
+	// several early returns between BEGIN and COMMIT, so the deferred
+	// rollback is well exercised. The other handlers in this file
+	// still pass the request context; converting them belongs in a
+	// deliberate sweep of its own rather than here.
+	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback is no-op if already committed
 
-	// Safe to use string formatting for ORDER BY because orderBy and order
-	// are validated against whitelists above.
-	// Build optional queryid filter clause.
-	queryIDClause := ""
-	args := []any{connID, limit}
-	if queryID != "" {
-		queryIDClause = fmt.Sprintf(
-			"AND pss.queryid::text = $%d", len(args)+1)
-		args = append(args, queryID)
+	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
+		connID, queryID, databaseName, excludeCollector, orderCol, orderDir,
+		limit, offset)
+
+	var totalCount int64
+	if err := tx.QueryRow(ctx, countQuery, filterArgs...).Scan(
+		&totalCount); err != nil {
+		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		respondEmptyTopQueries(w)
+		return
 	}
 
-	// Build optional clause to exclude collector probe queries.
-	excludeCollectorClause := ""
-	if excludeCollector {
-		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
-	}
-
-	query := fmt.Sprintf(`
-        WITH db_names AS (
-            SELECT DISTINCT datid, datname
-            FROM metrics.pg_stat_activity
-            WHERE connection_id = $1
-              AND datid IS NOT NULL
-              AND datname IS NOT NULL
-        ),
-        deduped AS (
-            SELECT DISTINCT ON (pss.queryid)
-                pss.queryid::text,
-                COALESCE(dn.datname, pss.database_name) AS database_name,
-                pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.rows,
-                pss.shared_blks_hit, pss.shared_blks_read
-            FROM metrics.pg_stat_statements pss
-            LEFT JOIN db_names dn ON pss.dbid = dn.datid
-            WHERE pss.connection_id = $1
-              AND pss.collected_at = (
-                  SELECT MAX(collected_at)
-                  FROM metrics.pg_stat_statements
-                  WHERE connection_id = $1
-              )
-              %s
-              %s
-            ORDER BY pss.queryid
-        )
-        SELECT * FROM deduped
-        ORDER BY %s %s
-        LIMIT $2
-    `, queryIDClause, excludeCollectorClause, orderBy, order)
-
-	rows, err := tx.Query(ctx, query, args...)
+	rows, err := tx.Query(ctx, query, pageArgs...)
 	if err != nil {
 		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		RespondJSON(w, http.StatusOK, []TopQueryRow{})
+		respondEmptyTopQueries(w)
 		return
 	}
 	defer rows.Close()
@@ -1195,7 +1312,25 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)
 	}
 
+	// X-Total-Count reports the number of rows matching the filters,
+	// ignoring limit and offset, so that a client can size its pager. The
+	// body deliberately stays a bare JSON array of TopQueryRow, because the
+	// OpenAPI spec and the web client both depend on that shape.
+	w.Header().Set(headerTotalCount, strconv.FormatInt(totalCount, 10))
 	RespondJSON(w, http.StatusOK, results)
+}
+
+// headerTotalCount is the response header carrying the unpaginated row
+// count for paged collection endpoints.
+const headerTotalCount = "X-Total-Count"
+
+// respondEmptyTopQueries returns the empty top-queries result used when the
+// underlying metrics tables are missing or the query fails. The endpoint
+// treats missing metrics data as "no rows" rather than an error, so the
+// total count is reported as zero.
+func respondEmptyTopQueries(w http.ResponseWriter) {
+	w.Header().Set(headerTotalCount, "0")
+	RespondJSON(w, http.StatusOK, []TopQueryRow{})
 }
 
 // roundTo rounds a float64 to the specified number of decimal places.

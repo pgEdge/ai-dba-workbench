@@ -568,6 +568,10 @@ func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			// Expose the pagination total so cross-origin browser clients
+			// can read it; response headers other than the CORS-safelisted
+			// set are hidden from script unless listed here.
+			w.Header().Set("Access-Control-Expose-Headers", "X-Total-Count")
 
 			// Handle preflight requests
 			if r.Method == http.MethodOptions {

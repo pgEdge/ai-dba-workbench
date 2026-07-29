@@ -20,10 +20,48 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
+
+// probeMarkerAlias is the synthetic column alias that the collector
+// wraps around every read-only probe query it runs against a monitored
+// database; see WrapQuery in the collector's probes package. The
+// collector is a separate Go module, so the value is repeated here
+// rather than imported. Keep the two in step.
+const probeMarkerAlias = "ai_dba_wb_probe"
+
+// excludeWorkbenchQueriesClause filters out the Workbench's own
+// statements from the Top Queries panel when the caller asks to hide
+// monitoring queries.
+//
+// Two markers are needed. The collector's probe queries against
+// monitored databases carry probeMarkerAlias as a column alias, whilst
+// the Workbench's statements against its own datastore (the collector's
+// bulk metrics writes and partition maintenance, and the alerter's
+// metric-evaluation queries) carry sqlmarker.Marker as an in-statement
+// comment. Because the datastore usually shares a PostgreSQL instance
+// with the databases being monitored, pg_stat_statements captures both
+// classes, and before the second marker existed the datastore traffic
+// leaked through this filter (GitHub issue #364).
+//
+// The clause is a compile-time constant built from two constants, so it
+// carries no user input and needs no bound parameters. Note that it
+// deliberately does not exclude the datastore database wholesale: users
+// legitimately run their own tools against that database and expect to
+// see them here.
+//
+// The pss.query IS NULL arm is not redundant. metrics.pg_stat_statements
+// stores query as a nullable column, and PostgreSQL evaluates
+// NULL NOT LIKE '...' to NULL rather than true, so without that arm any
+// row whose query text was not captured would be filtered out. A row we
+// cannot positively identify as Workbench traffic must be shown rather
+// than hidden, so NULL query text survives the filter.
+const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
+	"pss.query NOT LIKE '%" + probeMarkerAlias + "%' AND " +
+	"pss.query NOT LIKE '%" + sqlmarker.Marker + "%'))"
 
 // validTimeRanges maps time_range parameter values to their duration.
 var validTimeRanges = map[string]time.Duration{
@@ -1031,6 +1069,105 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	}
 }
 
+// defaultTopQueryOrderBy and defaultTopQueryOrder are the ordering used
+// when no ordering is requested, and the fallback buildTopQueriesQuery
+// substitutes for anything it cannot validate.
+const (
+	defaultTopQueryOrderBy = "total_exec_time"
+	defaultTopQueryOrder   = "desc"
+)
+
+// safeTopQueryOrdering maps a requested ORDER BY column and direction on
+// to a pair that is safe to interpolate into SQL, substituting the
+// defaults for anything not on the whitelists.
+//
+// handleTopQueries already rejects invalid values with HTTP 400, so in
+// practice this function never substitutes anything. It exists so that
+// the injection-safety property of buildTopQueriesQuery is local to the
+// code that does the interpolating rather than depending on a caller a
+// call frame away: any future caller, or any future relaxation of the
+// handler's parsing, still cannot reach the ORDER BY clause with
+// arbitrary text.
+func safeTopQueryOrdering(orderBy, order string) (string, string) {
+	if !validTopQueryOrderColumns[orderBy] {
+		orderBy = defaultTopQueryOrderBy
+	}
+	if order != "asc" && order != "desc" {
+		order = defaultTopQueryOrder
+	}
+	return orderBy, order
+}
+
+// buildTopQueriesQuery builds the pg_stat_statements query behind the
+// Top Queries panel, returning the statement and its bind arguments.
+//
+// The connection ID, row limit, and queryid filter are all bound
+// parameters. The ORDER BY column and direction are interpolated, so
+// both are passed through safeTopQueryOrdering first and can only ever
+// be whitelisted values; the optional Workbench-internal exclusion is a
+// compile-time constant clause. Callers are still expected to reject
+// invalid ordering parameters themselves, as handleTopQueries does with
+// HTTP 400, rather than relying on the silent fallback here.
+func buildTopQueriesQuery(
+	connID, limit int,
+	queryID string,
+	excludeCollector bool,
+	orderBy, order string,
+) (string, []any) {
+	orderBy, order = safeTopQueryOrdering(orderBy, order)
+
+	// Build optional queryid filter clause.
+	queryIDClause := ""
+	args := []any{connID, limit}
+	if queryID != "" {
+		queryIDClause = fmt.Sprintf(
+			"AND pss.queryid::text = $%d", len(args)+1)
+		args = append(args, queryID)
+	}
+
+	// Build optional clause to exclude Workbench-internal queries,
+	// covering both the collector's probe queries and the collector's
+	// and alerter's own datastore traffic.
+	excludeCollectorClause := ""
+	if excludeCollector {
+		excludeCollectorClause = excludeWorkbenchQueriesClause
+	}
+
+	query := fmt.Sprintf(`
+        WITH db_names AS (
+            SELECT DISTINCT datid, datname
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND datid IS NOT NULL
+              AND datname IS NOT NULL
+        ),
+        deduped AS (
+            SELECT DISTINCT ON (pss.queryid)
+                pss.queryid::text,
+                COALESCE(dn.datname, pss.database_name) AS database_name,
+                pss.query, pss.calls, pss.total_exec_time,
+                pss.mean_exec_time, pss.rows,
+                pss.shared_blks_hit, pss.shared_blks_read
+            FROM metrics.pg_stat_statements pss
+            LEFT JOIN db_names dn ON pss.dbid = dn.datid
+            WHERE pss.connection_id = $1
+              AND pss.collected_at = (
+                  SELECT MAX(collected_at)
+                  FROM metrics.pg_stat_statements
+                  WHERE connection_id = $1
+              )
+              %s
+              %s
+            ORDER BY pss.queryid
+        )
+        SELECT * FROM deduped
+        ORDER BY %s %s
+        LIMIT $2
+    `, queryIDClause, excludeCollectorClause, orderBy, order)
+
+	return query, args
+}
+
 // handleTopQueries handles GET /api/v1/metrics/top-queries
 func (h *PerfSummaryHandler) handleTopQueries(
 	w http.ResponseWriter,
@@ -1076,7 +1213,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// Parse and validate order_by
 	orderBy := ParseQueryString(r, "order_by")
 	if orderBy == "" {
-		orderBy = "total_exec_time"
+		orderBy = defaultTopQueryOrderBy
 	}
 	if !validTopQueryOrderColumns[orderBy] {
 		RespondError(w, http.StatusBadRequest,
@@ -1088,7 +1225,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// Parse and validate order direction
 	order := strings.ToLower(ParseQueryString(r, "order"))
 	if order == "" {
-		order = "desc"
+		order = defaultTopQueryOrder
 	}
 	if order != "asc" && order != "desc" {
 		RespondError(w, http.StatusBadRequest,
@@ -1117,54 +1254,8 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
 
-	// Safe to use string formatting for ORDER BY because orderBy and order
-	// are validated against whitelists above.
-	// Build optional queryid filter clause.
-	queryIDClause := ""
-	args := []any{connID, limit}
-	if queryID != "" {
-		queryIDClause = fmt.Sprintf(
-			"AND pss.queryid::text = $%d", len(args)+1)
-		args = append(args, queryID)
-	}
-
-	// Build optional clause to exclude collector probe queries.
-	excludeCollectorClause := ""
-	if excludeCollector {
-		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
-	}
-
-	query := fmt.Sprintf(`
-        WITH db_names AS (
-            SELECT DISTINCT datid, datname
-            FROM metrics.pg_stat_activity
-            WHERE connection_id = $1
-              AND datid IS NOT NULL
-              AND datname IS NOT NULL
-        ),
-        deduped AS (
-            SELECT DISTINCT ON (pss.queryid)
-                pss.queryid::text,
-                COALESCE(dn.datname, pss.database_name) AS database_name,
-                pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.rows,
-                pss.shared_blks_hit, pss.shared_blks_read
-            FROM metrics.pg_stat_statements pss
-            LEFT JOIN db_names dn ON pss.dbid = dn.datid
-            WHERE pss.connection_id = $1
-              AND pss.collected_at = (
-                  SELECT MAX(collected_at)
-                  FROM metrics.pg_stat_statements
-                  WHERE connection_id = $1
-              )
-              %s
-              %s
-            ORDER BY pss.queryid
-        )
-        SELECT * FROM deduped
-        ORDER BY %s %s
-        LIMIT $2
-    `, queryIDClause, excludeCollectorClause, orderBy, order)
+	query, args := buildTopQueriesQuery(
+		connID, limit, queryID, excludeCollector, orderBy, order)
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
@@ -1177,13 +1268,21 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	results := make([]TopQueryRow, 0)
 	for rows.Next() {
 		var row TopQueryRow
+		// query is nullable in metrics.pg_stat_statements, so it is
+		// scanned through a pointer; a row whose text was not captured
+		// is still reported, with an empty query string, rather than
+		// being dropped as an unscannable row.
+		var queryText *string
 		if err := rows.Scan(
-			&row.QueryID, &row.DatabaseName, &row.Query, &row.Calls,
+			&row.QueryID, &row.DatabaseName, &queryText, &row.Calls,
 			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning top query row: %v", err)
 			continue
+		}
+		if queryText != nil {
+			row.Query = *queryText
 		}
 		results = append(results, row)
 	}

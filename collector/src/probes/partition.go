@@ -19,8 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // weeklyPartitionBounds returns the partition name suffix and the
@@ -49,23 +49,118 @@ func weeklyPartitionBounds(t time.Time) (nameSuffix string, from, to time.Time) 
 // session's TimeZone setting cannot reinterpret it.
 const partitionBoundLayout = "2006-01-02 15:04:05Z07:00"
 
-// EnsurePartition creates a partition for the given week if it doesn't exist
-func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, timestamp time.Time) error {
-	nameSuffix, weekStart, weekEnd := weeklyPartitionBounds(timestamp)
+// DatastoreQuerier is the subset of *pgxpool.Conn that the partition
+// maintenance helpers use. Accepting the interface rather than the
+// concrete connection type keeps the helpers testable: unit tests can
+// inject a fake that both records the SQL actually issued (so the
+// Workbench-internal marker can be asserted without a database) and
+// returns errors from Query, Scan, and Exec.
+type DatastoreQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
 
-	partitionName := fmt.Sprintf("%s_%s", tableName, nameSuffix)
-	fullTableName := fmt.Sprintf("metrics.%s", tableName)
-	fullPartitionName := fmt.Sprintf("metrics.%s", partitionName)
-
-	// Check if partition already exists
-	var exists bool
-	err := conn.QueryRow(ctx, `
+// partitionExistsQuery checks whether a partition of the given name has
+// already been created. Tagged as Workbench-internal so partition
+// maintenance does not show up in the server's Top Queries panel when
+// monitoring queries are hidden; see sqlmarker.Tag for why the marker
+// sits immediately after the leading keyword.
+var partitionExistsQuery = sqlmarker.Tag(`
         SELECT EXISTS (
             SELECT 1 FROM pg_tables
             WHERE schemaname = 'metrics'
             AND tablename = $1
         )
-    `, partitionName).Scan(&exists)
+    `)
+
+// createPartitionSQL builds the tagged DDL that attaches a weekly
+// partition to a metrics table. Both relation names are quoted with
+// pgx.Identifier, and the range bounds are formatted from time.Time
+// values, so no caller-supplied text reaches the statement verbatim.
+//
+// The G201 suppression below sits on the formatting call itself rather
+// than on this comment, because a doc-comment annotation would silence
+// the rule for the whole function body.
+func createPartitionSQL(partitionName, tableName string, weekStart, weekEnd time.Time) string {
+	// #nosec G201 -- the table name comes from a probe definition, both
+	// identifiers are quoted by pgx.Identifier, and DDL cannot bind an
+	// identifier as a placeholder.
+	return sqlmarker.Tag(fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS %s
+        PARTITION OF %s
+        FOR VALUES FROM ('%s') TO ('%s')
+    `, pgx.Identifier{"metrics", partitionName}.Sanitize(),
+		pgx.Identifier{"metrics", tableName}.Sanitize(),
+		weekStart.Format(partitionBoundLayout),
+		weekEnd.Format(partitionBoundLayout)))
+}
+
+// dropPartitionSQL builds the tagged DDL that drops an expired
+// partition. The partition name is quoted with pgx.Identifier.
+func dropPartitionSQL(partitionName string) string {
+	return sqlmarker.Tag(fmt.Sprintf("DROP TABLE IF EXISTS %s",
+		pgx.Identifier{"metrics", partitionName}.Sanitize()))
+}
+
+// protectedPartitionsQuery builds the tagged query that finds, for a
+// change-tracked probe, the partitions holding the most recent sample
+// per connection. The relation name is quoted with pgx.Identifier
+// because a table cannot be named by a bind parameter.
+//
+// The G201 suppression below sits on the formatting call itself rather
+// than on this comment, because a doc-comment annotation would silence
+// the rule for the whole function body.
+func protectedPartitionsQuery(tableName string) string {
+	table := pgx.Identifier{"metrics", tableName}.Sanitize()
+	// #nosec G201 -- the table name comes from a probe definition and is
+	// quoted by pgx.Identifier; a relation cannot be bound as a
+	// placeholder.
+	return sqlmarker.Tag(fmt.Sprintf(`
+        SELECT DISTINCT
+            c.relname AS partition_name
+        FROM (
+            SELECT connection_id, MAX(collected_at) as max_collected_at
+            FROM %[1]s
+            GROUP BY connection_id
+        ) latest
+        JOIN %[1]s tbl ON tbl.connection_id = latest.connection_id
+            AND tbl.collected_at = latest.max_collected_at
+        JOIN pg_class c ON c.oid = tbl.tableoid
+    `, table))
+}
+
+// partitionCandidatesQuery is the tagged catalog query listing every
+// partition of a parent table together with its bound expression. The
+// parent name is compared as a value rather than interpolated as an
+// identifier, so it binds as $1.
+var partitionCandidatesQuery = sqlmarker.Tag(`
+        SELECT
+            c.relname AS partition_name,
+            pg_get_expr(c.relpartbound, c.oid) AS partition_bound
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        JOIN pg_inherits i ON c.oid = i.inhrelid
+        JOIN pg_class p ON i.inhparent = p.oid
+        WHERE n.nspname = 'metrics'
+        AND p.relname = $1
+        AND c.relkind = 'r'
+        ORDER BY c.relname
+    `)
+
+// EnsurePartition creates a partition for the given week if it doesn't exist
+func EnsurePartition(ctx context.Context, conn DatastoreQuerier, tableName string, timestamp time.Time) error {
+	nameSuffix, weekStart, weekEnd := weeklyPartitionBounds(timestamp)
+
+	partitionName := fmt.Sprintf("%s_%s", tableName, nameSuffix)
+
+	// Check if partition already exists
+	var exists bool
+	// partitionExistsQuery is a fixed SQL literal that is only non-constant
+	// because sqlmarker.Tag inserts the internal marker comment into it;
+	// the partition name is bound as $1 and never interpolated.
+	//nosemgrep: go_sql_rule-concat-sqli -- fixed literal tagged by sqlmarker.Tag; partition name bound as $1
+	err := conn.QueryRow(ctx, partitionExistsQuery, partitionName).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("failed to check if partition exists: %w", err)
 	}
@@ -75,15 +170,13 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 	}
 
 	// Create the partition
-	// #nosec G201 - table names are not user-provided, they come from probe definitions
-	createSQL := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS %s
-        PARTITION OF %s
-        FOR VALUES FROM ('%s') TO ('%s')
-    `, fullPartitionName, fullTableName,
-		weekStart.Format(partitionBoundLayout),
-		weekEnd.Format(partitionBoundLayout))
+	createSQL := createPartitionSQL(
+		partitionName, tableName, weekStart, weekEnd)
 
+	// createPartitionSQL interpolates only an internal probe table name,
+	// quoted with pgx.Identifier, and range bounds formatted from
+	// time.Time; CREATE TABLE cannot name a relation with a placeholder.
+	//nosemgrep: go_sql_rule-concat-sqli -- DDL identifiers come from probe definitions and are sanitized by pgx.Identifier
 	_, err = conn.Exec(ctx, createSQL)
 	if err != nil {
 		// Check if this is a "relation already exists" error (42P07)
@@ -108,7 +201,7 @@ func EnsurePartition(ctx context.Context, conn *pgxpool.Conn, tableName string, 
 // Rows result set. Doing so surfaces as a "conn busy" error. The two
 // catalog queries used here are therefore fully drained and closed
 // before any DROP TABLE is issued against the same connection.
-func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName string, retentionDays int) (int, error) {
+func DropExpiredPartitions(ctx context.Context, conn DatastoreQuerier, tableName string, retentionDays int) (int, error) {
 	// Calculate the cutoff timestamp
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
@@ -145,8 +238,11 @@ func DropExpiredPartitions(ctx context.Context, conn *pgxpool.Conn, tableName st
 			continue
 		}
 
-		dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s", pgx.Identifier{"metrics", c.name}.Sanitize())
-		if _, err := conn.Exec(ctx, dropSQL); err != nil {
+		// c.name is a partition name read back from pg_class, and
+		// dropPartitionSQL quotes it with pgx.Identifier; DROP TABLE
+		// cannot name its relation with a bind parameter.
+		//nosemgrep: go_sql_rule-concat-sqli -- partition name comes from pg_class and is sanitized by pgx.Identifier
+		if _, err := conn.Exec(ctx, dropPartitionSQL(c.name)); err != nil {
 			logger.Errorf("Warning: failed to drop partition %s: %v", c.name, err)
 			continue
 		}
@@ -176,7 +272,7 @@ type partitionCandidate struct {
 // are not change-tracked. The query's Rows is fully drained and
 // closed before the function returns so the caller can safely reuse
 // the same connection for subsequent commands.
-func loadProtectedPartitions(ctx context.Context, conn *pgxpool.Conn, tableName string) (map[string]bool, error) {
+func loadProtectedPartitions(ctx context.Context, conn DatastoreQuerier, tableName string) (map[string]bool, error) {
 	protected := make(map[string]bool)
 
 	switch tableName {
@@ -186,21 +282,11 @@ func loadProtectedPartitions(ctx context.Context, conn *pgxpool.Conn, tableName 
 		return protected, nil
 	}
 
-	// #nosec G201 - table name is from probe definition
-	protQuery := fmt.Sprintf(`
-        SELECT DISTINCT
-            c.relname AS partition_name
-        FROM (
-            SELECT connection_id, MAX(collected_at) as max_collected_at
-            FROM metrics.%s
-            GROUP BY connection_id
-        ) latest
-        JOIN metrics.%s tbl ON tbl.connection_id = latest.connection_id
-            AND tbl.collected_at = latest.max_collected_at
-        JOIN pg_class c ON c.oid = tbl.tableoid
-    `, tableName, tableName)
-
-	rows, err := conn.Query(ctx, protQuery)
+	// tableName is one of the four change-tracked probe names matched by
+	// the switch above, and protectedPartitionsQuery quotes it with
+	// pgx.Identifier; a relation cannot be bound as a placeholder.
+	//nosemgrep: go_sql_rule-concat-sqli -- table name is one of four internal probe names, sanitized by pgx.Identifier
+	rows, err := conn.Query(ctx, protectedPartitionsQuery(tableName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query protected partitions for %s: %w", tableName, err)
 	}
@@ -228,23 +314,12 @@ func loadProtectedPartitions(ctx context.Context, conn *pgxpool.Conn, tableName 
 // result is closed before the caller issues DROP TABLE on the same
 // connection. This is required because pgx reports "conn busy" when
 // a command is sent on a connection that still has open rows.
-func loadPartitionCandidates(ctx context.Context, conn *pgxpool.Conn, tableName string) ([]partitionCandidate, error) {
-	// #nosec G201 - table name is not user-provided, it comes from probe definitions
-	query := fmt.Sprintf(`
-        SELECT
-            c.relname AS partition_name,
-            pg_get_expr(c.relpartbound, c.oid) AS partition_bound
-        FROM pg_class c
-        JOIN pg_namespace n ON c.relnamespace = n.oid
-        JOIN pg_inherits i ON c.oid = i.inhrelid
-        JOIN pg_class p ON i.inhparent = p.oid
-        WHERE n.nspname = 'metrics'
-        AND p.relname = '%s'
-        AND c.relkind = 'r'
-        ORDER BY c.relname
-    `, tableName)
-
-	rows, err := conn.Query(ctx, query)
+func loadPartitionCandidates(ctx context.Context, conn DatastoreQuerier, tableName string) ([]partitionCandidate, error) {
+	// partitionCandidatesQuery is a fixed SQL literal that is only
+	// non-constant because sqlmarker.Tag inserts the internal marker
+	// comment into it; the parent table name is bound as $1.
+	//nosemgrep: go_sql_rule-concat-sqli -- fixed literal tagged by sqlmarker.Tag; parent table name bound as $1
+	rows, err := conn.Query(ctx, partitionCandidatesQuery, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query partitions: %w", err)
 	}

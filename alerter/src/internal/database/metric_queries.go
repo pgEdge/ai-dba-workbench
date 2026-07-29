@@ -12,12 +12,48 @@ package database
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
+
+// rowQuerier is the subset of *pgxpool.Pool that queryTagged needs. It
+// exists so the tagging behavior can be asserted without a database:
+// the end-to-end proof that the marker survives into
+// pg_stat_statements needs a live server with the extension loaded,
+// which is not available everywhere, whilst the tagging itself must be
+// verified on every run.
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// queryTagged tags sql as Workbench-internal and runs it on q.
+func queryTagged(ctx context.Context, q rowQuerier, sql string,
+	args ...any) (pgx.Rows, error) {
+	return q.Query(ctx, sqlmarker.Tag(sql), args...)
+}
+
+// queryInternal runs a datastore query on behalf of the metric
+// registry, tagging the SQL as Workbench-internal first.
+//
+// Every registry query (latestSQL and historicalSQL alike) funnels
+// through this one function, which is deliberate: the registry in
+// metric_registry.go holds well over a hundred SQL literals, and
+// tagging them individually would guarantee that the next one added
+// went untagged. Tagging here means the alerter's metric-evaluation
+// traffic against metrics.* never shows up in the server's Top Queries
+// panel when monitoring queries are hidden. See sqlmarker.Tag for why
+// the marker has to sit after the leading keyword rather than in front
+// of the statement.
+func (d *Datastore) queryInternal(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return queryTagged(ctx, d.pool, sql, args...)
+}
 
 // queryMetricValues executes a SQL query that returns rows with three columns
 // (connection_id, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValues(ctx context.Context, sql string) ([]MetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql)
+	rows, err := d.queryInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +76,7 @@ func (d *Datastore) queryMetricValues(ctx context.Context, sql string) ([]Metric
 // queryMetricValuesWithDB executes a SQL query that returns rows with four columns
 // (connection_id, database_name, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValuesWithDB(ctx context.Context, sql string) ([]MetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql)
+	rows, err := d.queryInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +101,7 @@ func (d *Datastore) queryMetricValuesWithDB(ctx context.Context, sql string) ([]
 // queryMetricValuesWithDBAndObject executes a SQL query that returns rows with five columns
 // (connection_id, database_name, object_name, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValuesWithDBAndObject(ctx context.Context, sql string) ([]MetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql)
+	rows, err := d.queryInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +175,7 @@ func (d *Datastore) GetLatestMetricValue(ctx context.Context, metricName string)
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).
 func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +198,7 @@ func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql st
 // queryHistoricalMetricValuesWithDB executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is a non-null string.
 func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays)
 	if err != nil {
 		return nil, err
 	}

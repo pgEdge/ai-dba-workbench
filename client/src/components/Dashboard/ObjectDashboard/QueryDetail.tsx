@@ -29,7 +29,15 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
+import {
+    useQueryStats,
+    type QueryStatsParams,
+} from '../../../hooks/useQueryStats';
 import { logger } from '../../../utils/logger';
+import {
+    SERVER_INFO_LABEL_BASE_SX,
+    SERVER_INFO_VALUE_BASE_SX,
+} from '../../../theme/tokens';
 import type { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX, spinKeyframes } from '../styles';
 import KpiTile from '../KpiTile';
@@ -242,6 +250,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 probeName: 'pg_stat_statements',
                 connectionId,
                 databaseName,
+                queryid: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
                 aggregation: 'avg',
@@ -266,6 +275,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 probeName: 'pg_stat_statements',
                 connectionId,
                 databaseName,
+                queryid: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
                 aggregation: 'sum',
@@ -280,6 +290,22 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 
     const execTimeChart = useMetrics(execTimeChartParams);
     const callsChart = useMetrics(callsChartParams);
+
+    // Period-scoped statistics for the selected time range; these sit
+    // alongside the lifetime pg_stat_statements totals above.
+    const queryStatsParams = useMemo(
+        (): QueryStatsParams | null => {
+            if (!queryData?.queryid) { return null; }
+            return {
+                connectionId,
+                queryid: queryData.queryid,
+                timeRange: timeRange.range,
+            };
+        },
+        [connectionId, timeRange.range, queryData?.queryid]
+    );
+
+    const { stats: periodStats } = useQueryStats(queryStatsParams);
 
     const execTimeChartData = useMemo(
         () => buildChartData(
@@ -310,6 +336,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const displayQuery = expanded || !isLong
         ? queryText
         : `${cleanedQuery.substring(0, COLLAPSED_QUERY_LENGTH)}...`;
+
+    // The collector reports an empty username when the role OID
+    // could not be resolved; say so rather than showing a blank.
+    const databaseUser = queryData?.username
+        ? queryData.username
+        : 'Unknown';
 
     // Compute rows per call
     const rowsPerCall = useMemo(() => {
@@ -344,18 +376,42 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     return (
         <Box>
             <Box sx={{ mb: 2 }}>
-                <Typography
-                    sx={{
-                        fontWeight: 600,
-                        fontSize: '0.875rem',
-                        color: 'text.secondary',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                        mb: 0.5,
-                    }}
-                >
-                    Query Text
-                </Typography>
+                <Box sx={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    flexWrap: 'wrap',
+                    gap: 1,
+                    mb: 0.5,
+                }}>
+                    <Typography
+                        sx={{
+                            fontWeight: 600,
+                            fontSize: '0.875rem',
+                            color: 'text.secondary',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                        }}
+                    >
+                        Query Text
+                    </Typography>
+                    <Box sx={{ flexGrow: 1 }} />
+                    <Typography
+                        component="span"
+                        sx={{
+                            ...SERVER_INFO_LABEL_BASE_SX,
+                            color: 'text.secondary',
+                        }}
+                    >
+                        Database User
+                    </Typography>
+                    <Typography
+                        component="span"
+                        sx={SERVER_INFO_VALUE_BASE_SX}
+                        data-testid="query-username"
+                    >
+                        {databaseUser}
+                    </Typography>
+                </Box>
                 <Typography sx={QUERY_TEXT_SX}>
                     {displayQuery}
                 </Typography>
@@ -629,10 +685,34 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label="Mean Time"
+                        label="Mean Time (All Time)"
                         value={queryData
                             ? formatTime(
                                 queryData.mean_exec_time
+                            )
+                            : '--'}
+                    />
+                    <KpiTile
+                        label={
+                            `Avg Time (Last ${timeRange.range})`
+                        }
+                        value={formatTime(
+                            periodStats?.avg_exec_time ?? null
+                        )}
+                    />
+                    <KpiTile
+                        label="Min Time (All Time)"
+                        value={queryData
+                            ? formatTime(
+                                queryData.min_exec_time
+                            )
+                            : '--'}
+                    />
+                    <KpiTile
+                        label="Max Time (All Time)"
+                        value={queryData
+                            ? formatTime(
+                                queryData.max_exec_time
                             )
                             : '--'}
                     />

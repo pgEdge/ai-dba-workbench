@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useMetrics, useBaselines } from '../useMetrics';
+import type { MetricQueryParams } from '../../components/Dashboard/types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -136,6 +137,47 @@ describe('useMetrics', () => {
         expect(url).toContain('buckets=60');
         expect(url).toContain('aggregation=avg');
         expect(url).toContain('metrics=seq_scan%2Cidx_scan');
+    });
+
+    it('builds URL with queryid when queryid is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_statements',
+            timeRange: '1h',
+            connectionId: 5,
+            databaseName: 'mydb',
+            queryid: '-1234567890',
+            metrics: ['mean_exec_time'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('queryid=-1234567890');
+    });
+
+    it('omits queryid when it is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_statements',
+            timeRange: '1h',
+            connectionId: 5,
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('queryid');
     });
 
     it('builds URL with connection_ids array', async () => {

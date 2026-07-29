@@ -27,9 +27,24 @@ The index detail view displays the following metrics:
 
 The query detail view displays the following metrics:
 
-- Total and mean execution time.
+- Total execution time across every recorded call.
+- Mean execution time over the lifetime of the query,
+  shown as "Mean Time (All Time)".
+- Average execution time over the selected time range,
+  labelled with that range as "Avg Time (Last 24h)".
+- Minimum and maximum execution time over the lifetime
+  of the query.
 - Total rows returned and rows per call.
 - Call count with a time-series chart.
+
+The view also names the database role that ran the
+query, beside the query text under the Database User
+heading. The view displays "Unknown" when the collector
+cannot resolve the role that owns the statement.
+
+The execution time and call count charts cover only the
+selected query, so the values reconcile with the tiles
+above.
 
 ## Query Plan
 

@@ -15,6 +15,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -128,28 +129,65 @@ type DatabaseSummary struct {
 
 // TopQueryRow holds a single row from pg_stat_statements.
 type TopQueryRow struct {
-	QueryID        string  `json:"queryid"`
-	DatabaseName   string  `json:"database_name"`
+	QueryID      string `json:"queryid"`
+	DatabaseName string `json:"database_name"`
+	// Username is the database role that ran the query, resolved from
+	// pg_stat_statements.userid. It is an empty string when the role
+	// could not be resolved; see buildTopQueriesSQL for why that can
+	// happen.
+	Username       string  `json:"username"`
 	Query          string  `json:"query"`
 	Calls          int64   `json:"calls"`
 	TotalExecTime  float64 `json:"total_exec_time"`
 	MeanExecTime   float64 `json:"mean_exec_time"`
+	MinExecTime    float64 `json:"min_exec_time"`
+	MaxExecTime    float64 `json:"max_exec_time"`
 	Rows           int64   `json:"rows"`
 	SharedBlksHit  int64   `json:"shared_blks_hit"`
 	SharedBlksRead int64   `json:"shared_blks_read"`
 }
 
+// QueryStatsResponse is the response for the period-scoped query statistics
+// endpoint. AvgExecTime is a pointer so that "no usable data" serializes as
+// JSON null, which the client renders differently from a genuine zero.
+type QueryStatsResponse struct {
+	QueryID       string   `json:"queryid"`
+	AvgExecTime   *float64 `json:"avg_exec_time"`
+	Calls         int64    `json:"calls"`
+	TotalExecTime float64  `json:"total_exec_time"`
+}
+
 // validTopQueryOrderColumns maps each accepted order_by request value to the
 // literal column name that may be interpolated into an ORDER BY clause. The
 // map value, never the request string, is what reaches the SQL text, so the
-// generated statement can only ever contain one of these six constants.
+// generated statement can only ever contain one of these constants.
 var validTopQueryOrderColumns = map[string]string{
 	"total_exec_time":  "total_exec_time",
 	"calls":            "calls",
 	"mean_exec_time":   "mean_exec_time",
+	"min_exec_time":    "min_exec_time",
+	"max_exec_time":    "max_exec_time",
 	"rows":             "rows",
 	"shared_blks_hit":  "shared_blks_hit",
 	"shared_blks_read": "shared_blks_read",
+}
+
+// topQueryOrderByError is the 400 message listing the accepted order_by
+// values. It is derived from validTopQueryOrderColumns so the message can
+// never drift from the whitelist it describes.
+var topQueryOrderByError = "Invalid order_by: must be one of " +
+	strings.Join(sortedKeys(validTopQueryOrderColumns), ", ")
+
+// sortedKeys returns the keys of a string-keyed map in sorted order, so that
+// generated messages are stable rather than following Go's randomized map
+// iteration order.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // validTopQueryOrderDirections maps each accepted order request value to the
@@ -184,6 +222,8 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 			authWrapper(HandleNotConfigured("Database summaries")))
 		mux.HandleFunc("/api/v1/metrics/top-queries",
 			authWrapper(HandleNotConfigured("Top queries")))
+		mux.HandleFunc("/api/v1/metrics/query-stats",
+			authWrapper(HandleNotConfigured("Query statistics")))
 		return
 	}
 
@@ -193,6 +233,8 @@ func (h *PerfSummaryHandler) RegisterRoutes(
 		authWrapper(h.handleDatabaseSummaries))
 	mux.HandleFunc("/api/v1/metrics/top-queries",
 		authWrapper(h.handleTopQueries))
+	mux.HandleFunc("/api/v1/metrics/query-stats",
+		authWrapper(h.handleQueryStats))
 }
 
 // handlePerfSummary handles GET /api/v1/metrics/performance-summary
@@ -1092,23 +1134,46 @@ func buildTopQueriesSQL(
 		filterArgs = append(filterArgs, databaseName)
 	}
 
+	// db_names and user_names resolve the OIDs recorded in
+	// pg_stat_statements to human-readable names using whatever
+	// pg_stat_activity has observed for this connection. Both are
+	// necessarily best-effort: an OID only appears in pg_stat_activity if
+	// the collector sampled a backend for that database or role inside the
+	// retention window, so a role that never had an active backend sampled
+	// (or one whose samples have since been pruned) resolves to nothing and
+	// the query is reported with an empty username. Both CTEs pick the most
+	// recently observed name per OID, so a database or role renamed within
+	// the window resolves to its current name rather than to whichever of
+	// the two names the planner happened to reach first.
 	cte := fmt.Sprintf(`
         WITH db_names AS (
-            SELECT DISTINCT datid, datname
+            SELECT DISTINCT ON (datid) datid, datname
             FROM metrics.pg_stat_activity
             WHERE connection_id = $1
               AND datid IS NOT NULL
               AND datname IS NOT NULL
+            ORDER BY datid, collected_at DESC
+        ),
+        user_names AS (
+            SELECT DISTINCT ON (usesysid) usesysid, usename
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND usesysid IS NOT NULL
+              AND usename IS NOT NULL
+            ORDER BY usesysid, collected_at DESC
         ),
         deduped AS (
             SELECT DISTINCT ON (pss.queryid)
                 pss.queryid::text,
                 COALESCE(dn.datname, pss.database_name) AS database_name,
+                COALESCE(un.usename, '') AS username,
                 pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.rows,
+                pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time,
+                pss.rows,
                 pss.shared_blks_hit, pss.shared_blks_read
             FROM metrics.pg_stat_statements pss
             LEFT JOIN db_names dn ON pss.dbid = dn.datid
+            LEFT JOIN user_names un ON pss.userid = un.usesysid
             WHERE pss.connection_id = $1
               AND pss.collected_at = (
                   SELECT MAX(collected_at)
@@ -1219,9 +1284,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	}
 	orderCol, ok := validTopQueryOrderColumns[orderBy]
 	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid order_by: must be one of total_exec_time, calls, "+
-				"mean_exec_time, rows, shared_blks_hit, shared_blks_read")
+		RespondError(w, http.StatusBadRequest, topQueryOrderByError)
 		return
 	}
 
@@ -1295,8 +1358,9 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	for rows.Next() {
 		var row TopQueryRow
 		if err := rows.Scan(
-			&row.QueryID, &row.DatabaseName, &row.Query, &row.Calls,
-			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
+			&row.QueryID, &row.DatabaseName, &row.Username, &row.Query,
+			&row.Calls, &row.TotalExecTime, &row.MeanExecTime,
+			&row.MinExecTime, &row.MaxExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning top query row: %v", err)
@@ -1331,6 +1395,150 @@ const headerTotalCount = "X-Total-Count"
 func respondEmptyTopQueries(w http.ResponseWriter) {
 	w.Header().Set(headerTotalCount, "0")
 	RespondJSON(w, http.StatusOK, []TopQueryRow{})
+}
+
+// queryStatsSQL computes the period-scoped statistics for a single query.
+//
+// pg_stat_statements exposes cumulative counters, so the figures for a time
+// range are the summed deltas between consecutive samples rather than the
+// values of any single sample. One collection can hold several rows for the
+// same queryid (the probe records one row per database, role, and toplevel
+// flag), so each sample is first collapsed with SUM before the LAG.
+//
+// Sample pairs whose call or time delta is negative are discarded: a negative
+// delta means the counters were reset by pg_stat_reset() or by a server
+// restart, and the pre-reset totals cannot be compared with the post-reset
+// ones. Dropping only the offending pair costs a single interval rather than
+// poisoning the whole range, which matches the reset handling in
+// metrics.BuildDerivedMetricsQuery. The first sample in the range has no
+// predecessor and so contributes nothing, exactly as in the transaction
+// throughput query.
+//
+// The final row reports the summed deltas plus the number of usable pairs, so
+// the caller can distinguish "no usable data at all" from "data, but no calls
+// in this period".
+const queryStatsSQL = `
+        WITH samples AS (
+            SELECT
+                collected_at,
+                SUM(calls) AS total_calls,
+                SUM(total_exec_time) AS total_time,
+                LAG(SUM(calls)) OVER (ORDER BY collected_at) AS prev_calls,
+                LAG(SUM(total_exec_time)) OVER (ORDER BY collected_at)
+                    AS prev_time
+            FROM metrics.pg_stat_statements
+            WHERE connection_id = $1
+              AND queryid::text = $2
+              AND collected_at >= $3
+              AND collected_at <= $4
+            GROUP BY collected_at
+        ),
+        valid_deltas AS (
+            SELECT
+                (total_calls - prev_calls) AS delta_calls,
+                (total_time - prev_time) AS delta_time
+            FROM samples
+            WHERE prev_calls IS NOT NULL
+              AND (total_calls - prev_calls) >= 0
+              AND (total_time - prev_time) >= 0
+        )
+        SELECT COUNT(*),
+               COALESCE(SUM(delta_calls), 0),
+               COALESCE(SUM(delta_time), 0)
+        FROM valid_deltas
+    `
+
+// buildQueryStats turns the summed deltas into the response body. avg is
+// reported as null (a nil pointer) when there were no usable sample pairs or
+// no calls at all in the period, so that the client can tell "no data" apart
+// from a genuine zero.
+func buildQueryStats(
+	queryID string,
+	pairs, calls int64,
+	totalTime float64,
+) QueryStatsResponse {
+	resp := QueryStatsResponse{
+		QueryID:       queryID,
+		Calls:         calls,
+		TotalExecTime: roundTo(totalTime, 3),
+	}
+	if pairs > 0 && calls > 0 {
+		avg := roundTo(totalTime/float64(calls), 3)
+		resp.AvgExecTime = &avg
+	}
+	return resp
+}
+
+// handleQueryStats handles GET /api/v1/metrics/query-stats, returning the
+// average execution time of a single query over the selected time range.
+// Unlike the mean_exec_time column of pg_stat_statements, which is a
+// cumulative lifetime average, this figure covers only the requested period.
+func (h *PerfSummaryHandler) handleQueryStats(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if !RequireGET(w, r) {
+		return
+	}
+
+	connectionIDs := h.parseConnectionIDs(w, r)
+	if connectionIDs == nil {
+		return
+	}
+	if len(connectionIDs) != 1 {
+		RespondError(w, http.StatusBadRequest,
+			"Exactly one connection_id is required")
+		return
+	}
+	connID := connectionIDs[0]
+
+	rbacChecker := auth.NewRBACCheckerWithSharing(h.authStore, h.datastore.GetConnectionSharingInfo)
+	canAccess, _ := rbacChecker.CanAccessConnection(r.Context(), connID)
+	if !canAccess {
+		RespondError(w, http.StatusForbidden,
+			fmt.Sprintf("Permission denied: you do not have access to connection %d", connID))
+		return
+	}
+
+	queryID := ParseQueryString(r, "queryid")
+	if queryID == "" {
+		RespondError(w, http.StatusBadRequest, "queryid is required")
+		return
+	}
+
+	timeRange := ParseQueryString(r, "time_range")
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+	duration, ok := validTimeRanges[timeRange]
+	if !ok {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+		return
+	}
+
+	now := time.Now().UTC()
+	startTime := now.Add(-duration)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	var pairs, calls int64
+	var totalTime float64
+	err := h.datastore.GetPool().QueryRow(ctx, queryStatsSQL,
+		connID, queryID, startTime, now).Scan(&pairs, &calls, &totalTime)
+	if err != nil {
+		// Missing metrics tables are treated as "no data" rather than an
+		// error, matching the top-queries endpoint: a workbench whose
+		// collector has never run should render an empty panel, not a
+		// failure.
+		log.Printf("[DEBUG] No query stats for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		RespondJSON(w, http.StatusOK, buildQueryStats(queryID, 0, 0, 0))
+		return
+	}
+
+	RespondJSON(w, http.StatusOK,
+		buildQueryStats(queryID, pairs, calls, totalTime))
 }
 
 // roundTo rounds a float64 to the specified number of decimal places.

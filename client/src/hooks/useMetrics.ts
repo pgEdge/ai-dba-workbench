@@ -61,6 +61,10 @@ const buildMetricsUrl = (params: MetricQueryParams): string => {
         searchParams.append('index_name', params.indexName);
     }
 
+    if (params.queryid) {
+        searchParams.append('queryid', params.queryid);
+    }
+
     if (params.buckets !== undefined) {
         searchParams.append('buckets', params.buckets.toString());
     }
@@ -134,6 +138,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         params?.indexName,
         params?.tableName,
         params?.schemaName,
+        params?.queryid,
     ]);
 
     // Fetch when dependencies change or refresh is triggered

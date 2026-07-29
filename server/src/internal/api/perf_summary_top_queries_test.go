@@ -38,12 +38,15 @@ CREATE TABLE metrics.pg_stat_statements (
     connection_id     integer     NOT NULL,
     collected_at      timestamptz NOT NULL,
     queryid           bigint      NOT NULL,
+    userid            bigint,
     dbid              bigint,
     database_name     text,
     query             text        NOT NULL,
     calls             bigint      NOT NULL DEFAULT 0,
     total_exec_time   double precision NOT NULL DEFAULT 0,
     mean_exec_time    double precision NOT NULL DEFAULT 0,
+    min_exec_time     double precision NOT NULL DEFAULT 0,
+    max_exec_time     double precision NOT NULL DEFAULT 0,
     rows              bigint      NOT NULL DEFAULT 0,
     shared_blks_hit   bigint      NOT NULL DEFAULT 0,
     shared_blks_read  bigint      NOT NULL DEFAULT 0
@@ -53,7 +56,9 @@ CREATE TABLE metrics.pg_stat_activity (
     connection_id  integer     NOT NULL,
     collected_at   timestamptz NOT NULL,
     datid          bigint,
-    datname        text
+    datname        text,
+    usesysid       bigint,
+    usename        text
 );
 `
 
@@ -126,45 +131,60 @@ func seedTopQueriesFixture(t *testing.T, pool *pgxpool.Pool) {
 		}
 	}
 
-	// datid -> datname mapping used by the db_names CTE.
+	// datid -> datname and usesysid -> usename mappings used by the
+	// db_names and user_names CTEs. The older sample carries the previous
+	// names for the same OIDs, standing in for a database and a role
+	// renamed within the retention window: both CTEs take the most recent
+	// name per OID, so the newer names must win.
 	exec(`INSERT INTO metrics.pg_stat_activity
-        (connection_id, collected_at, datid, datname)
-        VALUES ($1, $2, 100, 'alpha'), ($1, $2, 200, 'beta')`,
-		topQueriesConnID, latest)
+        (connection_id, collected_at, datid, datname, usesysid, usename)
+        VALUES ($1, $3, 100, 'alpha_old', 10, 'alice_old'),
+               ($1, $3, 200, 'beta_old', 20, 'bob_old'),
+               ($1, $2, 100, 'alpha', 10, 'alice'),
+               ($1, $2, 200, 'beta', 20, 'bob')`,
+		topQueriesConnID, latest, older)
 
 	// Latest snapshot. total_exec_time is unique per row so the default
-	// ordering is deterministic.
+	// ordering is deterministic. Query 1004 is attributed to a role OID
+	// that pg_stat_activity never observed, which is the unresolvable
+	// username case.
 	exec(`INSERT INTO metrics.pg_stat_statements
-        (connection_id, collected_at, queryid, dbid, database_name, query,
-         calls, total_exec_time, mean_exec_time, rows,
+        (connection_id, collected_at, queryid, userid, dbid, database_name,
+         query, calls, total_exec_time, mean_exec_time,
+         min_exec_time, max_exec_time, rows,
          shared_blks_hit, shared_blks_read)
         VALUES
-        ($1, $2, 1001, 100, 'alpha', 'SELECT 1', 10, 600, 60, 10, 100, 1),
-        ($1, $2, 1002, 100, 'alpha', 'SELECT 2', 20, 500, 25, 20, 200, 2),
-        ($1, $2, 1003, 100, 'alpha', 'SELECT 3', 30, 400, 13, 30, 300, 3),
-        ($1, $2, 1004, 100, 'alpha', 'SELECT 4', 40, 300, 7,  40, 400, 4),
-        ($1, $2, 1005, 200, 'stale-name', 'SELECT 5', 50, 200, 4, 50, 500, 5),
-        ($1, $2, 1006, 200, 'beta', 'SELECT 6 ai_dba_wb_probe', 60, 100, 2,
-         60, 600, 6)`,
+        ($1, $2, 1001, 10, 100, 'alpha', 'SELECT 1', 10, 600, 60,
+         1.5, 120.25, 10, 100, 1),
+        ($1, $2, 1002, 10, 100, 'alpha', 'SELECT 2', 20, 500, 25,
+         2, 90, 20, 200, 2),
+        ($1, $2, 1003, 10, 100, 'alpha', 'SELECT 3', 30, 400, 13,
+         3, 80, 30, 300, 3),
+        ($1, $2, 1004, 999, 100, 'alpha', 'SELECT 4', 40, 300, 7,
+         4, 70, 40, 400, 4),
+        ($1, $2, 1005, 20, 200, 'stale-name', 'SELECT 5', 50, 200, 4,
+         5, 60, 50, 500, 5),
+        ($1, $2, 1006, 20, 200, 'beta', 'SELECT 6 ai_dba_wb_probe', 60, 100, 2,
+         6, 50, 60, 600, 6)`,
 		topQueriesConnID, latest)
 
 	// Older snapshot for the same connection: excluded by the
 	// collected_at = MAX(collected_at) filter.
 	exec(`INSERT INTO metrics.pg_stat_statements
-        (connection_id, collected_at, queryid, dbid, database_name, query,
-         calls, total_exec_time, mean_exec_time, rows,
+        (connection_id, collected_at, queryid, userid, dbid, database_name,
+         query, calls, total_exec_time, mean_exec_time, rows,
          shared_blks_hit, shared_blks_read)
-        VALUES ($1, $2, 9001, 100, 'alpha', 'SELECT old', 1, 9999, 9999, 1,
+        VALUES ($1, $2, 9001, 10, 100, 'alpha', 'SELECT old', 1, 9999, 9999, 1,
                 1, 1)`,
 		topQueriesConnID, older)
 
 	// A different connection that must never leak into the results.
 	exec(`INSERT INTO metrics.pg_stat_statements
-        (connection_id, collected_at, queryid, dbid, database_name, query,
-         calls, total_exec_time, mean_exec_time, rows,
+        (connection_id, collected_at, queryid, userid, dbid, database_name,
+         query, calls, total_exec_time, mean_exec_time, rows,
          shared_blks_hit, shared_blks_read)
-        VALUES ($1, $2, 7001, 100, 'alpha', 'SELECT other', 1, 8888, 8888, 1,
-                1, 1)`,
+        VALUES ($1, $2, 7001, 10, 100, 'alpha', 'SELECT other', 1, 8888, 8888,
+                1, 1, 1)`,
 		topQueriesConnID+1, latest)
 }
 
@@ -239,6 +259,118 @@ func TestTopQueries_DefaultsAndTotalCount(t *testing.T) {
 	if rows[4].DatabaseName != "beta" {
 		t.Errorf("resolved database_name = %q, want \"beta\"",
 			rows[4].DatabaseName)
+	}
+}
+
+// TestTopQueries_UsernameResolution covers the username column added for
+// issue #350: the role OID is resolved through pg_stat_activity, the most
+// recently observed name wins when a role or database was renamed inside the
+// retention window, and a role that was never observed resolves to an empty
+// string rather than dropping the row.
+func TestTopQueries_UsernameResolution(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+
+	rows, _ := decodeTopQueries(t, callTopQueries(t, h, "connection_id=4242"))
+	if len(rows) != 6 {
+		t.Fatalf("got %d rows, want 6: %#v", len(rows), rows)
+	}
+
+	byQueryID := make(map[string]TopQueryRow, len(rows))
+	for _, row := range rows {
+		byQueryID[row.QueryID] = row
+	}
+
+	tests := []struct {
+		queryID      string
+		wantUser     string
+		wantDatabase string
+	}{
+		{"1001", "alice", "alpha"},
+		{"1002", "alice", "alpha"},
+		{"1005", "bob", "beta"},
+		// userid 999 was never seen with an active backend.
+		{"1004", "", "alpha"},
+	}
+
+	for _, tc := range tests {
+		t.Run("queryid_"+tc.queryID, func(t *testing.T) {
+			row, ok := byQueryID[tc.queryID]
+			if !ok {
+				t.Fatalf("queryid %s missing from results", tc.queryID)
+			}
+			if row.Username != tc.wantUser {
+				t.Errorf("username = %q, want %q", row.Username, tc.wantUser)
+			}
+			if row.DatabaseName != tc.wantDatabase {
+				t.Errorf("database_name = %q, want %q", row.DatabaseName,
+					tc.wantDatabase)
+			}
+		})
+	}
+}
+
+// TestTopQueries_MinAndMaxExecTime confirms the two new timing columns are
+// returned intact and can be sorted on.
+func TestTopQueries_MinAndMaxExecTime(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+
+	rows, _ := decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&queryid=1001"))
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(rows), rows)
+	}
+	if rows[0].MinExecTime != 1.5 {
+		t.Errorf("min_exec_time = %v, want 1.5", rows[0].MinExecTime)
+	}
+	if rows[0].MaxExecTime != 120.25 {
+		t.Errorf("max_exec_time = %v, want 120.25", rows[0].MaxExecTime)
+	}
+
+	orderings := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"min ascending",
+			"connection_id=4242&order_by=min_exec_time&order=asc&limit=1",
+			"1001"},
+		{"min descending",
+			"connection_id=4242&order_by=min_exec_time&order=desc&limit=1",
+			"1006"},
+		{"max ascending",
+			"connection_id=4242&order_by=max_exec_time&order=asc&limit=1",
+			"1006"},
+		{"max descending",
+			"connection_id=4242&order_by=max_exec_time&order=desc&limit=1",
+			"1001"},
+	}
+
+	for _, tc := range orderings {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := decodeTopQueries(t, callTopQueries(t, h, tc.query))
+			if len(got) != 1 || got[0].QueryID != tc.want {
+				t.Fatalf("rows = %#v, want queryid %s first", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTopQueriesOrderByErrorMessage confirms the 400 message enumerates every
+// accepted order_by value, including the two added for issue #350.
+func TestTopQueriesOrderByErrorMessage(t *testing.T) {
+	for token := range validTopQueryOrderColumns {
+		if !strings.Contains(topQueryOrderByError, token) {
+			t.Errorf("order_by error message %q omits %q",
+				topQueryOrderByError, token)
+		}
+	}
+	if !strings.HasPrefix(topQueryOrderByError, "Invalid order_by: ") {
+		t.Errorf("order_by error message = %q, want the Invalid order_by "+
+			"prefix", topQueryOrderByError)
 	}
 }
 

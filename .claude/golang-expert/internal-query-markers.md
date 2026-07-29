@@ -25,9 +25,10 @@ monitored database with a synthetic column alias:
 - `ai_dba_wb_probe`, injected by `WrapQuery` in
   `collector/src/probes/base.go`.
 
-Everything the Workbench runs against its own datastore carries an
-in-statement comment instead, because those statements are inserts,
-deletes, DDL, and multi-column reads whose shape must not change:
+The statements the collector and the alerter run against the
+Workbench's own datastore carry an in-statement comment instead,
+because those statements are inserts, deletes, DDL, and multi-column
+reads whose shape must not change:
 
 - `ai_dba_wb_internal`, injected by `Tag` in `pkg/sqlmarker`.
 
@@ -71,9 +72,12 @@ current chokepoints are:
   which every probe's bulk metric writes pass.
 - `HasDataChanged` in `collector/src/probes/change_tracking.go`, which
   tags the caller-supplied stored-snapshot query.
-- The SQL builders in `collector/src/probes/partition.go`
-  (`partitionExistsQuery`, `createPartitionSQL`, `dropPartitionSQL`,
-  `protectedPartitionsQuery`, `partitionCandidatesQuery`).
+- The partition maintenance statements in
+  `collector/src/probes/partition.go`: the `partitionExistsQuery` and
+  `partitionCandidatesQuery` variables, and the `createPartitionSQL`,
+  `dropPartitionSQL`, and `protectedPartitionsQuery` builders. See
+  `partitioning.md` for the identifier-quoting and suppression rules
+  those five carry.
 - `lastCollectionTimeQuery` in `collector/src/probes/config_loader.go`.
 - `probeAvailabilityUpsert` in
   `collector/src/database/probe_availability.go`.
@@ -81,22 +85,32 @@ current chokepoints are:
   (`monitoredConnectionsQuery`, `monitoredConnectionByIDQuery`,
   `setConnectionErrorStatement`).
 - `databaseListQuery` in `collector/src/scheduler/scheduler.go`.
-- `queryInternal` in `alerter/src/internal/database/metric_queries.go`,
-  through which every `metricRegistry` statement is executed; the
-  registry holds over a hundred SQL literals and tagging them
-  individually would guarantee the next addition went untagged.
+- `queryTagged` in `alerter/src/internal/database/metric_queries.go`,
+  reached through the `Datastore.queryInternal` method, through which
+  every `metricRegistry` statement is executed; the registry holds over
+  a hundred SQL literals and tagging them individually would guarantee
+  the next addition went untagged. `queryTagged` takes a `rowQuerier`
+  interface rather than the pool so that the tagging can be asserted
+  with a fake, without a database.
 
 Probe queries that run against monitored databases must not be tagged
 with `ai_dba_wb_internal`; they already carry `ai_dba_wb_probe`.
 
 ## Still Untagged
 
-The server's own traffic against the datastore (sessions, RBAC,
-conversations, timeline, and the API handlers generally) is the same
-class of noise and is not yet tagged. It needs a sweep across many
-handler-level chokepoints and is tracked separately from issue #364.
-The collector's `probe_configs` resolution path
-(`LoadProbeConfigs` and `EnsureProbeConfig`) is also untagged.
+Two classes of Workbench traffic remain untagged and therefore still
+appear in the Top Queries panel with the toggle on; do not describe the
+tagging as complete:
+
+- The server's own traffic against the datastore (sessions, RBAC,
+  conversations, timeline, and the API handlers generally). It needs a
+  sweep across many handler-level chokepoints and is tracked
+  separately from issue #364.
+- The collector's `probe_configs` resolution path, namely
+  `LoadProbeConfigs` and `EnsureProbeConfig` in
+  `collector/src/probes/config_loader.go`. Note that
+  `lastCollectionTimeQuery`, in that same file, *is* tagged, so the
+  file is a mixture.
 
 ## Testing Notes for pg_stat_statements
 
@@ -116,3 +130,26 @@ Use a uniquely named relation to give the statement its own `queryid`,
 and match on that relation name. Do not call
 `pg_stat_statements_reset()`; it discards the whole instance's history,
 including whatever the developer was looking at.
+
+A third trap is environmental, and it broke CI once already:
+`CREATE EXTENSION pg_stat_statements` succeeds on a server that does
+not list the library in `shared_preload_libraries`, and every read of
+the view then fails with SQLSTATE 55000. The CI PostgreSQL containers
+are configured exactly that way, so a test that only guards on
+`CREATE EXTENSION` fails on every matrix job. Guard by attempting the
+read and skipping on any error, which also covers the extension being
+absent or unprivileged:
+
+- `requirePgStatStatementsReadable` in
+  `collector/src/probes/integration_helpers_test.go`.
+- `requirePgStatStatements` in
+  `alerter/src/internal/database/sql_marker_test.go`.
+
+Because those end-to-end tests skip wherever the extension is not
+loaded, the tagging itself must also be asserted by tests that need no
+database at all, so that CI still proves the behavior: see
+`TestBuildMetricsInsert_Tagged` and the partition builder tests in
+`collector/src/probes/sql_marker_test.go`, and
+`TestQueryTagged_TagsSQL` with
+`TestQueryTagged_TagsEveryRegistryStatement` in the alerter. Never
+weaken or skip those.

@@ -37,6 +37,22 @@ var (
 	ErrNoMetricData = errors.New("no data found for metric")
 )
 
+// rowQuerier is the subset of *pgxpool.Pool that queryTagged needs. It
+// exists so the tagging behavior can be asserted without a database:
+// the end-to-end proof that the marker survives into
+// pg_stat_statements needs a live server with the extension loaded,
+// which is not available everywhere, whilst the tagging itself must be
+// verified on every run.
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// queryTagged tags sql as Workbench-internal and runs it on q.
+func queryTagged(ctx context.Context, q rowQuerier, sql string,
+	args ...any) (pgx.Rows, error) {
+	return q.Query(ctx, sqlmarker.Tag(sql), args...)
+}
+
 // queryInternal runs a datastore query on behalf of the metric
 // registry, tagging the SQL as Workbench-internal first.
 //
@@ -50,7 +66,7 @@ var (
 // the marker has to sit after the leading keyword rather than in front
 // of the statement.
 func (d *Datastore) queryInternal(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return d.pool.Query(ctx, sqlmarker.Tag(sql), args...)
+	return queryTagged(ctx, d.pool, sql, args...)
 }
 
 // queryMetricValues executes a SQL query that returns rows with three columns

@@ -121,6 +121,10 @@ func newTopQueriesHandler(t *testing.T) (*PerfSummaryHandler, int, func()) {
 			" recent_statements AS (SELECT 1) SELECT * FROM recent_statements"},
 	}
 	for _, st := range statements {
+		// The SQL is a fixed literal; st.query is seed data bound as $4,
+		// so the marker text it contains is a value and never part of
+		// the statement being executed.
+		//nosemgrep: go_sql_rule-concat-sqli -- fixed SQL literal; the seeded query text is bound as $4
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO metrics.pg_stat_statements (
 				connection_id, collected_at, queryid, dbid, database_name,

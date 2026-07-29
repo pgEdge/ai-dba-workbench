@@ -107,16 +107,18 @@ func (f *fakeRows) Scan(dest ...any) error {
 // fakeQuerier implements DatastoreQuerier, recording every statement it
 // is handed so tests can assert on the SQL actually issued.
 type fakeQuerier struct {
-	queries  []string
-	execs    []string
-	rows     *fakeRows
-	row      *fakeRow
-	queryErr error
-	execErr  error
+	queries   []string
+	queryArgs [][]any
+	execs     []string
+	rows      *fakeRows
+	row       *fakeRow
+	queryErr  error
+	execErr   error
 }
 
-func (f *fakeQuerier) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
+func (f *fakeQuerier) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
 	f.queries = append(f.queries, sql)
+	f.queryArgs = append(f.queryArgs, args)
 	if f.queryErr != nil {
 		return nil, f.queryErr
 	}
@@ -126,8 +128,9 @@ func (f *fakeQuerier) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, 
 	return f.rows, nil
 }
 
-func (f *fakeQuerier) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+func (f *fakeQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.queries = append(f.queries, sql)
+	f.queryArgs = append(f.queryArgs, args)
 	if f.row == nil {
 		return &fakeRow{}
 	}
@@ -179,13 +182,12 @@ func TestPartitionSQLBuilders_Tagged(t *testing.T) {
 	}{
 		{"partitionExistsQuery", partitionExistsQuery},
 		{"createPartitionSQL", createPartitionSQL(
-			"metrics.pg_stat_activity_20260727",
-			"metrics.pg_stat_activity", weekStart, weekEnd)},
+			"pg_stat_activity_20260727",
+			"pg_stat_activity", weekStart, weekEnd)},
 		{"dropPartitionSQL", dropPartitionSQL("pg_settings_20260727")},
 		{"protectedPartitionsQuery",
 			protectedPartitionsQuery("pg_settings")},
-		{"partitionCandidatesQuery",
-			partitionCandidatesQuery("pg_stat_activity")},
+		{"partitionCandidatesQuery", partitionCandidatesQuery},
 		{"lastCollectionTimeQuery",
 			lastCollectionTimeQuery("pg_stat_activity")},
 	}
@@ -198,18 +200,18 @@ func TestPartitionSQLBuilders_Tagged(t *testing.T) {
 }
 
 // TestCreatePartitionSQL_Content confirms the tagging refactor did not
-// disturb the DDL the collector has always issued.
+// disturb the DDL the collector has always issued, and that both
+// relation names are quoted by pgx.Identifier.
 func TestCreatePartitionSQL_Content(t *testing.T) {
 	weekStart := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
 	weekEnd := weekStart.AddDate(0, 0, 7)
 
-	got := createPartitionSQL("metrics.t_20260727", "metrics.t",
-		weekStart, weekEnd)
+	got := createPartitionSQL("t_20260727", "t", weekStart, weekEnd)
 
 	for _, want := range []string{
 		"CREATE " + sqlmarker.Comment,
-		"IF NOT EXISTS metrics.t_20260727",
-		"PARTITION OF metrics.t",
+		`IF NOT EXISTS "metrics"."t_20260727"`,
+		`PARTITION OF "metrics"."t"`,
 		"FROM ('2026-07-27 00:00:00Z') TO ('2026-08-03 00:00:00Z')",
 	} {
 		if !strings.Contains(got, want) {
@@ -226,6 +228,58 @@ func TestDropPartitionSQL_QuotesIdentifier(t *testing.T) {
 		` TABLE IF EXISTS "metrics"."pg_settings_20260727"`
 	if got != want {
 		t.Errorf("dropPartitionSQL = %q, want %q", got, want)
+	}
+}
+
+// TestPartitionQueries_IdentifiersAreQuoted asserts the identifier
+// handling the Semgrep suppressions in partition.go rely on: relation
+// names that cannot be bound as placeholders are quoted with
+// pgx.Identifier, and the one name that is a value binds as $1.
+func TestPartitionQueries_IdentifiersAreQuoted(t *testing.T) {
+	weekStart := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+
+	// A name containing a quote proves the escaping is real rather than
+	// incidental; production names never look like this.
+	got := createPartitionSQL(`ev"il`, `ta"ble`, weekStart,
+		weekStart.AddDate(0, 0, 7))
+	for _, want := range []string{
+		`"metrics"."ev""il"`,
+		`"metrics"."ta""ble"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("createPartitionSQL missing %q: %s", want, got)
+		}
+	}
+
+	prot := protectedPartitionsQuery(`ev"il`)
+	if !strings.Contains(prot, `"metrics"."ev""il"`) {
+		t.Errorf("protectedPartitionsQuery does not quote its table: %s",
+			prot)
+	}
+
+	if strings.Contains(partitionCandidatesQuery, "%s") ||
+		!strings.Contains(partitionCandidatesQuery, "p.relname = $1") {
+		t.Errorf("partitionCandidatesQuery should bind the parent "+
+			"table name: %s", partitionCandidatesQuery)
+	}
+}
+
+// TestLoadPartitionCandidates_BindsTableName confirms the parent table
+// name reaches PostgreSQL as a bind parameter rather than being
+// interpolated into the catalog query.
+func TestLoadPartitionCandidates_BindsTableName(t *testing.T) {
+	q := &fakeQuerier{}
+	if _, err := loadPartitionCandidates(
+		context.Background(), q, "pg_stat_activity"); err != nil {
+		t.Fatalf("loadPartitionCandidates() error = %v", err)
+	}
+	if len(q.queryArgs) != 1 || len(q.queryArgs[0]) != 1 ||
+		q.queryArgs[0][0] != "pg_stat_activity" {
+		t.Errorf("args = %v, want [pg_stat_activity]", q.queryArgs)
+	}
+	if strings.Contains(q.queries[0], "pg_stat_activity") {
+		t.Errorf("table name was interpolated into the SQL: %s",
+			q.queries[0])
 	}
 }
 
@@ -261,7 +315,7 @@ func TestEnsurePartition_FakeQuerier(t *testing.T) {
 		}
 		assertTagged(t, "create partition", q.execs[0])
 		if !strings.Contains(q.execs[0],
-			"metrics.pg_stat_activity_20260727") {
+			`"metrics"."pg_stat_activity_20260727"`) {
 			t.Errorf("unexpected DDL: %s", q.execs[0])
 		}
 	})

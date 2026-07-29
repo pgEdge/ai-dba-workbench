@@ -58,6 +58,7 @@ func TestBuildOpenAPISpec(t *testing.T) {
 		"/llm/models",
 		"/llm/chat",
 		"/chat/compact",
+		"/metrics/connection-groups",
 	}
 
 	for _, path := range keyPaths {
@@ -92,6 +93,8 @@ func TestBuildOpenAPISpec(t *testing.T) {
 		"TimelineEvent",
 		"Conversation",
 		"Message",
+		"ConnectionGroupsResponse",
+		"ConnectionGroupRow",
 	}
 
 	for _, schema := range keySchemas {

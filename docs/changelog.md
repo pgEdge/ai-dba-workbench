@@ -69,6 +69,16 @@ project adheres to
   The query leaderboards and the performance and database summary
   tiles do not yet follow the dashboard selector. (#345)
 
+- Add a Connections section to the server dashboard, which groups
+  the server's client connections by database user, client address,
+  or database, and breaks each group down into total, active, idle,
+  idle in transaction, and other backend states. The counts come
+  from the most recent `pg_stat_activity` snapshot within the
+  selected time range, and the By Client tab also shows the
+  reverse-resolved client hostname where the server recorded one.
+  A new `GET /api/v1/metrics/connection-groups` endpoint serves the
+  section. (#346)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a

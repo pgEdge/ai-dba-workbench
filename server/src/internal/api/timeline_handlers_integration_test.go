@@ -100,8 +100,10 @@ type timelineTestEnv struct {
 // newTimelineTestEnv brings up the schema, seeds two connections with a
 // cleared alert apiece, and returns an auth store for RBAC wiring. It
 // skips when no test database is configured so unit-only runs still
-// pass.
-func newTimelineTestEnv(t *testing.T) (*timelineTestEnv, func()) {
+// pass. Every resource is released through t.Cleanup, so a helper that
+// calls t.Fatalf part-way through setup still tears down whatever has
+// been created so far.
+func newTimelineTestEnv(t *testing.T) *timelineTestEnv {
 	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
@@ -117,12 +119,19 @@ func newTimelineTestEnv(t *testing.T) (*timelineTestEnv, func()) {
 	if err != nil {
 		t.Skipf("Could not connect to test database: %v", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	// Registered before anything else can fail, so the pool is closed
+	// exactly once on every subsequent exit path, including the
+	// t.Fatalf calls inside the seeding helpers below.
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), timelineTestTeardown); err != nil {
+			t.Logf("teardown: %v", err)
+		}
 		pool.Close()
+	})
+	if err := pool.Ping(ctx); err != nil {
 		t.Skipf("Test database ping failed: %v", err)
 	}
 	if _, err := pool.Exec(ctx, timelineTestSchema); err != nil {
-		pool.Close()
 		t.Fatalf("Failed to create timeline test schema: %v", err)
 	}
 
@@ -137,27 +146,22 @@ func newTimelineTestEnv(t *testing.T) (*timelineTestEnv, func()) {
 
 	tmpDir, err := os.MkdirTemp("", "timeline-handler-test-*")
 	if err != nil {
-		pool.Close()
 		t.Fatalf("MkdirTemp: %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
 	store, err := auth.NewAuthStore(tmpDir, 0, 0)
 	if err != nil {
-		pool.Close()
-		os.RemoveAll(tmpDir)
 		t.Fatalf("NewAuthStore: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Logf("auth store close: %v", err)
+		}
+	})
 	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
 	env.authStore = store
 
-	cleanup := func() {
-		store.Close()
-		os.RemoveAll(tmpDir)
-		if _, err := pool.Exec(context.Background(), timelineTestTeardown); err != nil {
-			t.Logf("teardown: %v", err)
-		}
-		pool.Close()
-	}
-	return env, cleanup
+	return env
 }
 
 // insertTimelineConnection seeds one unshared connection owned by the
@@ -260,8 +264,7 @@ func connectionIDsOf(result *database.TimelineResult) map[int]bool {
 // full handler against Postgres. A superuser bypasses the visibility
 // filter entirely, so both seeded connections appear.
 func TestTimelineHandler_Integration_SuperuserSeesAllConnections(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	handler := NewTimelineHandler(env.datastore, env.authStore,
 		auth.NewRBACChecker(env.authStore))
@@ -283,8 +286,7 @@ func TestTimelineHandler_Integration_SuperuserSeesAllConnections(t *testing.T) {
 // built without an RBAC checker skips visibility filtering and queries
 // the datastore directly.
 func TestTimelineHandler_Integration_NilRBACChecker(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	handler := NewTimelineHandler(env.datastore, env.authStore, nil)
 
@@ -302,8 +304,7 @@ func TestTimelineHandler_Integration_NilRBACChecker(t *testing.T) {
 // explicit connection_id inside and outside that set, and a
 // connection_ids list intersected against it.
 func TestTimelineHandler_Integration_VisibilityFilters(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	// The user is granted connA only, and owns nothing, so connB stays
 	// invisible however it is requested.
@@ -370,8 +371,7 @@ func TestTimelineHandler_Integration_VisibilityFilters(t *testing.T) {
 // caller with an empty visible set gets an empty result without the
 // datastore being queried at all.
 func TestTimelineHandler_Integration_NoVisibleConnections(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	userID := grantTimelineUser(t, env.authStore, "timeline_nobody")
 	handler := NewTimelineHandler(env.datastore, env.authStore,
@@ -392,8 +392,7 @@ func TestTimelineHandler_Integration_NoVisibleConnections(t *testing.T) {
 // path taken when the visibility lister cannot enumerate connections.
 // Dropping the connections table makes GetAllConnections fail.
 func TestTimelineHandler_Integration_VisibilityLookupFails(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	userID := grantTimelineUser(t, env.authStore, "timeline_broken_lister")
 	if _, err := env.pool.Exec(context.Background(),
@@ -424,8 +423,7 @@ func TestTimelineHandler_Integration_VisibilityLookupFails(t *testing.T) {
 // branch of RegisterRoutes, where the route reaches the real handler
 // rather than the not-configured stub.
 func TestTimelineHandler_Integration_RegisterRoutes(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	handler := NewTimelineHandler(env.datastore, env.authStore,
 		auth.NewRBACChecker(env.authStore))
@@ -446,8 +444,7 @@ func TestTimelineHandler_Integration_RegisterRoutes(t *testing.T) {
 // when the timeline query itself errors. The superuser skips the
 // visibility lookup, so dropping the alerts table fails the query.
 func TestTimelineHandler_Integration_QueryFails(t *testing.T) {
-	env, cleanup := newTimelineTestEnv(t)
-	defer cleanup()
+	env := newTimelineTestEnv(t)
 
 	if _, err := env.pool.Exec(context.Background(),
 		"DROP TABLE IF EXISTS alerts CASCADE"); err != nil {

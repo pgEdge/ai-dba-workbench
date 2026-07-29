@@ -184,6 +184,44 @@ at execution; `scanSeriesRows`'s own `pool.Query` and `rows.Scan` error
 branches are driven by a cancelled context and a destination-count mismatch
 respectively.
 
+## Time-Window Resolution (server)
+
+Every dashboard metrics query runs against an absolute window, and the
+window is resolved exactly once, at the HTTP boundary. The types live in
+`server/src/internal/metrics/query.go`:
+
+- `ParseTimeRange(timeRange string) (time.Time, time.Time, error)`
+  handles the rolling presets in `ValidTimeRanges` (`1h`, `6h`, `24h`,
+  `7d`, `30d`) and always ends at now.
+- `TimeWindow{Start, End time.Time}` is the resolved window.
+- `ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow,
+  error)` is the single source of truth for what constitutes a valid
+  window. A `timeRange` other than `custom` ignores the timestamps and
+  delegates to `ParseTimeRange`; `custom` requires both timestamps in
+  RFC 3339 form.
+- `QueryTimeSeries` takes a `metrics.TimeWindow`, not a time-range
+  string, and does no window validation of its own. The
+  `timeSeriesQueryFunc` seam in
+  `server/src/internal/api/metrics_handlers.go` mirrors that signature,
+  so test fakes must accept a `metrics.TimeWindow`.
+
+The custom-path validation order matters, because the error message is
+returned to API clients verbatim: missing timestamp, unparsable
+timestamp, `End` not after `Start`, `Start` at or after now, then the
+span cap. An `End` in the future is clamped to now rather than rejected,
+because a picker set to the current day routinely overshoots by minutes.
+The span cap (`MaxCustomTimeSpan`, 366 days) is a resource-exhaustion
+guard, not a nicety: `BuildMetricsQuery` derives the bucket width from
+the span, so an unbounded window turns one request into an arbitrarily
+large scan.
+
+`GET /api/v1/metrics/query` accepts `time_range=custom` alongside
+`time_start` and `time_end`, and maps any resolution error to `400`.
+The performance-summary and database-summary handlers in
+`perf_summary_handlers.go` still carry their own inline
+`validTimeRanges` maps and accept presets only; consolidating those is
+deliberately deferred.
+
 ## Related Issues
 
 - #56: Alerter FK violations when calculating baselines for deleted
@@ -191,3 +229,6 @@ respectively.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to
   `QueryTimeSeries` to fix blank Activity Charts; retired #339's
   `resolveMetricValue` in favour of the `finiteFloat` guard in `toFloat64`.
+- #345: Custom time ranges; `ResolveTimeWindow`/`TimeWindow` added and
+  `QueryTimeSeries` switched from a time-range string to a resolved
+  window.

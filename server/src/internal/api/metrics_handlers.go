@@ -32,7 +32,7 @@ type timeSeriesQueryFunc func(
 	pool *pgxpool.Pool,
 	probeName string,
 	connectionIDs []int,
-	timeRange string,
+	window metrics.TimeWindow,
 	filters metrics.MetricFilters,
 	buckets int,
 	aggregation string,
@@ -131,14 +131,19 @@ func (h *MetricsHandler) handleMetricsQuery(
 		return
 	}
 
-	// Parse time_range (default "1h")
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps;
+	// ResolveTimeWindow is the single source of truth for what counts as
+	// a valid window, so its error message is returned verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "1h"
 	}
-	if _, ok := metrics.ValidTimeRanges[timeRange]; !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -198,7 +203,7 @@ func (h *MetricsHandler) handleMetricsQuery(
 		queryFn = metrics.QueryTimeSeries
 	}
 	result, err := queryFn(
-		ctx, pool, probeName, connectionIDs, timeRange,
+		ctx, pool, probeName, connectionIDs, window,
 		filters, buckets, aggregation, requestedMetrics)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())

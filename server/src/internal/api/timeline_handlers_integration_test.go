@@ -324,7 +324,7 @@ func TestTimelineHandler_Integration_VisibilityFilters(t *testing.T) {
 			expectConn:  env.connA,
 		},
 		{
-			name:        "visible connection_id is honoured",
+			name:        "visible connection_id is respected",
 			extra:       "connection_id=" + strconv.Itoa(env.connA),
 			expectCount: 1,
 			expectConn:  env.connA,

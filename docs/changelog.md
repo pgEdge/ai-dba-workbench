@@ -61,6 +61,16 @@ project adheres to
 
 ### Fixed
 
+- Fix the Query Plan panel in the Query Detail view of the web
+  client showing a raw database error, such as `syntax error at or
+  near "VACUUM"`, for statements that PostgreSQL cannot explain.
+  Because `pg_stat_statements` records utility and maintenance
+  statements alongside `SELECT` and DML, a Top Queries row can hold
+  text such as a bare `VACUUM`, `ANALYZE`, or `REINDEX`. The panel
+  now reports that query plans are not available for that type of
+  statement, and no longer attempts a request that cannot
+  succeed. (#368)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

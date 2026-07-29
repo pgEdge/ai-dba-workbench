@@ -1,33 +1,105 @@
 # Collector Configuration
 
-The collector supports configuration through a YAML file and
-command-line flags. The collector loads configuration in the following
-order; later sources override earlier ones:
+The collector supports configuration through a YAML file and command-line
+flags. The collector loads configuration in the following order; later
+sources override earlier ones:
 
 1. Built-in defaults.
 2. Configuration file.
 3. Command-line flags.
 
-## File Location
+The collector validates configuration at startup; the following fields
+must be set:
 
-The collector searches for its configuration file in the following
-locations in order:
+- `datastore.host` must contain a hostname or IP.
+- `datastore.database` must contain a database name.
+- `datastore.username` must contain a username.
+- A secret file must exist in one of the search paths.
+
+The collector also validates the following ranges:
+
+- `datastore.port` must be between 1 and 65535.
+- Pool `max_connections` values must be greater than 0.
+- Pool `max_idle_seconds` values must be 0 or greater.
+- Pool `max_wait_seconds` values must be greater than 0.
+
+The collector searches for a configuration file in the following locations
+in order:
 
 1. The path specified via the `-config` flag.
 2. The per-user `config` directory at `~/.config/pgedge/ai-dba-collector.yaml`
    on Linux (honouring `$XDG_CONFIG_HOME`),
-   `~/Library/Application Support/pgedge/ai-dba-collector.yaml`
-   on macOS, and `%AppData%\pgedge\ai-dba-collector.yaml`
-   on Windows.
+   `~/Library/Application Support/pgedge/ai-dba-collector.yaml` on macOS, and
+   `%AppData%\pgedge\ai-dba-collector.yaml` on Windows.
 3. `/etc/pgedge/ai-dba-collector.yaml` (system-wide).
 
-If `-config` is set and the file is missing, the collector exits with
-an error. If `-config` is not set and none of the default locations
-contain a configuration file, the collector uses built-in defaults
-silently. The collector no longer searches the binary directory or the
-current working directory.
+If `-config` is set and the file is missing, the collector exits with an
+error. If `-config` is not set and none of the default locations contain
+a configuration file, the collector uses built-in defaults silently. The
+collector no longer searches the binary directory or the current working
+directory.
 
-## File Format
+## Security Best Practices
+
+The collector uses a secret file and AES-256-GCM encryption to protect stored
+passwords. The `secret_file` option specifies the path to a file containing the
+per-installation secret for password encryption.
+
+- Type: string (file path)
+- Default: Searches in order:
+    1. The per-user config directory at
+       `~/.config/pgedge/ai-dba-collector.secret` on Linux (honouring
+       `$XDG_CONFIG_HOME`),
+       `~/Library/Application Support/pgedge/ai-dba-collector.secret` on macOS,
+       and `%AppData%\pgedge\ai-dba-collector.secret` on Windows.
+    2. `/etc/pgedge/ai-dba-collector.secret` (system-wide).
+- Required: Yes (a secret file must exist)
+- Example: `secret_file: /etc/pgedge/collector.secret`
+- Note: The collector no longer searches the binary directory or the current
+  working directory for the secret file.
+
+The collector uses AES-256-GCM encryption to protect stored passwords and
+encrypts each password with a unique cryptographically random salt. It
+derives the encryption key from the server secret using PBKDF2 with SHA256
+and 100,000 iterations.
+
+In the following example, the `openssl` command generates a secure secret:
+
+```bash
+openssl rand -base64 32 \
+    > /etc/pgedge/ai-dba-collector.secret
+chmod 600 /etc/pgedge/ai-dba-collector.secret
+```
+
+Keep this file secure with restricted permissions. Loss of the secret file
+requires re-entering all monitored connection passwords. Do not manually
+encrypt passwords; use the MCP server API to create and manage connections with
+passwords.
+
+The following commands set restrictive file permissions on configuration files
+and password files.
+
+```bash
+chmod 600 /etc/pgedge/ai-dba-collector.yaml
+chmod 600 /etc/ai-workbench/password.txt
+```
+
+It's safer to use dedicated password files rather than inline passwords.
+Generate strong random secrets for the server secret. Never commit
+configuration files with real secrets to version control.
+
+For additional security in a production deployment, always use SSL with
+certificate verification:
+
+```yaml
+datastore:
+  sslmode: verify-full
+  sslcert: /path/to/client-cert.pem
+  sslkey: /path/to/client-key.pem
+  sslrootcert: /path/to/ca-cert.pem
+```
+
+## Specifying Collector Properties in a Configuration File
 
 The configuration file uses YAML format with nested sections.
 
@@ -52,70 +124,25 @@ A sample configuration file is available at
 [ai-dba-collector.yaml](https://github.com/pgEdge/ai-dba-workbench/blob/main/examples/ai-dba-collector.yaml)
 in the project repository.
 
-## Datastore Connection Options
+### Specifying datastore Connection Options in the Configuration File
 
-All datastore options are nested under the `datastore:` key in the
-YAML file.
+All datastore options are nested under the `datastore:` key in the YAML file.
 
-### datastore.host
+| Option | Type | Default | Required | Command-line Flag | Example | Description | Notes |
+|--------|------|---------|----------|--------------------|---------|-------------|-------|
+| `host` | string | `localhost` | No | `-pg-host` | `host: db.example.com` | PostgreSQL server hostname or IP address | |
+| `hostaddr` | string | none | No | `-pg-hostaddr` | `hostaddr: 192.168.1.100` | PostgreSQL server IP address; bypasses DNS lookup | Used instead of `host` when both are set. |
+| `database` | string | `ai_workbench` | Yes | `-pg-database` | `database: metrics` | Database name for the datastore | |
+| `username` | string | `postgres` | Yes | `-pg-username` | `username: ai_workbench` | Username for the datastore connection | |
+| `password_file` | string (file path) | none | No (but strongly recommended) | `-pg-password-file` | `password_file: /etc/ai-workbench/pw.txt` | Path to a file containing the datastore password | Plain text, password only. |
+| `port` | integer | `5432` | No | `-pg-port` | `port: 5433` | PostgreSQL server port number | Range: 1-65535 |
+| `sslmode` | string | `prefer` | No | `-pg-sslmode` | `sslmode: require` | SSL/TLS mode for the datastore connection | |
+| `sslcert` | string (file path) | none | No | `-pg-sslcert` | `sslcert: /etc/ai-workbench/client.pem` | Path to the client SSL certificate file | Use with `verify-ca` or `verify-full` modes. |
+| `sslkey` | string (file path) | none | If `sslcert` is set | `-pg-sslkey` | `sslkey: /etc/ai-workbench/client-key.pem` | Path to the client SSL private key file | Required if `sslcert` is set. |
+| `sslrootcert` | string (file path) | none | No | `-pg-sslrootcert` | `sslrootcert: /etc/ai-workbench/ca.pem` | Path to the root CA certificate file | Used to verify the server. |
 
-The `host` option specifies the PostgreSQL server hostname or IP
-address for the datastore.
-
-- Type: string
-- Default: `localhost`
-- Required: No
-- Command-line: `-pg-host`
-- Example: `host: db.example.com`
-
-### datastore.hostaddr
-
-The `hostaddr` option specifies the PostgreSQL server IP address and
-bypasses DNS lookup.
-
-- Type: string
-- Default: none
-- Required: No
-- Command-line: `-pg-hostaddr`
-- Example: `hostaddr: 192.168.1.100`
-- Note: The collector uses this address instead of `host` when both
-  are set.
-
-### datastore.database
-
-The `database` option specifies the database name for the datastore.
-
-- Type: string
-- Default: `ai_workbench`
-- Required: Yes
-- Command-line: `-pg-database`
-- Example: `database: metrics`
-
-### datastore.username
-
-The `username` option specifies the username for the datastore
-connection.
-
-- Type: string
-- Default: `postgres`
-- Required: Yes
-- Command-line: `-pg-username`
-- Example: `username: ai_workbench`
-
-### datastore.password_file
-
-The `password_file` option specifies the path to a file containing
-the datastore password.
-
-- Type: string (file path)
-- Default: none
-- Required: No (but strongly recommended)
-- Command-line: `-pg-password-file`
-- Example: `password_file: /etc/ai-workbench/pw.txt`
-- File format: Plain text with the password only.
-
-In the following example, the commands create a password file with
-secure permissions:
+In the following example, the commands create a password file with secure
+permissions:
 
 ```bash
 echo "my-secure-password" \
@@ -123,207 +150,83 @@ echo "my-secure-password" \
 chmod 600 /etc/ai-workbench/password.txt
 ```
 
-### datastore.port
-
-The `port` option specifies the PostgreSQL server port number.
-
-- Type: integer
-- Default: `5432`
-- Required: No
-- Range: 1-65535
-- Command-line: `-pg-port`
-- Example: `port: 5433`
-
-### datastore.sslmode
-
-The `sslmode` option specifies the SSL/TLS mode for the datastore
-connection.
-
-- Type: string
-- Default: `prefer`
-- Required: No
-- Command-line: `-pg-sslmode`
-- Example: `sslmode: require`
-
 The following SSL modes are supported:
 
 - `disable` disables SSL encryption.
 - `allow` attempts a non-SSL connection first and falls back to SSL.
-- `prefer` attempts an SSL connection first and falls back to
-  non-SSL.
+- `prefer` attempts an SSL connection first and falls back to non-SSL.
 - `require` requires SSL but does not verify the server certificate.
-- `verify-ca` requires SSL and verifies the server certificate
-  against the CA.
-- `verify-full` requires SSL and verifies the certificate and
-  hostname.
+- `verify-ca` requires SSL and verifies the server certificate against the CA.
+- `verify-full` requires SSL and verifies the certificate and hostname.
 
-### datastore.sslcert
+### Specifying Connection Pool Options
 
-The `sslcert` option specifies the path to the client SSL certificate
-file.
+All connection pool options are nested under the `pool:` key in the YAML file.
+Pool settings support configuration only through the configuration file;
+command-line flags are not available for pool options.
 
-- Type: string (file path)
-- Default: none
-- Required: No
-- Command-line: `-pg-sslcert`
-- Example: `sslcert: /etc/ai-workbench/client.pem`
-- Note: Use with `verify-ca` or `verify-full` modes.
+| Option | Type | Default | Min | Example | Description | Notes |
+|--------|------|---------|-----|---------|-------------|-------|
+| `datastore_max_connections` | integer | `25` | 1 | `datastore_max_connections: 50` | Maximum number of concurrent connections to the datastore. | Increase for more concurrent probe storage. |
+| `datastore_max_idle_seconds` | integer | `300` (5 minutes) | 0 (disables idle cleanup) | `datastore_max_idle_seconds: 600` | Maximum idle time in seconds for datastore connections. | |
+| `datastore_max_wait_seconds` | integer | `60` | 1 | `datastore_max_wait_seconds: 120` | Maximum wait time in seconds for an available datastore connection. | Probe storage fails if the timeout expires. |
+| `max_connections_per_server` | integer | `3` | 1 | `max_connections_per_server: 5` | Maximum concurrent connections per monitored database server. | This limit applies per server, not total. |
+| `monitored_max_idle_seconds` | integer | `300` (5 minutes) | 0 (disables idle cleanup) | `monitored_max_idle_seconds: 600` | Maximum idle time in seconds for monitored connections. | |
+| `monitored_max_wait_seconds` | integer | `60` | 1 | `monitored_max_wait_seconds: 120` | Maximum wait time in seconds for an available monitored connection. | Probe execution fails if the timeout expires. |
 
-### datastore.sslkey
+### Guidelines for Tuning the Collector
 
-The `sslkey` option specifies the path to the client SSL private key
-file.
+The following guidelines help select appropriate values for pool and timeout
+settings.
 
-- Type: string (file path)
-- Default: none
-- Required: No (required if `sslcert` is set)
-- Command-line: `-pg-sslkey`
-- Example: `sslkey: /etc/ai-workbench/client-key.pem`
+#### Datastore Pool Size
 
-### datastore.sslrootcert
+Choose `datastore_max_connections` based on the number of probes and monitored
+servers. Use the following formula as a starting point:
 
-The `sslrootcert` option specifies the path to the root CA certificate
-file.
+`(number of probes * concurrent servers) / 2`
 
-- Type: string (file path)
-- Default: none
-- Required: No
-- Command-line: `-pg-sslrootcert`
-- Example: `sslrootcert: /etc/ai-workbench/ca.pem`
-- Note: The collector uses this certificate to verify the server.
+For example, 24 probes with 10 monitored servers suggests approximately 120
+connections.
 
-## Connection Pool Options
+#### Monitored Pool Size
 
-All connection pool options are nested under the `pool:` key in the
-YAML file. Pool settings support configuration only through the
-configuration file; command-line flags are not available for pool
-options.
+Start with a `max_connections_per_server` value of 3 and increase the value if
+timeout errors occur. Higher network latency may require more connections.
 
-### pool.datastore_max_connections
+#### Idle Timeout
 
-The `datastore_max_connections` option specifies the maximum number of
-concurrent connections to the datastore.
+The default idle timeout of 300 seconds (5 minutes) works well for most
+environments. Use longer values when connections are expensive to create.
 
-- Type: integer
-- Default: `25`
-- Min: 1
-- Example: `datastore_max_connections: 50`
-- Tuning: Increase for more concurrent probe storage.
+#### Wait Timeout
 
-### pool.datastore_max_idle_seconds
+The default wait timeout of 60 seconds works for most environments. Use longer
+values for burst load patterns.
 
-The `datastore_max_idle_seconds` option specifies the maximum idle
-time in seconds for datastore connections.
 
-- Type: integer
-- Default: `300` (5 minutes)
-- Min: 0 (disables idle cleanup)
-- Example: `datastore_max_idle_seconds: 600`
+## Using Command-Line Flags to Specify Configuration Properties
 
-### pool.datastore_max_wait_seconds
+You can use a command-line flag to override built-in defaults and configuration
+file settings. The following table lists the available command-line flags.
 
-The `datastore_max_wait_seconds` option specifies the maximum wait
-time in seconds for an available datastore connection.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-config` | Auto-detected | Path to configuration file |
+| `-v` | `false` | Enable verbose logging |
+| `-pg-host` | `localhost` | PostgreSQL hostname |
+| `-pg-hostaddr` | none | PostgreSQL IP address |
+| `-pg-database` | `ai_workbench` | Database name |
+| `-pg-username` | `postgres` | Database username |
+| `-pg-password-file` | none | Path to password file |
+| `-pg-port` | `5432` | Database port |
+| `-pg-sslmode` | `prefer` | SSL mode |
+| `-pg-sslcert` | none | Client SSL certificate |
+| `-pg-sslkey` | none | Client SSL key |
+| `-pg-sslrootcert` | none | Root SSL certificate |
 
-- Type: integer
-- Default: `60`
-- Min: 1
-- Example: `datastore_max_wait_seconds: 120`
-- Tuning: Probe storage fails if the timeout expires.
-
-### pool.max_connections_per_server
-
-The `max_connections_per_server` option specifies the maximum
-concurrent connections per monitored database server.
-
-- Type: integer
-- Default: `3`
-- Min: 1
-- Example: `max_connections_per_server: 5`
-- Note: This limit applies per server, not total.
-
-### pool.monitored_max_idle_seconds
-
-The `monitored_max_idle_seconds` option specifies the maximum idle
-time in seconds for monitored connections.
-
-- Type: integer
-- Default: `300` (5 minutes)
-- Min: 0 (disables idle cleanup)
-- Example: `monitored_max_idle_seconds: 600`
-
-### pool.monitored_max_wait_seconds
-
-The `monitored_max_wait_seconds` option specifies the maximum wait
-time in seconds for an available monitored connection.
-
-- Type: integer
-- Default: `60`
-- Min: 1
-- Example: `monitored_max_wait_seconds: 120`
-- Tuning: Probe execution fails if the timeout expires.
-
-## Security Options
-
-The collector uses a secret file and AES-256-GCM encryption to protect
-stored passwords. The `secret_file` option specifies the path to a file
-containing the per-installation secret for password encryption.
-
-- Type: string (file path)
-- Default: Searches in order:
-    1. The per-user config directory at
-       `~/.config/pgedge/ai-dba-collector.secret` on Linux
-       (honouring `$XDG_CONFIG_HOME`),
-       `~/Library/Application Support/pgedge/ai-dba-collector.secret`
-       on macOS, and
-       `%AppData%\pgedge\ai-dba-collector.secret` on
-       Windows.
-    2. `/etc/pgedge/ai-dba-collector.secret` (system-wide).
-- Required: Yes (a secret file must exist)
-- Example: `secret_file: /etc/pgedge/collector.secret`
-- Note: The collector no longer searches the binary directory or the
-  current working directory for the secret file.
-
-The collector uses AES-256-GCM encryption to protect stored passwords.
-Each password is encrypted with a unique cryptographically random
-salt. The collector derives the encryption key from the server secret
-using PBKDF2 with SHA256 and 100,000 iterations.
-
-In the following example, the `openssl` command generates a secure
-secret:
-
-```bash
-openssl rand -base64 32 \
-    > /etc/pgedge/ai-dba-collector.secret
-chmod 600 /etc/pgedge/ai-dba-collector.secret
-```
-
-Keep this file secure with restricted permissions. Loss of the secret
-file requires re-entering all monitored connection passwords. Do not
-manually encrypt passwords; use the MCP server API to create and
-manage connections with passwords.
-
-## Command-Line Flags
-
-The following table lists all available command-line flags.
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-config` | Path to configuration file | Auto-detected |
-| `-v` | Enable verbose logging | `false` |
-| `-pg-host` | PostgreSQL hostname | `localhost` |
-| `-pg-hostaddr` | PostgreSQL IP address | none |
-| `-pg-database` | Database name | `ai_workbench` |
-| `-pg-username` | Database username | `postgres` |
-| `-pg-password-file` | Path to password file | none |
-| `-pg-port` | Database port | `5432` |
-| `-pg-sslmode` | SSL mode | `prefer` |
-| `-pg-sslcert` | Client SSL certificate | none |
-| `-pg-sslkey` | Client SSL key | none |
-| `-pg-sslrootcert` | Root SSL certificate | none |
-
-In the following example, the command uses flags to override
-configuration file settings:
+In the following example, the command uses flags to override configuration file
+settings:
 
 ```bash
 ./ai-dba-collector \
@@ -336,75 +239,23 @@ configuration file settings:
     -pg-sslmode prefer
 ```
 
-## Per-Server Probe Configuration
 
-The collector supports customizing probe settings for individual
-monitored servers through the `probe_configs` database table.
+## Per-Server Collector Probe Configuration
 
-### Configuration Hierarchy
+The collector supports customizing probe settings for individual monitored
+servers through the `probe_configs` database table. When the collector marks
+a new connection as monitored (`is_monitored = TRUE`), it creates per-server
+probe configurations by copying the global defaults.
 
 Probe settings use a three-level fallback hierarchy:
 
-1. Connection-specific settings in `probe_configs` where
-   `connection_id` matches the monitored connection.
-2. Global default settings in `probe_configs` where
-   `connection_id IS NULL`.
+1. Connection-specific settings in `probe_configs` where `connection_id`
+   matches the monitored connection.
+2. Global default settings in `probe_configs` where `connection_id IS NULL`.
 3. Hardcoded default values defined in the collector source code.
 
-### Automatic Configuration
-
-When the collector marks a new connection as monitored
-(`is_monitored = TRUE`), it creates per-server probe configurations
-by copying the global defaults.
-
-### Modifying Probe Settings
-
-Probe settings are managed through direct SQL updates to the
-`probe_configs` table.
-
-In the following example, the `UPDATE` statement changes the
-collection interval for a specific server:
-
-```sql
-UPDATE probe_configs
-SET collection_interval_seconds = 30
-WHERE name = 'pg_stat_activity'
-  AND connection_id = 1;
-```
-
-In the following example, the `UPDATE` statement disables a probe for
-a specific server:
-
-```sql
-UPDATE probe_configs
-SET is_enabled = FALSE
-WHERE name = 'pg_stat_statements'
-  AND connection_id = 2;
-```
-
-In the following example, the `UPDATE` statement changes the global
-retention period:
-
-```sql
-UPDATE probe_configs
-SET retention_days = 60
-WHERE name = 'pg_stat_database'
-  AND connection_id IS NULL;
-```
-
-### Automatic Reload
-
-The collector reloads probe configurations from the database every
-5 minutes; changes take effect without requiring a restart.
-
-Collection interval and enabled status changes take effect within
-5 minutes. Retention changes take effect on the next garbage
-collection run (within 24 hours).
-
-### Viewing Current Configuration
-
-In the following example, the query displays the probe configuration
-for a specific connection:
+The following command displays the current probe configuration for a specific
+connection:
 
 ```sql
 SELECT pc.name,
@@ -416,59 +267,50 @@ WHERE pc.connection_id = 1
 ORDER BY pc.name;
 ```
 
-## Configuration Validation
+The collector reloads probe configurations from the database every 5 minutes;
+changes take effect without requiring a restart. Retention changes take effect
+on the next garbage collection run (within 24 hours).
 
-The collector validates configuration at startup and requires the
-following fields to be set:
+### Modifying Probe Settings
 
-- `datastore.host` must contain a hostname or IP.
-- `datastore.database` must contain a database name.
-- `datastore.username` must contain a username.
-- A secret file must exist in one of the search paths.
+You manage probe settings through direct SQL updates to the `probe_configs`
+table.
 
-The collector validates the following ranges:
+In the following example, the `UPDATE` statement changes the collection
+interval for a specific server:
 
-- `datastore.port` must be between 1 and 65535.
-- Pool `max_connections` values must be greater than 0.
-- Pool `max_idle_seconds` values must be 0 or greater.
-- Pool `max_wait_seconds` values must be greater than 0.
+```sql
+UPDATE probe_configs
+SET collection_interval_seconds = 30
+WHERE name = 'pg_stat_activity'
+  AND connection_id = 1;
+```
 
-## Tuning Guidelines
+In the following example, the `UPDATE` statement disables a probe for a
+specific server:
 
-The following guidelines help select appropriate values for pool and
-timeout settings.
+```sql
+UPDATE probe_configs
+SET is_enabled = FALSE
+WHERE name = 'pg_stat_statements'
+  AND connection_id = 2;
+```
 
-### Datastore Pool Size
+In the following example, the `UPDATE` statement changes the global retention
+period:
 
-Choose `datastore_max_connections` based on the number of probes and
-monitored servers. Use the following formula as a starting point:
+```sql
+UPDATE probe_configs
+SET retention_days = 60
+WHERE name = 'pg_stat_database'
+  AND connection_id IS NULL;
+```
 
-`(number of probes * concurrent servers) / 2`
-
-For example, 24 probes with 10 monitored servers suggests
-approximately 120 connections.
-
-### Monitored Pool Size
-
-Start with a `max_connections_per_server` value of 3 and increase the
-value if timeout errors occur. Higher network latency may require more
-connections.
-
-### Idle Timeout
-
-The default idle timeout of 300 seconds (5 minutes) works well for
-most environments. Use longer values when connections are expensive to
-create.
-
-### Wait Timeout
-
-The default wait timeout of 60 seconds works for most environments.
-Use longer values for burst load patterns.
 
 ## Configuration Examples
 
 The following examples show minimal, production, and development
-configurations.
+configurations for the Collector.
 
 ### Minimal Configuration
 
@@ -522,74 +364,3 @@ pool:
 secret_file: ./ai-dba-collector.secret
 ```
 
-## Troubleshooting
-
-The following sections describe common error messages and corrective
-steps.
-
-### "Configuration file not found"
-
-This error indicates a problem locating the configuration file.
-
-- Check the file path for typos and correct any errors found.
-- Use absolute paths instead of relative paths.
-- Verify that file permissions allow the collector to read the file.
-
-### "Failed to parse configuration"
-
-This error indicates a YAML syntax problem in the configuration file.
-
-- Check for YAML syntax errors in indentation and correct them.
-- Ensure nested keys are properly indented.
-- Validate the YAML syntax using an online validator.
-
-### "Too many connections"
-
-This error indicates that the pool size exceeds the database limit.
-
-- Reduce `datastore_max_connections` to a lower value.
-- Reduce `max_connections_per_server` to a lower value.
-- Check the PostgreSQL `max_connections` setting on the target
-  servers.
-
-### "Connection timeout"
-
-This error indicates that connections are not available within the
-configured wait period.
-
-- Increase the `*_max_wait_seconds` values.
-- Increase the pool sizes for the affected component.
-- Check network connectivity to the database server.
-- Verify that the database server is responsive.
-
-## Security Best Practices
-
-Follow these practices to protect collector credentials and
-connections.
-
-### Protecting Secrets
-
-Set restrictive file permissions on configuration files and password
-files.
-
-```bash
-chmod 600 /etc/pgedge/ai-dba-collector.yaml
-chmod 600 /etc/ai-workbench/password.txt
-```
-
-Use dedicated password files rather than inline passwords. Generate
-strong random secrets for the server secret. Never commit
-configuration files with real secrets to version control.
-
-### SSL/TLS Configuration
-
-For production deployments, always use SSL with certificate
-verification:
-
-```yaml
-datastore:
-  sslmode: verify-full
-  sslcert: /path/to/client-cert.pem
-  sslkey: /path/to/client-key.pem
-  sslrootcert: /path/to/ca-cert.pem
-```

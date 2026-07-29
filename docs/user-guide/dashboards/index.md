@@ -67,7 +67,7 @@ selector and its event type filters.
 
 Server nodes and clusters in the cluster navigator each display a gear icon
 when you hover over them. Click the gear icon to open the settings dialog for
-that resource. See [Server Settings](server.md#server-settings) for the
-server dialog and [Cluster Settings](cluster.md#cluster-settings) for the
-cluster dialog; each topic covers connection details, cluster topology, alert
-overrides, probe configuration, and notification channels.
+that resource. See [Server Settings](server.md#reviewing-server-settings) for
+the server dialog and [Cluster Settings](cluster.md#reviewing-cluster-settings)
+for the cluster dialog; each topic covers connection details, cluster
+topology, alert overrides, probe configuration, and notification channels.

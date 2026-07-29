@@ -83,7 +83,7 @@ The server's `http.trusted_proxies` list pairs with
 the operator's network controls; configure the list
 with the CIDR ranges of the reverse proxies that send
 `X-Forwarded-For` headers. See the
-[server configuration reference](../getting-started/configuration/server.md#http-server-http)
+[server configuration reference](../getting-started/configuration/server.md#http-server-http-properties)
 for details.
 
 ## Direct TLS on the Server
@@ -176,7 +176,7 @@ to restore a supported configuration.
   documents the container topology that ships with
   the project.
 - The
-  [server configuration reference](../getting-started/configuration/server.md#http-server-http)
+  [server configuration reference](../getting-started/configuration/server.md#http-server-http-properties)
   lists every option for the `http` and `http.tls`
   sections.
 - The

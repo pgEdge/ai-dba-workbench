@@ -102,6 +102,7 @@ nav:
   - Troubleshooting:
     - Overview: troubleshooting/index.md
     - Stale Server Status: troubleshooting/stale-server-status.md
+    - Troubleshooting: troubleshooting/troubleshooting.md
 
   - Administrator's Guide:
     - Overview: admin-guide/index.md

@@ -49,6 +49,7 @@
 - Troubleshooting:
   - [Overview](docs/troubleshooting/index.md)
   - [Stale Server Status](docs/troubleshooting/stale-server-status.md)
+  - [Troubleshooting](docs/troubleshooting/troubleshooting.md)
 - Administrator's Guide:
   - [Overview](docs/admin-guide/index.md)
   - [TLS & Reverse Proxy](docs/admin-guide/tls-and-reverse-proxy.md)

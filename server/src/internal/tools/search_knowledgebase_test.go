@@ -25,6 +25,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestDeserializeEmbedding checks that stored embeddings decode from
+// their little-endian blob form, and that empty or truncated blobs
+// decode to nothing at all.
 func TestDeserializeEmbedding(t *testing.T) {
 	tests := []struct {
 		name string
@@ -84,6 +87,8 @@ func TestDeserializeEmbedding(t *testing.T) {
 	}
 }
 
+// TestCosineSimilarity covers the similarity measure, including the
+// zero results returned for mismatched lengths and for zero vectors.
 func TestCosineSimilarity(t *testing.T) {
 	tests := []struct {
 		name string
@@ -151,6 +156,8 @@ func TestCosineSimilarity(t *testing.T) {
 	}
 }
 
+// TestFormatKBResults checks that the rendered report echoes the query,
+// the chunk metadata, and any project or version filter applied.
 func TestFormatKBResults(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -241,6 +248,8 @@ func TestFormatKBResults(t *testing.T) {
 	}
 }
 
+// TestKBSearchResultStruct guards the field names and types of the
+// result struct that the tool output is built from.
 func TestKBSearchResultStruct(t *testing.T) {
 	result := KBSearchResult{
 		Text:           "Sample documentation text",
@@ -275,37 +284,111 @@ func TestKBSearchResultStruct(t *testing.T) {
 	}
 }
 
-// createSearchKBChunksSchema creates the legacy `chunks` table used by
-// searchKB tests, carrying the three original embedding columns and no
-// gemini_embedding column. Centralizing the DDL keeps the schema
-// consistent across test fixtures.
-func createSearchKBChunksSchema(t *testing.T, db *sql.DB) {
-	t.Helper()
-	createSearchKBChunksSchemaWithColumns(t, db,
-		"openai_embedding", "voyage_embedding", "ollama_embedding")
-}
-
-// createSearchKBChunksSchemaWithColumns creates a `chunks` table whose
-// embedding columns are exactly those named, so tests can reproduce the
-// several knowledgebase layouts found in the wild.
-func createSearchKBChunksSchemaWithColumns(t *testing.T, db *sql.DB, embeddingColumns ...string) {
-	t.Helper()
-	var sb strings.Builder
-	sb.WriteString(`
+// The knowledgebase layouts exercised by the searchKB tests, each a
+// static DDL statement so that no identifier is ever assembled at
+// runtime. Between them they cover an older file with no
+// gemini_embedding column, a current file carrying all four embedding
+// columns, a file built for Gemini alone, a file with no embedding
+// columns whatsoever, and a file whose columns appear in an unexpected
+// order with an extra column of its own.
+const (
+	kbLegacySchemaDDL = `
         CREATE TABLE chunks (
             text TEXT,
             title TEXT,
             section TEXT,
             project_name TEXT,
             project_version TEXT,
-            file_path TEXT`)
-	for _, column := range embeddingColumns {
-		sb.WriteString(",\n            " + column + " BLOB")
-	}
-	sb.WriteString("\n        );")
-	if _, err := db.Exec(sb.String()); err != nil {
+            file_path TEXT,
+            openai_embedding BLOB,
+            voyage_embedding BLOB,
+            ollama_embedding BLOB
+        );
+    `
+
+	kbAllProvidersSchemaDDL = `
+        CREATE TABLE chunks (
+            text TEXT,
+            title TEXT,
+            section TEXT,
+            project_name TEXT,
+            project_version TEXT,
+            file_path TEXT,
+            openai_embedding BLOB,
+            voyage_embedding BLOB,
+            ollama_embedding BLOB,
+            gemini_embedding BLOB
+        );
+    `
+
+	kbGeminiOnlySchemaDDL = `
+        CREATE TABLE chunks (
+            text TEXT,
+            title TEXT,
+            section TEXT,
+            project_name TEXT,
+            project_version TEXT,
+            file_path TEXT,
+            gemini_embedding BLOB
+        );
+    `
+
+	kbNoEmbeddingsSchemaDDL = `
+        CREATE TABLE chunks (
+            text TEXT,
+            title TEXT,
+            section TEXT,
+            project_name TEXT,
+            project_version TEXT,
+            file_path TEXT
+        );
+    `
+
+	kbReorderedSchemaDDL = `
+        CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY,
+            gemini_embedding BLOB,
+            file_path TEXT,
+            token_count INTEGER,
+            text TEXT,
+            project_version TEXT,
+            openai_embedding BLOB,
+            project_name TEXT,
+            section TEXT,
+            title TEXT
+        );
+    `
+)
+
+// createSearchKBChunksSchema creates the legacy `chunks` table used by
+// most searchKB tests, carrying the three original embedding columns and
+// no gemini_embedding column.
+func createSearchKBChunksSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	createSearchKBSchema(t, db, kbLegacySchemaDDL)
+}
+
+// createSearchKBSchema executes one of the static schema statements
+// above, failing the test if the table cannot be created.
+func createSearchKBSchema(t *testing.T, db *sql.DB, ddl string) {
+	t.Helper()
+	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
+}
+
+// openSearchKBTestDB creates an empty SQLite database in the test's
+// temporary directory, applies the given schema, and returns the open
+// handle along with the file path. The caller closes the handle.
+func openSearchKBTestDB(t *testing.T, name, ddl string) (*sql.DB, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	createSearchKBSchema(t, db, ddl)
+	return db, path
 }
 
 // encodeKBVector serializes a float32 vector into the little-endian blob
@@ -384,6 +467,8 @@ func buildSearchKBTestDB(t *testing.T) string {
 	return path
 }
 
+// TestSearchKB_UnfilteredReturnsAllResults checks that an unfiltered
+// search returns every chunk, most similar first.
 func TestSearchKB_UnfilteredReturnsAllResults(t *testing.T) {
 	path := buildSearchKBTestDB(t)
 
@@ -403,6 +488,8 @@ func TestSearchKB_UnfilteredReturnsAllResults(t *testing.T) {
 	}
 }
 
+// TestSearchKB_ProjectNameFilter checks that the project name filter is
+// applied as a bound IN clause.
 func TestSearchKB_ProjectNameFilter(t *testing.T) {
 	path := buildSearchKBTestDB(t)
 
@@ -421,6 +508,8 @@ func TestSearchKB_ProjectNameFilter(t *testing.T) {
 	}
 }
 
+// TestSearchKB_VersionFilter checks that project name and version
+// filters combine.
 func TestSearchKB_VersionFilter(t *testing.T) {
 	path := buildSearchKBTestDB(t)
 
@@ -438,6 +527,8 @@ func TestSearchKB_VersionFilter(t *testing.T) {
 	}
 }
 
+// TestSearchKB_TopNLimits checks that results are capped at topN after
+// ranking, not before.
 func TestSearchKB_TopNLimits(t *testing.T) {
 	path := buildSearchKBTestDB(t)
 
@@ -451,6 +542,10 @@ func TestSearchKB_TopNLimits(t *testing.T) {
 	}
 }
 
+// TestSearchKB_ErrorsWhenProviderBlobMissingForAllRows checks that a
+// knowledgebase whose provider column exists but is empty throughout is
+// reported as a misconfiguration instead of being searched with another
+// provider's vectors.
 func TestSearchKB_ErrorsWhenProviderBlobMissingForAllRows(t *testing.T) {
 	path := buildSearchKBTestDB(t)
 
@@ -470,6 +565,9 @@ func TestSearchKB_ErrorsWhenProviderBlobMissingForAllRows(t *testing.T) {
 	}
 }
 
+// TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs checks that chunks
+// with no embedding for the searched provider, or with a malformed one,
+// are skipped whilst the remaining chunks are still ranked.
 func TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "kb.sqlite")
@@ -566,6 +664,8 @@ func TestSearchKB_SkipsRowsWithNoEmbeddingAndBadBlobs(t *testing.T) {
 	}
 }
 
+// TestSearchKB_OpenFailure covers the error returned when the
+// knowledgebase file cannot be opened at all.
 func TestSearchKB_OpenFailure(t *testing.T) {
 	// A path containing a null byte is invalid for SQLite and should
 	// fail to open, exercising the error branch of searchKB.
@@ -582,17 +682,8 @@ func TestSearchKB_OpenFailure(t *testing.T) {
 // used. It returns the database path.
 func buildGeminiAwareKBTestDB(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "kb-gemini.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	db, path := openSearchKBTestDB(t, "kb-gemini.sqlite", kbAllProvidersSchemaDDL)
 	defer db.Close()
-
-	createSearchKBChunksSchemaWithColumns(t, db,
-		"openai_embedding", "voyage_embedding", "ollama_embedding",
-		"gemini_embedding")
 
 	rows := []struct {
 		text           string
@@ -666,15 +757,8 @@ func TestSearchKB_GeminiUsesGeminiEmbedding(t *testing.T) {
 // solely for Gemini, where the other embedding columns are absent from
 // the schema entirely.
 func TestSearchKB_GeminiOnlyKnowledgebase(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "kb-gemini-only.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	db, path := openSearchKBTestDB(t, "kb-gemini-only.sqlite", kbGeminiOnlySchemaDDL)
 	defer db.Close()
-
-	createSearchKBChunksSchemaWithColumns(t, db, "gemini_embedding")
 
 	inserts := []struct {
 		text   string
@@ -732,16 +816,10 @@ func TestSearchKB_GeminiColumnAbsentReturnsError(t *testing.T) {
 // TestSearchKB_NoEmbeddingColumns covers a chunks table that carries
 // none of the supported embedding columns.
 func TestSearchKB_NoEmbeddingColumns(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "kb-bare.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	createSearchKBChunksSchemaWithColumns(t, db)
+	db, path := openSearchKBTestDB(t, "kb-bare.sqlite", kbNoEmbeddingsSchemaDDL)
 	db.Close()
 
-	_, err = searchKB(path, []float32{1, 0, 0}, nil, nil, 10, "gemini")
+	_, err := searchKB(path, []float32{1, 0, 0}, nil, nil, 10, "gemini")
 	if err == nil {
 		t.Fatal("expected an error for a knowledgebase with no embedding columns")
 	}
@@ -768,15 +846,15 @@ func TestSearchKB_NoChunksTable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the chunks table is absent")
 	}
-	if !strings.Contains(err.Error(), "failed to inspect chunks table") ||
+	if !strings.Contains(err.Error(), "failed to query knowledgebase") ||
 		!strings.Contains(err.Error(), path) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 // TestSearchKB_CorruptDatabaseFile covers the failure path where the
-// knowledgebase file exists but is not a SQLite database, so probing the
-// chunks table fails outright.
+// knowledgebase file exists but is not a SQLite database, so the query
+// fails outright.
 func TestSearchKB_CorruptDatabaseFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "kb-corrupt.sqlite")
@@ -788,8 +866,132 @@ func TestSearchKB_CorruptDatabaseFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a corrupt knowledgebase file")
 	}
-	if !strings.Contains(err.Error(), "failed to inspect chunks table") {
+	if !strings.Contains(err.Error(), "failed to query knowledgebase") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestSearchKB_ResolvesColumnsByName covers a knowledgebase whose chunks
+// table orders its columns unexpectedly and carries extra columns of its
+// own, confirming that every scan destination is resolved by column name
+// rather than by position.
+func TestSearchKB_ResolvesColumnsByName(t *testing.T) {
+	db, path := openSearchKBTestDB(t, "kb-reordered.sqlite", kbReorderedSchemaDDL)
+	defer db.Close()
+
+	inserts := []struct {
+		text           string
+		gemini, openai []float32
+	}{
+		{"reordered close", []float32{1, 0, 0}, []float32{0, 1, 0}},
+		{"reordered far", []float32{0, 1, 0}, []float32{1, 0, 0}},
+	}
+	for _, row := range inserts {
+		_, err := db.Exec(
+			`INSERT INTO chunks (id, gemini_embedding, file_path, token_count,
+                text, project_version, openai_embedding, project_name,
+                section, title)
+              VALUES (NULL, ?, '/docs/r.md', 42, ?, '18', ?, 'PostgreSQL',
+                'Overview', 'Reordered')`,
+			encodeKBVector(row.gemini), row.text, encodeKBVector(row.openai))
+		if err != nil {
+			t.Fatalf("insert row: %v", err)
+		}
+	}
+
+	results, err := searchKB(path, []float32{1, 0, 0}, nil, nil, 10, "gemini")
+	if err != nil {
+		t.Fatalf("searchKB: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	top := results[0]
+	if top.Text != "reordered close" {
+		t.Errorf("expected %q first, got %q", "reordered close", top.Text)
+	}
+	if top.Title != "Reordered" || top.Section != "Overview" ||
+		top.ProjectName != "PostgreSQL" || top.ProjectVersion != "18" ||
+		top.FilePath != "/docs/r.md" {
+		t.Errorf("metadata resolved incorrectly: %+v", top)
+	}
+}
+
+// TestSearchKB_SkipsUnscannableRows covers a chunk whose metadata cannot
+// be scanned, here because a NOT NULL-free schema allows a NULL text
+// column; the row is skipped and the rest of the search proceeds.
+func TestSearchKB_SkipsUnscannableRows(t *testing.T) {
+	db, path := openSearchKBTestDB(t, "kb-nulltext.sqlite", kbGeminiOnlySchemaDDL)
+	defer db.Close()
+
+	_, err := db.Exec(
+		`INSERT INTO chunks (text, title, section, project_name,
+            project_version, file_path, gemini_embedding)
+          VALUES (NULL, 'T', 'S', 'pgEdge', '1.0', '/docs/n.md', ?)`,
+		encodeKBVector([]float32{1, 0, 0}))
+	if err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO chunks (text, title, section, project_name,
+            project_version, file_path, gemini_embedding)
+          VALUES ('scannable', 'T', 'S', 'pgEdge', '1.0', '/docs/s.md', ?)`,
+		encodeKBVector([]float32{1, 0, 0}))
+	if err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+
+	results, err := searchKB(path, []float32{1, 0, 0}, nil, nil, 10, "gemini")
+	if err != nil {
+		t.Fatalf("searchKB: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Text != "scannable" {
+		t.Errorf("expected the scannable row, got %q", results[0].Text)
+	}
+}
+
+// TestKBScanTargets checks that scan destinations are mapped by column
+// name, that the provider's embedding column is picked up, and that
+// unwanted columns are given a discard destination.
+func TestKBScanTargets(t *testing.T) {
+	columns := []string{"id", "gemini_embedding", "text", "openai_embedding"}
+	var row kbChunkRow
+	targets := kbScanTargets(columns, "gemini_embedding", &row)
+
+	if len(targets) != len(columns) {
+		t.Fatalf("expected %d targets, got %d", len(columns), len(targets))
+	}
+	if targets[1] != any(&row.embedding) {
+		t.Errorf("expected the gemini column to target the embedding field")
+	}
+	if targets[2] != any(&row.text) {
+		t.Errorf("expected the text column to target the text field")
+	}
+	if targets[0] == any(&row.embedding) || targets[3] == any(&row.embedding) {
+		t.Errorf("unwanted columns must not target the embedding field")
+	}
+}
+
+// TestKBAvailableProviders checks that the reported providers follow the
+// allow-list order and ignore columns that are not embeddings.
+func TestKBAvailableProviders(t *testing.T) {
+	got := kbAvailableProviders([]string{
+		"text", "gemini_embedding", "id", "openai_embedding"})
+	want := []string{"openai", "gemini"}
+	if len(got) != len(want) {
+		t.Fatalf("kbAvailableProviders() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("kbAvailableProviders() = %v, want %v", got, want)
+			break
+		}
+	}
+	if providers := kbAvailableProviders([]string{"text"}); len(providers) != 0 {
+		t.Errorf("expected no providers, got %v", providers)
 	}
 }
 
@@ -820,6 +1022,7 @@ func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || findInString(s, substr))
 }
 
+// findInString reports whether substr occurs anywhere in s.
 func findInString(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

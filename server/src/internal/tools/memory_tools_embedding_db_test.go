@@ -27,11 +27,13 @@ import (
 )
 
 // memoryEmbeddingTableDDL mirrors the chat_memories table that the memory
-// store reads from and writes to. The vector dimension is 3 so the mocked
-// Gemini endpoint can return a three-element vector and the store can
-// persist it without dimension mismatch. The table is created inside a
-// per-test private schema (see newMemoryEmbeddingStore) so it never
-// clobbers the canonical public.chat_memories shared with other tests.
+// store reads from and writes to. The column is halfvec(4000) because the
+// store pads every embedding to embedding.MaxDimensions before insert and
+// before querying, so a shorter vector column would reject the padded
+// value; halfvec rather than vector is required because pgvector caps the
+// vector type at 2000 dimensions. The table is created inside a per-test
+// private schema (see newMemoryEmbeddingStore) so it never clobbers the
+// canonical public.chat_memories shared with other tests.
 const memoryEmbeddingTableDDL = `
 CREATE TABLE chat_memories (
     id BIGSERIAL PRIMARY KEY,
@@ -40,7 +42,7 @@ CREATE TABLE chat_memories (
     category TEXT NOT NULL,
     content TEXT NOT NULL,
     pinned BOOLEAN NOT NULL DEFAULT FALSE,
-    embedding vector(3),
+    embedding halfvec(4000),
     model_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -51,7 +53,7 @@ CREATE TABLE chat_memories (
 // TEST_AI_WORKBENCH_SERVER Postgres instance. To avoid clobbering the
 // shared public.chat_memories table (which other tools and memory-package
 // integration tests rely on), it creates a uniquely-named private schema
-// and a chat_memories table with a vector(3) embedding column inside it.
+// and a chat_memories table with a halfvec(4000) embedding column inside it.
 // The pool's search_path is set so the memory store's unqualified
 // chat_memories references resolve to this private table. Teardown drops
 // the whole schema, leaving the shared table untouched. The test skips
@@ -148,8 +150,9 @@ func uniqueSchemaName(testName string) string {
 // endpoint. The wire contract mirrors the pgedge-go-llm-lib Gemini provider:
 // the request path is /v1beta/models/<model>:embedContent, the API key is
 // carried in the x-goog-api-key header, and the response is
-// {"embedding":{"values":[...]}}. A three-element vector matches the
-// vector(3) column used by the test schema.
+// {"embedding":{"values":[...]}}. The response carries a three-element
+// vector; the memory store pads it to the fixed 4000-dimension width before
+// insert, which is why the test schema declares a halfvec(4000) column.
 func newMockGeminiEmbeddingServer(t *testing.T, apiKey string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

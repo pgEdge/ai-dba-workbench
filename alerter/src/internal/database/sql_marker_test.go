@@ -22,10 +22,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
+
+// assertTagged fails the test unless tagged carries the marker in a
+// position that PostgreSQL preserves when it normalizes the statement
+// for pg_stat_statements, which is to say after the leading keyword
+// rather than in front of it.
+func assertTagged(t *testing.T, what, tagged string) {
+	t.Helper()
+
+	if !strings.Contains(tagged, sqlmarker.Marker) {
+		t.Errorf("%s is not tagged: %q", what, first80(tagged))
+		return
+	}
+	trimmed := strings.TrimLeft(tagged, " \t\r\n")
+	if strings.HasPrefix(trimmed, sqlmarker.Comment) {
+		t.Errorf("%s carries the marker before its leading keyword, "+
+			"where PostgreSQL strips it: %q", what, first80(tagged))
+	}
+}
 
 // assertTaggable fails the test unless Tag inserts the marker into sql
 // after the leading keyword. Registry SQL that fails this check would be
@@ -33,16 +52,84 @@ import (
 func assertTaggable(t *testing.T, what, sql string) {
 	t.Helper()
 
-	tagged := sqlmarker.Tag(sql)
-	if !strings.Contains(tagged, sqlmarker.Marker) {
-		t.Errorf("%s cannot be tagged; it has no leading keyword: %q",
-			what, first80(sql))
-		return
+	assertTagged(t, what, sqlmarker.Tag(sql))
+}
+
+// fakeRowQuerier records the statements handed to it, standing in for
+// the connection pool so the tagging can be asserted without a
+// database. Returning a nil pgx.Rows is safe because the tests that use
+// it call queryTagged directly and never iterate the result.
+type fakeRowQuerier struct {
+	sql  []string
+	args [][]any
+}
+
+func (f *fakeRowQuerier) Query(_ context.Context, sql string,
+	args ...any) (pgx.Rows, error) {
+	f.sql = append(f.sql, sql)
+	f.args = append(f.args, args)
+	return nil, nil
+}
+
+// TestQueryTagged_TagsSQL asserts the chokepoint every registry query
+// passes through tags the statement and forwards its arguments
+// untouched. This needs no database, so it guards the fix on every run,
+// including on servers where pg_stat_statements is not loaded and the
+// end-to-end test below skips.
+func TestQueryTagged_TagsSQL(t *testing.T) {
+	q := &fakeRowQuerier{}
+	ctx := context.Background()
+
+	if _, err := queryTagged(ctx, q,
+		"SELECT connection_id FROM metrics.pg_stat_activity "+
+			"WHERE collected_at > now() - ($1 || ' days')::interval",
+		7); err != nil {
+		t.Fatalf("queryTagged() error = %v", err)
 	}
-	trimmed := strings.TrimLeft(tagged, " \t\r\n")
-	if strings.HasPrefix(trimmed, sqlmarker.Comment) {
-		t.Errorf("%s would carry the marker before its leading keyword, "+
-			"where PostgreSQL strips it: %q", what, first80(tagged))
+
+	if len(q.sql) != 1 {
+		t.Fatalf("recorded %d statements, want 1", len(q.sql))
+	}
+	assertTagged(t, "queryTagged statement", q.sql[0])
+	if !strings.HasPrefix(q.sql[0], "SELECT "+sqlmarker.Comment+" ") {
+		t.Errorf("marker is not immediately after the keyword: %q",
+			first80(q.sql[0]))
+	}
+	if len(q.args[0]) != 1 || q.args[0][0] != 7 {
+		t.Errorf("args = %v, want [7]", q.args[0])
+	}
+}
+
+// TestQueryTagged_TagsEveryRegistryStatement drives every statement in
+// the metric registry through the real chokepoint with a fake pool, so
+// the tagging of the alerter's whole metric-evaluation surface is
+// verified without a database. It complements
+// TestMetricRegistrySQLIsTaggable, which checks only that Tag can
+// handle the SQL, by proving that the code path actually applies it.
+func TestQueryTagged_TagsEveryRegistryStatement(t *testing.T) {
+	if len(metricRegistry) == 0 {
+		t.Fatal("metricRegistry is empty")
+	}
+	ctx := context.Background()
+
+	for name, cfg := range metricRegistry {
+		for label, sql := range map[string]string{
+			name + ".latestSQL":     cfg.latestSQL,
+			name + ".historicalSQL": cfg.historicalSQL,
+		} {
+			if strings.TrimSpace(sql) == "" {
+				continue
+			}
+			q := &fakeRowQuerier{}
+			if _, err := queryTagged(ctx, q, sql, 1); err != nil {
+				t.Fatalf("queryTagged(%s) error = %v", label, err)
+			}
+			if len(q.sql) != 1 {
+				t.Fatalf("%s recorded %d statements, want 1",
+					label, len(q.sql))
+			}
+			assertTagged(t, label, q.sql[0])
+		}
 	}
 }
 
@@ -104,19 +191,48 @@ func markerTestDatastore(t *testing.T) *Datastore {
 	return &Datastore{pool: pool}
 }
 
+// requirePgStatStatements skips the test unless pg_stat_statements is
+// both installed and readable on the test server.
+//
+// Readability has to be established by actually reading the view rather
+// than by inspecting shared_preload_libraries or pg_extension, because
+// the extension can be created successfully and still raise SQLSTATE
+// 55000 ("must be loaded via shared_preload_libraries") on every
+// select. That is exactly how the CI PostgreSQL containers are
+// configured, and probing the read also covers the extension being
+// absent, unprivileged, or otherwise unusable, for whatever reason.
+func requirePgStatStatements(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx,
+		"CREATE EXTENSION IF NOT EXISTS pg_stat_statements"); err != nil {
+		t.Skipf("skipping end-to-end marker check: the "+
+			"pg_stat_statements extension cannot be created: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		"SELECT count(*) FROM pg_stat_statements"); err != nil {
+		t.Skipf("skipping end-to-end marker check: the "+
+			"pg_stat_statements view is not readable, most likely "+
+			"because the library is not listed in "+
+			"shared_preload_libraries: %v", err)
+	}
+}
+
 // TestQueryInternal_TagsSQL proves end-to-end that a registry-style query
 // reaches PostgreSQL with the marker intact, by reading its own entry
 // back out of pg_stat_statements. This is the behavior the server's
 // filter depends on, and the reason the marker sits after the leading
 // keyword rather than in front of the statement.
+//
+// The test skips where pg_stat_statements is not loaded; the tagging
+// itself is asserted unconditionally by TestQueryTagged_TagsSQL and
+// TestQueryTagged_TagsEveryRegistryStatement above.
 func TestQueryInternal_TagsSQL(t *testing.T) {
 	ds := markerTestDatastore(t)
 	ctx := context.Background()
 
-	if _, err := ds.pool.Exec(ctx,
-		"CREATE EXTENSION IF NOT EXISTS pg_stat_statements"); err != nil {
-		t.Skipf("pg_stat_statements unavailable: %v", err)
-	}
+	requirePgStatStatements(t, ds.pool)
 
 	// The statement must be identifiable in the view and must have a
 	// queryid of its own, so it reads from a uniquely named scratch
@@ -126,23 +242,29 @@ func TestQueryInternal_TagsSQL(t *testing.T) {
 	// aliases collapses onto an existing entry and keeps that entry's
 	// original text.
 	tag := fmt.Sprintf("marker_probe_%d", time.Now().UnixNano())
+	tagIdent := pgx.Identifier{tag}.Sanitize()
+	// The relation name is generated from a timestamp above and quoted
+	// with pgx.Identifier; CREATE TABLE cannot name its relation with a
+	// bind parameter.
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; timestamp-derived name sanitized by pgx.Identifier
 	if _, err := ds.pool.Exec(ctx, fmt.Sprintf(
 		`CREATE TABLE %s (
 			connection_id INTEGER,
 			value DOUBLE PRECISION,
 			collected_at TIMESTAMPTZ
-		)`, tag)); err != nil {
+		)`, tagIdent)); err != nil {
 		t.Fatalf("create scratch table: %v", err)
 	}
 	t.Cleanup(func() {
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; same sanitized identifier as the CREATE above
 		if _, err := ds.pool.Exec(context.Background(),
-			fmt.Sprintf("DROP TABLE IF EXISTS %s", tag)); err != nil {
-			t.Logf("cleanup: drop %s: %v", tag, err)
+			fmt.Sprintf("DROP TABLE IF EXISTS %s", tagIdent)); err != nil {
+			t.Logf("cleanup: drop %s: %v", tagIdent, err)
 		}
 	})
 
 	sql := fmt.Sprintf(
-		"SELECT connection_id, value, collected_at FROM %s", tag)
+		"SELECT connection_id, value, collected_at FROM %s", tagIdent)
 
 	rows, err := ds.queryInternal(ctx, sql)
 	if err != nil {
@@ -158,6 +280,9 @@ func TestQueryInternal_TagsSQL(t *testing.T) {
 	}
 
 	var count int
+	// The SQL is a fixed literal; the table name and the marker are
+	// bound as $1 and $2 rather than concatenated into it.
+	//nosemgrep: go_sql_rule-concat-sqli -- fixed SQL literal; table name and marker bound as $1 and $2
 	err = ds.pool.QueryRow(ctx, `
         SELECT count(*) FROM pg_stat_statements
         WHERE query LIKE '%' || $1 || '%'
@@ -304,9 +429,13 @@ func TestGetClusterPeers_ScanError(t *testing.T) {
 	ctx := context.Background()
 	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
 	schema := fmt.Sprintf("marker_scan_%d", time.Now().UnixNano())
+	schemaIdent := pgx.Identifier{schema}.Sanitize()
 
 	// name is boolean rather than text, so scanning it into a string
-	// destination fails on the first row.
+	// destination fails on the first row. The schema name is generated
+	// from a timestamp above and quoted with pgx.Identifier; CREATE
+	// SCHEMA cannot name its schema with a bind parameter.
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; timestamp-derived schema name sanitized by pgx.Identifier
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`
 		CREATE SCHEMA %[1]s;
 		CREATE TABLE %[1]s.connections (
@@ -315,15 +444,16 @@ func TestGetClusterPeers_ScanError(t *testing.T) {
 			cluster_id INTEGER
 		);
 		INSERT INTO %[1]s.connections VALUES (1, TRUE, 10), (2, FALSE, 10);
-	`, schema)); err != nil {
+	`, schemaIdent)); err != nil {
 		t.Fatalf("create scratch schema: %v", err)
 	}
 	// Registered with defer rather than t.Cleanup so the drop runs
 	// while the pool is still open: the fixture's own cleanup closes
 	// the pool, and deferred calls unwind before t.Cleanup functions.
 	defer func() {
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; same sanitized schema identifier as the CREATE above
 		if _, err := pool.Exec(context.Background(),
-			fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema),
+			fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schemaIdent),
 		); err != nil {
 			t.Logf("cleanup: drop schema %s: %v", schema, err)
 		}

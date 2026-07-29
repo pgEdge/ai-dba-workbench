@@ -259,18 +259,20 @@ project adheres to
   documented in the sample configuration. (#308)
 
 - Fix the "Hide monitoring queries" toggle on the Server dashboard's
-  Top Queries panel failing to hide most of the Workbench's own query
-  overhead. Only the collector's probe queries against monitored
-  databases carried a marker, so the Workbench's own traffic against
-  the metadata datastore stayed in the panel whenever that datastore
-  shared a PostgreSQL instance with the monitored databases, which is
-  the usual deployment. The toggle now also hides the collector's
-  bulk `metrics.*` inserts, partition maintenance, and
-  change-detection reads, together with the alerter's
-  metric-evaluation queries. Each of the Workbench's own statements is
-  tagged individually rather than excluding the metadata database
-  wholesale, so queries that other tools run against that same
-  database remain visible in the panel. (#364)
+  Top Queries panel failing to hide the collector's and alerter's
+  datastore query overhead. Only the collector's probe queries against
+  monitored databases carried a marker, so its bulk `metrics.*`
+  inserts, partition maintenance, and change-detection reads, together
+  with the alerter's metric-evaluation queries, stayed in the panel
+  whenever the metadata datastore shared a PostgreSQL instance with
+  the monitored databases, which is the usual deployment. The toggle
+  now hides those statements as well. Each statement is tagged
+  individually rather than excluding the metadata database wholesale,
+  so queries that other tools run against that same database remain
+  visible. Two classes stay untagged by design and still appear in the
+  panel: the server's own datastore traffic for sessions, RBAC,
+  conversations, and the timeline; and the collector's `probe_configs`
+  resolution path. (#364)
 
 ### Security
 

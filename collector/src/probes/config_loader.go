@@ -270,14 +270,19 @@ func getDefaultInterval(probeName string) int {
 // Workbench-internal to keep it out of the server's Top Queries panel
 // when monitoring queries are hidden.
 //
+// The probe name names the metrics table, so it is quoted with
+// pgx.Identifier rather than bound: a relation cannot be supplied as a
+// placeholder. The connection ID is bound as $1.
+//
 // #nosec G201 - the probe name is not user-provided; it comes from the
-// probe definitions compiled into the collector.
+// probe definitions compiled into the collector, and it is quoted by
+// pgx.Identifier.
 func lastCollectionTimeQuery(probeName string) string {
 	return sqlmarker.Tag(fmt.Sprintf(`
         SELECT MAX(collected_at)
-        FROM metrics.%s
+        FROM %s
         WHERE connection_id = $1
-    `, probeName))
+    `, pgx.Identifier{"metrics", probeName}.Sanitize()))
 }
 
 // GetLastCollectionTime queries the last collection timestamp for a probe/connection pair

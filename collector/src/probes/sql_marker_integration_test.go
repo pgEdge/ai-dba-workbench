@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
@@ -28,6 +30,10 @@ import (
 // proof of the fix: the collector's bulk metric INSERT is recorded by
 // pg_stat_statements with the marker intact, so the server's Top Queries
 // filter can exclude it.
+//
+// The test skips where pg_stat_statements is not loaded; the tagging
+// itself is asserted unconditionally, and without a database, by
+// TestBuildMetricsInsert_Tagged and its neighbors in sql_marker_test.go.
 func TestStoreMetrics_MarkerSurvivesInPgStatStatements(t *testing.T) {
 	pool := requireIntegrationPool(t)
 	conn := acquireConn(t, pool)
@@ -35,8 +41,10 @@ func TestStoreMetrics_MarkerSurvivesInPgStatStatements(t *testing.T) {
 
 	if _, err := conn.Exec(ctx,
 		"CREATE EXTENSION IF NOT EXISTS pg_stat_statements"); err != nil {
-		t.Skipf("pg_stat_statements unavailable: %v", err)
+		t.Skipf("skipping end-to-end marker check: the "+
+			"pg_stat_statements extension cannot be created: %v", err)
 	}
+	requirePgStatStatementsReadable(t, conn)
 	// A unique table name keeps this test independent of the shared
 	// metrics tables used by the other integration tests, and gives the
 	// statement a queryid of its own: pg_stat_statements normalizes
@@ -45,18 +53,24 @@ func TestStoreMetrics_MarkerSurvivesInPgStatStatements(t *testing.T) {
 	// only reliable discriminator. The statistics are deliberately not
 	// reset, because that would discard the whole instance's history.
 	table := fmt.Sprintf("marker_probe_%d", time.Now().UnixNano())
+	ident := pgx.Identifier{"metrics", table}.Sanitize()
+	// The relation name is generated from a timestamp above and quoted
+	// with pgx.Identifier; CREATE TABLE cannot name its relation with a
+	// bind parameter.
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; timestamp-derived name sanitized by pgx.Identifier
 	if _, err := conn.Exec(ctx, fmt.Sprintf(
-		`CREATE TABLE metrics.%s (
+		`CREATE TABLE %s (
 			connection_id INTEGER NOT NULL,
 			collected_at TIMESTAMPTZ NOT NULL
-		)`, table)); err != nil {
+		)`, ident)); err != nil {
 		t.Fatalf("create test table: %v", err)
 	}
 	t.Cleanup(func() {
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; same sanitized identifier as the CREATE above
 		if _, err := conn.Exec(context.Background(),
-			fmt.Sprintf("DROP TABLE IF EXISTS metrics.%s", table),
+			fmt.Sprintf("DROP TABLE IF EXISTS %s", ident),
 		); err != nil {
-			t.Logf("cleanup: drop metrics.%s: %v", table, err)
+			t.Logf("cleanup: drop %s: %v", ident, err)
 		}
 	})
 
@@ -68,6 +82,9 @@ func TestStoreMetrics_MarkerSurvivesInPgStatStatements(t *testing.T) {
 	}
 
 	var count int
+	// The SQL is a fixed literal; the table name and the marker are
+	// bound as $1 and $2 rather than concatenated into it.
+	//nosemgrep: go_sql_rule-concat-sqli -- fixed SQL literal; table name and marker bound as $1 and $2
 	err = conn.QueryRow(ctx, `
         SELECT count(*)
         FROM pg_stat_statements
@@ -78,7 +95,9 @@ func TestStoreMetrics_MarkerSurvivesInPgStatStatements(t *testing.T) {
 		t.Fatalf("read pg_stat_statements: %v", err)
 	}
 	if count == 0 {
-		// Dump what was recorded to make a regression obvious.
+		// Dump what was recorded to make a regression obvious. The SQL
+		// is a fixed literal and the table name is bound as $1.
+		//nosemgrep: go_sql_rule-concat-sqli -- fixed SQL literal; table name bound as $1
 		rows, qerr := conn.Query(ctx, `
             SELECT query FROM pg_stat_statements
             WHERE query LIKE '%' || $1 || '%'
@@ -106,19 +125,22 @@ func TestStoreMetrics_CommitError(t *testing.T) {
 	ctx := context.Background()
 
 	table := fmt.Sprintf("marker_commit_%d", time.Now().UnixNano())
+	ident := pgx.Identifier{"metrics", table}.Sanitize()
+	//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; timestamp-derived name sanitized by pgx.Identifier
 	if _, err := conn.Exec(ctx, fmt.Sprintf(
-		`CREATE TABLE metrics.%s (
+		`CREATE TABLE %s (
 			connection_id INTEGER NOT NULL,
 			collected_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (connection_id) DEFERRABLE INITIALLY DEFERRED
-		)`, table)); err != nil {
+		)`, ident)); err != nil {
 		t.Fatalf("create test table: %v", err)
 	}
 	t.Cleanup(func() {
+		//nosemgrep: go_sql_rule-concat-sqli -- test-only DDL; same sanitized identifier as the CREATE above
 		if _, err := conn.Exec(context.Background(),
-			fmt.Sprintf("DROP TABLE IF EXISTS metrics.%s", table),
+			fmt.Sprintf("DROP TABLE IF EXISTS %s", ident),
 		); err != nil {
-			t.Logf("cleanup: drop metrics.%s: %v", table, err)
+			t.Logf("cleanup: drop %s: %v", ident, err)
 		}
 	})
 

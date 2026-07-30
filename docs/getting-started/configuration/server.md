@@ -71,6 +71,9 @@ by purpose:
 
 ### General Options
 
+The general options set the configuration file path, debug logging, the
+data directory, and the trace file.
+
 | Flag | Description |
 |------|-------------|
 | `-config string` | Path to configuration file |
@@ -79,6 +82,9 @@ by purpose:
 | `-trace-file string` | Path to MCP trace file |
 
 ### HTTP Server Options
+
+The HTTP server options configure the listen address and TLS
+certificate files for encrypted connections.
 
 | Flag | Description |
 |------|-------------|
@@ -89,6 +95,9 @@ by purpose:
 | `-chain string` | Path to TLS certificate chain |
 
 ### Database Connection Options
+
+The database connection options set the host, port, credentials, and SSL
+mode for the PostgreSQL connection.
 
 | Flag | Description |
 |------|-------------|
@@ -102,6 +111,9 @@ by purpose:
 
 ### Token Management Options
 
+Use the token management options to create, remove, list, and annotate
+service tokens.
+
 | Flag | Description |
 |------|-------------|
 | `-add-token` | Add a new service token |
@@ -112,6 +124,9 @@ by purpose:
 | `-user string` | Owner username for the token |
 
 ### User Management Options
+
+The user management options add, update, delete, enable, and disable
+user and service accounts.
 
 | Flag | Description |
 |------|-------------|
@@ -130,6 +145,9 @@ by purpose:
 
 ### Group Management Options
 
+The group management options create, delete, and list RBAC groups, and
+manage group membership and superuser status.
+
 | Flag | Description |
 |------|-------------|
 | `-add-group` | Add a new RBAC group |
@@ -143,6 +161,9 @@ by purpose:
 | `-unset-superuser` | Remove superuser status |
 
 ### Privilege Management Options
+
+The privilege management options grant, revoke, register, and list MCP
+privileges and connection access levels.
 
 | Flag | Description |
 |------|-------------|
@@ -160,6 +181,9 @@ by purpose:
 | `-access-level string` | Access level (default: read) |
 
 ### Token Scope Options
+
+The token scope options set, clear, and display the connections and
+tools a service token can access.
 
 | Flag | Description |
 |------|-------------|
@@ -291,7 +315,10 @@ the following order:
     present at any search path, the server exits with an error at startup.
 
 
-### HTTP Server (`http`) Properties
+### HTTP Server Properties
+
+The HTTP server properties configure the listener address, TLS
+certificates, and authentication rate limiting.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -336,7 +363,7 @@ http:
     enabled: true
 ```
 
-### Connection Security (`connection_security`) Properties
+### Connection Security Properties
 
 The connection security section controls SSRF protection for user-created
 database connections.
@@ -347,7 +374,10 @@ database connections.
 | `allowed_hosts` | list | `[]` | Always-permitted hosts |
 | `blocked_hosts` | list | `[]` | Always-blocked hosts |
 
-### Database (`database`) Properties
+### Database Properties
+
+The database properties configure the PostgreSQL connection and
+connection pool for the server's datastore.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -362,7 +392,7 @@ database connections.
 | `pool_min_conns` | int | `0` | Min pool connections |
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
 
-### Embedding (`embedding`) Properties
+### Embedding Properties
 
 The `provider` option accepts `voyage`, `openai`, `gemini`, or `ollama`. The
 Gemini provider supports `gemini-embedding-001` (the default, 3072 dimensions),
@@ -383,7 +413,7 @@ which embedding models a given key can access.
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 
-### LLM Proxy (`llm`) Properties
+### LLM Proxy Properties
 
 The LLM proxy is optional. When no valid API key is configured for the chosen
 provider, the server disables all AI features at startup. The web client
@@ -488,7 +518,7 @@ llm:
   openai_base_url: "http://localhost:8080/v1"
 ```
 
-### Knowledgebase (`knowledgebase`) Properties
+### Knowledgebase Properties
 
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`, or
 `ollama`. The Gemini provider supports `gemini-embedding-001` (the default,
@@ -515,7 +545,7 @@ different model produces incompatible embeddings and breaks similarity search.
 | `embedding_openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `embedding_gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
 
-### Memory (`memory`) Properties
+### Memory Properties
 
 The memory section controls the chat memory feature for Ask Ellie. Chat memory
 allows Ellie to store and recall information across conversations.
@@ -544,7 +574,7 @@ memory:
 The `PGEDGE_MEMORY_ENABLED` environment variable can also control this setting;
 see [Environment Variables](#using-environment-variables-to-specify-server-properties) for details.
 
-### Built-in Features (`builtins`) Properties
+### Built-in Features Properties
 
 The builtins section enables or disables individual tools and resources.
 
@@ -577,7 +607,7 @@ builtins:
     connection_info: true
 ```
 
-#### Using the Memory Tools (`store_memory`, `recall_memories`, `delete_memory`) Properties
+#### Using the Memory Tool Properties
 
 The memory tools (`store_memory`, `recall_memories`, `delete_memory`) allow
 Ellie to store and recall information across conversations. The server stores
@@ -600,6 +630,9 @@ builtins:
 ```
 
 ### Paths and Directories
+
+These properties configure filesystem paths for secrets, custom
+prompts, persistent data, and tracing.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -863,5 +896,3 @@ llm:
 secret_file: "/etc/ai-workbench/server.secret"
 data_dir: "/var/lib/ai-workbench/data"
 ```
-
-### Sample: General Purpose Configuration

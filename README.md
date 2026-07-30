@@ -19,7 +19,7 @@
   - [Quick Start - Installing with Binaries](docs/getting-started/binary_install.md)
   - [Building from Source Code](docs/getting-started/build_from_source.md)
   - [Deploying with Docker](docs/getting-started/docker.md)
-  - Configuration Details:
+  - Configuring the Workbench:
     - [Server](docs/getting-started/configuration/server.md)
     - [Collector](docs/getting-started/configuration/collector.md)
     - [Alerter](docs/getting-started/configuration/alerter.md)
@@ -34,7 +34,6 @@
     - [Server Dashboard](docs/user-guide/dashboards/server.md)
     - [Database Dashboard](docs/user-guide/dashboards/database.md)
     - [Object Dashboard](docs/user-guide/dashboards/object.md)
-  - [Query Plan](docs/user-guide/query-plan.md)
   - [Event Timeline](docs/user-guide/event-timeline.md)
   - Alerts:
     - [Monitoring Alerts](docs/user-guide/alerts/index.md)

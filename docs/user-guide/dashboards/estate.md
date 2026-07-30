@@ -50,7 +50,7 @@ The section includes the following charts and graphs:
 - The `Checkpoints` graph displays a chart showing checkpoint activity across
   the selected time range.
 
-## Active Alerts
+## Reviewing Active Alerts
 
 The `Active Alerts` pane shows the alerts that are currently active across the
 estate.
@@ -67,13 +67,13 @@ See [Using Alerts](../alerts/index.md) for details on reviewing, acknowledging,
 and analyzing alerts, and for how to find an alert's acknowledgment reason or a
 past alert from the `Event Timeline`.
 
-## Monitoring
+## Monitoring Details of your Estate
 
 Panes within the `Monitoring` panel present an overview of the estate. See
 the [Time Range Selector](index.md#time-range-selector) section for details
 on rescoping data and expanding or collapsing panes.
 
-### Health Overview
+### Reviewing the Health Overview
 
 The `Health Overview` pane summarizes server status and alert distribution
 across the estate. The left tile displays a donut chart labeled `Server Status`
@@ -92,7 +92,7 @@ displayed data.
 
 ![Reviewing the health of the estate](../../images/estate_health_overview.png)
 
-### Key Performance Indicators
+### Reviewing Key Performance Indicators
 
 The `Key Performance Indicators` pane displays four tiles that summarize
 estate-wide metrics. Each tile presents a single aggregate value across all
@@ -111,7 +111,7 @@ The pane includes the following tiles:
 
 ![Reviewing the key performance indicators](../../images/estate_key_performance.png)
 
-### Clusters
+### Reviewing Clusters in your Estate
 
 The `Clusters` pane displays one tile for each cluster in the estate. Click a
 cluster tile to navigate to the [cluster dashboard](cluster.md) for that

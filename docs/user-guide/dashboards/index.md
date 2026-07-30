@@ -1,4 +1,4 @@
-# Reviewing the Dashboards
+# Reviewing Workbench Dashboards
 
 Monitoring dashboards provide a hierarchical view of PostgreSQL database health
 and performance. You can navigate through five levels of detail, from a
@@ -25,10 +25,9 @@ navigator tree.
 
 ## Using the Workbench with an AI Provider
 
-If you have enabled an
-[AI provider](../ai/index.md#enabling-ai-mode), the Workbench
-displays an informational analysis of each dashboard that you visit, and an
-`Ask Ellie` chat assistant for interactive help. See
+If you have enabled an [AI provider](../ai/index.md#enabling-ai-mode), the
+Workbench displays an informational analysis of each dashboard that you visit,
+and an `Ask Ellie` chat assistant for interactive help. See
 [Using AI Features](../ai/index.md) and [Ask Ellie](../ai/ask-ellie.md) for
 details.
 
@@ -44,14 +43,14 @@ resource.
 
 ## Expanding and Collapsing Panes
 
-Monitoring dashboards share a set of common UI conventions across their
-panes. Most panes display a chevron on the right side of the pane heading.
-Click the chevron to expand or collapse the pane.
+Monitoring dashboards share a set of common UI conventions across their panes.
+Most panes display a chevron on the right side of the pane heading. Click the
+chevron to expand or collapse the pane.
 
-## Time Range Selector
+## Using the Time Range Selector
 
-Many panes include a time range selector that lets you choose the period
-for the displayed metrics. The selector offers the following ranges:
+Many panes include a time range selector that lets you choose the period for
+the displayed metrics. The selector offers the following ranges:
 
 - `1h` displays the last one hour of data.
 - `6h` displays the last six hours of data.
@@ -59,9 +58,9 @@ for the displayed metrics. The selector offers the following ranges:
 - `7d` displays the last seven days of data.
 - `30d` displays the last thirty days of data.
 
-This selector is separate from the Event Timeline's own time range
-selector; see [Event Timeline](../event-timeline.md) for details on that
-selector and its event type filters.
+This selector is separate from the Event Timeline's own time range selector;
+see [Event Timeline](../event-timeline.md) for details on that selector and its
+event type filters.
 
 ## Reviewing Server and Cluster Settings
 
@@ -69,5 +68,5 @@ Server nodes and clusters in the cluster navigator each display a gear icon
 when you hover over them. Click the gear icon to open the settings dialog for
 that resource. See [Server Settings](server.md#reviewing-server-settings) for
 the server dialog and [Cluster Settings](cluster.md#reviewing-cluster-settings)
-for the cluster dialog; each topic covers connection details, cluster
-topology, alert overrides, probe configuration, and notification channels.
+for the cluster dialog; each topic covers connection details, cluster topology,
+alert overrides, probe configuration, and notification channels.

@@ -1,4 +1,4 @@
-# Collector Configuration
+# Configuring the Collector
 
 The collector supports configuration through a YAML file and command-line
 flags. The collector loads configuration in the following order; later
@@ -7,21 +7,6 @@ sources override earlier ones:
 1. Built-in defaults.
 2. Configuration file.
 3. Command-line flags.
-
-The collector validates configuration at startup; the following fields
-must be set:
-
-- `datastore.host` must contain a hostname or IP.
-- `datastore.database` must contain a database name.
-- `datastore.username` must contain a username.
-- A secret file must exist in one of the search paths.
-
-The collector also validates the following ranges:
-
-- `datastore.port` must be between 1 and 65535.
-- Pool `max_connections` values must be greater than 0.
-- Pool `max_idle_seconds` values must be 0 or greater.
-- Pool `max_wait_seconds` values must be greater than 0.
 
 The collector searches for a configuration file in the following locations
 in order:
@@ -38,6 +23,41 @@ error. If `-config` is not set and none of the default locations contain
 a configuration file, the collector uses built-in defaults silently. The
 collector no longer searches the binary directory or the current working
 directory.
+
+The collector validates configuration at startup; the following fields
+must be set:
+
+- `datastore.host` must contain a hostname or IP.
+- `datastore.database` must contain a database name.
+- `datastore.username` must contain a username.
+- A secret file must exist in one of the search paths.
+
+The collector also validates the following ranges:
+
+- `datastore.port` must be between 1 and 65535.
+- Pool `max_connections` values must be greater than 0.
+- Pool `max_idle_seconds` values must be 0 or greater.
+- Pool `max_wait_seconds` values must be greater than 0.
+
+
+## Reloading or Restarting the Collector
+
+The collector has no signal-based reload for its configuration file, unlike the server and alerter. Changing any property or command-line flag — requires a full restart to take effect. The collector's shutdown handler only responds to SIGINT and SIGTERM, and both signals stop the process rather than reapplying configuration.
+
+If you have configured systemd, you can restart the service through systemctl to apply configuration changes:
+
+```bash
+sudo systemctl restart pgedge-ai-dba-collector
+```
+
+Without systemd, stop and relaunch the process manually with the same configuration flag used originally:
+
+```bash
+pkill -f ai-dba-collector opt/ai-workbench/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml &
+```
+
+Per-server probe configuration is the one exception: the collector stores it in the datastore rather than the YAML file, polls for changes every 5 minutes, and applies them automatically without a restart. 
+
 
 ## Security Best Practices
 
@@ -134,7 +154,7 @@ All datastore options are nested under the `datastore:` key in the YAML file.
 | `hostaddr` | string | none | No | `-pg-hostaddr` | `hostaddr: 192.168.1.100` | PostgreSQL server IP address; bypasses DNS lookup | Used instead of `host` when both are set. |
 | `database` | string | `ai_workbench` | Yes | `-pg-database` | `database: metrics` | Database name for the datastore | |
 | `username` | string | `postgres` | Yes | `-pg-username` | `username: ai_workbench` | Username for the datastore connection | |
-| `password_file` | string (file path) | none | No (but strongly recommended) | `-pg-password-file` | `password_file: /etc/ai-workbench/pw.txt` | Path to a file containing the datastore password | Plain text, password only. |
+| `password_file` | string (file path) | none | No | `-pg-password-file` | `password_file: /etc/ai-workbench/pw.txt` | Path to a file containing the datastore password | Plain text, password only. |
 | `port` | integer | `5432` | No | `-pg-port` | `port: 5433` | PostgreSQL server port number | Range: 1-65535 |
 | `sslmode` | string | `prefer` | No | `-pg-sslmode` | `sslmode: require` | SSL/TLS mode for the datastore connection | |
 | `sslcert` | string (file path) | none | No | `-pg-sslcert` | `sslcert: /etc/ai-workbench/client.pem` | Path to the client SSL certificate file | Use with `verify-ca` or `verify-full` modes. |
@@ -267,9 +287,6 @@ WHERE pc.connection_id = 1
 ORDER BY pc.name;
 ```
 
-The collector reloads probe configurations from the database every 5 minutes;
-changes take effect without requiring a restart. Retention changes take effect
-on the next garbage collection run (within 24 hours).
 
 ### Modifying Probe Settings
 

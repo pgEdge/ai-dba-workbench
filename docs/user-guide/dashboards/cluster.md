@@ -45,7 +45,7 @@ The Workbench displays the following tiles:
 
 ![Reviewing cluster performance](../../images/cluster_performance_tiles.png)
 
-## Active Alerts
+## Reviewing Active Alerts
 
 The `Active Alerts` pane shows the alerts that are currently active across the
 cluster.
@@ -56,7 +56,7 @@ See [Using Alerts](../alerts/index.md) for details on reviewing, acknowledging,
 and analyzing alerts, and for how to find an alert's acknowledgment reason or a
 past alert from the Event Timeline.
 
-## Topology
+## Reviewing Cluster Topology
 
 The `Topology` pane renders an interactive diagram showing servers as nodes
 with color-coded replication edges. Each edge represents a replication
@@ -77,12 +77,12 @@ Edge labels display the replication type so you can distinguish between
 different replication methods at a glance.
 
 
-## Monitoring
+## Monitoring the Cluster
 
 The `Monitoring` pane presents replication health and comparative performance
 data for the cluster. 
 
-### Replication Lag
+### Reviewing Replication Lag
 
 The `Replication Lag` pane tracks replication lag over the selected time
 range for the replication relationships in the cluster. Three tiles at the top
@@ -103,7 +103,7 @@ metrics against a time axis; a legend identifies each line by color and label.
 When the Workbench detects no primary server, the graphic displays the message
 `No primary server detected in this cluster.`
 
-### Comparative Metrics
+### Reviewing Comparative Metrics
 
 The `Comparative Metrics` pane presents side-by-side metrics for all servers               
   in the cluster; use the pane to identify performance disparities between

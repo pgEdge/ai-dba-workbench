@@ -19,7 +19,7 @@ connect to the server:
 
 ![Reviewing the connection properties](../../images/connection_properties.png)
 
-The bar displays the following details:
+The bar displays the following connection details:
 
 - The `HOST` field shows the network address of the server.
 - The `PORT` field shows the port on which the server listens.
@@ -34,9 +34,9 @@ expanded information pane that details:
 - The `POSTGRESQL` section includes:
 
     - The PostgreSQL version.
-    - The DATA directory location.
-    - The values currently assigned to the max_connections, max_wal_senders,
-      and max_replication_slots parameters.
+    - The `data` directory location.
+    - The values currently assigned to the `max_connections`, `max_wal_senders`,
+      and `max_replication_slots` parameters.
 
 - The `DATABASES` section includes details about each database that resides on
   the server; the information includes the database name, size, and the
@@ -73,7 +73,7 @@ Highlight a point in time on a graph to display the graphed metrics at the
 selected time in a tooltip, or select the brain icon to perform an analysis
 of the graph.
 
-## Active Alerts
+## The Active Alerts Pane
 
 The `Active Alerts` pane shows the alerts that are currently active for the
 server.
@@ -84,16 +84,16 @@ See [Using Alerts](../alerts/index.md) for details on reviewing, acknowledging,
 and analyzing alerts, and for how to find an alert's acknowledgment reason or a
 past alert from the Event Timeline.
 
-## Monitoring
+## The Monitoring Pane
 
 The `Monitoring` pane presents detailed performance data for the selected
 server; collapsible sub-panes group related metrics.
 
 ![Collapsible panes in the Monitoring section](../../images/monitoring_collapsed.png)
 
-### System Resources
+### Reviewing System Resources
 
-The `System Resources` sub-pane displays operating-system metrics for the host
+The `System Resources` pane displays operating-system metrics for the host
 that runs the server. Four tiles summarize current resource usage, and each
 tile displays `--` when no data is available.
 
@@ -124,20 +124,22 @@ When no data is available, each chart displays a message such as
 `No CPU data available. Is the system_stats extension installed?` The charts
 require the `system_stats` extension to collect operating-system metrics.
 
-### PostgreSQL Overview
+### Reviewing the PostgreSQL Overview
 
-The `PostgreSQL Overview` sub-pane displays server-level database metrics. Four
+The `PostgreSQL Overview` pane displays server-level database metrics. Four
 tiles summarize current database activity, and each tile displays `--` when no
 data is available.
 
-The sub-pane includes the following tiles:
+![Reviewing the PostgreSQL Overview](../../images/postgresql_overview.png)
+
+The pane includes the following tiles:
 
 - The `BACKENDS` tile shows the number of active backend connections.
 - The `COMMITS` tile shows the transaction commit rate for the server.
 - The `CACHE HIT RATIO` tile shows the buffer cache hit ratio for the server.
 - The `TEMP BYTES` tile shows the volume of temporary file data written.
 
-The sub-pane also displays the following time-series charts:
+The pane also displays the following time-series charts:
 
 - The `Connections Over Time` chart tracks active connections over the selected
   range.
@@ -151,20 +153,22 @@ When no data is available, each chart displays a message such as
 `No connection data available`, `No transaction data available`,
 `No block I/O data available`, or `No tuple operation data available`.
 
-### WAL and Replication
+### Reviewing WAL and Replication Activity
 
-The `WAL and Replication` sub-pane displays write-ahead log activity and
+The `WAL and Replication` pane displays write-ahead log activity and
 replication status for the server. Four tiles summarize current WAL and
 replication activity, and each tile displays `--` when no data is available.
 
-The sub-pane includes the following tiles:
+![Reviewing the WAL and Replication Activity](../../images/wal_and_replication.png)
+
+The pane includes the following tiles:
 
 - The `WAL BYTES` tile shows the volume of write-ahead log data generated.
 - The `WAL RECORDS` tile shows the number of write-ahead log records generated.
 - The `REPLICATION LAG` tile shows the current replication lag for the server.
 - The `CHECKPOINTS` tile shows the checkpoint activity for the server.
 
-The sub-pane also displays the following time-series charts:
+The pane also displays the following time-series charts:
 
 - The `WAL Activity Over Time` chart tracks write-ahead log generation over the
   selected range.
@@ -178,11 +182,13 @@ When no data is available, each chart displays a message such as
 `No replication data available. Is this server a primary with standbys?`, or
 `No checkpoint data available`.
 
-## Database Summaries
+## Reviewing Database Summaries
 
 The `Database Summaries` pane lists all databases on the server with high-level
-metrics for each database. Click a database entry to navigate to the
+metrics for each database. Click a database tile to navigate to the
 [database dashboard](database.md) for that database.
+
+![Reviewing Database Summaries](../../images/database_summaries.png)
 
 ## Top Queries
 
@@ -190,7 +196,9 @@ The `Top Queries` pane ranks queries by resource consumption. The pane displays
 execution time, call count, rows returned, and source database for the most
 active queries.
 
-The Database column resolves each query's source database from the `dbid` field
+![Reviewing Top Queries](../../images/top_queries.png)
+
+The `Database` column resolves each query's source database from the `dbid` field
 in `pg_stat_statements` using `pg_stat_activity`. Because `pg_stat_statements`
 collects data cluster-wide, the pane deduplicates queries so each entry
 reflects a single database context.

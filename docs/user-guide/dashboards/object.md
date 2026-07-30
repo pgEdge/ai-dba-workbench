@@ -102,7 +102,7 @@ The `Index Overview` section presents four key statistics for the index:
 A statistic without a recorded value displays `--` in place of a
 number.
 
-![Reviewing the Scan Activity section](../../images/scan_activity.png)
+![Reviewing the Scan Activity section](../../images/index_scan_activity.png)
 
 The `Scan Activity` section renders a line chart that follows the index
 activity for the duration of the database dashboard's time-range selection:
@@ -129,7 +129,7 @@ evaluates the query. See [AI Query Analysis](../ai/index.md#query-analysis)
 for details on the summary panel, the analysis report, and running
 suggested SQL from the report.
 
-![Reviewing the Query Plan section](../../images/query_plan.png)
+![Reviewing the Query Plan](../../images/query_plan.png)
 
 The header normalizes the query onto a single line, collapsing runs of
 whitespace into single spaces for a compact preview. Select the 
@@ -139,14 +139,50 @@ preview ends with an ellipsis.
 When you're finished, you can use the `Show less` toggle to restore the
 compact preview.
 
+!!! note
+
+    The Workbench caches plans for five minutes to avoid redundant queries
+    against the database server.
+
 The `Query Plan` section displays a graphical interpretation of the PostgreSQL
 query plan:
 
 ![Reviewing the visual Query Plan](../../images/query_plan_visual.png)
 
-Select the Text tab to display the execution plan with costs:
+The `Visual` diagram uses a left-to-right layout. Leaf scan nodes display on the
+left and the root node displays on the right. SVG bezier arrows connect each
+child node to its parent.
+
+Each tile in the diagram displays the node type and the relation or index name.
+A colored left border indicates the cost ratio relative to the root node:
+
+- A red border marks nodes that consume over 80 percent of the total cost.
+- An orange border marks nodes that consume over 50 percent of the total cost.
+- The default border color applies to all other nodes.
+
+Click a tile to open a popover with comprehensive node details. The popover
+displays the following information:
+
+- The cost range from startup cost to total cost.
+- The estimated row count and row width.
+- The output columns the node produces.
+- The execution strategy and scan direction.
+- The planned and launched worker counts.
+- Any filter, join, or index conditions.
+
+Select the `Text` tab to display the execution plan with costs:
 
 ![Reviewing the text Query Plan](../../images/query_plan_text.png)
+
+The Workbench uses standard `EXPLAIN` without `VERBOSE` for a concise
+explanation of the execution plan.
+
+!!! note
+
+    For parameterized queries that use `$1`, `$2` placeholders, the Workbench
+    uses the `GENERIC_PLAN` option available in PostgreSQL 16 and later.
+    Older PostgreSQL versions display a friendly informational message
+    instead of the plan.
 
 The `Query Statistics` section presents four key statistics drawn from
 the latest `pg_stat_statements` snapshot for the query.

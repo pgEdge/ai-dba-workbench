@@ -70,7 +70,7 @@ nav:
     - Quick Start - Installing with Binaries: getting-started/binary_install.md
     - Building from Source Code: getting-started/build_from_source.md
     - Deploying with Docker: getting-started/docker.md
-    - Configuration Details:
+    - Configuring the Workbench:
       - Server: getting-started/configuration/server.md
       - Collector: getting-started/configuration/collector.md
       - Alerter: getting-started/configuration/alerter.md
@@ -86,7 +86,6 @@ nav:
       - Cluster Dashboard: user-guide/dashboards/cluster.md
       - Database Dashboard: user-guide/dashboards/database.md
       - Object Dashboard: user-guide/dashboards/object.md
-    - Understanding the Query Plan: user-guide/query-plan.md
     - Using the Event Timeline: user-guide/event-timeline.md
     - Managing Alerts:
       - Monitoring Alerts: user-guide/alerts/index.md

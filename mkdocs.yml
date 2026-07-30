@@ -73,6 +73,7 @@ nav:
     - Configuration Details:
       - Server: getting-started/configuration/server.md
       - Collector: getting-started/configuration/collector.md
+      - Monitored Database Privileges: getting-started/configuration/monitored-database-privileges.md
       - Alerter: getting-started/configuration/alerter.md
       - Web Client: getting-started/configuration/client.md
       - Configuring systemd Services: getting-started/configuration/configure_systemd.md

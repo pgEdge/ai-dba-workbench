@@ -63,8 +63,8 @@ The following sections provide starting points based on role and goals.
 
 - [Choose an installation type](getting-started/installation_overview.md) for
   details about setting up the Workbench for the first time.
-- The [User Guide](user-guide/index.md) covers dashboards, alerts, and AI
-  features for day-to-day usage.
+- The [Using the Workbench](user-guide/index.md) guide covers dashboards,
+  alerts, and AI features for day-to-day usage.
 - The [Administrator's Guide](admin-guide/index.md) explains authentication,
   connections, and system configuration.
 - The [Developer's Guide](developer-guide/index.md) provides architecture

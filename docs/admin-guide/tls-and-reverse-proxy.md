@@ -54,7 +54,7 @@ the bundled SPA, and proxies API and MCP traffic to the
 server container. See the
 [Docker deployment guide](../getting-started/docker.md)
 for the production Compose configuration and the
-[web client configuration page](../getting-started/configuration/client.md#nginx-configuration)
+[web client configuration page](../configuration/client.md#nginx-configuration)
 for an annotated nginx configuration.
 
 ## Operator Responsibilities
@@ -83,7 +83,7 @@ The server's `http.trusted_proxies` list pairs with
 the operator's network controls; configure the list
 with the CIDR ranges of the reverse proxies that send
 `X-Forwarded-For` headers. See the
-[server configuration reference](../getting-started/configuration/server.md#http-server-http-properties)
+[server configuration reference](../configuration/server.md#http-server-properties)
 for details.
 
 ## Direct TLS on the Server
@@ -176,10 +176,10 @@ to restore a supported configuration.
   documents the container topology that ships with
   the project.
 - The
-  [server configuration reference](../getting-started/configuration/server.md#http-server-http-properties)
+  [server configuration reference](../configuration/server.md#http-server-properties)
   lists every option for the `http` and `http.tls`
   sections.
 - The
-  [web client configuration page](../getting-started/configuration/client.md#nginx-configuration)
+  [web client configuration page](../configuration/client.md#nginx-configuration)
   shows an annotated nginx configuration for the
   static SPA.

@@ -254,7 +254,7 @@ builtins:
 
 The tools require the server to be configured with a
 datastore connection. For configuration details, see
-[Server Configuration](../../getting-started/configuration/server.md).
+[Server Configuration](../../configuration/server.md).
 
 ## Related Documentation
 

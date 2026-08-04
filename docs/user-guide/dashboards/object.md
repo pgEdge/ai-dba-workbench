@@ -2,7 +2,7 @@
 
 The object dashboard provides the most detailed description of a single
 database object. Select a database tile from the
-[`Database Summaries` section](server.md#database-summaries) of a server's
+[`Database Summaries` section](server.md#reviewing-database-summaries) of a server's
 dashboard to open the database dashboard, then select a table, index, or query
 from one of the leaderboards to open the object dashboard for the selected
 object.

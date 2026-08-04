@@ -63,29 +63,30 @@ copyright: Copyright &copy; 2025 - 2026 pgEdge, Inc
 repo_url: https://github.com/pgEdge/ai-dba-workbench
 
 nav:
-  - Architecture Overview: index.md
+  - pgEdge AI DBA Workbench Architecture Overview: index.md
 
   - Installing and Configuring pgEdge AI DBA Workbench:
-    - Installation Overview: getting-started/installation_overview.md
-    - Quick Start - Installing with Binaries: getting-started/binary_install.md
-    - Building from Source Code: getting-started/build_from_source.md
-    - Deploying with Docker: getting-started/docker.md
-    - Configuring the Workbench:
-      - Server: getting-started/configuration/server.md
-      - Collector: getting-started/configuration/collector.md
-      - Alerter: getting-started/configuration/alerter.md
-      - Web Client: getting-started/configuration/client.md
-      - Configuring systemd Services: getting-started/configuration/configure_systemd.md
+    - Installing pgEdge AI DBA Workbench: getting-started/installation_overview.md
+    - Quick Start - Installing the Workbench with Binary Files: getting-started/binary_install.md
+    - Building the Workbench from Source Code: getting-started/build_from_source.md
+    - Docker Deployment: getting-started/docker.md
 
-  - User Guide:
+  - Configuring the Workbench:
+    - Configuring the Server: configuration/server.md
+    - Configuring the Collector: configuration/collector.md
+    - Configuring the Alerter: configuration/alerter.md
+    - Configuring the Web Client: configuration/client.md
+    - Configuring systemd Services: configuration/configure_systemd.md
+
+  - Using the Workbench:
     - Using the Workbench: user-guide/index.md
     - Reviewing Dashboards:
-      - Reviewing the Dashboards: user-guide/dashboards/index.md
+      - Reviewing Workbench Dashboards: user-guide/dashboards/index.md
       - Estate Dashboard: user-guide/dashboards/estate.md
       - Server Dashboard: user-guide/dashboards/server.md
       - Cluster Dashboard: user-guide/dashboards/cluster.md
       - Database Dashboard: user-guide/dashboards/database.md
-      - Object Dashboard: user-guide/dashboards/object.md
+      - Reviewing Database Details: user-guide/dashboards/object.md
     - Using the Event Timeline: user-guide/event-timeline.md
     - Managing Alerts:
       - Monitoring Alerts: user-guide/alerts/index.md
@@ -104,47 +105,47 @@ nav:
     - Troubleshooting: troubleshooting/troubleshooting.md
 
   - Administrator's Guide:
-    - Overview: admin-guide/index.md
-    - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md
-    - Verifying the Health of Components: admin-guide/verify_health.md
-    - Users & Authentication: admin-guide/authentication.md
+    - Administrator's Guide: admin-guide/index.md
+    - TLS and Reverse Proxy Requirements: admin-guide/tls-and-reverse-proxy.md
+    - Verifying the Health of a Component: admin-guide/verify_health.md
+    - Authentication: admin-guide/authentication.md
     - Connection Management: admin-guide/connections.md
-    - Alert Rules & Thresholds: admin-guide/alert-rules.md
+    - Alert Rules: admin-guide/alert-rules.md
     - Notification Channels: admin-guide/notification-channels.md
-    - Probe Configuration: admin-guide/probes.md
+    - Probe Management: admin-guide/probes.md
     - REST API:
       - API Reference: admin-guide/api/reference.md
       - API Browser: admin-guide/api/browser.md
       - Server Information: admin-guide/api/server-info.md
-      - Metrics API: admin-guide/api/metrics.md
+      - Metrics Tools: admin-guide/api/metrics.md
 
   - Developer's Guide:
-    - Overview: developer-guide/index.md
+    - Developer Guide: developer-guide/index.md
     - Contributing: developer-guide/contributing.md
     - Collector:
-      - Architecture: developer-guide/collector/architecture.md
-      - Schema Design: developer-guide/collector/schema.md
+      - Collector Architecture: developer-guide/collector/architecture.md
+      - Database Schema: developer-guide/collector/schema.md
       - Schema Management: developer-guide/collector/schema-management.md
-      - Scheduler: developer-guide/collector/scheduler.md
-      - Probes: developer-guide/collector/probes.md
-      - Adding Probes: developer-guide/collector/adding-probes.md
+      - Scheduler Implementation: developer-guide/collector/scheduler.md
+      - Probes System: developer-guide/collector/probes.md
+      - Adding New Probes: developer-guide/collector/adding-probes.md
       - Probe Reference: developer-guide/collector/probe-reference.md
-      - pg_settings Usage: developer-guide/collector/pg-settings-usage.md
-      - Testing: developer-guide/collector/testing.md
+      - pg_settings Probe Usage Guide: developer-guide/collector/pg-settings-usage.md
+      - Testing and Development: developer-guide/collector/testing.md
     - Alerter:
-      - Architecture: developer-guide/alerter/architecture.md
+      - Alerter Architecture: developer-guide/alerter/architecture.md
       - Anomaly Detection: developer-guide/alerter/anomaly-detection.md
-      - Adding Rules: developer-guide/alerter/adding-rules.md
-      - Cron Expressions: developer-guide/alerter/cron-expressions.md
-      - Testing: developer-guide/alerter/testing.md
+      - Adding Alert Rules: developer-guide/alerter/adding-rules.md
+      - Cron Expression Format: developer-guide/alerter/cron-expressions.md
+      - Testing and Development: developer-guide/alerter/testing.md
     - Server:
-      - Architecture: developer-guide/server/architecture.md
+      - Server Architecture: developer-guide/server/architecture.md
     - Client:
-      - Architecture: developer-guide/client/architecture.md
+      - Client Architecture: developer-guide/client/architecture.md
     - End-to-End Testing:
-      - Overview: developer-guide/e2e/index.md
+      - End-to-End Smoke Tests: developer-guide/e2e/index.md
     - Design:
-      - Node Role Probe: developer-guide/design/node-role-probe.md
+      - Node Role Probe Design: developer-guide/design/node-role-probe.md
 
   - Changelog: changelog.md
   - License: LICENSE.md

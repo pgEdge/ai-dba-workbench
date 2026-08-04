@@ -37,7 +37,7 @@ secret_file: /etc/ai-workbench/secret
 The `secret_file` must contain the same secret used by
 the Collector for encrypting connection passwords. For
 full configuration details, see the
-[Server Configuration](../getting-started/configuration/server.md).
+[Server Configuration](../configuration/server.md).
 
 ## REST API Endpoints
 

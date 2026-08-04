@@ -265,7 +265,7 @@ has not yet gathered data for a metric category.
 The AI analysis endpoint requires an LLM provider to
 be configured in the server settings. For LLM provider
 setup instructions, see
-[Server Configuration](../../getting-started/configuration/server.md).
+[Server Configuration](../../configuration/server.md).
 
 ## Related Documentation
 

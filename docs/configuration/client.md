@@ -1,4 +1,4 @@
-# Web Client Configuration
+# Configuring the Web Client
 
 The pgEdge AI DBA Workbench web client uses Vite as the build tool and
 development server. Configuration covers the development proxy, build
@@ -25,7 +25,7 @@ starts.
     cleartext and offers no TLS option. For any network-accessible deployment,
     build the production bundle and front it with a TLS-terminating reverse
     proxy as described in the
-    [TLS and reverse proxy requirements](../../admin-guide/tls-and-reverse-proxy.md).
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md).
 
 ## API Proxy Configuration
 
@@ -150,7 +150,7 @@ server.
     Any network-accessible deployment must terminate TLS in front of the
     server. The reverse proxy is responsible for TLS termination, HTTP-to-HTTPS
     redirection, and HSTS. See the
-    [TLS and reverse proxy requirements](../../admin-guide/tls-and-reverse-proxy.md)
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
     for the full operator checklist.
 
 ### Nginx Configuration

@@ -236,11 +236,11 @@ VERSION=edge docker compose \
 The `docker/config/` directory contains configuration files for each service.
 
 - The `ai-dba-server.yaml` file configures the MCP server; see
-  [Server Configuration](configuration/server.md) for details.
+  [Server Configuration](../configuration/server.md) for details.
 - The `ai-dba-collector.yaml` file configures the metrics collector; see
-  [Collector Configuration](configuration/collector.md) for details.
+  [Collector Configuration](../configuration/collector.md) for details.
 - The `ai-dba-alerter.yaml` file configures the alert monitoring service;
-  see [Alerter Configuration](configuration/alerter.md) for details.
+  see [Configuring the Alerter](../configuration/alerter.md) for details.
 - The `nginx.conf` file configures the reverse proxy for the web client.
 
 The production Compose file mounts these configuration files into the

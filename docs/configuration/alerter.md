@@ -1,4 +1,4 @@
-# Alerter Configuration
+# Configuring the Alerter
 
 The pgEdge AI DBA Workbench Alerter supports configuration through YAML
 files and command-line flags. The alerter applies configuration settings

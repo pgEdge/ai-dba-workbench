@@ -35,8 +35,11 @@ pkill -f ai-dba-server
 /opt/ai-workbench/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml &
 ```
 
-Docker Compose deployments use a dedicated `restart` subcommand instead; see
-[Docker Deployment](../docker.md#server-cannot-connect-to-the-database).
+!!! hint
+
+    Docker Compose deployments use a dedicated `restart` subcommand instead;
+    see [Docker Deployment](../getting-started/docker.md#server-cannot-connect-to-the-database)
+    for details.
 
 If you have made configuration changes that require only a reload, you can use
 a runtime configuration reload via `SIGHUP` to update the configuration:
@@ -58,7 +61,7 @@ Authentication settings and HTTP server settings require a full restart.
 
 Command-line options take priority over environment variables and options
 specified in the configuration file. The following subsections group the flags
-by purpose:
+by functionality:
 
 - [General Options](#general-options)
 - [HTTP Server Options](#http-server-options)
@@ -213,12 +216,6 @@ The `PGEDGE_POSTGRES_CONNECTION_STRING` variable provides a PostgreSQL
 connection string for the datastore. The server uses this variable as a
 fallback when the configuration file does not specify database settings.
 
-The server applies connection settings in the following priority order:
-
-1. Database configuration from the YAML file or command-line flags.
-2. The `PGEDGE_POSTGRES_CONNECTION_STRING` variable.
-3. The default value `postgres://localhost/postgres?sslmode=disable`.
-
 In the following example, the variable specifies a remote database:
 
 ```bash
@@ -270,28 +267,28 @@ export PGEDGE_MEMORY_ENABLED=false
 
 After applying command-line flags and environment variables, the server uses
 the configuration file to fill in any remaining settings. For details about
-the available server configuration options, see:
+using the server configuration file, see:
 
-- [HTTP Server (`http`) Properties](#http-server-http-properties)
+- [HTTP Server Properties](#http-server-properties)
     - [Using the cors_origin Property](#using-the-cors_origin-property)
-- [Connection Security (`connection_security`) Properties](#connection-security-connection_security-properties)
-- [Database (`database`) Properties](#database-database-properties)
-- [Embedding (`embedding`) Properties](#embedding-embedding-properties)
-- [LLM Proxy (`llm`) Properties](#llm-proxy-llm-properties)
+- [Connection Security Properties](#connection-security-properties)
+- [Database Properties](#database-properties)
+- [Embedding Properties](#embedding-properties)
+- [LLM Proxy Properties](#llm-proxy-properties)
     - [Using the `timeout_seconds` Property](#using-the-timeout_seconds-property)
     - [Using the `compact_tool_descriptions` Property](#using-the-compact_tool_descriptions-property)
     - [Using the `openai_base_url` Property](#using-the-openai_base_url-property)
-- [Knowledgebase (`knowledgebase`) Properties](#knowledgebase-knowledgebase-properties)
-- [Memory (`memory`) Properties](#memory-memory-properties)
-    - [Using the Memory Tools (`store_memory`, `recall_memories`, `delete_memory`) Properties](#using-the-memory-tools-store_memory-recall_memories-delete_memory-properties)
-- [Built-in Features (`builtins`) Properties](#built-in-features-builtins-properties)
+- [Knowledgebase Properties](#knowledgebase-properties)
+- [Memory Properties](#memory-properties)
+    - [Using the Memory Tool Properties](#using-the-memory-tool-properties)
+- [Built-in Features Properties](#built-in-features-properties)
 - [Paths and Directories](#paths-and-directories)
     - [Using the data_dir Property](#using-the-data_dir-property)
     - [Using the trace_file Property](#using-the-trace_file-property)
 
 To review a sample file, see [Configuration Examples](#configuration-examples).
 
-The server searches for its configuration file in the following locations in
+The server searches for the configuration file in the following locations in
 the following order:
 
 1. The absolute path specified via the `-config` flag.

@@ -93,12 +93,12 @@ minimal deployment of the Workbench installed and serving content.
 Additional configuration options are extensive; for details about options
 available in each configuration file, see:
 
-- The [collector](configuration/collector.md) guide covers tuned
+- The [collector](../configuration/collector.md) guide covers tuned
   connection pools and SSL.
-- The [server](configuration/server.md) guide covers TLS, authentication,
+- The [server](../configuration/server.md) guide covers TLS, authentication,
   and LLM integration.
-- The [alerter](configuration/alerter.md) guide covers anomaly detection
+- The [alerter](../configuration/alerter.md) guide covers anomaly detection
   and notification channels.
-- The [web client](configuration/client.md) guide covers proxy settings
+- The [web client](../configuration/client.md) guide covers proxy settings
   and build options.
 

@@ -70,7 +70,7 @@ past alert from the `Event Timeline`.
 ## Monitoring Details of your Estate
 
 Panes within the `Monitoring` panel present an overview of the estate. See
-the [Time Range Selector](index.md#time-range-selector) section for details
+the [Time Range Selector](index.md#using-the-time-range-selector) section for details
 on rescoping data and expanding or collapsing panes.
 
 ### Reviewing the Health Overview

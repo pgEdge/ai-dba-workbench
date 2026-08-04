@@ -8,8 +8,8 @@ sources override earlier ones:
 2. Configuration file.
 3. Command-line flags.
 
-The collector searches for a configuration file in the following locations
-in order:
+The collector searches for a Collector configuration file in the following
+locations in the following order:
 
 1. The path specified via the `-config` flag.
 2. The per-user `config` directory at `~/.config/pgedge/ai-dba-collector.yaml`
@@ -62,21 +62,21 @@ Per-server probe configuration is the one exception: the collector stores it in 
 ## Security Best Practices
 
 The collector uses a secret file and AES-256-GCM encryption to protect stored
-passwords. The `secret_file` option specifies the path to a file containing the
-per-installation secret for password encryption.
+passwords; the secret file is required. The `secret_file` option specifies the
+path to a file containing the per-installation secret for password encryption.
 
-- Type: string (file path)
-- Default: Searches in order:
+The Collector searches the following locations in order:
     1. The per-user config directory at
        `~/.config/pgedge/ai-dba-collector.secret` on Linux (honouring
        `$XDG_CONFIG_HOME`),
        `~/Library/Application Support/pgedge/ai-dba-collector.secret` on macOS,
        and `%AppData%\pgedge\ai-dba-collector.secret` on Windows.
     2. `/etc/pgedge/ai-dba-collector.secret` (system-wide).
-- Required: Yes (a secret file must exist)
-- Example: `secret_file: /etc/pgedge/collector.secret`
-- Note: The collector no longer searches the binary directory or the current
-  working directory for the secret file.
+
+!!! note
+
+    The collector no longer searches the binary directory or the current
+    working directory for the secret file.
 
 The collector uses AES-256-GCM encryption to protect stored passwords and
 encrypts each password with a unique cryptographically random salt. It
@@ -331,6 +331,8 @@ configurations for the Collector.
 
 ### Minimal Configuration
 
+This example shows the minimum settings required by the Collector.
+
 ```yaml
 datastore:
   host: localhost
@@ -340,6 +342,9 @@ datastore:
 ```
 
 ### Production Configuration
+
+This example shows a production configuration with SSL verification
+and a connection pool.
 
 ```yaml
 datastore:
@@ -365,6 +370,9 @@ secret_file: /var/secrets/collector.secret
 ```
 
 ### Development Configuration
+
+This example shows a local development configuration with SSL
+disabled and a small connection pool.
 
 ```yaml
 datastore:

@@ -420,7 +420,7 @@ prompt.
 The alerter connects to the same datastore database as the collector and
 server. Configure the alerter with a YAML configuration file or
 command-line flags; see the
-[alerter configuration](configuration/alerter.md) reference to review the
+[alerter configuration](../configuration/alerter.md) reference to review the
 available options. In the following example, the `cp` command copies the
 sample alerter configuration file to `/etc/pgedge`:
 
@@ -574,25 +574,25 @@ entry.
 ![Adding a server definition](../images/add_server.png)
 
 For detailed information about using the Workbench, see the
-[User Guide](../user-guide/index.md).
+[Using the Workbench](../user-guide/index.md) guide.
 
 
 ## Customizing your Configuration
 
 Consult the following guides for additional configuration information:
 
-- The [systemd configuration](configuration/configure_systemd.md) guide
+- The [systemd configuration](../configuration/configure_systemd.md) guide
   provides details about setting up systemd service management for users
   who did not use pgEdge packages when installing.
 
-- The [collector](configuration/collector.md) guide covers tuned
+- The [collector](../configuration/collector.md) guide covers tuned
   connection pools and SSL.
 
-- The [server](configuration/server.md) guide covers TLS, authentication,
+- The [server](../configuration/server.md) guide covers TLS, authentication,
   and LLM integration.
 
-- The [alerter](configuration/alerter.md) guide covers anomaly detection
+- The [alerter](../configuration/alerter.md) guide covers anomaly detection
   and notification channels.
 
-- The [web client](configuration/client.md) guide covers proxy settings
+- The [web client](../configuration/client.md) guide covers proxy settings
   and build options.

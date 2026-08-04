@@ -1,5 +1,14 @@
 # pgEdge AI DBA Workbench Architecture Overview
 
+The pgEdge AI DBA Workbench is an AI-powered environment for monitoring,
+managing, and troubleshooting PostgreSQL systems. The Workbench combines a
+Model Context Protocol (MCP) server with a web-based user interface, a data
+collector, and an alert monitoring service. The Workbench enables you to
+query, analyze, and manage distributed PostgreSQL clusters using natural
+language and intelligent automation, exposing pgEdge tools and data sources
+to both cloud-connected and locally hosted language models; this
+design ensures full functionality in air-gapped or secure environments.
+
 The AI DBA Workbench consists of four components that work together to provide
 monitoring, alerting, and AI-powered database management.
 

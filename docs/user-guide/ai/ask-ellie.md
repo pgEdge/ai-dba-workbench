@@ -237,5 +237,5 @@ error or disabled state; the chat feature is simply absent from the interface.
 
 - [Using AI Features](index.md) covers AI-powered summaries of database health
   and status.
-- [AI Alert Analysis](../alerts/ai-analysis.md) describes the AI analysis
+- [AI Alert Analysis](ai-analysis.md) describes the AI analysis
   feature for individual alerts.

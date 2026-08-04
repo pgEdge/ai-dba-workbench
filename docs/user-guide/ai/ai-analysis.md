@@ -208,9 +208,9 @@ Threshold-based alerting continues to operate normally without AI.
 
 ## Related Documentation
 
-- [Monitoring Alerts](index.md) describes the alert lifecycle and management
-  features.
-- [Alert Rule Reference](rule-reference.md) lists all built-in alert rules and
-  their default thresholds.
-- [Using AI Features](../ai/index.md) covers AI-powered summaries of database
+- [Monitoring Alerts](../alerts/index.md) describes the alert lifecycle and
+  management features.
+- [Alert Rule Reference](../alerts/rule-reference.md) lists all built-in alert
+  rules and their default thresholds.
+- [Using AI Features](index.md) covers AI-powered summaries of database
   health.

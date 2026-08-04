@@ -108,15 +108,16 @@ range. Select an event icon to view its details, including the triggering
 threshold and, for acknowledged alerts, the operator, reason, and false
 positive flag.
 
-See [Event Timeline](../event-timeline.md) for the full range of trackable
-event types and how the timeline groups simultaneous events.
+See [Event Timeline](../dashboards/index.md#using-the-event-timeline) for the
+full range of trackable event types and how the timeline groups simultaneous
+events.
 
 ## AI-Powered Analysis
 
 Each alert in the status panel displays a brain icon that triggers an
 AI-powered analysis. The analysis examines the alert context, historical
 patterns, and server configuration to produce actionable remediation guidance.
-See [AI Alert Analysis](ai-analysis.md) for details on this feature.
+See [AI Alert Analysis](../ai/ai-analysis.md) for details on this feature.
 
 ## Editing Alert Thresholds
 
@@ -140,5 +141,5 @@ blackout; the blackout only prevents the alerter from creating new alerts. See
 
 - [Alert Rule Reference](rule-reference.md) lists all built-in alert rules and
   their default thresholds.
-- [AI Alert Analysis](ai-analysis.md) describes the AI-powered analysis feature
+- [AI Alert Analysis](../ai/ai-analysis.md) describes the AI-powered analysis feature
   for alerts.

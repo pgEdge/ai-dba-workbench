@@ -2,7 +2,7 @@
 
 The `ESTATE OVERVIEW` presents a fleet-wide health assessment at a glance. To
 view the `ESTATE OVERVIEW`, select the top-level estate node in the
-[cluster navigator](index.md#using-the-cluster-navigator).
+cluster navigator.
 
 ![Reviewing the ESTATE dashboard](../../images/estate_dashboard.png)
 
@@ -29,8 +29,9 @@ of the state of your servers:
 
 Below the status tiles, the `Event Timeline` displays a timeline with
 indicators that show monitored events that have occurred across the monitored
-servers. See [Event Timeline](../event-timeline.md) for details about using
-the time range selector, event type filters, and reviewing event details.
+servers. See [Event Timeline](index.md#using-the-event-timeline) for details about
+using the time range selector, event type filters, and reviewing event
+details.
 
 Tiles below the event timeline provide a quick glance into the performance of
 your selected estate, server, or cluster. Hover over a chart or graph to
@@ -70,8 +71,8 @@ past alert from the `Event Timeline`.
 ## Monitoring Details of your Estate
 
 Panes within the `Monitoring` panel present an overview of the estate. See
-the [Time Range Selector](index.md#using-the-time-range-selector) section for details
-on rescoping data and expanding or collapsing panes.
+[Using Common Dashboard Features](index.md#using-common-dashboard-features)
+for details on expanding or collapsing panes.
 
 ### Reviewing the Health Overview
 

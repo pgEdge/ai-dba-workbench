@@ -14,8 +14,8 @@
 - [pgEdge AI DBA Workbench](#pgedge-ai-dba-workbench)
 - [Using Binary Files to Install Workbench](#using-binary-files-to-install-workbench)
 - [Building Workbench from Source](#building-workbench-from-source)
-- Installing and Configuring pgEdge AI DBA Workbench:
-  - [Installing pgEdge AI DBA Workbench](docs/getting-started/installation_overview.md)
+- Installing pgEdge AI DBA Workbench:
+  - [Supported Installation Methods](docs/getting-started/installation_overview.md)
   - [Quick Start - Installing the Workbench with Binary Files](docs/getting-started/binary_install.md)
   - [Building the Workbench from Source Code](docs/getting-started/build_from_source.md)
   - [Docker Deployment](docs/getting-started/docker.md)
@@ -27,24 +27,24 @@
   - [Configuring systemd Services](docs/configuration/configure_systemd.md)
 - Using the Workbench:
   - [Using the Workbench](docs/user-guide/index.md)
-  - Monitoring Dashboards:
+  - Reviewing Dashboards:
     - [Reviewing Workbench Dashboards](docs/user-guide/dashboards/index.md)
     - [Estate Dashboard](docs/user-guide/dashboards/estate.md)
-    - [Cluster Dashboard](docs/user-guide/dashboards/cluster.md)
     - [Server Dashboard](docs/user-guide/dashboards/server.md)
+    - [Cluster Dashboard](docs/user-guide/dashboards/cluster.md)
     - [Reviewing Database Details](docs/user-guide/dashboards/database.md)
-    - [Object Dashboard](docs/user-guide/dashboards/object.md)
-  - [Event Timeline](docs/user-guide/event-timeline.md)
-  - Alerts:
-    - [Monitoring Alerts](docs/user-guide/alerts/index.md)
-    - [Alert Reference](docs/user-guide/alerts/rule-reference.md)
-    - [AI Alert Analysis](docs/user-guide/alerts/ai-analysis.md)
-    - [Managing Blackouts](docs/user-guide/alerts/blackouts.md)
-  - AI Features:
-    - [Using AI Features](docs/user-guide/ai/index.md)
+    - [Reviewing Object Details](docs/user-guide/dashboards/object.md)
+  - Using AI Features:
+    - [Enabling AI Features](docs/user-guide/ai/index.md)
+    - [Using the AI Chart Analysis Feature](docs/user-guide/ai/chart-analysis.md)
+    - [AI Alert Analysis](docs/user-guide/ai/ai-analysis.md)
     - [Ask Ellie](docs/user-guide/ai/ask-ellie.md)
     - [Connecting MCP Clients](docs/user-guide/ai/mcp-clients.md)
     - [Using Workbench with MCP Tools](docs/user-guide/ai/mcp-tools.md)
+  - Managing Alerts:
+    - [Monitoring Alerts](docs/user-guide/alerts/index.md)
+    - [Alert Reference](docs/user-guide/alerts/rule-reference.md)
+    - [Managing Blackouts](docs/user-guide/alerts/blackouts.md)
 - Troubleshooting:
   - [Overview](docs/troubleshooting/index.md)
   - [Stale Server Status](docs/troubleshooting/stale-server-status.md)

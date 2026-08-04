@@ -65,8 +65,8 @@ repo_url: https://github.com/pgEdge/ai-dba-workbench
 nav:
   - pgEdge AI DBA Workbench Architecture Overview: index.md
 
-  - Installing and Configuring pgEdge AI DBA Workbench:
-    - Installing pgEdge AI DBA Workbench: getting-started/installation_overview.md
+  - Installing pgEdge AI DBA Workbench:
+    - Supported Installation Methods: getting-started/installation_overview.md
     - Quick Start - Installing the Workbench with Binary Files: getting-started/binary_install.md
     - Building the Workbench from Source Code: getting-started/build_from_source.md
     - Docker Deployment: getting-started/docker.md
@@ -85,19 +85,19 @@ nav:
       - Estate Dashboard: user-guide/dashboards/estate.md
       - Server Dashboard: user-guide/dashboards/server.md
       - Cluster Dashboard: user-guide/dashboards/cluster.md
-      - Database Dashboard: user-guide/dashboards/database.md
-      - Reviewing Database Details: user-guide/dashboards/object.md
-    - Using the Event Timeline: user-guide/event-timeline.md
-    - Managing Alerts:
-      - Monitoring Alerts: user-guide/alerts/index.md
-      - Alert Reference: user-guide/alerts/rule-reference.md
-      - AI Alert Analysis: user-guide/alerts/ai-analysis.md
-      - Managing Blackouts: user-guide/alerts/blackouts.md
+      - Reviewing Database Details: user-guide/dashboards/database.md
+      - Reviewing Object Details: user-guide/dashboards/object.md
     - Using AI Features:
       - Enabling AI Features: user-guide/ai/index.md
+      - Using the AI Chart Analysis Feature: user-guide/ai/chart-analysis.md
+      - AI Alert Analysis: user-guide/ai/ai-analysis.md
       - Ask Ellie: user-guide/ai/ask-ellie.md
       - Connecting MCP Clients: user-guide/ai/mcp-clients.md
       - Using Workbench with MCP Tools: user-guide/ai/mcp-tools.md
+    - Managing Alerts:
+      - Monitoring Alerts: user-guide/alerts/index.md
+      - Alert Reference: user-guide/alerts/rule-reference.md
+      - Managing Blackouts: user-guide/alerts/blackouts.md
 
   - Troubleshooting:
     - Overview: troubleshooting/index.md

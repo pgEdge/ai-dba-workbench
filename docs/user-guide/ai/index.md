@@ -306,5 +306,5 @@ without AI.
 - [Ask Ellie](ask-ellie.md) describes the AI-powered database assistant.
 - [Connecting MCP Clients](mcp-clients.md) describes how external AI tools can
   use these same monitoring capabilities.
-- [AI Alert Analysis](../alerts/ai-analysis.md) covers the AI analysis feature
+- [AI Alert Analysis](ai-analysis.md) covers the AI analysis feature
   for individual alerts.

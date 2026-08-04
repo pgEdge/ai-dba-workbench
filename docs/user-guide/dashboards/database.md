@@ -1,9 +1,8 @@
 # Reviewing Database Details
 
 The database dashboard presents detailed metrics for a single database. Select
-a database in the [cluster navigator](index.md#using-the-cluster-navigator) or
-click a database entry in the server dashboard summary tiles to open the
-dashboard.
+a database tile from the `Database Summaries` section of a server's dashboard
+to view database details.
 
 ![Reviewing the database dashboard](../../images/database_dashboard.png)
 

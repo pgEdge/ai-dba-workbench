@@ -2,7 +2,7 @@
 
 The CLUSTER dashboard focuses on replication health and comparative performance
 across cluster members. To view the cluster dashboard, select a cluster name in
-the [cluster navigator](index.md#using-the-cluster-navigator).
+the cluster navigator.
 
 ![Reviewing the CLUSTER dashboard](../../images/cluster_dashboard.png)
 
@@ -27,8 +27,9 @@ of the state of your cluster:
 
 Below the status tiles, the `Event Timeline` displays a timeline with
 indicators that show monitored events that have occurred across the monitored
-servers. See [Event Timeline](../event-timeline.md) for details about using
-the time range selector, event type filters, and reviewing event details.
+servers. See [Event Timeline](index.md#using-the-event-timeline) for details about
+using the time range selector, event type filters, and reviewing event
+details.
 
 Tiles below the event timeline provide a quick glance into the performance of
 your selected estate, server, or cluster. Hover over a chart or graph to

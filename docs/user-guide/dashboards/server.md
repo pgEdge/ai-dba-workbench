@@ -1,9 +1,7 @@
 # Server Dashboard
 
 The SERVER dashboard provides detailed metrics for a single PostgreSQL server.
-Select a server node in the
-[cluster navigator](index.md#using-the-cluster-navigator) to open the
-dashboard.
+Select a server node in the cluster navigator to open the dashboard.
 
 ![Reviewing the SERVER dashboard](../../images/server_dashboard.png)
 
@@ -47,8 +45,9 @@ expanded information pane that details:
 
 Below the status tiles, the `Event Timeline` displays a timeline with
 indicators that show monitored events that have occurred across the monitored
-servers. See [Event Timeline](../event-timeline.md) for details about using
-the time range selector, event type filters, and reviewing event details.
+servers. See [Event Timeline](index.md#using-the-event-timeline) for details about
+using the time range selector, event type filters, and reviewing event
+details.
 
 ![Reviewing the event timeline](../../images/event_timeline.png)
 

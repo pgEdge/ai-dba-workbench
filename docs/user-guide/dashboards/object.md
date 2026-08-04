@@ -139,13 +139,20 @@ preview ends with an ellipsis.
 When you're finished, you can use the `Show less` toggle to restore the
 compact preview.
 
+The `Query Plan` section appears below the `AI Overview` panel and defaults
+to expanded; the expand/collapse state persists across browser sessions. The
+panel fetches the PostgreSQL `EXPLAIN` output when the section first renders,
+and a refresh button in the section header regenerates the plan on demand.
+
 !!! note
 
     The Workbench caches plans for five minutes to avoid redundant queries
     against the database server.
 
-The `Query Plan` section displays a graphical interpretation of the PostgreSQL
-query plan:
+The `Query Plan` section displays plan data in two tabs: the `Visual` tab
+shows a graphical flow diagram that the Workbench builds from the JSON
+`EXPLAIN` plan, and the `Text` tab shows the standard `EXPLAIN` output in
+monospace format for a concise view.
 
 ![Reviewing the visual Query Plan](../../images/query_plan_visual.png)
 
@@ -174,8 +181,9 @@ Select the `Text` tab to display the execution plan with costs:
 
 ![Reviewing the text Query Plan](../../images/query_plan_text.png)
 
-The Workbench uses standard `EXPLAIN` without `VERBOSE` for a concise
-explanation of the execution plan.
+The Workbench uses `EXPLAIN VERBOSE` for the JSON plan to provide
+comprehensive detail in the `Visual` tab. The `Text` tab uses standard
+`EXPLAIN` without `VERBOSE` for a concise view of the execution plan.
 
 !!! note
 

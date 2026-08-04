@@ -1,16 +1,4 @@
-# Installing pgEdge AI DBA Workbench
-
-The pgEdge AI DBA Workbench is an AI-powered environment for monitoring,
-managing, and troubleshooting PostgreSQL systems. The Workbench combines a
-Model Context Protocol (MCP) server with a web-based user interface, a data
-collector, and an alert monitoring service. The Workbench enables users to
-query, analyze, and manage distributed PostgreSQL clusters using natural
-language and intelligent automation. The Workbench exposes pgEdge tools and
-data sources to both cloud-connected and locally hosted language models; this
-design ensures full functionality in air-gapped or secure environments.
-
-
-## Supported Installation Methods
+# Supported Installation Methods
 
 The Workbench is supported on x86_64 (amd64) and arm64 when installed with
 [RPM packages](https://docs.pgedge.com/enterprise/) from the pgEdge

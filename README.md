@@ -46,10 +46,6 @@
     - [Alerts Overview](docs/user-guide/alerts/index.md)
     - [Alert Reference](docs/user-guide/alerts/rule-reference.md)
     - [Managing Blackouts](docs/user-guide/alerts/blackouts.md)
-- Troubleshooting:
-  - [Overview](docs/troubleshooting/index.md)
-  - [Stale Server Status](docs/troubleshooting/stale-server-status.md)
-  - [Troubleshooting](docs/troubleshooting/troubleshooting.md)
 - Administrator's Guide:
   - [Administrator's Guide](docs/admin-guide/index.md)
   - Managing Users and Permissions:
@@ -70,6 +66,10 @@
     - [API Browser](docs/admin-guide/api/browser.md)
     - [Server Information](docs/admin-guide/api/server-info.md)
     - [Metrics Tools](docs/admin-guide/api/metrics.md)
+- Troubleshooting:
+  - [Overview](docs/troubleshooting/index.md)
+  - [Stale Server Status](docs/troubleshooting/stale-server-status.md)
+  - [Troubleshooting](docs/troubleshooting/troubleshooting.md)
 - Developer's Guide:
   - [Developer Guide](docs/developer-guide/index.md)
   - [Contributing](docs/developer-guide/contributing.md)

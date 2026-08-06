@@ -100,11 +100,6 @@ nav:
       - Alert Reference: user-guide/alerts/rule-reference.md
       - Managing Blackouts: user-guide/alerts/blackouts.md
 
-  - Troubleshooting:
-    - Overview: troubleshooting/index.md
-    - Stale Server Status: troubleshooting/stale-server-status.md
-    - Troubleshooting: troubleshooting/troubleshooting.md
-
   - Administrator's Guide:
     - Administrator's Guide: admin-guide/index.md
     - Managing Users and Permissions:
@@ -125,6 +120,11 @@ nav:
       - API Browser: admin-guide/api/browser.md
       - Server Information: admin-guide/api/server-info.md
       - Metrics Tools: admin-guide/api/metrics.md
+
+  - Troubleshooting:
+    - Overview: troubleshooting/index.md
+    - Stale Server Status: troubleshooting/stale-server-status.md
+    - Troubleshooting: troubleshooting/troubleshooting.md
 
   - Developer's Guide:
     - Developer Guide: developer-guide/index.md

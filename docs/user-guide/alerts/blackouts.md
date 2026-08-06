@@ -24,6 +24,11 @@ The system enforces scope validation when creating or updating a blackout:
 - Cluster blackouts require a cluster identifier.
 - Server blackouts require a connection identifier.
 
+Users with the `manage_blackouts` permission can create, update, delete, and
+stop blackouts. All authenticated users can view active blackouts regardless of
+their permissions. For more details about creating privileged users, visit
+
+
 ## Managing Blackouts
 
 Administrative users can create one-time blackouts from the status panel, or
@@ -115,8 +120,9 @@ the schedule, or `Cancel` to close the dialog without creating one.
 ## Navigator Indicators
 
 The Cluster Navigator displays blackout status on affected nodes in the
-navigation tree. An amber pause icon appears on servers, clusters, and groups
-that have an active blackout.
+navigation tree. A red pause icon appears on servers, clusters, and groups
+that have an active blackout; hover over the icon to review a tooltip
+confirming the  blackout.
 
 ![The navigation pane, showing a Blackout on warehousing server](../../images/blackout_in_nav_pane.png)
 
@@ -138,9 +144,3 @@ steps describe the suppression process:
 5. Suppressed alerts do not fire and do not generate notifications.
 6. When the blackout ends, normal alert evaluation resumes.
 
-## Permissions
-
-The `manage_blackouts` permission controls access to blackout management
-operations. Administrators with this permission can create, update, delete, and
-stop blackouts. All authenticated users can view active blackouts regardless of
-their permissions.

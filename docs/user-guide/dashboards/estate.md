@@ -1,8 +1,8 @@
 # Estate Dashboard
 
 The `ESTATE OVERVIEW` presents a fleet-wide health assessment at a glance. To
-view the `ESTATE OVERVIEW`, select the top-level estate node in the
-cluster navigator.
+view the `ESTATE OVERVIEW`, select the top-level estate node in the cluster
+navigator.
 
 ![Reviewing the ESTATE dashboard](../../images/estate_dashboard.png)
 
@@ -29,14 +29,13 @@ of the state of your servers:
 
 Below the status tiles, the `Event Timeline` displays a timeline with
 indicators that show monitored events that have occurred across the monitored
-servers. See [Event Timeline](index.md#using-the-event-timeline) for details about
-using the time range selector, event type filters, and reviewing event
+servers. See [Event Timeline](index.md#using-the-event-timeline) for details
+about using the time range selector, event type filters, and reviewing event
 details.
 
 Tiles below the event timeline provide a quick glance into the performance of
-your selected estate, server, or cluster. Hover over a chart or graph to
-review detailed information about a specific point in time for the selected
-metric.
+your selected estate, server, or cluster. Hover over a chart or graph to review
+detailed information about a specific point in time for the selected metric.
 
 ![Reviewing timeline tooltips](../../images/estate_performance_graphs.png)
 
@@ -71,8 +70,8 @@ past alert from the `Event Timeline`.
 ## Monitoring Details of your Estate
 
 Panes within the `Monitoring` panel present an overview of the estate. See
-[Using Common Dashboard Features](index.md#using-common-dashboard-features)
-for details on expanding or collapsing panes.
+[Using Common Dashboard Features](index.md#using-common-dashboard-features) for
+details on expanding or collapsing panes.
 
 ### Reviewing the Health Overview
 
@@ -88,8 +87,8 @@ following categories:
 The right tile displays an `Alert Distribution` chart that breaks down active
 alerts. When no alerts are active, the panel displays `No active alerts`. The
 brain icon in the top-right corner of the tile opens an
-[AI chart analysis](../ai/index.md#chart-and-kpi-tile-analysis) of the
-displayed data.
+[AI chart analysis](../ai/index.md#in-depth-object-analysis) of the displayed
+data.
 
 ![Reviewing the health of the estate](../../images/estate_health_overview.png)
 
@@ -120,7 +119,7 @@ cluster.
 
 Each cluster tile displays the following details:
 
-- The cluster name identifies the cluster; for example,  `development`,
+- The cluster name identifies the cluster; for example, `development`,
   `management`, and `traffic`.
 - The server count shows the number of servers in the cluster, such as
   `1 server` or `2 servers`.

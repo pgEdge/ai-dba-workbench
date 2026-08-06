@@ -3,14 +3,12 @@
 Blackouts suppress alert notifications during planned maintenance windows.
 Administrators create blackouts to prevent false alerts while performing
 database upgrades, schema changes, or infrastructure work. The AI DBA Workbench
-supports both one-time blackouts and recurring schedules.
-
-## Scopes
+supports both one-time blackouts and recurring blackout schedules.
 
 Blackouts operate at four hierarchical levels. A blackout at any level
 suppresses alerts for everything beneath the blackout in the hierarchy.
 
-The following table describes the available scopes:
+The following table describes the available blackout scopes:
 
 | Scope | Target | Description |
 |-------|--------|-------------|
@@ -19,77 +17,108 @@ The following table describes the available scopes:
 | Cluster | Single cluster | Suppresses alerts for all servers within the cluster. |
 | Server | Individual server | Suppresses alerts for only the specified server. |
 
-The system enforces scope validation when creating or updating a blackout.
-Estate blackouts must not reference any group, cluster, or server. Group
-blackouts require a group identifier. Cluster blackouts require a cluster
-identifier. Server blackouts require a connection identifier.
+The system enforces scope validation when creating or updating a blackout:
 
-## One-Time Blackouts
+- Estate blackouts must not reference any group, cluster, or server. 
+- Group blackouts require a group identifier.
+- Cluster blackouts require a cluster identifier.
+- Server blackouts require a connection identifier.
 
-Administrators create one-time blackouts through the admin panel or the REST
-API. The admin panel offers two timing modes for scheduling a blackout.
+## Managing Blackouts
 
-The Start Now mode begins the blackout immediately. The administrator selects a
-duration preset or enters a custom duration. The following duration presets are
-available:
+Administrative users can create one-time blackouts from the status panel, or
+via the REST API. The header pane (across the top of the main console), which
+shows the selected server, cluster, or estate name, displays a halting-hand
+icon on the right side of the header. 
 
-- A 30-minute window covers brief maintenance tasks.
-- A 1-hour window covers standard maintenance tasks.
-- A 2-hour window covers extended maintenance tasks.
-- A 4-hour window covers major upgrade procedures.
-- An 8-hour window covers full migration operations.
+![The Blackout management icon](../../images/blackout_mgmt.png)
 
-The Schedule Future mode activates the blackout at a specified start time. The
-administrator picks a start time and an end time for the maintenance window.
+Click the icon to open the `Blackout Management` dialog.
 
-The following table describes the fields for a one-time blackout:
+![The Blackout management dialog](../../images/choose_blackout_mode.png)
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| Scope | Yes | The level at which to suppress alerts. |
-| Group / Cluster / Server | Conditional | The target entity; depends on the selected scope. |
-| Reason | Yes | Why you need the blackout. |
-| Start Time | Yes | When the blackout begins. |
-| End Time | Yes | When the blackout ends; must be after the start time. |
+The `Blackout management` dialog displays current blackouts and currently
+scheduled blackouts. The dialog also has buttons that allow you to create a
+blackout in one of two modes; you can:
 
-Administrators can stop active blackouts early using the Stop button in the
-admin panel.
+- Start a `New One Time Blackout` immediately. 
+- Create a `New Scheduled Blackout` with a specified start time. 
 
-## Recurring Schedules
+### Starting a Blackout Immediately
 
-Recurring schedules automatically create blackouts at regular intervals. The
-alerter evaluates enabled schedules every minute and creates blackout entries
-when cron expressions match the current time.
+Select `New One Time Blackout` from the `Blackout management` popup to specify
+the details for a blackup that starts immediately:
 
-The following table describes the fields for a recurring schedule:
+![The Blackout management dialog](../../images/start_blackout_now.png)
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| Name | Yes | -- | A human-readable name for the schedule. |
-| Scope | Yes | -- | The level at which to suppress alerts. |
-| Cron Expression | Yes | -- | A standard five-field cron expression. |
-| Duration | Yes | -- | How long each blackout lasts, in minutes. |
-| Timezone | No | UTC | The IANA timezone for cron evaluation. |
-| Reason | Yes | -- | The reason recorded on each created blackout. |
-| Enabled | No | true | Whether the schedule is active. |
+The `Start blackout` dialog lets you configure a one-time blackout for the
+selected scope.
+  
+The `SCOPE` section lists four options: `Estate`, `Group`, `Cluster`, and
+`Server`. Select a scope to suppress alerts at that level; the dialog
+displays the target entity next to the selected option, such as the server
+name for a `Server` scope.
+  
+The `TIMING` section offers two modes: `Start Now` and `Schedule Future`.
 
-### Cron Format
+Selecting `Start Now` reveals a `Duration` section with five presets: 
+`30m`, `1h`, `2h`, `4h`, and `8h`. Enter a custom duration in the `Hours` and
+`Minutes` fields instead of a preset. The dialog displays the computed end
+time below the duration controls, such as `Ends at Aug 6, 08:20 AM`.
 
-A cron expression consists of five fields that represent minute, hour, day of
-month, month, and day of week. The following examples demonstrate common
-scheduling patterns:
+Enter a reason for the blackout in the `REASON` field, such as "Scheduled
+maintenance window" or "Deployment in progress".
 
-- `0 2 * * *` triggers daily at 2:00 AM.
-- `0 3 * * 1-5` triggers on weekdays at 3:00 AM.
-- `0 4 * * 0,6` triggers on weekends at 4:00 AM.
-- `0 1 * * 0` triggers weekly on Sunday at 1:00 AM.
-- `0 0 1 * *` triggers monthly on the first day at midnight.
+Select the `Create Blackout` icon to start the blackout, or `Cancel` to close the
+dialog without creating one.
+
+
+### Scheduling a Blackout
+
+Select `New One Time Blackout` from the `Blackout management` popup to specify
+the details for a blackup that starts immediately:
+
+![The Blackout management dialog](../../images/schedule_blackout.png)
+
+The `Create blackout schedule` dialog lets you configure a recurring
+blackout for the selected scope.
+
+The `SCOPE` section offers the same four options as the one-time blackout
+dialog: `Estate`, `Group`, `Cluster`, and `Server`.
+  
+Enter a descriptive name for the schedule in the `Name` field, such as
+"Nightly maintenance window". This field is required.
+
+The `RECURRENCE` section offers six presets: `Daily`, `Weekdays`,
+`Weekends`, `Weekly`, `Monthly`, and `Custom`. Selecting a preset populates
+the `Hour` and `Minute` fields and the `Cron Expression` field
+automatically. The dialog displays the resulting schedule in plain
+language below the cron expression, such as `Daily at 2:00 AM`.
+
+The `DURATION` section offers four presets: `30m`, `1h`, `2h`, and `4h` that
+specify the length of the blackout. Optionally, enter a custom duration in
+minutes in the `Custom (Minutes)` field instead of using a predefined
+duration.
+
+Enter the IANA timezone for cron evaluation in the `TIMEZONE` field, such
+as `America/New_York`.
+
+Enter a reason for the schedule in the `REASON` field, such as "Nightly
+backup window".
+
+Use the `Enabled` toggle to activate or deactivate the schedule. 
+
+When you've defined the blackout, select `Create blackout schedule` to save
+the schedule, or `Cancel` to close the dialog without creating one.
+
 
 ## Navigator Indicators
 
 The Cluster Navigator displays blackout status on affected nodes in the
 navigation tree. An amber pause icon appears on servers, clusters, and groups
 that have an active blackout.
+
+![The navigation pane, showing a Blackout on warehousing server](../../images/blackout_in_nav_pane.png)
 
 The icon appears at full opacity for direct blackouts. The icon appears at
 reduced opacity for inherited blackouts. Hovering over the icon shows whether
@@ -115,10 +144,3 @@ The `manage_blackouts` permission controls access to blackout management
 operations. Administrators with this permission can create, update, delete, and
 stop blackouts. All authenticated users can view active blackouts regardless of
 their permissions.
-
-## Related Documentation
-
-- [Monitoring Alerts](index.md) describes the alert lifecycle and management
-  features.
-- [Alert Rule Reference](rule-reference.md) lists all built-in alert
-  rules.

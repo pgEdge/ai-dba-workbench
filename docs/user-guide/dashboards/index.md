@@ -1,4 +1,4 @@
-# Reviewing Workbench Dashboards
+# Dashboard Overview
 
 Monitoring dashboards provide a hierarchical view of PostgreSQL database health
 and performance. You can navigate through five levels of detail, from a
@@ -6,7 +6,7 @@ fleet-wide estate overview down to individual database objects.
 
 The dashboard system organizes metrics into five levels that progress from
 broad to specific. Select items in the cluster navigator or click drillable
-elements within each dashboard to move between levels. 
+elements within each dashboard to move between levels.
 
 - The [ESTATE DASHBOARD](estate.md) shows fleet-wide health across all
   monitored servers.
@@ -21,11 +21,11 @@ elements within each dashboard to move between levels.
 
 !!! hint
 
-    If you have enabled an [AI provider](../ai/index.md#enabling-ai-mode), the
-    Workbench displays an informational analysis of each dashboard that you
-    visit, and an `Ask Ellie` chat assistant for interactive help. See
-    [Using AI Features](../ai/index.md) and [Ask Ellie](../ai/ask-ellie.md)
-    for details.
+    If you have enabled an [AI provider](../ai/enabling_ai.md), the Workbench
+    displays an informational analysis of each dashboard that you visit, and an
+    `Ask Ellie` chat assistant for interactive help. See
+    [Using AI Features](../ai/index.md) and [Ask Ellie](../ai/ask-ellie.md) for
+    details.
 
 ## Using Common Dashboard Features
 
@@ -35,21 +35,21 @@ chevron to expand or collapse the pane.
 
 The dashboards include the following additional interactive features:
 
-- Drillable elements let you navigate between dashboard levels; for
-  example, clicking a database entry in Database Summaries opens the
-  database dashboard, and clicking a server entry in Comparative Metrics
-  opens the server dashboard.
-- The Hide monitoring queries toggle on the `Top Queries` pane filters out
-  the Workbench's own monitoring queries.
-- Clicking a tile in the visual query plan diagram opens a popover with
-  cost, row estimate, and filter details for that node.
+- Drillable elements let you navigate between dashboard levels; for example,
+  clicking a database entry in Database Summaries opens the database dashboard,
+  and clicking a server entry in Comparative Metrics opens the server
+  dashboard.
+- The Hide monitoring queries toggle on the `Top Queries` pane filters out the
+  Workbench's own monitoring queries.
+- Clicking a tile in the visual query plan diagram opens a popover with cost,
+  row estimate, and filter details for that node.
 
 Server nodes and clusters in the navigation pane display a gear icon to the
 right of the name when you hover over them with the mouse; click the gear icon
 to open the settings dialog for that resource. See
 [Server Settings](server.md#reviewing-server-settings) or
-[Cluster Settings](cluster.md#reviewing-cluster-settings) for details about
-the configuration of the selected node.
+[Cluster Settings](cluster.md#reviewing-cluster-settings) for details about the
+configuration of the selected node.
 
 
 ## Using the Event Timeline
@@ -59,14 +59,14 @@ events that have occurred within the selected time range. The Event Timeline
 appears on the estate, cluster, and server dashboards, scoped to the servers
 monitored at that level.
 
-Select an event icon to review a list of the alert's events; when
-applicable, the details include the threshold values that caused the alert.
+Select an event icon to review a list of the alert's events; when applicable,
+the details include the threshold values that caused the alert.
 
 ![Reviewing timeline tooltips](../../images/timeline_tooltip.png)
 
-The time range selector in the `Event Timeline` pane specifies how far back
-the pane displays events. The selector appears as a toggle button group with
-the following options:
+The time range selector in the `Event Timeline` pane specifies how far back the
+pane displays events. The selector appears as a toggle button group with the
+following options:
 
 - 1h displays the last one hour of data.
 - 6h displays the last six hours of data.

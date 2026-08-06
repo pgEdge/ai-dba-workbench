@@ -3,29 +3,25 @@
 The pgEdge AI DBA Workbench is an AI-powered environment for monitoring,
 managing, and troubleshooting PostgreSQL systems. The Workbench combines a
 Model Context Protocol (MCP) server with a web-based user interface, a data
-collector, and an alert monitoring service. The Workbench enables you to
-query, analyze, and manage distributed PostgreSQL clusters using natural
-language and intelligent automation, exposing pgEdge tools and data sources
-to both cloud-connected and locally hosted language models; this
-design ensures full functionality in air-gapped or secure environments.
+collector, and an alert monitoring service. The Workbench enables you to query,
+analyze, and manage distributed PostgreSQL clusters using natural language and
+intelligent automation, exposing pgEdge tools and data sources to both
+cloud-connected and locally hosted language models; this design ensures full
+functionality in air-gapped or secure environments.
 
 The AI DBA Workbench consists of four components that work together to provide
 monitoring, alerting, and AI-powered database management.
 
-![Architecture diagram showing the four AI DBA Workbench components, the
-Collector, MCP Server, Alerter, and Client, sharing a central datastore and
-connecting to monitored PostgreSQL servers, AI assistants and LLM providers,
-and notification channels](images/architecture.png)
+![Architecture diagram showing the four AI DBA Workbench components, the Collector, MCP Server, Alerter, and Client, sharing a central datastore and connecting to monitored PostgreSQL servers, AI assistants and LLM providers, and notification channels](images/architecture.png)
 
 ## Data Collection Layer <img src="images/icon-data-collection.svg" alt="" width="28" style="vertical-align:middle; margin-left:6px;">
 
 The Collector continuously monitors PostgreSQL servers and collects metrics
 into a centralized datastore. The Collector provides the following features:
 
-- The Collector supports multi-server monitoring with independent
-  connection pools.
-- The Collector includes 34 built-in probes that cover PostgreSQL system
-  views.
+- The Collector supports multi-server monitoring with independent connection
+  pools.
+- The Collector includes 34 built-in probes that cover PostgreSQL system views.
 - The Collector automates data management for partitioning and retention
   policies.
 - The Collector secures connections with encryption and SSL/TLS support.

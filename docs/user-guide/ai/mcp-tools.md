@@ -10,12 +10,24 @@ The MCP server exposes a JSON-RPC 2.0 endpoint at `/mcp/v1` over HTTP or HTTPS.
 Configure your MCP client with the server address and a valid API token to
 begin using the available tools.
 
+All MCP endpoints require a valid API token for authentication. Include the
+token in the `Authorization` header of each request.
+
+In the following example, a `curl` command lists the available tools:
+
+```bash
+curl -X POST http://localhost:8080/mcp/v1 \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
 ## Monitored Database Tools
 
 These tools operate on monitored database connections. Each tool accepts
 optional `connection_id` and `database_name` parameters to target a specific
-database; the tool uses the currently selected connection when you omit
-these parameters.
+database; the tool uses the currently selected connection when you omit these
+parameters.
 
 | Tool | Description |
 |------|-------------|
@@ -84,22 +96,3 @@ tool. The following resources are available:
 
 Administrators can disable resources in the server configuration.
 
-## Authentication
-
-All MCP endpoints require a valid API token for authentication. Include the
-token in the `Authorization` header of each request.
-
-In the following example, a `curl` command lists the available tools:
-
-```bash
-curl -X POST http://localhost:8080/mcp/v1 \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-## Related Documentation
-
-- [Ask Ellie](ask-ellie.md) describes the built-in AI assistant that uses
-  these tools internally.
-- [Using AI Features](index.md) covers AI-powered summaries of database health.

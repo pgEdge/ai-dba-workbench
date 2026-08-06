@@ -1,8 +1,8 @@
 # Configuring the Collector
 
 The collector supports configuration through a YAML file and command-line
-flags. The collector loads configuration in the following order; later
-sources override earlier ones:
+flags. The collector loads configuration in the following order; later sources
+override earlier ones:
 
 1. Built-in defaults.
 2. Configuration file.
@@ -18,14 +18,14 @@ locations in the following order:
    `%AppData%\pgedge\ai-dba-collector.yaml` on Windows.
 3. `/etc/pgedge/ai-dba-collector.yaml` (system-wide).
 
-If `-config` is set and the file is missing, the collector exits with an
-error. If `-config` is not set and none of the default locations contain
-a configuration file, the collector uses built-in defaults silently. The
+If `-config` is set and the file is missing, the collector exits with an error.
+If `-config` is not set and none of the default locations contain a
+configuration file, the collector uses built-in defaults silently. The
 collector no longer searches the binary directory or the current working
 directory.
 
-The collector validates configuration at startup; the following fields
-must be set:
+The collector validates configuration at startup; the following fields must be
+set:
 
 - `datastore.host` must contain a hostname or IP.
 - `datastore.database` must contain a database name.
@@ -42,21 +42,29 @@ The collector also validates the following ranges:
 
 ## Reloading or Restarting the Collector
 
-The collector has no signal-based reload for its configuration file, unlike the server and alerter. Changing any property or command-line flag — requires a full restart to take effect. The collector's shutdown handler only responds to SIGINT and SIGTERM, and both signals stop the process rather than reapplying configuration.
+The collector has no signal-based reload for its configuration file, unlike the
+server and alerter. Changing any property or command-line flag — requires a
+full restart to take effect. The collector's shutdown handler only responds to
+SIGINT and SIGTERM, and both signals stop the process rather than reapplying
+configuration.
 
-If you have configured systemd, you can restart the service through systemctl to apply configuration changes:
+If you have configured systemd, you can restart the service through systemctl
+to apply configuration changes:
 
 ```bash
 sudo systemctl restart pgedge-ai-dba-collector
 ```
 
-Without systemd, stop and relaunch the process manually with the same configuration flag used originally:
+Without systemd, stop and relaunch the process manually with the same
+configuration flag used originally:
 
 ```bash
 pkill -f ai-dba-collector opt/ai-workbench/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml &
 ```
 
-Per-server probe configuration is the one exception: the collector stores it in the datastore rather than the YAML file, polls for changes every 5 minutes, and applies them automatically without a restart. 
+Per-server probe configuration is the one exception: the collector stores it in
+the datastore rather than the YAML file, polls for changes every 5 minutes, and
+applies them automatically without a restart.
 
 
 ## Security Best Practices
@@ -79,9 +87,9 @@ The Collector searches the following locations in order:
     working directory for the secret file.
 
 The collector uses AES-256-GCM encryption to protect stored passwords and
-encrypts each password with a unique cryptographically random salt. It
-derives the encryption key from the server secret using PBKDF2 with SHA256
-and 100,000 iterations.
+encrypts each password with a unique cryptographically random salt. It derives
+the encryption key from the server secret using PBKDF2 with SHA256 and 100,000
+iterations.
 
 In the following example, the `openssl` command generates a secure secret:
 
@@ -263,8 +271,8 @@ settings:
 ## Per-Server Collector Probe Configuration
 
 The collector supports customizing probe settings for individual monitored
-servers through the `probe_configs` database table. When the collector marks
-a new connection as monitored (`is_monitored = TRUE`), it creates per-server
+servers through the `probe_configs` database table. When the collector marks a
+new connection as monitored (`is_monitored = TRUE`), it creates per-server
 probe configurations by copying the global defaults.
 
 Probe settings use a three-level fallback hierarchy:
@@ -326,8 +334,8 @@ WHERE name = 'pg_stat_database'
 
 ## Configuration Examples
 
-The following examples show minimal, production, and development
-configurations for the Collector.
+The following examples show minimal, production, and development configurations
+for the Collector.
 
 ### Minimal Configuration
 
@@ -343,8 +351,8 @@ datastore:
 
 ### Production Configuration
 
-This example shows a production configuration with SSL verification
-and a connection pool.
+This example shows a production configuration with SSL verification and a
+connection pool.
 
 ```yaml
 datastore:
@@ -371,8 +379,8 @@ secret_file: /var/secrets/collector.secret
 
 ### Development Configuration
 
-This example shows a local development configuration with SSL
-disabled and a small connection pool.
+This example shows a local development configuration with SSL disabled and a
+small connection pool.
 
 ```yaml
 datastore:

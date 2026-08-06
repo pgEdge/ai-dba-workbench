@@ -1,19 +1,18 @@
 # Supported Installation Methods
 
 The Workbench is supported on x86_64 (amd64) and arm64 when installed with
-[RPM packages](https://docs.pgedge.com/enterprise/) from the pgEdge
-repository, or [binary files](binary_install.md) or
-[source code](build_from_source.md) from 
+[RPM packages](https://docs.pgedge.com/enterprise/) from the pgEdge repository,
+or [binary files](binary_install.md) or [source code](build_from_source.md)
+from
 [the pgEdge GitHub repository](https://github.com/pgEdge/ai-dba-workbench).
-Additionally, macOS installations on x86_64 or arm64 are supported from
-GitHub.
+Additionally, macOS installations on x86_64 or arm64 are supported from GitHub.
 
 - [Building from binary files](binary_install.md) is the easiest method to use
   to deploy the Workbench.
-- [Building from source code](build_from_source.md) ensures you have the 
-  latest Workbench features available.
-- The [Docker guide](docker.md) walks you through a Workbench deployment
-  via Docker using RPM/DEB packages from pgEdge.
+- [Building from source code](build_from_source.md) ensures you have the latest
+  Workbench features available.
+- The [Docker guide](docker.md) walks you through a Workbench deployment via
+  Docker using RPM/DEB packages from pgEdge.
 
 Each installation method places files in different locations. The following
 table summarizes the locations for each deployment method.
@@ -32,12 +31,12 @@ table summarizes the locations for each deployment method.
     RPM and DEB packages are available from the
     [pgEdge Enterprise Repository](https://docs.pgedge.com/enterprise/), and
     are used in the Docker deployment method documented in the
-    [Docker deployment guide](docker.md). If you're using pgEdge packages
-    for deployment, note that the packages create and use the pgedge user
-    automatically, and you do not need to manually adjust your systemd files
-    to manage the service.
+    [Docker deployment guide](docker.md). If you're using pgEdge packages for
+    deployment, note that the packages create and use the pgedge user
+    automatically, and you do not need to manually adjust your systemd files to
+    manage the service.
 
-    Contact pgEdge for information about accessing the 
+    Contact pgEdge for information about accessing the
     [enterprise packages](https://docs.pgedge.com/enterprise/).
 
 
@@ -52,13 +51,13 @@ requirements:
 - The installation requires 120 GB of disk space for binaries and the
   datastore.
 
-Before installing the Workbench with binary files or building the project
-from source, install the following software:
+Before installing the Workbench with binary files or building the project from
+source, install the following software:
 
 - [Go 1.24](https://go.dev/doc/install) or later is required for building
   server-side components.
-- [Node.js 20.19](https://nodejs.org/) or later on the 20.x line,
-  or Node.js 22.12 or later, is required for building the web client.
+- [Node.js 20.19](https://nodejs.org/) or later on the 20.x line, or Node.js
+  22.12 or later, is required for building the web client.
 - [PostgreSQL 14](https://www.postgresql.org/download/) or later is required
   for the datastore.
 - [Make](https://www.gnu.org/software/make/) is required for build automation.
@@ -68,8 +67,8 @@ Each component requires specific network access to operate correctly:
 
 - The collector requires network access to each monitored PostgreSQL server.
 - The alerter requires network access to the datastore.
-- The server requires network access to the datastore and must be reachable
-  by web client users.
+- The server requires network access to the datastore and must be reachable by
+  web client users.
 - Database credentials for the datastore and each monitored PostgreSQL server
   are required.
 
@@ -77,16 +76,16 @@ Each component requires specific network access to operate correctly:
 ## Customizing Configuration Files
 
 The installation guides linked above share the details required to get a
-minimal deployment of the Workbench installed and serving content.
-Additional configuration options are extensive; for details about options
-available in each configuration file, see:
+minimal deployment of the Workbench installed and serving content. Additional
+configuration options are extensive; for details about options available in
+each configuration file, see:
 
-- The [collector](../configuration/collector.md) guide covers tuned
-  connection pools and SSL.
+- The [collector](../configuration/collector.md) guide covers tuned connection
+  pools and SSL.
 - The [server](../configuration/server.md) guide covers TLS, authentication,
   and LLM integration.
-- The [alerter](../configuration/alerter.md) guide covers anomaly detection
-  and notification channels.
-- The [web client](../configuration/client.md) guide covers proxy settings
-  and build options.
+- The [alerter](../configuration/alerter.md) guide covers anomaly detection and
+  notification channels.
+- The [web client](../configuration/client.md) guide covers proxy settings and
+  build options.
 

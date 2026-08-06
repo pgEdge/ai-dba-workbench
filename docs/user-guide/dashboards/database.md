@@ -31,8 +31,7 @@ The pane also displays the following time-series charts:
   selected range.
 
 Each tile and each chart displays a brain icon that opens an
-[AI analysis](../ai/index.md#chart-and-kpi-tile-analysis) of the displayed
-data.
+[AI analysis](../ai/index.md#in-depth-object-analysis) of the displayed data.
 
 ## Table Leaderboard
 
@@ -53,9 +52,9 @@ bar indicator, and a row count. Click a table entry to navigate to the
 
 ![Reviewing the Table Leaderboard](../../images/database_table_leaderboard.png)
 
-An [AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a
-brain icon sits beside the sort buttons. The analysis covers data across all
-sort categories for the listed tables.
+An [AI Analysis](../ai/index.md#in-depth-object-analysis) button with a brain
+icon sits beside the sort buttons. The analysis covers data across all sort
+categories for the listed tables.
 
 ## Index Leaderboard
 
@@ -74,9 +73,9 @@ navigate to the [object dashboard](object.md) for that index.
 
 ![Reviewing the Index Leaderboard](../../images/database_index_leaderboard.png)
 
-An [AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a
-brain icon sits beside the sort buttons. The analysis covers data across all
-index metrics for the listed indexes.
+An [AI Analysis](../ai/index.md#in-depth-object-analysis) button with a brain
+icon sits beside the sort buttons. The analysis covers data across all index
+metrics for the listed indexes.
 
 ## Vacuum Status
 
@@ -97,5 +96,5 @@ table; high `DEAD RATIO` values appear in bold red.
 
 ![Reviewing the Index Leaderboard](../../images/database_vacuum_status.png)
 
-An [AI Analysis](../ai/index.md#chart-and-kpi-tile-analysis) button with a
-brain icon provides vacuum recommendations.
+An [AI Analysis](../ai/index.md#in-depth-object-analysis) button with a brain
+icon provides vacuum recommendations.

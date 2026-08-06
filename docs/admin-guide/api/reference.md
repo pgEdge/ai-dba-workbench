@@ -1,51 +1,47 @@
 # API Reference
 
-The AI DBA Workbench server provides a RESTful API for
-client applications. This page provides interactive
-documentation for exploring and testing the API.
+The AI DBA Workbench server provides a RESTful API for client applications.
+This page provides interactive documentation for exploring and testing the API.
 
 ## API Discovery
 
-The API implements RFC 8631 for API discovery. All JSON
-responses include a Link header pointing to the OpenAPI
-specification:
+The API implements RFC 8631 for API discovery. All JSON responses include a
+Link header pointing to the OpenAPI specification:
 
 ```
 Link: </api/v1/openapi.json>; rel="service-desc"
 ```
 
-This enables API discovery tools like `restish` to
-automatically understand the API structure.
+This enables API discovery tools like `restish` to automatically understand the
+API structure.
 
 ## OpenAPI Specification
 
-The OpenAPI 3.0.3 specification is available at the
-following locations:
+The OpenAPI 3.0.3 specification is available at the following locations:
 
 - At runtime via `GET /api/v1/openapi.json`.
 - As a static file at `docs/admin-guide/api/openapi.json`.
 
-You can use this specification with tools like Postman,
-Insomnia, or any OpenAPI-compatible client.
+You can use this specification with tools like Postman, Insomnia, or any
+OpenAPI-compatible client.
 
 ## API Versioning
 
 All REST API endpoints use version prefixes:
 
 - The current version is `/api/v1/`.
-- The MCP protocol uses `/mcp/v1` with separate
-  versioning.
+- The MCP protocol uses `/mcp/v1` with separate versioning.
 
-Version changes follow semantic versioning principles.
-Breaking changes result in a new major version.
+Version changes follow semantic versioning principles. Breaking changes result
+in a new major version.
 
 ## Authentication
 
-Most API endpoints require authentication. Include a
-Bearer token in the Authorization header.
+Most API endpoints require authentication. Include a Bearer token in the
+Authorization header.
 
-In the following example, the `curl` command uses a
-Bearer token to authenticate:
+In the following example, the `curl` command uses a Bearer token to
+authenticate:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_TOKEN" \
@@ -54,18 +50,17 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 Tokens can be one of two types:
 
-- Session tokens are obtained via
-  `/api/v1/auth/login`.
-- Service tokens are created via the server command
-  line for programmatic access.
+- Session tokens are obtained via `/api/v1/auth/login`.
+- Service tokens are created via the server command line for programmatic
+  access.
 
 For detailed authentication information, see
 [Authentication](../authentication.md).
 
 ## Interactive API Browser
 
-The interactive API browser renders the OpenAPI
-specification in a searchable, navigable format.
+The interactive API browser renders the OpenAPI specification in a searchable,
+navigable format.
 
 [Open the API Browser](browser.md)
 
@@ -309,8 +304,7 @@ The API provides endpoints in the following categories.
 
 All API errors return a consistent JSON format.
 
-In the following example, the server returns an error
-response:
+In the following example, the server returns an error response:
 
 ```json
 {

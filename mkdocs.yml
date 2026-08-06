@@ -81,21 +81,22 @@ nav:
   - Using the Workbench:
     - Using the Workbench: user-guide/index.md
     - Reviewing Dashboards:
-      - Reviewing Workbench Dashboards: user-guide/dashboards/index.md
+      - Dashboard Overview: user-guide/dashboards/index.md
       - Estate Dashboard: user-guide/dashboards/estate.md
       - Server Dashboard: user-guide/dashboards/server.md
       - Cluster Dashboard: user-guide/dashboards/cluster.md
       - Reviewing Database Details: user-guide/dashboards/database.md
       - Reviewing Object Details: user-guide/dashboards/object.md
     - Using AI Features:
-      - Enabling AI Features: user-guide/ai/index.md
+      - AI Feature Overview: user-guide/ai/index.md
+      - Enabling AI Mode: user-guide/ai/enabling_ai.md
+      - Ask Ellie: user-guide/ai/ask-ellie.md
       - Using the AI Chart Analysis Feature: user-guide/ai/chart-analysis.md
       - AI Alert Analysis: user-guide/ai/ai-analysis.md
-      - Ask Ellie: user-guide/ai/ask-ellie.md
       - Connecting MCP Clients: user-guide/ai/mcp-clients.md
       - Using Workbench with MCP Tools: user-guide/ai/mcp-tools.md
     - Managing Alerts:
-      - Monitoring Alerts: user-guide/alerts/index.md
+      - Alerts Overview: user-guide/alerts/index.md
       - Alert Reference: user-guide/alerts/rule-reference.md
       - Managing Blackouts: user-guide/alerts/blackouts.md
 

@@ -6,15 +6,15 @@ the cluster navigator.
 
 ![Reviewing the CLUSTER dashboard](../../images/cluster_dashboard.png)
 
-If you have configured AI for your Workbench, the dashboard displays
-the [AI Overview](../ai/index.md) just below the header. The overview provides
-a concise, AI-powered summary of your object's health, with notes about history
+If you have configured AI for your Workbench, the dashboard displays the
+[AI Overview](../ai/index.md) just below the header. The overview provides a
+concise, AI-powered summary of your object's health, with notes about history
 and recommended actions to maintain system health.
 
 ![Reviewing the AI Overview](../../images/ai_overview.png)
 
-Tiles below the heading of the CLUSTER dashboard provide an at-a-glance overview
-of the state of your cluster:
+Tiles below the heading of the CLUSTER dashboard provide an at-a-glance
+overview of the state of your cluster:
 
 ![Reviewing the state of your cluster](../../images/cluster_state.png)
 
@@ -27,14 +27,13 @@ of the state of your cluster:
 
 Below the status tiles, the `Event Timeline` displays a timeline with
 indicators that show monitored events that have occurred across the monitored
-servers. See [Event Timeline](index.md#using-the-event-timeline) for details about
-using the time range selector, event type filters, and reviewing event
+servers. See [Event Timeline](index.md#using-the-event-timeline) for details
+about using the time range selector, event type filters, and reviewing event
 details.
 
 Tiles below the event timeline provide a quick glance into the performance of
-your selected estate, server, or cluster. Hover over a chart or graph to
-review detailed information about a specific point in time for the selected
-metric.
+your selected estate, server, or cluster. Hover over a chart or graph to review
+detailed information about a specific point in time for the selected metric.
 
 The Workbench displays the following tiles:
 
@@ -81,20 +80,23 @@ different replication methods at a glance.
 ## Monitoring the Cluster
 
 The `Monitoring` pane presents replication health and comparative performance
-data for the cluster. 
+data for the cluster.
 
 ### Reviewing Replication Lag
 
-The `Replication Lag` pane tracks replication lag over the selected time
-range for the replication relationships in the cluster. Three tiles at the top
-of the panel present the current lag values in milliseconds; a time-series
-chart below the tiles plots the same metrics over the selected time range.
+The `Replication Lag` pane tracks replication lag over the selected time range
+for the replication relationships in the cluster. Three tiles at the top of the
+panel present the current lag values in milliseconds; a time-series chart below
+the tiles plots the same metrics over the selected time range.
 
 The pane displays the following tiles:
 
-- The `WRITE LAG` tile shows the current write lag for the cluster in milliseconds.
-- The `FLUSH LAG` tile shows the current flush lag for the cluster in milliseconds.
-- The `REPLAY LAG` tile shows the current replay lag for the cluster in milliseconds.
+- The `WRITE LAG` tile shows the current write lag for the cluster in
+  milliseconds.
+- The `FLUSH LAG` tile shows the current flush lag for the cluster in
+  milliseconds.
+- The `REPLAY LAG` tile shows the current replay lag for the cluster in
+  milliseconds.
   
 The `Replication Lag Over Time` chart plots the write, flush, and replay lag
 metrics against a time axis; a legend identifies each line by color and label.
@@ -106,12 +108,12 @@ When the Workbench detects no primary server, the graphic displays the message
 
 ### Reviewing Comparative Metrics
 
-The `Comparative Metrics` pane presents side-by-side metrics for all servers               
-  in the cluster; use the pane to identify performance disparities between
-  cluster members. The pane arranges four bar charts in a grid, and each chart
-  plots one bar per server, labeled by server name along the x-axis.
+The `Comparative Metrics` pane presents side-by-side metrics for all servers in
+the cluster; use the pane to identify performance disparities between cluster
+members. The pane arranges four bar charts in a grid, and each chart plots one
+bar per server, labeled by server name along the x-axis.
 
-  The pane displays the following charts:
+The pane displays the following charts:
 
   - The `Transaction Rate (commits/sec)` chart shows the commit rate for each
     server in the cluster.
@@ -119,22 +121,22 @@ The `Comparative Metrics` pane presents side-by-side metrics for all servers
     server in the cluster.
   - The `Rollback Rate (%)` chart shows the transaction rollback rate for each
     server in the cluster.
-  - The `Connection Count` chart shows the number of connections for each server
-    in the cluster.
+  - The `Connection Count` chart shows the number of connections for each
+    server in the cluster.
 
-  Hover over a bar to display a tooltip with the server name and the metric's
-  value for that server. Click a server entry to navigate to the
-  [server dashboard](server.md) for that server.
+Hover over a bar to display a tooltip with the server name and the metric's
+value for that server. Click a server entry to navigate to the
+[server dashboard](server.md) for that server.
 
 ![Reviewing replication lag](../../images/cluster_comparative_metrics.png)
 
 
 ## Reviewing Cluster Settings
 
-Each cluster or cluster node displays a gear icon when you hover
-over the object name; click the gear icon to open the `Cluster Settings`
-dialog. The dialog organizes its settings into a horizontal tab bar, and
-`Cancel` and `Save` buttons at the bottom discard or retain your changes.
+Each cluster or cluster node displays a gear icon when you hover over the
+object name; click the gear icon to open the `Cluster Settings` dialog. The
+dialog organizes its settings into a horizontal tab bar, and `Cancel` and
+`Save` buttons at the bottom discard or retain your changes.
 
 ### DETAILS Tab
 
@@ -144,8 +146,8 @@ replication behavior. The tab includes the following fields:
 - The `Name` field displays or modifies the display name for the cluster.
 - The `Description` field is a multi-line text area that holds optional notes
   about the cluster.
-- The `Replication Type` dropdown specifies the replication technology used
-  for the cluster.
+- The `Replication Type` dropdown specifies the replication technology used for
+  the cluster.
 
 ![Reviewing the Details tab of Cluster Settings](../../images/cluster_settings_details.png)
 
@@ -203,9 +205,9 @@ list of built-in rules and their default thresholds.
 ### PROBE CONFIGURATION Tab
 
 The `PROBE CONFIGURATION` tab controls the probes that collect metrics for the
-selected cluster. A table lists the current probes and their settings; each
-row describes one probe and its configuration. The table contains the
-following columns:
+selected cluster. A table lists the current probes and their settings; each row
+describes one probe and its configuration. The table contains the following
+columns:
 
 - `Name` identifies the probe.
 - `Description` explains what the probe monitors.
@@ -234,8 +236,8 @@ state. The table contains the following columns:
 - `Description` shows the channel's optional description.
 - `Estate Default` indicates whether the channel applies to all servers or
   clusters by default.
-- `Enabled` provides a toggle that activates or deactivates the channel for
-  the selected cluster, overriding the estate default.
+- `Enabled` provides a toggle that activates or deactivates the channel for the
+  selected cluster, overriding the estate default.
 - `Actions` provides controls for managing the channel's override for the
   selected cluster.
 

@@ -1,9 +1,9 @@
 # Quick Start - Installing the Workbench with Binary Files
 
-The AI DBA Workbench collects metrics from PostgreSQL servers, evaluates
-alert rules, and displays results in a web interface. This guide covers
-setting up the complete pgEdge AI DBA Workbench using pre-built binaries
-available from the
+The AI DBA Workbench collects metrics from PostgreSQL servers, evaluates alert
+rules, and displays results in a web interface. This guide covers setting up
+the complete pgEdge AI DBA Workbench using pre-built binaries available from
+the
 [pgEdge GitHub repository](https://github.com/pgEdge/ai-dba-workbench/releases).
 
 Before you deploy the Workbench, confirm the following prerequisites are in
@@ -12,25 +12,25 @@ place on a supported operating system and platform:
 - [PostgreSQL 14](https://www.postgresql.org/download/) or later is installed
   for the Workbench datastore.
 - The database credentials for the datastore database are available.
-- Network access exists between each monitored PostgreSQL server and the
-  system hosting the Workbench.
+- Network access exists between each monitored PostgreSQL server and the system
+  hosting the Workbench.
 
 ## Installing the Binaries
 
 Download the latest release from the
 [GitHub releases page](https://github.com/pgEdge/ai-dba-workbench/releases).
-The release archive includes the collector, server, and alerter binaries
-and pre-built web client files:
+The release archive includes the collector, server, and alerter binaries and
+pre-built web client files:
 
 * ai-dba-collector-linux-arm64.tar.gz
 * ai-dba-server-linux-arm64.tar.gz
 * ai-dba-alerter-linux-arm64.tar.gz
 * ai-dba-client.tar.gz
 
-After downloading the files, move into your `Downloads` folder, and extract
-the archives and copy the files into a deployment directory. In the following
-example, the `tar` and `cp` commands install the binary and client files
-to the `/opt/ai-workbench` directory:
+After downloading the files, move into your `Downloads` folder, and extract the
+archives and copy the files into a deployment directory. In the following
+example, the `tar` and `cp` commands install the binary and client files to the
+`/opt/ai-workbench` directory:
 
 ```bash
 tar xzf ai-dba-collector-linux-arm64.tar.gz
@@ -46,17 +46,16 @@ sudo tar xzf ai-dba-client.tar.gz -C /opt/ai-workbench/client
 ```
 
 !!! note
-    See the [installation paths table](installation_overview.md)
-    for a comparison of installation paths used in different deployment
-    methods.
+    See the [installation paths table](installation_overview.md) for a
+    comparison of installation paths used in different deployment methods.
 
 
 ## Creating the Datastore Database
 
-Use a PostgreSQL client to create a database for the datastore; the
-collector, server, and alerter share this database. Use the
-[`psql`](https://www.postgresql.org/docs/18/app-psql.html) client
-to connect to the PostgreSQL server:
+Use a PostgreSQL client to create a database for the datastore; the collector,
+server, and alerter share this database. Use the
+[`psql`](https://www.postgresql.org/docs/18/app-psql.html) client to connect to
+the PostgreSQL server:
 
 ```bash
 sudo -u postgres psql
@@ -78,21 +77,21 @@ CREATE USER ai_workbench WITH PASSWORD '1safepassword';
 GRANT ALL PRIVILEGES ON DATABASE ai_workbench TO ai_workbench;
 ```
 
-The collector creates the required schema tables automatically on the
-first startup.
+The collector creates the required schema tables automatically on the first
+startup.
 
 !!! hint
 
-    You can use `\q` to exit the `psql` client session and return to the 
+    You can use `\q` to exit the `psql` client session and return to the
     terminal window.
 
 
 ## Creating a Server Secret and a Password File
 
-The Workbench components use the server secret file and password file when
-they connect and authenticate with other components and the datastore
-database. The Workbench stores both files in the `/etc/pgedge` directory;
-the complete paths are:
+The Workbench components use the server secret file and password file when they
+connect and authenticate with other components and the datastore database. The
+Workbench stores both files in the `/etc/pgedge` directory; the complete paths
+are:
 
 - The shared secret resides at `/etc/pgedge/server.secret`.
 
@@ -106,8 +105,8 @@ directory; the directory may already exist for configuration files, so
 sudo mkdir -p /etc/pgedge
 ```
 
-Then, use the `openssl` command to write a secret to the
-`server.secret` file in the `/etc/pgedge` directory:
+Then, use the `openssl` command to write a secret to the `server.secret` file
+in the `/etc/pgedge` directory:
 
 ```bash
 sudo openssl rand -base64 32 \
@@ -116,8 +115,8 @@ sudo openssl rand -base64 32 \
 sudo chmod 600 /etc/pgedge/server.secret
 ```
 
-Then, use the `echo` and `chmod` commands to create the `password.txt`
-file in the `/etc/pgedge` directory and set the file permissions:
+Then, use the `echo` and `chmod` commands to create the `password.txt` file in
+the `/etc/pgedge` directory and set the file permissions:
 
 ```bash
 sudo sh -c 'echo "1safepassword" > /etc/pgedge/password.txt'
@@ -126,17 +125,17 @@ sudo chmod 600 /etc/pgedge/password.txt
 
 !!! hint
 
-    When you configure your installation, ensure that the locations of
-    the `server.secret` and `password.txt` files match the
-    absolute file paths in each YAML configuration files.
+    When you configure your installation, ensure that the locations of the
+    `server.secret` and `password.txt` files match the absolute file paths in
+    each YAML configuration files.
 
 
 ## Creating the admin User and SQLite Database
 
 The Workbench uses a SQLite database to store authentication and management
-details. Create the database and add an `admin` user account (this account
-will be used when connecting to the Workbench client) before editing the
-configuration files. 
+details. Create the database and add an `admin` user account (this account will
+be used when connecting to the Workbench client) before editing the
+configuration files.
 
 In the following example, the `mkdir`, `chown`, and `ai-dba-server` commands
 create the directory and add a user; the `-data-dir` flag places the `auth.db`
@@ -151,8 +150,8 @@ sudo chown -R $USER:$USER /var/lib/ai-workbench/data
 ```
 
 The command prompts for a password and optional user details; this password
-will be used when connecting to the Workbench client, and must include at
-least one capital letter, one digit, and one special character:
+will be used when connecting to the Workbench client, and must include at least
+one capital letter, one digit, and one special character:
 
 ```bash
 /opt/ai-workbench/ai-dba-server -add-user -username admin -data-dir /var/lib/ai-workbench/data
@@ -174,9 +173,8 @@ Status:   Enabled
 ======================================================================
 ```
 
-Then, grant superuser status to the admin account. In the following
-example, the `-set-superuser` flag promotes the `admin` user to
-superuser:
+Then, grant superuser status to the admin account. In the following example,
+the `-set-superuser` flag promotes the `admin` user to superuser:
 
 ```bash
 /opt/ai-workbench/ai-dba-server \
@@ -198,15 +196,15 @@ User 'admin' is now a superuser
 
 ## Configuring and Starting the Collector
 
-Sample configuration files are available for download from the [GitHub
-repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
+Sample configuration files are available for download from the
+[GitHub repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
 The following command downloads the sample Collector configuration file:
 
 ```bash
 curl -L -o ~/Downloads/ai-dba-collector.yaml https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/ai-dba-collector.yaml
 ```
 
-Then, copy the sample Collector configuration file from `Downloads` to 
+Then, copy the sample Collector configuration file from `Downloads` to
 `/etc/pgedge`:
 
 ```bash
@@ -241,8 +239,8 @@ configuration file:
 /opt/ai-workbench/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml &
 ```
 
-The collector displays startup messages to confirm successful
-initialization; for example:
+The collector displays startup messages to confirm successful initialization;
+for example:
 
 ```bash
 /opt/ai-workbench/ai-dba-collector -config /etc/pgedge/ai-dba-collector.yaml
@@ -253,13 +251,12 @@ initialization; for example:
 2026/05/19 13:22:00 Collector is running. Press Ctrl+C to stop.
 ```
 
-The collector runs as a background service; press `Enter` to view your
-prompt.
+The collector runs as a background service; press `Enter` to view your prompt.
 
 
 ## Configuring and Starting the Server
 
-Sample configuration files are available for download from the 
+Sample configuration files are available for download from the
 [GitHub repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
 The following command downloads the file to your `Downloads` directory:
 
@@ -275,8 +272,8 @@ After downloading the sample file, copy the file from `Downloads` to
 sudo cp ~/Downloads/ai-dba-server.yaml /etc/pgedge/ai-dba-server.yaml
 ```
 
-Use your choice of editor to modify the `/etc/pgedge/ai-dba-server.yaml`
-file to describe the deployment. The following changes are the minimum settings
+Use your choice of editor to modify the `/etc/pgedge/ai-dba-server.yaml` file
+to describe the deployment. The following changes are the minimum settings
 required for our installation walkthrough:
 
 ```yaml
@@ -293,13 +290,12 @@ datastore:
 
 !!! note
 
-    You can use either the `password` property or the `password_file`
-    property to specify the password.
+    You can use either the `password` property or the `password_file` property
+    to specify the password.
 
-By default, the server blocks connections to internal and private IP
-addresses. To monitor a PostgreSQL instance on the same host or local
-network, set the `allow_internal_networks` property to `true` in the
-server configuration file:
+By default, the server blocks connections to internal and private IP addresses.
+To monitor a PostgreSQL instance on the same host or local network, set the
+`allow_internal_networks` property to `true` in the server configuration file:
 
 ```yaml
 connection_security:
@@ -371,13 +367,12 @@ Memory management: ENABLED
 RBAC management: ENABLED
 ```
 
-The server runs as a background process; press `Enter` to view your
-prompt.
+The server runs as a background process; press `Enter` to view your prompt.
 
 
 ## Configuring and Starting the Alerter
 
-Sample configuration files are available for download from the 
+Sample configuration files are available for download from the
 [GitHub repository](https://github.com/pgEdge/ai-dba-workbench/tree/main/examples).
 The following command downloads the sample file to your `Downloads` directory:
 
@@ -386,15 +381,15 @@ curl -L -o ~/Downloads/ai-dba-alerter.yaml \
     https://raw.githubusercontent.com/pgEdge/ai-dba-workbench/main/examples/ai-dba-alerter.yaml
 ```
 
-Then, copy the Alerter configuration file from the `Downloads` folder to 
+Then, copy the Alerter configuration file from the `Downloads` folder to
 `/etc/pgedge`:
 
 ```bash
 sudo cp ~/Downloads/ai-dba-alerter.yaml /etc/pgedge/ai-dba-alerter.yaml
 ```
 
-Use your choice of editor to modify the `/etc/pgedge/ai-dba-alerter.yaml`
-file to describe the deployment. The following changes are the minimum settings
+Use your choice of editor to modify the `/etc/pgedge/ai-dba-alerter.yaml` file
+to describe the deployment. The following changes are the minimum settings
 required for our installation walkthrough:
 
 ```yaml
@@ -416,8 +411,8 @@ secret_file: /etc/pgedge/server.secret
 After updating the configuration file, start the alerter; for example:
 
 
-In the following example, the `ai-dba-alerter` command starts the
-alerter with the configuration file:
+In the following example, the `ai-dba-alerter` command starts the alerter with
+the configuration file:
 
 ```bash
 /opt/ai-workbench/ai-dba-alerter -config /etc/pgedge/ai-dba-alerter.yaml &
@@ -446,22 +441,21 @@ Starting alerter engine...
 [alerter] Baseline calculation complete
 ```
 
-The alerter runs as a background process; press `Enter` to view your
-prompt.
+The alerter runs as a background process; press `Enter` to view your prompt.
 
 
 ## Running the Workbench
 
 The server does not include a static file service; install and configure
-[nginx](https://nginx.org/en/docs/) to serve the client files and proxy
-API requests to the server before running the Workbench. Use your choice
-of package manager to install nginx.
+[nginx](https://nginx.org/en/docs/) to serve the client files and proxy API
+requests to the server before running the Workbench. Use your choice of package
+manager to install nginx.
 
 !!! warning "TLS is required"
-    Any network-accessible deployment must terminate TLS in the
-    reverse proxy that fronts the server. The reverse proxy is
-    responsible for TLS termination, HTTP-to-HTTPS redirection, and
-    HSTS. See the [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    Any network-accessible deployment must terminate TLS in the reverse proxy
+    that fronts the server. The reverse proxy is responsible for TLS
+    termination, HTTP-to-HTTPS redirection, and HSTS. See the
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
     for the full operator checklist.
 
 In the following example, the `apt install` command installs nginx:
@@ -470,15 +464,15 @@ In the following example, the `apt install` command installs nginx:
 sudo apt install nginx
 ```
 
-Then, create and open the nginx configuration file; this example uses the
-`vi` command to open the nginx configuration file:
+Then, create and open the nginx configuration file; this example uses the `vi`
+command to open the nginx configuration file:
 
 ```bash
 sudo vi /etc/nginx/sites-available/ai-dba-workbench
 ```
 
-Update the nginx configuration file to set the proxy rules and file root
-for your installation:
+Update the nginx configuration file to set the proxy rules and file root for
+your installation:
 
 ```nginx
 server {
@@ -528,14 +522,13 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-Open a browser and navigate to `http://<server-ip>`; provide
-authentication details when the Workbench opens.
+Open a browser and navigate to `http://<server-ip>`; provide authentication
+details when the Workbench opens.
 
 ![Log in to the AI DBA Workbench](../images/workbench_login.png)
 
-After logging in, select the `+` next to the DATABASE SERVERS heading
-in the left navigation panel. The Workbench adds a new server definition
-entry.
+After logging in, select the `+` next to the DATABASE SERVERS heading in the
+left navigation panel. The Workbench adds a new server definition entry.
 
 ![Adding a server definition](../images/add_server.png)
 
@@ -548,17 +541,17 @@ For detailed information about using the Workbench, see the
 Consult the following guides for additional configuration information:
 
 - The [systemd configuration](../configuration/configure_systemd.md) guide
-  provides details about setting up systemd service management for users
-  who did not use pgEdge packages when installing.
+  provides details about setting up systemd service management for users who
+  did not use pgEdge packages when installing.
 
-- The [collector](../configuration/collector.md) guide covers tuned
-  connection pools and SSL.
+- The [collector](../configuration/collector.md) guide covers tuned connection
+  pools and SSL.
 
 - The [server](../configuration/server.md) guide covers TLS, authentication,
   and LLM integration.
 
-- The [alerter](../configuration/alerter.md) guide covers anomaly detection
-  and notification channels.
+- The [alerter](../configuration/alerter.md) guide covers anomaly detection and
+  notification channels.
 
-- The [web client](../configuration/client.md) guide covers proxy settings
-  and build options.
+- The [web client](../configuration/client.md) guide covers proxy settings and
+  build options.

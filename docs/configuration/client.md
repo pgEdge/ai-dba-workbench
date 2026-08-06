@@ -1,8 +1,8 @@
 # Configuring the Web Client
 
 The pgEdge AI DBA Workbench web client uses Vite as the build tool and
-development server. Configuration covers the development proxy, build
-settings, and runtime behavior.
+development server. Configuration covers the development proxy, build settings,
+and runtime behavior.
 
 
 ## Development Server
@@ -20,21 +20,21 @@ starts.
 
 !!! warning "Localhost only"
     The Vite development server is a developer-only tool that runs on plain
-    HTTP and supports only the loopback interface. Do not expose port
-    `5173` to any network; the development server transmits credentials in
-    cleartext and offers no TLS option. For any network-accessible deployment,
-    build the production bundle and front it with a TLS-terminating reverse
-    proxy as described in the
+    HTTP and supports only the loopback interface. Do not expose port `5173` to
+    any network; the development server transmits credentials in cleartext and
+    offers no TLS option. For any network-accessible deployment, build the
+    production bundle and front it with a TLS-terminating reverse proxy as
+    described in the
     [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md).
 
 ## API Proxy Configuration
 
-The development server proxies all API requests to the MCP server. By
-default, the proxy forwards requests matching the `/api` path prefix to
+The development server proxies all API requests to the MCP server. By default,
+the proxy forwards requests matching the `/api` path prefix to
 `http://localhost:8080`.
 
-The `vite.config.ts` file defines the proxy configuration. In the
-following example, the configuration shows the default proxy settings:
+The `vite.config.ts` file defines the proxy configuration. In the following
+example, the configuration shows the default proxy settings:
 
 ```typescript
 server: {
@@ -51,9 +51,9 @@ server: {
 
 ### Changing the Server Port
 
-If the MCP server runs on a different port, update the `target` value in
-the proxy configuration. In the following example, the proxy forwards
-requests to port 9090:
+If the MCP server runs on a different port, update the `target` value in the
+proxy configuration. In the following example, the proxy forwards requests to
+port 9090:
 
 ```typescript
 proxy: {
@@ -68,9 +68,9 @@ proxy: {
 ### Cookie Forwarding
 
 The proxy automatically forwards cookies between the browser and the MCP
-server. The `cookieDomainRewrite` option ensures cookies work correctly
-across the proxy boundary. The `changeOrigin` option rewrites the request
-origin header to match the target server.
+server. The `cookieDomainRewrite` option ensures cookies work correctly across
+the proxy boundary. The `changeOrigin` option rewrites the request origin
+header to match the target server.
 
 
 ## Build Configuration
@@ -95,11 +95,10 @@ following command:
 npm run build
 ```
 
-The build process generates optimized static files in the `dist`
-directory. The `vite.config.ts` file defines the build configuration.
+The build process generates optimized static files in the `dist` directory. The
+`vite.config.ts` file defines the build configuration.
 
-In the following example, the configuration shows the default build
-settings:
+In the following example, the configuration shows the default build settings:
 
 ```typescript
 build: {
@@ -129,22 +128,21 @@ npm run test:coverage
 
 ### Output Directory
 
-The `outDir` option specifies the directory for the production build
-output. The default value is `dist` relative to the client project root.
+The `outDir` option specifies the directory for the production build output.
+The default value is `dist` relative to the client project root.
 
 ### Source Maps
 
-The `sourcemap` option enables source map generation for the production
-build. Source maps help with debugging deployed applications. Set this
-option to `false` to disable source maps in production.
+The `sourcemap` option enables source map generation for the production build.
+Source maps help with debugging deployed applications. Set this option to
+`false` to disable source maps in production.
 
 
 ## Production Deployment
 
-For production deployments, serve the built files from the `dist`
-directory with a web server such as Nginx or Apache. The MCP server does
-not serve the web client files; deployments require a separate web
-server.
+For production deployments, serve the built files from the `dist` directory
+with a web server such as Nginx or Apache. The MCP server does not serve the
+web client files; deployments require a separate web server.
 
 !!! warning "TLS is required"
     Any network-accessible deployment must terminate TLS in front of the
@@ -155,14 +153,14 @@ server.
 
 ### Nginx Configuration
 
-The following example targets a non-containerized deployment in which
-Nginx runs on the host as the root user and serves the built client files
-directly from disk. The official client container image runs Nginx as a
-non-root user and listens on port 8080; see the Docker deployment guide
-for the container configuration.
+The following example targets a non-containerized deployment in which Nginx
+runs on the host as the root user and serves the built client files directly
+from disk. The official client container image runs Nginx as a non-root user
+and listens on port 8080; see the Docker deployment guide for the container
+configuration.
 
-In the following example, the Nginx configuration serves the web client
-and proxies API, MCP, and health check requests to the server:
+In the following example, the Nginx configuration serves the web client and
+proxies API, MCP, and health check requests to the server:
 
 ```nginx
 server {
@@ -212,10 +210,10 @@ server {
 }
 ```
 
-The `/mcp/` location disables proxy buffering and caching because MCP
-requests may use server-sent events or streaming responses. The `/health`
-location proxies health check requests to the server. The `try_files`
-directive ensures that client-side routing works correctly by falling
-back to `index.html` for all unmatched paths.
+The `/mcp/` location disables proxy buffering and caching because MCP requests
+may use server-sent events or streaming responses. The `/health` location
+proxies health check requests to the server. The `try_files` directive ensures
+that client-side routing works correctly by falling back to `index.html` for
+all unmatched paths.
 
 

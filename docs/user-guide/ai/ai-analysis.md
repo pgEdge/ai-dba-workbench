@@ -12,60 +12,37 @@ AI-powered analysis. The system sends the alert details, server context, and
 historical data to an LLM through an agentic loop. The LLM gathers additional
 context by calling built-in tools before producing the final report.
 
-The AI alert analysis feature provides the following capabilities:
+The AI alert analysis feature provides the following alert-specific
+capabilities:
 
 - The LLM analyzes alert severity, metric values, and threshold configurations.
 - The system gathers historical alert patterns and metric baselines
   automatically.
 - The analysis includes server-specific context such as PostgreSQL version and
   system resources.
-- Users can execute suggested SQL queries directly from the analysis report.
-- The system caches analysis results to avoid redundant LLM calls.
+
+For how the general analysis mechanic works, including SQL execution and result
+caching, see
+[Using AI-Powered Object Analysis](index.md#using-ai-powered-object-analysis).
 
 ## Triggering an Analysis
 
 The status panel displays a brain icon beside each alert. Clicking the brain
 icon opens the analysis dialog and starts the LLM analysis process.
 
-The analysis follows these steps:
-
-1. The system checks for a cached analysis result.
-2. The system fetches server context from the connection.
-3. The system sends the alert details and context to the LLM.
-4. The LLM calls tools to gather historical data and metric baselines.
-5. The LLM produces a structured analysis report.
+The alert analysis follows the same check-cache, fetch-context, send-to-LLM,
+gather-more-via-tools, and produce-report pattern described in
+[In-depth Object Analysis](index.md#in-depth-object-analysis), applied
+specifically to alerts.
 
 The dialog displays a loading skeleton while the analysis runs. The final
 report renders as formatted markdown with syntax-highlighted code blocks.
 
 ## Analysis Reports
 
-Each analysis report contains four sections that provide a complete picture of
-the alert and recommended actions.
-
-### Summary
-
-The summary section provides a brief description of the alert and its
-significance. The LLM explains what triggered the alert and why the current
-value is noteworthy.
-
-### Analysis
-
-The analysis section examines historical patterns and correlations. The LLM
-reviews the frequency of similar alerts, compares the current value against
-baselines, and identifies contributing factors.
-
-### Remediation Steps
-
-The remediation section provides a numbered list of specific actions to address
-the issue. Each step includes SQL queries or configuration changes that the
-user can apply.
-
-### Threshold Tuning
-
-The threshold tuning section recommends adjustments when the current threshold
-appears misconfigured. The LLM provides a rationale for the suggested changes
-based on observed metric patterns.
+The alert analysis report contains the same four sections described in
+[In-depth Object Analysis](index.md#in-depth-object-analysis): Summary,
+Analysis, Remediation Steps, and Threshold Tuning.
 
 ## Running SQL Queries
 
@@ -107,8 +84,8 @@ and improve response times.
 
 ### Cache Indicators
 
-A green brain icon indicates that a cached analysis exists for the alert.
-Clicking a green brain icon opens the cached report instantly without calling
+An amber brain icon indicates that a cached analysis exists for the alert.
+Clicking an amber brain icon opens the cached report instantly without calling
 the LLM.
 
 ### Tolerance-Based Invalidation
@@ -127,9 +104,8 @@ close cycles within a session.
 
 ### Downloading Reports
 
-The dialog footer includes a Download button that saves the analysis as a
-markdown file. The downloaded file includes the alert details, the full
-analysis report, and a generation timestamp.
+The same download feature applies here; see
+[Downloading Analysis Reports](index.md#downloading-analysis-reports).
 
 ## Server Context
 
@@ -173,14 +149,9 @@ The analysis includes timeline events to help the LLM correlate alerts with
 recent system changes. The system fetches events from a 24-hour window centered
 on the alert trigger time.
 
-The LLM considers the following event types:
-
-- Configuration changes to PostgreSQL settings.
-- Alert activations and resolutions.
-- Server restarts and recovery events.
-- Extension installations and upgrades.
-- Blackout periods and maintenance windows.
-- Authentication configuration changes.
+The analysis considers the same event types described in
+[In-depth Object Analysis](index.md#in-depth-object-analysis), plus
+authentication configuration changes.
 
 The LLM uses timeline events to identify potential root causes. A configuration
 change shortly before an alert may explain the metric deviation. The LLM notes
@@ -190,14 +161,12 @@ these correlations in the analysis report.
 
 When the server starts without valid LLM credentials, the Workbench
 automatically hides the AI analysis buttons. The alert list displays without
-brain icons, and users can still view, acknowledge, and manage alerts
-normally.
+brain icons, and users can still view, acknowledge, and manage alerts normally.
 
 The alerter component also auto-disables anomaly detection across all three
-tiers when the server has no configured LLM embedding or reasoning
-providers. Disabling anomaly detection prevents noise from raw statistical
-detection. The alerter
-logs the following message at startup when this occurs:
+tiers when the server has no configured LLM embedding or reasoning providers.
+Disabling anomaly detection prevents noise from raw statistical detection. The
+alerter logs the following message at startup when this occurs:
 
 ```
 Anomaly detection auto-disabled: no LLM providers
@@ -205,12 +174,3 @@ available
 ```
 
 Threshold-based alerting continues to operate normally without AI.
-
-## Related Documentation
-
-- [Monitoring Alerts](../alerts/index.md) describes the alert lifecycle and
-  management features.
-- [Alert Rule Reference](../alerts/rule-reference.md) lists all built-in alert
-  rules and their default thresholds.
-- [Using AI Features](index.md) covers AI-powered summaries of database
-  health.

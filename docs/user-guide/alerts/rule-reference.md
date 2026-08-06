@@ -37,8 +37,7 @@ connection pooler such as PgBouncer instead of increasing the connection limit.
 
 ### Blocked Sessions
 
-This rule alerts when sessions are waiting for locks that other sessions
-hold.
+This rule alerts when sessions are waiting for locks that other sessions hold.
 
 | Property | Value |
 |----------|-------|
@@ -123,8 +122,7 @@ requires the `pg_stat_statements` extension.
 | Default Severity | warning |
 | Required Extension | `pg_stat_statements` |
 
-A high slow query count indicates performance problems that need
-investigation.
+A high slow query count indicates performance problems that need investigation.
 
 ## Replication Rules
 
@@ -200,8 +198,7 @@ This rule alerts when a standby has no active WAL receiver process.
 A disconnected standby is in recovery mode but not receiving WAL from the
 primary. The standby will fall further behind until an administrator restarts
 the WAL receiver and replication resumes. Check the PostgreSQL log on the
-standby for connection errors and verify that the primary server is
-accessible.
+standby for connection errors and verify that the primary server is accessible.
 
 ### Subscription Worker Down
 
@@ -352,8 +349,8 @@ This rule alerts when temporary file creation exceeds the threshold.
 | Default Threshold | 10 |
 | Default Severity | warning |
 
-PostgreSQL creates temporary files when `work_mem` is insufficient for sort
-and hash operations. Consider increasing `work_mem`.
+PostgreSQL creates temporary files when `work_mem` is insufficient for sort and
+hash operations. Consider increasing `work_mem`.
 
 ## System Resource Rules
 
@@ -396,8 +393,8 @@ This rule alerts when the 15-minute load average exceeds the threshold.
 | Default Threshold | 4 |
 | Default Severity | warning |
 
-High system load indicates that the current workload has overloaded the
-server. Investigate the source of the load and consider scaling resources.
+High system load indicates that the current workload has overloaded the server.
+Investigate the source of the load and consider scaling resources.
 
 ## Archive Rules
 
@@ -435,5 +432,5 @@ may be too low for the workload.
 
 Administrators can customize all built-in rules through per-connection
 overrides, which they configure through the admin panel. See the
-[Monitoring Alerts](index.md) documentation for details on the alert
-lifecycle and management.
+[Monitoring Alerts](index.md) documentation for details on the alert lifecycle
+and management.

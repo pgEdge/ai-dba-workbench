@@ -28,21 +28,22 @@
 - Using the Workbench:
   - [Using the Workbench](docs/user-guide/index.md)
   - Reviewing Dashboards:
-    - [Reviewing Workbench Dashboards](docs/user-guide/dashboards/index.md)
+    - [Dashboard Overview](docs/user-guide/dashboards/index.md)
     - [Estate Dashboard](docs/user-guide/dashboards/estate.md)
     - [Server Dashboard](docs/user-guide/dashboards/server.md)
     - [Cluster Dashboard](docs/user-guide/dashboards/cluster.md)
     - [Reviewing Database Details](docs/user-guide/dashboards/database.md)
     - [Reviewing Object Details](docs/user-guide/dashboards/object.md)
   - Using AI Features:
-    - [Enabling AI Features](docs/user-guide/ai/index.md)
+    - [AI Feature Overview](docs/user-guide/ai/index.md)
+    - [Enabling AI Mode](docs/user-guide/ai/enabling_ai.md)
+    - [Ask Ellie](docs/user-guide/ai/ask-ellie.md)
     - [Using the AI Chart Analysis Feature](docs/user-guide/ai/chart-analysis.md)
     - [AI Alert Analysis](docs/user-guide/ai/ai-analysis.md)
-    - [Ask Ellie](docs/user-guide/ai/ask-ellie.md)
     - [Connecting MCP Clients](docs/user-guide/ai/mcp-clients.md)
     - [Using Workbench with MCP Tools](docs/user-guide/ai/mcp-tools.md)
   - Managing Alerts:
-    - [Monitoring Alerts](docs/user-guide/alerts/index.md)
+    - [Alerts Overview](docs/user-guide/alerts/index.md)
     - [Alert Reference](docs/user-guide/alerts/rule-reference.md)
     - [Managing Blackouts](docs/user-guide/alerts/blackouts.md)
 - Troubleshooting:

@@ -1,41 +1,37 @@
 # Server Information
 
-The Server Information API provides comprehensive
-details about a monitored PostgreSQL server and the
-host system. The API aggregates data from collector
+The Server Information API provides comprehensive details about a monitored
+PostgreSQL server and the host system. The API aggregates data from collector
 metrics into a single response for each connection.
 
 ## Overview
 
-The Server Information feature provides the following
-capabilities:
+The Server Information feature provides the following capabilities:
 
-- The API returns system hardware details including
-  CPU, memory, and disk information.
-- The API includes PostgreSQL configuration such as
-  version, cluster name, and connection limits.
-- The response lists all databases with sizes,
-  encodings, and installed extensions.
-- The API returns 16 curated PostgreSQL configuration
-  settings for quick review.
-- An optional AI analysis endpoint describes the
-  likely purpose of each database.
+- The API returns system hardware details including CPU, memory, and disk
+  information.
+- The API includes PostgreSQL configuration such as version, cluster name, and
+  connection limits.
+- The response lists all databases with sizes, encodings, and installed
+  extensions.
+- The API returns 16 curated PostgreSQL configuration settings for quick
+  review.
+- An optional AI analysis endpoint describes the likely purpose of each
+  database.
 
 ## Authentication
 
-Both endpoints require a valid Bearer token in the
-`Authorization` header. The server enforces RBAC
-access checks on the specified connection. The server
-returns a `403 Forbidden` response when the
-authenticated user lacks access to the connection.
+Both endpoints require a valid Bearer token in the `Authorization` header. The
+server enforces RBAC access checks on the specified connection. The server
+returns a `403 Forbidden` response when the authenticated user lacks access to
+the connection.
 
-For authentication details, see
-[Authentication](../authentication.md).
+For authentication details, see [Authentication](../authentication.md).
 
 ## Server Information Endpoint
 
-The server information endpoint returns system and
-PostgreSQL details for a single connection.
+The server information endpoint returns system and PostgreSQL details for a
+single connection.
 
 ### Endpoint
 
@@ -55,9 +51,8 @@ The following table describes the path parameters:
 
 ### Response
 
-The server returns a JSON object containing system
-information, PostgreSQL configuration, databases, and
-key settings. The following table describes the
+The server returns a JSON object containing system information, PostgreSQL
+configuration, databases, and key settings. The following table describes the
 top-level response fields:
 
 | Field | Type | Description |
@@ -72,8 +67,7 @@ top-level response fields:
 
 ### System Object
 
-The following table describes the fields in the
-`system` object:
+The following table describes the fields in the `system` object:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -94,8 +88,7 @@ The following table describes the fields in the
 
 ### PostgreSQL Object
 
-The following table describes the fields in the
-`postgresql` object:
+The following table describes the fields in the `postgresql` object:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -108,8 +101,7 @@ The following table describes the fields in the
 
 ### Database Object
 
-The following table describes the fields in each
-`databases` array entry:
+The following table describes the fields in each `databases` array entry:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -119,13 +111,11 @@ The following table describes the fields in each
 | `connection_limit` | integer | The per-database connection limit. |
 | `extensions` | array | The list of extension names installed in the database. |
 
-The response excludes the `template0` and `template1`
-system databases.
+The response excludes the `template0` and `template1` system databases.
 
 ### Extension Object
 
-The following table describes the fields in each
-`extensions` array entry:
+The following table describes the fields in each `extensions` array entry:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -136,8 +126,7 @@ The following table describes the fields in each
 
 ### Setting Object
 
-The following table describes the fields in each
-`key_settings` array entry:
+The following table describes the fields in each `key_settings` array entry:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -167,8 +156,8 @@ The endpoint returns the following 16 curated settings:
 
 ### Example
 
-In the following example, a `curl` command requests
-the server information for connection 1:
+In the following example, a `curl` command requests the server information for
+connection 1:
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
@@ -177,9 +166,8 @@ curl -H "Authorization: Bearer <token>" \
 
 ## AI Analysis Endpoint
 
-The AI analysis endpoint returns LLM-generated
-descriptions of each database on the server. The
-endpoint analyzes database names, sizes, and installed
+The AI analysis endpoint returns LLM-generated descriptions of each database on
+the server. The endpoint analyzes database names, sizes, and installed
 extensions to infer the purpose of each database.
 
 ### Endpoint
@@ -200,31 +188,28 @@ The following table describes the path parameters:
 
 ### Response
 
-The server returns a JSON object with per-database
-descriptions. The following table describes the
-response fields:
+The server returns a JSON object with per-database descriptions. The following
+table describes the response fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `databases` | object | A map of database names to AI-generated descriptions. |
 | `generated_at` | string | The ISO 8601 timestamp when the analysis was generated. |
 
-The server returns `null` when no LLM provider is
-configured. The server also returns `null` when the
-connection has no databases to analyze.
+The server returns `null` when no LLM provider is configured. The server also
+returns `null` when the connection has no databases to analyze.
 
 ### Caching
 
-The server caches AI analysis results for five minutes
-per connection. Subsequent requests within the cache
-window return the cached analysis without calling the
-LLM. The cache refreshes automatically when a request
-arrives after the five-minute window expires.
+The server caches AI analysis results for five minutes per connection.
+Subsequent requests within the cache window return the cached analysis without
+calling the LLM. The cache refreshes automatically when a request arrives after
+the five-minute window expires.
 
 ### Example
 
-In the following example, a `curl` command requests
-the AI analysis for connection 1:
+In the following example, a `curl` command requests the AI analysis for
+connection 1:
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
@@ -245,8 +230,8 @@ The server returns a response similar to the following:
 
 ## Error Responses
 
-Both endpoints return standard error responses. The
-following table describes the possible error statuses:
+Both endpoints return standard error responses. The following table describes
+the possible error statuses:
 
 | Status | Meaning |
 |--------|---------|
@@ -257,19 +242,10 @@ following table describes the possible error statuses:
 
 ## Configuration
 
-The server information endpoint requires the collector
-to be gathering metrics for the specified connection.
-The endpoint returns empty fields when the collector
-has not yet gathered data for a metric category.
+The server information endpoint requires the collector to be gathering metrics
+for the specified connection. The endpoint returns empty fields when the
+collector has not yet gathered data for a metric category.
 
-The AI analysis endpoint requires an LLM provider to
-be configured in the server settings. For LLM provider
-setup instructions, see
+The AI analysis endpoint requires an LLM provider to be configured in the
+server settings. For LLM provider setup instructions, see
 [Server Configuration](../../configuration/server.md).
-
-## Related Documentation
-
-- [Connections](../connections.md) describes how to
-  manage database connections.
-- [Metrics](metrics.md) documents the metrics
-  collection endpoints.

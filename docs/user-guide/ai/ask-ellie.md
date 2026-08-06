@@ -22,9 +22,8 @@ The Ask Ellie feature provides the following capabilities:
   timeline.
 - The assistant stores and recalls persistent memories across conversations.
 
-The Workbench's AI features are available only when the server has a
-configured LLM provider. See
-[Enabling AI Mode](index.md#enabling-ai-mode) for configuration details.
+The Workbench's AI features are available only when the server has a configured
+LLM provider. See [Enabling AI Mode](enabling_ai.md) for configuration details.
 
 ## Opening the Chat
 
@@ -153,8 +152,8 @@ panel.
 
 The server automatically includes a pinned memory in every conversation by
 appending it to the system prompt, so Ellie always has access to the pinned
-content. Use pinned memories for critical information that should inform
-every response.
+content. Use pinned memories for critical information that should inform every
+response.
 
 ### Memory Tools
 
@@ -218,8 +217,8 @@ user-scoped memories and shared system-scoped memories.
 
 The panel provides the following actions:
 
-- Toggle the pinned switch to control whether the server automatically
-  includes a memory in every conversation.
+- Toggle the pinned switch to control whether the server automatically includes
+  a memory in every conversation.
 - Delete memories that you no longer need using the delete button.
 
 Deleting system-scoped memories requires the `store_system_memory` admin
@@ -228,14 +227,7 @@ permission.
 ## Running Without AI
 
 When the server starts without valid LLM credentials, the Workbench
-automatically hides the Ask Ellie chat button and panel. The web client
-detects the server's
-capabilities at startup and removes all chat UI elements. Users do not see any
-error or disabled state; the chat feature is simply absent from the interface.
-
-## Related Documentation
-
-- [Using AI Features](index.md) covers AI-powered summaries of database health
-  and status.
-- [AI Alert Analysis](ai-analysis.md) describes the AI analysis
-  feature for individual alerts.
+automatically hides the Ask Ellie chat button and panel. The web client detects
+the server's capabilities at startup and removes all chat UI elements. Users do
+not see any error or disabled state; the chat feature is simply absent from the
+interface.

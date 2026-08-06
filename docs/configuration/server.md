@@ -38,7 +38,8 @@ pkill -f ai-dba-server
 !!! hint
 
     Docker Compose deployments use a dedicated `restart` subcommand instead;
-    see [Docker Deployment](../getting-started/docker.md#server-cannot-connect-to-the-database)
+    see
+    [Docker Deployment](../getting-started/docker.md#server-cannot-connect-to-the-database)
     for details.
 
 If you have made configuration changes that require only a reload, you can use
@@ -74,8 +75,8 @@ by functionality:
 
 ### General Options
 
-The general options set the configuration file path, debug logging, the
-data directory, and the trace file.
+The general options set the configuration file path, debug logging, the data
+directory, and the trace file.
 
 | Flag | Description |
 |------|-------------|
@@ -86,8 +87,8 @@ data directory, and the trace file.
 
 ### HTTP Server Options
 
-The HTTP server options configure the listen address and TLS
-certificate files for encrypted connections.
+The HTTP server options configure the listen address and TLS certificate files
+for encrypted connections.
 
 | Flag | Description |
 |------|-------------|
@@ -99,8 +100,8 @@ certificate files for encrypted connections.
 
 ### Database Connection Options
 
-The database connection options set the host, port, credentials, and SSL
-mode for the PostgreSQL connection.
+The database connection options set the host, port, credentials, and SSL mode
+for the PostgreSQL connection.
 
 | Flag | Description |
 |------|-------------|
@@ -114,8 +115,8 @@ mode for the PostgreSQL connection.
 
 ### Token Management Options
 
-Use the token management options to create, remove, list, and annotate
-service tokens.
+Use the token management options to create, remove, list, and annotate service
+tokens.
 
 | Flag | Description |
 |------|-------------|
@@ -128,8 +129,8 @@ service tokens.
 
 ### User Management Options
 
-The user management options add, update, delete, enable, and disable
-user and service accounts.
+The user management options add, update, delete, enable, and disable user and
+service accounts.
 
 | Flag | Description |
 |------|-------------|
@@ -148,8 +149,8 @@ user and service accounts.
 
 ### Group Management Options
 
-The group management options create, delete, and list RBAC groups, and
-manage group membership and superuser status.
+The group management options create, delete, and list RBAC groups, and manage
+group membership and superuser status.
 
 | Flag | Description |
 |------|-------------|
@@ -185,8 +186,8 @@ privileges and connection access levels.
 
 ### Token Scope Options
 
-The token scope options set, clear, and display the connections and
-tools a service token can access.
+The token scope options set, clear, and display the connections and tools a
+service token can access.
 
 | Flag | Description |
 |------|-------------|
@@ -202,9 +203,9 @@ tools a service token can access.
 ## Using Environment Variables to Specify Server Properties
 
 The server reads environment variables at startup; those server properties
-specified in an environment variable are overridden by properties
-specified on the command line, but take precedence over properties written in
-a configuration file. The server supports the following variables:
+specified in an environment variable are overridden by properties specified on
+the command line, but take precedence over properties written in a
+configuration file. The server supports the following variables:
 
 - [`PGEDGE_POSTGRES_CONNECTION_STRING`](#pgedge_postgres_connection_string)
 - [`PGEDGE_DB_LOG_LEVEL`](#pgedge_db_log_level)
@@ -301,11 +302,10 @@ the following order:
 !!! note
 
     If `-config` is set and the file is missing, the server exits with an
-    error. If `-config` is not set and none of the default locations contain
-    a configuration file, the server uses built-in defaults silently. The
-    server does not search the binary directory or the current working
-    directory. 
-    
+    error. If `-config` is not set and none of the default locations contain a
+    configuration file, the server uses built-in defaults silently. The server
+    does not search the binary directory or the current working directory.
+
     The same search paths apply to `secret_file` discovery for
     `ai-dba-server.secret`; however, secret discovery is not silent. If no
     `secret_file` is set in the YAML and no `ai-dba-server.secret` file is
@@ -314,8 +314,8 @@ the following order:
 
 ### HTTP Server Properties
 
-The HTTP server properties configure the listener address, TLS
-certificates, and authentication rate limiting.
+The HTTP server properties configure the listener address, TLS certificates,
+and authentication rate limiting.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -373,8 +373,8 @@ database connections.
 
 ### Database Properties
 
-The database properties configure the PostgreSQL connection and
-connection pool for the server's datastore.
+The database properties configure the PostgreSQL connection and connection pool
+for the server's datastore.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -569,7 +569,9 @@ memory:
 ```
 
 The `PGEDGE_MEMORY_ENABLED` environment variable can also control this setting;
-see [Environment Variables](#using-environment-variables-to-specify-server-properties) for details.
+see
+[Environment Variables](#using-environment-variables-to-specify-server-properties)
+for details.
 
 ### Built-in Features Properties
 
@@ -628,8 +630,8 @@ builtins:
 
 ### Paths and Directories
 
-These properties configure filesystem paths for secrets, custom
-prompts, persistent data, and tracing.
+These properties configure filesystem paths for secrets, custom prompts,
+persistent data, and tracing.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|

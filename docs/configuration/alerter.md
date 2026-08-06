@@ -1,8 +1,8 @@
 # Configuring the Alerter
 
-The pgEdge AI DBA Workbench Alerter supports configuration through YAML
-files and command-line flags. The alerter applies configuration settings
-in the following order; later sources override earlier ones:
+The pgEdge AI DBA Workbench Alerter supports configuration through YAML files
+and command-line flags. The alerter applies configuration settings in the
+following order; later sources override earlier ones:
 
 1. Default values built into the application.
 2. Configuration file settings (YAML format).
@@ -438,16 +438,16 @@ following command-line flags:
 | `-db-password` | Database password | None |
 | `-db-sslmode` | Database SSL mode | None |
 
-In the following example, the alerter starts with debug logging and a
-custom configuration file:
+In the following example, the alerter starts with debug logging and a custom
+configuration file:
 
 ```bash
 ./ai-dba-alerter -debug \
     -config /etc/ai-workbench/alerter.yaml
 ```
 
-In the following example, the alerter connects to a specific database
-without a configuration file:
+In the following example, the alerter connects to a specific database without a
+configuration file:
 
 ```bash
 ./ai-dba-alerter \

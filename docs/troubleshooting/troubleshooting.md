@@ -5,8 +5,7 @@ Workbench.
 
 ## Troubleshooting Collector Issues
 
-The following sections describe common error messages and corrective
-steps.
+The following sections describe common error messages and corrective steps.
 
 ### "Configuration file not found"
 
@@ -30,13 +29,12 @@ This error indicates that the pool size exceeds the database limit.
 
 - Reduce `datastore_max_connections` to a lower value.
 - Reduce `max_connections_per_server` to a lower value.
-- Check the PostgreSQL `max_connections` setting on the target
-  servers.
+- Check the PostgreSQL `max_connections` setting on the target servers.
 
 ### "Connection timeout"
 
-This error indicates that connections are not available within the
-configured wait period.
+This error indicates that connections are not available within the configured
+wait period.
 
 - Increase the `*_max_wait_seconds` values.
 - Increase the pool sizes for the affected component.

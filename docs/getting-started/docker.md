@@ -1,48 +1,46 @@
 # Docker Deployment
 
-Docker provides a straightforward way to deploy all four services of the
-pgEdge AI DBA Workbench using pre-built container images for production or
-built from source for development.
+Docker provides a straightforward way to deploy all four services of the pgEdge
+AI DBA Workbench using pre-built container images for production or built from
+source for development.
 
 ## Prerequisites
 
 Install the following software before continuing.
 
-- [Docker Engine](https://docs.docker.com/engine/install/) version 24.0
-  or later is required.
-- The [Docker Compose v2](https://docs.docker.com/compose/install/)
-  plugin must be available as a Docker CLI plugin.
-- [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
-  is required to clone the repository in the installation steps.
-- [OpenSSL](https://www.openssl.org/source/) is required to generate the
-  shared secret file; OpenSSL is pre-installed on most Linux and macOS
-  systems.
+- [Docker Engine](https://docs.docker.com/engine/install/) version 24.0 or
+  later is required.
+- The [Docker Compose v2](https://docs.docker.com/compose/install/) plugin must
+  be available as a Docker CLI plugin.
+- [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) is
+  required to clone the repository in the installation steps.
+- [OpenSSL](https://www.openssl.org/source/) is required to generate the shared
+  secret file; OpenSSL is pre-installed on most Linux and macOS systems.
 
-Access to the GitHub Container Registry is required for pulling
-pre-built production images.
+Access to the GitHub Container Registry is required for pulling pre-built
+production images.
 
 
 ## Installing Workbench with Docker
 
-The quickest way to deploy uses pre-built images from the GitHub
-Container Registry.
+The quickest way to deploy uses pre-built images from the GitHub Container
+Registry.
 
 !!! warning "Add TLS before exposing the deployment"
-    The default Compose configuration publishes the client container
-    on plain HTTP at `http://localhost:3000` for first-run
-    convenience. Any deployment reachable from a network other than
-    the host loopback must terminate TLS in front of the client
-    container. Place an external reverse proxy (or TLS sidecar) in
-    front of the published port, configure HTTP-to-HTTPS redirection
-    and HSTS on the proxy, and restrict the published port to the
-    proxy. See the [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
+    The default Compose configuration publishes the client container on plain
+    HTTP at `http://localhost:3000` for first-run convenience. Any deployment
+    reachable from a network other than the host loopback must terminate TLS in
+    front of the client container. Place an external reverse proxy (or TLS
+    sidecar) in front of the published port, configure HTTP-to-HTTPS
+    redirection and HSTS on the proxy, and restrict the published port to the
+    proxy. See the
+    [TLS and reverse proxy requirements](../admin-guide/tls-and-reverse-proxy.md)
     for the full operator checklist.
 
 1. Clone the repository to obtain the configuration files.
 
-    In the following example, the `git clone` command retrieves the
-    project repository; the `cd` command then enters the project
-    directory.
+In the following example, the `git clone` command retrieves the project
+repository; the `cd` command then enters the project directory.
 
     ```bash
     git clone \
@@ -52,8 +50,8 @@ Container Registry.
 
 2. Generate the required secret files for the server and the database.
 
-    In the following example, the `openssl` command creates a random
-    secret key and writes the PostgreSQL password to a secret file.
+In the following example, the `openssl` command creates a random secret key and
+writes the PostgreSQL password to a secret file.
 
     ```bash
     mkdir -p docker/secret
@@ -61,21 +59,20 @@ Container Registry.
     echo '1safePassword!' > docker/secret/pg-password
     ```
 
-3. Set the database password in the `POSTGRES_PASSWORD` environment
-   variable.
+3. Set the database password in the `POSTGRES_PASSWORD` environment variable.
 
-    In the following example, the `export` command sets the database
-    password used by the Workbench.
+In the following example, the `export` command sets the database password used
+by the Workbench.
 
     ```bash
     export POSTGRES_PASSWORD=1safePassword!
     ```
 
-4. Update the password in the `ai-dba-server.yaml` configuration file
-   to match the PostgreSQL password set in the previous step.
+4. Update the password in the `ai-dba-server.yaml` configuration file to match
+   the PostgreSQL password set in the previous step.
 
-    In the following example, the `sed` command replaces the default
-    password value in the server configuration file.
+In the following example, the `sed` command replaces the default password value
+in the server configuration file.
 
     ```bash
     sed -i 's/password: postgres/password: 1safePassword!/' \
@@ -84,15 +81,15 @@ Container Registry.
 
 5. Start all of the services using the production Compose file.
 
-    In the following example, the `docker compose` command starts the
-    services in detached mode.
+In the following example, the `docker compose` command starts the services in
+detached mode.
 
     ```bash
     docker compose \
       -f examples/docker-compose.production.yml up -d
     ```
 
-    The output from a healthy cluster resembles the following.
+The output from a healthy cluster resembles the following.
 
     ```text
     [+] up 8/8
@@ -114,7 +111,7 @@ Container Registry.
       -f examples/docker-compose.production.yml ps
     ```
 
-    The output from a healthy cluster resembles the following.
+The output from a healthy cluster resembles the following.
 
     ```text
     NAME                   IMAGE                                               COMMAND                  SERVICE     CREATED          STATUS                     PORTS
@@ -125,11 +122,11 @@ Container Registry.
     examples-server-1      ghcr.io/pgedge/ai-dba-server:latest                 "/usr/local/bin/ai-d…"   server      13 minutes ago   Up 10 minutes (healthy)    0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
     ```
 
-7. Create a user account for the Workbench. The password must be at
-   least 12 characters long.
+7. Create a user account for the Workbench. The password must be at least 12
+   characters long.
 
-    In the following example, the `exec` subcommand creates a user
-    named `admin` inside the server container.
+In the following example, the `exec` subcommand creates a user named `admin`
+inside the server container.
 
     ```bash
     echo '1safePassword!' > /tmp/pw.txt
@@ -155,8 +152,8 @@ Container Registry.
     rm /tmp/pw.txt
     ```
 
-    The server prompts for optional notes and then confirms the user
-    creation. The confirmation output resembles the following.
+The server prompts for optional notes and then confirms the user creation. The
+confirmation output resembles the following.
 
     ```text
     Auth store: /data/auth.db
@@ -173,10 +170,9 @@ Container Registry.
     ======================================================================
     ```
 
-8. Open a browser and navigate to `http://localhost:3000` to access
-   the web client. Select the `+` icon to the right of the DATABASE
-   SERVERS label; then add the connection details for the PostgreSQL
-   database you wish to monitor.
+8. Open a browser and navigate to `http://localhost:3000` to access the web
+   client. Select the `+` icon to the right of the DATABASE SERVERS label; then
+   add the connection details for the PostgreSQL database you wish to monitor.
 
 ![Adding a server definition](../images/add_server.png)
 
@@ -184,8 +180,8 @@ Container Registry.
 ## Docker Image Variants
 
 Pre-built images are published to the GitHub Container Registry for each
-release and for each push to the `main` branch. The following table
-lists the available images and their tags.
+release and for each push to the `main` branch. The following table lists the
+available images and their tags.
 
 | Image | Tags | Description |
 |-------|------|-------------|
@@ -207,24 +203,24 @@ tag types:
 Select a tag by setting the `VERSION` environment variable before running
 `docker compose`.
 
-In the following example, the `VERSION` variable pins the deployment to
-an exact release.
+In the following example, the `VERSION` variable pins the deployment to an
+exact release.
 
 ```bash
 VERSION=1.2.3 docker compose \
   -f examples/docker-compose.production.yml up -d
 ```
 
-In the following example, the `VERSION` variable pins to a minor version
-and receives automatic patch updates.
+In the following example, the `VERSION` variable pins to a minor version and
+receives automatic patch updates.
 
 ```bash
 VERSION=1.2 docker compose \
   -f examples/docker-compose.production.yml up -d
 ```
 
-In the following example, the `VERSION` variable selects the latest
-main-branch build.
+In the following example, the `VERSION` variable selects the latest main-branch
+build.
 
 ```bash
 VERSION=edge docker compose \
@@ -239,13 +235,13 @@ The `docker/config/` directory contains configuration files for each service.
   [Server Configuration](../configuration/server.md) for details.
 - The `ai-dba-collector.yaml` file configures the metrics collector; see
   [Collector Configuration](../configuration/collector.md) for details.
-- The `ai-dba-alerter.yaml` file configures the alert monitoring service;
-  see [Configuring the Alerter](../configuration/alerter.md) for details.
+- The `ai-dba-alerter.yaml` file configures the alert monitoring service; see
+  [Configuring the Alerter](../configuration/alerter.md) for details.
 - The `nginx.conf` file configures the reverse proxy for the web client.
 
 The production Compose file mounts these configuration files into the
-containers at runtime. The files in `docker/config/` can be edited to
-customize the deployment.
+containers at runtime. The files in `docker/config/` can be edited to customize
+the deployment.
 
 The Compose files support the following environment variables.
 
@@ -259,8 +255,8 @@ The Compose files support the following environment variables.
 
 ## Development Deployment
 
-The root `docker-compose.yml` file builds all images from source and is
-suited for local development and testing.
+The root `docker-compose.yml` file builds all images from source and is suited
+for local development and testing.
 
 In the following example, the `docker compose` command builds and starts all
 services from source.
@@ -291,8 +287,8 @@ docker compose \
   -f examples/docker-compose.production.yml ps
 ```
 
-The server exposes a health endpoint for external monitoring. In the
-following example, the `curl` command checks the server health:
+The server exposes a health endpoint for external monitoring. In the following
+example, the `curl` command checks the server health:
 
 ```bash
 curl http://localhost:8080/health
@@ -313,8 +309,8 @@ This section covers common deployment issues and their solutions.
 
 ### PostgreSQL Fails to Start
 
-The PostgreSQL container may fail to start if the data directory has
-incorrect permissions; the container logs contain error details.
+The PostgreSQL container may fail to start if the data directory has incorrect
+permissions; the container logs contain error details.
 
 In the following example, the `logs` subcommand displays the PostgreSQL
 container output.
@@ -325,18 +321,18 @@ docker compose \
   logs postgres
 ```
 
-The `POSTGRES_PASSWORD` environment variable must be set before starting
-the services. The PostgreSQL container requires this variable on first
+The `POSTGRES_PASSWORD` environment variable must be set before starting the
+services. The PostgreSQL container requires this variable on first
 initialization.
 
 ### Port Already in Use
 
-The PostgreSQL container binds to port 5432 on the host by default.
-The container fails to start if another service already occupies that
-port; the error message includes the text "port is already allocated."
+The PostgreSQL container binds to port 5432 on the host by default. The
+container fails to start if another service already occupies that port; the
+error message includes the text "port is already allocated."
 
-Setting the `POSTGRES_PORT` environment variable selects a different host
-port. In the following example, the datastore binds to port 5433.
+Setting the `POSTGRES_PORT` environment variable selects a different host port.
+In the following example, the datastore binds to port 5433.
 
 ```bash
 export POSTGRES_PORT=5433
@@ -350,9 +346,9 @@ by service name, so they are unaffected by this change.
 
 ### Server Cannot Connect to the Database
 
-The server may fail to connect if the database has not finished
-initializing. The server container depends on the PostgreSQL health
-check, but network issues can still cause connection delays.
+The server may fail to connect if the database has not finished initializing.
+The server container depends on the PostgreSQL health check, but network issues
+can still cause connection delays.
 
 In the following example, the `restart` subcommand restarts the server
 container.
@@ -363,14 +359,14 @@ docker compose \
   restart server
 ```
 
-The database credentials in the server configuration must match the
-PostgreSQL password. The `docker/config/ai-dba-server.yaml` file and
-the `docker/secret/pg-password` file must contain consistent values.
+The database credentials in the server configuration must match the PostgreSQL
+password. The `docker/config/ai-dba-server.yaml` file and the
+`docker/secret/pg-password` file must contain consistent values.
 
 ### Viewing Logs for All Services
 
-Viewing logs for all services simultaneously helps identify the source
-of a problem.
+Viewing logs for all services simultaneously helps identify the source of a
+problem.
 
 In the following example, the `logs` subcommand streams output from all
 containers.

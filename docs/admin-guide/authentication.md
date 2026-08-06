@@ -1,62 +1,51 @@
 # Authentication
 
-The MCP server includes built-in authentication with two
-methods: API tokens for programmatic access and user
-accounts for interactive authentication.
+The MCP server includes built-in authentication with two methods: API tokens
+for programmatic access and user accounts for interactive authentication.
 
 ## Overview
 
-- API tokens provide long-lived credentials for
-  programmatic access via direct HTTP/HTTPS connections.
-- User accounts provide interactive authentication with
-  session tokens.
+- API tokens provide long-lived credentials for programmatic access via direct
+  HTTP/HTTPS connections.
+- User accounts provide interactive authentication with session tokens.
 - Service accounts enable non-interactive, automated use.
 - Authentication is required in HTTP/HTTPS mode.
-- SHA256 and Bcrypt hashing provides secure credential
-  storage.
-- Token expiration with automatic cleanup manages the
-  token lifecycle.
-- Per-token connection isolation ensures multi-user
-  security.
-- Bearer token authentication uses the HTTP
-  Authorization header.
-- Per-IP rate limiting protects against brute force
-  attacks.
-- Automatic account lockout disables accounts after
-  failed attempts.
+- SHA256 and Bcrypt hashing provides secure credential storage.
+- Token expiration with automatic cleanup manages the token lifecycle.
+- Per-token connection isolation ensures multi-user security.
+- Bearer token authentication uses the HTTP Authorization header.
+- Per-IP rate limiting protects against brute force attacks.
+- Automatic account lockout disables accounts after failed attempts.
 
 ## Authentication Storage
 
-Authentication data is stored in a SQLite database
-(`auth.db`) within the data directory. By default, the
-database resides at `./data/auth.db` relative to the
+Authentication data is stored in a SQLite database (`auth.db`) within the data
+directory. By default, the database resides at `./data/auth.db` relative to the
 server binary.
 
 The auth store contains the following components:
 
-- The users table stores usernames, bcrypt password
-  hashes, service account flags, and superuser status.
-- The tokens table stores API token hashes, expiry
-  dates, and owner references for all token types.
-- The groups table stores named groups for organizing
-  users and assigning permissions.
-- The group members table tracks user and nested group
-  memberships within each group.
-- The token scope tables restrict tokens to specific
-  connections, MCP privileges, and admin permissions.
-- Session tokens use in-memory storage for 24-hour
-  session validity.
+- The users table stores usernames, bcrypt password hashes, service account
+  flags, and superuser status.
+- The tokens table stores API token hashes, expiry dates, and owner references
+  for all token types.
+- The groups table stores named groups for organizing users and assigning
+  permissions.
+- The group members table tracks user and nested group memberships within each
+  group.
+- The token scope tables restrict tokens to specific connections, MCP
+  privileges, and admin permissions.
+- Session tokens use in-memory storage for 24-hour session validity.
 
 ## User Account Management
 
-User accounts provide interactive authentication with
-session-based access. Users authenticate with a username
-and password to receive a 24-hour session token.
+User accounts provide interactive authentication with session-based access.
+Users authenticate with a username and password to receive a 24-hour session
+token.
 
 ### Adding Users
 
-In the following example, the `-add-user` flag starts
-interactive mode:
+In the following example, the `-add-user` flag starts interactive mode:
 
 ```bash
 ./bin/ai-dba-server -add-user
@@ -68,8 +57,7 @@ You will be prompted for the following information:
 - Password (hidden input, with confirmation).
 - Annotation or note (optional).
 
-In the following example, the command creates a user in
-non-interactive mode:
+In the following example, the command creates a user in non-interactive mode:
 
 ```bash
 ./bin/ai-dba-server -add-user \
@@ -80,8 +68,7 @@ non-interactive mode:
 
 ### Listing Users
 
-In the following example, the `-list-users` flag
-displays all user accounts:
+In the following example, the `-list-users` flag displays all user accounts:
 
 ```bash
 ./bin/ai-dba-server -list-users
@@ -102,8 +89,8 @@ charlie         2024-09-01 08:00     2024-10-10 16:45 DISABLED Former
 
 ### Updating Users
 
-In the following examples, the `-update-user` flag
-modifies an existing user account:
+In the following examples, the `-update-user` flag modifies an existing user
+account:
 
 ```bash
 # Interactive update
@@ -122,8 +109,8 @@ modifies an existing user account:
 
 ### Enabling and Disabling Users
 
-In the following examples, the `-disable-user` and
-`-enable-user` flags control account access:
+In the following examples, the `-disable-user` and `-enable-user` flags control
+account access:
 
 ```bash
 # Disable a user account (prevents login)
@@ -135,8 +122,7 @@ In the following examples, the `-disable-user` and
 
 ### Deleting Users
 
-In the following example, the `-delete-user` flag
-removes a user account:
+In the following example, the `-delete-user` flag removes a user account:
 
 ```bash
 # Delete user (with confirmation prompt)
@@ -145,73 +131,60 @@ removes a user account:
 
 ## Password Policy
 
-The server validates every new or updated password
-against a policy aligned with the NIST SP 800-63B
-[Digital Identity Guidelines][nist-800-63b]. The
-server is the authoritative validator; the web
-client mirrors these checks to provide live feedback
-as the user types.
+The server validates every new or updated password against a policy aligned
+with the NIST SP 800-63B [Digital Identity Guidelines][nist-800-63b]. The
+server is the authoritative validator; the web client mirrors these checks to
+provide live feedback as the user types.
 
 [nist-800-63b]: https://pages.nist.gov/800-63-3/sp800-63b.html
 
 ### Length Requirements
 
-The server enforces both a minimum and a maximum
-password length.
+The server enforces both a minimum and a maximum password length.
 
 - A password must contain at least 12 characters.
-- A password must not exceed 72 bytes, which is the
-  hard limit imposed by the bcrypt hashing algorithm.
-- The 72-byte cap matches the byte length rather than
-  the character count; multi-byte UTF-8 characters
-  consume more than one byte each and reduce the
+- A password must not exceed 72 bytes, which is the hard limit imposed by the
+  bcrypt hashing algorithm.
+- The 72-byte cap matches the byte length rather than the character count;
+  multi-byte UTF-8 characters consume more than one byte each and reduce the
   effective character count accordingly.
 
 ### No Composition Rules
 
-The policy intentionally omits character-class
-requirements such as mandatory uppercase, lowercase,
-digit, or special-character mixes. NIST SP 800-63B
-recommends against composition rules because they
-push users toward predictable substitutions like
-`Password123` or `Summer2026!` and reject
-high-entropy passphrases that are easier to remember
-and harder to guess.
+The policy intentionally omits character-class requirements such as mandatory
+uppercase, lowercase, digit, or special-character mixes. NIST SP 800-63B
+recommends against composition rules because they push users toward predictable
+substitutions like `Password123` or `Summer2026!` and reject high-entropy
+passphrases that are easier to remember and harder to guess.
 
 ### Common-Password Dictionary
 
-The server rejects any password that appears in a
-built-in dictionary of approximately 10,000 common
-and breached passwords. Choose a passphrase composed
-of several unrelated words to maximize entropy while
-avoiding entries the dictionary already covers.
+The server rejects any password that appears in a built-in dictionary of
+approximately 10,000 common and breached passwords. Choose a passphrase
+composed of several unrelated words to maximize entropy while avoiding entries
+the dictionary already covers.
 
 ### Rejected Passwords
 
-The server returns a validation error and refuses to
-store any password that fails one of the checks
-below.
+The server returns a validation error and refuses to store any password that
+fails one of the checks below.
 
-- A password shorter than 12 characters is rejected
-  as too short.
-- A password longer than 72 bytes is rejected as too
-  long.
-- A password matching an entry in the common-password
-  dictionary is rejected as too common.
+- A password shorter than 12 characters is rejected as too short.
+- A password longer than 72 bytes is rejected as too long.
+- A password matching an entry in the common-password dictionary is rejected as
+  too common.
 
 ### Examples
 
-The following passphrase satisfies every rule because
-the unrelated words and trailing characters yield
-high entropy without appearing in the dictionary:
+The following passphrase satisfies every rule because the unrelated words and
+trailing characters yield high entropy without appearing in the dictionary:
 
 ```text
 correct-horse-battery-staple-9z
 ```
 
-The next two passwords look strong under traditional
-composition rules, but they follow common patterns
-that frequently appear in password dictionaries;
+The next two passwords look strong under traditional composition rules, but
+they follow common patterns that frequently appear in password dictionaries;
 modern policies treat such passwords as weak:
 
 ```text
@@ -219,30 +192,27 @@ Password123!
 Summer2026!
 ```
 
-The validator rejects these passwords when they match
-the embedded common-password list; otherwise it
-relies on the 12-character minimum to discourage
-short variants. Avoid these patterns even when a
-specific example slips past the dictionary check.
+The validator rejects these passwords when they match the embedded
+common-password list; otherwise it relies on the 12-character minimum to
+discourage short variants. Avoid these patterns even when a specific example
+slips past the dictionary check.
 
 ### Live Strength Feedback
 
-The web client evaluates each keystroke in the
-password field and displays a strength indicator
-alongside any policy violations. The indicator is a
-usability aid; the server independently re-validates
-the password before storing the bcrypt hash.
+The web client evaluates each keystroke in the password field and displays a
+strength indicator alongside any policy violations. The indicator is a
+usability aid; the server independently re-validates the password before
+storing the bcrypt hash.
 
 ## Service Account Management
 
-Service accounts are non-interactive users that
-authenticate exclusively via API tokens. A service
-account cannot log in with a password.
+Service accounts are non-interactive users that authenticate exclusively via
+API tokens. A service account cannot log in with a password.
 
 ### Creating Service Accounts
 
-In the following example, the `-add-service-account`
-flag creates a new service account:
+In the following example, the `-add-service-account` flag creates a new service
+account:
 
 ```bash
 ./bin/ai-dba-server -add-service-account
@@ -258,24 +228,21 @@ You will be prompted for the following information:
 Service accounts share the following characteristics:
 
 - A service account authenticates only via API tokens.
-- Service accounts can be members of groups and receive
-  RBAC privileges just like regular users.
+- Service accounts can be members of groups and receive RBAC privileges just
+  like regular users.
 - Service accounts can hold superuser status.
-- The server rejects password-based login for service
-  accounts.
+- The server rejects password-based login for service accounts.
 
 ## API Token Management
 
-API tokens provide programmatic access for both service
-accounts and regular users. Each token belongs to a
-specific user and inherits the authorization context
-from that user. Superuser status is always determined by
-the owning user account.
+API tokens provide programmatic access for both service accounts and regular
+users. Each token belongs to a specific user and inherits the authorization
+context from that user. Superuser status is always determined by the owning
+user account.
 
 ### Adding Tokens
 
-In the following example, the `-add-token` flag starts
-interactive mode:
+In the following example, the `-add-token` flag starts interactive mode:
 
 ```bash
 ./bin/ai-dba-server -add-token
@@ -287,8 +254,7 @@ You will be prompted for the following information:
 - Annotation or note (optional).
 - Expiry duration (e.g., "30d", "1y", "never").
 
-In the following examples, the command creates tokens in
-non-interactive mode:
+In the following examples, the command creates tokens in non-interactive mode:
 
 ```bash
 # Create token for a user
@@ -338,8 +304,7 @@ The following expiry formats are supported:
 
 ### Listing Tokens
 
-In the following example, the `-list-tokens` flag
-displays all API tokens:
+In the following example, the `-list-tokens` flag displays all API tokens:
 
 ```bash
 ./bin/ai-dba-server -list-tokens
@@ -360,8 +325,8 @@ ID   Hash Prefix        Owner     Super  Svc    Expires          Status
 
 ### Removing Tokens
 
-In the following examples, the `-remove-token` flag
-deletes an API token by its ID or hash prefix:
+In the following examples, the `-remove-token` flag deletes an API token by its
+ID or hash prefix:
 
 ```bash
 # Remove by token ID
@@ -373,130 +338,113 @@ deletes an API token by its ID or hash prefix:
 
 ## Role-Based Access Control (RBAC)
 
-The server enforces access control through groups,
-privileges, and token scopes. Administrators manage
-these settings through the admin panel or the REST API.
+The server enforces access control through groups, privileges, and token
+scopes. Administrators manage these settings through the admin panel or the
+REST API.
 
 ### Groups
 
-Groups organize users and assign shared permissions.
-Each group can contain users, service accounts, or other
-groups. Nested groups inherit the parent group's
-privileges.
+Groups organize users and assign shared permissions. Each group can contain
+users, service accounts, or other groups. Nested groups inherit the parent
+group's privileges.
 
 Administrators assign two types of privileges to groups:
 
-- Connection privileges grant access to monitored
-  database connections with a specified access level.
-- MCP privileges grant access to specific MCP tools
-  such as `query_database` or `get_schema_info`.
+- Connection privileges grant access to monitored database connections with a
+  specified access level.
+- MCP privileges grant access to specific MCP tools such as `query_database` or
+  `get_schema_info`.
 
 ### Admin Permissions
 
-Admin permissions control access to management
-operations in the admin panel and REST API. The system
-defines the following ten admin permissions:
+Admin permissions control access to management operations in the admin panel
+and REST API. The system defines the following ten admin permissions:
 
-- `manage_connections` allows creating, editing, and
-  deleting monitored database connections.
-- `manage_groups` allows creating, editing, and
-  deleting RBAC groups and their memberships.
-- `manage_permissions` allows granting and revoking
-  privileges on groups.
-- `manage_users` allows creating, editing, and
-  deleting user accounts and service accounts.
-- `manage_token_scopes` allows viewing and modifying
-  token scope restrictions.
-- `manage_blackouts` allows creating, editing, and
-  deleting maintenance blackout windows.
-- `manage_probes` allows configuring probe frequency,
-  retention, and enabled state.
-- `manage_alert_rules` allows configuring alert rule
-  defaults and per-connection overrides.
-- `manage_notification_channels` allows creating,
-  editing, and deleting alert notification channels.
-- `store_system_memory` allows storing and deleting
-  system-scoped chat memories visible to all users.
+- `manage_connections` allows creating, editing, and deleting monitored
+  database connections.
+- `manage_groups` allows creating, editing, and deleting RBAC groups and their
+  memberships.
+- `manage_permissions` allows granting and revoking privileges on groups.
+- `manage_users` allows creating, editing, and deleting user accounts and
+  service accounts.
+- `manage_token_scopes` allows viewing and modifying token scope restrictions.
+- `manage_blackouts` allows creating, editing, and deleting maintenance
+  blackout windows.
+- `manage_probes` allows configuring probe frequency, retention, and enabled
+  state.
+- `manage_alert_rules` allows configuring alert rule defaults and
+  per-connection overrides.
+- `manage_notification_channels` allows creating, editing, and deleting alert
+  notification channels.
+- `store_system_memory` allows storing and deleting system-scoped chat memories
+  visible to all users.
 
-Superusers bypass all permission checks and have full
-access to every operation.
+Superusers bypass all permission checks and have full access to every
+operation.
 
 ### Token Scopes
 
-Token scopes restrict a token to a subset of the owning
-user's permissions. A token without scope restrictions
-inherits the full access of the owner. The system
-supports three scope types:
+Token scopes restrict a token to a subset of the owning user's permissions. A
+token without scope restrictions inherits the full access of the owner. The
+system supports three scope types:
 
-- Connection scopes limit the token to specific
-  database connections with a per-connection access
-  level of `read` or `read_write`.
-- MCP privilege scopes limit the token to specific
-  MCP tools.
-- Admin permission scopes limit the token to specific
-  admin operations.
+- Connection scopes limit the token to specific database connections with a
+  per-connection access level of `read` or `read_write`.
+- MCP privilege scopes limit the token to specific MCP tools.
+- Admin permission scopes limit the token to specific admin operations.
 
-The effective access for a scoped token equals the
-intersection of the owner's group-level access and the
-token scope. A token cannot exceed the access level of
-the owner.
+The effective access for a scoped token equals the intersection of the owner's
+group-level access and the token scope. A token cannot exceed the access level
+of the owner.
 
 ### Wildcard Scopes
 
-Each scope type supports a wildcard option that grants
-access to all items of that type:
+Each scope type supports a wildcard option that grants access to all items of
+that type:
 
-- "All Connections" uses `connection_id=0` to match
-  every connection the owner can access.
-- "All MCP Privileges" uses `id=0` to match every MCP
-  privilege the owner holds.
-- "All Admin Permissions" uses `*` to match every admin
-  permission the owner holds.
+- "All Connections" uses `connection_id=0` to match every connection the owner
+  can access.
+- "All MCP Privileges" uses `id=0` to match every MCP privilege the owner
+  holds.
+- "All Admin Permissions" uses `*` to match every admin permission the owner
+  holds.
 
-Wildcard scopes simplify token creation when broad
-access is acceptable.
+Wildcard scopes simplify token creation when broad access is acceptable.
 
 ### Connection Access Levels
 
-Connection privileges and token scopes support two
-access levels:
+Connection privileges and token scopes support two access levels:
 
-- `read` allows read-only queries against the
-  connection.
+- `read` allows read-only queries against the connection.
 - `read_write` allows both read and write operations.
 
-A token scope can further restrict access to `read`
-even when the owning user has `read_write` access
-through group membership. The system always enforces
+A token scope can further restrict access to `read` even when the owning user
+has `read_write` access through group membership. The system always enforces
 the more restrictive level.
 
 ### Admin Panel
 
-The admin panel provides a graphical interface for
-managing RBAC settings. Access the admin panel by
-clicking the Settings gear icon in the web client. The
-panel contains three tabs:
+The admin panel provides a graphical interface for managing RBAC settings.
+Access the admin panel by clicking the Settings gear icon in the web client.
+The panel contains three tabs:
 
-- The Users tab lists all users with expandable rows
-  that show effective permissions including group
-  memberships, connection privileges, MCP privileges,
-  and admin permissions.
-- The Groups tab lists all groups with expandable rows
-  that show members, connection privileges, MCP
+- The Users tab lists all users with expandable rows that show effective
+  permissions including group memberships, connection privileges, MCP
   privileges, and admin permissions.
-- The Tokens tab lists all tokens with expandable rows
-  that show the token scope including connection access
-  levels, MCP privileges, and admin permissions.
+- The Groups tab lists all groups with expandable rows that show members,
+  connection privileges, MCP privileges, and admin permissions.
+- The Tokens tab lists all tokens with expandable rows that show the token
+  scope including connection access levels, MCP privileges, and admin
+  permissions.
 
-The Tokens tab also displays API usage examples with
-sample `curl` commands for common operations.
+The Tokens tab also displays API usage examples with sample `curl` commands for
+common operations.
 
 ## Authentication Flow
 
 ### For Interactive Applications (User Authentication)
 
-1. Authenticate with a username and password using
-   the login API:
+1. Authenticate with a username and password using the login API:
 
    ```bash
    curl -X POST http://localhost:8080/api/v1/auth/login \
@@ -529,12 +477,10 @@ sample `curl` commands for common operations.
 
 ### For Machine-to-Machine (API Tokens)
 
-Create API tokens for service accounts or regular users
-via the server command line. Use the token directly in
-all requests as a Bearer token.
+Create API tokens for service accounts or regular users via the server command
+line. Use the token directly in all requests as a Bearer token.
 
-In the following example, an API token authenticates
-a request:
+In the following example, an API token authenticates a request:
 
 ```bash
 curl -X POST http://localhost:8080/mcp/v1 \
@@ -547,30 +493,23 @@ curl -X POST http://localhost:8080/mcp/v1 \
 
 ### Rate Limiting
 
-The server tracks failed authentication attempts per IP
-address.
+The server tracks failed authentication attempts per IP address.
 
-- The default allows 10 failed attempts per 15-minute
-  window.
-- Rate limiting applies to all authentication
-  endpoints.
-- The server performs automatic cleanup of old attempt
-  records.
+- The default allows 10 failed attempts per 15-minute window.
+- Rate limiting applies to all authentication endpoints.
+- The server performs automatic cleanup of old attempt records.
 
 ### Account Lockout
 
-When a valid username is provided, the server tracks
-failed login attempts.
+When a valid username is provided, the server tracks failed login attempts.
 
 - The default is disabled (0 means no lockout).
-- The `max_failed_attempts_before_lockout` setting
-  controls the threshold.
+- The `max_failed_attempts_before_lockout` setting controls the threshold.
 - An administrator must re-enable locked accounts.
 
 ### Configuration
 
-In the following example, the configuration file sets
-authentication options:
+In the following example, the configuration file sets authentication options:
 
 ```yaml
 http:
@@ -588,8 +527,7 @@ http:
 
 ### Recovering Locked Accounts
 
-In the following example, the `-enable-user` flag
-re-enables a locked account:
+In the following example, the `-enable-user` flag re-enables a locked account:
 
 ```bash
 # Re-enable a locked account (also resets failed attempts)
@@ -600,24 +538,21 @@ re-enables a locked account:
 
 ### Password Security
 
-- Encourage users to choose long passphrases that
-  satisfy the policy described in
-  [Password Policy](#password-policy).
+- Encourage users to choose long passphrases that satisfy the policy described
+  in [Password Policy](#password-policy).
 - Never log or display passwords in output.
 - Always use HTTPS in production environments.
-- Rotate passwords when a credential leak is
-  suspected rather than on a fixed schedule.
+- Rotate passwords when a credential leak is suspected rather than on a fixed
+  schedule.
 
 ### Token Security
 
 - Do not store API tokens in version control.
 - Use environment variables for application secrets.
-- Assign different tokens to different services and
-  users.
+- Assign different tokens to different services and users.
 - Set appropriate expiry times for each token.
 - Regularly audit and remove unused tokens.
-- Use service accounts for automated workflows instead
-  of personal user tokens.
+- Use service accounts for automated workflows instead of personal user tokens.
 
 ### Session Management
 
@@ -628,8 +563,7 @@ re-enables a locked account:
 
 ## Error Responses
 
-The server returns standard HTTP error codes for
-authentication failures.
+The server returns standard HTTP error codes for authentication failures.
 
 | Error Type | JSON Response | HTTP Status |
 |------------|---------------|-------------|
@@ -638,16 +572,13 @@ authentication failures.
 | Expired Token | `{ "error": "Unauthorized" }` | 401 |
 | Rate Limited | `{ "error": "Too many requests" }` | 429 |
 
-The server does not expose specific error details for
-security reasons.
+The server does not expose specific error details for security reasons.
 
 ## Health Endpoint
 
-The `/health` endpoint is always accessible without
-authentication.
+The `/health` endpoint is always accessible without authentication.
 
-In the following example, the `curl` command checks
-server health:
+In the following example, the `curl` command checks server health:
 
 ```bash
 curl http://localhost:8080/health

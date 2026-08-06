@@ -1,8 +1,8 @@
 # Using the Workbench
 
 The pgEdge AI DBA Workbench provides a browser-based interface for monitoring
-and managing PostgreSQL database estates. This section of the guide covers the
-features available to users of the web client.
+and managing PostgreSQL database estates. This guide covers the features
+available to users of the web client.
 
 - [Reviewing Dashboards](dashboards/index.md) describes the monitoring
   dashboard hierarchy and the metrics each level displays.
@@ -17,6 +17,11 @@ prompted, log in with the user credentials provided during installation to
 begin monitoring your PostgreSQL estate.
 
 ![The Workbench Login](../images/workbench_login.png)
+
+After logging in, select the `+` next to the DATABASE SERVERS heading in the
+left navigation panel. The Workbench adds a new server definition entry.
+
+![Adding a server definition](../images/add_server.png)
 
 The Workbench incorporates a number of features that simplify management of
 your database estate. Consistent and intuitive tooling make it easy to navigate

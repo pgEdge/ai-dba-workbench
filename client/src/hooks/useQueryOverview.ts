@@ -139,9 +139,14 @@ export function useQueryOverview(
                     },
                     body: JSON.stringify({
                         messages: [
-                            { role: 'user', content: userMessage },
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: userMessage },
+                                ],
+                            },
                         ],
-                        system: SYSTEM_PROMPT,
+                        system_prompt: SYSTEM_PROMPT,
                     }),
                 });
 

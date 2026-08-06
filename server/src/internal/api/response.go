@@ -14,8 +14,8 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
-	"os"
 
 	"github.com/pgedge/ai-workbench/server/internal/apiconst"
 )
@@ -31,7 +31,12 @@ func RespondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"service-desc\"", apiconst.OpenAPISpecPath))
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to encode JSON response: %v\n", err)
+		// The status line and headers are already flushed, so the client will
+		// receive this status with a truncated or empty body. Log loudly: an
+		// encode failure here (for example an unmarshalable NaN/Inf float that
+		// slipped through upstream sanitization) is a real bug that otherwise
+		// manifests only as a mysterious empty 200 response.
+		log.Printf("[ERROR] RespondJSON: failed to encode response body (status %d): %v", status, err)
 	}
 }
 

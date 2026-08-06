@@ -10,13 +10,17 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 )
 
@@ -318,12 +322,84 @@ func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
 	}
 }
 
+// TestMaybePrintSchemaVersion_Enabled verifies that when the flag is
+// enabled the helper prints exactly the collector's latest schema
+// version (matching database.SchemaManager.LatestVersion) followed by a
+// newline, and reports that the caller should exit early.
+func TestMaybePrintSchemaVersion_Enabled(t *testing.T) {
+	var buf bytes.Buffer
+
+	handled, err := maybePrintSchemaVersion(&buf, true)
+	if err != nil {
+		t.Fatalf("maybePrintSchemaVersion(enabled=true) error = %v, want nil", err)
+	}
+	if !handled {
+		t.Fatal("maybePrintSchemaVersion(enabled=true) = false, want true")
+	}
+
+	want := database.NewSchemaManager().LatestVersion()
+	printed := strings.TrimSpace(buf.String())
+	got, err := strconv.Atoi(printed)
+	if err != nil {
+		t.Fatalf("printed value %q is not an integer: %v", printed, err)
+	}
+	if got != want {
+		t.Errorf("printed version = %d, want %d", got, want)
+	}
+	if buf.String() != strconv.Itoa(want)+"\n" {
+		t.Errorf("output = %q, want %q", buf.String(), strconv.Itoa(want)+"\n")
+	}
+}
+
+// TestMaybePrintSchemaVersion_Disabled verifies that when the flag is
+// not set the helper writes nothing and tells the caller to continue
+// normal startup.
+func TestMaybePrintSchemaVersion_Disabled(t *testing.T) {
+	var buf bytes.Buffer
+
+	handled, err := maybePrintSchemaVersion(&buf, false)
+	if err != nil {
+		t.Errorf("maybePrintSchemaVersion(enabled=false) error = %v, want nil", err)
+	}
+	if handled {
+		t.Error("maybePrintSchemaVersion(enabled=false) = true, want false")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no output, got %q", buf.String())
+	}
+}
+
+// failingWriter is an io.Writer whose Write always fails. It lets the
+// test drive the error path of maybePrintSchemaVersion without needing
+// a real closed file descriptor or broken pipe.
+type failingWriter struct{}
+
+func (failingWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+// TestMaybePrintSchemaVersion_WriteError verifies that a write failure is
+// surfaced to the caller: the helper still reports the request was
+// handled (so main does not fall through to normal startup) but returns
+// the underlying error so main can exit non-zero.
+func TestMaybePrintSchemaVersion_WriteError(t *testing.T) {
+	handled, err := maybePrintSchemaVersion(failingWriter{}, true)
+	if !handled {
+		t.Error("maybePrintSchemaVersion(enabled=true) handled = false, want true")
+	}
+	if err == nil {
+		t.Fatal("maybePrintSchemaVersion(enabled=true) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "write failed") {
+		t.Errorf("error = %v, want it to contain 'write failed'", err)
+	}
+}
+
 func TestWaitForShutdown(t *testing.T) {
-	done := make(chan struct{})
+	got := make(chan os.Signal, 1)
 
 	go func() {
-		waitForShutdown()
-		close(done)
+		got <- waitForShutdown()
 	}()
 
 	// Give the goroutine time to install its signal handler before we
@@ -339,8 +415,10 @@ func TestWaitForShutdown(t *testing.T) {
 	}
 
 	select {
-	case <-done:
-		// ok
+	case sig := <-got:
+		if sig != syscall.SIGTERM {
+			t.Errorf("waitForShutdown returned %v, want SIGTERM", sig)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("waitForShutdown did not return after SIGTERM")
 	}

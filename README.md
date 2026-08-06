@@ -52,10 +52,16 @@
   - [Troubleshooting](docs/troubleshooting/troubleshooting.md)
 - Administrator's Guide:
   - [Administrator's Guide](docs/admin-guide/index.md)
+  - Managing Users and Permissions:
+    - [Understanding the Workbench Permission Model](docs/admin-guide/managing-users-and-permissions/permission_model.md)
+    - [Account Management](docs/admin-guide/managing-users-and-permissions/accounts.md)
+    - [Group Management](docs/admin-guide/managing-users-and-permissions/groups.md)
+    - [Token Management](docs/admin-guide/managing-users-and-permissions/tokens.md)
+    - [Permission Management](docs/admin-guide/managing-users-and-permissions/permission_mgmt.md)
+  - [Enforcing the Password Policy](docs/admin-guide/password.md)
+  - [Connection Management](docs/admin-guide/connections.md)
   - [TLS and Reverse Proxy Requirements](docs/admin-guide/tls-and-reverse-proxy.md)
   - [Verifying the Health of a Component](docs/admin-guide/verify_health.md)
-  - [Authentication](docs/admin-guide/authentication.md)
-  - [Connection Management](docs/admin-guide/connections.md)
   - [Alert Rules](docs/admin-guide/alert-rules.md)
   - [Notification Channels](docs/admin-guide/notification-channels.md)
   - [Probe Management](docs/admin-guide/probes.md)

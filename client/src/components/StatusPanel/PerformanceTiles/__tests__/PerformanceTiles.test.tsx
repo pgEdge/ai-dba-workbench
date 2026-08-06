@@ -111,6 +111,7 @@ describe('PerformanceTiles', () => {
             },
             loading: false,
             error: null,
+            retrying: false,
         });
         mockUseDatabaseCacheHit.mockReturnValue({
             databases: [],

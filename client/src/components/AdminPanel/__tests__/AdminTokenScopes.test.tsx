@@ -426,7 +426,7 @@ describe('AdminTokenScopes', () => {
 
         const mcpListbox = await screen.findByRole('listbox');
         expect(
-            within(mcpListbox).getByRole('option', { name: 'All MCP Privileges' }),
+            within(mcpListbox).getByRole('option', { name: "All the owner's MCP privileges" }),
         ).toBeInTheDocument();
         for (const priv of MCP_PRIVILEGES) {
             expect(
@@ -443,7 +443,7 @@ describe('AdminTokenScopes', () => {
 
         const adminListbox = await screen.findByRole('listbox');
         expect(
-            within(adminListbox).getByRole('option', { name: 'All Admin Permissions' }),
+            within(adminListbox).getByRole('option', { name: "All the owner's admin permissions" }),
         ).toBeInTheDocument();
         for (const label of expectedAdminLabels) {
             expect(
@@ -508,7 +508,7 @@ describe('AdminTokenScopes', () => {
 
         const mcpListbox = await screen.findByRole('listbox');
         expect(
-            within(mcpListbox).getByRole('option', { name: 'All MCP Privileges' }),
+            within(mcpListbox).getByRole('option', { name: "All the owner's MCP privileges" }),
         ).toBeInTheDocument();
         for (const priv of MCP_PRIVILEGES) {
             expect(
@@ -525,7 +525,7 @@ describe('AdminTokenScopes', () => {
 
         const adminListbox = await screen.findByRole('listbox');
         expect(
-            within(adminListbox).getByRole('option', { name: 'All Admin Permissions' }),
+            within(adminListbox).getByRole('option', { name: "All the owner's admin permissions" }),
         ).toBeInTheDocument();
         for (const label of expectedAdminLabels) {
             expect(
@@ -810,12 +810,13 @@ describe('AdminTokenScopes - additional coverage', () => {
         const aliceOption = await screen.findByRole('option', { name: 'alice' });
         await user.click(aliceOption);
 
-        // Confirm the MCP combobox now has the "All MCP Privileges" option.
+        // Confirm the MCP combobox now has the "All the owner's MCP
+        // privileges" option.
         const mcpCombo = await screen.findByRole('combobox', {
             name: /allowed mcp privileges/i,
         });
         await user.click(mcpCombo);
-        await screen.findByRole('option', { name: 'All MCP Privileges' });
+        await screen.findByRole('option', { name: "All the owner's MCP privileges" });
         await user.keyboard('{Escape}');
 
         // Clear the owner via the Autocomplete clear button.
@@ -832,7 +833,7 @@ describe('AdminTokenScopes - additional coverage', () => {
         if (listbox) {
             expect(
                 within(listbox).queryByRole('option', {
-                    name: /All MCP Privileges/,
+                    name: /All the owner's MCP privileges/,
                 }),
             ).not.toBeInTheDocument();
         }
@@ -1099,7 +1100,7 @@ describe('AdminTokenScopes - additional coverage', () => {
         // Click the Name field to take focus away from the multi-select.
         await user.click(screen.getByLabelText(/^Name/i));
 
-        // Add the "All Admin Permissions" wildcard to exercise the _isAll
+        // Add the "All the owner's admin permissions" wildcard to exercise the _isAll
         // mapping path (line 220-221).
         const adminCombo = screen.getByRole('combobox', {
             name: /allowed admin permissions/i,
@@ -1108,7 +1109,7 @@ describe('AdminTokenScopes - additional coverage', () => {
         const adminListbox = await screen.findByRole('listbox');
         await user.click(
             within(adminListbox).getByRole('option', {
-                name: 'All Admin Permissions',
+                name: "All the owner's admin permissions",
             }),
         );
         await user.click(screen.getByLabelText(/^Name/i));
@@ -1134,7 +1135,7 @@ describe('AdminTokenScopes - additional coverage', () => {
         );
     }, 15000);
 
-    it('creates a token with the "All MCP Privileges" wildcard via the _isAll mapping', async () => {
+    it('creates a token with the "All the owner\'s MCP privileges" wildcard via the _isAll mapping', async () => {
         mockApiGet.mockImplementation((url: string) => {
             if (url === '/api/v1/rbac/tokens') {
                 return Promise.resolve({ tokens: [] });
@@ -1185,7 +1186,7 @@ describe('AdminTokenScopes - additional coverage', () => {
         await user.click(mcpCombo);
         const mcpListbox = await screen.findByRole('listbox');
         await user.click(
-            within(mcpListbox).getByRole('option', { name: 'All MCP Privileges' }),
+            within(mcpListbox).getByRole('option', { name: "All the owner's MCP privileges" }),
         );
         await user.click(screen.getByLabelText(/^Name/i));
 

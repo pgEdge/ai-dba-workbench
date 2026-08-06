@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,6 +30,14 @@ var (
 	// Command line flags
 	configFile = flag.String("config", "", "Path to configuration file")
 	verbose    = flag.Bool("v", false, "Enable verbose logging")
+
+	// printSchemaVersion, when set, makes the collector print the newest
+	// datastore schema version it knows about and exit without touching
+	// the database. The e2e harness uses this to learn the version the
+	// collector will converge to so it can wait for every migration to
+	// finish rather than guessing at a hardcoded count.
+	printSchemaVersion = flag.Bool("print-latest-schema-version", false,
+		"Print the latest datastore schema version this collector knows about and exit")
 
 	// Datastore connection flags
 	pgHost         = flag.String("pg-host", "", "PostgreSQL server hostname or IP address")
@@ -45,6 +54,20 @@ var (
 
 func main() {
 	flag.Parse()
+
+	// Handle --print-latest-schema-version before any logging or
+	// datastore initialization so the number is the only thing written
+	// to stdout and the query needs no live database. A write failure
+	// must exit non-zero: the e2e harness reads this number from stdout
+	// and a silent exit 0 with no output would hide the failure from
+	// the collector's own side.
+	if handled, err := maybePrintSchemaVersion(os.Stdout, *printSchemaVersion); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to print latest schema version: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Initialize logger
 	logger.Init()
@@ -89,9 +112,9 @@ func main() {
 	logger.Startup("Collector is running. Press Ctrl+C to stop.")
 
 	// Wait for shutdown signal
-	waitForShutdown()
+	sig := waitForShutdown()
 
-	logger.Startup("Shutdown signal received, stopping...")
+	logger.Startupf("Received signal %q, shutting down...", sig)
 
 	// Shutdown in proper order to ensure clean connection closure
 	// 1. Stop probe scheduler (no new probe queries)
@@ -114,6 +137,26 @@ func main() {
 	logger.Info("Datastore connection pool closed")
 
 	logger.Startup("Collector stopped")
+}
+
+// maybePrintSchemaVersion writes the latest datastore schema version the
+// collector will converge to onto w and reports whether the caller
+// should exit early along with any write error. When enabled is false it
+// writes nothing and returns (false, nil) so main proceeds with normal
+// startup.
+//
+// The logic lives here rather than inline in main so it can be unit-
+// tested without invoking the full daemon startup path. The version is
+// obtained from the schema manager's registered migrations, so it stays
+// correct automatically as new migrations are added. The write error is
+// propagated so the caller can exit non-zero: the e2e harness relies on
+// this stdout value, so a swallowed failure would mislead it.
+func maybePrintSchemaVersion(w io.Writer, enabled bool) (bool, error) {
+	if !enabled {
+		return false, nil
+	}
+	_, err := fmt.Fprintln(w, database.NewSchemaManager().LatestVersion())
+	return true, err
 }
 
 // loadConfiguration loads configuration from file, environment, and command line.
@@ -187,9 +230,13 @@ func loadConfiguration() (*Config, error) {
 	return config, nil
 }
 
-// waitForShutdown waits for an interrupt signal
-func waitForShutdown() {
+// waitForShutdown waits for an interrupt signal and returns the
+// signal that was received, so the caller can log which signal
+// triggered the shutdown. A clean exit that was previously silent
+// now records the delivered signal, making a future recurrence of
+// the reported clean-exit restart loop diagnosable.
+func waitForShutdown() os.Signal {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+	return <-sigChan
 }

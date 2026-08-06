@@ -239,7 +239,7 @@ const TokensTable: React.FC<TokensTableProps> = ({
                                                                         ) === '*'
                                                                 )
                                                                     ? [
-                                                                          'All MCP Privileges',
+                                                                          "All the owner's MCP privileges",
                                                                       ]
                                                                     : token.scope?.mcp_privileges?.map(
                                                                           (
@@ -255,7 +255,7 @@ const TokensTable: React.FC<TokensTableProps> = ({
                                                                     '*'
                                                                 )
                                                                     ? [
-                                                                          'All Admin Permissions',
+                                                                          "All the owner's admin permissions",
                                                                       ]
                                                                     : token.scope
                                                                           ?.admin_permissions

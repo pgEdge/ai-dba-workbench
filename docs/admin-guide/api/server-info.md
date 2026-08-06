@@ -26,7 +26,8 @@ server enforces RBAC access checks on the specified connection. The server
 returns a `403 Forbidden` response when the authenticated user lacks access to
 the connection.
 
-For authentication details, see [Authentication](../authentication.md).
+For authentication details, see
+[Managing Users and Permissions](../managing-users-and-permissions/permission_model.md).
 
 ## Server Information Endpoint
 

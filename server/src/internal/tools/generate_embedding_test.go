@@ -227,8 +227,8 @@ func TestGenerateEmbeddingTool_GeminiMissingAPIKey(t *testing.T) {
 	if len(response.Content) == 0 {
 		t.Fatal("expected error message in response")
 	}
-	if !strings.Contains(response.Content[0].Text, "Gemini API key is required") {
-		t.Errorf("expected 'Gemini API key is required' error, got: %s",
+	if !strings.Contains(response.Content[0].Text, "gemini API key is required") {
+		t.Errorf("expected 'gemini API key is required' error, got: %s",
 			response.Content[0].Text)
 	}
 }
@@ -243,8 +243,8 @@ func TestGenerateEmbeddingTool_GeminiSuccess(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/v1beta/models/gemini-embedding-001:embedContent") {
 			t.Errorf("unexpected request path %q", r.URL.Path)
 		}
-		if r.URL.Query().Get("key") != "test-gemini-key" {
-			t.Errorf("expected API key in query string, got %q", r.URL.Query().Get("key"))
+		if r.Header.Get("x-goog-api-key") != "test-gemini-key" {
+			t.Errorf("expected API key in x-goog-api-key header, got %q", r.Header.Get("x-goog-api-key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

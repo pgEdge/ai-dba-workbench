@@ -170,6 +170,7 @@ func TestHasGroupCommand(t *testing.T) {
 		{"list groups", Flags{ListGroupsCmd: true}, true},
 		{"add member", Flags{AddMemberCmd: true}, true},
 		{"remove member", Flags{RemoveMemberCmd: true}, true},
+		{"list members", Flags{ListMembersCmd: true}, true},
 		{"set superuser", Flags{SetSuperuserCmd: true}, true},
 		{"unset superuser", Flags{UnsetSuperuserCmd: true}, true},
 	}

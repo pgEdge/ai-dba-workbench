@@ -31,7 +31,7 @@ management for PostgreSQL databases.
 # ============================================================================
 %package -n pgedge-ai-dba-server
 Summary:        pgEdge AI DBA Server
-Requires:       pgedge-ai-kb openssl
+Requires:       openssl
 
 %description -n pgedge-ai-dba-server
 Core AI DBA server providing REST API and AI-powered analysis for

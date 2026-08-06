@@ -9,10 +9,11 @@ You must meet the following requirements before configuring a client:
 
 - The Workbench server must be running and accessible from the machine where
   the MCP client operates.
-- Authentication requires an API token. Create tokens through the admin panel
-  under Security > Tokens, or use the REST API. See
-  [Users & Authentication](../../admin-guide/authentication.md) for details on
-  token management.
+- Authentication requires an API token. Create a token by selecting the
+  `Settings` icon, then selecting `Tokens` from the `Administration` console's
+  left navigation pane, or use the REST API. See
+  [Managing Users and Permissions](../../admin-guide/managing-users-and-permissions/permission_model.md)
+  for details on token management.
 
 ## Finding the Server Endpoint
 

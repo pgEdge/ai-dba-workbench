@@ -101,7 +101,6 @@ func GenerateEmbeddingTool(cfg *config.Config) Tool {
 			sb.WriteString("\n\n")
 			fmt.Fprintf(&sb, "Provider: %s\n", provider.ProviderName())
 			fmt.Fprintf(&sb, "Model: %s\n", provider.ModelName())
-			fmt.Fprintf(&sb, "Dimensions: %d\n", provider.Dimensions())
 			fmt.Fprintf(&sb, "Text Length: %d characters\n", len(text))
 			fmt.Fprintf(&sb, "\nText:\n%s\n\n", text)
 			fmt.Fprintf(&sb, "Embedding Vector (%d dimensions):\n%s", len(vector), string(vectorJSON))

@@ -458,7 +458,8 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			heap_blks_read BIGINT, heap_blks_hit BIGINT,
 			idx_blks_read BIGINT, idx_blks_hit BIGINT,
 			toast_blks_read BIGINT, toast_blks_hit BIGINT,
-			tidx_blks_read BIGINT, tidx_blks_hit BIGINT
+			tidx_blks_read BIGINT, tidx_blks_hit BIGINT,
+			table_size BIGINT
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_indexes (
@@ -469,7 +470,8 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			schemaname TEXT, relname TEXT, indexrelname TEXT,
 			idx_scan BIGINT, last_idx_scan TIMESTAMPTZ,
 			idx_tup_read BIGINT, idx_tup_fetch BIGINT,
-			idx_blks_read BIGINT, idx_blks_hit BIGINT
+			idx_blks_read BIGINT, idx_blks_hit BIGINT,
+			index_size BIGINT
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_sequences (

@@ -55,7 +55,7 @@ Tokens can be one of two types:
   access.
 
 For detailed authentication information, see
-[Authentication](../authentication.md).
+[Managing Users and Permissions](../managing-users-and-permissions/permission_model.md).
 
 ## Interactive API Browser
 
@@ -243,9 +243,14 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/llm/providers` | List LLM providers. |
-| GET | `/api/v1/llm/models` | List available models. |
+| GET | `/api/v1/llm/providers` | List LLM providers (public). |
+| GET | `/api/v1/llm/models` | List available models (public). |
+| GET | `/api/v1/llm/health` | Check LLM proxy health (public). |
 | POST | `/api/v1/llm/chat` | Send a chat message to the LLM. |
+| POST | `/api/v1/llm/chat/stream` | Stream a chat response as SSE. |
+| POST | `/api/v1/llm/embed` | Generate embeddings for input text. |
+| POST | `/api/v1/llm/embed/multimodal` | Generate embeddings for multimodal (text and image) inputs. |
+| POST | `/api/v1/llm/rerank` | Rerank documents against a query. |
 
 ### Memory
 

@@ -6,6 +6,260 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add a `-group-description` CLI flag that sets a group's
+  description when creating it with `-add-group`, matching the
+  description support already available in the web console. (#301)
+
+- Add a `-list-members` CLI flag to the server, which lists the
+  members of the group named with `-group`, including both member
+  users and nested member groups. (#303)
+
+### Changed
+
+- Extend the `-show-group-privileges` CLI command to also display a
+  group's admin permissions, alongside the MCP and connection
+  privileges it already reports. (#303)
+
+- Drop the runtime dependency on a knowledgebase package from the
+  `pgedge-ai-dba-server` package in both the Debian and RPM
+  packaging. The knowledgebase is now published as co-installable
+  `pgedge-ai-kb-<provider>-<model>` packages, one per embedding
+  provider and model, and it remains opt-in and disabled by
+  default. Operators who want the knowledgebase install the
+  package matching their chosen embedding provider and model, and
+  set `database_path` themselves. (#316)
+
+- Update the knowledgebase `database_path` documentation and the
+  example server configuration for the renamed `pgedge-ai-kb`
+  package. The packages install one database per embedding
+  provider and model under `/usr/share/pgedge/pgedge-ai-kb/`,
+  named `kb-<provider>-<model>.db`, and the built-in default
+  still points at the legacy `postgres-mcp-kb` path. (#293)
+
+- Relabel the token scope options in the API token create and edit
+  screens so they now read "All the owner's MCP privileges" and
+  "All the owner's admin permissions" rather than "All MCP
+  Privileges" and "All Admin Permissions"; the new wording clarifies
+  that a token grants the owner's privileges rather than all system
+  privileges. (#323)
+
+- Ellie now gives correct, deployment-aware guidance for restarting
+  the Workbench's own components (server, collector, alerter, and
+  web client), and no longer suggests commands for unrelated
+  third-party tooling.
+  The web client sends its own copy of Ellie's system prompt on
+  every request, which always takes precedence over the server's
+  default; both copies now carry the same guidance, since fixing
+  only the server default left the client-facing bug unchanged for
+  real users. (#329)
+
+### Fixed
+
+- Fix every chat request that included a tool list failing with
+  `anthropic (400): tools.0.custom.input_schema: Input does not
+  match the expected shape`, which broke Ask Ellie and the Server,
+  Query, and Alert analysis panels for any interaction requiring a
+  tool call. The client built each tool with a camelCase
+  `inputSchema` field, but `POST /api/v1/llm/chat` decodes its
+  request body via the vendored `pgedge-go-llm-lib` package, whose
+  wire contract expects snake_case `input_schema`; the mismatched
+  key silently unmarshalled to an empty schema for every tool,
+  which Anthropic then rejected outright. The client now normalises
+  tool definitions to the library's wire shape before sending them,
+  mirroring the existing message normalisation added in the same
+  migration. (#370)
+
+- Connection-privilege chips in the Admin Groups and Users panels
+  now show the connection name instead of the internal numeric
+  connection id. (#309)
+
+- Fix the metrics time-series API (`GET /api/v1/metrics/query`)
+  silently returning an empty HTTP 200 response, which the web UI
+  rendered as a generic "No data available" message, whenever a
+  monitored server's metric sample contained a NaN or Infinity value.
+  Go's JSON encoder cannot serialize non-finite floats, so the encode
+  failed silently after the response status had already been sent. The
+  query path now treats a non-finite sample the same way it already
+  treats a missing value from an underlying LEFT JOIN gap; the code
+  carries the last known good value forward when one exists and skips
+  the sample when none does, so a single bad reading degrades
+  gracefully instead of blanking the whole chart. A JSON-encoding
+  failure on this path is now logged loudly rather than silently
+  swallowed, so any future occurrence surfaces in the server logs.
+
+- Fix blank overview tiles and a Maintenance Info panel stuck on
+  "Never" in the Table and Index object-detail dashboards of the
+  web client. These panels requested the single most recent row of
+  stats through the `limit`, `order_by`, and `order` query
+  parameters, but the metrics API ignored those parameters and
+  returned time-bucketed chart data instead. The API now honors
+  these parameters and returns the most recent raw stat rows as
+  real column values, validating `order_by` against the table's
+  known columns before use.
+
+- Fix the end-to-end test suite intermittently failing at the "Start
+  stack" step. The server logged "collector schema is at v2, server
+  requires at least v4" and then timed out waiting for its health
+  endpoint. The harness script that applies the collector schema
+  stopped the collector as soon as it observed any recorded schema
+  version. A poll that landed between two migrations killed the
+  collector mid-migration, leaving the datastore below the version the
+  server requires. The collector now accepts a
+  `--print-latest-schema-version` flag that reports the newest known
+  schema version without touching any database. The harness asks for
+  that target up front and waits for the datastore to reach it. This
+  change affects test infrastructure only and does not alter
+  application behavior.
+
+- Fix the Table Size and Index Size fields rendering permanently as
+  "--" on the Table and Index object-detail dashboards of the web
+  client. No collector probe ever gathered relation size, so the value
+  genuinely never reached the datastore rather than failing at query
+  time as the two prior dashboard fixes did. The `pg_stat_all_tables`
+  probe now collects `table_size` via `pg_table_size`, which covers
+  heap, TOAST, free space map, and visibility map storage whilst
+  excluding indexes. The `pg_stat_all_indexes` probe now collects
+  `index_size` via `pg_relation_size` for each index. Both values are
+  stored as raw byte counts that the web client formats for display.
+  Collector schema migration Version 7 adds the two new columns to the
+  `metrics.pg_stat_all_tables` and `metrics.pg_stat_all_indexes`
+  partitioned parent tables, and PostgreSQL propagates them to every
+  existing and future partition automatically. The web client's
+  existing latest-row request reads the new columns with no further
+  server or client changes.
+
+- Fix the Activity Charts on the Table and Index object-detail
+  dashboards rendering permanently blank, with the messages "No tuple
+  operation data available", "No scan data available", and "No dead
+  tuple data available" appearing even when the monitored server had
+  completely normal, healthy activity. Those charts request computed
+  metrics, including per-second rates such as sequential scans, index
+  scans, and inserted, updated, or deleted rows, together with a
+  dead-tuple percentage. The metrics API understood only literal, raw
+  stored columns and could not compute a rate or a ratio, so it
+  rejected these requests with an error that the web client silently
+  rendered as missing data. The metrics API now computes a per-second
+  rate for any counter column a dashboard requests by name; a request
+  for `seq_scan_per_sec` computes the rate of change of the underlying
+  `seq_scan` counter between samples. The API also computes a
+  dead-tuple ratio metric for tables, reusing the rate and ratio
+  calculations already applied elsewhere in the product. (#342)
+
+- Fix embedding storage rejecting non-OpenAI providers with a
+  dimension-mismatch error. The chat memory and anomaly detection
+  embedding columns were hardcoded to `vector(1536)`, OpenAI's
+  dimension, which broke Gemini (3072), Voyage (1024 or 512), and
+  Ollama (384, 768, or 1024). The columns are now `halfvec(4000)`,
+  and the workbench zero-pads every embedding to 4000 dimensions, so
+  embeddings from any supported provider store and compare correctly.
+  This widening introduces a hard ceiling: an embedding model that
+  produces vectors with more than 4000 dimensions is not supported,
+  because 4000 is pgvector's HNSW index limit for the `halfvec` type.
+  The workbench rejects such a model with a clear error rather than
+  truncating the vector. (#294)
+
+- Fix the Estate Overview dashboard's KPI tiles (XID Age, Cache Hit
+  Ratio, Transactions, and Checkpoints) and Event Timeline getting
+  stuck on "No data" indefinitely after a brief backend restart or
+  any transient API failure. Recovering required the user to click the
+  sidebar's Refresh button or reload the page, because nothing retried
+  on its own. The client uses no React Query or SWR; every panel hook
+  refetched only when a single shared `lastRefresh` timestamp changed,
+  and that timestamp advanced only when the sidebar's
+  `GET /api/v1/clusters` call succeeded. A transient failure in an
+  individual panel's fetch, or in the shared refresh call itself, left
+  the affected panels blank with no automatic recovery. A shared
+  `useRetryingFetch` hook now provides capped exponential backoff (3s,
+  6s, 12s, 24s, capped at 45s) for the Event Timeline, the
+  performance-summary tiles, the Estate KPI tiles, and the alerts
+  panel. A manual refresh always pre-empts any pending retry, and the
+  Estate KPI tiles show a subtle "Reconnecting..." indicator while a
+  retry is pending, distinguishing that state from genuinely empty
+  data.
+
+- Granting "All Connections" access no longer deletes a group's
+  specific per-connection grants. Previously, adding an All
+  Connections READ grant destructively removed existing
+  per-connection grants, silently reducing a connection's
+  READ/WRITE access to READ; specific and wildcard grants now
+  coexist, and the effective access for each connection is the
+  higher of the two. (#302)
+
+- Fix the Table and Index object-detail dashboards showing stale,
+  pre-maintenance values in their overview tiles and Maintenance Info
+  panel indefinitely, even after the collector recorded fresh, correct
+  data. Running ANALYZE on a table corrected its live-tuple-count
+  estimate downward, yet the dashboard kept showing the old, larger
+  count and a stale or missing Last Analyze value. The latest-row mode
+  of the metrics API (`GET /api/v1/metrics/query` with `limit` and
+  `order_by`) ranked the table's entire history by the requested
+  `order_by` column and used `collected_at` only to break exact ties,
+  so it returned whichever historical sample had the highest column
+  value rather than the most recent sample. Any column that can
+  decrease over time, such as a tuple count after ANALYZE, VACUUM, or
+  DELETE, or a dead-tuple count after VACUUM, could therefore return a
+  permanently stale historical row. The query now reduces to each
+  monitored entity's newest sample by `collected_at` first, then ranks
+  those already-latest rows by the requested `order_by` column, so a
+  request filtered to one table or index always returns that entity's
+  true latest sample regardless of the sort column.
+
+- Fix the Index object-detail dashboard's Scan Activity chart always
+  showing "No index scan data available" for every index. The web
+  client sent the index's own name as the `table_name` query
+  parameter, but the metrics time-series query filtered on `relname`,
+  so no table ever matched an index name and the request returned no
+  rows. The time-series query path also had no way to filter by index
+  name, so a table with several indexes would have blended all of
+  their scan activity together. The metrics API
+  (`GET /api/v1/metrics/query`) now filters on `indexrelname`, the
+  client's metrics-fetching hook accepts a new `indexName` parameter,
+  and the Scan Activity chart sends it instead of misusing the
+  table-name parameter.
+
+- Fix several dashboard charts rendering blank whenever their time
+  series was perfectly flat, most visibly the Cache Hit Ratio Over
+  Time chart for a new, essentially read-only sample database whose
+  ratio held steady at 100% for its whole history. A flat series gave
+  the value axis a zero-height range, with `min` equal to `max`, so
+  the line or area had nothing to draw against and the chart appeared
+  empty. The value axis now pads a small visible range around a flat
+  value so the series renders, and it does so in a baseline-aware way
+  for zero-anchored charts, such as bars and stacked or area fills, so
+  their fill still renders from zero. (#336)
+
+- Fix the Cluster Group settings dialog so it shows and preserves a
+  group's description and its "Share with all users" setting, which
+  previously appeared empty or unchecked and were lost when editing;
+  the share flag is now persisted by the API. (#304)
+
+- Harden the collector against clean-exit restart loops that could
+  stop the Dashboard from showing Top Queries. The collector now
+  logs which signal triggered its shutdown, rather than exiting
+  silently, and the default monitored probe and pool wait timeout
+  (`monitored_max_wait_seconds`) was raised from 60 to 120 seconds
+  to give slow probes such as `pg_stat_statements` on large
+  monitored databases more headroom before timing out. (#308)
+
+- Harden the shipped Docker Compose collector service by running an
+  init process as PID 1, adding a stop grace period for graceful
+  shutdown, and raising the memory limit modestly from 256M to
+  512M; the collector connection-pool and timeout options are now
+  documented in the sample configuration. (#308)
+
+### Security
+
+- Ignore a blank password when updating a database connection, so an
+  empty or whitespace-only password can no longer overwrite the stored
+  credential. The datastore now enforces the "leave blank to keep
+  unchanged" rule server-side as defence-in-depth, rather than relying
+  on the web client alone. The create path, which still requires a
+  non-empty password, is unaffected. (#332)
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the pgEdge AI DBA

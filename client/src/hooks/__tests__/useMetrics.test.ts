@@ -157,6 +157,52 @@ describe('useMetrics', () => {
         expect(url).toContain('connection_ids=1%2C2%2C3');
     });
 
+    it('builds URL with index_name when indexName is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params = {
+            probeName: 'pg_stat_all_indexes',
+            timeRange: '24h',
+            connectionId: 5,
+            databaseName: 'mydb',
+            schemaName: 'public',
+            indexName: 'pk_orders',
+            metrics: ['idx_scan_per_sec'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('index_name=pk_orders');
+        // The index name must not leak into table_name.
+        expect(url).not.toContain('table_name');
+    });
+
+    it('omits index_name when indexName is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params = {
+            probeName: 'pg_stat_user_tables',
+            timeRange: '24h',
+            connectionId: 5,
+            tableName: 'orders',
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('index_name');
+        expect(url).toContain('table_name=orders');
+    });
+
     it('sets loading to true during initial fetch', async () => {
         let resolvePromise: (value: unknown) => void;
         mockApiGet.mockImplementationOnce(() =>
@@ -253,6 +299,64 @@ describe('useMetrics', () => {
         await waitFor(() => {
             expect(mockApiGet).toHaveBeenCalledTimes(2);
         });
+    });
+
+    it('resets initial load state when indexName changes so loading flashes again', async () => {
+        // Initial index resolves immediately.
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const { result, rerender } = renderHook(
+            ({ params }) => useMetrics(params),
+            {
+                initialProps: {
+                    params: {
+                        probeName: 'pg_stat_all_indexes',
+                        timeRange: '24h',
+                        connectionId: 5,
+                        indexName: 'pk_orders',
+                    },
+                },
+            },
+        );
+
+        // Wait for initial load to complete.
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+        expect(result.current.loading).toBe(false);
+
+        // Switching to a different index should reset initialLoadDoneRef,
+        // so the next fetch flashes loading to true (no stale data shown).
+        let resolvePromise: (value: unknown) => void;
+        mockApiGet.mockImplementationOnce(() =>
+            new Promise(resolve => {
+                resolvePromise = resolve;
+            }),
+        );
+
+        rerender({
+            params: {
+                probeName: 'pg_stat_all_indexes',
+                timeRange: '24h',
+                connectionId: 5,
+                indexName: 'idx_customers_email',
+            },
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(true);
+        });
+
+        await act(async () => {
+            resolvePromise!(makeMetricSeries());
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        const url = mockApiGet.mock.calls[1][0];
+        expect(url).toContain('index_name=idx_customers_email');
     });
 
     it('does not flash loading on auto-refresh after initial load', async () => {

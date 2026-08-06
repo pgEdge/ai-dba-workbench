@@ -210,3 +210,9 @@ In the following example, an error response uses the standard JSON format:
     "error": "Description of the error"
 }
 ```
+
+## Related Documentation
+
+- [Managing Users and Permissions](managing-users-and-permissions/permission_model.md)
+  covers tokens and access control.
+- [API Reference](api/reference.md) provides interactive API documentation.

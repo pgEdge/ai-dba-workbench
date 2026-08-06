@@ -21,7 +21,6 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
-    DarkMode as MoonIcon,
     Stop as StopIcon,
     Language as EstateIcon,
     FolderSpecial as GroupIcon,
@@ -29,6 +28,7 @@ import {
     Storage as ServerIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/useBlackouts';
+import MoonIcon from './shared/BlackoutIcon';
 import type { Selection } from '../types/selection';
 import { ICON_14_SX } from '../theme';
 

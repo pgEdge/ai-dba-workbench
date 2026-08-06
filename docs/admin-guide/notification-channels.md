@@ -398,11 +398,3 @@ The GET response returns an array of channel override objects:
 | `is_estate_default` | boolean | Whether the channel is an estate default. |
 | `has_override` | boolean | Whether an override exists at this scope. |
 | `override_enabled` | boolean | The override enabled state; null when no override exists. |
-
-## Related Documentation
-
-- [Alert Rules](alert-rules.md) describes the rules that trigger
-  notifications.
-- [Managing Users and Permissions](managing-users-and-permissions/permission_model.md)
-  covers the permissions required for channel management.
-- [API Reference](api/reference.md) provides interactive API documentation.

@@ -1,17 +1,15 @@
 module github.com/pgedge/ai-workbench/server
 
-go 1.26.1
-
-toolchain go1.26.2
+go 1.26.5
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pgEdge/pgedge-go-llm-lib v0.1.1
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.47.0
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.39.0
-	golang.org/x/text v0.33.0
+	golang.org/x/text v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.40.1
 )

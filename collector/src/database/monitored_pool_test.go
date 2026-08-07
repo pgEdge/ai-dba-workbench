@@ -86,34 +86,6 @@ func TestNewMonitoredConnectionPoolManager(t *testing.T) {
 	}
 }
 
-func TestSetGetMaxConnections(t *testing.T) {
-	m := NewMonitoredConnectionPoolManager(3, 1)
-
-	// Setting same value: no-op path.
-	m.SetMaxConnections(3)
-	if got := m.GetMaxConnections(); got != 3 {
-		t.Errorf("after no-op set, got %d", got)
-	}
-
-	// Update.
-	m.SetMaxConnections(8)
-	if got := m.GetMaxConnections(); got != 8 {
-		t.Errorf("after set, got %d", got)
-	}
-}
-
-func TestVersionGetSet(t *testing.T) {
-	m := NewMonitoredConnectionPoolManager(1, 1)
-
-	if v := m.GetVersion(42); v != 0 {
-		t.Errorf("uninitialized GetVersion = %d, want 0", v)
-	}
-	m.SetVersion(42, 16)
-	if v := m.GetVersion(42); v != 16 {
-		t.Errorf("after SetVersion, got %d, want 16", v)
-	}
-}
-
 func TestGetSemaphore_Reuse(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(2, 1)
 

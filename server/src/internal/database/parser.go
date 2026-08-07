@@ -74,12 +74,3 @@ func ParseQueryForConnection(query string) *QueryContext {
 
 	return ctx
 }
-
-// IsSetDefaultCommand checks if the query is a command to set the default database
-func IsSetDefaultCommand(query string) bool {
-	lowerQuery := strings.ToLower(strings.TrimSpace(query))
-	return strings.HasPrefix(lowerQuery, "set default") ||
-		strings.HasPrefix(lowerQuery, "use database") ||
-		strings.HasPrefix(lowerQuery, "switch to database") ||
-		strings.HasPrefix(lowerQuery, "change database to")
-}

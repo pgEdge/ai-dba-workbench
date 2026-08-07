@@ -492,58 +492,6 @@ func TestGetCurrentVersion(t *testing.T) {
 	cleanupTestSchema(t, pool)
 }
 
-func TestGetMigrationStatus(t *testing.T) {
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up any existing schema
-	cleanupTestSchema(t, pool)
-
-	sm := NewSchemaManager()
-
-	// Test status before any migrations
-	statuses, err := sm.GetMigrationStatus(conn)
-	if err != nil {
-		t.Fatalf("Failed to get migration status: %v", err)
-	}
-
-	for _, status := range statuses {
-		if status.Applied {
-			t.Errorf("Migration %d should not be applied yet", status.Version)
-		}
-		if status.AppliedAt != nil {
-			t.Errorf("Migration %d should not have AppliedAt timestamp yet", status.Version)
-		}
-	}
-
-	// Apply migrations
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Test status after migrations
-	statuses, err = sm.GetMigrationStatus(conn)
-	if err != nil {
-		t.Fatalf("Failed to get migration status: %v", err)
-	}
-
-	for _, status := range statuses {
-		if !status.Applied {
-			t.Errorf("Migration %d should be applied", status.Version)
-		}
-		if status.AppliedAt == nil {
-			t.Errorf("Migration %d should have AppliedAt timestamp", status.Version)
-		}
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
 func TestMonitoredConnectionsConstraints(t *testing.T) {
 	ctx := context.Background()
 	pool, conn := getTestConnection(t)

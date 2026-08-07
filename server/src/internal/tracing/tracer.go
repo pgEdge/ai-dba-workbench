@@ -314,8 +314,3 @@ func truncateHash(hash string) string {
 func GenerateRequestID() string {
 	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), time.Now().UnixNano()%0xFFFF)
 }
-
-// GenerateSessionID creates a unique session ID
-func GenerateSessionID() string {
-	return fmt.Sprintf("sess_%d", time.Now().UnixNano())
-}

@@ -199,61 +199,6 @@ func TestParseQueryIntList(t *testing.T) {
 	}
 }
 
-func TestParseQueryTime(t *testing.T) {
-	validTime := "2024-01-15T10:30:00Z"
-	expectedTime, _ := time.Parse(time.RFC3339, validTime)
-
-	tests := []struct {
-		name           string
-		queryValue     string
-		expectTime     time.Time
-		expectOK       bool
-		expectedStatus int
-	}{
-		{
-			name:       "valid RFC3339 time",
-			queryValue: validTime,
-			expectTime: expectedTime,
-			expectOK:   true,
-		},
-		{
-			name:     "empty value",
-			expectOK: false,
-		},
-		{
-			name:           "invalid format",
-			queryValue:     "2024-01-15",
-			expectOK:       false,
-			expectedStatus: http.StatusBadRequest,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			url := "/test"
-			if tt.queryValue != "" {
-				url = "/test?time=" + tt.queryValue
-			}
-			req := httptest.NewRequest(http.MethodGet, url, nil)
-			rec := httptest.NewRecorder()
-
-			value, ok := ParseQueryTime(rec, req, "time")
-
-			if ok != tt.expectOK {
-				t.Errorf("ParseQueryTime returned ok=%v, expected %v", ok, tt.expectOK)
-			}
-
-			if tt.expectOK && !value.Equal(tt.expectTime) {
-				t.Errorf("ParseQueryTime returned %v, expected %v", value, tt.expectTime)
-			}
-
-			if !tt.expectOK && tt.expectedStatus != 0 && rec.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, rec.Code)
-			}
-		})
-	}
-}
-
 func TestParseQueryBool(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -433,33 +378,6 @@ func TestValidateTimeRange(t *testing.T) {
 
 			if !tt.expectOK && rec.Code != http.StatusBadRequest {
 				t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
-			}
-		})
-	}
-}
-
-func TestValidateStringInSet(t *testing.T) {
-	allowed := map[string]bool{"type1": true, "type2": true}
-
-	tests := []struct {
-		name     string
-		value    string
-		expectOK bool
-	}{
-		{name: "valid value", value: "type1", expectOK: true},
-		{name: "another valid", value: "type2", expectOK: true},
-		{name: "empty allowed", value: "", expectOK: true},
-		{name: "invalid value", value: "type3", expectOK: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-
-			result := ValidateStringInSet(rec, tt.value, "type", allowed)
-
-			if result != tt.expectOK {
-				t.Errorf("ValidateStringInSet returned %v, expected %v", result, tt.expectOK)
 			}
 		})
 	}

@@ -253,59 +253,6 @@ func TestTokenEstimator_OverheadPerMessage(t *testing.T) {
 	}
 }
 
-func TestCountWords(t *testing.T) {
-	testCases := []struct {
-		text     string
-		expected int
-	}{
-		{"Hello world", 2},
-		{"One", 1},
-		{"", 0},
-		{"Multiple words in this sentence", 5},
-		{"Words, with! punctuation?", 3},
-	}
-
-	for _, tc := range testCases {
-		count := CountWords(tc.text)
-		if count != tc.expected {
-			t.Errorf("For text '%s', expected %d words, got %d",
-				tc.text, tc.expected, count)
-		}
-	}
-}
-
-func TestTruncateText(t *testing.T) {
-	testCases := []struct {
-		name           string
-		text           string
-		maxTokens      int
-		shouldTruncate bool
-	}{
-		{"Short text", "Hello world", 100, false},
-		{"Long text", strings.Repeat("word ", 200), 50, true},
-		{"Exact length", "Exact", 2, false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := TruncateText(tc.text, tc.maxTokens)
-
-			if tc.shouldTruncate && !strings.HasSuffix(result, "...") {
-				t.Error("Expected truncated text to end with '...'")
-			}
-
-			if !tc.shouldTruncate && result != tc.text {
-				t.Error("Expected text to remain unchanged")
-			}
-
-			// Result should not be longer than original
-			if len(result) > len(tc.text) {
-				t.Error("Truncated text should not be longer than original")
-			}
-		})
-	}
-}
-
 func TestTokenEstimator_ContentMultiplier(t *testing.T) {
 	estimator := NewTokenEstimator()
 

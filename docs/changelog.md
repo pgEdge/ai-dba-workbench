@@ -253,6 +253,28 @@ project adheres to
   512M; the collector connection-pool and timeout options are now
   documented in the sample configuration. (#308)
 
+### Removed
+
+- Remove 47 unused functions from the collector, server, and alerter,
+  along with the tests that existed only to exercise them. A
+  reachability analysis with `govulncheck`'s sibling tool `deadcode`
+  found 94 functions that no service entry point can reach; comparing
+  the result against the v1.0.0 tag confirmed that every one had
+  already been unreachable at that release, so none was recent work
+  awaiting a caller. This change takes the safe subset: 698 lines of
+  production code and 2,110 lines of dedicated tests.
+
+- Delete the alerter's unused `secretManager` implementation and the
+  `SecretManager` interface it satisfied, neither of which had any
+  caller, and delete the unused resource `Registry` type along with
+  its constructor and methods. The `Resource` and `Handler` types
+  declared alongside `Registry` remain, since the MCP resource
+  definitions still use them.
+
+- Remove the unused `HeaderStatusIndicator` component from the web
+  client, together with the `@dnd-kit/sortable` and `@dnd-kit/utilities`
+  dependencies; the client imports only `@dnd-kit/core`, which stays.
+
 ### Security
 
 - Ignore a blank password when updating a database connection, so an

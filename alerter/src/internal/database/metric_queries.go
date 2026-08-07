@@ -122,19 +122,6 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	return results, nil
 }
 
-// GetLatestMetricValue retrieves the most recent value for a metric (single value).
-// This is a convenience wrapper that returns the first value found.
-func (d *Datastore) GetLatestMetricValue(ctx context.Context, metricName string) (value float64, connectionID int, dbName *string, err error) {
-	values, err := d.GetLatestMetricValues(ctx, metricName)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	if len(values) == 0 {
-		return 0, 0, nil, fmt.Errorf("no data found for metric %s", metricName)
-	}
-	return values[0].Value, values[0].ConnectionID, values[0].DatabaseName, nil
-}
-
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).

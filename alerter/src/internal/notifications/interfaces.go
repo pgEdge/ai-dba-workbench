@@ -27,15 +27,6 @@ type Notifier interface {
 	Validate(channel *database.NotificationChannel) error
 }
 
-// SecretManager handles encryption/decryption of sensitive data stored in the database
-type SecretManager interface {
-	// Encrypt encrypts plaintext data for storage
-	Encrypt(plaintext string) (string, error)
-
-	// Decrypt decrypts ciphertext retrieved from storage
-	Decrypt(ciphertext string) (string, error)
-}
-
 // TemplateRenderer renders notification templates with payload data
 type TemplateRenderer interface {
 	// Render renders a template string with the given payload

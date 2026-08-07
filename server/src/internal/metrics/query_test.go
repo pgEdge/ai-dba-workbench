@@ -413,16 +413,6 @@ func TestGetAggSelectCols(t *testing.T) {
 	}
 }
 
-func TestGetQuotedSelectCols(t *testing.T) {
-	cols := GetQuotedSelectCols([]string{"col_a", "col_b"})
-	if len(cols) != 2 {
-		t.Fatalf("expected 2 cols, got %d", len(cols))
-	}
-	if cols[0] != `"col_a"` {
-		t.Errorf("expected quoted col, got %s", cols[0])
-	}
-}
-
 func TestGetQualifiedSelectCols(t *testing.T) {
 	cols := GetQualifiedSelectCols([]string{"xact_commit", "blks_hit"}, "data_buckets")
 	if len(cols) != 2 {
@@ -436,63 +426,6 @@ func TestGetQualifiedSelectCols(t *testing.T) {
 	if cols[1] != expected1 {
 		t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
 	}
-}
-
-func TestGetCoalescedSelectCols(t *testing.T) {
-	t.Run("numeric columns", func(t *testing.T) {
-		colTypes := map[string]string{
-			"xact_commit": "bigint",
-			"blks_hit":    "bigint",
-		}
-		cols := GetCoalescedSelectCols([]string{"xact_commit", "blks_hit"}, "data_buckets", colTypes)
-		if len(cols) != 2 {
-			t.Fatalf("expected 2 cols, got %d", len(cols))
-		}
-		expected0 := `COALESCE(data_buckets."xact_commit", 0) AS "xact_commit"`
-		if cols[0] != expected0 {
-			t.Errorf("cols[0] = %s, want %s", cols[0], expected0)
-		}
-		expected1 := `COALESCE(data_buckets."blks_hit", 0) AS "blks_hit"`
-		if cols[1] != expected1 {
-			t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
-		}
-	})
-
-	t.Run("interval columns", func(t *testing.T) {
-		colTypes := map[string]string{
-			"write_lag":  "interval",
-			"replay_lag": "interval",
-		}
-		cols := GetCoalescedSelectCols([]string{"write_lag", "replay_lag"}, "data_buckets", colTypes)
-		if len(cols) != 2 {
-			t.Fatalf("expected 2 cols, got %d", len(cols))
-		}
-		expected0 := `COALESCE(data_buckets."write_lag", '0 seconds'::interval) AS "write_lag"`
-		if cols[0] != expected0 {
-			t.Errorf("cols[0] = %s, want %s", cols[0], expected0)
-		}
-		expected1 := `COALESCE(data_buckets."replay_lag", '0 seconds'::interval) AS "replay_lag"`
-		if cols[1] != expected1 {
-			t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
-		}
-	})
-
-	t.Run("mixed columns", func(t *testing.T) {
-		colTypes := map[string]string{
-			"sent_lsn":  "bigint",
-			"write_lag": "interval",
-		}
-		cols := GetCoalescedSelectCols([]string{"sent_lsn", "write_lag"}, "data_buckets", colTypes)
-		if len(cols) != 2 {
-			t.Fatalf("expected 2 cols, got %d", len(cols))
-		}
-		if !strings.Contains(cols[0], ", 0)") {
-			t.Errorf("numeric col should use 0 default, got %s", cols[0])
-		}
-		if !strings.Contains(cols[1], "'0 seconds'::interval") {
-			t.Errorf("interval col should use interval default, got %s", cols[1])
-		}
-	})
 }
 
 func TestToFloat64(t *testing.T) {

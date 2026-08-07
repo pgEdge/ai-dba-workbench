@@ -50,13 +50,6 @@ func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ip
 	}
 }
 
-// SetTrustProxyHeaders configures whether to trust X-Forwarded-Proto header
-// for determining if the connection is secure. This should be true when
-// behind a trusted reverse proxy that terminates TLS.
-func (h *AuthHandler) SetTrustProxyHeaders(trust bool) {
-	h.trustProxyHeaders = trust
-}
-
 // Close releases background resources owned by the handler. In
 // particular it stops the internally owned totalRateLimiter goroutine
 // created in NewAuthHandler. The caller-supplied rateLimiter is NOT

@@ -51,21 +51,6 @@ func NewMonitoredConnectionPoolManager(maxConnectionsPerServer int, maxIdleSecon
 	}
 }
 
-// GetVersion returns the cached PostgreSQL major version for a connection
-// Returns 0 if version is not cached
-func (m *MonitoredConnectionPoolManager) GetVersion(connectionID int) int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.versions[connectionID]
-}
-
-// SetVersion caches the PostgreSQL major version for a connection
-func (m *MonitoredConnectionPoolManager) SetVersion(connectionID int, majorVersion int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.versions[connectionID] = majorVersion
-}
-
 // DetectAndCacheVersion detects the PostgreSQL major version and caches it
 // Returns the major version number (e.g., 14, 15, 16, 17, 18)
 func (m *MonitoredConnectionPoolManager) DetectAndCacheVersion(ctx context.Context, connectionID int, conn *pgxpool.Conn) (int, error) {
@@ -99,22 +84,6 @@ func (m *MonitoredConnectionPoolManager) GetMaxConnections() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.maxConnections
-}
-
-// SetMaxConnections updates the maximum concurrent connections per server.
-// Only the stored maxConnections value is updated; existing semaphore
-// channels are left intact to avoid orphaning goroutines blocked on them.
-// New semaphores created by getSemaphore will use the updated size.
-func (m *MonitoredConnectionPoolManager) SetMaxConnections(n int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if n == m.maxConnections {
-		return
-	}
-
-	logger.Infof("Updating max connections per server from %d to %d (existing semaphores unchanged)", m.maxConnections, n)
-	m.maxConnections = n
 }
 
 // getSemaphore gets or creates a semaphore for a connection ID

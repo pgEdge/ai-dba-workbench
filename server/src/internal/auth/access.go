@@ -18,30 +18,6 @@ import (
 // With single database support, this is simplified to just check authentication
 type DatabaseAccessChecker struct{}
 
-// NewDatabaseAccessChecker creates a new database access checker
-func NewDatabaseAccessChecker() *DatabaseAccessChecker {
-	return &DatabaseAccessChecker{}
-}
-
-// CanAccessDatabase checks if the current request context has access to the database
-// With single database, we just check that authentication is valid
-func (dac *DatabaseAccessChecker) CanAccessDatabase(ctx context.Context) bool {
-	// Check if API token
-	if IsAPITokenFromContext(ctx) {
-		return true
-	}
-
-	// Session user - check if authenticated
-	username := GetUsernameFromContext(ctx)
-	return username != ""
-}
-
-// GetBoundDatabase returns the database name that an API token is bound to
-// Returns empty string - with single database, tokens are not bound to specific databases
-func (dac *DatabaseAccessChecker) GetBoundDatabase(_ context.Context) string {
-	return ""
-}
-
 // =============================================================================
 // RBAC Access Control
 // =============================================================================

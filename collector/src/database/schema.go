@@ -3213,61 +3213,6 @@ func isTableNotExistError(err error) bool {
 	return errors.Is(err, pgx.ErrNoRows)
 }
 
-// GetMigrationStatus returns information about migration status
-func (sm *SchemaManager) GetMigrationStatus(conn *pgxpool.Conn) ([]MigrationStatus, error) {
-	ctx := context.Background()
-	currentVersion, err := sm.getCurrentVersion(conn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current version: %w", err)
-	}
-
-	// Get applied migrations from database
-	appliedMigrations := make(map[int]MigrationRecord)
-	rows, err := conn.Query(ctx, `
-        SELECT version, description, applied_at
-        FROM schema_version
-        ORDER BY version
-    `)
-	tableNotExist := isTableNotExistError(err)
-	if err != nil && !tableNotExist {
-		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
-	}
-
-	if !tableNotExist {
-		defer rows.Close()
-
-		for rows.Next() {
-			var record MigrationRecord
-			if err := rows.Scan(&record.Version, &record.Description, &record.AppliedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan migration record: %w", err)
-			}
-			appliedMigrations[record.Version] = record
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("error iterating migrations: %w", err)
-		}
-	}
-
-	// Build status for each migration
-	var statuses []MigrationStatus
-	for _, migration := range sm.migrations {
-		status := MigrationStatus{
-			Version:     migration.Version,
-			Description: migration.Description,
-			Applied:     migration.Version <= currentVersion,
-		}
-
-		if record, ok := appliedMigrations[migration.Version]; ok {
-			status.AppliedAt = &record.AppliedAt
-		}
-
-		statuses = append(statuses, status)
-	}
-
-	return statuses, nil
-}
-
 // MigrationRecord represents a migration record in the database
 type MigrationRecord struct {
 	Version     int

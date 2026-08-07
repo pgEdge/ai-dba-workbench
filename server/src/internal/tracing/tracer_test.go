@@ -30,22 +30,6 @@ func TestGenerateRequestID(t *testing.T) {
 	}
 }
 
-func TestGenerateSessionID(t *testing.T) {
-	id1 := GenerateSessionID()
-	time.Sleep(time.Nanosecond) // Ensure time advances
-	id2 := GenerateSessionID()
-
-	if id1 == "" {
-		t.Error("GenerateSessionID should return non-empty string")
-	}
-	if !strings.HasPrefix(id1, "sess_") {
-		t.Error("GenerateSessionID should start with 'sess_'")
-	}
-	// Note: IDs may be the same if generated at the same nanosecond
-	// We just verify the format is correct
-	_ = id2
-}
-
 func TestTruncateHash(t *testing.T) {
 	tests := []struct {
 		input    string

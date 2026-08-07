@@ -102,17 +102,7 @@ func (p *Parser) Validate(expr string) error {
 // DefaultParser is a package-level parser for convenience.
 var DefaultParser = NewParser()
 
-// Parse parses a cron expression using the default parser.
-func Parse(expr string) (Schedule, error) {
-	return DefaultParser.Parse(expr)
-}
-
 // Matches checks if a time matches a cron expression using the default parser.
 func Matches(expr string, t time.Time, timezone string) (bool, error) {
 	return DefaultParser.Matches(expr, t, timezone)
-}
-
-// Validate validates a cron expression using the default parser.
-func Validate(expr string) error {
-	return DefaultParser.Validate(expr)
 }

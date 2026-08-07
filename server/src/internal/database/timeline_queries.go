@@ -887,26 +887,6 @@ const alertClearedDurationSQL = `
             END
         `
 
-// formatAlertClearedDuration renders the same human-readable duration
-// string that alertClearedDurationSQL produces, but in Go. It exists
-// so unit tests can verify the SQL output without a live database and
-// so any future caller that needs to render the same string can share
-// a single definition. The two implementations must stay in sync.
-func formatAlertClearedDuration(d time.Duration) string {
-	secs := int64(d.Seconds())
-	if secs < 0 {
-		secs = 0
-	}
-	switch {
-	case secs < 60:
-		return fmt.Sprintf("%ds", secs)
-	case secs < 3600:
-		return fmt.Sprintf("%dm %ds", secs/60, secs%60)
-	default:
-		return fmt.Sprintf("%dh %dm", secs/3600, (secs%3600)/60)
-	}
-}
-
 // buildAlertClearedCountQuery creates the count query for cleared alerts
 func buildAlertClearedCountQuery(whereClause string) string {
 	tableWhere := strings.ReplaceAll(whereClause, "event_time", "cleared_at")

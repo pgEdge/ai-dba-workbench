@@ -99,14 +99,6 @@ func (c *CompactionCache) Clear() {
 	c.entries = make(map[string]*CacheEntry)
 }
 
-// Size returns the number of cached entries
-func (c *CompactionCache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return len(c.entries)
-}
-
 // generateKey creates a cache key from messages and config
 func (c *CompactionCache) generateKey(messages []Message, maxTokens, recentWindow int) string {
 	// Create a hash of the messages + config
@@ -144,35 +136,5 @@ func (c *CompactionCache) cleanupExpired() {
 			}
 		}
 		c.mu.Unlock()
-	}
-}
-
-// GetStats returns cache statistics
-func (c *CompactionCache) GetStats() map[string]any {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var oldestEntry, newestEntry time.Time
-	expiredCount := 0
-	now := time.Now()
-
-	for _, entry := range c.entries {
-		if oldestEntry.IsZero() || entry.CreatedAt.Before(oldestEntry) {
-			oldestEntry = entry.CreatedAt
-		}
-		if newestEntry.IsZero() || entry.CreatedAt.After(newestEntry) {
-			newestEntry = entry.CreatedAt
-		}
-		if c.ttl > 0 && now.After(entry.ExpiresAt) {
-			expiredCount++
-		}
-	}
-
-	return map[string]any{
-		"total_entries": len(c.entries),
-		"expired_count": expiredCount,
-		"oldest_entry":  oldestEntry,
-		"newest_entry":  newestEntry,
-		"cache_ttl_sec": c.ttl.Seconds(),
 	}
 }

@@ -11,12 +11,8 @@ package compactor
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
 )
-
-// reWord matches word characters for counting words
-var reWord = regexp.MustCompile(`\w+`)
 
 // TokenEstimator provides utilities for estimating token counts in messages.
 type TokenEstimator struct {
@@ -188,30 +184,4 @@ func (te *TokenEstimator) containsCode(text string) bool {
 		}
 	}
 	return false
-}
-
-// CountWords counts words in a string for rough estimation.
-func CountWords(text string) int {
-	return len(reWord.FindAllString(text, -1))
-}
-
-// TruncateText truncates text to approximately maxTokens.
-func TruncateText(text string, maxTokens int) string {
-	// Rough approximation: 4 chars per token
-	maxChars := maxTokens * 4
-
-	if len(text) <= maxChars {
-		return text
-	}
-
-	// Truncate and add ellipsis
-	truncated := text[:maxChars-3]
-
-	// Try to break at a word boundary
-	lastSpace := strings.LastIndex(truncated, " ")
-	if lastSpace > maxChars/2 {
-		truncated = truncated[:lastSpace]
-	}
-
-	return truncated + "..."
 }

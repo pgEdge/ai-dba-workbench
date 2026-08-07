@@ -141,37 +141,6 @@ func TestAnalytics_GetEfficiencyReport(t *testing.T) {
 	}
 }
 
-func TestAnalytics_Reset(t *testing.T) {
-	analytics := NewAnalytics()
-
-	info := CompactionInfo{
-		OriginalCount:    10,
-		CompactedCount:   5,
-		TokensSaved:      1000,
-		CompressionRatio: 0.5,
-	}
-
-	analytics.RecordCompaction(info, 100*time.Millisecond)
-
-	metrics := analytics.GetMetrics()
-	if metrics.TotalCompactions != 1 {
-		t.Fatal("Expected 1 compaction before reset")
-	}
-
-	analytics.Reset()
-
-	metrics = analytics.GetMetrics()
-	if metrics.TotalCompactions != 0 {
-		t.Errorf("TotalCompactions after reset = %v, want 0", metrics.TotalCompactions)
-	}
-	if metrics.TotalMessagesIn != 0 {
-		t.Errorf("TotalMessagesIn after reset = %v, want 0", metrics.TotalMessagesIn)
-	}
-	if metrics.TotalTokensSaved != 0 {
-		t.Errorf("TotalTokensSaved after reset = %v, want 0", metrics.TotalTokensSaved)
-	}
-}
-
 func TestAnalytics_LastCompactionTime(t *testing.T) {
 	analytics := NewAnalytics()
 

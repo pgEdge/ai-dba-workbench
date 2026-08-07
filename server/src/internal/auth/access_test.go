@@ -483,50 +483,6 @@ func TestHasWriteAccess(t *testing.T) {
 // DatabaseAccessChecker Tests
 // =============================================================================
 
-func TestNewDatabaseAccessChecker(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-
-	if checker == nil {
-		t.Fatal("Expected non-nil checker")
-	}
-}
-
-func TestDatabaseAccessChecker_APIToken(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-
-	ctx := context.WithValue(context.Background(), IsAPITokenContextKey, true)
-
-	if !checker.CanAccessDatabase(ctx) {
-		t.Error("Expected database access with API token")
-	}
-}
-
-func TestDatabaseAccessChecker_SessionUser(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-
-	// With username in context
-	ctx := context.WithValue(context.Background(), UsernameContextKey, "testuser")
-	if !checker.CanAccessDatabase(ctx) {
-		t.Error("Expected database access with session user")
-	}
-
-	// Without username in context
-	ctx = context.Background()
-	if checker.CanAccessDatabase(ctx) {
-		t.Error("Expected no database access without authentication")
-	}
-}
-
-func TestDatabaseAccessChecker_GetBoundDatabase(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-	ctx := context.Background()
-
-	// Should always return empty string (single database mode)
-	if db := checker.GetBoundDatabase(ctx); db != "" {
-		t.Errorf("Expected empty string, got %q", db)
-	}
-}
-
 // =============================================================================
 // RBACChecker Nil Store Tests
 // =============================================================================

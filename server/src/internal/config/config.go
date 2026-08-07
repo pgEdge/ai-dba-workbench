@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -1159,25 +1158,4 @@ func GetDefaultSecretPath(binaryPath string) string {
 // ConfigFileExists checks if a config file exists at the given path
 func ConfigFileExists(path string) bool {
 	return fileutil.FileExists(path)
-}
-
-// SaveConfig saves the configuration to a YAML file
-func SaveConfig(path string, cfg *Config) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// Write with restrictive permissions (owner read/write only)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
 }

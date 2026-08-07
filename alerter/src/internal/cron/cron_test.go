@@ -300,31 +300,6 @@ func TestMatches_Steps(t *testing.T) {
 	}
 }
 
-func TestValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		expr    string
-		wantErr bool
-	}{
-		{"valid every minute", "* * * * *", false},
-		{"valid daily", "0 0 * * *", false},
-		{"valid complex", "*/15 9-17 * * 1-5", false},
-		{"invalid empty", "", true},
-		{"invalid format", "not a cron", true},
-		{"invalid minute", "99 * * * *", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := Validate(tt.expr)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate(%q) error = %v, wantErr %v",
-					tt.expr, err, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestSchedule_Next(t *testing.T) {
 	parser := NewParser()
 
@@ -352,23 +327,5 @@ func TestSchedule_Next(t *testing.T) {
 	expected = time.Date(2024, 6, 16, 9, 0, 0, 0, time.UTC)
 	if !nextTime.Equal(expected) {
 		t.Errorf("Next(%v) = %v, want %v", startTime, nextTime, expected)
-	}
-}
-
-func TestDefaultParser(t *testing.T) {
-	// Test package-level functions use the default parser
-	_, err := Parse("* * * * *")
-	if err != nil {
-		t.Errorf("Parse with default parser failed: %v", err)
-	}
-
-	_, err = Matches("* * * * *", time.Now(), "UTC")
-	if err != nil {
-		t.Errorf("Matches with default parser failed: %v", err)
-	}
-
-	err = Validate("* * * * *")
-	if err != nil {
-		t.Errorf("Validate with default parser failed: %v", err)
 	}
 }

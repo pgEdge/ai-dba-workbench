@@ -848,32 +848,6 @@ func TestDeleteOldAlertsAndCandidates(t *testing.T) {
 	}
 }
 
-func TestGetProbeAvailability(t *testing.T) {
-	ds, pool, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	connID := insertTestConnection(t, pool, "probe-conn")
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO probe_availability (connection_id, database_name, probe_name, is_available)
-		VALUES ($1, '', 'probe_x', TRUE)
-	`, connID); err != nil {
-		t.Fatal(err)
-	}
-	pa, err := ds.GetProbeAvailability(ctx, connID, "probe_x")
-	if err != nil {
-		t.Fatalf("GetProbeAvailability: %v", err)
-	}
-	if pa.ProbeName != "probe_x" || !pa.IsAvailable {
-		t.Errorf("got %+v", pa)
-	}
-
-	// Missing returns ErrNoRows.
-	if _, err := ds.GetProbeAvailability(ctx, connID, "missing_probe"); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("expected ErrNoRows, got %v", err)
-	}
-}
-
 func TestGetEnabledBlackoutSchedules(t *testing.T) {
 	ds, pool, cleanup := newFullTestDatastore(t)
 	defer cleanup()

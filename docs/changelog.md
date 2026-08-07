@@ -253,6 +253,18 @@ project adheres to
   512M; the collector connection-pool and timeout options are now
   documented in the sample configuration. (#308)
 
+### Removed
+
+- Remove a further 18 unused functions across the collector, server, and
+  alerter, together with the tests that existed only to exercise them.
+  The largest group is the alerter's notification-channel write API,
+  where ten methods covering channel creation, updates, deletion, email
+  recipients, connection links, notification history, and reminder state
+  had no caller; the alerter reads notification channels, whilst the
+  server owns every write. The rest are a pool accessor, two compaction
+  analytics reporters, a probe-availability lookup, and three session
+  tracing helpers.
+
 ### Security
 
 - Ignore a blank password when updating a database connection, so an

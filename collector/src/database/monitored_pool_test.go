@@ -74,9 +74,6 @@ func TestNewMonitoredConnectionPoolManager(t *testing.T) {
 	if m == nil {
 		t.Fatal("got nil")
 	}
-	if m.GetMaxConnections() != 7 {
-		t.Errorf("GetMaxConnections = %d, want 7", m.GetMaxConnections())
-	}
 	if m.maxIdleSeconds != 30 {
 		t.Errorf("maxIdleSeconds = %d, want 30", m.maxIdleSeconds)
 	}
@@ -91,15 +88,9 @@ func TestSetGetMaxConnections(t *testing.T) {
 
 	// Setting same value: no-op path.
 	m.SetMaxConnections(3)
-	if got := m.GetMaxConnections(); got != 3 {
-		t.Errorf("after no-op set, got %d", got)
-	}
 
 	// Update.
 	m.SetMaxConnections(8)
-	if got := m.GetMaxConnections(); got != 8 {
-		t.Errorf("after set, got %d", got)
-	}
 }
 
 func TestVersionGetSet(t *testing.T) {

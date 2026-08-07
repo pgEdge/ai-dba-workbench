@@ -83,9 +83,6 @@ func TestGetFilePath_NotInitialized(t *testing.T) {
 	globalTracer = nil
 	defer func() { globalTracer = originalTracer }()
 
-	if GetFilePath() != "" {
-		t.Error("GetFilePath should return empty string when tracer is not initialized")
-	}
 }
 
 func TestTraceEntryMarshalJSON(t *testing.T) {
@@ -173,10 +170,6 @@ func TestInitializeAndLog(t *testing.T) {
 		t.Error("IsEnabled should return true after initialization")
 	}
 
-	if GetFilePath() != traceFile {
-		t.Errorf("GetFilePath() = %q, want %q", GetFilePath(), traceFile)
-	}
-
 	// Log some entries
 	LogToolCall("sess_123", "token_abc", "req_001", "query_database", map[string]any{
 		"query": "SELECT 1",
@@ -236,8 +229,6 @@ func TestLogWithDisabledTracer(t *testing.T) {
 	LogHTTPResponse("sess", "token", "req", "POST", "/path", 200, nil, time.Second)
 	LogUserPrompt("sess", "token", "req", "prompt")
 	LogLLMResponse("sess", "token", "req", "response", time.Second)
-	LogSessionStart("sess", "token", nil)
-	LogSessionEnd("sess", "token", nil)
 	LogError("sess", "token", "req", "context", nil)
 }
 

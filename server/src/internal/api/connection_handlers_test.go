@@ -26,7 +26,7 @@ import (
 )
 
 func TestNewConnectionHandler(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 	if handler == nil {
 		t.Fatal("NewConnectionHandler returned nil")
 	}
@@ -79,7 +79,7 @@ func TestConnectionHandler_HandleNotConfigured(t *testing.T) {
 }
 
 func TestConnectionHandler_HandleConnections_MethodNotAllowed(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	tests := []struct {
 		name   string
@@ -111,7 +111,7 @@ func TestConnectionHandler_HandleConnections_MethodNotAllowed(t *testing.T) {
 }
 
 func TestConnectionHandler_HandleConnectionSubpath_InvalidID(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/abc", nil)
 	rec := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestConnectionHandler_HandleConnectionSubpath_InvalidID(t *testing.T) {
 }
 
 func TestConnectionHandler_HandleConnectionSubpath_MethodNotAllowed(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/connections/1", nil)
 	rec := httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestConnectionHandler_HandleConnectionSubpath_MethodNotAllowed(t *testing.T
 }
 
 func TestConnectionHandler_HandleConnectionSubpath_DatabasesMethodNotAllowed(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/1/databases", nil)
 	rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestConnectionHandler_HandleConnectionSubpath_DatabasesMethodNotAllowed(t *
 }
 
 func TestConnectionHandler_HandleCurrentConnection_MethodNotAllowed(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/connections/current", nil)
 	req.Header.Set("Authorization", "Bearer testtoken")
@@ -188,7 +188,7 @@ func TestConnectionHandler_HandleCurrentConnection_MethodNotAllowed(t *testing.T
 }
 
 func TestConnectionHandler_HandleCurrentConnection_MissingAuth(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/current", nil)
 	rec := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestConnectionHandler_HandleCurrentConnection_MissingAuth(t *testing.T) {
 }
 
 func TestConnectionHandler_RegisterRoutes_NotConfigured(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 	mux := http.NewServeMux()
 	noopWrapper := func(h http.HandlerFunc) http.HandlerFunc { return h }
 
@@ -237,7 +237,7 @@ func TestConnectionHandler_RegisterRoutes_NotConfigured(t *testing.T) {
 func TestConnectionHandler_CreateConnection_NoAuth(t *testing.T) {
 	// Test that createConnection requires authentication
 	rbac := auth.NewRBACChecker(nil)
-	handler := NewConnectionHandler(nil, nil, rbac)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, rbac, false, nil, nil)
 
 	body, _ := json.Marshal(ConnectionCreateRequest{
 		Name:         "test",
@@ -273,7 +273,7 @@ func TestConnectionHandler_CreateConnection_NoAuth(t *testing.T) {
 func TestConnectionHandler_UpdateConnection_NoAuth(t *testing.T) {
 	// Test that updateConnection requires authentication
 	rbac := auth.NewRBACChecker(nil)
-	handler := NewConnectionHandler(nil, nil, rbac)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, rbac, false, nil, nil)
 
 	body, _ := json.Marshal(ConnectionFullUpdateRequest{})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/connections/1",
@@ -299,7 +299,7 @@ func TestConnectionHandler_UpdateConnection_NoAuth(t *testing.T) {
 }
 
 func TestConnectionHandler_SetCurrentConnection_InvalidConnectionID(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	body, _ := json.Marshal(CurrentConnectionRequest{ConnectionID: 0})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/current",
@@ -453,7 +453,7 @@ func TestCurrentConnectionResponse_JSON(t *testing.T) {
 }
 
 func TestConnectionHandler_HandleSubpath_NotFound(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	// Test unknown subpath
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/1/unknown", nil)
@@ -467,7 +467,7 @@ func TestConnectionHandler_HandleSubpath_NotFound(t *testing.T) {
 }
 
 func TestConnectionHandler_HandleSubpath_EmptyPath(t *testing.T) {
-	handler := NewConnectionHandler(nil, nil, nil)
+	handler := NewConnectionHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/", nil)
 	rec := httptest.NewRecorder()
@@ -649,7 +649,7 @@ func TestListConnectionsScopedTokenReturnsScopedConnection(t *testing.T) {
 			return ds.GetConnectionSharingInfo(ctx, id)
 		},
 	)
-	handler := NewConnectionHandler(ds, store, checker)
+	handler := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
 	ctx := req.Context()
@@ -761,7 +761,7 @@ func newListConnectionsIssue68Handler(ds *database.Datastore, store *auth.AuthSt
 			return ds.GetConnectionSharingInfo(ctx, id)
 		},
 	)
-	return NewConnectionHandler(ds, store, checker)
+	return NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
 }
 
 // TestListConnections_Issue68_Superuser_ReturnsAllConnections locks in

@@ -391,6 +391,18 @@ project adheres to
   call sites all go together. `EnableAnalytics` defaulted to false, so
   no deployment was collecting these figures in any case.
 
+### Removed
+
+- Remove the superseded `NewConnectionHandler` and
+  `NewNotificationChannelHandler` constructors, along with the
+  `DefaultHostValidator` helper that only they used. The server has
+  wired both handlers through the `NewConnectionHandlerWithSecurity` and
+  `NewNotificationChannelHandlerWithSecurity` variants for some time, so
+  the shorter forms were unreachable in production whilst 49 test call
+  sites still used them. Those call sites now use the `WithSecurity`
+  constructors directly, passing the same host-validation settings the
+  removed helper supplied, so test behaviour is unchanged.
+
 ### Security
 
 - Ignore a blank password when updating a database connection, so an

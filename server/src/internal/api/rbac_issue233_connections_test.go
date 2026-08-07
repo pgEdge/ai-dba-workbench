@@ -88,7 +88,7 @@ func setupIssue233CreateConnection(
 	}
 
 	checker := auth.NewRBACChecker(store)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	return handler, userID, token, cleanup
 }
@@ -231,7 +231,7 @@ func TestConnectionHandler_CreateConnection_Issue233_SuperuserAllowed(t *testing
 	}
 
 	checker := auth.NewRBACChecker(store)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	body, _ := json.Marshal(ConnectionCreateRequest{
 		Name:         "super-conn",
@@ -315,7 +315,7 @@ func setupIssue233UpdateConnectionCluster(
 	}
 
 	checker := auth.NewRBACChecker(store)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	return handler, userID, token, cleanup
 }
@@ -412,7 +412,7 @@ func TestConnectionHandler_UpdateConnectionCluster_Issue233(t *testing.T) {
 		}
 
 		checker := auth.NewRBACChecker(store)
-		handler := NewConnectionHandler(nil, store, checker)
+		handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 		clusterID := 1
 		body, _ := json.Marshal(ConnectionClusterUpdateRequest{

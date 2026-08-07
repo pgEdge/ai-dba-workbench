@@ -94,13 +94,6 @@ func (m *MonitoredConnectionPoolManager) DetectAndCacheVersion(ctx context.Conte
 	return serverVersion, nil
 }
 
-// GetMaxConnections returns the current maximum concurrent connections per server.
-func (m *MonitoredConnectionPoolManager) GetMaxConnections() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.maxConnections
-}
-
 // SetMaxConnections updates the maximum concurrent connections per server.
 // Only the stored maxConnections value is updated; existing semaphore
 // channels are left intact to avoid orphaning goroutines blocked on them.

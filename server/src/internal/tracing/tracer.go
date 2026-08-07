@@ -117,14 +117,6 @@ func IsEnabled() bool {
 	return globalTracer.enabled
 }
 
-// GetFilePath returns the trace file path
-func GetFilePath() string {
-	if globalTracer == nil {
-		return ""
-	}
-	return globalTracer.filePath
-}
-
 // Close closes the trace file
 func Close() error {
 	if globalTracer == nil || !globalTracer.enabled || globalTracer.file == nil {
@@ -264,26 +256,6 @@ func LogLLMResponse(sessionID, tokenHash, requestID string, response any, durati
 		Duration:  &duration,
 		TokenHash: truncateHash(tokenHash),
 		RequestID: requestID,
-	})
-}
-
-// LogSessionStart logs the start of a new session
-func LogSessionStart(sessionID, tokenHash string, metadata map[string]any) {
-	Log(TraceEntry{
-		SessionID: sessionID,
-		Type:      EntryTypeSessionStart,
-		TokenHash: truncateHash(tokenHash),
-		Metadata:  metadata,
-	})
-}
-
-// LogSessionEnd logs the end of a session
-func LogSessionEnd(sessionID, tokenHash string, metadata map[string]any) {
-	Log(TraceEntry{
-		SessionID: sessionID,
-		Type:      EntryTypeSessionEnd,
-		TokenHash: truncateHash(tokenHash),
-		Metadata:  metadata,
 	})
 }
 

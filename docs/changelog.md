@@ -61,6 +61,19 @@ project adheres to
 
 ### Fixed
 
+- Stop the login rate limiter that `AuthHandler` creates for itself
+  when the server shuts down. `NewAuthHandler` starts a background
+  cleanup goroutine for an internal rate limiter covering total login
+  attempts per IP, and only its `Close` method stops that goroutine.
+  Nothing called `Close`, because `SetupHandlers` built the handler
+  inside a closure and discarded the reference, so the goroutine and
+  its map of recorded attempts survived for the remaining life of the
+  process. `HandlerDependencies` now carries a `RegisterCloser`
+  callback, which the server uses to collect cleanup functions from the
+  handlers it wires and to run them from `Close`, alongside the
+  overview generator, the shared rate limiter, the auth store, and the
+  datastore it already stopped.
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

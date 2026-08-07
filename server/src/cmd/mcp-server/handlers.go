@@ -54,6 +54,12 @@ type HandlerDependencies struct {
 	OverviewHub  *overview.Hub
 	ToolProvider api.ContextAwareToolProvider
 	AIEnabled    bool
+
+	// RegisterCloser records a cleanup function to be run when the
+	// server shuts down. Handlers that own background goroutines use
+	// it to hand that ownership back to the server. It may be nil in
+	// tests that only exercise route registration.
+	RegisterCloser func(func())
 }
 
 // SetupHandlers configures all HTTP handlers for the server
@@ -80,6 +86,14 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		// The TLS enabled flag ensures cookies are marked Secure when using HTTPS
 		tlsEnabled := deps.Config != nil && deps.Config.HTTP.TLS.Enabled
 		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor, tlsEnabled)
+
+		// NewAuthHandler starts a cleanup goroutine for its internal
+		// login rate limiter, which only Close stops. Hand that back
+		// to the server so it is stopped on shutdown rather than
+		// running for the remaining life of the process.
+		if deps.RegisterCloser != nil {
+			deps.RegisterCloser(authHandler.Close)
+		}
 		authHandler.RegisterRoutes(mux)
 
 		// Chat history compaction endpoint

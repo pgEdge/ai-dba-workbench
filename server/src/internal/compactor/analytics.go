@@ -46,14 +46,6 @@ func (a *Analytics) RecordCompaction(info CompactionInfo, duration time.Duration
 	}
 }
 
-// GetMetrics returns a copy of current metrics
-func (a *Analytics) GetMetrics() CompactionMetrics {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	return a.metrics
-}
-
 // Reset clears all metrics
 func (a *Analytics) Reset() {
 	a.mu.Lock()
@@ -81,31 +73,6 @@ func (a *Analytics) GetSummary() map[string]any {
 		"average_compression": a.metrics.AverageCompression,
 		"average_duration_ms": a.metrics.AverageDuration.Milliseconds(),
 		"last_compaction":     a.metrics.LastCompactionTime.Format(time.RFC3339),
-	}
-}
-
-// GetEfficiencyReport generates an efficiency report
-func (a *Analytics) GetEfficiencyReport() EfficiencyReport {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.metrics.TotalCompactions == 0 {
-		return EfficiencyReport{
-			HasData: false,
-		}
-	}
-
-	avgMessagesDropped := float64(a.metrics.TotalMessagesIn-a.metrics.TotalMessagesOut) / float64(a.metrics.TotalCompactions)
-	avgTokensSaved := float64(a.metrics.TotalTokensSaved) / float64(a.metrics.TotalCompactions)
-
-	return EfficiencyReport{
-		HasData:                true,
-		TotalCompactions:       a.metrics.TotalCompactions,
-		AverageCompression:     a.metrics.AverageCompression,
-		AverageMessagesDropped: avgMessagesDropped,
-		AverageTokensSaved:     avgTokensSaved,
-		AverageDuration:        a.metrics.AverageDuration,
-		TotalTokensSaved:       a.metrics.TotalTokensSaved,
 	}
 }
 

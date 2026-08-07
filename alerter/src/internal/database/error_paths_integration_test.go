@@ -82,9 +82,6 @@ func TestQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.DeleteOldAnomalyCandidates(ctx, time.Now()); err == nil {
 		t.Errorf("DeleteOldAnomalyCandidates should error on closed pool")
 	}
-	if _, err := ds.GetProbeAvailability(ctx, 1, "x"); err == nil {
-		t.Errorf("GetProbeAvailability should error on closed pool")
-	}
 	if _, err := ds.GetEnabledBlackoutSchedules(ctx); err == nil {
 		t.Errorf("GetEnabledBlackoutSchedules should error on closed pool")
 	}
@@ -206,53 +203,14 @@ func TestNotificationQueriesReturnErrorOnClosedPool(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	owner := "tester"
-	ch := &NotificationChannel{
-		OwnerUsername:         &owner,
-		Enabled:               true,
-		ChannelType:           ChannelTypeWebhook,
-		Name:                  "x",
-		HTTPMethod:            "POST",
-		Headers:               map[string]string{},
-		SMTPPort:              587,
-		SMTPUseTLS:            true,
-		ReminderEnabled:       true,
-		ReminderIntervalHours: 1,
-		CreatedAt:             time.Now(),
-		UpdatedAt:             time.Now(),
-	}
 	if _, err := ds.GetNotificationChannel(ctx, 1); err == nil {
 		t.Errorf("GetNotificationChannel should error on closed pool")
 	}
 	if _, err := ds.GetNotificationChannelsForConnection(ctx, 1); err == nil {
 		t.Errorf("GetNotificationChannelsForConnection should error on closed pool")
 	}
-	if err := ds.CreateNotificationChannel(ctx, ch); err == nil {
-		t.Errorf("CreateNotificationChannel should error on closed pool")
-	}
-	if err := ds.UpdateNotificationChannel(ctx, ch); err == nil {
-		t.Errorf("UpdateNotificationChannel should error on closed pool")
-	}
-	if err := ds.DeleteNotificationChannel(ctx, 1); err == nil {
-		t.Errorf("DeleteNotificationChannel should error on closed pool")
-	}
 	if _, err := ds.GetEmailRecipients(ctx, 1); err == nil {
 		t.Errorf("GetEmailRecipients should error on closed pool")
-	}
-	if err := ds.CreateEmailRecipient(ctx, &EmailRecipient{}); err == nil {
-		t.Errorf("CreateEmailRecipient should error on closed pool")
-	}
-	if err := ds.DeleteEmailRecipient(ctx, 1); err == nil {
-		t.Errorf("DeleteEmailRecipient should error on closed pool")
-	}
-	if err := ds.LinkConnectionToChannel(ctx, &ConnectionNotificationChannel{}); err == nil {
-		t.Errorf("LinkConnectionToChannel should error on closed pool")
-	}
-	if err := ds.UnlinkConnectionFromChannel(ctx, 1, 1); err == nil {
-		t.Errorf("UnlinkConnectionFromChannel should error on closed pool")
-	}
-	if _, err := ds.GetConnectionChannelLinks(ctx, 1); err == nil {
-		t.Errorf("GetConnectionChannelLinks should error on closed pool")
 	}
 	if err := ds.CreateNotificationHistory(ctx, &NotificationHistory{}); err == nil {
 		t.Errorf("CreateNotificationHistory should error on closed pool")
@@ -262,12 +220,6 @@ func TestNotificationQueriesReturnErrorOnClosedPool(t *testing.T) {
 	}
 	if _, err := ds.GetPendingNotifications(ctx); err == nil {
 		t.Errorf("GetPendingNotifications should error on closed pool")
-	}
-	if _, err := ds.GetNotificationHistoryForAlert(ctx, 1); err == nil {
-		t.Errorf("GetNotificationHistoryForAlert should error on closed pool")
-	}
-	if _, err := ds.GetReminderState(ctx, 1, 1); err == nil {
-		t.Errorf("GetReminderState should error on closed pool")
 	}
 	if err := ds.UpsertReminderState(ctx, &NotificationReminderState{}); err == nil {
 		t.Errorf("UpsertReminderState should error on closed pool")

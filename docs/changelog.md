@@ -262,6 +262,23 @@ project adheres to
   on the web client alone. The create path, which still requires a
   non-empty password, is unaffected. (#332)
 
+- Move the collector, server, and alerter to Go 1.26.5, and update
+  `golang.org/x/text` to v0.40.0. Together these clear four
+  vulnerabilities that `govulncheck` confirmed were reachable from
+  Workbench code: an infinite loop in `golang.org/x/text` normalisation
+  reached through connection-pool setup, a privacy leak in the
+  `crypto/tls` Encrypted Client Hello handling, unescaped input in
+  `net/textproto` error messages, and inefficient candidate hostname
+  parsing in `crypto/x509`. The Go version is raised in the module
+  files, the three service `Dockerfile` builder stages, and the CI and
+  release workflows; the release workflow matters most, because it
+  previously built the published binaries with the affected toolchain.
+
+- Update the web client's ECharts dependency to v6.1.0, which resolves a
+  cross-site scripting vulnerability, and refresh the transitive
+  `postcss`, `js-yaml`, and `brace-expansion` packages. The client now
+  reports no known vulnerabilities.
+
 ## [1.0.0] - 2026-06-08
 
 This release is the first general-availability release of the

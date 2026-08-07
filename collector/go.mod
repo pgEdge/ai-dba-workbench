@@ -1,8 +1,6 @@
 module github.com/pgedge/ai-workbench/collector
 
-go 1.26.1
-
-toolchain go1.26.2
+go 1.26.5
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
@@ -18,8 +16,8 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )
 
 replace github.com/pgedge/ai-workbench/pkg => ../pkg

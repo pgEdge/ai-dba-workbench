@@ -231,7 +231,7 @@ func TestRBACEnforcement_AdminPermissions(t *testing.T) {
 			url:        "/api/v1/notification-channels",
 			permission: auth.PermManageNotificationChannels,
 			handler: func(store *auth.AuthStore, checker *auth.RBACChecker) http.HandlerFunc {
-				h := NewNotificationChannelHandler(nil, store, checker)
+				h := NewNotificationChannelHandlerWithSecurity(nil, store, checker, false, nil, nil)
 				return h.handleChannels
 			},
 		},
@@ -241,7 +241,7 @@ func TestRBACEnforcement_AdminPermissions(t *testing.T) {
 			url:        "/api/v1/notification-channels/1",
 			permission: auth.PermManageNotificationChannels,
 			handler: func(store *auth.AuthStore, checker *auth.RBACChecker) http.HandlerFunc {
-				h := NewNotificationChannelHandler(nil, store, checker)
+				h := NewNotificationChannelHandlerWithSecurity(nil, store, checker, false, nil, nil)
 				return h.handleChannelSubpath
 			},
 		},
@@ -251,7 +251,7 @@ func TestRBACEnforcement_AdminPermissions(t *testing.T) {
 			url:        "/api/v1/notification-channels/1",
 			permission: auth.PermManageNotificationChannels,
 			handler: func(store *auth.AuthStore, checker *auth.RBACChecker) http.HandlerFunc {
-				h := NewNotificationChannelHandler(nil, store, checker)
+				h := NewNotificationChannelHandlerWithSecurity(nil, store, checker, false, nil, nil)
 				return h.handleChannelSubpath
 			},
 		},
@@ -1070,7 +1070,7 @@ func TestConnectionHandler_GetConnection_NonOwnerUnshared_403(t *testing.T) {
 	bobID, _ := store.GetUserID("bob")
 
 	checker := mockSharingChecker(t, store, 42, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
 	req = withUser(req, bobID)
@@ -1087,7 +1087,7 @@ func TestConnectionHandler_GetConnection_Superuser_NotDenied(t *testing.T) {
 	defer cleanup()
 
 	checker := mockSharingChecker(t, store, 42, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
 	req = withSuperuser(req)
@@ -1115,7 +1115,7 @@ func TestConnectionHandler_GetConnection_Owner_NotDenied(t *testing.T) {
 	aliceID, _ := store.GetUserID("alice")
 
 	checker := mockSharingChecker(t, store, 42, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
 	req = withUser(req, aliceID)
@@ -1143,7 +1143,7 @@ func TestConnectionHandler_GetConnection_SharedNonOwner_NotDenied(t *testing.T) 
 
 	// Shared resource: non-owner should have access.
 	checker := mockSharingChecker(t, store, 42, "alice", true)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
 	req = withUser(req, bobID)
@@ -1182,7 +1182,7 @@ func TestConnectionHandler_GetConnection_GroupGrantedUser_NotDenied(t *testing.T
 	}
 
 	checker := mockSharingChecker(t, store, 42, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/42", nil)
 	req = withUser(req, bobID)

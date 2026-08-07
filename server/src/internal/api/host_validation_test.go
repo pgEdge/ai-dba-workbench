@@ -67,22 +67,6 @@ func TestNewHostValidator(t *testing.T) {
 	}
 }
 
-func TestDefaultHostValidator(t *testing.T) {
-	v := DefaultHostValidator()
-	if v == nil {
-		t.Fatal("DefaultHostValidator returned nil")
-	}
-	if v.AllowInternalNetworks {
-		t.Error("Default validator should not allow internal networks")
-	}
-	if len(v.AllowedHosts) != 0 {
-		t.Error("Default validator should have empty allowed hosts")
-	}
-	if len(v.BlockedHosts) != 0 {
-		t.Error("Default validator should have empty blocked hosts")
-	}
-}
-
 func TestHostValidator_ValidateHost(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -239,7 +223,7 @@ func TestHostValidator_ValidateHost(t *testing.T) {
 }
 
 func TestHostValidator_ValidatePort(t *testing.T) {
-	v := DefaultHostValidator()
+	v := NewHostValidator(false, nil, nil)
 
 	tests := []struct {
 		name        string
@@ -403,7 +387,7 @@ func TestHostValidator_CIDRParsing(t *testing.T) {
 }
 
 func TestHostValidator_InternalNetworksList(t *testing.T) {
-	v := DefaultHostValidator()
+	v := NewHostValidator(false, nil, nil)
 
 	// Test that common internal ranges are blocked
 	internalIPs := []string{

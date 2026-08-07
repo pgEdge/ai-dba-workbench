@@ -32,20 +32,6 @@ type NotificationChannelHandler struct {
 	checkPermission func(http.ResponseWriter, *http.Request) bool
 }
 
-// NewNotificationChannelHandler creates a new notification channel handler
-func NewNotificationChannelHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *NotificationChannelHandler {
-	h := &NotificationChannelHandler{
-		datastore:     datastore,
-		authStore:     authStore,
-		rbacChecker:   rbacChecker,
-		hostValidator: DefaultHostValidator(),
-	}
-	if rbacChecker != nil {
-		h.checkPermission = RequireAdminPermission(rbacChecker, auth.PermManageNotificationChannels, "manage notification channels")
-	}
-	return h
-}
-
 // NewNotificationChannelHandlerWithSecurity creates a new notification channel handler with custom security settings
 func NewNotificationChannelHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
 	rbacChecker *auth.RBACChecker, allowInternal bool, allowedHosts, blockedHosts []string) *NotificationChannelHandler {

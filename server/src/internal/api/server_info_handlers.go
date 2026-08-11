@@ -30,11 +30,15 @@ import (
 // aiAnalysisCacheTTL is how long AI database analysis is cached.
 const aiAnalysisCacheTTL = 5 * time.Minute
 
-// llmAnalysisMaxTokens caps the AI analysis response length.
-const llmAnalysisMaxTokens = 512
-
 // llmAnalysisTemperature controls response creativity for analysis.
 const llmAnalysisTemperature = 0.3
+
+// aiAnalysisUnusableMessage is returned to the client when the model
+// produced no usable analysis text. It names the actionable cause: a
+// reasoning model that spent its whole output budget on thinking tokens.
+const aiAnalysisUnusableMessage = "AI analysis unavailable: the model returned no text. " +
+	"It may have exhausted its output token budget on reasoning tokens; " +
+	"increase llm.max_tokens or select a model that emits less reasoning."
 
 // keySettings lists the PostgreSQL configuration parameters included
 // in the server info response.
@@ -316,8 +320,33 @@ func (h *ServerInfoHandler) handleServerInfoAI(w http.ResponseWriter, r *http.Re
 	extensions := h.queryExtensions(ctx, pool, connectionID)
 	h.attachExtensionsToDatabases(extensions, databases)
 
-	// Generate AI analysis
-	analysis := h.getAIAnalysis(ctx, connectionID, databases, extensions)
+	// Generate AI analysis and write whichever response its outcome calls
+	// for.
+	analysis, err := h.getAIAnalysis(ctx, connectionID, databases, extensions)
+	writeAIAnalysisResponse(w, connectionID, analysis, err)
+}
+
+// writeAIAnalysisResponse writes the HTTP response for an AI-analysis
+// outcome.
+//
+// A nil analysis with no error means analysis is simply unavailable (AI
+// disabled, no databases, or an upstream call that already logged its own
+// failure); that stays a 200 with a null body, which the client renders as
+// "no analysis". A non-nil error means the model answered but produced
+// nothing usable, which is an actionable misconfiguration, so it is
+// reported as 502 with a message naming the likely cause.
+func writeAIAnalysisResponse(
+	w http.ResponseWriter,
+	connectionID int,
+	analysis *AIAnalysisInfo,
+	err error,
+) {
+	if err != nil {
+		log.Printf("[ERROR] AI analysis unusable for connection %d: %v",
+			connectionID, err)
+		RespondError(w, http.StatusBadGateway, aiAnalysisUnusableMessage)
+		return
+	}
 	if analysis == nil {
 		RespondJSON(w, http.StatusOK, nil)
 		return
@@ -644,14 +673,22 @@ func (h *ServerInfoHandler) queryKeySettings(
 
 // getAIAnalysis returns a cached or freshly generated AI analysis of
 // the databases on the given connection.
+//
+// It returns (nil, nil) when analysis is unavailable for a benign reason:
+// AI is not configured, there are no databases to analyze, or the client
+// or chat call failed (those failures are logged here and left as a null
+// body so a transient provider outage does not turn the dialog into an
+// error). It returns a non-nil error only when the provider answered with
+// no usable text, which is an actionable misconfiguration rather than a
+// transient failure.
 func (h *ServerInfoHandler) getAIAnalysis(
 	ctx context.Context,
 	connectionID int,
 	databases []DatabaseInfo,
 	extensions []ExtensionInfo,
-) *AIAnalysisInfo {
+) (*AIAnalysisInfo, error) {
 	if h.llmConfig == nil || h.llmConfig.Provider == "" {
-		return nil
+		return nil, nil
 	}
 
 	// Check cache
@@ -662,14 +699,14 @@ func (h *ServerInfoHandler) getAIAnalysis(
 			return &AIAnalysisInfo{
 				Databases:   entry.analysis,
 				GeneratedAt: entry.generatedAt,
-			}
+			}, nil
 		}
 	}
 	h.cacheMu.RUnlock()
 
 	// No databases to analyze
 	if len(databases) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Build prompt
@@ -678,23 +715,32 @@ func (h *ServerInfoHandler) getAIAnalysis(
 	// Create LLM client
 	client, err := h.createLLMClient()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
+	// The request budget is resolved from the operator's llm.max_tokens
+	// through the same helper the client options use, so the request and
+	// the client agree on the budget.
 	resp, err := client.Chat(ctx, pgllm.ChatRequest{
 		Messages:     []pgllm.Message{pgllm.UserText(prompt)},
 		SystemPrompt: "",
-		MaxTokens:    pgllm.Int(llmAnalysisMaxTokens),
+		MaxTokens:    pgllm.Int(h.llmConfig.AnalysisMaxTokens()),
 		Temperature:  pgllm.Float(llmAnalysisTemperature),
 	})
 	if err != nil {
 		log.Printf("[ERROR] AI analysis failed for connection %d: %v",
 			connectionID, err)
-		return nil
+		return nil, nil
 	}
 
-	// Parse the response into per-database analysis
-	analysis := parseDatabaseAnalysisResponse(resp, databases)
+	// Parse the response into per-database analysis. A response with no
+	// text block (the shape a reasoning model produces when its thinking
+	// exhausts the output budget) is reported rather than cached as an
+	// empty analysis.
+	analysis, err := parseDatabaseAnalysisResponse(resp, databases)
+	if err != nil {
+		return nil, err
+	}
 
 	// Cache the result
 	now := time.Now().UTC()
@@ -709,7 +755,7 @@ func (h *ServerInfoHandler) getAIAnalysis(
 	return &AIAnalysisInfo{
 		Databases:   analysis,
 		GeneratedAt: now,
-	}
+	}, nil
 }
 
 // buildDatabaseAnalysisPrompt constructs the LLM prompt for database
@@ -750,10 +796,17 @@ func buildDatabaseAnalysisPrompt(databases []DatabaseInfo) string {
 
 // parseDatabaseAnalysisResponse extracts per-database descriptions from
 // the LLM response text.
+//
+// A response that carries no text block, or whose text is whitespace
+// only, yields llmproxy.ErrNoTextContent. Reasoning models charge their
+// thinking blocks against the same output budget as the answer, so an
+// under-sized budget produces exactly this shape of response; reporting
+// it as an error surfaces the misconfiguration instead of caching an
+// empty analysis for the whole cache TTL.
 func parseDatabaseAnalysisResponse(
 	resp *pgllm.ChatResponse,
 	databases []DatabaseInfo,
-) map[string]string {
+) (map[string]string, error) {
 	// Extract text from response
 	var text string
 	if resp != nil {
@@ -762,6 +815,9 @@ func parseDatabaseAnalysisResponse(
 				text += b.Text
 			}
 		}
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, llmproxy.ErrNoTextContent
 	}
 
 	result := make(map[string]string, len(databases))
@@ -806,7 +862,7 @@ func parseDatabaseAnalysisResponse(
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // createLLMClient builds a pgedge-go-llm-lib client based on the
@@ -816,10 +872,11 @@ func parseDatabaseAnalysisResponse(
 func (h *ServerInfoHandler) createLLMClient() (pgllm.Client, error) {
 	provider := h.llmConfig.Provider
 
-	// Credential selection, custom-header wiring, and the
-	// timeout-only-when-positive rule live in the shared llmproxy helper
-	// so the overview and server-info analysis paths stay in lock-step.
-	opts := h.llmConfig.BuildClientOptions(llmAnalysisMaxTokens, llmAnalysisTemperature)
+	// Credential selection, custom-header wiring, max-token resolution,
+	// and the timeout-only-when-positive rule live in the shared llmproxy
+	// helper so the overview and server-info analysis paths stay in
+	// lock-step.
+	opts := h.llmConfig.BuildClientOptions(llmAnalysisTemperature)
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {

@@ -324,6 +324,17 @@ llm:
   # Default: ollama
   reasoning_provider: ollama
 
+  # Maximum number of output tokens for a tier 3 classification.
+  # Default: 4096
+  #
+  # Reasoning models (for example Qwen3, DeepSeek-R1 distills, or
+  # gpt-oss served through llama.cpp) charge their thinking tokens
+  # against this same budget. A small budget is consumed entirely by
+  # the thinking block, so the model never emits the classification
+  # verdict. Raise this value if tier 3 reports empty responses; a
+  # value of 0 or less selects the default.
+  max_tokens: 4096
+
   #-------------------------------------------------------------------------
   # Ollama Settings (local LLM)
   #-------------------------------------------------------------------------

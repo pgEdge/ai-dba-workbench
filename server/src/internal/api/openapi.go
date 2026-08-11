@@ -3306,6 +3306,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid connection ID"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"502": jsonResponse("ErrorResponse",
+						"The model returned no usable analysis text"),
 				},
 			},
 		},

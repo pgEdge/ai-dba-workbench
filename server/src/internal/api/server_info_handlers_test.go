@@ -11,15 +11,28 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
+	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 )
+
+// thinkingBlock is the content-block type a reasoning model emits for its
+// chain of thought. The library has no named constant for it, so the tests
+// use the wire value directly to reproduce the issue #399 response shape.
+const thinkingBlock pgllm.ContentBlockType = "thinking"
 
 func TestPgEncodingName(t *testing.T) {
 	tests := []struct {
@@ -122,7 +135,10 @@ func TestParseDatabaseAnalysisResponse(t *testing.T) {
 		},
 	}
 
-	result := parseDatabaseAnalysisResponse(resp, databases)
+	result, err := parseDatabaseAnalysisResponse(resp, databases)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(result) != 2 {
 		t.Errorf("expected 2 entries, got %d", len(result))
@@ -157,7 +173,10 @@ func TestParseDatabaseAnalysisResponseHandlesMarkdownFormatting(t *testing.T) {
 		},
 	}
 
-	result := parseDatabaseAnalysisResponse(resp, databases)
+	result, err := parseDatabaseAnalysisResponse(resp, databases)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(result) != 5 {
 		t.Errorf("expected 5 entries, got %d", len(result))
@@ -193,7 +212,10 @@ func TestParseDatabaseAnalysisResponseIgnoresUnknownDatabases(t *testing.T) {
 		},
 	}
 
-	result := parseDatabaseAnalysisResponse(resp, databases)
+	result, err := parseDatabaseAnalysisResponse(resp, databases)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 entry, got %d", len(result))
@@ -218,18 +240,65 @@ func TestParseDatabaseAnalysisResponseConcatenatesTextBlocksOnly(t *testing.T) {
 		},
 	}
 
-	result := parseDatabaseAnalysisResponse(resp, databases)
+	result, err := parseDatabaseAnalysisResponse(resp, databases)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if result["testdb"] != "A test database." {
 		t.Errorf("unexpected testdb description: %q", result["testdb"])
 	}
 }
 
-func TestParseDatabaseAnalysisResponseNilResponse(t *testing.T) {
+// TestParseDatabaseAnalysisResponseNoTextContent covers the responses that
+// carry no usable text: a nil response, a response whose only block is a
+// reasoning/thinking block (the issue #399 shape produced when the model
+// spends its whole output budget thinking), and whitespace-only text. Each
+// must report llmproxy.ErrNoTextContent rather than an empty analysis that
+// would be cached and rendered as a blank panel.
+func TestParseDatabaseAnalysisResponseNoTextContent(t *testing.T) {
 	databases := []DatabaseInfo{{Name: "testdb"}}
-	result := parseDatabaseAnalysisResponse(nil, databases)
-	if len(result) != 0 {
-		t.Errorf("expected empty result for nil response, got %d entries", len(result))
+
+	tests := []struct {
+		name string
+		resp *pgllm.ChatResponse
+	}{
+		{
+			name: "nil response",
+			resp: nil,
+		},
+		{
+			name: "no content blocks",
+			resp: &pgllm.ChatResponse{},
+		},
+		{
+			name: "reasoning block only",
+			resp: &pgllm.ChatResponse{
+				Content: []pgllm.ContentBlock{
+					{Type: thinkingBlock, Text: "let me consider each database"},
+				},
+			},
+		},
+		{
+			name: "whitespace-only text",
+			resp: &pgllm.ChatResponse{
+				Content: []pgllm.ContentBlock{
+					{Type: pgllm.BlockText, Text: " \n\t "},
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := parseDatabaseAnalysisResponse(tc.resp, databases)
+			if !errors.Is(err, llmproxy.ErrNoTextContent) {
+				t.Fatalf("expected ErrNoTextContent, got %v", err)
+			}
+			if result != nil {
+				t.Errorf("expected nil result on error, got %v", result)
+			}
+		})
 	}
 }
 
@@ -460,9 +529,12 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			cache:     make(map[int]*aiCacheEntry),
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 1, []DatabaseInfo{{Name: "db"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result != nil {
 			t.Error("expected nil when llmConfig is nil")
 		}
@@ -474,9 +546,12 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			cache:     make(map[int]*aiCacheEntry),
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 1, []DatabaseInfo{{Name: "db"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result != nil {
 			t.Error("expected nil when provider is empty")
 		}
@@ -488,9 +563,12 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			cache:     make(map[int]*aiCacheEntry),
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 1, []DatabaseInfo{}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result != nil {
 			t.Error("expected nil when databases is empty")
 		}
@@ -509,10 +587,13 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			},
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 1,
 			[]DatabaseInfo{{Name: "mydb"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result == nil {
 			t.Fatal("expected non-nil cached result")
 		}
@@ -541,10 +622,13 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			},
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 1,
 			[]DatabaseInfo{{Name: "mydb"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		// With empty provider, getAIAnalysis returns nil early
 		if result != nil {
 			t.Error("expected nil for empty provider after expired cache")
@@ -565,10 +649,13 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			},
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 2,
 			[]DatabaseInfo{{Name: "mydb"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result != nil {
 			t.Error("expected nil for cache miss on different connection ID")
 		}
@@ -583,10 +670,13 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			cache:     make(map[int]*aiCacheEntry),
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 1,
 			[]DatabaseInfo{{Name: "mydb"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result != nil {
 			t.Error("expected nil when client construction fails")
 		}
@@ -619,10 +709,13 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			cache: make(map[int]*aiCacheEntry),
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 7,
 			[]DatabaseInfo{{Name: "mydb"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result == nil {
 			t.Fatal("expected non-nil analysis on successful LLM call")
 		}
@@ -660,10 +753,13 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			cache: make(map[int]*aiCacheEntry),
 		}
 
-		result := h.getAIAnalysis(
+		result, err := h.getAIAnalysis(
 			context.Background(), 8,
 			[]DatabaseInfo{{Name: "mydb"}}, nil,
 		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if result != nil {
 			t.Error("expected nil when the LLM call fails")
 		}
@@ -674,6 +770,261 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 			t.Error("expected no cache entry when the LLM call fails")
 		}
 	})
+
+	t.Run("reports an error when the model returns no text", func(t *testing.T) {
+		// The issue #399 shape: the provider answers successfully but the
+		// message carries no text because the reasoning consumed the whole
+		// output budget. getAIAnalysis must report it and cache nothing.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "length"}]
+			}`))
+		}))
+		defer srv.Close()
+
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+			},
+			cache: make(map[int]*aiCacheEntry),
+		}
+
+		result, err := h.getAIAnalysis(
+			context.Background(), 9,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		)
+		if !errors.Is(err, llmproxy.ErrNoTextContent) {
+			t.Fatalf("expected ErrNoTextContent, got %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil analysis on error, got %v", result)
+		}
+		h.cacheMu.RLock()
+		_, ok := h.cache[9]
+		h.cacheMu.RUnlock()
+		if ok {
+			t.Error("expected no cache entry when the model returns no text")
+		}
+	})
+}
+
+// TestServerInfoAIAnalysisMaxTokensHonoursConfig verifies that the analysis
+// chat request carries the operator-configured llm.max_tokens, falling back
+// to llmproxy.DefaultAnalysisMaxTokens when the setting is unset or
+// non-positive. Regression cover for issue #399, where a hardcoded
+// 512-token cap starved reasoning models of output budget.
+func TestServerInfoAIAnalysisMaxTokensHonoursConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxTokens int
+		want      float64
+	}{
+		{"configured value used", 8192, 8192},
+		{"unset falls back", 0, llmproxy.DefaultAnalysisMaxTokens},
+		{"negative falls back", -3, llmproxy.DefaultAnalysisMaxTokens},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]any
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Errorf("failed to decode request body: %v", err)
+				}
+				got = payload["max_tokens"]
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{
+					"choices": [{"message": {"role": "assistant", "content": "mydb: A store.\n"}, "finish_reason": "stop"}]
+				}`)
+			}))
+			defer srv.Close()
+
+			h := &ServerInfoHandler{
+				llmConfig: &llmproxy.Config{
+					Provider:      "openai",
+					Model:         "gpt-4o",
+					OpenAIAPIKey:  "test-key",
+					OpenAIBaseURL: srv.URL,
+					MaxTokens:     tc.maxTokens,
+				},
+				cache: make(map[int]*aiCacheEntry),
+			}
+
+			if _, err := h.getAIAnalysis(
+				context.Background(), 1,
+				[]DatabaseInfo{{Name: "mydb"}}, nil,
+			); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			num, ok := got.(float64)
+			if !ok {
+				t.Fatalf("max_tokens missing or not a number in request: %#v", got)
+			}
+			if num != tc.want {
+				t.Errorf("max_tokens: got %v, want %v", num, tc.want)
+			}
+		})
+	}
+}
+
+// unreachablePool returns a lazily-created pool aimed at a closed port.
+// pgxpool does not dial until a query runs, so every query fails with a
+// connection error instead of panicking; that lets the handler-routing
+// tests exercise the full request path without a live datastore.
+func unreachablePool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(context.Background(),
+		"postgres://nobody@127.0.0.1:1/none?connect_timeout=1")
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestHandleServerInfoAI covers the AI-analysis route: method and
+// connection-ID validation, and the delegation to the analysis response
+// writer. A nil auth store makes the RBAC checker grant access, and the
+// unreachable pool makes the database queries fail benignly so the handler
+// reaches the analysis step with no databases.
+func TestHandleServerInfoAI(t *testing.T) {
+	h := &ServerInfoHandler{
+		datastore:   database.NewTestDatastore(unreachablePool(t)),
+		rbacChecker: auth.NewRBACChecker(nil),
+		llmConfig:   &llmproxy.Config{Provider: "openai", OpenAIAPIKey: "k"},
+		cache:       make(map[int]*aiCacheEntry),
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "non-GET is rejected",
+			method:     http.MethodPost,
+			path:       "/api/v1/server-info/1/ai-analysis",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "missing connection ID",
+			method:     http.MethodGet,
+			path:       "/api/v1/server-info/ai-analysis",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "non-numeric connection ID",
+			method:     http.MethodGet,
+			path:       "/api/v1/server-info/abc/ai-analysis",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "no databases yields a null body",
+			method:     http.MethodGet,
+			path:       "/api/v1/server-info/1/ai-analysis",
+			wantStatus: http.StatusOK,
+			wantBody:   "null",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			w := httptest.NewRecorder()
+			h.handleServerInfoRouting(w, req)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status: got %d, want %d (%s)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantBody != "" && !strings.Contains(w.Body.String(), tc.wantBody) {
+				t.Errorf("body %q does not contain %q", w.Body.String(), tc.wantBody)
+			}
+		})
+	}
+
+	t.Run("RBAC denial is a 403", func(t *testing.T) {
+		// A real auth store plus a sharing lookup that reports the
+		// connection as private makes the RBAC check deny an
+		// unauthenticated caller before any analysis happens.
+		tmpDir := t.TempDir()
+		store, err := auth.NewAuthStore(tmpDir, 0, 0)
+		if err != nil {
+			t.Fatalf("failed to create auth store: %v", err)
+		}
+		defer store.Close()
+
+		sharing := func(context.Context, int) (bool, string, error) {
+			return false, "someone-else", nil
+		}
+
+		denied := &ServerInfoHandler{
+			datastore:   h.datastore,
+			rbacChecker: auth.NewRBACCheckerWithSharing(store, sharing),
+			llmConfig:   h.llmConfig,
+			cache:       make(map[int]*aiCacheEntry),
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/server-info/1/ai-analysis", nil)
+		w := httptest.NewRecorder()
+		denied.handleServerInfoRouting(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("status: got %d, want %d (%s)", w.Code, http.StatusForbidden, w.Body.String())
+		}
+	})
+}
+
+// TestWriteAIAnalysisResponse verifies the three response shapes the
+// endpoint can produce: a 502 with an actionable message when the model
+// returned nothing usable, a 200 null body when analysis is simply
+// unavailable, and a 200 with the analysis on success.
+func TestWriteAIAnalysisResponse(t *testing.T) {
+	tests := []struct {
+		name         string
+		analysis     *AIAnalysisInfo
+		err          error
+		wantStatus   int
+		wantContains string
+	}{
+		{
+			name:         "no usable text is reported as 502",
+			err:          llmproxy.ErrNoTextContent,
+			wantStatus:   http.StatusBadGateway,
+			wantContains: "llm.max_tokens",
+		},
+		{
+			name:         "unavailable analysis is a null 200",
+			wantStatus:   http.StatusOK,
+			wantContains: "null",
+		},
+		{
+			name: "analysis is returned on success",
+			analysis: &AIAnalysisInfo{
+				Databases: map[string]string{"mydb": "A store."},
+			},
+			wantStatus:   http.StatusOK,
+			wantContains: "A store.",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			writeAIAnalysisResponse(w, 1, tc.analysis, tc.err)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status: got %d, want %d", w.Code, tc.wantStatus)
+			}
+			if !strings.Contains(w.Body.String(), tc.wantContains) {
+				t.Errorf("body %q does not contain %q", w.Body.String(), tc.wantContains)
+			}
+		})
+	}
 }
 
 func TestServerInfoInvalidateCache(t *testing.T) {

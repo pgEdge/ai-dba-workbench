@@ -20,6 +20,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultLLMMaxTokens is the default output-token budget for tier-3
+// reasoning calls (llm.max_tokens).
+//
+// The previous hardcoded 500-token budget was sized for a classification
+// verdict alone. Reasoning models served through an OpenAI-compatible
+// endpoint (llama.cpp hosting Qwen3, DeepSeek-R1 distills, gpt-oss, and
+// similar) charge their thinking tokens against the same budget, so 500
+// tokens are routinely consumed in full by the thinking block and the
+// model never emits the verdict. 4096 leaves several thousand tokens of
+// thinking room ahead of the small JSON verdict, and matches the server's
+// llm.max_tokens default so operators see one number across the estate.
+const DefaultLLMMaxTokens = 4096
+
 // Config holds all configuration options for the alerter
 type Config struct {
 	// Datastore connection settings
@@ -147,13 +160,21 @@ type CorrelationConfig struct {
 
 // LLMConfig holds LLM provider settings
 type LLMConfig struct {
-	EmbeddingProvider string          `yaml:"embedding_provider"`
-	ReasoningProvider string          `yaml:"reasoning_provider"`
-	Ollama            OllamaConfig    `yaml:"ollama"`
-	OpenAI            OpenAIConfig    `yaml:"openai"`
-	Anthropic         AnthropicConfig `yaml:"anthropic"`
-	Voyage            VoyageConfig    `yaml:"voyage"`
-	Gemini            GeminiConfig    `yaml:"gemini"`
+	EmbeddingProvider string `yaml:"embedding_provider"`
+	ReasoningProvider string `yaml:"reasoning_provider"`
+
+	// MaxTokens caps the output tokens of a tier-3 reasoning call.
+	// Reasoning models charge their thinking blocks against this same
+	// budget, so a small value leaves no room for the classification
+	// verdict itself. A value of 0 or less selects
+	// llm.DefaultReasoningMaxTokens. Default: 4096.
+	MaxTokens int `yaml:"max_tokens"`
+
+	Ollama    OllamaConfig    `yaml:"ollama"`
+	OpenAI    OpenAIConfig    `yaml:"openai"`
+	Anthropic AnthropicConfig `yaml:"anthropic"`
+	Voyage    VoyageConfig    `yaml:"voyage"`
+	Gemini    GeminiConfig    `yaml:"gemini"`
 }
 
 // NotificationsConfig holds notification settings
@@ -340,6 +361,7 @@ func NewConfig() *Config {
 		LLM: LLMConfig{
 			EmbeddingProvider: "ollama",
 			ReasoningProvider: "ollama",
+			MaxTokens:         DefaultLLMMaxTokens,
 			Ollama: OllamaConfig{
 				BaseURL:        "http://localhost:11434",
 				EmbeddingModel: "nomic-embed-text",
@@ -374,8 +396,9 @@ func (c *Config) LoadFromFile(filename string) error {
 		return fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
-	// Apply defaults for notification settings
+	// Apply defaults for notification and LLM settings
 	c.SetNotificationDefaults()
+	c.SetLLMDefaults()
 
 	return nil
 }
@@ -512,6 +535,16 @@ func GetDefaultConfigPath(binaryPath string) string {
 // ConfigFileExists checks if a config file exists at the given path
 func ConfigFileExists(path string) bool {
 	return fileutil.FileExists(path)
+}
+
+// SetLLMDefaults sets default values for LLM config that a YAML file may
+// have left unset. NewConfig already seeds these defaults, but a caller
+// that loads into a bare Config (or a YAML file that sets llm.max_tokens
+// to 0) must still end up with a usable budget.
+func (c *Config) SetLLMDefaults() {
+	if c.LLM.MaxTokens <= 0 {
+		c.LLM.MaxTokens = DefaultLLMMaxTokens
+	}
 }
 
 // SetNotificationDefaults sets default values for notification config

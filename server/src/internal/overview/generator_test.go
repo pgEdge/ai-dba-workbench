@@ -11,6 +11,8 @@ package overview
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -221,16 +223,22 @@ func TestHasSignificantChange(t *testing.T) {
 
 // --- extractTextFromResponse tests -----------------------------------------
 
+// thinkingBlock is the content-block type a reasoning model emits for its
+// chain of thought. The library has no named constant for it, so the tests
+// use the wire value directly to reproduce the issue #399 response shape.
+const thinkingBlock pgllm.ContentBlockType = "thinking"
+
 func TestExtractTextFromResponse(t *testing.T) {
 	tests := []struct {
 		name    string
 		content []pgllm.ContentBlock
 		want    string
+		wantErr bool
 	}{
 		{
-			name:    "empty content",
+			name:    "empty content is an error",
 			content: nil,
-			want:    "",
+			wantErr: true,
 		},
 		{
 			name: "single text block",
@@ -248,11 +256,28 @@ func TestExtractTextFromResponse(t *testing.T) {
 			want: "Hello World",
 		},
 		{
-			name: "non-text block ignored",
+			name: "non-text block only is an error",
 			content: []pgllm.ContentBlock{
 				{Type: pgllm.BlockToolUse, Text: "ignored"},
 			},
-			want: "",
+			wantErr: true,
+		},
+		{
+			// The regression from issue #399: a reasoning model that
+			// spends its whole budget thinking emits a thinking block
+			// and no text block.
+			name: "reasoning-only response is an error",
+			content: []pgllm.ContentBlock{
+				{Type: thinkingBlock, Text: "let me think about this at length"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "whitespace-only text is an error",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockText, Text: "  \n\t "},
+			},
+			wantErr: true,
 		},
 		{
 			name: "mixed blocks concatenate only text",
@@ -263,12 +288,32 @@ func TestExtractTextFromResponse(t *testing.T) {
 			},
 			want: "Part1Part2",
 		},
+		{
+			name: "text alongside thinking passes through unchanged",
+			content: []pgllm.ContentBlock{
+				{Type: thinkingBlock, Text: "thinking"},
+				{Type: pgllm.BlockText, Text: " Estate is healthy. "},
+			},
+			want: " Estate is healthy. ",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := &pgllm.ChatResponse{Content: tc.content}
-			got := extractTextFromResponse(resp)
+			got, err := extractTextFromResponse(resp)
+			if tc.wantErr {
+				if !errors.Is(err, llmproxy.ErrNoTextContent) {
+					t.Fatalf("expected ErrNoTextContent, got %v", err)
+				}
+				if got != "" {
+					t.Errorf("expected empty text on error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if got != tc.want {
 				t.Errorf("expected %q, got %q", tc.want, got)
 			}
@@ -276,7 +321,11 @@ func TestExtractTextFromResponse(t *testing.T) {
 	}
 
 	t.Run("nil response", func(t *testing.T) {
-		if got := extractTextFromResponse(nil); got != "" {
+		got, err := extractTextFromResponse(nil)
+		if !errors.Is(err, llmproxy.ErrNoTextContent) {
+			t.Fatalf("expected ErrNoTextContent for nil response, got %v", err)
+		}
+		if got != "" {
 			t.Errorf("expected empty string for nil response, got %q", got)
 		}
 	})
@@ -937,6 +986,103 @@ func TestGenerateSummaryFromPrompt_ChatError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "LLM chat failed") {
 		t.Errorf("expected 'LLM chat failed' in error, got %v", err)
+	}
+}
+
+// TestGenerateSummaryFromPrompt_MaxTokensHonoursConfig verifies that the
+// chat request carries the operator-configured llm.max_tokens, and falls
+// back to llmproxy.DefaultAnalysisMaxTokens when the setting is unset or
+// non-positive. Regression cover for issue #399, where a hardcoded
+// 512-token cap starved reasoning models of output budget.
+func TestGenerateSummaryFromPrompt_MaxTokensHonoursConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxTokens int
+		want      float64
+	}{
+		{"configured value used", 8192, 8192},
+		{"unset falls back", 0, llmproxy.DefaultAnalysisMaxTokens},
+		{"negative falls back", -5, llmproxy.DefaultAnalysisMaxTokens},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				var payload map[string]any
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Errorf("failed to decode request body: %v", err)
+				}
+				got = payload["max_tokens"]
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+					"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]
+				}`))
+			}))
+			defer srv.Close()
+
+			g := NewGenerator(nil, &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+				MaxTokens:     tc.maxTokens,
+			})
+
+			if _, err := g.generateSummaryFromPrompt(context.Background(), "system", "data"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			num, ok := got.(float64)
+			if !ok {
+				t.Fatalf("max_tokens missing or not a number in request: %#v", got)
+			}
+			if num != tc.want {
+				t.Errorf("max_tokens: got %v, want %v", num, tc.want)
+			}
+		})
+	}
+}
+
+// TestGenerateSummaryFromPrompt_NoTextContentIsError verifies that a
+// response carrying no usable text (the shape a reasoning model produces
+// when its thinking consumes the whole output budget) surfaces as an
+// error rather than a silently empty summary.
+func TestGenerateSummaryFromPrompt_NoTextContentIsError(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"empty string content", `""`},
+		{"whitespace-only content", `"   \n  "`},
+		{"null content", `null`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{
+					"choices": [{"message": {"role": "assistant", "content": %s}, "finish_reason": "length"}]
+				}`, tc.content)
+			}))
+			defer srv.Close()
+
+			g := NewGenerator(nil, &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+			})
+
+			summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+			if !errors.Is(err, llmproxy.ErrNoTextContent) {
+				t.Fatalf("expected ErrNoTextContent, got %v", err)
+			}
+			if summary != "" {
+				t.Errorf("expected empty summary on error, got %q", summary)
+			}
+		})
 	}
 }
 

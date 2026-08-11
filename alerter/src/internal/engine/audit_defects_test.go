@@ -107,6 +107,25 @@ const (
             (connection_id, slot_name, active, retained_bytes, collected_at)
         VALUES ($1, $2, $3, $4, NOW())
     `
+
+	// createStatDatabaseTableSQL carries every metrics.pg_stat_database
+	// column the audit tests read, so a single definition serves both
+	// the cache_hit_ratio tests (blks_hit, blks_read) and the
+	// deadlocks_delta tests (deadlocks). Keeping one fixture avoids the
+	// two definitions drifting apart, which would make a test fail with
+	// an undefined-column error that has nothing to do with the defect
+	// under examination.
+	createStatDatabaseTableSQL = `
+        CREATE TABLE metrics.pg_stat_database (
+            connection_id INTEGER NOT NULL,
+            database_name VARCHAR(255) NOT NULL,
+            datname TEXT,
+            blks_hit BIGINT,
+            blks_read BIGINT,
+            deadlocks BIGINT,
+            collected_at TIMESTAMPTZ NOT NULL
+        )
+    `
 )
 
 // notificationCapture records the notification jobs the engine submits
@@ -500,16 +519,7 @@ func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 	ctx := context.Background()
 	capture := installNotificationCapture(t, engine)
 
-	if _, err := pool.Exec(ctx, `
-        CREATE TABLE metrics.pg_stat_database (
-            connection_id INTEGER NOT NULL,
-            database_name VARCHAR(255) NOT NULL,
-            datname TEXT,
-            blks_hit BIGINT,
-            blks_read BIGINT,
-            collected_at TIMESTAMPTZ NOT NULL
-        )
-    `); err != nil {
+	if _, err := pool.Exec(ctx, createStatDatabaseTableSQL); err != nil {
 		t.Fatalf("failed to create metrics.pg_stat_database: %v", err)
 	}
 
@@ -619,16 +629,6 @@ const (
             slot_name TEXT NOT NULL,
             active BOOLEAN,
             retained_bytes NUMERIC,
-            collected_at TIMESTAMPTZ NOT NULL
-        )
-    `
-
-	createStatDatabaseTableSQL = `
-        CREATE TABLE metrics.pg_stat_database (
-            connection_id INTEGER NOT NULL,
-            database_name VARCHAR(255) NOT NULL,
-            datname TEXT,
-            deadlocks BIGINT,
             collected_at TIMESTAMPTZ NOT NULL
         )
     `

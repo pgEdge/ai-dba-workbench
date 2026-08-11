@@ -326,17 +326,17 @@ tokens a reasoning model may generate for a single
 call. The budget applies to the following reasoning
 work:
 
-- The tier 3 classification of an anomaly candidate
-  uses the budget for each candidate it examines.
-- The re-evaluation of an acknowledged alert uses the
-  budget for each alert it revisits.
+- The tier 3 anomaly classification applies the budget
+  to each candidate that the alerter examines.
+- The re-evaluation of acknowledged alerts applies the
+  budget to each alert that the alerter revisits.
 
 The default value is `4096` tokens; a value less than
 or equal to zero falls back to the default. Earlier
 releases capped both calls at 500 tokens and offered
 no way to change the limit.
 
-A reasoning model counts the internal thinking tokens
+A reasoning model counts its internal thinking tokens
 against this same budget. A budget that suits a
 conventional model can therefore leave no room for the
 verdict itself. The model then returns a response that

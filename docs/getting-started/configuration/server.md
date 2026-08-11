@@ -118,7 +118,7 @@ embedding:
   # gemini_api_key_file: "~/.gemini-api-key"
 
 #=====================================================
-# LLM CONFIGURATION (Web Client Chat Proxy)
+# LLM CONFIGURATION (Chat Proxy and AI Analysis)
 #=====================================================
 llm:
   provider: "anthropic"
@@ -458,7 +458,7 @@ releases capped the AI Overview and the server-info
 analysis at 512 tokens and ignored the configured
 value on both paths.
 
-A reasoning model counts the internal thinking tokens
+A reasoning model counts its internal thinking tokens
 against this same budget. A budget that suits a
 conventional model can therefore leave no room for the
 answer itself. The model then returns a response that
@@ -467,10 +467,10 @@ to render. Raise `max_tokens` when a summary or an
 analysis comes back empty; alternatively, select a
 model that emits less reasoning.
 
-The server reports an empty response rather than
-hiding the response. A scoped AI Overview request
-fails with an error, and the estate summary records
-the failure in the server log. The
+The server reports an empty response instead of
+discarding the response silently. A scoped AI Overview
+request fails with an error, and the estate summary
+records the failure in the server log. The
 `GET /api/v1/server-info/{id}/ai-analysis` endpoint
 returns `502` with a message that names the likely
 cause.

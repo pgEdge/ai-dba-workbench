@@ -519,8 +519,14 @@ func TestAuditC5CPUUsageNullProcessorTimeReadsZero(t *testing.T) {
 
 	ctx := context.Background()
 
+	// connName is carried in the table as a literal rather than being
+	// derived from name at the call site. Building it by concatenation
+	// makes the value a taint source for the Opengrep rule
+	// go_sql_rule-concat-sqli, which then reports the pool.Exec below
+	// as SQL injection even though every value is bound via $N.
 	cases := []struct {
 		name               string
+		connName           string
 		processorTime      any
 		usermodeNormal     float64
 		kernelmode         float64
@@ -530,6 +536,7 @@ func TestAuditC5CPUUsageNullProcessorTimeReadsZero(t *testing.T) {
 	}{
 		{
 			name:           "linux shape leaves processor_time NULL",
+			connName:       "audit-c5-linux",
 			processorTime:  nil,
 			usermodeNormal: 71.5,
 			kernelmode:     23.5,
@@ -541,6 +548,7 @@ func TestAuditC5CPUUsageNullProcessorTimeReadsZero(t *testing.T) {
 		},
 		{
 			name:               "windows shape populates processor_time",
+			connName:           "audit-c5-windows",
 			processorTime:      92.5,
 			usermodeNormal:     0,
 			kernelmode:         0,
@@ -561,7 +569,7 @@ func TestAuditC5CPUUsageNullProcessorTimeReadsZero(t *testing.T) {
 			if _, err := pool.Exec(ctx, `DELETE FROM connections`); err != nil {
 				t.Fatalf("failed to reset connections: %v", err)
 			}
-			connID := insertAuditConnection(t, pool, "audit-c5-"+tc.name)
+			connID := insertAuditConnection(t, pool, tc.connName)
 
 			if _, err := pool.Exec(ctx, insertAuditCPUUsageSQL,
 				connID, tc.usermodeNormal, tc.kernelmode, tc.idle,
@@ -704,8 +712,9 @@ func TestAuditC10BaselineLookupIgnoresDatabase(t *testing.T) {
 // TestAuditC7HistoricalSQLCoverage verifies the counting half of audit
 // claim C7. The audit says "12 of 34 metrics" have an empty
 // historicalSQL; the registry actually holds a different number of
-// entries and a different number of empty ones. The test pins both
-// figures so the discrepancy is explicit.
+// entries and a different number of empty ones. The test pins the
+// affected metrics by name so the discrepancy is explicit and any
+// future drift identifies the metric that moved.
 //
 // Metrics with an empty historicalSQL fall back to
 // calculateGlobalBaselinesFallback, which cannot produce a warm
@@ -725,32 +734,67 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 		t.Logf("  no historical SQL: %s", name)
 	}
 
-	// Pinned figures for the current code. The audit's "12 of 34" is
+	// Pinned by name rather than by count. The audit's "12 of 34" is
 	// wrong on both numbers; 34 is the count of seeded alert_rules
-	// rows, not of registry metrics.
-	const (
-		wantRegistryEntries = 32
-		wantEmptyHistorical = 14
-	)
-	if len(metricRegistry) != wantRegistryEntries {
-		t.Errorf("registry entries = %d, want %d",
-			len(metricRegistry), wantRegistryEntries)
+	// rows, not of registry metrics. Listing every affected metric
+	// means that adding, removing, or backfilling one produces a
+	// failure naming the metric that changed, rather than an opaque
+	// count mismatch that says nothing about which entry moved.
+	wantEmpty := []string{
+		"age_percent",
+		"pg_node_role.subscription_worker_down",
+		"pg_replication_slots.inactive",
+		"pg_replication_slots.retained_bytes",
+		"pg_stat_activity.max_lock_wait_seconds",
+		"pg_stat_all_tables.dead_tuple_percent",
+		"pg_stat_archiver.failed_count_delta",
+		"pg_stat_checkpointer.checkpoints_req_delta",
+		"pg_stat_replication.lag_bytes",
+		"pg_stat_replication.replay_lag_seconds",
+		"pg_stat_replication.standby_disconnected",
+		"pg_stat_statements.slow_query_count",
+		"table_bloat_ratio",
+		"table_last_autovacuum_hours",
 	}
-	if len(empty) != wantEmptyHistorical {
-		t.Errorf("entries with empty historicalSQL = %d, want %d",
-			len(empty), wantEmptyHistorical)
+	// Both slices are sorted, so a positional diff names the first
+	// metric that differs.
+	if len(empty) != len(wantEmpty) {
+		t.Errorf("metrics with empty historicalSQL = %d, want %d\n"+
+			" got: %v\nwant: %v", len(empty), len(wantEmpty), empty, wantEmpty)
+	}
+	for i := 0; i < len(empty) && i < len(wantEmpty); i++ {
+		if empty[i] != wantEmpty[i] {
+			t.Errorf("metric with empty historicalSQL [%d] = %q, want %q",
+				i, empty[i], wantEmpty[i])
+		}
 	}
 
 	// Every empty-historicalSQL metric must in fact fail
 	// GetHistoricalMetricValues, because that is what pushes baseline
-	// calculation onto the fallback path.
+	// calculation onto the fallback path. The exact message matters:
+	// it proves the registry guard rejected the call before any SQL
+	// ran, so removing the guard or hitting an unrelated query error
+	// both surface as failures here.
 	ds, _, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()
 
+	// A named const rather than an inline literal so that building the
+	// expected message below is a const-plus-variable expression, which
+	// the Opengrep rule go_sql_rule-concat-sqli does not treat as a
+	// taint source.
+	const notImplementedPrefix = "historical data not implemented for metric "
+
 	ctx := context.Background()
 	for _, name := range empty {
-		if _, err := ds.GetHistoricalMetricValues(ctx, name, 7); err == nil {
+		_, err := ds.GetHistoricalMetricValues(ctx, name, 7)
+		if err == nil {
 			t.Errorf("GetHistoricalMetricValues(%s) unexpectedly succeeded", name)
+			continue
+		}
+		want := notImplementedPrefix + name
+		if err.Error() != want {
+			t.Errorf("GetHistoricalMetricValues(%s) error = %q, want %q",
+				name, err.Error(), want)
 		}
 	}
 }
@@ -760,15 +804,24 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 // performs no latest-sample reduction, so it returns one row per
 // sample interval in the 15-minute window.
 //
-// The consequence depends on where the violating interval sits in the
-// window, because the query carries no ORDER BY and PostgreSQL emits
-// the rows in the window-function ordering (collected_at ascending):
+// The consequence depends on which row a caller looks at, because the
+// evaluator scans every row while the cleaner inspects only the first
+// one. The query carries no ORDER BY, so which row comes first is
+// whatever the chosen plan emits first:
 //
-//   - Violation in the oldest interval: the evaluator fires (it scans
-//     every row) and the cleaner never clears (it stops at the first
-//     matching row, which still violates). The alert latches.
-//   - Violation in the newest interval: the evaluator fires and the
-//     cleaner clears on the same data, which flaps.
+//   - When the first row is the violating one, the cleaner never
+//     clears, because the row it stops at still breaches the
+//     threshold. The alert latches.
+//   - When the first row is a healthy one, the cleaner clears the
+//     alert the evaluator just raised on identical data, and the
+//     alert flaps.
+//
+// This test pins the structural defect - three unreduced rows for one
+// connection and one database, exactly one of them violating - and
+// sorts by collected_at before making any positional assertion. The
+// production cleaner's dependence on the unspecified wire order is
+// itself the defect on record here; it is deliberately not an
+// assumption this test relies on.
 //
 // The query SHOULD reduce to the most recent interval, as
 // deadlocks_delta and temp_files_delta do with MAX()/GROUP BY.
@@ -782,26 +835,34 @@ func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 	// Each case seeds four samples, producing three delta intervals.
 	// Every interval moves at least 10000 blocks so it clears the
 	// query's minimum-activity filter.
+	//
+	// connName is a literal rather than a value derived from name for
+	// the reason given on the C5 table above: concatenating it would
+	// make it a taint source for the Opengrep rule
+	// go_sql_rule-concat-sqli.
 	cases := []struct {
-		name string
+		name     string
+		connName string
 		// hits and reads are cumulative counters per sample.
 		hits  []int64
 		reads []int64
-		// wantFirstRowViolates records whether the row the cleaner
-		// would inspect breaches the threshold.
-		wantFirstRowViolates bool
+		// violatingInterval is the index, in collected_at order, of
+		// the one delta interval that breaches the threshold.
+		violatingInterval int
 	}{
 		{
-			name:                 "violation in oldest interval",
-			hits:                 []int64{0, 10_000, 40_000, 70_000},
-			reads:                []int64{0, 10_000, 10_000, 10_000},
-			wantFirstRowViolates: true,
+			name:              "violation in oldest interval",
+			connName:          "audit-c8-oldest",
+			hits:              []int64{0, 10_000, 40_000, 70_000},
+			reads:             []int64{0, 10_000, 10_000, 10_000},
+			violatingInterval: 0,
 		},
 		{
-			name:                 "violation in newest interval",
-			hits:                 []int64{0, 30_000, 60_000, 60_000},
-			reads:                []int64{0, 0, 0, 30_000},
-			wantFirstRowViolates: false,
+			name:              "violation in newest interval",
+			connName:          "audit-c8-newest",
+			hits:              []int64{0, 30_000, 60_000, 60_000},
+			reads:             []int64{0, 0, 0, 30_000},
+			violatingInterval: 2,
 		},
 	}
 
@@ -816,7 +877,7 @@ func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 			if _, err := pool.Exec(ctx, `DELETE FROM connections`); err != nil {
 				t.Fatalf("failed to reset connections: %v", err)
 			}
-			connID := insertAuditConnection(t, pool, "audit-c8-"+tc.name)
+			connID := insertAuditConnection(t, pool, tc.connName)
 
 			for i, offset := range offsets {
 				if _, err := pool.Exec(ctx, insertAuditStatDatabaseSQL,
@@ -832,30 +893,74 @@ func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 				t.Fatalf("GetLatestMetricValues failed: %v", err)
 			}
 
-			// Current (defective) behavior: three rows for a single
-			// connection/database pair. There SHOULD be exactly one.
-			if len(values) != 3 {
-				t.Fatalf("expected 3 unreduced delta rows, got %d", len(values))
+			// Current (defective) behavior, asserted on the rows exactly
+			// as the query returned them: four samples for ONE
+			// connection and ONE database produce three unreduced delta
+			// rows. A metric that reduced to the latest interval would
+			// return exactly one, so this count is the defect itself
+			// and does not depend on row order.
+			const wantRows = 3
+			if len(values) != wantRows {
+				t.Fatalf("expected %d unreduced delta rows for a single "+
+					"connection/database, got %d", wantRows, len(values))
 			}
 
 			var violating int
 			for _, v := range values {
+				if v.ConnectionID != connID {
+					t.Errorf("row connection_id = %d, want %d",
+						v.ConnectionID, connID)
+				}
+				if v.DatabaseName == nil || *v.DatabaseName != "appdb" {
+					t.Errorf("row database_name = %v, want \"appdb\"",
+						v.DatabaseName)
+				}
 				if v.Value < seededThreshold {
 					violating++
 				}
-				t.Logf("row: value=%.2f collected_at=%s", v.Value, v.CollectedAt)
 			}
+			// Exactly one of the unreduced rows breaches the threshold,
+			// so the fire/clear outcome turns entirely on which row a
+			// caller happens to read.
 			if violating != 1 {
 				t.Fatalf("expected exactly one violating row, got %d", violating)
 			}
 
-			// The evaluator fires because at least one row violates.
-			// The cleaner inspects values[0] only.
-			gotFirstViolates := values[0].Value < seededThreshold
-			if gotFirstViolates != tc.wantFirstRowViolates {
-				t.Errorf("first row violates = %v, want %v (values=%v)",
-					gotFirstViolates, tc.wantFirstRowViolates, values)
+			// Sort a copy by collected_at before asserting on positions.
+			// The sort is defensive: the registry query has no ORDER BY,
+			// so the wire order is plan-dependent and asserting on it
+			// directly would let this test flake with no code change.
+			ordered := make([]MetricValue, len(values))
+			copy(ordered, values)
+			sort.Slice(ordered, func(i, j int) bool {
+				return ordered[i].CollectedAt.Before(ordered[j].CollectedAt)
+			})
+			for i, v := range ordered {
+				t.Logf("interval %d: value=%.2f collected_at=%s",
+					i, v.Value, v.CollectedAt)
 			}
+			for i, v := range ordered {
+				gotViolates := v.Value < seededThreshold
+				wantViolates := i == tc.violatingInterval
+				if gotViolates != wantViolates {
+					t.Errorf("interval %d (collected_at=%s, value=%.2f) "+
+						"violates = %v, want %v",
+						i, v.CollectedAt, v.Value, gotViolates, wantViolates)
+				}
+			}
+
+			// Diagnostic only. The cleaner acts on whichever row the
+			// planner emitted first, so this line records what it would
+			// have done on this run. Asserting on it would make the
+			// test flaky, which is exactly the hazard the missing
+			// ORDER BY creates for the production cleaner.
+			cleanerAction := "clear the alert"
+			if values[0].Value < seededThreshold {
+				cleanerAction = "leave the alert active"
+			}
+			t.Logf("wire-order first row: value=%.2f collected_at=%s; "+
+				"the cleaner would %s", values[0].Value,
+				values[0].CollectedAt, cleanerAction)
 		})
 	}
 

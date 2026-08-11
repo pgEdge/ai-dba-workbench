@@ -162,7 +162,7 @@ func TestNewLibReasoningMaxTokensResolution(t *testing.T) {
 		{"configured value used", 8192, 8192},
 		{"unset falls back", 0, DefaultReasoningMaxTokens},
 		{"negative falls back", -1, DefaultReasoningMaxTokens},
-		{"small configured value still honoured", 32, 32},
+		{"small configured value still honored", 32, 32},
 	}
 
 	for _, tt := range tests {

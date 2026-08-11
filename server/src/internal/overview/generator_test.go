@@ -989,12 +989,12 @@ func TestGenerateSummaryFromPrompt_ChatError(t *testing.T) {
 	}
 }
 
-// TestGenerateSummaryFromPrompt_MaxTokensHonoursConfig verifies that the
+// TestGenerateSummaryFromPrompt_MaxTokensHonorsConfig verifies that the
 // chat request carries the operator-configured llm.max_tokens, and falls
 // back to llmproxy.DefaultAnalysisMaxTokens when the setting is unset or
 // non-positive. Regression cover for issue #399, where a hardcoded
 // 512-token cap starved reasoning models of output budget.
-func TestGenerateSummaryFromPrompt_MaxTokensHonoursConfig(t *testing.T) {
+func TestGenerateSummaryFromPrompt_MaxTokensHonorsConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		maxTokens int
@@ -1168,7 +1168,7 @@ func TestGenerateSummaryFromPrompt_NilConfigNoPanic(t *testing.T) {
 	}
 }
 
-func TestCreateLLMClient_TimeoutSecondsHonoured(t *testing.T) {
+func TestCreateLLMClient_TimeoutSecondsHonored(t *testing.T) {
 	// A positive TimeoutSeconds on the underlying config must produce a
 	// usable client; the timeout is applied to the library Options. The
 	// library defers credential validation, so a valid provider with a

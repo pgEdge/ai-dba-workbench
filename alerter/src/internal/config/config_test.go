@@ -633,7 +633,7 @@ llm:
 			want int
 		}{
 			{
-				name: "explicit value is honoured",
+				name: "explicit value is honored",
 				yaml: "llm:\n  max_tokens: 16384\n",
 				want: 16384,
 			},

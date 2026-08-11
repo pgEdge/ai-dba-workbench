@@ -1353,7 +1353,7 @@ func TestBuildClientOptions_ZeroTimeoutNotApplied(t *testing.T) {
 // -----------------------------------------------------------------------
 
 // TestAnalysisMaxTokens verifies that a positive configured budget is
-// honoured and that an unset, zero, or negative budget falls back to
+// honored and that an unset, zero, or negative budget falls back to
 // DefaultAnalysisMaxTokens. A nil receiver is also exercised because the
 // overview generator may hold a nil config when AI is disabled.
 func TestAnalysisMaxTokens(t *testing.T) {
@@ -1364,7 +1364,7 @@ func TestAnalysisMaxTokens(t *testing.T) {
 	}{
 		{"configured value used", &Config{MaxTokens: 8192}, 8192},
 		{"configured default value used", &Config{MaxTokens: 4096}, 4096},
-		{"small configured value still honoured", &Config{MaxTokens: 16}, 16},
+		{"small configured value still honored", &Config{MaxTokens: 16}, 16},
 		{"unset falls back", &Config{}, DefaultAnalysisMaxTokens},
 		{"zero falls back", &Config{MaxTokens: 0}, DefaultAnalysisMaxTokens},
 		{"negative falls back", &Config{MaxTokens: -1}, DefaultAnalysisMaxTokens},

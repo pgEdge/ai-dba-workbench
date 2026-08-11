@@ -812,12 +812,12 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 	})
 }
 
-// TestServerInfoAIAnalysisMaxTokensHonoursConfig verifies that the analysis
+// TestServerInfoAIAnalysisMaxTokensHonorsConfig verifies that the analysis
 // chat request carries the operator-configured llm.max_tokens, falling back
 // to llmproxy.DefaultAnalysisMaxTokens when the setting is unset or
 // non-positive. Regression cover for issue #399, where a hardcoded
 // 512-token cap starved reasoning models of output budget.
-func TestServerInfoAIAnalysisMaxTokensHonoursConfig(t *testing.T) {
+func TestServerInfoAIAnalysisMaxTokensHonorsConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		maxTokens int

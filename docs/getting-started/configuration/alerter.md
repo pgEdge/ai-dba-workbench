@@ -317,6 +317,48 @@ an older pgvector causes the embedding-column migration to fail.
 |--------|------|---------|-------------|
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `reasoning_provider` | string | `ollama` | Classification provider |
+| `max_tokens` | integer | `4096` | Max output tokens per reasoning call |
+
+#### Output Token Budget (`max_tokens`)
+
+The `max_tokens` option caps the number of output
+tokens a reasoning model may generate for a single
+call. The budget applies to the following reasoning
+work:
+
+- The tier 3 classification of an anomaly candidate
+  uses the budget for each candidate it examines.
+- The re-evaluation of an acknowledged alert uses the
+  budget for each alert it revisits.
+
+The default value is `4096` tokens; a value less than
+or equal to zero falls back to the default. Earlier
+releases capped both calls at 500 tokens and offered
+no way to change the limit.
+
+A reasoning model counts the internal thinking tokens
+against this same budget. A budget that suits a
+conventional model can therefore leave no room for the
+verdict itself. The model then returns a response that
+contains no text, which the alerter treats as a tier 3
+failure. A failed tier 3 classification fails safe and
+raises the alert; the alerter records the cause in the
+candidate's tier 3 error field. Raise `max_tokens`
+when these failures appear; alternatively, select a
+model that emits less reasoning.
+
+In the following example, the `llm` section raises the
+budget for a reasoning model that a local llama.cpp
+server hosts:
+
+```yaml
+llm:
+  reasoning_provider: openai
+  max_tokens: 8192
+  openai:
+    base_url: http://localhost:8080/v1
+    reasoning_model: qwen3-8b
+```
 
 #### Ollama Configuration
 
@@ -368,6 +410,11 @@ llm:
     base_url: http://localhost:8080/v1
     reasoning_model: my-local-model
 ```
+
+A local server that hosts a reasoning model usually
+needs a larger output budget than the default. For
+details, see
+[Output Token Budget](#output-token-budget-max_tokens).
 
 #### Anthropic Configuration
 

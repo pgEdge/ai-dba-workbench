@@ -29,6 +29,7 @@ interface ConnectionMetrics {
     cacheHitRatio: number;
     commitsPerSec: number;
     rollbackPercent: number;
+    activeConnections: number;
     connectionId: number;
 }
 
@@ -107,6 +108,10 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                             rollbackPercent: txns && typeof txns.rollback_percent === 'number'
                                 ? Math.round(txns.rollback_percent * 100) / 100
                                 : 0,
+                            activeConnections:
+                                typeof conn.active_connections === 'number'
+                                    ? conn.active_connections
+                                    : 0,
                         };
                     }
                 );
@@ -175,7 +180,7 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
         categories: serverNames,
         series: [{
             name: 'Connections',
-            data: metrics.map(() => 1),
+            data: metrics.map(m => m.activeConnections),
         }],
     }), [serverNames, metrics]);
 

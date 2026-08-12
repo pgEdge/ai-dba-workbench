@@ -61,6 +61,16 @@ project adheres to
 
 ### Fixed
 
+- Roll every database transaction back on a non-cancelable context,
+  across the server, collector, and alerter. The pgx v5 driver fails
+  a rollback outright once its context is cancelled, and it then
+  discards the pooled connection whilst the transaction is still
+  open on the server, so a client that disconnected mid-request
+  slowly leaked connections left in an aborted-transaction state.
+  Two call sites already guarded against this; the remaining sites
+  now follow the same rule, and a convention test enforces it for
+  new transactions. (#381)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

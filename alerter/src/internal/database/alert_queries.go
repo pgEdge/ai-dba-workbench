@@ -263,8 +263,7 @@ func (d *Datastore) ReactivateAlert(ctx context.Context, alertID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	//nolint:errcheck // Rollback is a no-op if the tx was already committed.
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	result, err := tx.Exec(ctx, `
 		UPDATE alerts

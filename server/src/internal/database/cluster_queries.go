@@ -467,7 +467,7 @@ func (d *Datastore) DeleteAutoDetectedCluster(ctx context.Context, autoKey strin
 	if err != nil {
 		return fmt.Errorf("failed to begin cluster dismiss transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	var clusterID int
 	err = tx.QueryRow(ctx,
@@ -527,7 +527,7 @@ func (d *Datastore) DismissAutoDetectedClusterKeys(ctx context.Context, autoKeys
 	if err != nil {
 		return fmt.Errorf("failed to begin dismiss transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	for _, autoKey := range autoKeys {
 		var clusterID int

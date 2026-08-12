@@ -249,7 +249,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			"Failed to query performance metrics")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	response := PerfSummaryResponse{
 		TimeRange:   timeRange,
@@ -728,7 +728,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 			"Failed to query database summaries")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	dbMap := make(map[string]*DatabaseSummary)
 
@@ -1115,7 +1115,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			"Failed to query top queries")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Safe to use string formatting for ORDER BY because orderBy and order
 	// are validated against whitelists above.

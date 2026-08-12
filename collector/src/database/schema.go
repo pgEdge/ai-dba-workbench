@@ -3142,7 +3142,8 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 
 		// Apply the migration
 		if err := migration.Up(tx); err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
+			// Non-cancelable ctx (see contributing.md).
+			if rbErr := tx.Rollback(context.Background()); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to apply migration %d: %w", migration.Version, err)
@@ -3155,7 +3156,8 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
             ON CONFLICT (version) DO NOTHING
         `, migration.Version, migration.Description)
 		if err != nil {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
+			// Non-cancelable ctx (see contributing.md).
+			if rbErr := tx.Rollback(context.Background()); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to record migration %d: %w", migration.Version, err)

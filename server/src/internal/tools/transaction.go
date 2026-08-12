@@ -65,18 +65,18 @@ func BeginReadOnlyTx(ctx context.Context, pool *pgxpool.Pool) (rot *ManagedTx, e
 
 	cleanup = func() {
 		if r := recover(); r != nil {
-			_ = tx.Rollback(ctx) //nolint:errcheck // Best effort cleanup on panic
+			_ = tx.Rollback(context.Background()) //nolint:errcheck // best effort cleanup on panic; non-cancelable ctx
 			panic(r)
 		}
 		if !rot.committed {
-			_ = tx.Rollback(ctx) //nolint:errcheck // rollback in defer after commit is expected to fail
+			_ = tx.Rollback(context.Background()) //nolint:errcheck // non-cancelable ctx (see contributing.md)
 		}
 	}
 
 	// Set transaction to read-only
 	_, err = tx.Exec(ctx, "SET TRANSACTION READ ONLY")
 	if err != nil {
-		_ = tx.Rollback(ctx)                                                                     //nolint:errcheck // cleanup on setup failure
+		_ = tx.Rollback(context.Background())                                                    //nolint:errcheck // cleanup on setup failure; non-cancelable ctx
 		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to set transaction read-only: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp, func() {}
 	}
@@ -84,7 +84,7 @@ func BeginReadOnlyTx(ctx context.Context, pool *pgxpool.Pool) (rot *ManagedTx, e
 	// Defense-in-depth: limit query execution time
 	_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
 	if err != nil {
-		_ = tx.Rollback(ctx)                                                                 //nolint:errcheck // cleanup on setup failure
+		_ = tx.Rollback(context.Background())                                                //nolint:errcheck // cleanup on setup failure; non-cancelable ctx
 		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp, func() {}
 	}
@@ -108,18 +108,18 @@ func BeginTx(ctx context.Context, pool *pgxpool.Pool) (mt *ManagedTx, errResp *m
 
 	cleanup = func() {
 		if r := recover(); r != nil {
-			_ = tx.Rollback(ctx) //nolint:errcheck // Best effort cleanup on panic
+			_ = tx.Rollback(context.Background()) //nolint:errcheck // best effort cleanup on panic; non-cancelable ctx
 			panic(r)
 		}
 		if !mt.committed {
-			_ = tx.Rollback(ctx) //nolint:errcheck // rollback in defer after commit is expected to fail
+			_ = tx.Rollback(context.Background()) //nolint:errcheck // non-cancelable ctx (see contributing.md)
 		}
 	}
 
 	// Defense-in-depth: limit query execution time
 	_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '10s'")
 	if err != nil {
-		_ = tx.Rollback(ctx)                                                                 //nolint:errcheck // cleanup on setup failure
+		_ = tx.Rollback(context.Background())                                                //nolint:errcheck // cleanup on setup failure; non-cancelable ctx
 		resp, _ := mcp.NewToolError(fmt.Sprintf("Failed to set statement timeout: %v", err)) //nolint:errcheck // NewToolError always succeeds
 		return nil, &resp, func() {}
 	}

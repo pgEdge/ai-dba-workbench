@@ -379,8 +379,7 @@ func (d *Datastore) AcknowledgeAlert(ctx context.Context, req AcknowledgeAlertRe
 		logger.Errorf("AcknowledgeAlert: failed to begin transaction: %v", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	//nolint:errcheck // Rollback is no-op if already committed
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Update alert status to acknowledged
 	result, err := tx.Exec(ctx, `
@@ -441,8 +440,7 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 	if err != nil {
 		return fmt.Errorf("unacknowledge alert %d: begin transaction: %w", alertID, err)
 	}
-	//nolint:errcheck // Rollback is a no-op if the tx was already committed.
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Update alert status back to active.
 	result, err := tx.Exec(ctx, `

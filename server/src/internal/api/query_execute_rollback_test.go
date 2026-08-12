@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -59,14 +60,21 @@ DROP TABLE IF EXISTS connections CASCADE;
 DROP TABLE IF EXISTS query_exec_write_target CASCADE;
 `
 
+// queryExecTestSecret is a fixed 32-byte server secret so the stored
+// connection password round-trips through the encrypt/decrypt path the
+// handler uses.
+const queryExecTestSecret = "test-server-secret-32-bytes-long!"
+
 // queryExecTestTarget holds the parsed pieces of the test connection
-// string, so the seeded connection row points back at the same local
-// instance the test itself is using.
+// string, so the seeded connection row points back at the same instance
+// the test itself is using. The password matters: CI authenticates with
+// one, whilst a loopback development server may use trust.
 type queryExecTestTarget struct {
 	host     string
 	port     int
 	database string
 	username string
+	password string
 }
 
 // newQueryExecTestHandler wires a ConnectionHandler to the
@@ -96,6 +104,7 @@ func newQueryExecTestHandler(
 		port:     int(cfg.ConnConfig.Port),
 		database: cfg.ConnConfig.Database,
 		username: cfg.ConnConfig.User,
+		password: cfg.ConnConfig.Password,
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -112,7 +121,8 @@ func newQueryExecTestHandler(
 	}
 
 	handler := NewConnectionHandler(
-		database.NewTestDatastore(pool), nil, auth.NewRBACChecker(nil))
+		database.NewTestDatastoreWithSecret(pool, queryExecTestSecret),
+		nil, auth.NewRBACChecker(nil))
 
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), queryExecTestTeardown)
@@ -122,8 +132,10 @@ func newQueryExecTestHandler(
 }
 
 // seedQueryExecConnection inserts a connection row pointing at the given
-// host and port and returns its ID. The password column stays empty, so
-// no server secret is needed and loopback trust authentication applies.
+// host and port and returns its ID. The target's password is stored
+// encrypted, exactly as the production create path stores it, so the
+// handler exercises the decrypt step too. A target with no password
+// (loopback trust) stores NULL instead.
 func seedQueryExecConnection(
 	t *testing.T,
 	pool *pgxpool.Pool,
@@ -133,13 +145,24 @@ func seedQueryExecConnection(
 ) int {
 	t.Helper()
 
+	var encrypted *string
+	if target.password != "" {
+		value, err := crypto.EncryptPassword(target.password, queryExecTestSecret)
+		if err != nil {
+			t.Fatalf("Failed to encrypt the test password: %v", err)
+		}
+		encrypted = &value
+	}
+
 	var id int
 	if err := pool.QueryRow(context.Background(), `
 		INSERT INTO connections
-			(name, host, port, database_name, username, sslmode)
-		VALUES ('query-exec-test', $1, $2, $3, $4, 'disable')
+			(name, host, port, database_name, username, password_encrypted,
+			 sslmode)
+		VALUES ('query-exec-test', $1, $2, $3, $4, $5, 'disable')
 		RETURNING id
-	`, host, port, target.database, target.username).Scan(&id); err != nil {
+	`, host, port, target.database, target.username, encrypted).
+		Scan(&id); err != nil {
 		t.Fatalf("Failed to insert connection: %v", err)
 	}
 	return id

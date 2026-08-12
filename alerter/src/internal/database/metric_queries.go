@@ -11,7 +11,26 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
+)
+
+// Sentinel errors returned by GetLatestMetricValues. Callers need to tell
+// the three failure modes apart, because they have opposite consequences
+// for an active alert: a metric that the registry cannot answer at all,
+// or a query that failed, says nothing about whether the alerting
+// condition still holds, whereas an empty result set means the condition
+// genuinely reports nothing for any connection.
+var (
+	// ErrMetricNotSupported reports that the metric has no entry in
+	// metricRegistry, or has an entry whose scan type is unknown. Metrics
+	// evaluated by bespoke code paths (probe_staleness_ratio, for example)
+	// are deliberately absent from the registry and always fail this way.
+	ErrMetricNotSupported = errors.New("metric not implemented")
+
+	// ErrNoMetricData reports that the registry query ran successfully but
+	// returned no rows.
+	ErrNoMetricData = errors.New("no data found for metric")
 )
 
 // queryMetricValues executes a SQL query that returns rows with three columns
@@ -94,7 +113,7 @@ func (d *Datastore) queryMetricValuesWithDBAndObject(ctx context.Context, sql st
 func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string) ([]MetricValue, error) {
 	cfg, ok := metricRegistry[metricName]
 	if !ok {
-		return nil, fmt.Errorf("metric %s not implemented", metricName)
+		return nil, fmt.Errorf("metric %s: %w", metricName, ErrMetricNotSupported)
 	}
 
 	var results []MetricValue
@@ -108,7 +127,8 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	case scanWithDBObject:
 		results, err = d.queryMetricValuesWithDBAndObject(ctx, cfg.latestSQL)
 	default:
-		return nil, fmt.Errorf("unknown scan type for metric: %s", metricName)
+		return nil, fmt.Errorf("unknown scan type for metric %s: %w",
+			metricName, ErrMetricNotSupported)
 	}
 
 	if err != nil {
@@ -116,7 +136,7 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	}
 
 	if len(results) == 0 {
-		return nil, fmt.Errorf("no data found for metric %s", metricName)
+		return nil, fmt.Errorf("%w: %s", ErrNoMetricData, metricName)
 	}
 
 	return results, nil

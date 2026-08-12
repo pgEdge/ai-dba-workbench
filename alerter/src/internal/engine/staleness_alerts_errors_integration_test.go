@@ -54,13 +54,13 @@ const (
         UPDATE alert_rules SET default_enabled = FALSE WHERE id = $1
     `
 
-	insertConnectionThresholdOverrideSQL = `
+	stalenessThresholdOverrideInsertSQL = `
         INSERT INTO alert_thresholds
             (rule_id, scope, connection_id, operator, threshold, severity, enabled)
         VALUES ($1, 'server', $2, '>', 3, 'warning', FALSE)
     `
 
-	insertActiveBlackoutSQL = `
+	stalenessActiveBlackoutInsertSQL = `
         INSERT INTO blackouts
             (scope, connection_id, reason, start_time, end_time, created_by)
         VALUES ('server', $1, 'test blackout',
@@ -69,13 +69,13 @@ const (
 
 	dropBlackoutsTableSQL = `DROP TABLE blackouts CASCADE`
 
-	insertSlotSampleSQL = `
+	stalenessSlotSampleInsertSQL = `
         INSERT INTO metrics.pg_replication_slots
             (connection_id, slot_name, active, retained_bytes, collected_at)
         VALUES ($1, $2, FALSE, 5000000000, NOW())
     `
 
-	insertRegistryMetricAlertSQL = `
+	stalenessRegistryMetricAlertInsertSQL = `
         INSERT INTO alerts
             (alert_type, rule_id, connection_id, database_name, metric_name,
              metric_value, threshold_value, operator, severity, title,
@@ -102,7 +102,7 @@ func TestStalenessEvaluatorSurvivesStalenessQueryFailure(t *testing.T) {
 	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
 
 	engine.evaluateThresholds(ctx)
-	if alerts := readAlertsForRule(t, pool, ruleID); len(alerts) != 1 {
+	if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
 
@@ -115,7 +115,7 @@ func TestStalenessEvaluatorSurvivesStalenessQueryFailure(t *testing.T) {
 	engine.evaluateMetricStaleness(ctx)
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -170,7 +170,7 @@ func TestStalenessEvaluatorSurvivesAlertCreateFailure(t *testing.T) {
 
 	engine.evaluateMetricStaleness(ctx)
 
-	if alerts := readAlertsForRule(t, pool, ruleID); len(alerts) != 0 {
+	if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 0 {
 		t.Errorf("alert rows = %d, want 0 when the insert is rejected", len(alerts))
 	}
 	if counts := capture.drain(t); counts[database.NotificationTypeAlertFire] != 0 {
@@ -193,7 +193,7 @@ func TestStalenessEvaluatorSurvivesAlertUpdateFailure(t *testing.T) {
 	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
 
 	engine.evaluateMetricStaleness(ctx)
-	if alerts := readAlertsForRule(t, pool, ruleID); len(alerts) != 1 {
+	if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
 
@@ -211,7 +211,7 @@ func TestStalenessEvaluatorSurvivesAlertUpdateFailure(t *testing.T) {
 
 	engine.evaluateMetricStaleness(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Errorf("alert rows = %d, want 1 after a failed update", len(alerts))
 	}
@@ -240,7 +240,7 @@ func TestStalenessEvaluatorSkipConditions(t *testing.T) {
 			name: "blackout active",
 			prepare: func(t *testing.T, pool *pgxpool.Pool, ruleID int64, connID int) {
 				if _, err := pool.Exec(context.Background(),
-					insertActiveBlackoutSQL, connID); err != nil {
+					stalenessActiveBlackoutInsertSQL, connID); err != nil {
 					t.Fatalf("failed to insert blackout: %v", err)
 				}
 			},
@@ -249,7 +249,7 @@ func TestStalenessEvaluatorSkipConditions(t *testing.T) {
 			name: "rule disabled for connection",
 			prepare: func(t *testing.T, pool *pgxpool.Pool, ruleID int64, connID int) {
 				if _, err := pool.Exec(context.Background(),
-					insertConnectionThresholdOverrideSQL, ruleID, connID); err != nil {
+					stalenessThresholdOverrideInsertSQL, ruleID, connID); err != nil {
 					t.Fatalf("failed to insert threshold override: %v", err)
 				}
 			},
@@ -271,7 +271,7 @@ func TestStalenessEvaluatorSkipConditions(t *testing.T) {
 
 			engine.evaluateMetricStaleness(ctx)
 
-			if alerts := readAlertsForRule(t, pool, ruleID); len(alerts) != 0 {
+			if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 0 {
 				t.Errorf("alert rows = %d, want 0", len(alerts))
 			}
 		})
@@ -298,7 +298,7 @@ func TestStalenessEvaluatorSurvivesBlackoutLookupFailure(t *testing.T) {
 
 	engine.evaluateMetricStaleness(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -330,7 +330,7 @@ func TestStalenessAlertIgnoresOtherProbesInTheView(t *testing.T) {
 	engine.evaluateMetricStaleness(ctx)
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -355,12 +355,12 @@ func TestCheckAlertResolvedClearsWhenConnectionOrDatabaseHasNoValue(t *testing.T
 	dataConnID := insertTestConnection(t, pool, "resolve-data-conn")
 
 	// The only slot sample belongs to a different connection.
-	if _, err := pool.Exec(ctx, insertSlotSampleSQL, dataConnID, "slot_a"); err != nil {
+	if _, err := pool.Exec(ctx, stalenessSlotSampleInsertSQL, dataConnID, "slot_a"); err != nil {
 		t.Fatalf("failed to seed replication slot sample: %v", err)
 	}
 
 	var alertID int64
-	if err := pool.QueryRow(ctx, insertRegistryMetricAlertSQL, ruleID, alertConnID,
+	if err := pool.QueryRow(ctx, stalenessRegistryMetricAlertInsertSQL, ruleID, alertConnID,
 		nil).Scan(&alertID); err != nil {
 		t.Fatalf("failed to insert alert: %v", err)
 	}
@@ -369,14 +369,14 @@ func TestCheckAlertResolvedClearsWhenConnectionOrDatabaseHasNoValue(t *testing.T
 	// a database the basic metric never reports.
 	dbName := "app_db"
 	var dbAlertID int64
-	if err := pool.QueryRow(ctx, insertRegistryMetricAlertSQL, ruleID, dataConnID,
+	if err := pool.QueryRow(ctx, stalenessRegistryMetricAlertInsertSQL, ruleID, dataConnID,
 		&dbName).Scan(&dbAlertID); err != nil {
 		t.Fatalf("failed to insert database-scoped alert: %v", err)
 	}
 
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 2 {
 		t.Fatalf("alert rows = %d, want 2", len(alerts))
 	}

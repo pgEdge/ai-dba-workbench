@@ -22,6 +22,7 @@ import { Refresh as RefreshIcon } from '@mui/icons-material';
 import CollapsibleSection from '../CollapsibleSection';
 import PlanTree from './PlanTree';
 import { useQueryPlan } from '../../../hooks/useQueryPlan';
+import { buildNotExplainableMessage } from '../../../utils/sqlHelpers';
 import { spinKeyframes } from '../styles';
 
 interface QueryPlanPanelProps {
@@ -93,6 +94,7 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
         jsonPlan,
         loading,
         error,
+        notExplainable,
         fetch: fetchPlan,
     } = useQueryPlan(queryText, connectionId, databaseName);
 
@@ -149,7 +151,13 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                 </Box>
             )}
 
-            {error && !textPlan && !jsonPlan && (
+            {notExplainable !== null && (
+                <Alert severity="info" sx={{ mt: 1 }}>
+                    {buildNotExplainableMessage(notExplainable)}
+                </Alert>
+            )}
+
+            {notExplainable === null && error && !textPlan && !jsonPlan && (
                 <Alert severity="info" sx={{ mt: 1 }}>
                     {isParameterError(error)
                         ? PARAM_ERROR_MSG

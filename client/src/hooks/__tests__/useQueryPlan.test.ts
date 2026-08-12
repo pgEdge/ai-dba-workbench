@@ -104,7 +104,81 @@ describe('useQueryPlan', () => {
         expect(result.current.jsonPlan).toBeNull();
         expect(result.current.loading).toBe(false);
         expect(result.current.error).toBeNull();
+        expect(result.current.notExplainable).toBeNull();
         expect(typeof result.current.fetch).toBe('function');
+    });
+
+    it.each([
+        ['VACUUM', 'VACUUM'],
+        ['VACUUM (ANALYZE, VERBOSE) public.users', 'VACUUM'],
+        ['ANALYZE', 'ANALYZE'],
+        ['REINDEX INDEX users_pkey', 'REINDEX'],
+        ['CLUSTER users USING users_pkey', 'CLUSTER'],
+        ['CREATE INDEX idx ON users (id)', 'CREATE'],
+        ['TRUNCATE users', 'TRUNCATE'],
+    ])(
+        'skips EXPLAIN for %s and reports the statement type',
+        async (query, keyword) => {
+            const { result } = renderHook(() =>
+                useQueryPlan(query, 1, 'testdb'),
+            );
+
+            await act(async () => {
+                result.current.fetch();
+            });
+
+            expect(mockApiFetch).not.toHaveBeenCalled();
+            expect(result.current.notExplainable).toBe(keyword);
+            expect(result.current.textPlan).toBeNull();
+            expect(result.current.jsonPlan).toBeNull();
+            expect(result.current.error).toBeNull();
+            expect(result.current.loading).toBe(false);
+        },
+    );
+
+    it('reports an empty keyword for unidentifiable text', async () => {
+        const { result } = renderHook(() =>
+            useQueryPlan('-- only a comment', 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        expect(mockApiFetch).not.toHaveBeenCalled();
+        expect(result.current.notExplainable).toBe('');
+    });
+
+    it('clears notExplainable when a plannable query follows', async () => {
+        const textResponse = makeQueryResponse([['Seq Scan']]);
+        const jsonResponse = makeQueryResponse([[
+            JSON.stringify([{ Plan: { 'Node Type': 'Seq Scan' } }]),
+        ]]);
+        mockApiFetch
+            .mockResolvedValueOnce(textResponse)
+            .mockResolvedValueOnce(jsonResponse);
+
+        const { result, rerender } = renderHook(
+            ({ q }: { q: string }) =>
+                useQueryPlan(q, 1, 'testdb'),
+            { initialProps: { q: 'VACUUM' } },
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+        expect(result.current.notExplainable).toBe('VACUUM');
+
+        rerender({ q: `SELECT switch_${testCounter}` });
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.textPlan).toBe('Seq Scan');
+        });
+        expect(result.current.notExplainable).toBeNull();
     });
 
     it('fetch triggers two parallel API calls', async () => {
@@ -230,6 +304,31 @@ describe('useQueryPlan', () => {
         expect(
             result.current.jsonPlan?.[0]['Total Cost'],
         ).toBe(35.5);
+    });
+
+    it('keeps JSON plans that are not wrapped in Plan nodes', async () => {
+        const bareNodes = [{ 'Node Type': 'Seq Scan' }];
+        mockApiFetch
+            .mockResolvedValueOnce(
+                makeQueryResponse([['Seq Scan on users']]),
+            )
+            .mockResolvedValueOnce(
+                makeQueryResponse([[JSON.stringify(bareNodes)]]),
+            );
+
+        const { result } = renderHook(() =>
+            useQueryPlan(`SELECT bare_${testCounter}`, 1, 'testdb'),
+        );
+
+        await act(async () => {
+            result.current.fetch();
+        });
+
+        await waitFor(() => {
+            expect(result.current.jsonPlan).not.toBeNull();
+        });
+
+        expect(result.current.jsonPlan).toEqual(bareNodes);
     });
 
     it('sets error when both requests fail', async () => {

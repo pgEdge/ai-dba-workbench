@@ -52,6 +52,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
     });
@@ -86,6 +87,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: true,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -108,6 +110,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: 'Something went wrong',
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -130,6 +133,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: 'could not determine data type of parameter $1',
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -146,6 +150,62 @@ describe('QueryPlanPanel', () => {
         ).toBeInTheDocument();
     });
 
+    it('shows a friendly message for non-explainable statements', () => {
+        mockUseQueryPlan.mockReturnValue({
+            textPlan: null,
+            jsonPlan: null,
+            loading: false,
+            error: null,
+            notExplainable: 'VACUUM',
+            fetch: mockFetch,
+        });
+
+        render(
+            <QueryPlanPanel
+                connectionId={1}
+                databaseName="testdb"
+                queryText="VACUUM"
+            />,
+        );
+
+        expect(
+            screen.getByText(
+                /cannot produce a query plan for VACUUM statements/,
+            ),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByRole('tab', { name: 'Visual' }),
+        ).not.toBeInTheDocument();
+    });
+
+    it('prefers the non-explainable notice over a stale error', () => {
+        mockUseQueryPlan.mockReturnValue({
+            textPlan: null,
+            jsonPlan: null,
+            loading: false,
+            error: 'syntax error at or near "VACUUM"',
+            notExplainable: '',
+            fetch: mockFetch,
+        });
+
+        render(
+            <QueryPlanPanel
+                connectionId={1}
+                databaseName="testdb"
+                queryText="/* comment only */"
+            />,
+        );
+
+        expect(
+            screen.getByText(
+                /cannot produce a query plan for this statement/,
+            ),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByText(/syntax error at or near/),
+        ).not.toBeInTheDocument();
+    });
+
     it('shows text plan in monospace when text tab is selected', () => {
         const planText = 'Seq Scan on users (cost=0.00..35.50)';
         mockUseQueryPlan.mockReturnValue({
@@ -153,6 +213,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -184,6 +245,7 @@ describe('QueryPlanPanel', () => {
             }],
             loading: false,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -205,6 +267,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -228,6 +291,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
 
@@ -249,6 +313,7 @@ describe('QueryPlanPanel', () => {
             jsonPlan: null,
             loading: false,
             error: null,
+            notExplainable: null,
             fetch: mockFetch,
         });
 

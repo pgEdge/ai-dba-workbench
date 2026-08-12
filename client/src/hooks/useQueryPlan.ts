@@ -11,6 +11,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { apiFetch } from '../utils/apiClient';
 import { djb2Hash } from '../utils/textHelpers';
+import {
+    getStatementKeyword,
+    isExplainable,
+} from '../utils/sqlHelpers';
 
 export interface PlanNode {
     'Node Type': string;
@@ -58,6 +62,13 @@ export interface UseQueryPlanReturn {
     jsonPlan: PlanNode[] | null;
     loading: boolean;
     error: string | null;
+    /**
+     * Leading keyword of a statement that EXPLAIN cannot plan
+     * (for example VACUUM), or null when the statement is
+     * explainable. An empty string means the statement type
+     * could not be identified.
+     */
+    notExplainable: string | null;
     fetch: () => void;
 }
 
@@ -174,6 +185,8 @@ export function useQueryPlan(
         useState<PlanNode[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [notExplainable, setNotExplainable] =
+        useState<string | null>(null);
 
     const queryRef = useRef(query);
     const connRef = useRef(connectionId);
@@ -186,6 +199,20 @@ export function useQueryPlan(
         const q = queryRef.current;
         const conn = connRef.current;
         const db = dbRef.current;
+
+        // pg_stat_statements captures utility commands such as
+        // VACUUM or REINDEX, which EXPLAIN rejects outright.
+        // Detect those up front rather than issuing a request
+        // that can only fail with a raw syntax error.
+        if (!isExplainable(q)) {
+            setTextPlan(null);
+            setJsonPlan(null);
+            setError(null);
+            setLoading(false);
+            setNotExplainable(getStatementKeyword(q));
+            return;
+        }
+        setNotExplainable(null);
 
         const cacheKey = computeCacheKey(q, conn, db);
 
@@ -288,6 +315,7 @@ export function useQueryPlan(
         jsonPlan,
         loading,
         error,
+        notExplainable,
         fetch: fetchPlan,
     };
 }

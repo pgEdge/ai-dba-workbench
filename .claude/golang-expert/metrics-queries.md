@@ -184,10 +184,48 @@ at execution; `scanSeriesRows`'s own `pool.Query` and `rows.Scan` error
 branches are driven by a cancelled context and a destination-count mismatch
 respectively.
 
+## Alerter Metric Lookup Errors
+
+`GetLatestMetricValues` (`alerter/src/internal/database/metric_queries.go`)
+distinguishes three failure modes, and callers must keep them apart:
+
+- `ErrMetricNotSupported` - the metric has no `metricRegistry` entry, or
+  its entry carries an unknown scan type. Metrics evaluated by bespoke
+  code paths, notably `probe_staleness_ratio`, are deliberately absent
+  from the registry and always fail this way.
+- `ErrNoMetricData` - the registry query ran and returned no rows.
+- Any other error - the query itself failed.
+
+When `GetLatestMetricValues` returns an error, `checkAlertResolved`
+(`alerter/src/internal/engine/cleanup.go`) clears an alert only for
+`ErrNoMetricData`; it still clears on its other, non-error paths, when
+the metric reports no value for the alert's connection or database, or
+when the current value no longer violates the threshold. An
+unsupported metric or a failed query
+says nothing about whether the alerting condition still holds, so the
+alert is left active and logged. Treating those errors as a resolution
+was the root cause of issue #405, in which `metric_staleness` alerts were
+cleared by the cleaner and immediately re-raised by the evaluator, once
+per cycle, for as long as a probe stayed stale.
+
+Probe-scoped alerts (those with a non-NULL `probe_name`) never reach the
+registry path at all: `checkAlertResolved` routes them to
+`checkStalenessAlertResolved`, which re-reads
+`GetProbeStalenessByConnection` and clears the alert when the probe's
+staleness ratio no longer violates the stored threshold, or when the
+probe stops being reported. Their evaluator,
+`evaluateMetricStaleness` (`alerter/src/internal/engine/thresholds.go`),
+keys both the active-alert lookup and the cooldown check by probe via
+`GetActiveThresholdAlertForProbe` and `GetRecentlyClearedAlertForProbe`,
+so several stale probes on one connection raise one alert each.
+
 ## Related Issues
 
 - #56: Alerter FK violations when calculating baselines for deleted
   connections.
+- #405: `metric_staleness` alert fire/clear loop; introduced the
+  `ErrMetricNotSupported`/`ErrNoMetricData` sentinels and the
+  probe-scoped alert lookups.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to
   `QueryTimeSeries` to fix blank Activity Charts; retired #339's
   `resolveMetricValue` in favour of the `finiteFloat` guard in `toFloat64`.

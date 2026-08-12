@@ -61,6 +61,20 @@ project adheres to
 
 ### Fixed
 
+- Fix the `metric_staleness` alert rule firing and clearing in a
+  loop, which sent a notification pair every cycle for as long as a
+  probe remained stale. The alert cleaner resolved the rule's metric
+  through the metric registry, where the bespoke staleness metric
+  has no entry, and treated the resulting lookup error as proof that
+  the condition had gone away. The cleaner now distinguishes a
+  metric it cannot evaluate, or a query that failed, from a metric
+  that ran and reported nothing; only the latter clears an alert.
+  Staleness alerts resolve through their own check against probe
+  availability, the staleness evaluator applies the same cooldown
+  guard as every other rule, and each stale probe on a connection
+  now raises its own alert rather than overwriting a shared one.
+  (#405)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

@@ -58,6 +58,61 @@ func (d *Datastore) GetActiveThresholdAlert(ctx context.Context, ruleID int64, c
 	return &alert, nil
 }
 
+// GetActiveThresholdAlertForProbe checks if there's an existing active alert
+// for a rule/connection/probe combination. Probe-scoped rules such as
+// metric_staleness raise one alert per probe, so keying the lookup on the
+// rule and connection alone would collapse every stale probe on a server
+// into a single row whose title and description are overwritten by whichever
+// probe was evaluated last.
+func (d *Datastore) GetActiveThresholdAlertForProbe(ctx context.Context, ruleID int64, connectionID int, probeName string) (*Alert, error) {
+	var alert Alert
+	err := d.pool.QueryRow(ctx, `
+        SELECT id, alert_type, rule_id, connection_id, database_name, object_name,
+               probe_name, metric_name, metric_value, threshold_value, operator,
+               severity, title, description, correlation_id, status, triggered_at,
+               cleared_at, last_updated, anomaly_score, anomaly_details
+        FROM alerts
+        WHERE rule_id = $1 AND connection_id = $2 AND probe_name = $3
+          AND status IN ('active', 'acknowledged')
+        LIMIT 1
+    `, ruleID, connectionID, probeName).Scan(
+		&alert.ID, &alert.AlertType, &alert.RuleID, &alert.ConnectionID,
+		&alert.DatabaseName, &alert.ObjectName, &alert.ProbeName, &alert.MetricName,
+		&alert.MetricValue, &alert.ThresholdValue, &alert.Operator, &alert.Severity,
+		&alert.Title, &alert.Description, &alert.CorrelationID, &alert.Status,
+		&alert.TriggeredAt, &alert.ClearedAt, &alert.LastUpdated, &alert.AnomalyScore,
+		&alert.AnomalyDetails)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &alert, nil
+}
+
+// GetRecentlyClearedAlertForProbe reports whether an alert for the same rule,
+// connection, and probe was cleared within the cooldown period. It is the
+// probe-scoped counterpart of GetRecentlyClearedAlert.
+func (d *Datastore) GetRecentlyClearedAlertForProbe(ctx context.Context, ruleID int64, connectionID int, probeName string, cooldown time.Duration) (bool, error) {
+	var exists bool
+	err := d.pool.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 FROM alerts
+            WHERE rule_id = $1 AND connection_id = $2 AND probe_name = $3
+              AND status = 'cleared'
+              AND cleared_at > NOW() - $4::interval
+        )
+    `, ruleID, connectionID, probeName,
+		fmt.Sprintf("%d seconds", int(cooldown.Seconds()))).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check recently cleared probe alert: %w", err)
+	}
+	return exists, nil
+}
+
 // GetActiveAnomalyAlert checks for an existing active anomaly alert for the
 // given metric name, connection, and optional database name.
 func (d *Datastore) GetActiveAnomalyAlert(ctx context.Context, metricName string, connectionID int, dbName *string) (*Alert, error) {

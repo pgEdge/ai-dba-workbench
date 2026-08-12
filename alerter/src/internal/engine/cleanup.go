@@ -11,6 +11,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -44,12 +45,31 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 		return
 	}
 
+	// Probe-scoped alerts (metric_staleness) are raised by a bespoke
+	// evaluator and their metric has no registry entry, so they need a
+	// bespoke resolution check too.
+	if alert.ProbeName != nil {
+		e.checkStalenessAlertResolved(ctx, alert)
+		return
+	}
+
 	// Get current metric values for all connections/databases
 	values, err := e.datastore.GetLatestMetricValues(ctx, *alert.MetricName)
 	if err != nil {
-		// No data returned for this metric at all — the condition
-		// no longer exists (e.g. all values filtered out), so clear
-		e.clearResolvedAlert(ctx, alert, 0)
+		if errors.Is(err, database.ErrNoMetricData) {
+			// The query ran and reported nothing for any connection —
+			// the condition no longer exists (e.g. all values filtered
+			// out), so clear
+			e.clearResolvedAlert(ctx, alert, 0)
+			return
+		}
+		// The metric could not be evaluated at all: either it has no
+		// registry entry or the query failed. Neither says anything
+		// about whether the condition still holds, so leave the alert
+		// alone rather than clearing it and letting the evaluator
+		// re-raise it on its next pass.
+		e.log("ERROR: Cannot evaluate metric %s for alert %d, leaving it active: %v",
+			*alert.MetricName, alert.ID, err)
 		return
 	}
 
@@ -82,6 +102,37 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 	if !stillViolated {
 		e.clearResolvedAlert(ctx, alert, value)
 	}
+}
+
+// checkStalenessAlertResolved checks whether a probe-scoped staleness alert
+// has resolved. The metric_staleness rule is evaluated by
+// evaluateMetricStaleness rather than through metricRegistry, so the
+// resolution check reads the same probe_availability source the evaluator
+// does. The alert clears when the probe's staleness ratio no longer violates
+// the threshold stored on the alert, or when the probe stops being reported
+// at all because it was disabled or its connection is no longer monitored.
+func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert) {
+	entries, err := e.datastore.GetProbeStalenessByConnection(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to get probe staleness for alert %d: %v", alert.ID, err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.ConnectionID != alert.ConnectionID || entry.ProbeName != *alert.ProbeName {
+			continue
+		}
+		if !e.checkThreshold(entry.StalenessRatio, *alert.Operator, *alert.ThresholdValue) {
+			e.clearResolvedAlert(ctx, alert, entry.StalenessRatio)
+		}
+		return
+	}
+
+	// The probe no longer appears in the staleness view, so there is
+	// nothing left to be stale about.
+	e.debugLog("Probe %s on connection %d is no longer reported; clearing alert %d",
+		*alert.ProbeName, alert.ConnectionID, alert.ID)
+	e.clearResolvedAlert(ctx, alert, 0)
 }
 
 // clearResolvedAlert clears an alert and queues a notification

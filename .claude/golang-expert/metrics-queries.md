@@ -11,10 +11,15 @@
 # Metrics Query Conventions
 
 The collector writes probe output into `metrics.*` partitioned tables.
-Those tables intentionally carry no foreign key to `connections` so that
-probes never fail because a connection was deleted mid-write. The cost
-of that design is that orphaned metric rows can briefly outlive their
-owning connection.
+The consolidated migration in `collector/src/database/schema.go` now adds
+a `FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE
+CASCADE` to each of them via `addConstraintIfMissing`, so deleting a
+connection removes its metric rows with it. That was not always true,
+and the queries written before it still assume orphaned metric rows can
+outlive their owning connection; keep that assumption rather than
+stripping the joins out, because it costs nothing and the cascade is the
+only thing standing between a stale metric row and a foreign key
+violation downstream.
 
 ## Filter Orphans at Query Time
 

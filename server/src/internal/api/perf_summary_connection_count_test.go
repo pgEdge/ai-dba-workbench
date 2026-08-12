@@ -100,7 +100,7 @@ func TestQueryConnectionCount_NoData(t *testing.T) {
 
 // TestQueryConnectionCount_MissingTable verifies the helper degrades to
 // zero when the metrics table is absent, matching the other summary
-// helpers' behaviour on an uncollected estate.
+// helpers' behavior on an uncollected estate.
 func TestQueryConnectionCount_MissingTable(t *testing.T) {
 	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
 	defer cleanup()

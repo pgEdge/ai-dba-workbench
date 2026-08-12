@@ -196,8 +196,12 @@ distinguishes three failure modes, and callers must keep them apart:
 - `ErrNoMetricData` - the registry query ran and returned no rows.
 - Any other error - the query itself failed.
 
-`checkAlertResolved` (`alerter/src/internal/engine/cleanup.go`) clears an
-alert only for `ErrNoMetricData`. An unsupported metric or a failed query
+When `GetLatestMetricValues` returns an error, `checkAlertResolved`
+(`alerter/src/internal/engine/cleanup.go`) clears an alert only for
+`ErrNoMetricData`; it still clears on its other, non-error paths, when
+the metric reports no value for the alert's connection or database, or
+when the current value no longer violates the threshold. An
+unsupported metric or a failed query
 says nothing about whether the alerting condition still holds, so the
 alert is left active and logged. Treating those errors as a resolution
 was the root cause of issue #405, in which `metric_staleness` alerts were

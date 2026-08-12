@@ -22,6 +22,7 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/alerter/internal/engine"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 )
 
 // Version information
@@ -60,17 +61,37 @@ func resolveConfigPath(flagValue string) resolveConfigPathResult {
 	}
 }
 
-// reloadFlagOverrides bundles the CLI flag values that survive
-// across a SIGHUP reload and must be reapplied to the freshly
-// loaded config so operators do not lose their command-line
-// overrides on every reload.
-type reloadFlagOverrides struct {
+// Names of the database connection flags. They are named constants
+// so the registration in main and the override logic in
+// applyFlagOverrides cannot drift apart; the override logic looks a
+// flag up by name to decide whether the operator actually passed it.
+const (
+	flagDBHost         = "db-host"
+	flagDBPort         = "db-port"
+	flagDBName         = "db-name"
+	flagDBUser         = "db-user"
+	flagDBPasswordFile = "db-password-file"
+	flagDBSSLMode      = "db-sslmode"
+)
+
+// flagOverrides bundles the CLI flag values that override the
+// configuration file, together with the set of flags the operator
+// actually passed. The same bundle is reapplied to the freshly
+// loaded config across a SIGHUP reload so operators do not lose
+// their command-line overrides on every reload.
+//
+// Passed is what makes an override unambiguous: a flag value on its
+// own cannot distinguish "the operator asked for this" from "this is
+// the registered default", so a config file value that happens to
+// match a default would otherwise be overwritten.
+type flagOverrides struct {
 	DBHost         string
 	DBPort         int
 	DBName         string
 	DBUser         string
 	DBPasswordFile string
 	DBSSLMode      string
+	Passed         flagutil.Set
 }
 
 // reloadConfigOnSignal builds a fresh *config.Config from the same
@@ -95,7 +116,7 @@ func reloadConfigOnSignal(
 	logOut io.Writer,
 	prevPath string,
 	explicit bool,
-	overrides reloadFlagOverrides,
+	overrides flagOverrides,
 ) (*config.Config, error) {
 	reloadPath := prevPath
 	if !explicit {
@@ -119,10 +140,7 @@ func reloadConfigOnSignal(
 		return nil, fmt.Errorf("failed to reload config: %w", err)
 	}
 
-	if err := applyFlagOverrides(newCfg,
-		overrides.DBHost, overrides.DBPort, overrides.DBName,
-		overrides.DBUser, overrides.DBPasswordFile, overrides.DBSSLMode,
-	); err != nil {
+	if err := applyFlagOverrides(newCfg, overrides); err != nil {
 		return nil, fmt.Errorf("failed to apply overrides on reload: %w", err)
 	}
 
@@ -156,14 +174,26 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable debug logging")
 
 	// Database connection flags
-	dbHost := flag.String("db-host", "", "Database host (overrides config)")
-	dbPort := flag.Int("db-port", 0, "Database port (overrides config)")
-	dbName := flag.String("db-name", "", "Database name (overrides config)")
-	dbUser := flag.String("db-user", "", "Database user (overrides config)")
-	dbPasswordFile := flag.String("db-password-file", "", "Path to file containing the database password")
-	dbSSLMode := flag.String("db-sslmode", "", "Database SSL mode (overrides config)")
+	dbHost := flag.String(flagDBHost, "", "Database host (overrides config)")
+	dbPort := flag.Int(flagDBPort, 0, "Database port (overrides config)")
+	dbName := flag.String(flagDBName, "", "Database name (overrides config)")
+	dbUser := flag.String(flagDBUser, "", "Database user (overrides config)")
+	dbPasswordFile := flag.String(flagDBPasswordFile, "", "Path to file containing the database password")
+	dbSSLMode := flag.String(flagDBSSLMode, "", "Database SSL mode (overrides config)")
 
 	flag.Parse()
+
+	// Record which flags the operator actually passed, so overrides
+	// are driven by intent rather than by a value comparison.
+	overrides := flagOverrides{
+		DBHost:         *dbHost,
+		DBPort:         *dbPort,
+		DBName:         *dbName,
+		DBUser:         *dbUser,
+		DBPasswordFile: *dbPasswordFile,
+		DBSSLMode:      *dbSSLMode,
+		Passed:         flagutil.Passed(flag.CommandLine),
+	}
 
 	// Resolve the config path: an explicit flag wins, otherwise the
 	// shared discovery helper picks the highest-priority path that
@@ -202,7 +232,7 @@ func main() {
 	}
 
 	// Apply command line overrides
-	if err := applyFlagOverrides(cfg, *dbHost, *dbPort, *dbName, *dbUser, *dbPasswordFile, *dbSSLMode); err != nil {
+	if err := applyFlagOverrides(cfg, overrides); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
@@ -262,14 +292,7 @@ func main() {
 					os.Stderr,
 					resolvedConfigPath,
 					explicitConfigPath,
-					reloadFlagOverrides{
-						DBHost:         *dbHost,
-						DBPort:         *dbPort,
-						DBName:         *dbName,
-						DBUser:         *dbUser,
-						DBPasswordFile: *dbPasswordFile,
-						DBSSLMode:      *dbSSLMode,
-					},
+					overrides,
 				)
 				if err != nil {
 					fmt.Fprintf(os.Stderr,
@@ -305,28 +328,36 @@ func main() {
 
 // applyFlagOverrides applies CLI flag values to the configuration, allowing
 // command-line arguments to take precedence over the configuration file.
-func applyFlagOverrides(cfg *config.Config, dbHost string, dbPort int, dbName, dbUser, dbPasswordFile, dbSSLMode string) error {
-	if dbHost != "" {
-		cfg.Datastore.Host = dbHost
+//
+// Only the flags recorded in o.Passed are applied, so a value read
+// from the configuration file survives unless the operator asked for
+// something else, and an explicitly passed flag wins even when its
+// value coincides with the flag's registered default.
+func applyFlagOverrides(cfg *config.Config, o flagOverrides) error {
+	if o.Passed.Has(flagDBHost) {
+		cfg.Datastore.Host = o.DBHost
 	}
-	if dbPort != 0 {
-		cfg.Datastore.Port = dbPort
+	if o.Passed.Has(flagDBPort) {
+		cfg.Datastore.Port = o.DBPort
 	}
-	if dbName != "" {
-		cfg.Datastore.Database = dbName
+	if o.Passed.Has(flagDBName) {
+		cfg.Datastore.Database = o.DBName
 	}
-	if dbUser != "" {
-		cfg.Datastore.Username = dbUser
+	if o.Passed.Has(flagDBUser) {
+		cfg.Datastore.Username = o.DBUser
 	}
-	if dbPasswordFile != "" {
-		password, err := fileutil.ReadSecretFile(dbPasswordFile)
+	// An explicitly empty -db-password-file means "no password file",
+	// so there is nothing to read; only a non-empty path triggers a
+	// read, which would otherwise fail on the empty path.
+	if o.Passed.Has(flagDBPasswordFile) && o.DBPasswordFile != "" {
+		password, err := fileutil.ReadSecretFile(o.DBPasswordFile)
 		if err != nil {
 			return fmt.Errorf("failed to read password file: %w", err)
 		}
 		cfg.Datastore.Password = password
 	}
-	if dbSSLMode != "" {
-		cfg.Datastore.SSLMode = dbSSLMode
+	if o.Passed.Has(flagDBSSLMode) {
+		cfg.Datastore.SSLMode = o.DBSSLMode
 	}
 	return nil
 }

@@ -435,11 +435,7 @@ func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin delete connection transaction: %w", err)
 	}
-	// Roll back with a non-cancelable context so a canceled request
-	// context cannot trigger the pgx v5 close-of-closed-channel panic
-	// described in jackc/pgx#2470, which would leak the pooled
-	// connection in an aborted-transaction state.
-	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Delete the connection row and capture its cluster_id in one
 	// statement. Doing both atomically avoids a TOCTOU window in

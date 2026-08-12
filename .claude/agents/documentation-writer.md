@@ -29,7 +29,7 @@ report them for the main agent to address.
 ## Knowledge Base
 
 **Before writing documentation, consult your knowledge base at
-`/.claude/documentation-writer/`:**
+`.claude/documentation-writer/`:**
 
 - `README.md` - An index of this knowledge base, describing its purpose
   and the documents it holds

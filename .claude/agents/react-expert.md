@@ -25,7 +25,7 @@ advice or review, provide thorough analysis and recommendations.
 ## Knowledge Base
 
 **Before providing guidance or implementing features, consult your knowledge
-base at `/.claude/react-expert/`:**
+base at `.claude/react-expert/`:**
 
 - `quality-checklist.md` - Anti-patterns, standards, and review checklists
 - `color-contrast-guidelines.md` - WCAG AA color contrast requirements

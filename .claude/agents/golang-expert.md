@@ -25,7 +25,7 @@ advice or review, provide thorough analysis and recommendations.
 ## Knowledge Base
 
 **Before providing guidance or implementing features, consult your knowledge
-base at `/.claude/golang-expert/`:**
+base at `.claude/golang-expert/`:**
 
 - `database-scan.md` - The generic row-scanning helper in
   `server/src/internal/database/scan.go`, and when to use it

@@ -10,6 +10,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
@@ -77,11 +79,13 @@ func TestApplyFlagOverrides_ConfigMatchingFlagDefaultSurvives(t *testing.T) {
 }
 
 // TestApplyFlagOverrides_ExplicitEmptyPasswordFile verifies that an
-// explicitly empty -db-password-file is treated as "no password
-// file" rather than as a path to read, which would fail.
+// explicitly empty -db-password-file clears the path the
+// configuration file named, rather than being read as a path (which
+// would fail) or silently leaving the configured file in place for
+// cfg.LoadPassword to read later.
 func TestApplyFlagOverrides_ExplicitEmptyPasswordFile(t *testing.T) {
 	cfg := config.NewConfig()
-	cfg.Datastore.Password = "from-config"
+	cfg.Datastore.PasswordFile = "/from/config/password"
 
 	if err := applyFlagOverrides(cfg, flagOverrides{
 		DBPasswordFile: "",
@@ -89,7 +93,43 @@ func TestApplyFlagOverrides_ExplicitEmptyPasswordFile(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("applyFlagOverrides: %v", err)
 	}
-	if cfg.Datastore.Password != "from-config" {
-		t.Errorf("Password = %q, want it left alone", cfg.Datastore.Password)
+	if cfg.Datastore.PasswordFile != "" {
+		t.Errorf("PasswordFile = %q, want it cleared by the explicit empty flag",
+			cfg.Datastore.PasswordFile)
+	}
+
+	// The configured file must not be read on a later LoadPassword
+	// either; it does not exist, so a read attempt would error.
+	if err := cfg.LoadPassword(); err != nil {
+		t.Errorf("LoadPassword after clearing the path: %v", err)
+	}
+	if cfg.Datastore.Password != "" {
+		t.Errorf("Password = %q, want it left empty", cfg.Datastore.Password)
+	}
+}
+
+// TestApplyFlagOverrides_PasswordFileReplacesConfigured verifies that
+// a non-empty -db-password-file both loads the password and replaces
+// the path the configuration file named.
+func TestApplyFlagOverrides_PasswordFileReplacesConfigured(t *testing.T) {
+	pwFile := filepath.Join(t.TempDir(), "pw.txt")
+	if err := os.WriteFile(pwFile, []byte("flag-password\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	cfg := config.NewConfig()
+	cfg.Datastore.PasswordFile = "/from/config/password"
+
+	if err := applyFlagOverrides(cfg, flagOverrides{
+		DBPasswordFile: pwFile,
+		Passed:         flagutil.Set{flagDBPasswordFile: true},
+	}); err != nil {
+		t.Fatalf("applyFlagOverrides: %v", err)
+	}
+	if cfg.Datastore.PasswordFile != pwFile {
+		t.Errorf("PasswordFile = %q, want %q", cfg.Datastore.PasswordFile, pwFile)
+	}
+	if cfg.Datastore.Password != "flag-password" {
+		t.Errorf("Password = %q, want flag-password", cfg.Datastore.Password)
 	}
 }

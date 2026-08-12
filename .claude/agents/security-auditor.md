@@ -32,7 +32,7 @@ Always delegate actual code modifications to the main agent based on your findin
 ## Knowledge Base
 
 **Before auditing, consult your knowledge base at
-`/.claude/security-auditor/`:**
+`.claude/security-auditor/`:**
 
 - `README.md` - An index of this knowledge base, covering the
   security-sensitive code locations and the attack surface it documents

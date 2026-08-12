@@ -23,6 +23,12 @@ A high connection utilization indicates the database may
 run out of available connections. Consider increasing
 `max_connections` or implementing connection pooling.
 
+The rule divides the most recent session count by the
+newest recorded `max_connections` value. The settings
+probe only stores a snapshot when the configuration
+changes, so the newest snapshot may be days or weeks old
+on a stable server.
+
 ### High Max Connections
 
 This rule alerts when the `max_connections` setting
@@ -38,6 +44,10 @@ exceeds a threshold.
 A very high `max_connections` setting can degrade
 performance. Consider using a connection pooler such as
 PgBouncer instead of increasing the connection limit.
+
+The rule reads the newest stored `pg_settings` snapshot,
+which the collector writes only when the configuration
+changes.
 
 ### Blocked Sessions
 
@@ -326,8 +336,14 @@ wraparound.
 |----------|-------|
 | Metric | `age_percent` |
 | Operator | `>` |
-| Default Threshold | 50 |
-| Default Severity | warning |
+| Default Threshold | 75 |
+| Default Severity | critical |
+
+The value is the transaction ID age of the oldest
+non-template database on the server, expressed as a
+percentage of the 2147483647 wraparound limit. It comes
+from `age(datfrozenxid)` in `pg_database`, which the
+collector samples every 300 seconds.
 
 Transaction ID wraparound prevention requires aggressive
 vacuuming. Monitor this metric carefully on busy
@@ -403,6 +419,13 @@ This rule alerts when CPU usage exceeds the threshold.
 High CPU usage may indicate inefficient queries, missing
 indexes, or insufficient hardware capacity.
 
+The value is the busy percentage of the host CPU. The
+`system_stats` extension reports different columns on
+different platforms, so the rule uses
+`processor_time_percent` on Windows and derives the busy
+percentage from the idle and per-mode percentages on
+Linux.
+
 ### High Memory Usage
 
 This rule alerts when memory usage exceeds the threshold.
@@ -441,10 +464,15 @@ This rule alerts when WAL archiving fails.
 
 | Property | Value |
 |----------|-------|
-| Metric | `pg_stat_wal.failed_count_delta` |
+| Metric | `pg_stat_archiver.failed_count_delta` |
 | Operator | `>` |
 | Default Threshold | 0 |
 | Default Severity | critical |
+
+The value counts the archive failures recorded in the
+last hour, read from the archiver columns of
+`metrics.pg_stat_wal`. A reset of the archiver statistics
+contributes no failures.
 
 Archive failures can prevent point-in-time recovery.
 Check the archive command and destination storage.
@@ -460,8 +488,13 @@ frequently.
 |----------|-------|
 | Metric | `pg_stat_checkpointer.checkpoints_req_delta` |
 | Operator | `>` |
-| Default Threshold | 5 |
+| Default Threshold | 12 |
 | Default Severity | warning |
+
+The value counts the requested checkpoints recorded in
+the last hour, so the default threshold corresponds to an
+average of one requested checkpoint every five minutes.
+Timed checkpoints are not counted.
 
 Frequent requested checkpoints indicate
 `checkpoint_segments` or `max_wal_size` may be too low

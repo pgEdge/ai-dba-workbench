@@ -34,17 +34,46 @@ type metricQueryConfig struct {
 	historicalScan historicalScanType
 }
 
+// cpuBusyPercentExpr is the SQL expression that derives a portable CPU
+// busy percentage from a metrics.pg_sys_cpu_usage_info row.
+//
+// The system_stats extension fills different columns on different
+// platforms: processor_time_percent is Windows-only, while the Linux
+// build reports the individual busy buckets and idle_mode_percent. The
+// expression therefore prefers the Windows column, falls back to
+// 100 minus the idle percentage, and finally sums the Linux busy
+// buckets, clamping the result to the 0-100 range. Column names are
+// left unqualified so the expression can be embedded in both the latest
+// and historical queries.
+const cpuBusyPercentExpr = `
+	LEAST(GREATEST(COALESCE(
+	    processor_time_percent,
+	    100 - idle_mode_percent,
+	    COALESCE(usermode_normal_process_percent, 0)
+	        + COALESCE(usermode_niced_process_percent, 0)
+	        + COALESCE(kernelmode_process_percent, 0)
+	        + COALESCE(io_completion_percent, 0)
+	        + COALESCE(servicing_irq_percent, 0)
+	        + COALESCE(servicing_softirq_percent, 0)
+	), 0), 100)::float`
+
 // metricRegistry maps metric names to their query configurations.
 // Each entry contains the SQL for latest and historical queries, along with
 // the scan type that determines how to parse the result rows.
 var metricRegistry = map[string]metricQueryConfig{
+	// metrics.pg_settings is written by a change-tracked probe that skips
+	// the write whenever the settings hash is unchanged, so a stable server
+	// receives one snapshot at onboarding and nothing afterwards. Any
+	// max-age predicate on collected_at therefore kills the metric within
+	// the hour; the latest query takes the newest row per connection with
+	// no time filter, matching what the historical variant already did.
+	// See GitHub issue #406.
 	"pg_settings.max_connections": {
 		latestSQL: `
 			SELECT DISTINCT ON (connection_id)
 			       connection_id, setting::float as value, collected_at
 			FROM metrics.pg_settings
 			WHERE name = 'max_connections'
-			  AND collected_at > NOW() - INTERVAL '1 hour'
 			ORDER BY connection_id, collected_at DESC
 		`,
 		historicalSQL: `
@@ -61,6 +90,11 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The max_conns CTE reads the newest pg_settings row per connection
+	// rather than requiring one written within the last hour, for the same
+	// reason as pg_settings.max_connections above. Freshness of the metric
+	// still comes from metrics.pg_stat_activity, which the 5 minute window
+	// on active_counts bounds. See GitHub issue #406.
 	"connection_utilization_percent": {
 		latestSQL: `
 			WITH active_counts AS (
@@ -76,10 +110,11 @@ var metricRegistry = map[string]metricQueryConfig{
 				GROUP BY connection_id
 			),
 			max_conns AS (
-				SELECT connection_id, setting::float as max_connections
+				SELECT DISTINCT ON (connection_id)
+				       connection_id, setting::float as max_connections
 				FROM metrics.pg_settings
 				WHERE name = 'max_connections'
-				  AND collected_at > NOW() - INTERVAL '1 hour'
+				ORDER BY connection_id, collected_at DESC
 			)
 			SELECT a.connection_id,
 			       (a.active / NULLIF(m.max_connections, 0)) * 100 as value,
@@ -656,6 +691,17 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The archiver counters live on metrics.pg_stat_wal, which the
+	// collector populates from pg_stat_archiver and pg_stat_wal together;
+	// there is no metrics.pg_stat_archiver table, so this query used to
+	// fail with SQLSTATE 42P01 on every evaluation.
+	//
+	// The value is the number of archive failures observed in the last
+	// hour, which is six samples at the probe's 600 second interval. Only
+	// positive per-sample deltas are summed so a stats reset (failed_count
+	// dropping back to zero) does not report a spurious burst of failures,
+	// and connections with a single sample in the window report 0 rather
+	// than dropping out of the result set entirely. See GitHub issue #406.
 	"pg_stat_archiver.failed_count_delta": {
 		latestSQL: `
 			WITH archiver_data AS (
@@ -663,14 +709,16 @@ var metricRegistry = map[string]metricQueryConfig{
 				       failed_count,
 				       collected_at,
 				       LAG(failed_count) OVER (PARTITION BY connection_id ORDER BY collected_at) as prev_failed_count
-				FROM metrics.pg_stat_archiver
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				FROM metrics.pg_stat_wal
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 			)
 			SELECT connection_id,
-			       COALESCE(MAX(failed_count - COALESCE(prev_failed_count, failed_count)), 0)::float as value,
+			       COALESCE(
+			           SUM(GREATEST(failed_count - prev_failed_count, 0))
+			               FILTER (WHERE prev_failed_count IS NOT NULL),
+			           0)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM archiver_data
-			WHERE prev_failed_count IS NOT NULL
 			GROUP BY connection_id
 		`,
 		historicalSQL:  "",
@@ -678,6 +726,17 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The value is the number of requested (as opposed to timed)
+	// checkpoints observed in the last hour. The previous query took the
+	// largest increase between two consecutive samples inside a 15 minute
+	// window, which at the probe's 600 second interval meant "requested
+	// checkpoints in a single 10 minute sample" and additionally returned
+	// no row at all whenever only one sample fell inside the window.
+	//
+	// Summing positive per-sample deltas over an hour gives a stable,
+	// absolute count; negative deltas from a stats reset contribute zero,
+	// and a connection with a single sample reports 0 instead of vanishing
+	// from the result set. See GitHub issue #406.
 	"pg_stat_checkpointer.checkpoints_req_delta": {
 		latestSQL: `
 			WITH checkpointer_data AS (
@@ -686,13 +745,15 @@ var metricRegistry = map[string]metricQueryConfig{
 				       collected_at,
 				       LAG(num_requested) OVER (PARTITION BY connection_id ORDER BY collected_at) as prev_num_requested
 				FROM metrics.pg_stat_checkpointer
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 			)
 			SELECT connection_id,
-			       COALESCE(MAX(num_requested - COALESCE(prev_num_requested, num_requested)), 0)::float as value,
+			       COALESCE(
+			           SUM(GREATEST(num_requested - prev_num_requested, 0))
+			               FILTER (WHERE prev_num_requested IS NOT NULL),
+			           0)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM checkpointer_data
-			WHERE prev_num_requested IS NOT NULL
 			GROUP BY connection_id
 		`,
 		historicalSQL:  "",
@@ -912,14 +973,21 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The system_stats extension only populates processor_time_percent on
+	// Windows; on Linux the column is NULL, so coalescing it to zero made
+	// the cpu_usage_high rule read 0% on a fully saturated host and never
+	// fire. The value is now the first of three expressions that yields a
+	// number: the Windows processor time, the Linux busy percentage
+	// derived from idle_mode_percent, or the sum of the individual Linux
+	// busy buckets. The result is clamped to 0-100 so a partial row cannot
+	// produce a nonsensical percentage. See GitHub issue #406.
 	"pg_sys_cpu_usage_info.processor_time_percent": {
 		latestSQL: `
 			SELECT connection_id,
-			       COALESCE(processor_time_percent, 0)::float as value,
+			       ` + cpuBusyPercentExpr + ` as value,
 			       collected_at
 			FROM (
-			    SELECT DISTINCT ON (connection_id)
-			           connection_id, processor_time_percent, collected_at
+			    SELECT DISTINCT ON (connection_id) *
 			    FROM metrics.pg_sys_cpu_usage_info
 			    WHERE collected_at > NOW() - INTERVAL '15 minutes'
 			    ORDER BY connection_id, collected_at DESC
@@ -927,7 +995,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		historicalSQL: `
 			SELECT m.connection_id, NULL::text as database_name,
-			       COALESCE(m.processor_time_percent, 0)::float as value,
+			       ` + cpuBusyPercentExpr + ` as value,
 			       m.collected_at
 			FROM metrics.pg_sys_cpu_usage_info m
 			JOIN connections c ON c.id = m.connection_id
@@ -1040,37 +1108,37 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The value is the transaction ID age of the oldest non-template
+	// database on the connection, expressed as a percentage of the 2^31-1
+	// wraparound limit; that is the same definition the dashboard's XID
+	// Age tile and the server's performance summary already use.
+	//
+	// The query previously joined metrics.pg_stat_all_tables against
+	// pg_settings, discarded both, and returned the literal 50.0, so the
+	// transaction_wraparound rule reported a constant regardless of the
+	// real age. metrics.pg_stat_all_tables carries no frozen-xid column,
+	// so the value is read from metrics.pg_database.age_datfrozenxid,
+	// which the pg_database probe collects every 300 seconds. See GitHub
+	// issue #406.
 	"age_percent": {
 		latestSQL: `
-			WITH freeze_settings AS (
-				SELECT DISTINCT ON (connection_id)
+			WITH latest_ages AS (
+				SELECT DISTINCT ON (connection_id, datname)
 				       connection_id,
-				       setting::bigint as freeze_max_age
-				FROM metrics.pg_settings
-				WHERE name = 'autovacuum_freeze_max_age'
-				  AND collected_at > NOW() - INTERVAL '1 hour'
-				ORDER BY connection_id, collected_at DESC
-			),
-			table_ages AS (
-				SELECT t.connection_id,
-				       t.database_name,
-				       t.relname,
-				       COALESCE(t.n_live_tup, 0) as n_live_tup,
-				       t.collected_at,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY t.connection_id, t.database_name, t.schemaname, t.relname
-				           ORDER BY t.collected_at DESC
-				       ) as rn
-				FROM metrics.pg_stat_all_tables t
-				WHERE t.collected_at > NOW() - INTERVAL '15 minutes'
+				       datname,
+				       age_datfrozenxid,
+				       collected_at
+				FROM metrics.pg_database
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
+				  AND age_datfrozenxid IS NOT NULL
+				  AND datistemplate IS NOT TRUE
+				ORDER BY connection_id, datname, collected_at DESC
 			)
-			SELECT ta.connection_id,
-			       50.0::float as value,
-			       MAX(ta.collected_at) as collected_at
-			FROM table_ages ta
-			JOIN freeze_settings fs ON ta.connection_id = fs.connection_id
-			WHERE ta.rn = 1
-			GROUP BY ta.connection_id
+			SELECT connection_id,
+			       MAX(age_datfrozenxid::float / 2147483647.0 * 100)::float as value,
+			       MAX(collected_at) as collected_at
+			FROM latest_ages
+			GROUP BY connection_id
 		`,
 		historicalSQL:  "",
 		scan:           scanBasic,
@@ -1127,6 +1195,13 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The autovacuum settings are read from the newest pg_settings row per
+	// connection and setting name rather than from a one-hour window. The
+	// window meant the LEFT JOIN found nothing on any server whose
+	// settings had been stable for an hour, so the COALESCE defaults of 50
+	// and 0.2 applied and tuned autovacuum_vacuum_threshold and
+	// autovacuum_vacuum_scale_factor values were ignored. See GitHub issue
+	// #406.
 	"table_last_autovacuum_hours": {
 		latestSQL: `
 			WITH recent_tables AS (
@@ -1146,16 +1221,20 @@ var metricRegistry = map[string]metricQueryConfig{
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND schemaname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
 			),
-			av_settings AS (
-				SELECT DISTINCT ON (connection_id)
-				       connection_id,
-				       MAX(CASE WHEN name = 'autovacuum_vacuum_threshold'
-				           THEN setting::float ELSE NULL END) as av_threshold,
-				       MAX(CASE WHEN name = 'autovacuum_vacuum_scale_factor'
-				           THEN setting::float ELSE NULL END) as av_scale_factor
+			latest_av_settings AS (
+				SELECT DISTINCT ON (connection_id, name)
+				       connection_id, name, setting
 				FROM metrics.pg_settings
 				WHERE name IN ('autovacuum_vacuum_threshold', 'autovacuum_vacuum_scale_factor')
-				  AND collected_at > NOW() - INTERVAL '1 hour'
+				ORDER BY connection_id, name, collected_at DESC
+			),
+			av_settings AS (
+				SELECT connection_id,
+				       MAX(setting::float) FILTER (
+				           WHERE name = 'autovacuum_vacuum_threshold') as av_threshold,
+				       MAX(setting::float) FILTER (
+				           WHERE name = 'autovacuum_vacuum_scale_factor') as av_scale_factor
+				FROM latest_av_settings
 				GROUP BY connection_id
 			),
 			exceeding AS (

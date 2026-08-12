@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -165,6 +166,28 @@ func TestAcknowledgeAlert_AckInsertFailureRollsBack(t *testing.T) {
 	if status != "active" {
 		t.Errorf("status after failed acknowledge = %q, want \"active\": the "+
 			"rollback must undo the status update", status)
+	}
+}
+
+// TestUnacknowledgeAlert_UpdateFailureReturnsError covers the
+// failed-UPDATE branch of UnacknowledgeAlert, where the first statement in
+// the transaction cannot run at all. Neither sentinel must match, so the
+// handler maps the error to 500 rather than 404 or 409.
+func TestUnacknowledgeAlert_UpdateFailureReturnsError(t *testing.T) {
+	ds, pool, cleanup := newUnackAlertTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `DROP TABLE alerts CASCADE`); err != nil {
+		t.Fatalf("Failed to drop alerts table: %v", err)
+	}
+
+	err := ds.UnacknowledgeAlert(ctx, 1)
+	if err == nil {
+		t.Fatal("UnacknowledgeAlert without an alerts table returned nil; want error")
+	}
+	if errors.Is(err, ErrAlertNotFound) || errors.Is(err, ErrAlertNotAcknowledged) {
+		t.Errorf("error = %v, want neither sentinel to match", err)
 	}
 }
 

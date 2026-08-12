@@ -172,9 +172,47 @@ const seriesValuesFor = (title: string, name: string): string =>
             && el.getAttribute('data-series') === name)
         .map(el => el.getAttribute('data-values') ?? '')[0];
 
-const renderSection = () => render(
-    <PostgresOverviewSection connectionId={7} connectionName="Test Server" />,
+const renderSection = (connectionId = 7) => render(
+    <PostgresOverviewSection
+        connectionId={connectionId}
+        connectionName="Test Server"
+    />,
 );
+
+/** Deferred settlement handles for each queued apiGet call. */
+interface Deferred {
+    resolve: (value: unknown) => void;
+    reject: (reason: unknown) => void;
+}
+
+/**
+ * Make apiGet return promises that the test settles by hand, so that
+ * every assertion about the reference series follows an observed state
+ * transition rather than the initial pre-fetch render.
+ */
+const deferApiGet = (): Deferred[] => {
+    const deferrals: Deferred[] = [];
+    mockApiGet.mockImplementation(() => new Promise((resolve, reject) => {
+        deferrals.push({ resolve, reject });
+    }));
+    return deferrals;
+};
+
+/**
+ * Render, settle the first lookup with a usable limit, and wait for the
+ * reference series to appear. Returns the rerender helper and the
+ * deferred queue so the caller can drive a connection change.
+ */
+const renderWithLimit = async (deferrals: Deferred[]) => {
+    const view = renderSection(7);
+    await waitFor(() => { expect(deferrals).toHaveLength(1); });
+    deferrals[0].resolve([{ max_connections: 100 }]);
+    await waitFor(() => {
+        expect(seriesNamesFor(CONNECTIONS_TITLE))
+            .toEqual(['Backends', 'Max Connections']);
+    });
+    return view;
+};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -232,36 +270,79 @@ describe('PostgresOverviewSection', () => {
             expect(url).toContain('order_by=collected_at');
         });
 
-        it('omits the reference series when max_connections is unavailable', async () => {
-            mockApiGet.mockResolvedValue([]);
-            renderSection();
+        it('drops the previous limit as soon as the connection changes', async () => {
+            const deferrals = deferApiGet();
+            const { rerender } = await renderWithLimit(deferrals);
+
+            // Switching connection must not leave the old server's limit
+            // drawn over the new server's backend count whilst the
+            // second lookup is still in flight.
+            rerender(
+                <PostgresOverviewSection
+                    connectionId={8}
+                    connectionName="Other Server"
+                />,
+            );
+            expect(seriesNamesFor(CONNECTIONS_TITLE)).toEqual(['Backends']);
+
+            await waitFor(() => { expect(deferrals).toHaveLength(2); });
+            deferrals[1].resolve([{ max_connections: 250 }]);
+            await waitFor(() => {
+                expect(seriesValuesFor(CONNECTIONS_TITLE, 'Max Connections'))
+                    .toBe('250,250');
+            });
+        });
+
+        /**
+         * Drive a connection change whose lookup settles with an
+         * unusable response, and assert the reference series is dropped
+         * rather than merely absent from the outset.
+         */
+        const expectOmittedAfter = async (
+            settle: (deferred: Deferred) => void,
+        ) => {
+            const deferrals = deferApiGet();
+            const { rerender } = await renderWithLimit(deferrals);
+
+            rerender(
+                <PostgresOverviewSection
+                    connectionId={8}
+                    connectionName="Other Server"
+                />,
+            );
+            await waitFor(() => { expect(deferrals).toHaveLength(2); });
+            settle(deferrals[1]);
 
             await waitFor(() => {
-                expect(seriesNamesFor(CONNECTIONS_TITLE)).toEqual(['Backends']);
+                expect(mockApiGet).toHaveBeenCalledTimes(2);
             });
+            expect(seriesNamesFor(CONNECTIONS_TITLE)).toEqual(['Backends']);
+        };
+
+        it('omits the reference series when max_connections is unavailable', async () => {
+            await expectOmittedAfter(d => { d.resolve([]); });
         });
 
         it('omits the reference series when max_connections is not positive', async () => {
-            mockApiGet.mockResolvedValue([{ max_connections: 0 }]);
-            renderSection();
-
-            await waitFor(() => {
-                expect(seriesNamesFor(CONNECTIONS_TITLE)).toEqual(['Backends']);
-            });
+            await expectOmittedAfter(d => { d.resolve([{ max_connections: 0 }]); });
         });
 
         it('omits the reference series when the response is not an array', async () => {
-            mockApiGet.mockResolvedValue(null);
-            renderSection();
-
-            await waitFor(() => {
-                expect(seriesNamesFor(CONNECTIONS_TITLE)).toEqual(['Backends']);
-            });
+            await expectOmittedAfter(d => { d.resolve(null); });
         });
 
         it('logs and degrades gracefully when the lookup fails', async () => {
-            mockApiGet.mockRejectedValue(new Error('boom'));
-            renderSection();
+            const deferrals = deferApiGet();
+            const { rerender } = await renderWithLimit(deferrals);
+
+            rerender(
+                <PostgresOverviewSection
+                    connectionId={8}
+                    connectionName="Other Server"
+                />,
+            );
+            await waitFor(() => { expect(deferrals).toHaveLength(2); });
+            deferrals[1].reject(new Error('boom'));
 
             await waitFor(() => {
                 expect(mockLoggerError).toHaveBeenCalledWith(
@@ -272,35 +353,43 @@ describe('PostgresOverviewSection', () => {
             expect(seriesNamesFor(CONNECTIONS_TITLE)).toEqual(['Backends']);
         });
 
-        it('ignores a resolved lookup once the request is aborted', async () => {
-            let resolveLookup: ((value: unknown) => void) | undefined;
-            mockApiGet.mockImplementation(() => new Promise((resolve) => {
-                resolveLookup = resolve;
-            }));
-
+        it('aborts the in-flight lookup and ignores a late resolution', async () => {
+            const deferrals = deferApiGet();
             const { unmount } = renderSection();
-            await waitFor(() => { expect(mockApiGet).toHaveBeenCalled(); });
-            unmount();
-            resolveLookup?.([{ max_connections: 100 }]);
+            await waitFor(() => { expect(deferrals).toHaveLength(1); });
 
-            // No state update occurs after unmount, so React logs no
-            // warning and the test simply completes cleanly.
+            const signal = (mockApiGet.mock.calls[0][1] as {
+                signal: AbortSignal;
+            }).signal;
+            expect(signal.aborted).toBe(false);
+
+            unmount();
+            expect(signal.aborted).toBe(true);
+
+            // A late success is discarded by the aborted guard, so no
+            // state update is attempted after teardown.
+            deferrals[0].resolve([{ max_connections: 100 }]);
             await waitFor(() => {
                 expect(screen.queryByTestId('chart')).not.toBeInTheDocument();
             });
+            expect(mockLoggerError).not.toHaveBeenCalled();
         });
 
-        it('ignores a rejected lookup once the request is aborted', async () => {
-            let rejectLookup: ((reason: unknown) => void) | undefined;
-            mockApiGet.mockImplementation(() => new Promise((_resolve, reject) => {
-                rejectLookup = reject;
-            }));
-
+        it('aborts the in-flight lookup and ignores a late rejection', async () => {
+            const deferrals = deferApiGet();
             const { unmount } = renderSection();
-            await waitFor(() => { expect(mockApiGet).toHaveBeenCalled(); });
-            unmount();
-            rejectLookup?.(new Error('aborted'));
+            await waitFor(() => { expect(deferrals).toHaveLength(1); });
 
+            const signal = (mockApiGet.mock.calls[0][1] as {
+                signal: AbortSignal;
+            }).signal;
+
+            unmount();
+            expect(signal.aborted).toBe(true);
+
+            // A late failure is swallowed rather than logged, because
+            // the abort is the cause rather than a real lookup error.
+            deferrals[0].reject(new Error('aborted'));
             await waitFor(() => {
                 expect(mockLoggerError).not.toHaveBeenCalled();
             });

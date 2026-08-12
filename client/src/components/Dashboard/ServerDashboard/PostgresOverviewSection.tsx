@@ -82,17 +82,33 @@ interface ServerInfoRow {
     max_connections?: number | null;
 }
 
+/** A max_connections lookup result tied to the connection it came from. */
+interface MaxConnectionsResult {
+    connectionId: number;
+    value: number | null;
+}
+
 /**
  * Fetch the configured max_connections for a connection from the most
  * recent pg_server_info row. The probe only stores a row when the
  * server configuration changes, so the latest-row query is used rather
  * than a time-bucketed series that would usually be empty.
+ *
+ * The result carries the connection it belongs to, so that switching
+ * connections never draws the previous server's limit over the new
+ * server's backend count whilst the fresh lookup is still in flight.
  */
 const useMaxConnections = (connectionId: number): number | null => {
-    const [maxConnections, setMaxConnections] = useState<number | null>(null);
+    const [result, setResult] = useState<MaxConnectionsResult>({
+        connectionId,
+        value: null,
+    });
 
     useEffect(() => {
         const controller = new AbortController();
+        const setValue = (value: number | null) => {
+            setResult({ connectionId, value });
+        };
         const params = new URLSearchParams({
             probe_name: 'pg_server_info',
             connection_id: connectionId.toString(),
@@ -108,20 +124,18 @@ const useMaxConnections = (connectionId: number): number | null => {
             .then((rows) => {
                 if (controller.signal.aborted) { return; }
                 const value = Array.isArray(rows) ? rows[0]?.max_connections : null;
-                setMaxConnections(
-                    typeof value === 'number' && value > 0 ? value : null
-                );
+                setValue(typeof value === 'number' && value > 0 ? value : null);
             })
             .catch((err: unknown) => {
                 if (controller.signal.aborted) { return; }
                 logger.error('Error fetching max_connections:', err);
-                setMaxConnections(null);
+                setValue(null);
             });
 
         return () => { controller.abort(); };
     }, [connectionId]);
 
-    return maxConnections;
+    return result.connectionId === connectionId ? result.value : null;
 };
 
 /**

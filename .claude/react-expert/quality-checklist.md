@@ -132,6 +132,48 @@ mock with a plain string and assert that
 passed at the call site) renders in the appropriate alert or
 dialog.
 
+## Dashboard Chart Semantics
+
+Metric series carry units and semantics, and a chart must not mix
+kinds of quantity on one shared axis. The two kinds seen most often
+in this project are gauges, such as `numbackends`, which are
+point-in-time values bounded by a configured limit, and cumulative
+counters, such as `sessions` or `xact_commit`, which only ever
+climb until `stats_reset`. Plotting one of each on a single axis
+lets the counter set the scale, flattens the gauge into a
+featureless line, and invites the reader to compare two numbers
+that are not comparable.
+
+The rules for new or modified charts are as follows:
+
+- Give a gauge and a counter their own charts, even when the
+  underlying metric query fetches both in one request; splitting
+  the presentation does not require splitting the query.
+
+- Draw a reference line for a gauge whose limit is known. The
+  `Chart` component does not register the ECharts `MarkLine`
+  component, so add the limit as an extra constant series with the
+  same units instead of reaching for `markLine`; passing `series`
+  through `echartsOptions` would replace the real data, because
+  `deepMerge` assigns arrays rather than merging them.
+
+- Say what the numbers cover in the chart title and legend. The
+  `pg_stat_database` probe filters on `current_database()`, so
+  anything derived from it describes the monitored database rather
+  than the whole server, and the title should say so.
+
+- Label a cumulative series as cumulative in the legend, so that a
+  reader does not mistake it for a rate.
+
+The reference implementation is
+`client/src/components/Dashboard/ServerDashboard/PostgresOverviewSection.tsx`,
+which draws backends with a `max_connections` reference series and
+keeps cumulative sessions on a separate chart. It reads the limit
+from the latest `pg_server_info` row through the latest-row mode of
+`/api/v1/metrics/query` (`limit` and `order_by` parameters), since
+that probe only stores a row when the server configuration changes
+and a bucketed query would usually come back empty.
+
 ## TypeScript Standards
 
 ### Naming Conventions

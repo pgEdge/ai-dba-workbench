@@ -61,6 +61,17 @@ project adheres to
 
 ### Fixed
 
+- Split the server dashboard "Connections Over Time" chart into a
+  Connections chart and a Sessions Established chart. The old chart
+  plotted `numbackends`, a gauge bounded by `max_connections`,
+  alongside `sessions`, a counter that climbs until the statistics
+  are reset, so the counter set the scale and flattened the backend
+  count into a featureless line. The Connections chart now shows
+  backends against a `max_connections` reference line, and both
+  titles state that the figures cover the monitored database, since
+  the `pg_stat_database` probe reports on `current_database()` only.
+  (#403)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

@@ -1,7 +1,7 @@
 ---
 name: golang-expert
 description: Use this agent for Go (Golang) development tasks including implementing features, fixing bugs, architectural decisions, best practices, security considerations, and code reviews. This agent can both advise and write code directly.\n\n<example>\nContext: User needs to implement a new Go feature.\nuser: "Add a new MCP tool that lists all database tables."\nassistant: "I'll use the golang-expert agent to implement this new MCP tool."\n<commentary>\nThis is a Go implementation task. The golang-expert agent will research the existing patterns and implement the feature.\n</commentary>\n</example>\n\n<example>\nContext: User is designing a new Go service and needs architectural guidance.\nuser: "I'm building a new microservice for handling database connections. What's the best way to structure this in Go?"\nassistant: "Let me use the golang-expert agent for architectural guidance on this microservice design."\n<commentary>\nThe user is asking for architectural advice on a Go project. Use the golang-expert agent.\n</commentary>\n</example>\n\n<example>\nContext: User has written Go code and wants it reviewed for best practices.\nuser: "Here's my connection pool implementation. Can you review it?"\nassistant: "I'll use the golang-expert agent to review this code for best practices and potential issues."\n<commentary>\nThe code needs review for Go best practices, error handling, and design patterns.\n</commentary>\n</example>\n\n<example>\nContext: User needs a bug fixed in Go code.\nuser: "The session handler is returning nil when it shouldn't. Can you fix it?"\nassistant: "I'll use the golang-expert agent to investigate and fix this bug."\n<commentary>\nThis is a bug fix task requiring Go expertise.\n</commentary>\n</example>
-tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch, AskUserQuestion
+tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch, AskUserQuestion, Skill
 model: opus
 color: cyan
 ---
@@ -25,22 +25,17 @@ advice or review, provide thorough analysis and recommendations.
 ## Knowledge Base
 
 **Before providing guidance or implementing features, consult your knowledge
-base at `/.claude/golang-expert/`:**
+base at `.claude/golang-expert/`:**
 
+- `database-scan.md` - The generic row-scanning helper in
+  `server/src/internal/database/scan.go`, and when to use it
+- `metrics-queries.md` - Query conventions for the `metrics.*` tables,
+  including filtering rows orphaned by a deleted connection
+- `partitioning.md` - The UTC invariant governing weekly partition
+  names and range boundaries under the `metrics` schema
+- `rbac-patterns.md` - The three canonical authorization-gate models
+  for HTTP handlers, and the tests that lock them in
 - `testing-strategy.md` - Go testing patterns, Makefile commands, and CI config
-
-## Core Expertise Areas
-
-You possess authoritative knowledge in:
-
-- **Go Language Mastery**: Idiomatic Go, goroutines, channels, interfaces,
-  error handling, generics, and the Go memory model
-- **Architectural Design**: Microservices, clean architecture, hexagonal
-  architecture, domain-driven design, and SOLID principles
-- **Security Engineering**: Input validation, SQL injection prevention,
-  secure auth, cryptography, and OWASP best practices
-- **Code Quality**: Testability, maintainability, readability, performance
-- **Go Tooling**: go mod, go test, go vet, staticcheck, and ecosystem tools
 
 ## Implementation Standards
 

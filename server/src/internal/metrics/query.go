@@ -53,6 +53,11 @@ type MetricFilters struct {
 	SchemaName     string
 	TableName      string
 	IndexName      string
+	// QueryID restricts results to a single pg_stat_statements query
+	// identifier. It is carried as a string because query identifiers are
+	// 64-bit values that JavaScript clients cannot represent exactly, and
+	// it is compared against queryid::text for the same reason.
+	QueryID string
 }
 
 // maxLatestRowLimit bounds the number of rows a latest-row query may
@@ -500,7 +505,18 @@ func metricQueryBase(
 		whereClauses = append(whereClauses,
 			fmt.Sprintf("indexrelname = $%d", argNum))
 		queryArgs = append(queryArgs, filters.IndexName)
-		// No argNum++ here: IndexName is the last filter. A new filter
+		argNum++
+	}
+
+	// QueryID filters on the pg_stat_statements query identifier, compared
+	// as text so the caller can pass the value it received in JSON without
+	// losing precision. Like the dimension filters above it applies no
+	// probe-column-existence check.
+	if filters.QueryID != "" {
+		whereClauses = append(whereClauses,
+			fmt.Sprintf("queryid::text = $%d", argNum))
+		queryArgs = append(queryArgs, filters.QueryID)
+		// No argNum++ here: QueryID is the last filter. A new filter
 		// added below must add argNum++ above first.
 	}
 
@@ -1248,6 +1264,12 @@ func buildLatestRowsQuery(
 	if filters.IndexName != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("indexrelname = $%d", argNum))
 		args = append(args, filters.IndexName)
+		argNum++
+	}
+
+	if filters.QueryID != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("queryid::text = $%d", argNum))
+		args = append(args, filters.QueryID)
 		argNum++
 	}
 

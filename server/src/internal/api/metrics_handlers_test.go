@@ -248,6 +248,114 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesIndexNameFilter(t *testing.T) {
 	}
 }
 
+func TestHandleMetricsQuery_TimeSeriesMode_ParsesQueryIDFilter(t *testing.T) {
+	// The Query detail dashboard's charts rely on the time-series path
+	// forwarding queryid into MetricFilters.QueryID; without it both
+	// charts aggregate across every statement in the database.
+	var gotFilters metrics.MetricFilters
+	called := false
+	handler := &MetricsHandler{
+		datastore: &database.Datastore{},
+		queryTimeSeriesFn: func(
+			_ context.Context,
+			_ *pgxpool.Pool,
+			_ string,
+			_ []int,
+			_ string,
+			filters metrics.MetricFilters,
+			_ int,
+			_ string,
+			_ []string,
+		) ([]metrics.MetricSeries, error) {
+			called = true
+			gotFilters = filters
+			return []metrics.MetricSeries{}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=pg_stat_statements&time_range=1h"+
+			"&queryid=-1234567890123456789", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if !called {
+		t.Fatal("expected time-series query function to be called")
+	}
+	if gotFilters.QueryID != "-1234567890123456789" {
+		t.Errorf("expected QueryID %q reaching the query layer, got %q",
+			"-1234567890123456789", gotFilters.QueryID)
+	}
+}
+
+func TestHandleMetricsQuery_TimeSeriesMode_InvalidQueryID(t *testing.T) {
+	// A queryid that is not a 64-bit integer is rejected before any
+	// query runs, so a malformed value can never reach the database.
+	handler := &MetricsHandler{
+		datastore: &database.Datastore{},
+		queryTimeSeriesFn: func(
+			_ context.Context,
+			_ *pgxpool.Pool,
+			_ string,
+			_ []int,
+			_ string,
+			_ metrics.MetricFilters,
+			_ int,
+			_ string,
+			_ []string,
+		) ([]metrics.MetricSeries, error) {
+			t.Fatal("query function must not be called for a bad queryid")
+			return nil, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=pg_stat_statements&time_range=1h"+
+			"&queryid=not-a-number", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusBadRequest, rec.Code)
+	}
+	if resp := decodeError(t, rec); resp.Error !=
+		"Invalid queryid: must be a 64-bit integer" {
+		t.Errorf("unexpected error: %q", resp.Error)
+	}
+}
+
+func TestHandleMetricsQuery_LatestRowsMode_InvalidQueryID(t *testing.T) {
+	// The latest-row path shares the same queryid validation, and must
+	// reject a malformed value before it touches the pool.
+	handler := &MetricsHandler{datastore: &database.Datastore{}}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=pg_stat_statements&limit=5"+
+			"&queryid=99999999999999999999", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusBadRequest, rec.Code)
+	}
+	if resp := decodeError(t, rec); resp.Error !=
+		"Invalid queryid: must be a 64-bit integer" {
+		t.Errorf("unexpected error: %q", resp.Error)
+	}
+}
+
 func TestHandleMetricsQuery_TimeSeriesMode_DefaultQueryFn(t *testing.T) {
 	// Exercises the nil-queryTimeSeriesFn fallback: a handler built without
 	// an injected query function must resolve to metrics.QueryTimeSeries. A

@@ -5883,6 +5883,22 @@
             }
           },
           {
+            "name": "index_name",
+            "in": "query",
+            "description": "Filter by index name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "queryid",
+            "in": "query",
+            "description": "Filter by pg_stat_statements query ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "buckets",
             "in": "query",
             "description": "Number of time buckets",

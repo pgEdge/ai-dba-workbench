@@ -203,6 +203,47 @@ describe('useMetrics', () => {
         expect(url).toContain('table_name=orders');
     });
 
+    it('builds URL with queryid when queryId is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params = {
+            probeName: 'pg_stat_statements',
+            timeRange: '24h',
+            connectionId: 5,
+            databaseName: 'mydb',
+            queryId: '-1234567890123456789',
+            metrics: ['calls'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('queryid=-1234567890123456789');
+    });
+
+    it('omits queryid when queryId is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params = {
+            probeName: 'pg_stat_statements',
+            timeRange: '24h',
+            connectionId: 5,
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('queryid');
+    });
+
     it('sets loading to true during initial fetch', async () => {
         let resolvePromise: (value: unknown) => void;
         mockApiGet.mockImplementationOnce(() =>

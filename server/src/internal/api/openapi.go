@@ -3326,6 +3326,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("database_name", "Filter by database name"),
 					queryParamString("schema_name", "Filter by schema name"),
 					queryParamString("table_name", "Filter by table name"),
+					queryParamString("index_name", "Filter by index name"),
+					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
 					queryParamInt("buckets", "Number of time buckets"),
 					queryParamString("aggregation", "Aggregation method"),
 					queryParamString("metrics", "Comma-separated metric names"),

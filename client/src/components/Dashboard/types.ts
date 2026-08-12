@@ -129,6 +129,12 @@ export interface MetricQueryParams {
     schemaName?: string;
     tableName?: string;
     indexName?: string;
+    /**
+     * pg_stat_statements query identifier. Carried as a string because
+     * query identifiers are 64-bit values that JavaScript numbers cannot
+     * represent exactly.
+     */
+    queryId?: string;
     timeRange: TimeRange;
     buckets?: number;
     aggregation?: 'avg' | 'sum' | 'min' | 'max' | 'last';

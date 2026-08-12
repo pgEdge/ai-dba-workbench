@@ -303,6 +303,72 @@ func TestBuildMetricsQuery(t *testing.T) {
 		}
 	})
 
+	t.Run("with queryid filter", func(t *testing.T) {
+		query, args, err := BuildMetricsQuery(
+			"pg_stat_statements",
+			[]string{"calls"},
+			map[string]string{"calls": "bigint"},
+			1, start, end, 60, "sum",
+			MetricFilters{
+				DatabaseName:   "mydb",
+				DatabaseColumn: "database_name",
+				QueryID:        "-1234567890123456789",
+			},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Filters bind after the four fixed args ($1-$4): database_name
+		// $5, then queryid $6.
+		if !strings.Contains(query, `"database_name" = $5`) {
+			t.Error("query should filter by database_name")
+		}
+		if !strings.Contains(query, "queryid::text = $6") {
+			t.Errorf("query should filter by queryid, got:\n%s", query)
+		}
+		if len(args) != 6 {
+			t.Fatalf("expected 6 args, got %d", len(args))
+		}
+		if args[5] != "-1234567890123456789" {
+			t.Errorf("expected queryid arg, got %v", args[5])
+		}
+	})
+
+	t.Run("queryid filter omitted leaves SQL unchanged", func(t *testing.T) {
+		withoutField, argsA, err := BuildMetricsQuery(
+			"pg_stat_statements",
+			[]string{"calls"},
+			map[string]string{"calls": "bigint"},
+			1, start, end, 60, "sum",
+			MetricFilters{},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		withEmptyField, argsB, err := BuildMetricsQuery(
+			"pg_stat_statements",
+			[]string{"calls"},
+			map[string]string{"calls": "bigint"},
+			1, start, end, 60, "sum",
+			MetricFilters{QueryID: ""},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if withoutField != withEmptyField {
+			t.Errorf("empty QueryID changed SQL:\n%s\n---\n%s",
+				withoutField, withEmptyField)
+		}
+		if strings.Contains(withEmptyField, "queryid") {
+			t.Error("empty QueryID must not add a queryid clause")
+		}
+		if len(argsA) != len(argsB) {
+			t.Errorf("empty QueryID changed arg count: %d vs %d",
+				len(argsA), len(argsB))
+		}
+	})
+
 	t.Run("index_name filter omitted leaves SQL unchanged", func(t *testing.T) {
 		// The Table Detail dashboard never sends index_name; verify that an
 		// empty IndexName produces byte-identical SQL and args to a query
@@ -1275,6 +1341,34 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		}
 	})
 
+	t.Run("queryid filter applied", func(t *testing.T) {
+		query, args := buildLatestRowsQuery(
+			"pg_stat_statements",
+			[]string{"query", "calls"},
+			map[string]string{"query": "text", "calls": "bigint"},
+			[]int{7},
+			MetricFilters{QueryID: "-1234567890123456789"},
+			"calls", "desc", 10,
+		)
+
+		if !strings.Contains(query, "queryid::text = $2") {
+			t.Errorf("query should filter by queryid, got: %s", query)
+		}
+		if !strings.Contains(query, "LIMIT $3") {
+			t.Errorf("limit placeholder should follow the filter, got: %s", query)
+		}
+		// 1 connection + 1 filter + 1 limit
+		if len(args) != 3 {
+			t.Fatalf("expected 3 args, got %d", len(args))
+		}
+		if args[1] != "-1234567890123456789" {
+			t.Errorf("expected queryid arg, got %v", args[1])
+		}
+		if args[2] != 10 {
+			t.Errorf("expected limit arg 10, got %v", args[2])
+		}
+	})
+
 	t.Run("no text entity keys still keys DISTINCT ON connection_id", func(t *testing.T) {
 		// A probe with only numeric metric columns (e.g. pg_sys_cpu_info) has
 		// no text/name entity keys, yet connection_id alone must still key the
@@ -1762,6 +1856,32 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		}
 		if args[6] != "pk_orders" {
 			t.Errorf("expected indexrelname arg 'pk_orders', got %v", args[6])
+		}
+	})
+
+	t.Run("queryid filter binds queryid", func(t *testing.T) {
+		// The derived path shares metricQueryBase with the raw-column
+		// path, so the QueryDetail charts scope correctly either way.
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_statements",
+			[]DerivedMetric{{
+				OutputName: "calls_per_sec",
+				BaseColumn: "calls",
+				Kind:       DerivedPerSec,
+			}},
+			1, start, end, 60, "avg",
+			MetricFilters{QueryID: "42"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, "queryid::text = $5") {
+			t.Errorf("query should filter by queryid, got:\n%s", query)
+		}
+		if len(args) != 5 {
+			t.Fatalf("expected 5 args, got %d", len(args))
+		}
+		if args[4] != "42" {
+			t.Errorf("expected queryid arg '42', got %v", args[4])
 		}
 	})
 

@@ -20,6 +20,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultLLMMaxTokens is the output-token budget applied to reasoning
+// requests when llm.max_tokens is unset or non-positive. It is generous
+// enough that a reasoning model can emit a thinking block and still have
+// room for the classification that follows it.
+const DefaultLLMMaxTokens = 4096
+
 // Config holds all configuration options for the alerter
 type Config struct {
 	// Datastore connection settings
@@ -147,13 +153,31 @@ type CorrelationConfig struct {
 
 // LLMConfig holds LLM provider settings
 type LLMConfig struct {
-	EmbeddingProvider string          `yaml:"embedding_provider"`
-	ReasoningProvider string          `yaml:"reasoning_provider"`
-	Ollama            OllamaConfig    `yaml:"ollama"`
-	OpenAI            OpenAIConfig    `yaml:"openai"`
-	Anthropic         AnthropicConfig `yaml:"anthropic"`
-	Voyage            VoyageConfig    `yaml:"voyage"`
-	Gemini            GeminiConfig    `yaml:"gemini"`
+	EmbeddingProvider string `yaml:"embedding_provider"`
+	ReasoningProvider string `yaml:"reasoning_provider"`
+
+	// MaxTokens is the output-token budget for a reasoning request.
+	// A reasoning model spends part of that budget on its thinking block
+	// before it emits any answer, so a tight cap can leave no room for
+	// the classification itself. Defaults to DefaultLLMMaxTokens when
+	// unset or non-positive.
+	MaxTokens int `yaml:"max_tokens"`
+
+	Ollama    OllamaConfig    `yaml:"ollama"`
+	OpenAI    OpenAIConfig    `yaml:"openai"`
+	Anthropic AnthropicConfig `yaml:"anthropic"`
+	Voyage    VoyageConfig    `yaml:"voyage"`
+	Gemini    GeminiConfig    `yaml:"gemini"`
+}
+
+// ReasoningMaxTokens returns the output-token budget for a reasoning
+// request, falling back to DefaultLLMMaxTokens when the operator has not
+// configured a positive llm.max_tokens.
+func (l *LLMConfig) ReasoningMaxTokens() int {
+	if l == nil || l.MaxTokens <= 0 {
+		return DefaultLLMMaxTokens
+	}
+	return l.MaxTokens
 }
 
 // NotificationsConfig holds notification settings
@@ -340,6 +364,7 @@ func NewConfig() *Config {
 		LLM: LLMConfig{
 			EmbeddingProvider: "ollama",
 			ReasoningProvider: "ollama",
+			MaxTokens:         DefaultLLMMaxTokens,
 			Ollama: OllamaConfig{
 				BaseURL:        "http://localhost:11434",
 				EmbeddingModel: "nomic-embed-text",

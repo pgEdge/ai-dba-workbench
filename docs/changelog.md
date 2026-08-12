@@ -61,6 +61,19 @@ project adheres to
 
 ### Fixed
 
+- Honour the configured `llm.max_tokens` on the AI estate summary,
+  the Server Info database analysis, and the alerter's tier 3
+  classification, each of which previously hardcoded a 512-token
+  output budget. A reasoning model spends part of its budget on an
+  internal thinking block, so the small cap was consumed before the
+  model emitted any answer and the estate summary rendered as an
+  empty panel. Each path now reads the operator-configured budget
+  and falls back to `4096` when the setting is absent, and a
+  response that carries no text content is reported as an error
+  rather than being cached and rendered as an empty result. The
+  alerter gains a matching `llm.max_tokens` setting, which it
+  previously lacked. (#399)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

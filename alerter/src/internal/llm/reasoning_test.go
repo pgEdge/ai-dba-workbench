@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
@@ -49,7 +50,7 @@ func TestLibReasoningClassify(t *testing.T) {
 			{Type: pgllm.BlockText, Text: `"confidence":0.9}`},
 		}},
 	}
-	r := &libReasoning{client: fc}
+	r := &libReasoning{client: fc, maxTokens: 8192}
 	out, err := r.Classify(context.Background(), "analyze this anomaly")
 	if err != nil {
 		t.Fatalf("Classify: %v", err)
@@ -68,8 +69,8 @@ func TestLibReasoningClassify(t *testing.T) {
 		fc.gotReq.Messages[0].Content[0].Text != "analyze this anomaly" {
 		t.Fatalf("user message content = %+v", fc.gotReq.Messages[0].Content)
 	}
-	if fc.gotReq.MaxTokens == nil || *fc.gotReq.MaxTokens != 500 {
-		t.Fatalf("MaxTokens = %v, want 500", fc.gotReq.MaxTokens)
+	if fc.gotReq.MaxTokens == nil || *fc.gotReq.MaxTokens != 8192 {
+		t.Fatalf("MaxTokens = %v, want 8192", fc.gotReq.MaxTokens)
 	}
 	if fc.gotReq.Temperature == nil || *fc.gotReq.Temperature != 0.1 {
 		t.Fatalf("Temperature = %v, want 0.1", fc.gotReq.Temperature)
@@ -80,27 +81,85 @@ func TestLibReasoningClassify(t *testing.T) {
 }
 
 func TestLibReasoningClassifyError(t *testing.T) {
-	r := &libReasoning{client: &fakeChatClient{err: errors.New("boom")}}
+	r := &libReasoning{client: &fakeChatClient{err: errors.New("boom")}, maxTokens: 4096}
 	if _, err := r.Classify(context.Background(), "x"); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-// TestLibReasoningClassifyEmptyContent verifies that Classify returns ("", nil)
-// when the response contains no text blocks; the caller's parser treats an
-// empty string as the "no-decision" fallback.
+// TestLibReasoningClassifyEmptyContent verifies that Classify reports an
+// error when the response carries no text blocks, which is what a reasoning
+// model produces once its thinking block exhausts the output budget. The
+// error names the setting so an operator can act on it.
 func TestLibReasoningClassifyEmptyContent(t *testing.T) {
-	fc := &fakeChatClient{
-		model: "gpt-4o-mini",
-		resp:  &pgllm.ChatResponse{Content: []pgllm.ContentBlock{}},
+	cases := []struct {
+		name    string
+		content []pgllm.ContentBlock
+	}{
+		{name: "no blocks", content: []pgllm.ContentBlock{}},
+		{
+			name: "whitespace only",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockText, Text: "  \n "},
+			},
+		},
+		{
+			name: "non-text block only",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockToolUse},
+			},
+		},
 	}
-	r := &libReasoning{client: fc}
-	out, err := r.Classify(context.Background(), "prompt")
-	if err != nil {
-		t.Fatalf("Classify: %v", err)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := &fakeChatClient{
+				model: "gpt-4o-mini",
+				resp:  &pgllm.ChatResponse{Content: tc.content},
+			}
+			r := &libReasoning{client: fc, maxTokens: 512}
+			out, err := r.Classify(context.Background(), "prompt")
+			if err == nil {
+				t.Fatal("expected an error for a response with no text content")
+			}
+			if !strings.Contains(err.Error(), "llm.max_tokens = 512") {
+				t.Fatalf("error = %v, want it to name the configured budget", err)
+			}
+			if out != "" {
+				t.Fatalf("out = %q, want empty string", out)
+			}
+		})
 	}
-	if out != "" {
-		t.Fatalf("out = %q, want empty string", out)
+}
+
+// TestNewLibReasoningMaxTokens verifies that the configured budget is
+// carried onto the provider and that a non-positive value falls back to
+// config.DefaultLLMMaxTokens.
+func TestNewLibReasoningMaxTokens(t *testing.T) {
+	cases := []struct {
+		name  string
+		given int
+		want  int
+	}{
+		{name: "explicit", given: 16384, want: 16384},
+		{name: "zero falls back", given: 0, want: config.DefaultLLMMaxTokens},
+		{name: "negative falls back", given: -1, want: config.DefaultLLMMaxTokens},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := newLibReasoning("openai", "test-key", "gpt-4o", "", tc.given)
+			if err != nil {
+				t.Fatalf("newLibReasoning: %v", err)
+			}
+			lr, ok := r.(*libReasoning)
+			if !ok {
+				t.Fatalf("provider type = %T, want *libReasoning", r)
+			}
+			if lr.maxTokens != tc.want {
+				t.Fatalf("maxTokens = %d, want %d", lr.maxTokens, tc.want)
+			}
+		})
 	}
 }
 
@@ -108,7 +167,7 @@ func TestLibReasoningClassifyEmptyContent(t *testing.T) {
 // accepted and that the default model (llama3.2) is applied when none is given.
 // No network is attempted: the library constructs the client without dialing.
 func TestNewLibReasoningOllamaExplicitBaseURL(t *testing.T) {
-	r, err := newLibReasoning("ollama", "", "", "http://localhost:11434")
+	r, err := newLibReasoning("ollama", "", "", "http://localhost:11434", 4096)
 	if err != nil {
 		t.Fatalf("newLibReasoning: %v", err)
 	}
@@ -120,7 +179,7 @@ func TestNewLibReasoningOllamaExplicitBaseURL(t *testing.T) {
 // TestNewLibReasoningDefaultModel verifies that an empty model falls back
 // to the per-provider default and that the resulting client reports it.
 func TestNewLibReasoningDefaultModel(t *testing.T) {
-	r, err := newLibReasoning("openai", "test-key", "", "")
+	r, err := newLibReasoning("openai", "test-key", "", "", 4096)
 	if err != nil {
 		t.Fatalf("newLibReasoning: %v", err)
 	}
@@ -131,7 +190,7 @@ func TestNewLibReasoningDefaultModel(t *testing.T) {
 
 // TestNewLibReasoningExplicitModel verifies an explicit model is preserved.
 func TestNewLibReasoningExplicitModel(t *testing.T) {
-	r, err := newLibReasoning("openai", "test-key", "gpt-4o", "")
+	r, err := newLibReasoning("openai", "test-key", "gpt-4o", "", 4096)
 	if err != nil {
 		t.Fatalf("newLibReasoning: %v", err)
 	}
@@ -143,7 +202,7 @@ func TestNewLibReasoningExplicitModel(t *testing.T) {
 // TestNewLibReasoningUnknownProvider verifies NewClient errors propagate
 // through newLibReasoning as a wrapped error.
 func TestNewLibReasoningUnknownProvider(t *testing.T) {
-	if _, err := newLibReasoning("does-not-exist", "k", "m", ""); err == nil {
+	if _, err := newLibReasoning("does-not-exist", "k", "m", "", 4096); err == nil {
 		t.Fatal("expected error for unknown provider")
 	}
 }

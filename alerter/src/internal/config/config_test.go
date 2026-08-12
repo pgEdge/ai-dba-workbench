@@ -51,6 +51,7 @@ func TestNewConfig(t *testing.T) {
 		{"correlation window", cfg.Correlation.WindowSeconds, 120},
 		{"llm embedding provider", cfg.LLM.EmbeddingProvider, "ollama"},
 		{"llm reasoning provider", cfg.LLM.ReasoningProvider, "ollama"},
+		{"llm max tokens", cfg.LLM.MaxTokens, DefaultLLMMaxTokens},
 		{"gemini embedding model", cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-001"},
 		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-flash"},
 	}
@@ -59,6 +60,32 @@ func TestNewConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.got != tt.expected {
 				t.Errorf("%s = %v, expected %v", tt.name, tt.got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestReasoningMaxTokens verifies that the reasoning budget comes from
+// llm.max_tokens and falls back to DefaultLLMMaxTokens whenever the
+// setting is absent or non-positive. A nil receiver is covered because
+// callers may hold a nil *LLMConfig.
+func TestReasoningMaxTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *LLMConfig
+		want int
+	}{
+		{name: "nil config", cfg: nil, want: DefaultLLMMaxTokens},
+		{name: "unset", cfg: &LLMConfig{}, want: DefaultLLMMaxTokens},
+		{name: "zero", cfg: &LLMConfig{MaxTokens: 0}, want: DefaultLLMMaxTokens},
+		{name: "negative", cfg: &LLMConfig{MaxTokens: -5}, want: DefaultLLMMaxTokens},
+		{name: "configured", cfg: &LLMConfig{MaxTokens: 8192}, want: 8192},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.ReasoningMaxTokens(); got != tt.want {
+				t.Errorf("ReasoningMaxTokens() = %d, want %d", got, tt.want)
 			}
 		})
 	}

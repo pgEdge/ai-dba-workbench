@@ -1343,3 +1343,47 @@ func TestBuildClientOptions_ZeroTimeoutNotApplied(t *testing.T) {
 		t.Errorf("expected zero timeout when TimeoutSeconds=0, got %v", opts.RequestTimeout)
 	}
 }
+
+// TestAnalysisMaxTokens verifies that the analysis paths pick up the
+// operator-configured llm.max_tokens and fall back to
+// DefaultAnalysisMaxTokens whenever the setting is absent or non-positive.
+// A nil receiver is included because the overview generator holds a nil
+// *Config when AI is disabled.
+func TestAnalysisMaxTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{name: "nil config", cfg: nil, want: DefaultAnalysisMaxTokens},
+		{name: "unset", cfg: &Config{}, want: DefaultAnalysisMaxTokens},
+		{name: "zero", cfg: &Config{MaxTokens: 0}, want: DefaultAnalysisMaxTokens},
+		{name: "negative", cfg: &Config{MaxTokens: -1}, want: DefaultAnalysisMaxTokens},
+		{name: "configured", cfg: &Config{MaxTokens: 8192}, want: 8192},
+		{name: "small but positive", cfg: &Config{MaxTokens: 64}, want: 64},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.AnalysisMaxTokens(); got != tc.want {
+				t.Errorf("AnalysisMaxTokens() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildClientOptions_AnalysisMaxTokensFlowsThrough verifies that the
+// budget AnalysisMaxTokens reports reaches the library Options the analysis
+// call sites construct.
+func TestBuildClientOptions_AnalysisMaxTokensFlowsThrough(t *testing.T) {
+	cfg := &Config{
+		Provider:        "anthropic",
+		Model:           "m",
+		AnthropicAPIKey: "k",
+		MaxTokens:       12288,
+	}
+	opts := cfg.BuildClientOptions(cfg.AnalysisMaxTokens(), 0.3)
+	if opts.MaxTokens == nil || *opts.MaxTokens != 12288 {
+		t.Errorf("opts.MaxTokens = %v, want 12288", opts.MaxTokens)
+	}
+}

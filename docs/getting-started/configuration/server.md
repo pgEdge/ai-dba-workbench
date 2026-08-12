@@ -425,7 +425,7 @@ contain a valid key.
 | `openai_api_key_file` | string | | OpenAI key path |
 | `gemini_api_key_file` | string | | Gemini key path |
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
-| `max_tokens` | int | `4096` | Max response tokens |
+| `max_tokens` | int | `4096` | Max response tokens for chat and analysis |
 | `temperature` | float | `0.7` | Sampling temperature |
 | `max_iterations` | int | `50` | Max tool-call iterations |
 | `compact_tool_descriptions` | string | `auto` | Tool description mode |
@@ -433,6 +433,38 @@ contain a valid key.
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+#### Response Length (`max_tokens`)
+
+The `max_tokens` option sets the output-token budget
+for every LLM request the server makes. The budget
+governs Ask Ellie chat, the AI estate summary on the
+overview page, and the AI database analysis in the
+Server Info dialog. The default value is `4096`;
+values less than or equal to zero fall back to that
+default.
+
+A reasoning model spends part of the budget on its
+internal thinking block before it emits any answer
+text, so a tight budget can be consumed entirely by
+reasoning. When that happens the response arrives
+with no text content, and the server reports an
+error rather than displaying an empty summary.
+Raise `max_tokens` when a local reasoning model
+produces such errors, or disable the model's
+thinking output.
+
+In the following example, the `llm` section widens
+the budget for a local reasoning model served over
+an OpenAI-compatible endpoint:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "qwen3"
+  openai_base_url: "http://localhost:8080/v1"
+  max_tokens: 8192
+```
 
 #### Request Timeout (`timeout_seconds`)
 

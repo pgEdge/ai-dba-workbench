@@ -62,6 +62,14 @@ type Config struct {
 	LLMConfig              *config.LLMConfig // LLMConfig for accessing custom headers (may be nil)
 }
 
+// DefaultAnalysisMaxTokens is the output-token budget the analysis paths
+// (estate overview and server-info database analysis) apply when the
+// operator has not configured llm.max_tokens. It is deliberately generous
+// because a reasoning model spends part of the budget on its thinking
+// block before it emits any answer text; a tight cap leaves no room for
+// the answer and the response arrives with no text content at all.
+const DefaultAnalysisMaxTokens = 4096
+
 // maxChatBodySize caps the chat/embed/rerank request body at 5MB to
 // accommodate tool definitions and message history, consistent with the
 // DecodeJSONBody pattern used elsewhere in the API layer.
@@ -318,6 +326,19 @@ func (c *Config) BuildClientOptions(maxTokens int, temperature float64) pgllm.Op
 		opts.RequestTimeout = time.Duration(c.LLMConfig.TimeoutSeconds) * time.Second
 	}
 	return opts
+}
+
+// AnalysisMaxTokens returns the output-token budget the analysis paths
+// should request. It reports the operator-configured llm.max_tokens when
+// that setting is positive, and DefaultAnalysisMaxTokens otherwise, so a
+// missing or zero setting still leaves a reasoning model room for both
+// its thinking block and an answer. The receiver may be nil, which the
+// overview generator relies on when AI is disabled.
+func (c *Config) AnalysisMaxTokens() int {
+	if c == nil || c.MaxTokens <= 0 {
+		return DefaultAnalysisMaxTokens
+	}
+	return c.MaxTokens
 }
 
 // authorize is the proxy's Authorize hook. The public discovery

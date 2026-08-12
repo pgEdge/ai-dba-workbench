@@ -317,6 +317,15 @@ an older pgvector causes the embedding-column migration to fail.
 |--------|------|---------|-------------|
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `reasoning_provider` | string | `ollama` | Classification provider |
+| `max_tokens` | int | `4096` | Max response tokens for classification |
+
+The `max_tokens` option sets the output-token budget for a tier 3
+classification request. A reasoning model spends part of that budget on
+its internal thinking block before it emits any answer, so a tight
+budget can be consumed entirely by reasoning; the alerter then reports
+the classification as failed rather than treating the empty response as
+a decision. Values less than or equal to zero fall back to the default
+of `4096`.
 
 #### Ollama Configuration
 

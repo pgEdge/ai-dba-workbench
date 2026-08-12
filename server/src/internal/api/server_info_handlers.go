@@ -30,9 +30,6 @@ import (
 // aiAnalysisCacheTTL is how long AI database analysis is cached.
 const aiAnalysisCacheTTL = 5 * time.Minute
 
-// llmAnalysisMaxTokens caps the AI analysis response length.
-const llmAnalysisMaxTokens = 512
-
 // llmAnalysisTemperature controls response creativity for analysis.
 const llmAnalysisTemperature = 0.3
 
@@ -681,10 +678,11 @@ func (h *ServerInfoHandler) getAIAnalysis(
 		return nil
 	}
 
+	maxTokens := h.llmConfig.AnalysisMaxTokens()
 	resp, err := client.Chat(ctx, pgllm.ChatRequest{
 		Messages:     []pgllm.Message{pgllm.UserText(prompt)},
 		SystemPrompt: "",
-		MaxTokens:    pgllm.Int(llmAnalysisMaxTokens),
+		MaxTokens:    pgllm.Int(maxTokens),
 		Temperature:  pgllm.Float(llmAnalysisTemperature),
 	})
 	if err != nil {
@@ -695,6 +693,17 @@ func (h *ServerInfoHandler) getAIAnalysis(
 
 	// Parse the response into per-database analysis
 	analysis := parseDatabaseAnalysisResponse(resp, databases)
+
+	// A response that yields nothing usable is a failure rather than an
+	// empty analysis; it happens when a reasoning model spends the whole
+	// output budget on its thinking block. Report it and skip the cache so
+	// the next request retries instead of serving a blank result.
+	if len(analysis) == 0 {
+		log.Printf("[ERROR] AI analysis for connection %d returned no usable "+
+			"content; the output token budget (llm.max_tokens = %d) may be "+
+			"too small for this model", connectionID, maxTokens)
+		return nil
+	}
 
 	// Cache the result
 	now := time.Now().UTC()
@@ -819,7 +828,7 @@ func (h *ServerInfoHandler) createLLMClient() (pgllm.Client, error) {
 	// Credential selection, custom-header wiring, and the
 	// timeout-only-when-positive rule live in the shared llmproxy helper
 	// so the overview and server-info analysis paths stay in lock-step.
-	opts := h.llmConfig.BuildClientOptions(llmAnalysisMaxTokens, llmAnalysisTemperature)
+	opts := h.llmConfig.BuildClientOptions(h.llmConfig.AnalysisMaxTokens(), llmAnalysisTemperature)
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {

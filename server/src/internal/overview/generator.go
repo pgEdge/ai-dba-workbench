@@ -31,9 +31,6 @@ const (
 	// staleDuration is how long an overview is considered fresh.
 	staleDuration = 5 * time.Minute
 
-	// llmMaxTokens caps the summary length for concise output.
-	llmMaxTokens = 512
-
 	// llmTemperature controls response creativity; low for factual output.
 	llmTemperature = 0.3
 
@@ -510,17 +507,28 @@ func (g *Generator) generateSummaryFromPrompt(ctx context.Context, system, data 
 		return "", fmt.Errorf("no LLM provider configured: %w", err)
 	}
 
+	maxTokens := g.llmConfig.AnalysisMaxTokens()
 	resp, err := client.Chat(ctx, pgllm.ChatRequest{
 		Messages:     []pgllm.Message{pgllm.UserText(data)},
 		SystemPrompt: system,
-		MaxTokens:    pgllm.Int(llmMaxTokens),
+		MaxTokens:    pgllm.Int(maxTokens),
 		Temperature:  pgllm.Float(llmTemperature),
 	})
 	if err != nil {
 		return "", fmt.Errorf("LLM chat failed: %w", err)
 	}
 
-	return extractTextFromResponse(resp), nil
+	// A response carrying no text block is a failure, not an empty
+	// summary. It happens when a reasoning model spends the whole output
+	// budget on its thinking block, so report it rather than letting the
+	// caller cache and render a blank panel.
+	summary := extractTextFromResponse(resp)
+	if strings.TrimSpace(summary) == "" {
+		return "", fmt.Errorf("LLM returned no text content; the output token "+
+			"budget (llm.max_tokens = %d) may be too small for this model", maxTokens)
+	}
+
+	return summary, nil
 }
 
 // createLLMClient builds a pgedge-go-llm-lib client based on the
@@ -542,7 +550,7 @@ func (g *Generator) createLLMClient() (pgllm.Client, error) {
 	// Credential selection, custom-header wiring, and the
 	// timeout-only-when-positive rule live in the shared llmproxy helper
 	// so the overview and server-info analysis paths stay in lock-step.
-	opts := g.llmConfig.BuildClientOptions(llmMaxTokens, llmTemperature)
+	opts := g.llmConfig.BuildClientOptions(g.llmConfig.AnalysisMaxTokens(), llmTemperature)
 
 	client, err := pgllm.NewClient(provider, opts)
 	if err != nil {

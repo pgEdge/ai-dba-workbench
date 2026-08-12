@@ -174,28 +174,32 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 		if apiKey == "" && cfg.LLM.OpenAI.BaseURL == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL)
+		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel,
+			cfg.LLM.OpenAI.BaseURL, cfg.LLM.ReasoningMaxTokens())
 
 	case "anthropic":
 		apiKey := cfg.GetAnthropicAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("anthropic: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL)
+		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel,
+			cfg.LLM.Anthropic.BaseURL, cfg.LLM.ReasoningMaxTokens())
 
 	case "gemini":
 		apiKey := cfg.GetGeminiAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("gemini: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL)
+		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel,
+			cfg.LLM.Gemini.BaseURL, cfg.LLM.ReasoningMaxTokens())
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434"
 		}
-		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL)
+		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL,
+			cfg.LLM.ReasoningMaxTokens())
 
 	case "", "none", "disabled":
 		return nil, nil

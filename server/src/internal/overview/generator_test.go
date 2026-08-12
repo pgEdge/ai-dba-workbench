@@ -11,6 +11,7 @@ package overview
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -908,6 +909,113 @@ func TestGenerateSummaryFromPrompt_Success(t *testing.T) {
 	}
 	if summary != "All servers healthy." {
 		t.Errorf("expected summary text from stub, got %q", summary)
+	}
+}
+
+// TestGenerateSummaryFromPrompt_MaxTokens verifies that the output-token
+// budget on the wire comes from the configured llm.max_tokens, and that an
+// unset setting falls back to llmproxy.DefaultAnalysisMaxTokens rather than
+// the old hardcoded 512. The stub decodes the request body and accepts
+// either OpenAI token field, since the provider chooses between them by
+// model name.
+func TestGenerateSummaryFromPrompt_MaxTokens(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+	}{
+		{name: "configured budget is applied", configured: 8192, want: 8192},
+		{name: "unset falls back to the default", configured: 0,
+			want: llmproxy.DefaultAnalysisMaxTokens},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					MaxTokens           *int `json:"max_tokens"`
+					MaxCompletionTokens *int `json:"max_completion_tokens"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, "bad body", http.StatusBadRequest)
+					return
+				}
+				switch {
+				case body.MaxTokens != nil:
+					got = *body.MaxTokens
+				case body.MaxCompletionTokens != nil:
+					got = *body.MaxCompletionTokens
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+					"choices": [{"message": {"role": "assistant", "content": "All servers healthy."}, "finish_reason": "stop"}],
+					"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+				}`))
+			}))
+			defer srv.Close()
+
+			g := NewGenerator(nil, &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+				MaxTokens:     tc.configured,
+			})
+
+			if _, err := g.generateSummaryFromPrompt(context.Background(), "system", "data"); err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("max tokens on the wire = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGenerateSummaryFromPrompt_NoTextContentIsError verifies that a
+// response carrying no usable text is reported as an error rather than
+// rendered as a blank summary. A reasoning model produces exactly this when
+// its thinking block exhausts the output budget.
+func TestGenerateSummaryFromPrompt_NoTextContentIsError(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "empty content", content: `""`},
+		{name: "whitespace only", content: `"   \n  "`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{
+					"choices": [{"message": {"role": "assistant", "content": %s}, "finish_reason": "length"}],
+					"usage": {"prompt_tokens": 10, "completion_tokens": 512, "total_tokens": 522}
+				}`, tc.content)
+			}))
+			defer srv.Close()
+
+			g := NewGenerator(nil, &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+				MaxTokens:     512,
+			})
+
+			summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+			if err == nil {
+				t.Fatal("expected an error when the response carries no text")
+			}
+			if summary != "" {
+				t.Errorf("expected an empty summary on error, got %q", summary)
+			}
+			if !strings.Contains(err.Error(), "llm.max_tokens = 512") {
+				t.Errorf("expected the error to name the configured budget, got %v", err)
+			}
+		})
 	}
 }
 

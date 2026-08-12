@@ -342,7 +342,11 @@ llm:
   # Generation Parameters
   #-----------------------------------------------------------------------
 
-  # Maximum tokens for LLM response
+  # Maximum tokens for an LLM response. The budget applies to Ask Ellie
+  # chat, the AI estate summary, and the AI database analysis in the
+  # Server Info dialog. A reasoning model spends part of the budget on
+  # its thinking block before it emits any answer, so raise this value
+  # when a local reasoning model returns no summary text.
   # Default: 4096
   max_tokens: 4096
 

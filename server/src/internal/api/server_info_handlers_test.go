@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -639,6 +640,144 @@ func TestServerInfoGetAIAnalysis(t *testing.T) {
 		}
 		if entry.analysis["mydb"] != "A primary application store." {
 			t.Errorf("unexpected cached description: %q", entry.analysis["mydb"])
+		}
+	})
+
+	t.Run("sends the configured max tokens", func(t *testing.T) {
+		// The wire budget must come from llm.max_tokens rather than a
+		// compile-time constant. The stub accepts either OpenAI token
+		// field, since the provider chooses between them by model name.
+		var got int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				MaxTokens           *int `json:"max_tokens"`
+				MaxCompletionTokens *int `json:"max_completion_tokens"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad body", http.StatusBadRequest)
+				return
+			}
+			switch {
+			case body.MaxTokens != nil:
+				got = *body.MaxTokens
+			case body.MaxCompletionTokens != nil:
+				got = *body.MaxCompletionTokens
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"choices": [{"message": {"role": "assistant", "content": "mydb: A primary application store.\n"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+			}`))
+		}))
+		defer srv.Close()
+
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+				MaxTokens:     8192,
+			},
+			cache: make(map[int]*aiCacheEntry),
+		}
+
+		if result := h.getAIAnalysis(
+			context.Background(), 11,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		); result == nil {
+			t.Fatal("expected non-nil analysis")
+		}
+		if got != 8192 {
+			t.Errorf("max tokens on the wire = %d, want 8192", got)
+		}
+	})
+
+	t.Run("falls back to the default max tokens when unset", func(t *testing.T) {
+		// An unset llm.max_tokens must yield the generous shared default,
+		// not the old hardcoded 512.
+		var got int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				MaxTokens           *int `json:"max_tokens"`
+				MaxCompletionTokens *int `json:"max_completion_tokens"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad body", http.StatusBadRequest)
+				return
+			}
+			switch {
+			case body.MaxTokens != nil:
+				got = *body.MaxTokens
+			case body.MaxCompletionTokens != nil:
+				got = *body.MaxCompletionTokens
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"choices": [{"message": {"role": "assistant", "content": "mydb: A primary application store.\n"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+			}`))
+		}))
+		defer srv.Close()
+
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+			},
+			cache: make(map[int]*aiCacheEntry),
+		}
+
+		if result := h.getAIAnalysis(
+			context.Background(), 12,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		); result == nil {
+			t.Fatal("expected non-nil analysis")
+		}
+		if got != llmproxy.DefaultAnalysisMaxTokens {
+			t.Errorf("max tokens on the wire = %d, want %d",
+				got, llmproxy.DefaultAnalysisMaxTokens)
+		}
+	})
+
+	t.Run("returns nil and skips cache when no usable content", func(t *testing.T) {
+		// A reasoning model that spends its whole budget on thinking
+		// returns no parsable line; the result must be reported as a
+		// failure and left uncached so the next request retries.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "length"}],
+				"usage": {"prompt_tokens": 10, "completion_tokens": 512, "total_tokens": 522}
+			}`))
+		}))
+		defer srv.Close()
+
+		h := &ServerInfoHandler{
+			llmConfig: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: srv.URL,
+				MaxTokens:     512,
+			},
+			cache: make(map[int]*aiCacheEntry),
+		}
+
+		result := h.getAIAnalysis(
+			context.Background(), 13,
+			[]DatabaseInfo{{Name: "mydb"}}, nil,
+		)
+		if result != nil {
+			t.Error("expected nil when the response carries no usable content")
+		}
+		h.cacheMu.RLock()
+		_, ok := h.cache[13]
+		h.cacheMu.RUnlock()
+		if ok {
+			t.Error("expected no cache entry when the response is unusable")
 		}
 	})
 

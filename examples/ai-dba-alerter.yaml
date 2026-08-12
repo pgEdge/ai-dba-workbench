@@ -324,6 +324,14 @@ llm:
   # Default: ollama
   reasoning_provider: ollama
 
+  # Maximum tokens for a tier 3 classification response. A reasoning
+  # model spends part of the budget on its thinking block before it
+  # emits any answer, so raise this value when a local reasoning model
+  # returns no classification text. Values of zero or less fall back to
+  # the default.
+  # Default: 4096
+  max_tokens: 4096
+
   #-------------------------------------------------------------------------
   # Ollama Settings (local LLM)
   #-------------------------------------------------------------------------

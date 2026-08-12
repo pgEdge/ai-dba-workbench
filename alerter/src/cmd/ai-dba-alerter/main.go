@@ -346,15 +346,20 @@ func applyFlagOverrides(cfg *config.Config, o flagOverrides) error {
 	if o.Passed.Has(flagDBUser) {
 		cfg.Datastore.Username = o.DBUser
 	}
-	// An explicitly empty -db-password-file means "no password file",
-	// so there is nothing to read; only a non-empty path triggers a
-	// read, which would otherwise fail on the empty path.
-	if o.Passed.Has(flagDBPasswordFile) && o.DBPasswordFile != "" {
-		password, err := fileutil.ReadSecretFile(o.DBPasswordFile)
-		if err != nil {
-			return fmt.Errorf("failed to read password file: %w", err)
+	// The flag always replaces whatever the configuration file named,
+	// including with an explicit empty value meaning "no password
+	// file"; otherwise cfg.LoadPassword would still read the
+	// configured file later. Only a non-empty path is read here,
+	// because reading the empty path would fail.
+	if o.Passed.Has(flagDBPasswordFile) {
+		cfg.Datastore.PasswordFile = o.DBPasswordFile
+		if o.DBPasswordFile != "" {
+			password, err := fileutil.ReadSecretFile(o.DBPasswordFile)
+			if err != nil {
+				return fmt.Errorf("failed to read password file: %w", err)
+			}
+			cfg.Datastore.Password = password
 		}
-		cfg.Datastore.Password = password
 	}
 	if o.Passed.Has(flagDBSSLMode) {
 		cfg.Datastore.SSLMode = o.DBSSLMode

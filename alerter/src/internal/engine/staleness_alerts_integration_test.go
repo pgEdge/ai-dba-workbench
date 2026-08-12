@@ -25,7 +25,7 @@ import (
 // multi-line SQL passed to Exec or QueryRow; every value is still bound
 // via $N.
 const (
-	insertStalenessRuleSQL = `
+	stalenessRuleInsertSQL = `
         INSERT INTO alert_rules
             (name, description, category, metric_name, default_operator,
              default_threshold, default_severity, default_enabled, is_built_in)
@@ -36,37 +36,37 @@ const (
         RETURNING id
     `
 
-	insertProbeConfigSQL = `
+	stalenessProbeConfigInsertSQL = `
         INSERT INTO probe_configs
             (name, connection_id, is_enabled, collection_interval_seconds)
         VALUES ($1, NULL, TRUE, $2)
     `
 
-	insertProbeAvailabilitySQL = `
+	stalenessProbeAvailabilityInsertSQL = `
         INSERT INTO probe_availability
             (connection_id, probe_name, is_available, last_collected)
         VALUES ($1, $2, TRUE, NOW() - $3::interval)
     `
 
-	refreshProbeAvailabilitySQL = `
+	stalenessProbeAvailabilityRefreshSQL = `
         UPDATE probe_availability
            SET last_collected = NOW()
          WHERE connection_id = $1 AND probe_name = $2
     `
 
-	deleteProbeAvailabilitySQL = `
+	stalenessProbeAvailabilityDeleteSQL = `
         DELETE FROM probe_availability
          WHERE connection_id = $1 AND probe_name = $2
     `
 
-	selectAlertsForRuleSQL = `
+	stalenessAlertsForRuleSelectSQL = `
         SELECT id, status, probe_name
         FROM alerts
         WHERE rule_id = $1
         ORDER BY id
     `
 
-	insertUnsupportedMetricAlertSQL = `
+	stalenessUnsupportedMetricAlertInsertSQL = `
         INSERT INTO alerts
             (alert_type, rule_id, connection_id, metric_name, metric_value,
              threshold_value, operator, severity, title, description, status,
@@ -135,7 +135,7 @@ func seedStalenessRule(t *testing.T, pool *pgxpool.Pool) int64 {
 	t.Helper()
 
 	var ruleID int64
-	if err := pool.QueryRow(context.Background(), insertStalenessRuleSQL).Scan(&ruleID); err != nil {
+	if err := pool.QueryRow(context.Background(), stalenessRuleInsertSQL).Scan(&ruleID); err != nil {
 		t.Fatalf("failed to insert metric_staleness rule: %v", err)
 	}
 	return ruleID
@@ -148,10 +148,10 @@ func seedStaleProbe(t *testing.T, pool *pgxpool.Pool, connID int, probeName, sta
 	t.Helper()
 
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, insertProbeConfigSQL, probeName, 60); err != nil {
+	if _, err := pool.Exec(ctx, stalenessProbeConfigInsertSQL, probeName, 60); err != nil {
 		t.Fatalf("failed to insert probe config for %s: %v", probeName, err)
 	}
-	if _, err := pool.Exec(ctx, insertProbeAvailabilitySQL, connID, probeName, staleFor); err != nil {
+	if _, err := pool.Exec(ctx, stalenessProbeAvailabilityInsertSQL, connID, probeName, staleFor); err != nil {
 		t.Fatalf("failed to insert probe availability for %s: %v", probeName, err)
 	}
 }
@@ -164,11 +164,11 @@ type stalenessAlertRow struct {
 	probe  *string
 }
 
-// readAlertsForRule returns every alert row belonging to a rule, oldest first.
-func readAlertsForRule(t *testing.T, pool *pgxpool.Pool, ruleID int64) []stalenessAlertRow {
+// readStalenessAlertsForRule returns every alert row belonging to a rule, oldest first.
+func readStalenessAlertsForRule(t *testing.T, pool *pgxpool.Pool, ruleID int64) []stalenessAlertRow {
 	t.Helper()
 
-	rows, err := pool.Query(context.Background(), selectAlertsForRuleSQL, ruleID)
+	rows, err := pool.Query(context.Background(), stalenessAlertsForRuleSelectSQL, ruleID)
 	if err != nil {
 		t.Fatalf("failed to read alerts: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestStalenessAlertDoesNotFireClearLoop(t *testing.T) {
 		engine.cleanResolvedAlerts(ctx)
 	}
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1 for a continuously stale probe", len(alerts))
 	}
@@ -246,21 +246,21 @@ func TestStalenessAlertClearsWhenProbeRecovers(t *testing.T) {
 	engine.evaluateThresholds(ctx)
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 || alerts[0].status != "active" {
 		t.Fatalf("expected one active alert, got %+v", alerts)
 	}
 
 	// The probe collects again, so the staleness ratio drops below the
 	// threshold.
-	if _, err := pool.Exec(ctx, refreshProbeAvailabilitySQL, connID,
+	if _, err := pool.Exec(ctx, stalenessProbeAvailabilityRefreshSQL, connID,
 		"pg_stat_activity"); err != nil {
 		t.Fatalf("failed to refresh probe availability: %v", err)
 	}
 
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts = readAlertsForRule(t, pool, ruleID)
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -291,14 +291,14 @@ func TestStalenessAlertClearsWhenProbeStopsReporting(t *testing.T) {
 
 	engine.evaluateThresholds(ctx)
 
-	if _, err := pool.Exec(ctx, deleteProbeAvailabilitySQL, connID,
+	if _, err := pool.Exec(ctx, stalenessProbeAvailabilityDeleteSQL, connID,
 		"pg_stat_activity"); err != nil {
 		t.Fatalf("failed to delete probe availability: %v", err)
 	}
 
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -324,7 +324,7 @@ func TestStalenessAlertPerProbe(t *testing.T) {
 
 	engine.evaluateThresholds(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 2 {
 		t.Fatalf("alert rows = %d, want 2 (one per stale probe)", len(alerts))
 	}
@@ -344,7 +344,7 @@ func TestStalenessAlertPerProbe(t *testing.T) {
 
 	// A second pass updates the existing alerts instead of adding more.
 	engine.evaluateThresholds(ctx)
-	if alerts = readAlertsForRule(t, pool, ruleID); len(alerts) != 2 {
+	if alerts = readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 2 {
 		t.Errorf("alert rows after a second pass = %d, want 2", len(alerts))
 	}
 }
@@ -402,14 +402,14 @@ func TestCheckAlertResolvedKeepsUnevaluableMetricAlerts(t *testing.T) {
 	connID := insertTestConnection(t, pool, "unevaluable-metric")
 
 	var alertID int64
-	if err := pool.QueryRow(ctx, insertUnsupportedMetricAlertSQL, ruleID, connID,
+	if err := pool.QueryRow(ctx, stalenessUnsupportedMetricAlertInsertSQL, ruleID, connID,
 		"metric_that_does_not_exist").Scan(&alertID); err != nil {
 		t.Fatalf("failed to insert alert: %v", err)
 	}
 
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}
@@ -435,14 +435,14 @@ func TestCheckAlertResolvedClearsWhenMetricReportsNoData(t *testing.T) {
 	connID := insertTestConnection(t, pool, "empty-metric")
 
 	var alertID int64
-	if err := pool.QueryRow(ctx, insertUnsupportedMetricAlertSQL, ruleID, connID,
+	if err := pool.QueryRow(ctx, stalenessUnsupportedMetricAlertInsertSQL, ruleID, connID,
 		"pg_replication_slots.inactive_count").Scan(&alertID); err != nil {
 		t.Fatalf("failed to insert alert: %v", err)
 	}
 
 	engine.cleanResolvedAlerts(ctx)
 
-	alerts := readAlertsForRule(t, pool, ruleID)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
 	if len(alerts) != 1 {
 		t.Fatalf("alert rows = %d, want 1", len(alerts))
 	}

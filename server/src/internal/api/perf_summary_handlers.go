@@ -360,7 +360,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			"Failed to query performance metrics")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	response := PerfSummaryResponse{
 		TimeRange:   timeRange,
@@ -868,7 +868,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 			"Failed to query database summaries")
 		return
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback after commit is a no-op
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	dbMap := make(map[string]*DatabaseSummary)
 
@@ -1466,15 +1466,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			"Failed to query top queries")
 		return
 	}
-	// Roll back with a non-cancelable context so a canceled request
-	// context cannot trigger the pgx v5 close-of-closed-channel panic
-	// described in jackc/pgx#2470, which would leak the pooled
-	// connection in an aborted-transaction state. This endpoint takes
-	// several early returns between BEGIN and COMMIT, so the deferred
-	// rollback is well exercised. The other handlers in this file
-	// still pass the request context; converting them belongs in a
-	// deliberate sweep of its own rather than here.
-	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
 		connID, queryID, databaseName, excludeCollector, orderCol, orderDir,

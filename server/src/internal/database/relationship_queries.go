@@ -179,7 +179,7 @@ func (d *Datastore) SetNodeRelationships(ctx context.Context, clusterID int, sou
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Delete existing manual relationships for this source in this cluster
 	_, err = tx.Exec(ctx,
@@ -236,7 +236,7 @@ func (d *Datastore) SyncAutoDetectedRelationships(ctx context.Context, clusterID
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Take a row-level lock on the cluster's row to serialize concurrent
 	// syncs targeting the same cluster. Other transactions that take this
@@ -388,7 +388,7 @@ func (d *Datastore) RemoveServerFromCluster(ctx context.Context, clusterID int, 
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // Rollback is no-op if already committed
+	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
 
 	// Delete all relationships where this connection is source or target
 	_, err = tx.Exec(ctx,

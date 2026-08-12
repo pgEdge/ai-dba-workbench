@@ -61,6 +61,23 @@ project adheres to
 
 ### Fixed
 
+- Fix the "Connection Count" bar chart in the cluster dashboard's
+  comparative section, which plotted a hardcoded value of one for
+  every server rather than a real measurement. The performance
+  summary endpoint (`GET /api/v1/metrics/performance-summary`) now
+  reports an `active_connections` count per connection, taken from
+  the sum of `numbackends` across the databases in the server's
+  most recent `pg_stat_database` snapshot, and the chart plots that
+  value. (#404)
+
+- Fix both charts on the query drill-down page, "Execution Time
+  Over Time" and "Calls Over Time", aggregating across every
+  statement in the database instead of the query the user selected.
+  The metrics time-series API (`GET /api/v1/metrics/query`) now
+  accepts a `queryid` filter, and the query detail page passes the
+  identifier of the selected query so that both series describe
+  that query alone. (#404)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

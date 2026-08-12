@@ -82,6 +82,25 @@ func (h *MetricsHandler) RegisterRoutes(
 		authWrapper(h.handleMetricsBaselines))
 }
 
+// parseQueryIDFilter reads the optional queryid filter from the request.
+// Query identifiers are 64-bit signed integers that clients carry as
+// strings, so the value is validated as a signed 64-bit integer and then
+// passed on in its original string form. It returns the value and true
+// when the parameter is absent or valid, and false after sending a 400
+// response for a malformed value.
+func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (string, bool) {
+	queryID := ParseQueryString(r, "queryid")
+	if queryID == "" {
+		return "", true
+	}
+	if _, err := strconv.ParseInt(queryID, 10, 64); err != nil {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid queryid: must be a 64-bit integer")
+		return "", false
+	}
+	return queryID, true
+}
+
 // handleMetricsQuery handles GET /api/v1/metrics/query.
 func (h *MetricsHandler) handleMetricsQuery(
 	w http.ResponseWriter,
@@ -143,11 +162,16 @@ func (h *MetricsHandler) handleMetricsQuery(
 	}
 
 	// Parse optional filters
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
 	filters := metrics.MetricFilters{
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
 		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      queryID,
 	}
 
 	// Parse buckets (default 150)
@@ -252,11 +276,16 @@ func (h *MetricsHandler) handleLatestRows(
 		return
 	}
 
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
 	filters := metrics.MetricFilters{
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
 		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      queryID,
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

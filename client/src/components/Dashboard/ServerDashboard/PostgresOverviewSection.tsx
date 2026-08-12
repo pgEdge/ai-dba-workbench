@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import { Storage as StorageIcon } from '@mui/icons-material';
@@ -21,6 +21,8 @@ import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
+import { apiGet } from '../../../utils/apiClient';
+import { logger } from '../../../utils/logger';
 import { formatBytes, formatValue, formatNumber, formatCompactNumber } from '../../../utils/formatters';
 import { type ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
 
@@ -32,6 +34,14 @@ const CHART_BUCKETS = 150;
 
 /** Chart height in pixels */
 const CHART_HEIGHT = 250;
+
+/**
+ * Titles for the connection charts. The pg_stat_database probe filters
+ * on current_database(), so both charts cover the monitored database
+ * rather than the whole server; the titles say so explicitly.
+ */
+const CONNECTIONS_CHART_TITLE = 'Connections (Monitored Database)';
+const SESSIONS_CHART_TITLE = 'Sessions Established (Monitored Database)';
 
 /**
  * Build chart data from metric series for the Chart component.
@@ -65,6 +75,53 @@ const buildChartData = (
             data: s.data,
         })),
     };
+};
+
+/** Shape of the latest pg_server_info row used for max_connections. */
+interface ServerInfoRow {
+    max_connections?: number | null;
+}
+
+/**
+ * Fetch the configured max_connections for a connection from the most
+ * recent pg_server_info row. The probe only stores a row when the
+ * server configuration changes, so the latest-row query is used rather
+ * than a time-bucketed series that would usually be empty.
+ */
+const useMaxConnections = (connectionId: number): number | null => {
+    const [maxConnections, setMaxConnections] = useState<number | null>(null);
+
+    useEffect(() => {
+        const controller = new AbortController();
+        const params = new URLSearchParams({
+            probe_name: 'pg_server_info',
+            connection_id: connectionId.toString(),
+            limit: '1',
+            order_by: 'collected_at',
+            order: 'desc',
+        });
+
+        apiGet<ServerInfoRow[]>(
+            `/api/v1/metrics/query?${params.toString()}`,
+            { signal: controller.signal },
+        )
+            .then((rows) => {
+                if (controller.signal.aborted) { return; }
+                const value = Array.isArray(rows) ? rows[0]?.max_connections : null;
+                setMaxConnections(
+                    typeof value === 'number' && value > 0 ? value : null
+                );
+            })
+            .catch((err: unknown) => {
+                if (controller.signal.aborted) { return; }
+                logger.error('Error fetching max_connections:', err);
+                setMaxConnections(null);
+            });
+
+        return () => { controller.abort(); };
+    }, [connectionId]);
+
+    return maxConnections;
 };
 
 /**
@@ -165,6 +222,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
 
     // Fetch chart data
     const connectionChart = useMetrics(connectionChartParams);
+    const maxConnections = useMaxConnections(connectionId);
     const txnChart = useMetrics(txnChartParams);
     const blockIoChart = useMetrics(blockIoChartParams);
     const tupleChart = useMetrics(tupleChartParams);
@@ -211,12 +269,34 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         tempKpi.data, 'temp_bytes'
     );
 
-    // Build chart datasets
-    const connectionChartData = useMemo(
+    // Build chart datasets. Backends and sessions are deliberately kept
+    // apart: numbackends is a gauge bounded by max_connections, whilst
+    // sessions is a counter that only ever climbs, so plotting them on
+    // one axis flattens the gauge and invites a false comparison.
+    const connectionChartData = useMemo(() => {
+        const base = buildChartData(
+            connectionChart.data,
+            ['numbackends'],
+            ['Backends'],
+        );
+        if (!base || maxConnections === null) { return base; }
+        return {
+            ...base,
+            series: [
+                ...base.series,
+                {
+                    name: 'Max Connections',
+                    data: base.categories.map(() => maxConnections),
+                },
+            ],
+        };
+    }, [connectionChart.data, maxConnections]);
+
+    const sessionChartData = useMemo(
         () => buildChartData(
             connectionChart.data,
-            ['numbackends', 'sessions'],
-            ['Backends', 'Sessions'],
+            ['sessions'],
+            ['Cumulative Sessions'],
         ),
         [connectionChart.data]
     );
@@ -326,7 +406,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
             <Box sx={CHART_SECTION_SX}>
                 <Box>
                     <ChartPanel
-                        title="Connections Over Time"
+                        title={CONNECTIONS_CHART_TITLE}
                         loading={connectionChart.loading && !connectionChartData}
                         hasData={!!connectionChartData}
                         emptyMessage="No connection data available"
@@ -336,14 +416,43 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                             <Chart
                                 type="line"
                                 data={connectionChartData}
-                                title="Connections Over Time"
+                                title={CONNECTIONS_CHART_TITLE}
                                 height={CHART_HEIGHT}
                                 smooth
                                 showLegend
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'PostgreSQL backend connections and sessions over time',
+                                    metricDescription: 'PostgreSQL backends connected to the monitored database over time, against the max_connections limit',
+                                    connectionId,
+                                    connectionName,
+                                    timeRange: timeRange.range,
+                                }}
+                            />
+                        )}
+                    </ChartPanel>
+                </Box>
+
+                <Box>
+                    <ChartPanel
+                        title={SESSIONS_CHART_TITLE}
+                        loading={connectionChart.loading && !sessionChartData}
+                        hasData={!!sessionChartData}
+                        emptyMessage="No session data available"
+                        height={CHART_HEIGHT}
+                    >
+                        {sessionChartData && (
+                            <Chart
+                                type="line"
+                                data={sessionChartData}
+                                title={SESSIONS_CHART_TITLE}
+                                height={CHART_HEIGHT}
+                                smooth
+                                showLegend
+                                showTooltip
+                                enableExport={false}
+                                analysisContext={{
+                                    metricDescription: 'Cumulative sessions established against the monitored database since the last statistics reset',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,

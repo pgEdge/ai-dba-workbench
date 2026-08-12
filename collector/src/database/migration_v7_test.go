@@ -110,12 +110,14 @@ func TestMigrationV7_ColumnsCascadeToExistingPartition(t *testing.T) {
 	// tables look like a pre-v7 datastore, then attach a partition
 	// before re-applying v7. This reproduces the real upgrade shape:
 	// a partition exists at the moment ADD COLUMN runs on the parent.
+	// Every row from v7 onwards is removed, because Migrate compares
+	// against the highest recorded version and would otherwise skip v7.
 	if _, err := pool.Exec(ctx, `
 		ALTER TABLE metrics.pg_stat_all_tables
 			DROP COLUMN IF EXISTS table_size;
 		ALTER TABLE metrics.pg_stat_all_indexes
 			DROP COLUMN IF EXISTS index_size;
-		DELETE FROM schema_version WHERE version = 7;
+		DELETE FROM schema_version WHERE version >= 7;
 	`); err != nil {
 		t.Fatalf("rewind to pre-v7 state: %v", err)
 	}
@@ -193,11 +195,13 @@ func TestMigrationV7_Idempotent(t *testing.T) {
 		t.Fatalf("first Migrate failed: %v", err)
 	}
 
-	// Rewind only the schema_version row for v7, leaving the columns the
-	// first run added in place. This forces Migrate to re-run v7's Up
+	// Rewind the schema_version rows from v7 onwards, leaving the columns
+	// the first run added in place. This forces Migrate to re-run v7's Up
 	// against already-present columns, exercising real idempotency.
+	// Migrate compares against the highest recorded version, so every
+	// later row has to go as well or v7 would simply be skipped.
 	if _, err := pool.Exec(ctx,
-		`DELETE FROM schema_version WHERE version = 7`); err != nil {
+		`DELETE FROM schema_version WHERE version >= 7`); err != nil {
 		t.Fatalf("rewind v7 schema_version row: %v", err)
 	}
 

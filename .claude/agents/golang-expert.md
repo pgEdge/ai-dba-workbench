@@ -28,6 +28,7 @@ advice or review, provide thorough analysis and recommendations.
 base at `/.claude/golang-expert/`:**
 
 - `testing-strategy.md` - Go testing patterns, Makefile commands, and CI config
+- `transaction-rollback.md` - Non-cancelable contexts for pgx rollbacks
 
 ## Core Expertise Areas
 

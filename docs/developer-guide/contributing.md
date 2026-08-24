@@ -171,6 +171,29 @@ Follow these Go-specific guidelines:
   `fmt.Errorf` with `%w`.
 - Run `gofmt` and `go vet` before committing.
 
+#### Transaction Rollbacks
+
+Roll every pgx transaction back on a non-cancelable
+context, never on the request-derived context:
+
+```go
+tx, err := pool.Begin(ctx)
+if err != nil {
+    return fmt.Errorf("begin transaction: %w", err)
+}
+defer tx.Rollback(context.Background()) //nolint:errcheck
+```
+
+The pgx v5 driver fails a rollback outright once its
+context is cancelled, and it then discards the pooled
+connection whilst the transaction is still open on the
+server. A client that disconnects mid-request therefore
+leaks a connection in an aborted-transaction state. The
+statements inside the transaction still use the request
+context; only the rollback differs. A convention test in
+`server/src/internal/database/rollback_convention_test.go`
+enforces the rule across all three Go modules.
+
 ### Documentation
 
 Follow the documentation style guide in

@@ -34,7 +34,8 @@ func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, col
 	}
 	defer func() {
 		if err != nil {
-			if rerr := txn.Rollback(ctx); rerr != nil {
+			// Non-cancelable ctx (see contributing.md).
+			if rerr := txn.Rollback(context.Background()); rerr != nil {
 				logger.Errorf("Error rolling back transaction: %v", rerr)
 			}
 		}

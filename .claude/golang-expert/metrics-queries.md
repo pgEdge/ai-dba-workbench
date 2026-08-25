@@ -11,10 +11,15 @@
 # Metrics Query Conventions
 
 The collector writes probe output into `metrics.*` partitioned tables.
-Those tables intentionally carry no foreign key to `connections` so that
-probes never fail because a connection was deleted mid-write. The cost
-of that design is that orphaned metric rows can briefly outlive their
-owning connection.
+The consolidated migration in `collector/src/database/schema.go` now adds
+a `FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE
+CASCADE` to each of them via `addConstraintIfMissing`, so deleting a
+connection removes its metric rows with it. That was not always true,
+and the queries written before it still assume orphaned metric rows can
+outlive their owning connection; keep that assumption rather than
+stripping the joins out, because it costs nothing and the cascade is the
+only thing standing between a stale metric row and a foreign key
+violation downstream.
 
 ## Filter Orphans at Query Time
 
@@ -184,10 +189,59 @@ at execution; `scanSeriesRows`'s own `pool.Query` and `rows.Scan` error
 branches are driven by a cancelled context and a destination-count mismatch
 respectively.
 
+## Alerter Metric Registry (alerter)
+
+`alerter/src/internal/database/metric_registry.go` maps each alert rule's
+metric name to the SQL that produces its value. A query error there is
+swallowed by `evaluateRuleForAllConnections` in
+`alerter/src/internal/engine/thresholds.go`, which logs at debug level and
+moves on, so a broken metric looks exactly like an idle one. Four rules
+that follow from that, all learned the hard way in #406:
+
+- The metric name is not the table name. `pg_stat_archiver.*` metrics read
+  `metrics.pg_stat_wal`, because the collector consolidates the archiver
+  columns (`archived_count`, `failed_count`, `last_failed_wal`) onto that
+  table and never creates a `metrics.pg_stat_archiver`. Check the CREATE
+  TABLE statements in `collector/src/database/schema.go` before writing a
+  FROM clause; there are 36 `metrics.*` tables and no views.
+
+- Never put a max-age predicate on `metrics.pg_settings`. The probe is
+  change-tracked (`collector/src/probes/pg_settings_probe.go`) and skips
+  the write whenever the settings hash is unchanged, with no heartbeat, so
+  a stable server stores one snapshot at onboarding and nothing after.
+  Take the newest row per connection with
+  `DISTINCT ON (connection_id) ... ORDER BY collected_at DESC` instead,
+  and remember that a LEFT JOIN onto settings with COALESCE defaults hides
+  the failure by silently substituting the shipped defaults.
+
+- Counter deltas are windowed, and the window must comfortably exceed the
+  probe interval. Summing positive per-sample deltas over an hour is the
+  pattern to copy (see the archiver and checkpointer entries): it survives
+  a stats reset, it reports 0 rather than dropping the connection when
+  only one sample lands in the window, and it gives the rule an absolute
+  per-hour count rather than a per-probe-interval figure. Rules whose
+  value is a rate should say so in `metric_unit`, for example
+  `checkpoints/hour`.
+
+- `system_stats` columns are platform-specific. `processor_time_percent`,
+  `user_time_percent`, `privileged_time_percent` and
+  `interrupt_time_percent` are Windows-only and NULL on Linux; the Linux
+  build populates the per-mode buckets and `idle_mode_percent`. Use the
+  shared `cpuBusyPercentExpr` rather than coalescing a platform-specific
+  column to zero, which reads as an idle host.
+
+Changing a seeded rule's threshold or unit needs a collector migration as
+well as the registry edit, because migration 1 only seeds a fresh install.
+Migration 8 is the worked example: it rewrites descriptions and units
+unconditionally, but only rewrites a threshold that still carries the old
+shipped default, so operator tuning survives the upgrade.
+
 ## Related Issues
 
 - #56: Alerter FK violations when calculating baselines for deleted
   connections.
+- #406: Five built-in alert rules that could never fire; fixed in the
+  alerter metric registry plus collector migration 8.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to
   `QueryTimeSeries` to fix blank Activity Charts; retired #339's
   `resolveMetricValue` in favour of the `finiteFloat` guard in `toFloat64`.

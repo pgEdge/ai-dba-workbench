@@ -107,7 +107,7 @@ chmod 600 ./ai-dba-collector.secret
 ```
 
 For detailed configuration options, see
-[Configuration Guide](../docs/getting-started/configuration/collector.md).
+[Configuration Guide](../docs/configuration/collector.md).
 
 ### Command-Line Flags
 
@@ -199,7 +199,7 @@ For complete documentation, see the
 
 The documentation covers the following topics:
 
-- [Configuration](../docs/getting-started/configuration/collector.md)
+- [Configuration](../docs/configuration/collector.md)
   covers configuration options and examples.
 - [Architecture](../docs/developer-guide/collector/architecture.md)
   covers system design and components.

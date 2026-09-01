@@ -1,15 +1,13 @@
 # Connection Management
 
-The MCP server provides REST APIs for managing
-connections to monitored PostgreSQL databases. This
-feature allows users to select which database connection
-they want to work with for their session.
+The MCP server provides REST APIs for managing connections to monitored
+PostgreSQL databases. This feature allows users to select which database
+connection they want to work with for their session.
 
 ## Overview
 
-When the MCP server is configured with a datastore
-connection, the server can access connection information
-stored by the Collector. This enables users to:
+When the MCP server is configured with a datastore connection, the server can
+access connection information stored by the Collector. This enables users to:
 
 - List available database connections.
 - Select a connection for their session.
@@ -18,9 +16,8 @@ stored by the Collector. This enables users to:
 
 ## Configuration
 
-To enable connection management, configure the server's
-database settings to point to the same datastore used
-by the Collector:
+To enable connection management, configure the server's database settings to
+point to the same datastore used by the Collector:
 
 ```yaml
 database:
@@ -34,10 +31,9 @@ database:
 secret_file: /etc/ai-workbench/secret
 ```
 
-The `secret_file` must contain the same secret used by
-the Collector for encrypting connection passwords. For
-full configuration details, see the
-[Server Configuration](../getting-started/configuration/server.md).
+The `secret_file` must contain the same secret used by the Collector for
+encrypting connection passwords. For full configuration details, see the
+[Server Configuration](../configuration/server.md).
 
 ## REST API Endpoints
 
@@ -45,8 +41,8 @@ All endpoints require authentication via Bearer token.
 
 ### List Connections
 
-The following endpoint lists all available database
-connections from the datastore:
+The following endpoint lists all available database connections from the
+datastore:
 
 ```
 GET /api/v1/connections
@@ -78,8 +74,7 @@ Response:
 
 ### List Databases
 
-The following endpoint lists all databases on a
-specific connection:
+The following endpoint lists all databases on a specific connection:
 
 ```
 GET /api/v1/connections/{id}/databases
@@ -107,8 +102,8 @@ Response:
 
 ### Get Current Connection
 
-The following endpoint returns the currently selected
-connection for the session:
+The following endpoint returns the currently selected connection for the
+session:
 
 ```
 GET /api/v1/connections/current
@@ -137,8 +132,7 @@ Response (404 Not Found):
 
 ### Set Current Connection
 
-The following endpoint selects a connection and
-optionally a specific database:
+The following endpoint selects a connection and optionally a specific database:
 
 ```
 POST /api/v1/connections/current
@@ -151,8 +145,8 @@ Content-Type: application/json
 }
 ```
 
-The `database_name` is optional. If not specified, the
-connection's default database is used.
+The `database_name` is optional. If not specified, the connection's default
+database is used.
 
 Response:
 
@@ -168,8 +162,7 @@ Response:
 
 ### Clear Current Connection
 
-The following endpoint clears the current connection
-selection:
+The following endpoint clears the current connection selection:
 
 ```
 DELETE /api/v1/connections/current
@@ -180,20 +173,18 @@ Response: `204 No Content`
 
 ## Session Persistence
 
-Connection selections are stored in the authentication
-database (`auth.db`) and persist across requests and
-server restarts. Each token has an independent
+Connection selections are stored in the authentication database (`auth.db`) and
+persist across requests and server restarts. Each token has an independent
 connection selection.
 
 ## Tool Behavior
 
-When a connection is selected, all database tools
-(`query_database`, `get_schema_info`,
-`similarity_search`, `execute_explain`, `count_rows`)
+When a connection is selected, all database tools (`query_database`,
+`get_schema_info`, `similarity_search`, `execute_explain`, `count_rows`)
 operate on the selected database.
 
-If no connection is selected, the tools return an error
-message instructing the user to select a connection:
+If no connection is selected, the tools return an error message instructing the
+user to select a connection:
 
 ```
 No database connection selected. Please select a
@@ -212,18 +203,10 @@ The connection APIs return standard error responses.
 | 500 | Internal server error. |
 | 503 | Datastore not configured. |
 
-In the following example, an error response uses the
-standard JSON format:
+In the following example, an error response uses the standard JSON format:
 
 ```json
 {
     "error": "Description of the error"
 }
 ```
-
-## Related Documentation
-
-- [Managing Users and Permissions](managing-users-and-permissions/permission_model.md) covers tokens and
-  access control.
-- [API Reference](api/reference.md) provides
-  interactive API documentation.

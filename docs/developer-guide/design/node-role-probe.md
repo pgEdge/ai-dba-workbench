@@ -1,34 +1,27 @@
 # Node Role Probe Design
 
-This document describes the design for probes that detect
-and track PostgreSQL node roles within various cluster
-topologies.
+This document describes the design for probes that detect and track PostgreSQL
+node roles within various cluster topologies.
 
 ## Overview
 
-PostgreSQL servers can participate in various replication
-configurations:
+PostgreSQL servers can participate in various replication configurations:
 
 - A standalone server runs without replication.
-- Binary (physical/streaming) replication clusters use
-  WAL streaming between nodes.
-- Native logical replication setups use publications and
-  subscriptions.
-- Spock multi-master clusters enable bidirectional
-  replication.
+- Binary (physical/streaming) replication clusters use WAL streaming between
+  nodes.
+- Native logical replication setups use publications and subscriptions.
+- Spock multi-master clusters enable bidirectional replication.
 
-A single node may hold multiple roles simultaneously. For
-example, a Spock node might also have a binary standby
-for high availability. The probe system must detect these
-configurations accurately and store the results for
-analysis.
+A single node may hold multiple roles simultaneously. For example, a Spock node
+might also have a binary standby for high availability. The probe system must
+detect these configurations accurately and store the results for analysis.
 
 ## Node Role Taxonomy
 
 ### Primary Roles
 
-The following table lists the primary roles that a node
-can assume.
+The following table lists the primary roles that a node can assume.
 
 | Role | Description | Detection Method |
 |------|-------------|------------------|
@@ -43,27 +36,21 @@ can assume.
 
 ### Role Flags
 
-Since roles can combine, the system tracks individual
-capability flags. These flags are non-exclusive:
+Since roles can combine, the system tracks individual capability flags. These
+flags are non-exclusive:
 
-- `is_in_recovery` indicates the node operates in standby
-  mode.
-- `has_binary_standbys` indicates the node has physical
-  replication standbys.
-- `has_publications` indicates the node has logical
-  replication publications.
-- `has_subscriptions` indicates the node has logical
-  replication subscriptions.
-- `has_spock` indicates the Spock extension is installed
-  and active.
+- `is_in_recovery` indicates the node operates in standby mode.
+- `has_binary_standbys` indicates the node has physical replication standbys.
+- `has_publications` indicates the node has logical replication publications.
+- `has_subscriptions` indicates the node has logical replication subscriptions.
+- `has_spock` indicates the Spock extension is installed and active.
 
 ## Database Schema
 
 ### Table: metrics.pg_server_info
 
-This table stores relatively static server identification
-information. The data changes rarely and only on upgrades
-or major configuration changes.
+This table stores relatively static server identification information. The data
+changes rarely and only on upgrades or major configuration changes.
 
 ```sql
 CREATE TABLE IF NOT EXISTS metrics.pg_server_info (
@@ -97,9 +84,8 @@ COMMENT ON TABLE metrics.pg_server_info IS
 
 ### Table: metrics.pg_node_role
 
-This table stores node role detection results. The data
-may change more dynamically as replication configurations
-evolve.
+This table stores node role detection results. The data may change more
+dynamically as replication configurations evolve.
 
 ```sql
 CREATE TABLE IF NOT EXISTS metrics.pg_node_role (
@@ -162,8 +148,7 @@ CREATE INDEX IF NOT EXISTS
 
 ### Query: Server Info
 
-The following query retrieves server identification and
-configuration data.
+The following query retrieves server identification and configuration data.
 
 ```sql
 SELECT
@@ -193,8 +178,7 @@ SELECT
 
 ### Query: Basic Role Detection
 
-The following query detects the fundamental replication
-role of a node.
+The following query detects the fundamental replication role of a node.
 
 ```sql
 SELECT
@@ -221,8 +205,8 @@ SELECT
 
 ### Query: Standby Info
 
-The following query runs only when `is_in_recovery` is
-true and retrieves upstream connection details.
+The following query runs only when `is_in_recovery` is true and retrieves
+upstream connection details.
 
 ```sql
 SELECT
@@ -237,8 +221,8 @@ LIMIT 1
 
 ### Query: Spock Detection
 
-The following queries detect whether Spock is installed
-and retrieve node information.
+The following queries detect whether Spock is installed and retrieve node
+information.
 
 ```sql
 -- Check if Spock is installed
@@ -261,8 +245,8 @@ LIMIT 1;
 
 ## Role Determination Algorithm
 
-The following Go function determines the primary role
-and capability flags for a node.
+The following Go function determines the primary role and capability flags for
+a node.
 
 ```go
 func determineNodeRole(
@@ -319,8 +303,8 @@ func determineNodeRole(
 
 ## Probe Configuration
 
-The following YAML shows the default probe configuration
-for the node role probes.
+The following YAML shows the default probe configuration for the node role
+probes.
 
 ```yaml
 - name: pg_server_info
@@ -341,8 +325,7 @@ for the node role probes.
 
 ### Adding New Cluster Types
 
-Developers can add support for new cluster types by
-following these steps:
+Developers can add support for new cluster types by following these steps:
 
 1. Add a detection query for the new extension.
 2. Add columns to `pg_node_role` for type-specific data.
@@ -351,8 +334,8 @@ following these steps:
 
 ### Role Details JSON
 
-The `role_details` JSONB column provides flexibility for
-extension-specific data without schema changes.
+The `role_details` JSONB column provides flexibility for extension-specific
+data without schema changes.
 
 ```json
 {
@@ -374,22 +357,18 @@ extension-specific data without schema changes.
 
 ### Change Detection
 
-Both probes use change detection to avoid storing
-duplicate data:
+Both probes use change detection to avoid storing duplicate data:
 
-- The `pg_server_info` probe stores a row only when any
-  value changes.
-- The `pg_node_role` probe stores a row only when the
-  role or key metrics change.
+- The `pg_server_info` probe stores a row only when any value changes.
+- The `pg_node_role` probe stores a row only when the role or key metrics
+  change.
 
 ### Error Handling
 
-The probe implementation follows these error handling
-rules:
+The probe implementation follows these error handling rules:
 
 - Extension queries gracefully handle missing extensions.
-- Standby-specific queries run only when
-  `is_in_recovery` is true.
+- Standby-specific queries run only when `is_in_recovery` is true.
 - Permission errors are logged but do not fail the probe.
 
 ### Performance
@@ -398,15 +377,14 @@ The probe queries are lightweight and efficient:
 
 - All queries access only system catalogs.
 - No queries scan user data tables.
-- The probes can run on standbys without affecting
-  replication.
+- The probes can run on standbys without affecting replication.
 
 ## Usage Examples
 
 ### Find All Spock Nodes
 
-The following query retrieves the most recent role data
-for all Spock-enabled nodes.
+The following query retrieves the most recent role data for all Spock-enabled
+nodes.
 
 ```sql
 SELECT c.name, c.host,
@@ -423,8 +401,7 @@ WHERE r.has_spock = true
 
 ### Cluster Topology Overview
 
-The following query provides a snapshot of the current
-cluster topology.
+The following query provides a snapshot of the current cluster topology.
 
 ```sql
 SELECT
@@ -442,8 +419,8 @@ ORDER BY r.primary_role, c.name;
 
 ### Detect Role Changes
 
-The following query identifies nodes that changed roles
-within the past seven days.
+The following query identifies nodes that changed roles within the past seven
+days.
 
 ```sql
 SELECT

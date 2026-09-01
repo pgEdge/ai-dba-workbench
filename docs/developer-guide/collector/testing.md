@@ -1,34 +1,29 @@
 # Testing and Development
 
-This guide covers setting up a development
-environment, contributing to the Collector, and
-testing practices.
+This guide covers setting up a development environment, contributing to the
+Collector, and testing practices.
 
 ## Prerequisites
 
-Before starting development, ensure you have the
-following tools installed:
+Before starting development, ensure you have the following tools installed:
 
-- [Go 1.24](https://go.dev/doc/install) or later
-  is required for building the Collector.
-- [PostgreSQL 14](https://www.postgresql.org/download/)
-  or later is required for testing.
-- [Git](https://git-scm.com/) is required for
-  version control.
-- Make is optional but recommended for build
-  automation.
-- [golangci-lint](https://golangci-lint.run/welcome/install/)
-  is required for linting.
+- [Go 1.24](https://go.dev/doc/install) or later is required for building the
+  Collector.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or later is required
+  for testing.
+- [Git](https://git-scm.com/) is required for version control.
+- Make is optional but recommended for build automation.
+- [golangci-lint](https://golangci-lint.run/welcome/install/) is required for
+  linting.
 
 ## Setting Up
 
-Follow these steps to set up a development
-environment.
+Follow these steps to set up a development environment.
 
 ### 1. Clone the Repository
 
-In the following example, the commands clone the
-repository and navigate to the Collector directory:
+In the following example, the commands clone the repository and navigate to the
+Collector directory:
 
 ```bash
 git clone \
@@ -38,8 +33,7 @@ cd ai-dba-workbench/collector
 
 ### 2. Install Dependencies
 
-In the following example, the commands download Go
-module dependencies:
+In the following example, the commands download Go module dependencies:
 
 ```bash
 cd src
@@ -48,17 +42,15 @@ go mod download
 
 ### 3. Install Development Tools
 
-In the following example, the command installs
-`golangci-lint` for linting:
+In the following example, the command installs `golangci-lint` for linting:
 
 ```bash
 go install \
     github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 ```
 
-Ensure `$(go env GOPATH)/bin` is in your PATH. In
-the following example, the export statement adds the
-Go binary directory to PATH:
+Ensure `$(go env GOPATH)/bin` is in your PATH. In the following example, the
+export statement adds the Go binary directory to PATH:
 
 ```bash
 export PATH="$PATH:$(go env GOPATH)/bin"
@@ -66,8 +58,8 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 ### 4. Set Up Test Database
 
-Create a test database. In the following example,
-the SQL commands create the database and user:
+Create a test database. In the following example, the SQL commands create the
+database and user:
 
 ```sql
 CREATE DATABASE ai_workbench_dev;
@@ -79,9 +71,8 @@ GRANT ALL PRIVILEGES ON DATABASE ai_workbench_dev
 
 ### 5. Create Development Config
 
-Copy and edit the example configuration. In the
-following example, the command copies the example
-configuration file:
+Copy and edit the example configuration. In the following example, the command
+copies the example configuration file:
 
 ```bash
 cp ../examples/ai-dba-collector.yaml \
@@ -101,17 +92,14 @@ datastore:
 secret_file: ./ai-dba-collector.secret
 ```
 
-The collector does not auto-discover a YAML file in
-the working directory or next to the binary; pass the
-dev config explicitly with `--config` when you run
-the collector, as shown in the
-[Development Mode](#development-mode) section below.
-The `secret_file:` entry above is a relative path
-read from the YAML, so the collector resolves it
-against the working directory at startup.
+The collector does not auto-discover a YAML file in the working directory or
+next to the binary; pass the dev config explicitly with `--config` when you run
+the collector, as shown in the [Development Mode](#development-mode) section
+below. The `secret_file:` entry above is a relative path read from the YAML, so
+the collector resolves it against the working directory at startup.
 
-Create a development secret file. In the following
-example, the commands generate a random secret:
+Create a development secret file. In the following example, the commands
+generate a random secret:
 
 ```bash
 openssl rand -base64 32 \
@@ -154,8 +142,7 @@ This section describes how to build the Collector.
 
 ### Using Make
 
-In the following example, the `make` commands perform
-various build tasks:
+In the following example, the `make` commands perform various build tasks:
 
 ```bash
 # Build the collector
@@ -182,8 +169,7 @@ make check
 
 ### Using Go Directly
 
-In the following example, the `go build` command
-builds the Collector directly:
+In the following example, the `go build` command builds the Collector directly:
 
 ```bash
 cd src
@@ -192,13 +178,12 @@ go build -o collector
 
 ## Running
 
-This section describes how to run the Collector in
-development mode.
+This section describes how to run the Collector in development mode.
 
 ### Development Mode
 
-In the following example, the command starts the
-Collector with a development configuration:
+In the following example, the command starts the Collector with a development
+configuration:
 
 ```bash
 ./ai-dba-collector \
@@ -207,8 +192,7 @@ Collector with a development configuration:
 
 ### With Verbose Logging
 
-In the following example, the command captures all
-output to a log file:
+In the following example, the command captures all output to a log file:
 
 ```bash
 ./ai-dba-collector \
@@ -222,15 +206,13 @@ The Collector includes several types of tests.
 
 ### Unit Tests
 
-Unit tests verify individual functions and methods
-in isolation. Test files reside in the same package
-as the code being tested.
+Unit tests verify individual functions and methods in isolation. Test files
+reside in the same package as the code being tested.
 
 ### Integration Tests
 
-Integration tests verify interaction between
-components and with a real database. These tests
-are spread across packages.
+Integration tests verify interaction between components and with a real
+database. These tests are spread across packages.
 
 ## Running Tests
 
@@ -238,8 +220,7 @@ This section describes how to run the test suite.
 
 ### Using Make
 
-In the following example, the `make` commands run
-tests:
+In the following example, the `make` commands run tests:
 
 ```bash
 # Run all tests with formatting and linting
@@ -254,8 +235,8 @@ make coverage
 
 ### Using Go
 
-In the following example, the `go test` commands run
-tests with various options:
+In the following example, the `go test` commands run tests with various
+options:
 
 ```bash
 # All tests
@@ -279,25 +260,20 @@ go tool cover -html=coverage.out
 
 ## Test Database
 
-Tests automatically create a temporary database for
-each test run.
+Tests automatically create a temporary database for each test run.
 
-1. The test framework connects to PostgreSQL using
-   `TEST_AI_WORKBENCH_SERVER` or the default URL.
-2. The framework creates a database with a timestamp
-   name like
+1. The test framework connects to PostgreSQL using `TEST_AI_WORKBENCH_SERVER`
+   or the default URL.
+2. The framework creates a database with a timestamp name like
    `ai_workbench_test_YYYYMMDD_HHMMSS_NNNNNN`.
 3. All tests run against that database.
-4. The framework drops the database when tests
-   complete.
+4. The framework drops the database when tests complete.
 
 ### Environment Variables
 
-The following environment variables control test
-behavior.
+The following environment variables control test behavior.
 
-`TEST_AI_WORKBENCH_SERVER` specifies the PostgreSQL
-connection URL:
+`TEST_AI_WORKBENCH_SERVER` specifies the PostgreSQL connection URL:
 
 ```bash
 export TEST_AI_WORKBENCH_SERVER=\
@@ -305,8 +281,7 @@ export TEST_AI_WORKBENCH_SERVER=\
 go test ./...
 ```
 
-`TEST_AI_WORKBENCH_KEEP_DB` keeps the test database
-after tests complete:
+`TEST_AI_WORKBENCH_KEEP_DB` keeps the test database after tests complete:
 
 ```bash
 export TEST_AI_WORKBENCH_KEEP_DB=1
@@ -322,18 +297,16 @@ go test ./...
 
 ## Writing Tests
 
-This section describes test conventions for the
-Collector.
+This section describes test conventions for the Collector.
 
 ### Test File Naming
 
-Test files use the `*_test.go` suffix and reside in
-the same package as the code being tested.
+Test files use the `*_test.go` suffix and reside in the same package as the
+code being tested.
 
 ### Test Function Naming
 
-Test function names should clearly describe the
-behavior being tested:
+Test function names should clearly describe the behavior being tested:
 
 ```go
 func TestFunctionName(t *testing.T) { }
@@ -343,8 +316,7 @@ func TestFeatureDescription(t *testing.T) { }
 
 ### Basic Test Structure
 
-In the following example, the test verifies a
-datastore connection:
+In the following example, the test verifies a datastore connection:
 
 ```go
 func TestDatastoreConnection(t *testing.T) {
@@ -375,9 +347,8 @@ func TestDatastoreConnection(t *testing.T) {
 
 ### Table-Driven Tests
 
-Use table-driven tests for multiple test cases. In
-the following example, the test verifies password
-encryption with several inputs:
+Use table-driven tests for multiple test cases. In the following example, the
+test verifies password encryption with several inputs:
 
 ```go
 func TestPasswordEncryption(t *testing.T) {
@@ -423,8 +394,7 @@ func TestPasswordEncryption(t *testing.T) {
 
 ### Testing with Database
 
-In the following example, the test verifies schema
-migration:
+In the following example, the test verifies schema migration:
 
 ```go
 func TestSchemaManager(t *testing.T) {
@@ -466,13 +436,11 @@ func TestSchemaManager(t *testing.T) {
 
 ## Coverage
 
-This section describes how to generate and review
-coverage reports.
+This section describes how to generate and review coverage reports.
 
 ### Generating Coverage Reports
 
-In the following example, the commands generate and
-view coverage reports:
+In the following example, the commands generate and view coverage reports:
 
 ```bash
 # Generate coverage profile
@@ -490,20 +458,18 @@ go tool cover -html=coverage.out
 The project targets the following coverage goals:
 
 - Overall coverage should exceed 80 percent.
-- Core packages such as database and scheduler
-  should exceed 90 percent.
-- Critical functions such as encryption and storage
-  should have 100 percent coverage.
+- Core packages such as database and scheduler should exceed 90 percent.
+- Critical functions such as encryption and storage should have 100 percent
+  coverage.
 
 ## Code Style
 
-This section describes the code style conventions
-for the Collector.
+This section describes the code style conventions for the Collector.
 
 ### Formatting
 
-Always format code with `gofmt`. In the following
-example, the commands format all Go files:
+Always format code with `gofmt`. In the following example, the commands format
+all Go files:
 
 ```bash
 make fmt
@@ -515,21 +481,18 @@ go fmt ./...
 
 The project follows these naming conventions:
 
-- Packages use lowercase, single-word names such as
-  `database`, `probes`, and `scheduler`.
-- Types use PascalCase names such as
-  `ProbeScheduler` and `Datastore`.
-- Functions use PascalCase for exported functions
-  and camelCase for private functions.
+- Packages use lowercase, single-word names such as `database`, `probes`, and
+  `scheduler`.
+- Types use PascalCase names such as `ProbeScheduler` and `Datastore`.
+- Functions use PascalCase for exported functions and camelCase for private
+  functions.
 - Variables use camelCase names.
-- Constants use PascalCase or SCREAMING_SNAKE_CASE
-  names.
+- Constants use PascalCase or SCREAMING_SNAKE_CASE names.
 
 ### Comments
 
-Every exported type and function should have a doc
-comment. In the following example, the comments
-describe the type and method:
+Every exported type and function should have a doc comment. In the following
+example, the comments describe the type and method:
 
 ```go
 // Datastore represents a connection to the
@@ -549,8 +512,8 @@ func (ds *Datastore) GetConnection() (
 
 ### Error Handling
 
-Always check errors and provide context. In the
-following example, the code wraps the error:
+Always check errors and provide context. In the following example, the code
+wraps the error:
 
 ```go
 conn, err := ds.GetConnection()
@@ -565,8 +528,7 @@ Use the `%w` verb to wrap errors for error chains.
 
 ## Common Development Tasks
 
-This section describes common tasks when developing
-the Collector.
+This section describes common tasks when developing the Collector.
 
 ### Adding a Configuration Option
 
@@ -587,23 +549,20 @@ Follow these steps to modify the schema:
 3. Make the migration idempotent.
 4. Test on a clean database.
 5. Test on a database with an existing schema.
-6. Update the [Schema Management](schema-management.md)
-   documentation.
+6. Update the [Schema Management](schema-management.md) documentation.
 
 ### Adding a Probe
 
-See the dedicated [Adding Probes](adding-probes.md)
-guide for complete instructions.
+See the dedicated [Adding Probes](adding-probes.md) guide for complete
+instructions.
 
 ## Debugging
 
-This section describes debugging techniques for the
-Collector.
+This section describes debugging techniques for the Collector.
 
 ### Using Delve Debugger
 
-In the following example, the commands install and
-run the Delve debugger:
+In the following example, the commands install and run the Delve debugger:
 
 ```bash
 go install \
@@ -624,9 +583,8 @@ Set breakpoints and step through code:
 
 ### Database Inspection
 
-Connect to the datastore and inspect the state. In
-the following example, the queries check probe and
-connection status:
+Connect to the datastore and inspect the state. In the following example, the
+queries check probe and connection status:
 
 ```sql
 SELECT * FROM probes WHERE is_enabled = TRUE;
@@ -643,14 +601,12 @@ ORDER BY collected_at DESC;
 
 ## Performance Profiling
 
-This section describes performance profiling
-techniques.
+This section describes performance profiling techniques.
 
 ### CPU Profiling
 
-Add the `pprof` import to enable profiling. In the
-following example, the import statement enables
-HTTP profiling:
+Add the `pprof` import to enable profiling. In the following example, the
+import statement enables HTTP profiling:
 
 ```go
 import _ "net/http/pprof"
@@ -665,8 +621,8 @@ go func() {
 }()
 ```
 
-Collect and analyze the profile. In the following
-example, the commands run a 30-second profile:
+Collect and analyze the profile. In the following example, the commands run a
+30-second profile:
 
 ```bash
 go tool pprof \
@@ -679,8 +635,7 @@ go tool pprof \
 
 ### Memory Profiling
 
-In the following example, the commands collect memory
-profiles:
+In the following example, the commands collect memory profiles:
 
 ```bash
 # Heap profile
@@ -694,8 +649,7 @@ go tool pprof \
 
 ### Goroutine Profiling
 
-In the following example, the command collects a
-goroutine profile:
+In the following example, the command collects a goroutine profile:
 
 ```bash
 go tool pprof \
@@ -704,9 +658,8 @@ go tool pprof \
 
 ## Benchmarks
 
-Write benchmarks to measure performance-critical
-code. In the following example, the benchmark tests
-encryption performance:
+Write benchmarks to measure performance-critical code. In the following
+example, the benchmark tests encryption performance:
 
 ```go
 func BenchmarkEncryption(b *testing.B) {
@@ -723,8 +676,7 @@ func BenchmarkEncryption(b *testing.B) {
 }
 ```
 
-In the following example, the commands run
-benchmarks:
+In the following example, the commands run benchmarks:
 
 ```bash
 go test -bench=. ./...
@@ -737,9 +689,8 @@ Follow these best practices when writing tests.
 
 ### Test Isolation
 
-Each test should be independent. In the following
-example, the test creates and cleans up its own
-resources:
+Each test should be independent. In the following example, the test creates and
+cleans up its own resources:
 
 ```go
 func TestConnection(t *testing.T) {
@@ -751,9 +702,8 @@ func TestConnection(t *testing.T) {
 
 ### Cleanup
 
-Always clean up resources using defer statements. In
-the following example, the test closes the datastore
-on completion:
+Always clean up resources using defer statements. In the following example, the
+test closes the datastore on completion:
 
 ```go
 func TestDatastore(t *testing.T) {
@@ -768,9 +718,8 @@ func TestDatastore(t *testing.T) {
 
 ### Meaningful Assertions
 
-Provide context in error messages. In the following
-example, the assertion includes both actual and
-expected values:
+Provide context in error messages. In the following example, the assertion
+includes both actual and expected values:
 
 ```go
 if got != want {
@@ -781,8 +730,7 @@ if got != want {
 
 ### Skip Appropriately
 
-Skip tests that cannot run in the current
-environment:
+Skip tests that cannot run in the current environment:
 
 ```go
 if os.Getenv("SKIP_DB_TESTS") != "" {
@@ -798,8 +746,7 @@ This section describes the contribution workflow.
 
 Follow these steps before submitting a change:
 
-1. Run `make check` to ensure formatting, linting,
-   and tests pass.
+1. Run `make check` to ensure formatting, linting, and tests pass.
 2. Update relevant documentation.
 3. Add tests for new functionality.
 4. Follow existing code style.
@@ -825,8 +772,7 @@ This section covers common development issues.
 
 ### "go.mod out of sync"
 
-Run the following command to synchronize the module
-file:
+Run the following command to synchronize the module file:
 
 ```bash
 go mod tidy
@@ -834,8 +780,7 @@ go mod tidy
 
 ### "golangci-lint not found"
 
-Install or update `golangci-lint` with the following
-command:
+Install or update `golangci-lint` with the following command:
 
 ```bash
 go install \
@@ -844,9 +789,8 @@ go install \
 
 ### "Test database connection failed"
 
-Check the environment variables. In the following
-example, the export statement sets the connection
-URL:
+Check the environment variables. In the following example, the export statement
+sets the connection URL:
 
 ```bash
 export TEST_AI_WORKBENCH_SERVER=\
@@ -856,8 +800,7 @@ go test ./...
 
 ### Build Fails with "undefined: ..."
 
-Re-download dependencies with the following
-commands:
+Re-download dependencies with the following commands:
 
 ```bash
 go mod download
@@ -876,8 +819,7 @@ If tests hang, check for the following issues:
 
 If tests are flaky, check for the following issues:
 
-- Race conditions; run `go test -race` to detect
-  them.
+- Race conditions; run `go test -race` to detect them.
 - Test isolation; ensure tests do not share state.
 - Time-dependent assertions.
 
@@ -887,23 +829,21 @@ This section provides links to external resources.
 
 ### Go Resources
 
-The following resources are helpful for Go
-development:
+The following resources are helpful for Go development:
 
-- [Effective Go](https://golang.org/doc/effective_go.html)
-  provides best practices for Go programming.
+- [Effective Go](https://golang.org/doc/effective_go.html) provides best
+  practices for Go programming.
 - [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
   provides community-maintained guidelines.
-- [pgx Documentation](https://pkg.go.dev/github.com/jackc/pgx/v5)
-  covers the PostgreSQL driver library.
+- [pgx Documentation](https://pkg.go.dev/github.com/jackc/pgx/v5) covers the
+  PostgreSQL driver library.
 
 ### PostgreSQL Resources
 
-The following resources are helpful for PostgreSQL
-development:
+The following resources are helpful for PostgreSQL development:
 
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-  provides the official reference.
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/) provides the
+  official reference.
 - [Statistics Views](https://www.postgresql.org/docs/current/monitoring-stats.html)
   describes monitoring statistics.
 - [Partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html)
@@ -913,9 +853,6 @@ development:
 
 The following resources provide additional details.
 
-- [Adding Probes](adding-probes.md) covers how to
-  create new probes.
-- [Architecture](architecture.md) describes the
-  system design.
-- [Schema Management](schema-management.md) covers
-  the migration system.
+- [Adding Probes](adding-probes.md) covers how to create new probes.
+- [Architecture](architecture.md) describes the system design.
+- [Schema Management](schema-management.md) covers the migration system.

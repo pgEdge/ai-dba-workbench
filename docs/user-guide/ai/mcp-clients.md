@@ -1,45 +1,35 @@
 # Connecting MCP Clients
 
-Any MCP-compatible AI tool can connect to the
-Workbench's MCP server endpoint. External clients
-gain access to the same tools and resources that
-power the built-in Ask Ellie assistant. The MCP
-server uses HTTP transport with Bearer token
-authentication.
+Any MCP-compatible AI tool can connect to the Workbench's MCP server endpoint.
+External clients gain access to the same tools and resources that power the
+built-in Ask Ellie assistant. The MCP server uses HTTP transport with Bearer
+token authentication.
 
-## Prerequisites
+You must meet the following requirements before configuring a client:
 
-Ensure the following requirements are met before
-configuring a client.
-
-- The Workbench server must be running and accessible
-  from the machine where the MCP client operates.
-- An API token is required for authentication. Create
-  a token by selecting the `Settings` icon, then
-  selecting `Tokens` from the `Administration`
-  console's left navigation pane, or use the REST
-  API. See
+- The Workbench server must be running and accessible from the machine where
+  the MCP client operates.
+- Authentication requires an API token. Create a token by selecting the
+  `Settings` icon, then selecting `Tokens` from the `Administration` console's
+  left navigation pane, or use the REST API. See
   [Managing Users and Permissions](../../admin-guide/managing-users-and-permissions/permission_model.md)
   for details on token management.
 
-## Endpoint
+## Finding the Server Endpoint
 
-The MCP server exposes a JSON-RPC 2.0 endpoint at
-`/mcp/v1` on the server's HTTP address.
+The MCP server exposes a JSON-RPC 2.0 endpoint at `/mcp/v1` on the server's
+HTTP address.
 
-In the following example, the endpoint URL uses the
-default server address:
+In the following example, the endpoint URL uses the default server address:
 
 ```text
 http://localhost:8080/mcp/v1
 ```
 
-Include the token in the `Authorization` header using
-the Bearer scheme. The token's scope controls which
-connections and MCP tools the client can access.
+Include the token in the `Authorization` header using the Bearer scheme. The
+token's scope controls which connections and MCP tools the client can access.
 
-In the following example, a `curl` command sends a
-request to the MCP endpoint:
+In the following example, a `curl` command sends a request to the MCP endpoint:
 
 ```bash
 curl -X POST http://localhost:8080/mcp/v1 \
@@ -48,24 +38,21 @@ curl -X POST http://localhost:8080/mcp/v1 \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Replace the URL and token with values that match your
-environment.
+Replace the URL and token with values that match your environment.
 
-## Client Configuration
+## Configuring Popular Clients
 
-The following sections describe how to configure
-popular MCP clients. Each example connects to
-`http://localhost:8080/mcp/v1` with a Bearer token.
-Replace the URL and token value with your own.
+The following sections describe how to configure popular MCP clients. Each
+example connects to `http://localhost:8080/mcp/v1` with a Bearer token. Replace
+the URL and token value with your own.
 
 ### Claude Code
 
-Claude Code stores MCP server configuration in
-`~/.claude.json` for user scope or `.mcp.json` for
-project scope.
+Claude Code stores MCP server configuration in `~/.claude.json` for user scope
+or `.mcp.json` for project scope.
 
-In the following example, the `claude mcp add`
-command registers the Workbench server:
+In the following example, the `claude mcp add` command registers the Workbench
+server:
 
 ```bash
 claude mcp add ai-dba-workbench \
@@ -74,11 +61,11 @@ claude mcp add ai-dba-workbench \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-Alternatively, create a `.mcp.json` file in the
-project root for project-scoped configuration.
+Alternatively, create a `.mcp.json` file in the project root for project-scoped
+configuration.
 
-In the following example, the `.mcp.json` file uses
-an environment variable for the token:
+In the following example, the `.mcp.json` file uses an environment variable for
+the token:
 
 ```json
 {
@@ -94,17 +81,16 @@ an environment variable for the token:
 }
 ```
 
-Set the `AI_DBA_WORKBENCH_TOKEN` environment variable
-in your shell before launching Claude Code.
+Set the `AI_DBA_WORKBENCH_TOKEN` environment variable in your shell before
+launching Claude Code.
 
 ### Cursor
 
-Cursor stores MCP server configuration in
-`~/.cursor/mcp.json` for user scope or
-`.cursor/mcp.json` for workspace scope.
+Cursor stores MCP server configuration in `~/.cursor/mcp.json` for user scope
+or `.cursor/mcp.json` for workspace scope.
 
-In the following example, the configuration file
-uses the `${env:VAR}` syntax for the token:
+In the following example, the configuration file uses the `${env:VAR}` syntax
+for the token:
 
 ```json
 {
@@ -120,17 +106,16 @@ uses the `${env:VAR}` syntax for the token:
 }
 ```
 
-Set the `AI_DBA_WORKBENCH_TOKEN` environment variable
-in your shell before launching Cursor.
+Set the `AI_DBA_WORKBENCH_TOKEN` environment variable in your shell before
+launching Cursor.
 
 ### VS Code (GitHub Copilot)
 
-VS Code stores MCP server configuration in
-`.vscode/mcp.json` at the workspace level. The
-top-level key is `servers` rather than `mcpServers`.
+VS Code stores MCP server configuration in `.vscode/mcp.json` at the workspace
+level. The top-level key is `servers` rather than `mcpServers`.
 
-In the following example, the configuration file
-uses the `${input:name}` syntax for the token:
+In the following example, the configuration file uses the `${input:name}`
+syntax for the token:
 
 ```json
 {
@@ -146,17 +131,16 @@ uses the `${input:name}` syntax for the token:
 }
 ```
 
-VS Code prompts for the `input` variable value when
-the MCP client connects. You can also use environment
-variables as an alternative to interactive input.
+VS Code prompts for the `input` variable value when the MCP client connects.
+You can also use environment variables as an alternative to interactive input.
 
 ### Windsurf
 
 Windsurf stores MCP server configuration in
 `~/.codeium/windsurf/mcp_config.json`.
 
-In the following example, the configuration file
-uses `serverUrl` instead of `url`:
+In the following example, the configuration file uses `serverUrl` instead of
+`url`:
 
 ```json
 {
@@ -171,39 +155,27 @@ uses `serverUrl` instead of `url`:
 }
 ```
 
-Set the `AI_DBA_WORKBENCH_TOKEN` environment variable
-in your shell before launching Windsurf. Note that
-Windsurf uses `serverUrl` instead of `url` in the
+Set the `AI_DBA_WORKBENCH_TOKEN` environment variable in your shell before
+launching Windsurf. Note that Windsurf uses `serverUrl` instead of `url` in the
 configuration.
 
 ## Claude Desktop (Not Supported)
 
-Claude Desktop does not support HTTP transport for
-MCP servers. The `claude_desktop_config.json` file
-only accepts `stdio` transport for locally installed
-MCP servers. Use Claude Code instead for connecting
-to the Workbench.
+Claude Desktop does not support HTTP transport for MCP servers. The
+`claude_desktop_config.json` file only accepts `stdio` transport for locally
+installed MCP servers. Use Claude Code instead for connecting to the Workbench.
 
 ## Verification
 
-Once configured, the MCP client should discover the
-Workbench's tools automatically. Verify the connection
-by asking your AI assistant to list the available MCP
-tools or to run a simple query such as listing
-database connections.
+Configured clients should discover the Workbench's tools automatically. Verify
+a connection by asking your AI assistant to list the available MCP tools or to
+run a simple query such as listing database connections.
 
-If the client does not discover the tools, confirm
-that the server is running, the URL is correct, and
-the token is valid.
+If the client does not discover the tools, confirm that the server is running,
+the URL is correct, and the token is valid.
 
 ## Available Tools
 
-The full list of tools and resources is documented on
-the [MCP Tools](../mcp-tools.md) page.
+The [Using Workbench with MCP Tools](mcp-tools.md) page documents the full list
+of tools and resources.
 
-## Related Documentation
-
-- [Ask Ellie](ask-ellie.md) describes the built-in
-  AI assistant that uses these tools internally.
-- [AI Overview](overview.md) covers AI-powered
-  summaries of database health and status.

@@ -1,16 +1,14 @@
-# Alert Rule Reference
+# Alert Reference
 
-This document lists all built-in alert rules included
-with the alerter. Each rule monitors a specific
-PostgreSQL metric and triggers an alert when the
-threshold is exceeded.
+This document lists all built-in alert rules included with the alerter. Each
+rule monitors a specific PostgreSQL metric and triggers an alert when the
+metric exceeds the threshold.
 
 ## Connection Rules
 
 ### High Connection Utilization
 
-This rule alerts when database connection usage
-approaches the maximum limit.
+This rule alerts when database connection usage approaches the maximum limit.
 
 | Property | Value |
 |----------|-------|
@@ -19,14 +17,13 @@ approaches the maximum limit.
 | Default Threshold | 80 |
 | Default Severity | warning |
 
-A high connection utilization indicates the database may
-run out of available connections. Consider increasing
-`max_connections` or implementing connection pooling.
+A high connection utilization indicates the database may run out of available
+connections. Consider increasing `max_connections` or implementing connection
+pooling.
 
 ### High Max Connections
 
-This rule alerts when the `max_connections` setting
-exceeds a threshold.
+This rule alerts when the `max_connections` setting exceeds a threshold.
 
 | Property | Value |
 |----------|-------|
@@ -35,14 +32,12 @@ exceeds a threshold.
 | Default Threshold | 500 |
 | Default Severity | warning |
 
-A very high `max_connections` setting can degrade
-performance. Consider using a connection pooler such as
-PgBouncer instead of increasing the connection limit.
+A very high `max_connections` setting can degrade performance. Consider using a
+connection pooler such as PgBouncer instead of increasing the connection limit.
 
 ### Blocked Sessions
 
-This rule alerts when sessions are waiting for locks
-held by other sessions.
+This rule alerts when sessions are waiting for locks that other sessions hold.
 
 | Property | Value |
 |----------|-------|
@@ -51,14 +46,13 @@ held by other sessions.
 | Default Threshold | 5 |
 | Default Severity | warning |
 
-Blocked sessions indicate lock contention. Investigate
-the blocking queries and consider optimizing the
-workload.
+Blocked sessions indicate lock contention. Investigate the blocking queries and
+consider optimizing the workload.
 
 ### Long-Running Idle Transactions
 
-This rule alerts when a transaction has been idle in
-transaction state too long.
+This rule alerts when a transaction has been idle in transaction state too
+long.
 
 | Property | Value |
 |----------|-------|
@@ -67,15 +61,13 @@ transaction state too long.
 | Default Threshold | 300 |
 | Default Severity | warning |
 
-Idle in transaction connections hold locks and prevent
-vacuum from reclaiming space. Configure
-`idle_in_transaction_session_timeout` to automatically
+Idle in transaction connections hold locks and prevent vacuum from reclaiming
+space. Configure `idle_in_transaction_session_timeout` to automatically
 terminate these connections.
 
 ### Long Lock Wait Time
 
-This rule alerts when a session has been waiting for a
-lock too long.
+This rule alerts when a session has been waiting for a lock too long.
 
 | Property | Value |
 |----------|-------|
@@ -84,15 +76,14 @@ lock too long.
 | Default Threshold | 60 |
 | Default Severity | warning |
 
-Long lock waits can indicate deadlock-prone workloads
-or inefficient query patterns.
+Long lock waits can indicate deadlock-prone workloads or inefficient query
+patterns.
 
 ## Query Performance Rules
 
 ### Long-Running Query
 
-This rule alerts when a query has been executing for
-longer than the threshold.
+This rule alerts when a query has been executing for longer than the threshold.
 
 | Property | Value |
 |----------|-------|
@@ -101,13 +92,13 @@ longer than the threshold.
 | Default Threshold | 300 |
 | Default Severity | warning |
 
-Long-running queries may indicate missing indexes,
-inefficient query plans, or inappropriate workloads.
+Long-running queries may indicate missing indexes, inefficient query plans, or
+inappropriate workloads.
 
 ### Long-Running Transaction
 
-This rule alerts when a transaction has been active for
-longer than the threshold.
+This rule alerts when a transaction has been active for longer than the
+threshold.
 
 | Property | Value |
 |----------|-------|
@@ -116,14 +107,12 @@ longer than the threshold.
 | Default Threshold | 600 |
 | Default Severity | warning |
 
-Long transactions can cause bloat and prevent vacuum
-from running effectively.
+Long transactions can cause bloat and prevent vacuum from running effectively.
 
 ### Slow Query Count
 
-This rule alerts when the number of slow queries exceeds
-a threshold. The rule requires the `pg_stat_statements`
-extension.
+This rule alerts when the number of slow queries exceeds a threshold. The rule
+requires the `pg_stat_statements` extension.
 
 | Property | Value |
 |----------|-------|
@@ -133,15 +122,13 @@ extension.
 | Default Severity | warning |
 | Required Extension | `pg_stat_statements` |
 
-A high slow query count indicates performance problems
-that should be investigated.
+A high slow query count indicates performance problems that need investigation.
 
 ## Replication Rules
 
 ### High Replication Lag (Time)
 
-This rule alerts when replication replay is behind the
-primary.
+This rule alerts when replication replay is behind the primary.
 
 | Property | Value |
 |----------|-------|
@@ -150,13 +137,13 @@ primary.
 | Default Threshold | 30 |
 | Default Severity | warning |
 
-Replication lag can indicate network issues, replica
-resource constraints, or write-heavy workloads.
+Replication lag can indicate network issues, replica resource constraints, or
+write-heavy workloads.
 
 ### High Replication Lag (Bytes)
 
-This rule alerts when replication is behind by more than
-the specified byte count.
+This rule alerts when replication is behind by more than the specified byte
+count.
 
 | Property | Value |
 |----------|-------|
@@ -165,13 +152,12 @@ the specified byte count.
 | Default Threshold | 104857600 (100 MB) |
 | Default Severity | warning |
 
-This metric provides a more accurate view of replication
-lag when write activity is bursty.
+This metric provides a more accurate view of replication lag when write
+activity is bursty.
 
 ### Inactive Replication Slot
 
-This rule alerts when a replication slot becomes
-inactive.
+This rule alerts when a replication slot becomes inactive.
 
 | Property | Value |
 |----------|-------|
@@ -180,14 +166,13 @@ inactive.
 | Default Threshold | 1 |
 | Default Severity | critical |
 
-Inactive replication slots prevent WAL cleanup and can
-cause disk exhaustion. Drop unused slots or reconnect
-the subscriber.
+Inactive replication slots prevent WAL cleanup and can cause disk exhaustion.
+Drop unused slots or reconnect the subscriber.
 
 ### High Replication Slot WAL Retention
 
-This rule alerts when a replication slot retains more
-WAL data than the threshold.
+This rule alerts when a replication slot retains more WAL data than the
+threshold.
 
 | Property | Value |
 |----------|-------|
@@ -196,14 +181,12 @@ WAL data than the threshold.
 | Default Threshold | 1073741824 (1 GB) |
 | Default Severity | warning |
 
-Large WAL retention by a replication slot can lead to
-disk exhaustion. Investigate the subscriber connection
-or consider dropping unused slots.
+Large WAL retention by a replication slot can lead to disk exhaustion.
+Investigate the subscriber connection or consider dropping unused slots.
 
 ### Standby Disconnected
 
-This rule alerts when a standby has no active WAL
-receiver process.
+This rule alerts when a standby has no active WAL receiver process.
 
 | Property | Value |
 |----------|-------|
@@ -212,17 +195,14 @@ receiver process.
 | Default Threshold | 1 |
 | Default Severity | critical |
 
-A disconnected standby is in recovery mode but not
-receiving WAL from the primary. The standby will fall
-further behind until the WAL receiver is restarted and
-replication resumes. Check the PostgreSQL log on the
-standby for connection errors and verify that the
-primary server is accessible.
+A disconnected standby is in recovery mode but not receiving WAL from the
+primary. The standby will fall further behind until an administrator restarts
+the WAL receiver and replication resumes. Check the PostgreSQL log on the
+standby for connection errors and verify that the primary server is accessible.
 
 ### Subscription Worker Down
 
-This rule alerts when a subscription's apply worker is
-not running.
+This rule alerts when a subscription's apply worker is not running.
 
 | Property | Value |
 |----------|-------|
@@ -231,13 +211,11 @@ not running.
 | Default Threshold | 1 |
 | Default Severity | critical |
 
-A subscription worker that is not running means logical
-replication has stopped for that subscription. This
-alert covers both native PostgreSQL logical replication
-and Spock subscriptions. Check the PostgreSQL log on the
-subscriber for errors and verify that the publisher is
-accessible. Use `ALTER SUBSCRIPTION ... ENABLE` to
-restart a disabled subscription.
+A subscription worker that is not running means logical replication has stopped
+for that subscription. This alert covers both native PostgreSQL logical
+replication and Spock subscriptions. Check the PostgreSQL log on the subscriber
+for errors and verify that the publisher is accessible. Use
+`ALTER SUBSCRIPTION ... ENABLE` to restart a disabled subscription.
 
 ## Storage Rules
 
@@ -252,8 +230,8 @@ This rule alerts when disk usage exceeds the threshold.
 | Default Threshold | 85 |
 | Default Severity | warning |
 
-High disk usage can lead to database failures. Add
-storage capacity or clean up unnecessary data.
+High disk usage can lead to database failures. Add storage capacity or clean up
+unnecessary data.
 
 ### Critical Disk Usage
 
@@ -266,13 +244,11 @@ This rule alerts when disk usage is critically high.
 | Default Threshold | 95 |
 | Default Severity | critical |
 
-Critical disk usage requires immediate action to
-prevent database outages.
+Critical disk usage requires immediate action to prevent database outages.
 
 ### High Dead Tuple Percentage
 
-This rule alerts when tables have accumulated too many
-dead tuples.
+This rule alerts when tables have accumulated too many dead tuples.
 
 | Property | Value |
 |----------|-------|
@@ -281,11 +257,10 @@ dead tuples.
 | Default Threshold | 10 |
 | Default Severity | warning |
 
-Dead tuples indicate vacuum is not keeping up with
-updates. Check vacuum settings and consider running
-manual vacuum. The alerter excludes tables with fewer
-than 1,000 total tuples from evaluation to reduce noise
-from small catalog and system tables.
+Dead tuples indicate vacuum is not keeping up with updates. Check vacuum
+settings and consider running manual vacuum. The alerter excludes tables with
+fewer than 1,000 total tuples from evaluation to reduce noise from small
+catalog and system tables.
 
 ### High Table Bloat
 
@@ -298,14 +273,12 @@ This rule alerts when table bloat exceeds the threshold.
 | Default Threshold | 50 |
 | Default Severity | warning |
 
-Table bloat reduces query performance and wastes
-storage. Consider running `VACUUM FULL` during a
-maintenance window.
+Table bloat reduces query performance and wastes storage. Consider running
+`VACUUM FULL` during a maintenance window.
 
 ### Stale Autovacuum
 
-This rule alerts when a table has not been autovacuumed
-recently.
+This rule alerts when autovacuum has not processed a table recently.
 
 | Property | Value |
 |----------|-------|
@@ -314,13 +287,12 @@ recently.
 | Default Threshold | 168 (7 days) |
 | Default Severity | warning |
 
-Tables that have not been vacuumed may have accumulated
-dead tuples or outdated statistics.
+Tables that vacuum has not processed recently may accumulate dead tuples or
+outdated statistics.
 
 ### High Transaction ID Age
 
-This rule alerts when transaction IDs are approaching
-wraparound.
+This rule alerts when transaction IDs are approaching wraparound.
 
 | Property | Value |
 |----------|-------|
@@ -329,16 +301,14 @@ wraparound.
 | Default Threshold | 50 |
 | Default Severity | warning |
 
-Transaction ID wraparound prevention requires aggressive
-vacuuming. Monitor this metric carefully on busy
-databases.
+Transaction ID wraparound prevention requires aggressive vacuuming. Monitor
+this metric carefully on busy databases.
 
 ## Database Performance Rules
 
 ### Low Cache Hit Ratio
 
-This rule alerts when the buffer cache hit ratio falls
-below the threshold.
+This rule alerts when the buffer cache hit ratio falls below the threshold.
 
 | Property | Value |
 |----------|-------|
@@ -347,14 +317,12 @@ below the threshold.
 | Default Threshold | 90 |
 | Default Severity | warning |
 
-A low cache hit ratio indicates the database needs more
-memory for `shared_buffers`; the working set may also be
-too large. The alerter calculates the ratio from the
-change in block reads between collection intervals. This
-delta-based approach reflects recent performance rather
-than cumulative counters. The alerter excludes databases
-with fewer than 10,000 total block operations in an
-interval to avoid noise from idle databases.
+A low cache hit ratio indicates the database needs more memory for
+`shared_buffers`; the working set may also be too large. The alerter calculates
+the ratio from the change in block reads between collection intervals. This
+delta-based approach reflects recent performance rather than cumulative
+counters. The alerter excludes databases with fewer than 10,000 total block
+operations in an interval to avoid noise from idle databases.
 
 ### Deadlocks Detected
 
@@ -367,14 +335,12 @@ This rule alerts when deadlocks occur.
 | Default Threshold | 0 |
 | Default Severity | warning |
 
-Deadlocks indicate lock ordering problems in the
-application. Review the application logic to prevent
-deadlocks.
+Deadlocks indicate lock ordering problems in the application. Review the
+application logic to prevent deadlocks.
 
 ### High Temporary File Usage
 
-This rule alerts when temporary file creation exceeds
-the threshold.
+This rule alerts when temporary file creation exceeds the threshold.
 
 | Property | Value |
 |----------|-------|
@@ -383,9 +349,8 @@ the threshold.
 | Default Threshold | 10 |
 | Default Severity | warning |
 
-Temporary files are created when `work_mem` is
-insufficient for sort and hash operations. Consider
-increasing `work_mem`.
+PostgreSQL creates temporary files when `work_mem` is insufficient for sort and
+hash operations. Consider increasing `work_mem`.
 
 ## System Resource Rules
 
@@ -400,8 +365,8 @@ This rule alerts when CPU usage exceeds the threshold.
 | Default Threshold | 80 |
 | Default Severity | warning |
 
-High CPU usage may indicate inefficient queries, missing
-indexes, or insufficient hardware capacity.
+High CPU usage may indicate inefficient queries, missing indexes, or
+insufficient hardware capacity.
 
 ### High Memory Usage
 
@@ -414,13 +379,12 @@ This rule alerts when memory usage exceeds the threshold.
 | Default Threshold | 85 |
 | Default Severity | warning |
 
-High memory usage can lead to swap usage and performance
-degradation. Review memory allocation settings.
+High memory usage can lead to swap usage and performance degradation. Review
+memory allocation settings.
 
 ### High System Load
 
-This rule alerts when the 15-minute load average exceeds
-the threshold.
+This rule alerts when the 15-minute load average exceeds the threshold.
 
 | Property | Value |
 |----------|-------|
@@ -429,9 +393,8 @@ the threshold.
 | Default Threshold | 4 |
 | Default Severity | warning |
 
-High system load indicates the server is overloaded.
-Investigate the source of the load and consider scaling
-resources.
+High system load indicates that the current workload has overloaded the server.
+Investigate the source of the load and consider scaling resources.
 
 ## Archive Rules
 
@@ -446,15 +409,14 @@ This rule alerts when WAL archiving fails.
 | Default Threshold | 0 |
 | Default Severity | critical |
 
-Archive failures can prevent point-in-time recovery.
-Check the archive command and destination storage.
+Archive failures can prevent point-in-time recovery. Check the archive command
+and destination storage.
 
 ## Checkpoint Rules
 
 ### Frequent Requested Checkpoints
 
-This rule alerts when checkpoints are requested too
-frequently.
+This rule alerts when PostgreSQL requests too many checkpoints.
 
 | Property | Value |
 |----------|-------|
@@ -463,14 +425,12 @@ frequently.
 | Default Threshold | 5 |
 | Default Severity | warning |
 
-Frequent requested checkpoints indicate
-`checkpoint_segments` or `max_wal_size` may be too low
-for the workload.
+Frequent requested checkpoints indicate `checkpoint_segments` or `max_wal_size`
+may be too low for the workload.
 
 ## Customizing Rules
 
-All built-in rules can be customized through
-per-connection overrides. Administrators configure
-overrides through the admin panel. See the
-[Alerts](index.md) documentation for details on the
-alert lifecycle and management.
+Administrators can customize all built-in rules through per-connection
+overrides, which they configure through the admin panel. See the
+[Monitoring Alerts](index.md) documentation for details on the alert lifecycle
+and management.

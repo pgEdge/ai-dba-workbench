@@ -1,24 +1,21 @@
 # Contributing
 
-This guide provides instructions for developers who want
-to contribute to the pgEdge AI DBA Workbench project. The
-guide covers setting up a development environment,
-building and testing the project, and submitting
-contributions.
+This guide provides instructions for developers who want to contribute to the
+pgEdge AI DBA Workbench project. The guide covers setting up a development
+environment, building and testing the project, and submitting contributions.
 
 ## Prerequisites
 
 Before starting development, install the following tools:
 
-- [Go 1.24](https://go.dev/doc/install) or later for
-  building server-side components.
-- [Node.js 20.19](https://nodejs.org/) or later on the 20.x line,
-  or Node.js 22.12 or later, for building the web client.
-- [PostgreSQL 14](https://www.postgresql.org/download/)
-  or later for running tests.
+- [Go 1.24](https://go.dev/doc/install) or later for building server-side
+  components.
+- [Node.js 20.19](https://nodejs.org/) or later on the 20.x line, or Node.js
+  22.12 or later, for building the web client.
+- [PostgreSQL 14](https://www.postgresql.org/download/) or later for running
+  tests.
 - [Git](https://git-scm.com/) for version control.
-- [Make](https://www.gnu.org/software/make/) for build
-  automation.
+- [Make](https://www.gnu.org/software/make/) for build automation.
 
 Install the Go linter with the following command:
 
@@ -36,8 +33,7 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 ## Getting Started
 
-Clone the repository from
-[GitHub](https://github.com/pgEdge/ai-dba-workbench):
+Clone the repository from [GitHub](https://github.com/pgEdge/ai-dba-workbench):
 
 ```bash
 git clone \
@@ -53,9 +49,8 @@ Build all components from the top-level directory:
 make all
 ```
 
-The build process compiles all Go binaries and places
-them in the `bin/` directory. Build individual components
-by changing to the component directory:
+The build process compiles all Go binaries and places them in the `bin/`
+directory. Build individual components by changing to the component directory:
 
 ```bash
 cd collector && make build
@@ -63,9 +58,9 @@ cd server && make build
 ```
 
 Build the web client from the `ai-dba-workbench` repository root. In the
-following example, the `cd client` command enters the client directory;
-the `npm install` command installs dependencies; the `npm run build`
-command builds the client:
+following example, the `cd client` command enters the client directory; the
+`npm install` command installs dependencies; the `npm run build` command builds
+the client:
 
 ```bash
 cd client && npm install && npm run build
@@ -73,16 +68,15 @@ cd client && npm install && npm run build
 
 ## Testing
 
-The project uses comprehensive unit tests for all
-components. Run all tests from the top-level directory:
+The project uses comprehensive unit tests for all components. Run all tests
+from the top-level directory:
 
 ```bash
 make test-all
 ```
 
-The `test-all` target runs tests, coverage analysis, and
-linting for all Go components. Run individual test
-targets as needed:
+The `test-all` target runs tests, coverage analysis, and linting for all Go
+components. Run individual test targets as needed:
 
 ```bash
 # Run tests only
@@ -97,18 +91,16 @@ make lint
 
 ### Test Database
 
-Tests that require a database create a temporary database
-with a timestamp in the name. Set the connection string
-using an environment variable:
+Tests that require a database create a temporary database with a timestamp in
+the name. Set the connection string using an environment variable:
 
 ```bash
 export TEST_AI_WORKBENCH_SERVER=\
   "postgres://user:pass@localhost/postgres"
 ```
 
-The test database drops automatically after tests
-complete. Set the keep flag to preserve the database for
-inspection:
+The test database drops automatically after tests complete. Set the keep flag
+to preserve the database for inspection:
 
 ```bash
 export TEST_AI_WORKBENCH_KEEP_DB=1
@@ -116,16 +108,14 @@ export TEST_AI_WORKBENCH_KEEP_DB=1
 
 ### Component-Specific Tests
 
-Run tests for a specific component by changing to the
-component directory:
+Run tests for a specific component by changing to the component directory:
 
 ```bash
 cd collector && make test
 cd server && make test
 ```
 
-See the component development guides for detailed
-testing information:
+See the component development guides for detailed testing information:
 
 - [Collector Testing Guide](collector/testing.md)
 - [Alerter Testing Guide](alerter/testing.md)
@@ -142,8 +132,7 @@ The project follows these coding standards:
 
 ### Copyright Header
 
-Include the following copyright header at the top of
-every source file:
+Include the following copyright header at the top of every source file:
 
 ```go
 /*-------------------------------------------------------
@@ -157,8 +146,8 @@ every source file:
  */
 ```
 
-Adjust the comment style for non-Go languages. Do not
-include the header in configuration files.
+Adjust the comment style for non-Go languages. Do not include the header in
+configuration files.
 
 ### Go Code
 
@@ -167,8 +156,7 @@ Follow these Go-specific guidelines:
 - Export types and functions using PascalCase naming.
 - Use camelCase for private functions and variables.
 - Add doc comments to all exported types and functions.
-- Handle all errors and provide context using
-  `fmt.Errorf` with `%w`.
+- Handle all errors and provide context using `fmt.Errorf` with `%w`.
 - Run `gofmt` and `go vet` before committing.
 
 ### Documentation
@@ -184,8 +172,8 @@ Follow the documentation style guide in
 
 ## Submitting Contributions
 
-We welcome contributions from the community. Follow
-these steps to submit a contribution.
+We welcome contributions from the community. Follow these steps to submit a
+contribution.
 
 ### 1. Create a Feature Branch
 
@@ -197,9 +185,8 @@ git checkout -b feature/your-feature-name
 
 ### 2. Make Your Changes
 
-Implement your changes following the code style
-guidelines. Add tests for any new functionality and
-update documentation as needed.
+Implement your changes following the code style guidelines. Add tests for any
+new functionality and update documentation as needed.
 
 ### 3. Run Quality Checks
 
@@ -209,13 +196,12 @@ Run the full test suite before committing:
 make test-all
 ```
 
-The test suite must pass without errors or warnings
-before you submit a pull request.
+The test suite must pass without errors or warnings before you submit a pull
+request.
 
 ### 4. Commit Your Changes
 
-Write clear commit messages that explain what changed
-and why:
+Write clear commit messages that explain what changed and why:
 
 ```
 Short summary (50 characters or less)
@@ -237,20 +223,17 @@ Push your branch to GitHub and open a pull request:
 git push origin feature/your-feature-name
 ```
 
-Provide a clear description of your changes in the pull
-request. Reference any related issues and describe how
-you tested your changes.
+Provide a clear description of your changes in the pull request. Reference any
+related issues and describe how you tested your changes.
 
 ### 6. Address Review Feedback
 
-Respond to code review comments and make requested
-changes. Push additional commits to your branch to
-update the pull request.
+Respond to code review comments and make requested changes. Push additional
+commits to your branch to update the pull request.
 
 ## Reporting Issues
 
-To report a bug or request a feature, create an issue
-on GitHub:
+To report a bug or request a feature, create an issue on GitHub:
 
 [GitHub Issues](https://github.com/pgEdge/ai-dba-workbench/issues)
 
@@ -266,5 +249,5 @@ Include the following information in bug reports:
 This project is licensed under the
 [PostgreSQL License](https://github.com/pgEdge/ai-dba-workbench/blob/main/LICENSE.md).
 
-By contributing to the project, you agree that your
-contributions will be licensed under the same license.
+By contributing to the project, you agree that your contributions will be
+licensed under the same license.

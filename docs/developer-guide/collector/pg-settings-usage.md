@@ -1,44 +1,37 @@
 # pg_settings Probe Usage Guide
 
-This guide provides examples and best practices for
-using the `pg_settings` probe to track PostgreSQL
-configuration changes over time.
+This guide provides examples and best practices for using the `pg_settings`
+probe to track PostgreSQL configuration changes over time.
 
 ## Overview
 
-The `pg_settings` probe collects PostgreSQL
-configuration settings with intelligent change
-detection. Unlike other probes that store data on
-every collection interval, this probe only stores
-configuration snapshots when changes are detected.
+The `pg_settings` probe collects PostgreSQL configuration settings with
+intelligent change detection. Unlike other probes that store data on every
+collection interval, this probe only stores configuration snapshots when
+changes are detected.
 
 ### Key Features
 
-The `pg_settings` probe includes the following
-features:
+The `pg_settings` probe includes the following features:
 
-- Change detection uses SHA256 hash comparison to
-  identify configuration changes.
-- Selective storage only stores data when the
-  configuration differs from the most recent
-  snapshot.
-- Long retention provides a default 365-day retention
-  for year-over-year analysis.
-- The garbage collector preserves the most recent
-  snapshot for each server regardless of age.
-- Hourly checks run every hour by default to detect
-  changes promptly.
+- Change detection uses SHA256 hash comparison to identify configuration
+  changes.
+- Selective storage only stores data when the configuration differs from the
+  most recent snapshot.
+- Long retention provides a default 365-day retention for year-over-year
+  analysis.
+- The garbage collector preserves the most recent snapshot for each server
+  regardless of age.
+- Hourly checks run every hour by default to detect changes promptly.
 
 ## Common Queries
 
-This section provides SQL queries for common
-`pg_settings` analysis tasks.
+This section provides SQL queries for common `pg_settings` analysis tasks.
 
 ### View Current Configuration for a Server
 
-In the following example, the query retrieves the
-most recent configuration snapshot for a specific
-monitored connection:
+In the following example, the query retrieves the most recent configuration
+snapshot for a specific monitored connection:
 
 ```sql
 SELECT name, setting, unit, source,
@@ -55,9 +48,8 @@ ORDER BY name;
 
 ### Compare Configuration Between Two Points in Time
 
-In the following example, the query identifies
-settings that changed between two specific
-timestamps:
+In the following example, the query identifies settings that changed between
+two specific timestamps:
 
 ```sql
 WITH recent AS (
@@ -87,8 +79,8 @@ ORDER BY setting_name;
 
 ### Track All Configuration Changes for a Server
 
-In the following example, the query shows the
-complete history of configuration changes:
+In the following example, the query shows the complete history of configuration
+changes:
 
 ```sql
 SELECT
@@ -111,8 +103,8 @@ ORDER BY collected_at DESC;
 
 ### Find Settings Changed in the Last 30 Days
 
-In the following example, the query identifies which
-specific settings changed recently:
+In the following example, the query identifies which specific settings changed
+recently:
 
 ```sql
 WITH changes AS (
@@ -138,8 +130,8 @@ ORDER BY ps.name, ps.collected_at DESC;
 
 ### Identify Pending Restart Requirements
 
-In the following example, the query finds
-configuration changes that require a server restart:
+In the following example, the query finds configuration changes that require a
+server restart:
 
 ```sql
 SELECT
@@ -163,8 +155,8 @@ ORDER BY name;
 
 ### Compare Configuration Across Multiple Servers
 
-In the following example, the query identifies
-configuration differences between servers:
+In the following example, the query identifies configuration differences
+between servers:
 
 ```sql
 WITH latest_settings AS (
@@ -190,8 +182,8 @@ ORDER BY c.name;
 
 ### Audit Configuration Source Changes
 
-In the following example, the query tracks when
-settings moved from one source to another:
+In the following example, the query tracks when settings moved from one source
+to another:
 
 ```sql
 WITH numbered_changes AS (
@@ -221,8 +213,8 @@ ORDER BY collected_at DESC;
 
 ### Find Non-Default Settings
 
-In the following example, the query identifies all
-settings that differ from PostgreSQL defaults:
+In the following example, the query identifies all settings that differ from
+PostgreSQL defaults:
 
 ```sql
 SELECT
@@ -245,15 +237,13 @@ ORDER BY name;
 
 ## Use Cases
 
-This section describes common use cases for the
-`pg_settings` probe data.
+This section describes common use cases for the `pg_settings` probe data.
 
 ### Configuration Change Auditing
 
-Track configuration changes by correlating
-`pg_settings` data with other audit logs. In the
-following example, the query finds all configuration
-snapshots in a specific time window:
+Track configuration changes by correlating `pg_settings` data with other audit
+logs. In the following example, the query finds all configuration snapshots in
+a specific time window:
 
 ```sql
 SELECT
@@ -272,9 +262,8 @@ ORDER BY collected_at;
 
 ### Configuration Drift Detection
 
-Identify when servers drift from a standard
-configuration. In the following example, the query
-compares each server against a baseline:
+Identify when servers drift from a standard configuration. In the following
+example, the query compares each server against a baseline:
 
 ```sql
 WITH baseline AS (
@@ -311,9 +300,8 @@ ORDER BY c.name, cs.name;
 
 ### Capacity Planning Analysis
 
-Track configuration changes related to resource
-allocation over time. In the following example, the
-query retrieves resource-related settings across
+Track configuration changes related to resource allocation over time. In the
+following example, the query retrieves resource-related settings across
 snapshots:
 
 ```sql
@@ -347,9 +335,8 @@ ORDER BY collected_at DESC;
 
 ### Compliance Verification
 
-Verify that specific security-related settings meet
-compliance requirements. In the following example,
-the query checks critical security settings:
+Verify that specific security-related settings meet compliance requirements. In
+the following example, the query checks critical security settings:
 
 ```sql
 SELECT
@@ -383,14 +370,12 @@ ORDER BY name;
 
 ## Best Practices
 
-Follow these best practices when working with
-`pg_settings` data.
+Follow these best practices when working with `pg_settings` data.
 
 ### Understand the Collection Interval
 
-The probe checks configuration every hour by default.
-To detect changes more frequently, adjust the
-collection interval. In the following example, the
+The probe checks configuration every hour by default. To detect changes more
+frequently, adjust the collection interval. In the following example, the
 command changes the interval to 30 minutes:
 
 ```sql
@@ -400,15 +385,13 @@ WHERE name = 'pg_settings'
   AND connection_id IS NULL;
 ```
 
-Changes take effect within 5 minutes through
-automatic configuration reload.
+Changes take effect within 5 minutes through automatic configuration reload.
 
 ### Leverage the Long Retention Period
 
-With a default 365-day retention, you can perform
-year-over-year analysis. In the following example,
-the query compares configuration from exactly one
-year ago:
+With a default 365-day retention, you can perform year-over-year analysis. In
+the following example, the query compares configuration from exactly one year
+ago:
 
 ```sql
 SELECT
@@ -435,9 +418,8 @@ ORDER BY name;
 
 ### Monitor for Unexpected Changes
 
-Set up alerts for configuration changes you do not
-expect. In the following example, the query finds
-configuration changes in the last 24 hours:
+Set up alerts for configuration changes you do not expect. In the following
+example, the query finds configuration changes in the last 24 hours:
 
 ```sql
 SELECT
@@ -454,22 +436,18 @@ GROUP BY collected_at
 ORDER BY collected_at DESC;
 ```
 
-If this query returns multiple snapshots, the
-configuration is changing frequently and may warrant
-investigation.
+If this query returns multiple snapshots, the configuration is changing
+frequently and may warrant investigation.
 
 ## Integration with Other Probes
 
-This section shows how to correlate `pg_settings`
-data with other metrics.
+This section shows how to correlate `pg_settings` data with other metrics.
 
 ### Correlate Configuration with Performance
 
-Join `pg_settings` data with performance metrics to
-understand how configuration changes impact system
-behavior. In the following example, the query
-compares query performance before and after a
-configuration change:
+Join `pg_settings` data with performance metrics to understand how
+configuration changes impact system behavior. In the following example, the
+query compares query performance before and after a configuration change:
 
 ```sql
 WITH config_change AS (
@@ -498,13 +476,11 @@ GROUP BY period;
 
 ## Troubleshooting
 
-This section covers common issues with the
-`pg_settings` probe.
+This section covers common issues with the `pg_settings` probe.
 
 ### No Data Appearing
 
-If no `pg_settings` data appears, check the
-following:
+If no `pg_settings` data appears, check the following:
 
 1. Verify the probe is enabled:
    ```sql
@@ -514,8 +490,7 @@ following:
      AND connection_id IS NULL;
    ```
 
-2. Check the Collector logs for errors related to
-   `pg_settings`.
+2. Check the Collector logs for errors related to `pg_settings`.
 
 3. Verify that partitions exist:
    ```sql
@@ -528,33 +503,28 @@ following:
 
 ### Data Not Updating
 
-If configuration data seems stale, consider the
-following points:
+If configuration data seems stale, consider the following points:
 
-1. The probe only stores data when changes are
-   detected.
+1. The probe only stores data when changes are detected.
 2. Check the last collection time:
    ```sql
    SELECT MAX(collected_at) AS last_snapshot
    FROM metrics.pg_settings
    WHERE connection_id = 1;
    ```
-3. Verify the probe is running by checking the
-   Collector logs.
+3. Verify the probe is running by checking the Collector logs.
 
 ### Understanding Why Data Was Not Stored
 
-The probe uses hash comparison for change detection.
-If no new snapshot appears after configuration
-changes, follow these steps:
+The probe uses hash comparison for change detection. If no new snapshot appears
+after configuration changes, follow these steps:
 
 1. Verify the change took effect in PostgreSQL:
    ```sql
    SHOW max_connections;
    ```
 
-2. Wait up to 1 hour (default collection interval)
-   for detection.
+2. Wait up to 1 hour (default collection interval) for detection.
 
 3. Check whether the change requires a restart:
    ```sql
@@ -567,7 +537,5 @@ changes, follow these steps:
 
 The following resources provide additional details.
 
-- [Probe Reference](probe-reference.md) provides
-  complete probe documentation.
-- [Probes](probes.md) explains how probes work
-  internally.
+- [Probe Reference](probe-reference.md) provides complete probe documentation.
+- [Probes](probes.md) explains how probes work internally.

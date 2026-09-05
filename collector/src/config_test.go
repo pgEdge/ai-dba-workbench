@@ -16,6 +16,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 )
 
 func TestNewConfig(t *testing.T) {
@@ -469,6 +470,24 @@ func TestConfigLoadFromFile_InvalidYAML(t *testing.T) {
 	}
 }
 
+// allDatastoreFlagsPassed returns a flagutil.Set naming every
+// datastore connection flag, as if the operator had supplied all of
+// them on the command line.
+func allDatastoreFlagsPassed() flagutil.Set {
+	return flagutil.Set{
+		flagPGHost:         true,
+		flagPGHostAddr:     true,
+		flagPGDatabase:     true,
+		flagPGUsername:     true,
+		flagPGPasswordFile: true,
+		flagPGPort:         true,
+		flagPGSSLMode:      true,
+		flagPGSSLCert:      true,
+		flagPGSSLKey:       true,
+		flagPGSSLRootCert:  true,
+	}
+}
+
 func TestConfigApplyFlags(t *testing.T) {
 	// Save and restore the package-level flag pointers so this test is
 	// isolated from other tests in the file.
@@ -502,8 +521,9 @@ func TestConfigApplyFlags(t *testing.T) {
 	*pgSSLKey = "/flag/key"
 	*pgSSLRootCert = "/flag/root"
 
+	// Every flag is marked as passed, so every override applies.
 	config := NewConfig()
-	config.ApplyFlags()
+	config.ApplyFlags(allDatastoreFlagsPassed())
 
 	if config.Datastore.Host != "flag-host" {
 		t.Errorf("Host: got %q, want flag-host", config.Datastore.Host)
@@ -537,7 +557,7 @@ func TestConfigApplyFlags(t *testing.T) {
 	}
 }
 
-func TestConfigApplyFlags_EmptyFlagsPreserveDefaults(t *testing.T) {
+func TestConfigApplyFlags_UnpassedFlagsPreserveConfig(t *testing.T) {
 	// Save and restore flag pointers.
 	origHost, origHostAddr := *pgHost, *pgHostAddr
 	origDB, origUser := *pgDatabase, *pgUsername
@@ -557,18 +577,20 @@ func TestConfigApplyFlags_EmptyFlagsPreserveDefaults(t *testing.T) {
 		*pgSSLRootCert = origSSLRootCert
 	})
 
-	// Set all flags to their default values: ApplyFlags should not
-	// overwrite any config field in this case.
-	*pgHost = ""
-	*pgHostAddr = ""
-	*pgDatabase = ""
-	*pgUsername = ""
-	*pgPasswordFile = ""
+	// Give every flag a value that differs from the configuration
+	// below, but mark none of them as passed. ApplyFlags must ignore
+	// the values entirely, because nothing was supplied on the
+	// command line.
+	*pgHost = "flag-host"
+	*pgHostAddr = "10.0.0.5"
+	*pgDatabase = "flag-db"
+	*pgUsername = "flag-user"
+	*pgPasswordFile = "/flag/password"
 	*pgPort = 5432
 	*pgSSLMode = "prefer"
-	*pgSSLCert = ""
-	*pgSSLKey = ""
-	*pgSSLRootCert = ""
+	*pgSSLCert = "/flag/cert"
+	*pgSSLKey = "/flag/key"
+	*pgSSLRootCert = "/flag/root"
 
 	config := NewConfig()
 	// Pre-set all fields so we can detect any unwanted overwrite.
@@ -583,7 +605,7 @@ func TestConfigApplyFlags_EmptyFlagsPreserveDefaults(t *testing.T) {
 	config.Datastore.SSLKey = "/preserved/key"
 	config.Datastore.SSLRootCert = "/preserved/root"
 
-	config.ApplyFlags()
+	config.ApplyFlags(nil)
 
 	if config.Datastore.Host != "preserved" {
 		t.Errorf("Host should not have changed, got %q", config.Datastore.Host)
@@ -614,6 +636,102 @@ func TestConfigApplyFlags_EmptyFlagsPreserveDefaults(t *testing.T) {
 	}
 	if config.Datastore.SSLRootCert != "/preserved/root" {
 		t.Errorf("SSLRootCert should not have changed, got %q", config.Datastore.SSLRootCert)
+	}
+}
+
+// TestConfigApplyFlags_ExplicitDefaultValueWins covers the case the
+// old value-comparison logic could not express: the operator passes a
+// flag whose value happens to equal the flag's registered default, so
+// the flag must still override the configuration file.
+func TestConfigApplyFlags_ExplicitDefaultValueWins(t *testing.T) {
+	origPort, origSSLMode := *pgPort, *pgSSLMode
+	t.Cleanup(func() {
+		*pgPort = origPort
+		*pgSSLMode = origSSLMode
+	})
+
+	// Both values are the flags' registered defaults.
+	*pgPort = 5432
+	*pgSSLMode = "prefer"
+
+	config := NewConfig()
+	// Values as if they had come from a configuration file.
+	config.Datastore.Port = 6000
+	config.Datastore.SSLMode = "require"
+
+	config.ApplyFlags(flagutil.Set{flagPGPort: true, flagPGSSLMode: true})
+
+	if config.Datastore.Port != 5432 {
+		t.Errorf("Port: got %d, want 5432 from the explicit flag", config.Datastore.Port)
+	}
+	if config.Datastore.SSLMode != "prefer" {
+		t.Errorf("SSLMode: got %q, want prefer from the explicit flag", config.Datastore.SSLMode)
+	}
+}
+
+// TestConfigApplyFlags_ConfigMatchingFlagDefaultSurvives covers the
+// mirror image: a configuration file value that coincides with a
+// flag's registered default must survive when the flag is not passed.
+func TestConfigApplyFlags_ConfigMatchingFlagDefaultSurvives(t *testing.T) {
+	origPort, origSSLMode := *pgPort, *pgSSLMode
+	t.Cleanup(func() {
+		*pgPort = origPort
+		*pgSSLMode = origSSLMode
+	})
+
+	*pgPort = 5432
+	*pgSSLMode = "prefer"
+
+	config := NewConfig()
+	config.Datastore.Port = 5432
+	config.Datastore.SSLMode = "prefer"
+
+	config.ApplyFlags(nil)
+
+	if config.Datastore.Port != 5432 {
+		t.Errorf("Port: got %d, want the config value 5432", config.Datastore.Port)
+	}
+	if config.Datastore.SSLMode != "prefer" {
+		t.Errorf("SSLMode: got %q, want the config value prefer", config.Datastore.SSLMode)
+	}
+}
+
+// TestLoadConfigurationFlagPrecedence drives the whole load path: a
+// configuration file sets a non-default port, and an explicitly
+// passed -pg-port carrying the flag's own default value must still
+// win, which is precisely the case the old logic got wrong.
+func TestLoadConfigurationFlagPrecedence(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "collector.yaml")
+	secretPath := filepath.Join(tmpDir, "collector.secret")
+
+	yaml := "datastore:\n  host: config-host\n  port: 6000\n  sslmode: require\n" +
+		"secret_file: " + secretPath + "\n"
+	if err := os.WriteFile(configPath, []byte(yaml), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(secretPath, []byte("test-secret\n"), 0600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+
+	defer saveAndClearFlags(t)()
+	*configFile = configPath
+	*pgPort = 5432
+	*pgSSLMode = "prefer"
+
+	// Only -pg-port was passed; -pg-sslmode was not.
+	cfg, err := loadConfiguration(flagutil.Set{flagPGPort: true})
+	if err != nil {
+		t.Fatalf("loadConfiguration: %v", err)
+	}
+	if cfg.Datastore.Port != 5432 {
+		t.Errorf("Port: got %d, want 5432 from the explicit flag", cfg.Datastore.Port)
+	}
+	if cfg.Datastore.SSLMode != "require" {
+		t.Errorf("SSLMode: got %q, want require from the config file", cfg.Datastore.SSLMode)
+	}
+	if cfg.Datastore.Host != "config-host" {
+		t.Errorf("Host: got %q, want config-host from the config file", cfg.Datastore.Host)
 	}
 }
 

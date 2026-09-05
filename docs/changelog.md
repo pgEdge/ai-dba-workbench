@@ -61,6 +61,18 @@ project adheres to
 
 ### Fixed
 
+- Fix the collector and the alerter overriding a configuration file
+  value whenever that value happened to match a command-line flag's
+  built-in default, and ignoring a flag that an operator passed
+  explicitly with its default value. Both services decided whether a
+  flag had been supplied by comparing the flag's value against its
+  own default, which cannot tell the two cases apart; for example,
+  a collector configuration file setting `datastore.port: 6000`
+  ignored `-pg-port 5432` on the command line. Both services now
+  detect the flags that were actually present on the command line,
+  so the documented precedence of defaults, then configuration file,
+  then flags holds in every case. (#389)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

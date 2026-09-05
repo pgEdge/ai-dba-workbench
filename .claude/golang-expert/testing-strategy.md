@@ -307,6 +307,38 @@ func skipIfNoDatabase(t *testing.T) *pgxpool.Pool {
 }
 ```
 
+### Testing Command-Line Flag Precedence
+
+Configuration is layered as defaults, then configuration file, then
+command-line flags. Whether a flag overrides the file is decided by
+whether the operator actually passed it, never by comparing the
+flag's value against its default; a value comparison silently drops
+an explicitly passed default value and clobbers a file value that
+happens to match a default.
+
+The shared helper `pkg/flagutil` provides `Passed(fs *flag.FlagSet)
+Set`, backed by `flag.FlagSet.Visit`, and `Set.Has(name)`. The
+collector threads a `flagutil.Set` into `loadConfiguration` and
+`(*Config).ApplyFlags`; the alerter carries one in the `Passed`
+field of its `flagOverrides` struct, which `applyFlagOverrides` and
+the SIGHUP reload path both consume. Both binaries declare their
+flag names as constants, so registration and lookup cannot drift.
+
+Tests construct the set directly rather than parsing a command
+line, so both branches of every override are reachable:
+
+```go
+// The flag was passed, carrying the value that is also its default.
+cfg.ApplyFlags(flagutil.Set{flagPGPort: true})
+
+// Nothing was passed, so the config file value must survive.
+cfg.ApplyFlags(nil)
+```
+
+Any new flag needs both cases covered: a configuration value that
+coincides with the flag's default must survive when the flag is
+absent, and an explicitly passed default value must still apply.
+
 ## Database Testing
 
 ### Test Database Lifecycle

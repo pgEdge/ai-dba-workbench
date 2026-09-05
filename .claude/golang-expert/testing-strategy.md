@@ -257,6 +257,60 @@ When auditing a slow test, grep for `OpenAIBaseURL` and
 `AnthropicAPIURL` set to literal `http://localhost:...` or
 `https://api.openai.com` strings; those are the smell.
 
+### AI Analysis Paths: Token Budget and Empty Responses
+
+The non-streaming analysis paths (the estate/scoped overview in
+`internal/overview/` and the server-info database analysis in
+`internal/api/server_info_handlers.go`) share two conventions that
+tests must uphold.
+
+The first convention is that no caller hardcodes an output-token
+budget. `(*llmproxy.Config).BuildClientOptions(temperature)`
+resolves the budget internally from `llm.max_tokens` via
+`AnalysisMaxTokens`, falling back to
+`llmproxy.DefaultAnalysisMaxTokens` (4096) when the setting is
+unset, zero, or negative. Callers that also stamp `MaxTokens` onto
+a `pgllm.ChatRequest` must read `AnalysisMaxTokens` rather than a
+local constant. Cover the configured, unset, and negative cases;
+assert the value on the wire by decoding `max_tokens` from the
+request body inside the `httptest` stub.
+
+The second convention is that a response with no text block, or
+with whitespace-only text, is an error and not an empty summary.
+Both paths return `llmproxy.ErrNoTextContent`, which the
+server-info handler maps to HTTP 502. Reasoning models charge
+their thinking blocks against the same budget as the answer, so
+this is the shape a starved budget produces; reproduce it in tests
+with a content block of type `"thinking"` (the library exposes no
+named constant) or with an empty assistant message. The alerter
+mirrors both conventions in `alerter/src/internal/llm/reasoning.go`
+with `config.DefaultLLMMaxTokens` and its own `ErrNoTextContent`.
+
+### Handler Routing Tests Without a Live Datastore
+
+Handler tests that need to reach past a `*database.Datastore` but
+do not care about query results can wrap a lazily-created
+`pgxpool.Pool` aimed at a closed port:
+
+```go
+pool, err := pgxpool.New(context.Background(),
+    "postgres://nobody@127.0.0.1:1/none?connect_timeout=1")
+```
+
+`pgxpool` does not dial until a query runs, and a refused
+connection fails immediately, so the query helpers log their
+`[DEBUG]` message and return empty slices instead of panicking on
+a nil pool. Wrap the pool with `database.NewTestDatastore` and
+pair it with `auth.NewRBACChecker(nil)` for the allow path or
+`auth.NewRBACCheckerWithSharing` for the deny path. See
+`TestHandleServerInfoAI` in
+`server/src/internal/api/server_info_handlers_test.go`.
+
+This is not a counter-example to the rule above: the ban on
+unreachable URLs concerns the LLM HTTP client, whose 120-second
+timeout turns a refused endpoint into a two-minute hang. A
+refused TCP connect to a local port returns at once.
+
 ### Testing Without Database
 
 Pass `nil` pool for methods that do not require database access:

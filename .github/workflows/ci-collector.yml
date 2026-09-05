@@ -24,7 +24,7 @@ jobs:
 
         services:
             postgres:
-                image: postgres:${{ matrix.postgres-version }}
+                image: pgvector/pgvector:pg${{ matrix.postgres-version }}
                 env:
                     POSTGRES_PASSWORD: postgres
                     POSTGRES_DB: postgres

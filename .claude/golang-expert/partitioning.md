@@ -133,3 +133,37 @@ Rules for the datastore connection shared across a GC pass:
   client-side protocol violation, not transient contention, and
   retries will only succeed because the loop body has moved past
   the busy state — the underlying bug stays.
+
+## Scheduling Retention: Never Couple It to Process Uptime
+
+Retention enforcement must not be scheduled from process start.
+The garbage collector originally waited five minutes after startup
+and then ticked every 24 hours, holding no record of when it last
+ran. That made retention a function of *unbroken uptime*: a
+collector restarting more often than the startup delay never
+collected garbage at all, and every restart put it back to the
+beginning of the delay. In issue #437 an OOM restart loop therefore
+filled a datastore's disk, because partitions were never dropped
+across more than a hundred restarts.
+
+The pattern to follow instead:
+
+- Persist each completed pass. `maintenance_runs` holds one row per
+  task (`database.PartitionRetentionTask` for the dropper), written
+  by `database.RecordMaintenanceRun`.
+- Time the next pass from that record, not from process start, so a
+  restart resumes the cycle rather than beginning a new one. See
+  `computeNextRunDelay` in `collector/src/garbage_collector.go`.
+- Treat "never run" and "cannot read the record" as due now. Failing
+  towards collecting slightly early is harmless; failing towards not
+  collecting is what fills a disk.
+- Keep the startup grace period short, and only long enough to stay
+  clear of the probe burst the scheduler runs at startup. A long
+  grace period reintroduces the original bug for any process that
+  does not live that long.
+- Back a failed pass off rather than retrying immediately, so an
+  unreachable datastore does not produce a tight error loop.
+
+The same reasoning applies to any periodic maintenance added later:
+if the schedule lives only in memory, an unstable process silently
+stops doing the work, and nothing in the logs says so.

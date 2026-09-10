@@ -3160,6 +3160,33 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     9,
+		Description: "Add maintenance_runs table to persist background task completions",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS maintenance_runs (
+					task TEXT PRIMARY KEY,
+					last_run_at TIMESTAMPTZ NOT NULL
+				);
+
+				COMMENT ON TABLE maintenance_runs IS
+					'Records when each periodic background maintenance task last completed, so the schedule survives a collector restart. Without this the partition dropper only ran after a fixed period of unbroken uptime, and a collector that restarted more often than that never enforced retention at all.';
+				COMMENT ON COLUMN maintenance_runs.task IS
+					'Stable identifier for the maintenance task, for example partition_retention for the metrics partition dropper.';
+				COMMENT ON COLUMN maintenance_runs.last_run_at IS
+					'Timestamp at which the task last completed successfully; the next run is scheduled relative to this rather than to process start.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create maintenance_runs table: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations

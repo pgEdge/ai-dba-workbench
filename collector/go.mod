@@ -1,6 +1,6 @@
 module github.com/pgedge/ai-workbench/collector
 
-go 1.26.5
+go 1.26.8
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2

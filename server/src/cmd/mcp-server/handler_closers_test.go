@@ -134,3 +134,90 @@ func TestSetupHandlers_NilRegisterCloser(t *testing.T) {
 		t.Fatalf("SetupHandlers returned an error: %v", err)
 	}
 }
+
+// TestRegisterHandlerCloser_AfterDrainRunsImmediately verifies that a
+// closer arriving after Close has drained the list is still run, rather
+// than being appended to a list nothing will ever walk again.
+func TestRegisterHandlerCloser_AfterDrainRunsImmediately(t *testing.T) {
+	s := &Server{}
+	s.runHandlerClosers()
+
+	var called bool
+	s.registerHandlerCloser(func() { called = true })
+
+	if !called {
+		t.Error("closer registered after the drain was never run")
+	}
+	if len(s.handlerClosers) != 0 {
+		t.Errorf("expected closer list to stay empty, got %d entries",
+			len(s.handlerClosers))
+	}
+}
+
+// TestRegisterHandlerCloser_NestedRegistrationAfterDrain verifies that a
+// closer which itself registers another closer does not deadlock on
+// closersMu when it runs inline on the post-drain path.
+func TestRegisterHandlerCloser_NestedRegistrationAfterDrain(t *testing.T) {
+	s := &Server{}
+	s.runHandlerClosers()
+
+	var inner bool
+	s.registerHandlerCloser(func() {
+		s.registerHandlerCloser(func() { inner = true })
+	})
+
+	if !inner {
+		t.Error("nested closer registered after the drain was never run")
+	}
+}
+
+// TestRunHandlerClosers_OverlappingRegistration overlaps registration
+// with the shutdown drain and asserts that every closer runs exactly
+// once, whichever side of the drain it lands on. Run with -race, this
+// also covers the closersDrained read/write pair.
+func TestRunHandlerClosers_OverlappingRegistration(t *testing.T) {
+	const closers = 100
+
+	s := &Server{}
+
+	var mu sync.Mutex
+	counts := make(map[int]int)
+	record := func(id int) {
+		mu.Lock()
+		defer mu.Unlock()
+		counts[id]++
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < closers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			s.registerHandlerCloser(func() { record(id) })
+		}(i)
+	}
+
+	// Drain concurrently with the registrations above, which is the
+	// race between the HTTP server's goroutine and the signal handler.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.runHandlerClosers()
+	}()
+	wg.Wait()
+
+	// Registrations that beat the drain are still on the list.
+	s.runHandlerClosers()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(counts) != closers {
+		t.Errorf("expected all %d closers to run, got %d",
+			closers, len(counts))
+	}
+	for id, n := range counts {
+		if n != 1 {
+			t.Errorf("closer %d ran %d times, want exactly 1", id, n)
+		}
+	}
+}

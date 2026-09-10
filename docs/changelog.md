@@ -261,9 +261,9 @@ project adheres to
   where ten methods covering channel creation, updates, deletion, email
   recipients, connection links, notification history, and reminder state
   had no caller; the alerter reads notification channels, whilst the
-  server owns every write. The rest are a pool accessor, two compaction
-  analytics reporters, a probe-availability lookup, and three session
-  tracing helpers.
+  server owns every write. The rest are two pool accessors, two
+  compaction analytics reporters, a probe-availability lookup, and three
+  session tracing helpers.
 
 ### Security
 

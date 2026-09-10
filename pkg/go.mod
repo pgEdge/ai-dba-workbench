@@ -1,6 +1,6 @@
 module github.com/pgedge/ai-workbench/pkg
 
-go 1.26.5
+go 1.26.8
 
 require (
 	golang.org/x/crypto v0.47.0

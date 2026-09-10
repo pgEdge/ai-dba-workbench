@@ -393,7 +393,7 @@ project adheres to
   on the web client alone. The create path, which still requires a
   non-empty password, is unaffected. (#332)
 
-- Move the collector, server, and alerter to Go 1.26.5, and update
+- Move the collector, server, and alerter to Go 1.26.8, and update
   `golang.org/x/text` to v0.40.0. Together these clear four
   vulnerabilities that `govulncheck` confirmed were reachable from
   Workbench code: an infinite loop in `golang.org/x/text` normalisation

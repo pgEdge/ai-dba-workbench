@@ -74,6 +74,30 @@ project adheres to
   guard as every other rule, and each stale probe on a connection
   now raises its own alert rather than overwriting a shared one.
   (#405)
+- Fix five built-in alert rules that could never fire. The
+  `wal_archive_failed` rule queried `metrics.pg_stat_archiver`, a
+  table the collector never creates, and now reads the archiver
+  columns of `metrics.pg_stat_wal`. The `transaction_wraparound`
+  rule evaluated a hardcoded 50.0 and now reports the transaction
+  ID age of the oldest database as a percentage of the
+  wraparound limit, template databases included; `template0`
+  does not allow connections, so autovacuum only reaches it on
+  the anti-wraparound path, which makes it the database most
+  likely to age while every user database stays fresh, and
+  excluding templates left the rule silent in exactly that
+  case. The dashboard's XID Age tile now counts templates for
+  the same reason. The `high_max_connections` and
+  `connection_utilization` rules required a `pg_settings` snapshot
+  from the last hour, which a change-tracked probe stops
+  producing on a stable server, and now read the newest stored
+  snapshot. The `cpu_usage_high` rule keyed on a Windows-only
+  column that is NULL on Linux and now derives the busy
+  percentage on both platforms. The `checkpoint_warning` rule
+  compared a per-probe-interval delta against an unreachable
+  threshold and now counts requested checkpoints per hour, with a
+  default threshold of 12. Tuned autovacuum settings are also
+  honoured again by `autovacuum_not_running`, which previously
+  always assumed the shipped defaults. (#406)
 
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not

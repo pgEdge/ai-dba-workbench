@@ -2709,15 +2709,15 @@ func (sm *SchemaManager) registerMigrations() {
 					-- Transaction alerts
 					('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', 'seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
 					('idle_in_transaction', 'Connection idle in transaction too long', 'transactions', 'pg_stat_activity.idle_in_transaction_seconds', 'seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
-					('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
+					('transaction_wraparound', 'Transaction ID wraparound approaching; the oldest database transaction ID age exceeds this percentage of the wraparound limit', 'transactions', 'age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
 
 					-- Lock alerts
 					('deadlocks_detected', 'Deadlocks detected', 'locks', 'pg_stat_database.deadlocks_delta', 'deadlocks', '>', 0, 'warning', TRUE, NULL, TRUE),
 					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
 
 					-- WAL and Checkpoint alerts
-					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 50, 'warning', TRUE, NULL, TRUE),
-					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
+					('checkpoint_warning', 'Requested checkpoints in the last hour exceed the threshold; frequent requested checkpoints usually mean max_wal_size is too small', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints/hour', '>', 12, 'warning', TRUE, NULL, TRUE),
+					('wal_archive_failed', 'WAL archiving failures detected in the last hour', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures/hour', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
 					('autovacuum_not_running', 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
@@ -3098,6 +3098,62 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to add relation-size columns to metrics tables: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #8 realigns three built-in alert rules with the metric
+	// semantics the alerter actually implements. See GitHub issue #406.
+	//
+	// checkpoint_warning previously read "more than 50 requested
+	// checkpoints", but the metric only ever reported the increase seen
+	// between two consecutive samples of a 600 second probe, so the rule
+	// could not fire. The metric now reports requested checkpoints per
+	// hour, and the shipped threshold drops to a level a real server can
+	// reach. The threshold update is deliberately conditional on the row
+	// still carrying the old shipped default, so an operator who has
+	// tuned the value keeps it.
+	//
+	// wal_archive_failed and transaction_wraparound keep their thresholds
+	// and only gain descriptions and units that state the window and the
+	// denominator, because both were previously silent about them.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     8,
+		Description: "Realign checkpoint, WAL archiving and wraparound alert rule semantics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 12
+				WHERE name = 'checkpoint_warning'
+				  AND is_built_in
+				  AND default_threshold = 50;
+
+				UPDATE alert_rules
+				SET description = 'Requested checkpoints in the last hour exceed the threshold; frequent requested checkpoints usually mean max_wal_size is too small',
+				    metric_unit = 'checkpoints/hour'
+				WHERE name = 'checkpoint_warning'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'WAL archiving failures detected in the last hour',
+				    metric_unit = 'failures/hour'
+				WHERE name = 'wal_archive_failed'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Transaction ID wraparound approaching; the oldest database transaction ID age exceeds this percentage of the wraparound limit'
+				WHERE name = 'transaction_wraparound'
+				  AND is_built_in;
+
+				COMMENT ON COLUMN alert_rules.metric_unit IS
+					'Unit the metric is reported in. Rate-style units name their window explicitly (for example ''checkpoints/hour''), because the alerter evaluates those metrics over a fixed one hour window rather than reporting an absolute counter.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to realign built-in alert rule semantics: %w", err)
 			}
 
 			return nil

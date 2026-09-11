@@ -68,8 +68,18 @@ CREATE TABLE metrics.pg_stat_database (
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- The busy-percentage expression reads the Linux per-mode columns as
+-- well as the Windows-only processor_time_percent, so the fixture
+-- carries the same column set as the collector's table.
 CREATE TABLE metrics.pg_sys_cpu_usage_info (
     connection_id INTEGER NOT NULL,
+    usermode_normal_process_percent REAL,
+    usermode_niced_process_percent REAL,
+    kernelmode_process_percent REAL,
+    io_completion_percent REAL,
+    servicing_irq_percent REAL,
+    servicing_softirq_percent REAL,
+    idle_mode_percent REAL,
     processor_time_percent DOUBLE PRECISION,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

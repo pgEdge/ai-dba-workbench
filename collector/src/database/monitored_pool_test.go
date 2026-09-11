@@ -74,15 +74,41 @@ func TestNewMonitoredConnectionPoolManager(t *testing.T) {
 	if m == nil {
 		t.Fatal("got nil")
 	}
-	if m.GetMaxConnections() != 7 {
-		t.Errorf("GetMaxConnections = %d, want 7", m.GetMaxConnections())
-	}
 	if m.maxIdleSeconds != 30 {
 		t.Errorf("maxIdleSeconds = %d, want 30", m.maxIdleSeconds)
 	}
 	if m.pools == nil || m.semaphores == nil || m.versions == nil ||
 		m.poolHashes == nil || m.poolUpdatedAt == nil || m.poolKeyToConnID == nil {
 		t.Error("internal maps not initialized")
+	}
+}
+
+func TestSetMaxConnections(t *testing.T) {
+	m := NewMonitoredConnectionPoolManager(3, 1)
+
+	// The accessor this test used to read back through was removed as
+	// unreachable, so it checks the field directly; the manager is in
+	// this package, and an assertion beats exercising the setter for
+	// its side effects and checking nothing.
+	current := func() int {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return m.maxConnections
+	}
+
+	if got := current(); got != 3 {
+		t.Fatalf("maxConnections = %d after construction, want 3", got)
+	}
+
+	// Setting the same value takes the no-op path.
+	m.SetMaxConnections(3)
+	if got := current(); got != 3 {
+		t.Errorf("maxConnections = %d after a no-op set, want 3", got)
+	}
+
+	m.SetMaxConnections(8)
+	if got := current(); got != 8 {
+		t.Errorf("maxConnections = %d after update, want 8", got)
 	}
 }
 

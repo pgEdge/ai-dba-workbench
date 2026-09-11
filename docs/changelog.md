@@ -321,6 +321,24 @@ project adheres to
   client, together with the `@dnd-kit/sortable` and `@dnd-kit/utilities`
   dependencies; the client imports only `@dnd-kit/core`, which stays.
 
+- Remove a further 18 unused functions across the collector, server, and
+  alerter, together with the tests that existed only to exercise them.
+  The largest group is the alerter's notification-channel write API,
+  where ten methods covering channel creation, updates, deletion, email
+  recipients, connection links, notification history, and reminder state
+  had no caller; the alerter reads notification channels, whilst the
+  server owns every write. The rest are two pool accessors, two
+  compaction analytics reporters, a probe-availability lookup, and three
+  session tracing helpers.
+
+- Remove the chat compactor's analytics entirely, rather than leaving a
+  type that only ever writes. With its reporters gone, nothing could
+  read what `RecordCompaction` accumulated, so the `Analytics` type,
+  the `CompactionMetrics` and `EfficiencyReport` structures, the
+  `analytics` field, the `EnableAnalytics` option and the two recording
+  call sites all go together. `EnableAnalytics` defaulted to false, so
+  no deployment was collecting these figures in any case.
+
 ### Security
 
 - Ignore a blank password when updating a database connection, so an

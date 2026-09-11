@@ -58,7 +58,7 @@ docker run --rm -d \
     --name "${PG_CONTAINER}" \
     -e POSTGRES_PASSWORD="${E2E_DB_PASSWORD}" \
     -p "${E2E_DB_PORT}:5432" \
-    postgres:16 >/dev/null
+    pgvector/pgvector:0.8.6-pg16 >/dev/null
 
 echo "==> Building server with coverage"
 (

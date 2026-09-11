@@ -383,20 +383,20 @@ DROP TABLE IF EXISTS clusters CASCADE;
 DROP TABLE IF EXISTS cluster_groups CASCADE;
 `
 
-// pgvectorAvailable reports whether the pgvector extension is installed
-// in the current connection. The anomaly_embeddings table is created
-// only when pgvector is present.
+// pgvectorAvailable reports whether the pgvector extension can be used
+// on this connection, installing it if it is available but not yet
+// installed. The anomaly_embeddings table is created only when pgvector
+// is present.
+//
+// Checking pg_extension alone is not enough, and reading it was why
+// these tests skipped even on a pgvector-capable server: a freshly
+// created database has the extension available but not installed, so
+// the check returned false before anything had a chance to install it.
+// Attempting the install is both the real question and the same
+// operation createAnomalyEmbeddingsTable performs.
 func pgvectorAvailable(ctx context.Context, pool *pgxpool.Pool) bool {
-	var exists bool
-	err := pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM pg_extension WHERE extname = 'vector'
-		)
-	`).Scan(&exists)
-	if err != nil {
-		return false
-	}
-	return exists
+	_, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`)
+	return err == nil
 }
 
 // createAnomalyEmbeddingsTable creates anomaly_embeddings when pgvector

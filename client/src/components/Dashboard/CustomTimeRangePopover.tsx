@@ -17,6 +17,11 @@ import Typography from '@mui/material/Typography';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
+    MAX_CUSTOM_WINDOW_DAYS,
+    validateCustomWindow,
+    type CustomWindowError,
+} from '../../utils/timelineRange';
+import {
     CUSTOM_RANGE_ACTIONS_SX,
     CUSTOM_RANGE_POPOVER_SX,
 } from './styles';
@@ -48,18 +53,40 @@ const toDayjs = (iso?: string): Dayjs | null => {
     return parsed.isValid() ? parsed : null;
 };
 
+/** Why the entered window cannot be applied; null when it can. */
+type WindowProblem = 'incomplete' | CustomWindowError;
+
+/**
+ * Explain each failing rule in the caption beneath the fields, so the
+ * user knows which bound to change rather than just that Apply is off.
+ */
+const WINDOW_PROBLEM_TEXT: Record<WindowProblem, string> = {
+    incomplete: 'Choose a start and an end, with the end after the start.',
+    'end-not-after-start': 'The end must be after the start.',
+    'start-in-future': 'The start must not be in the future.',
+    'span-too-long':
+        `The range must not span more than ${MAX_CUSTOM_WINDOW_DAYS} days.`,
+};
+
 /**
  * A window is applicable only when both bounds are present, both parse,
- * and the end is strictly after the start.
+ * and the pair satisfies the server's custom-window rules: the end
+ * strictly after the start, the start not in the future, and the span no
+ * longer than MAX_CUSTOM_WINDOW_DAYS. Mirroring the server here keeps
+ * Apply disabled for a window that would otherwise be answered with a
+ * 400 and an empty chart.
  */
-const isWindowValid = (start: Dayjs | null, end: Dayjs | null): boolean => {
+const checkWindow = (
+    start: Dayjs | null,
+    end: Dayjs | null,
+): WindowProblem | null => {
     if (start === null || end === null) {
-        return false;
+        return 'incomplete';
     }
     if (!start.isValid() || !end.isValid()) {
-        return false;
+        return 'incomplete';
     }
-    return end.isAfter(start);
+    return validateCustomWindow(start.toDate(), end.toDate());
 };
 
 /**
@@ -93,7 +120,8 @@ const CustomTimeRangePopover: React.FC<CustomTimeRangePopoverProps> = ({
         }
     }, [open, startISO, endISO]);
 
-    const valid = isWindowValid(start, end);
+    const problem = checkWindow(start, end);
+    const valid = problem === null;
 
     const handleApply = useCallback((): void => {
         // The Apply button is disabled unless the window is valid; the
@@ -117,18 +145,19 @@ const CustomTimeRangePopover: React.FC<CustomTimeRangePopoverProps> = ({
                     label="From"
                     value={start}
                     onChange={setStart}
+                    disableFuture
                     slotProps={{ textField: { size: 'small' } }}
                 />
                 <DateTimePicker
                     label="To"
                     value={end}
                     onChange={setEnd}
+                    disableFuture
                     slotProps={{ textField: { size: 'small' } }}
                 />
-                {!valid && (
+                {problem !== null && (
                     <Typography variant="caption" color="error">
-                        Choose a start and an end, with the end after the
-                        start.
+                        {WINDOW_PROBLEM_TEXT[problem]}
                     </Typography>
                 )}
                 <Box sx={CUSTOM_RANGE_ACTIONS_SX}>

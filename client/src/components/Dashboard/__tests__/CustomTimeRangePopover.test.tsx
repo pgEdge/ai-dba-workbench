@@ -10,7 +10,7 @@
 
 import type React from 'react';
 import { screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import dayjs, { type Dayjs } from 'dayjs';
 import renderWithTheme from '../../../test/renderWithTheme';
 import CustomTimeRangePopover from '../CustomTimeRangePopover';
@@ -28,13 +28,16 @@ vi.mock('@mui/x-date-pickers/DateTimePicker', () => ({
         label,
         value,
         onChange,
+        disableFuture,
     }: {
         label: string;
         value: Dayjs | null;
         onChange: (value: Dayjs | null) => void;
+        disableFuture?: boolean;
     }) => (
         <input
             aria-label={label}
+            data-disable-future={disableFuture === true ? 'true' : 'false'}
             value={value === null || !value.isValid() ? '' : value.toISOString()}
             onChange={(event) => {
                 onChange(
@@ -50,6 +53,16 @@ vi.mock('@mui/x-date-pickers/DateTimePicker', () => ({
 const START = '2026-01-01T00:00:00.000Z';
 const END = '2026-01-01T06:00:00.000Z';
 
+/*
+ * The validity rules compare against the current clock, so the tests pin
+ * it to a date after the fixture window and use it to build boundary
+ * cases for the future-start and maximum-span checks.
+ */
+const NOW = new Date('2026-03-15T12:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
+const offsetISO = (ms: number): string =>
+    new Date(NOW.getTime() + ms).toISOString();
+
 describe('CustomTimeRangePopover', () => {
     const onApply = vi.fn();
     const onClose = vi.fn();
@@ -57,6 +70,12 @@ describe('CustomTimeRangePopover', () => {
     beforeEach(() => {
         onApply.mockClear();
         onClose.mockClear();
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        vi.setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     const renderPopover = (
@@ -117,6 +136,55 @@ describe('CustomTimeRangePopover', () => {
         renderPopover({ startISO: START, endISO: START });
 
         expect(applyButton()).toBeDisabled();
+        expect(
+            screen.getByText('The end must be after the start.'),
+        ).toBeInTheDocument();
+    });
+
+    it('disables Apply when the start is in the future', () => {
+        renderPopover({
+            startISO: offsetISO(DAY_MS),
+            endISO: offsetISO(2 * DAY_MS),
+        });
+
+        expect(applyButton()).toBeDisabled();
+        expect(
+            screen.getByText('The start must not be in the future.'),
+        ).toBeInTheDocument();
+    });
+
+    it('disables Apply when the span exceeds 366 days', () => {
+        renderPopover({
+            startISO: offsetISO(-368 * DAY_MS),
+            endISO: offsetISO(-DAY_MS),
+        });
+
+        expect(applyButton()).toBeDisabled();
+        expect(
+            screen.getByText('The range must not span more than 366 days.'),
+        ).toBeInTheDocument();
+    });
+
+    it('enables Apply for a span of exactly 366 days', () => {
+        renderPopover({
+            startISO: offsetISO(-366 * DAY_MS),
+            endISO: NOW.toISOString(),
+        });
+
+        expect(applyButton()).toBeEnabled();
+    });
+
+    it('asks both pickers to disable future dates', () => {
+        renderPopover({ startISO: START, endISO: END });
+
+        expect(screen.getByLabelText('From')).toHaveAttribute(
+            'data-disable-future',
+            'true',
+        );
+        expect(screen.getByLabelText('To')).toHaveAttribute(
+            'data-disable-future',
+            'true',
+        );
     });
 
     it('enables Apply once an edit makes the window valid', () => {

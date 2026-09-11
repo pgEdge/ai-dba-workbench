@@ -275,6 +275,18 @@ vi.mock('../../contexts/useAuth', () => ({
 }));
 ```
 
+## MUI Icon Imports
+
+Always import icons as named exports from the package root, for
+example `import { PauseCircleOutline } from '@mui/icons-material';`,
+never from a deep path such as
+`@mui/icons-material/PauseCircleOutline`. The package has no
+`exports` map, so a deep default import resolves to the CommonJS
+build in the production bundle and the imported value becomes the
+whole exports object; React then throws error #130 when it renders.
+Vitest resolves the deep path natively, so unit tests pass and only
+`npm run build` plus a browser session shows the failure.
+
 ## Coverage Requirements
 
 The 90% line coverage floor in `CLAUDE.md` applies to all new and

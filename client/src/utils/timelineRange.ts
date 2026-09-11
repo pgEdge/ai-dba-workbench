@@ -87,4 +87,49 @@ export const resolveTimeRangeBounds = (
     };
 };
 
+/** The longest custom window the server accepts, in days. */
+export const MAX_CUSTOM_WINDOW_DAYS = 366;
+
+/** MAX_CUSTOM_WINDOW_DAYS expressed in milliseconds. */
+export const MAX_CUSTOM_WINDOW_MS = MAX_CUSTOM_WINDOW_DAYS * 24 * HOUR_MS;
+
+/**
+ * The reasons a custom window can be rejected, mirroring the checks the
+ * server applies in ResolveCustomWindow so that the client never offers
+ * a window the server will answer with a 400.
+ */
+export type CustomWindowError =
+    | 'end-not-after-start'
+    | 'start-in-future'
+    | 'span-too-long';
+
+/**
+ * Validate a custom window against the server's rules: the end must be
+ * strictly after the start, the start must not be in the future, and the
+ * span must not exceed MAX_CUSTOM_WINDOW_MS. As on the server, an end in
+ * the future is clamped to now before the span is measured, because a
+ * picker set to the current day routinely overshoots by a few minutes.
+ * Returns the first failing rule, or null when the window is acceptable.
+ */
+export const validateCustomWindow = (
+    start: Date,
+    end: Date,
+    now: Date = new Date(),
+): CustomWindowError | null => {
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    const nowMs = now.getTime();
+
+    if (!(endMs > startMs)) {
+        return 'end-not-after-start';
+    }
+    if (!(startMs < nowMs)) {
+        return 'start-in-future';
+    }
+    if (Math.min(endMs, nowMs) - startMs > MAX_CUSTOM_WINDOW_MS) {
+        return 'span-too-long';
+    }
+    return null;
+};
+
 export default resolveTimeRangeBounds;

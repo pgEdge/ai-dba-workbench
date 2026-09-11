@@ -427,7 +427,8 @@ func BuildMetricsQuery(
             GROUP BY date_bin($1::interval, collected_at, $3)
         ),
         all_buckets AS (
-            SELECT generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS bucket_time
+            SELECT bucket_time
+            FROM generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS g(bucket_time)
         )
         SELECT
             all_buckets.bucket_time,
@@ -682,7 +683,8 @@ func BuildDerivedMetricsQuery(
 
 	ctes = append(ctes, `
         all_buckets AS (
-            SELECT generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS bucket_time
+            SELECT bucket_time
+            FROM generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS g(bucket_time)
         )`)
 
 	query := fmt.Sprintf(`

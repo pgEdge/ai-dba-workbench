@@ -200,6 +200,10 @@ func TestBuildMetricsQuery(t *testing.T) {
 		if strings.Contains(query, `COALESCE(data_buckets."xact_commit"`) {
 			t.Error("query should not COALESCE metric columns; LOCF is applied in Go")
 		}
+		if !strings.Contains(query, `FROM generate_series($3::timestamptz, `+
+			`$4::timestamptz, $1::interval) AS g(bucket_time)`) {
+			t.Error("bucket series must be generated in the FROM clause")
+		}
 
 		// Check args
 		if len(args) != 4 {
@@ -1586,7 +1590,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			`CASE WHEN (total_0 - prev_0) >= 0 AND elapsed_sec > 0`,
 			`(total_0 - prev_0)::float / elapsed_sec`,
 			`avg(rate_0) AS "seq_scan_per_sec"`,
-			`generate_series($3::timestamptz, $4::timestamptz, $1::interval)`,
+			`FROM generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS g(bucket_time)`,
 			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
 			`rate_buckets."seq_scan_per_sec"`,
 			`connection_id = $2`,

@@ -1379,10 +1379,13 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"queryid":          {Type: "integer", Format: "int64", Description: "Query ID"},
 				"database_name":    {Type: "string", Description: "Database name where the query was executed"},
+				"username":         {Type: "string", Description: "Database role that ran the query; empty when the role could not be resolved"},
 				"query":            {Type: "string", Description: "Query text"},
 				"calls":            {Type: "integer", Format: "int64", Description: "Total call count"},
 				"total_exec_time":  {Type: "number", Description: "Total execution time in ms"},
 				"mean_exec_time":   {Type: "number", Description: "Mean execution time in ms"},
+				"min_exec_time":    {Type: "number", Description: "Minimum execution time in ms"},
+				"max_exec_time":    {Type: "number", Description: "Maximum execution time in ms"},
 				"rows":             {Type: "integer", Format: "int64", Description: "Total rows returned"},
 				"shared_blks_hit":  {Type: "integer", Format: "int64", Description: "Shared blocks hit"},
 				"shared_blks_read": {Type: "integer", Format: "int64", Description: "Shared blocks read"},
@@ -1428,6 +1431,16 @@ func buildSchemas() map[string]*OpenAPISchema {
 			// is always present but may be null is correctly described as
 			// both.
 			Required: []string{"group_label", "client_hostname", "total", "active", "idle", "idle_in_transaction", "other"},
+		},
+		"QueryStatsResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"queryid":         {Type: "string", Description: "Query ID the statistics apply to"},
+				"avg_exec_time":   {Type: "number", Nullable: true, Description: "Average execution time in ms over the requested period, or null when there is no usable data"},
+				"calls":           {Type: "integer", Format: "int64", Description: "Calls made during the requested period"},
+				"total_exec_time": {Type: "number", Description: "Execution time in ms accumulated during the requested period"},
+			},
+			Required: []string{"queryid", "avg_exec_time", "calls", "total_exec_time"},
 		},
 		"LatestSnapshotResponse": {
 			Type: "object",
@@ -3504,6 +3517,27 @@ func buildPaths() map[string]OpenAPIPathItem {
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ConnectionGroupsResponse", "Connection counts by group"),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/query-stats": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get period-scoped query statistics",
+				Description: "Returns the average execution time, call count, and total execution time of a single query over the requested time range, computed from the deltas between consecutive pg_stat_statements samples",
+				OperationID: "getQueryStats",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamStringRequired("queryid", "Query ID to report on"),
+					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("QueryStatsResponse", "Period-scoped query statistics"),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),

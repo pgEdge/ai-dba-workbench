@@ -25,9 +25,14 @@ export interface DatabaseSummary {
     database_name: string;
     size_bytes: number;
     size_pretty: string;
+    /**
+     * Cache hit ratio over the requested range. Both `current` and a
+     * bucket `value` are null when no block access happened in that
+     * interval; a null bucket is drawn as a gap rather than as 0%.
+     */
     cache_hit_ratio: {
-        current: number;
-        time_series: { time: string; value: number }[];
+        current: number | null;
+        time_series: { time: string; value: number | null }[];
     };
     transaction_rate: number;
     dead_tuple_ratio: number;

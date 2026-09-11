@@ -21,7 +21,7 @@ import { useDatabaseSummaries } from '../../../hooks/useDatabaseSummaries';
 import CollapsibleSection from '../CollapsibleSection';
 import Sparkline from '../Sparkline';
 import { getDashboardTileSx } from '../styles';
-import type { MetricDataPoint } from '../types';
+import type { SparklinePoint } from '../types';
 import { formatNumber } from '../../../utils/formatters';
 import type {
     ServerSectionProps,
@@ -75,9 +75,14 @@ const CHART_BOX_SX = {
 };
 
 /**
- * Determine color for cache hit ratio.
+ * Determine color for cache hit ratio. A null ratio (no block access
+ * in the latest interval) is neutral rather than critical.
  */
-const getCacheColor = (ratio: number): string => {
+const getCacheColor = (
+    ratio: number | null | undefined,
+    neutral: string,
+): string => {
+    if (typeof ratio !== 'number') { return neutral; }
     if (ratio >= 95) { return '#4caf50'; }
     if (ratio >= 80) { return '#ff9800'; }
     return '#f44336';
@@ -123,13 +128,16 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
         });
     }, [pushOverlay, connectionId, connectionName]);
 
+    const neutralColor = theme.palette.text.secondary;
+
     /**
-     * Convert cache hit ratio time series into MetricDataPoint array
-     * for the Sparkline component.
+     * Convert cache hit ratio time series into Sparkline points. Null
+     * values (no block access in that interval) are kept so the
+     * sparkline draws them as gaps.
      */
     const toSparklineData = (
-        timeSeries: Array<{ time: string; value: number }> | undefined
-    ): MetricDataPoint[] => {
+        timeSeries: Array<{ time: string; value: number | null }> | undefined
+    ): SparklinePoint[] => {
         if (!timeSeries) { return []; }
         return timeSeries.map(p => ({
             time: p.time,
@@ -206,11 +214,12 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                     sx={{
                                         ...STAT_VALUE_SX,
                                         color: getCacheColor(
-                                            db.cache_hit_ratio?.current ?? 0
+                                            db.cache_hit_ratio?.current,
+                                            neutralColor,
                                         ),
                                     }}
                                 >
-                                    {db.cache_hit_ratio?.current !== undefined
+                                    {typeof db.cache_hit_ratio?.current === 'number'
                                         ? `${db.cache_hit_ratio.current.toFixed(1)}%`
                                         : '--'}
                                 </Typography>
@@ -224,7 +233,8 @@ const DatabaseSummariesSection: React.FC<ServerSectionProps> = ({
                                             db.cache_hit_ratio.time_series
                                         )}
                                         color={getCacheColor(
-                                            db.cache_hit_ratio?.current ?? 0
+                                            db.cache_hit_ratio?.current,
+                                            neutralColor,
                                         )}
                                         height={30}
                                     />

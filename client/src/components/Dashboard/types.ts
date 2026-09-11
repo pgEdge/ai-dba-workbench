@@ -63,6 +63,16 @@ export interface MetricDataPoint {
     value: number;
 }
 
+/**
+ * A point accepted by Sparkline and KpiTile. Unlike MetricDataPoint
+ * the value may be null, which is drawn as a gap; MetricDataPoint is
+ * assignable to it, so callers with complete series need no change.
+ */
+export interface SparklinePoint {
+    time: string;
+    value: number | null;
+}
+
 /** Metric series for charts */
 export interface MetricSeries {
     name: string;
@@ -85,7 +95,7 @@ export interface MetricBaseline {
 
 /** Sparkline props for embedding in tiles */
 export interface SparklineProps {
-    data: MetricDataPoint[];
+    data: SparklinePoint[];
     color?: string;
     height?: number;
     showArea?: boolean;
@@ -110,7 +120,7 @@ export interface KpiTileData {
     unit?: string;
     trend?: 'up' | 'down' | 'flat';
     trendValue?: string;
-    sparklineData?: MetricDataPoint[];
+    sparklineData?: SparklinePoint[];
     status?: 'good' | 'warning' | 'critical';
 }
 

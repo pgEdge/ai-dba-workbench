@@ -17,10 +17,16 @@ import type { ConnectionPerformance, DatabaseCacheHitData } from '../types';
 
 // Mock the Chart component to avoid ECharts complexity in tests
 vi.mock('../../../Chart/Chart', () => ({
-    Chart: ({ data }: { data: { series: Array<{ name: string }> } }) => (
+    Chart: ({ data }: { data: { series: Array<{ name: string; data: (number | null)[] }> } }) => (
         <div data-testid="mock-chart">
             {data.series.map(s => (
-                <span key={s.name} data-testid={`series-${s.name}`}>{s.name}</span>
+                <span
+                    key={s.name}
+                    data-testid={`series-${s.name}`}
+                    data-values={JSON.stringify(s.data)}
+                >
+                    {s.name}
+                </span>
             ))}
         </div>
     ),
@@ -57,11 +63,18 @@ const mockTimeSeries = [
     { time: '2024-01-01T12:00:00Z', value: 94.8 },
 ];
 
+/** A series with an idle bucket in the middle, sent by the server as null. */
+const gappedTimeSeries = [
+    { time: '2024-01-01T10:00:00Z', value: 95.5 },
+    { time: '2024-01-01T11:00:00Z', value: null },
+    { time: '2024-01-01T12:00:00Z', value: 94.8 },
+];
+
 const createConnectionPerformance = (
     id: number,
     name: string,
-    cacheHitCurrent: number,
-    timeSeries = mockTimeSeries
+    cacheHitCurrent: number | null,
+    timeSeries: Array<{ time: string; value: number | null }> = mockTimeSeries
 ): ConnectionPerformance => ({
     connection_id: id,
     connection_name: name,
@@ -82,8 +95,8 @@ const createConnectionPerformance = (
 
 const createDatabaseCacheHitData = (
     dbName: string,
-    current: number,
-    timeSeries = mockTimeSeries
+    current: number | null,
+    timeSeries: Array<{ time: string; value: number | null }> = mockTimeSeries
 ): DatabaseCacheHitData => ({
     database_name: dbName,
     cache_hit_ratio: {
@@ -442,6 +455,141 @@ describe('CacheHitTile', () => {
 
             const valueElement = screen.getByText('75.5');
             expect(valueElement).toHaveStyle({ color: '#f44336' });
+        });
+    });
+
+    describe('null ratios (issue #401)', () => {
+        it('shows no data when the single connection current is null', () => {
+            const conn = createConnectionPerformance(1, 'Server 1', null);
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={[conn]}
+                    loading={false}
+                    isMultiServer={false}
+                />
+            );
+
+            // A null current means no block access, never 0%.
+            expect(screen.getByText('No data')).toBeInTheDocument();
+            expect(screen.queryByText('0.0')).not.toBeInTheDocument();
+        });
+
+        it('skips databases with a null current when picking the worst', () => {
+            const conn = createConnectionPerformance(1, 'Server 1', 97.5);
+            const databaseData: DatabaseCacheHitData[] = [
+                createDatabaseCacheHitData('idle', null),
+                createDatabaseCacheHitData('postgres', 99.9),
+                createDatabaseCacheHitData('ecommerce', 88.2),
+            ];
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={[conn]}
+                    loading={false}
+                    isMultiServer={false}
+                    databaseData={databaseData}
+                />
+            );
+
+            expect(screen.getByText('88.2')).toBeInTheDocument();
+            expect(screen.getByText('(ecommerce)')).toBeInTheDocument();
+        });
+
+        it('shows no data when every database current is null', () => {
+            const conn = createConnectionPerformance(1, 'Server 1', 97.5);
+            const databaseData: DatabaseCacheHitData[] = [
+                createDatabaseCacheHitData('idle_a', null),
+                createDatabaseCacheHitData('idle_b', null),
+            ];
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={[conn]}
+                    loading={false}
+                    isMultiServer={false}
+                    databaseData={databaseData}
+                />
+            );
+
+            expect(screen.getByText('No data')).toBeInTheDocument();
+        });
+
+        it('skips servers with a null current in the multi-server worst-of', () => {
+            const connections = [
+                createConnectionPerformance(1, 'Idle', null),
+                createConnectionPerformance(2, 'Primary', 99.5),
+                createConnectionPerformance(3, 'Replica', 91.0),
+            ];
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={connections}
+                    loading={false}
+                    isMultiServer={true}
+                />
+            );
+
+            expect(screen.getByText('91.0')).toBeInTheDocument();
+        });
+
+        it('shows no data when every server current is null', () => {
+            const connections = [
+                createConnectionPerformance(1, 'Idle A', null),
+                createConnectionPerformance(2, 'Idle B', null),
+            ];
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={connections}
+                    loading={false}
+                    isMultiServer={true}
+                />
+            );
+
+            expect(screen.getByText('No data')).toBeInTheDocument();
+        });
+
+        it('passes null buckets through to the chart as gaps', () => {
+            const conn = createConnectionPerformance(1, 'Server 1', 94.8, gappedTimeSeries);
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={[conn]}
+                    loading={false}
+                    isMultiServer={false}
+                />
+            );
+
+            expect(screen.getByTestId('series-Cache Hit %'))
+                .toHaveAttribute('data-values', '[95.5,null,94.8]');
+        });
+
+        it('passes null buckets through per-database and per-server series', () => {
+            const conn = createConnectionPerformance(1, 'Server 1', 97.5);
+            renderWithTheme(
+                <CacheHitTile
+                    connections={[conn]}
+                    loading={false}
+                    isMultiServer={false}
+                    databaseData={[createDatabaseCacheHitData('postgres', 94.8, gappedTimeSeries)]}
+                />
+            );
+            expect(screen.getByTestId('series-postgres'))
+                .toHaveAttribute('data-values', '[95.5,null,94.8]');
+
+            renderWithTheme(
+                <CacheHitTile
+                    connections={[
+                        createConnectionPerformance(1, 'Primary', 99.5),
+                        createConnectionPerformance(2, 'Replica', 94.8, gappedTimeSeries),
+                    ]}
+                    loading={false}
+                    isMultiServer={true}
+                />
+            );
+            expect(screen.getByTestId('series-Replica'))
+                .toHaveAttribute('data-values', '[95.5,null,94.8]');
         });
     });
 

@@ -159,6 +159,62 @@ describe('buildLineOptions', () => {
     });
 });
 
+describe('null gaps', () => {
+    it('passes null entries through to the line series untouched', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [95, null, 97] }],
+        };
+        const result = buildLineOptions(gapped, {}) as any;
+        expect(result.series[0].data).toEqual([95, null, 97]);
+    });
+
+    it('ignores null entries when sizing a flat plain line', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [100, null, 100] }],
+        };
+        const result = buildLineOptions(gapped, {}) as any;
+        expect(result.yAxis.min).toBeCloseTo(90);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
+
+    it('ignores null entries when sizing a flat stacked line', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [
+                { name: 'v', data: [100, null, 100] },
+                { name: 'w', data: [null, null, null] },
+            ],
+        };
+        const result = buildLineOptions(gapped, { stacked: true }) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
+
+    it('leaves auto-scaling alone for an all-null series', () => {
+        const empty: ChartData = {
+            categories: ['a', 'b'],
+            series: [{ name: 'v', data: [null, null] }],
+        };
+        const result = buildLineOptions(empty, {}) as any;
+        expect(result.yAxis.min).toBeUndefined();
+        expect(result.yAxis.max).toBeUndefined();
+    });
+
+    it('treats a null pie slice as zero', () => {
+        const gapped: ChartData = {
+            categories: ['a', 'b'],
+            series: [{ name: 'v', data: [null, 5] }],
+        };
+        const result = buildPieOptions(gapped, {}) as any;
+        expect(result.series[0].data).toEqual([
+            { name: 'a', value: 0 },
+            { name: 'b', value: 5 },
+        ]);
+    });
+});
+
 describe('buildBarOptions', () => {
     it('returns object with the expected structure', () => {
         const result = buildBarOptions(sampleData, {}) as any;

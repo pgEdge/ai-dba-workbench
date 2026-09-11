@@ -30,6 +30,9 @@ vi.mock('../../Chart', () => ({
             data-show-toolbar={props.showToolbar}
             data-show-legend={props.showLegend}
             data-show-tooltip={props.showTooltip}
+            data-series={JSON.stringify(
+                (props.data as { series: { data: unknown[] }[] }).series[0].data
+            )}
             {...(props.colorPalette !== undefined && {
                 'data-color-palette': JSON.stringify(props.colorPalette),
             })}
@@ -61,6 +64,18 @@ describe('Sparkline', () => {
 
     // Note: The component expects data to always be provided (not undefined)
     // This test verifies behavior with an empty array instead
+
+    it('passes null values through as gaps rather than zeros', () => {
+        const data = [
+            { time: '2025-01-01T00:00:00Z', value: 10 },
+            { time: '2025-01-01T01:00:00Z', value: null },
+            { time: '2025-01-01T02:00:00Z', value: 30 },
+        ];
+        const { getByTestId } = render(<Sparkline data={data} />);
+
+        expect(getByTestId('chart-mock'))
+            .toHaveAttribute('data-series', '[10,null,30]');
+    });
 
     it('renders Chart component when data is provided', () => {
         const data = createDataPoints(5);

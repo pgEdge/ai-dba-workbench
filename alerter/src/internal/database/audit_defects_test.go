@@ -12,8 +12,6 @@ package database
 import (
 	"context"
 	"os"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -33,7 +31,7 @@ import (
 // Claims C2 to C5 were fixed in #406 (the archiver table, the constant
 // wraparound value, the one-hour pg_settings expiry and the Windows-only
 // CPU column). Their pinned tests were removed with that fix, as the
-// header above prescribes, and the behaviour they described is now
+// header above prescribes, and the behavior they described is now
 // covered against the corrected code in
 // dead_alert_rules_integration_test.go, which tests each rule directly
 // rather than pinning a defect.
@@ -172,19 +170,6 @@ const (
         RETURNING id
     `
 
-	insertAuditPgSettingSQL = `
-        INSERT INTO metrics.pg_settings
-            (connection_id, name, setting, collected_at)
-        VALUES ($1, $2, $3, $4)
-    `
-
-	insertAuditAllTablesSQL = `
-        INSERT INTO metrics.pg_stat_all_tables
-            (connection_id, database_name, schemaname, relname,
-             n_live_tup, n_dead_tup, collected_at)
-        VALUES ($1, $2, 'public', $3, $4, 0, $5)
-    `
-
 	insertAuditStatDatabaseSQL = `
         INSERT INTO metrics.pg_stat_database
             (connection_id, database_name, datname, blks_hit, blks_read,
@@ -196,14 +181,6 @@ const (
         INSERT INTO metrics.pg_stat_statements
             (connection_id, database_name, queryid, calls, mean_exec_time,
              collected_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-    `
-
-	insertAuditCPUUsageSQL = `
-        INSERT INTO metrics.pg_sys_cpu_usage_info
-            (connection_id, usermode_normal_process_percent,
-             kernelmode_process_percent, idle_mode_percent,
-             processor_time_percent, collected_at)
         VALUES ($1, $2, $3, $4, $5, $6)
     `
 
@@ -268,39 +245,6 @@ func insertAuditConnection(t *testing.T, pool *pgxpool.Pool, name string) int {
 		t.Fatalf("failed to insert connection %q: %v", name, err)
 	}
 	return id
-}
-
-// collectorSchemaMetricsTables scans the collector schema source for
-// every "CREATE TABLE ... metrics.<name>" statement and returns the
-// sorted, de-duplicated table names. The test is skipped when the
-// collector source is not present (for example in a packaged build),
-// because this is a cross-module source inspection rather than a
-// runtime assertion.
-func collectorSchemaMetricsTables(t *testing.T) []string {
-	t.Helper()
-
-	path, err := filepath.Abs(filepath.Join(
-		"..", "..", "..", "..", "collector", "src", "database", "schema.go"))
-	if err != nil {
-		t.Skipf("cannot resolve collector schema path: %v", err)
-	}
-	data, err := os.ReadFile(path) // #nosec G304 -- fixed repo-relative path
-	if err != nil {
-		t.Skipf("collector schema source unavailable at %s: %v", path, err)
-	}
-
-	re := regexp.MustCompile(`CREATE TABLE (?:IF NOT EXISTS )?metrics\.([a-z0-9_]+)`)
-	seen := make(map[string]struct{})
-	for _, m := range re.FindAllStringSubmatch(string(data), -1) {
-		seen[m[1]] = struct{}{}
-	}
-
-	names := make([]string, 0, len(seen))
-	for n := range seen {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // TestAuditC6BaselineOrderingPrefersAll verifies audit claim C6:

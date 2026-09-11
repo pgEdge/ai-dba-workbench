@@ -15,6 +15,14 @@ BIN_DIR ?= .
 # Binary name
 BINARY := ai-dba-server
 
+# Minimum acceptable total statement coverage, in percent; the coverage
+# target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
+# this default is pinned just below the total measured on 11 September
+# 2026 so the gate holds the line today, and it should be raised towards
+# 90 as coverage grows. Override for local experiments with
+# `make coverage COVERAGE_MIN=80`.
+COVERAGE_MIN ?= 55
+
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))
 
@@ -77,6 +85,10 @@ coverage: killall
 	@$(MAKE) --no-print-directory killall
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
+	@cd src && total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, "", $$3); print $$3}'); \
+	echo "Total coverage: $${total}% (minimum $(COVERAGE_MIN)%)"; \
+	awk -v t="$$total" -v m="$(COVERAGE_MIN)" 'BEGIN { exit (t + 0 < m + 0) ? 1 : 0 }' \
+	|| { echo "ERROR: total coverage $${total}% is below the $(COVERAGE_MIN)% floor"; exit 1; }
 
 # Clean build artifacts
 clean:
@@ -112,7 +124,7 @@ help:
 	@echo "  vet       - Run go vet"
 	@echo "  fmt       - Format code with gofmt"
 	@echo "  fmt-check - Check code formatting (fails if not formatted)"
-	@echo "  coverage  - Generate test coverage report"
+	@echo "  coverage  - Generate test coverage report and enforce COVERAGE_MIN"
 	@echo "  test-all  - Run fmt-check, coverage, and lint (verbose, single pass)"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"

@@ -59,7 +59,7 @@ WHERE prev_blks_hit IS NOT NULL
 ```
 
 The canonical example is
-`alerter/src/internal/database/queries.go` -
+`alerter/src/internal/database/metric_queries.go` -
 `GetHistoricalMetricValues`. Every one of its metric branches
 performs the JOIN. The regression test at
 `alerter/src/internal/database/queries_integration_test.go` -
@@ -238,7 +238,7 @@ that follow from that, all learned the hard way in #406:
   columns (`archived_count`, `failed_count`, `last_failed_wal`) onto that
   table and never creates a `metrics.pg_stat_archiver`. Check the CREATE
   TABLE statements in `collector/src/database/schema.go` before writing a
-  FROM clause; there are 36 `metrics.*` tables and no views.
+  FROM clause; there is one `metrics.*` table per probe and no views.
 
 - Never put a max-age predicate on `metrics.pg_settings`. The probe is
   change-tracked (`collector/src/probes/pg_settings_probe.go`) and skips

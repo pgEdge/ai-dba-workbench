@@ -71,7 +71,11 @@ annotations a site already has when moving this code around.
 Unit tests in `collector/src/probes/base_test.go` cover the known
 off-by-one timezone cases (Sunday-in-UTC that looks like Monday in a
 positive-offset zone, Monday-in-UTC that looks like Sunday in a
-negative-offset zone).
+negative-offset zone). `TestDropExpiredPartitions` in
+`collector/src/probes/helpers_integration_test.go` covers the drop
+path against a real database. The only production caller of
+`DropExpiredPartitions` is the garbage collector in
+`collector/src/garbage_collector.go`.
 
 ## Expiry Comparisons
 

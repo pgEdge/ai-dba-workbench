@@ -36,6 +36,11 @@ Before installing the Collector, ensure you have the following:
 - [PostgreSQL 14](https://www.postgresql.org/download/) or
   later for the datastore.
 - Network access to the PostgreSQL servers you want to monitor.
+- A PostgreSQL login role on each monitored server that holds the
+  `pg_monitor` predefined role and `CONNECT` on every database you want
+  to probe. The
+  [Monitored Database Privileges](https://github.com/pgEdge/ai-dba-workbench/blob/main/docs/getting-started/configuration/monitored-database-privileges.md)
+  document describes the least-privilege grants and their caveats.
 
 ## Installation
 

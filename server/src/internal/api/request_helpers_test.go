@@ -337,52 +337,6 @@ func TestRequireQueryTime(t *testing.T) {
 	}
 }
 
-func TestValidateTimeRange(t *testing.T) {
-	now := time.Now()
-
-	tests := []struct {
-		name     string
-		start    time.Time
-		end      time.Time
-		expectOK bool
-	}{
-		{
-			name:     "valid range",
-			start:    now,
-			end:      now.Add(time.Hour),
-			expectOK: true,
-		},
-		{
-			name:     "same time",
-			start:    now,
-			end:      now,
-			expectOK: true,
-		},
-		{
-			name:     "invalid range",
-			start:    now.Add(time.Hour),
-			end:      now,
-			expectOK: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-
-			result := ValidateTimeRange(rec, tt.start, tt.end)
-
-			if result != tt.expectOK {
-				t.Errorf("ValidateTimeRange returned %v, expected %v", result, tt.expectOK)
-			}
-
-			if !tt.expectOK && rec.Code != http.StatusBadRequest {
-				t.Errorf("Expected status %d, got %d", http.StatusBadRequest, rec.Code)
-			}
-		})
-	}
-}
-
 func TestValidateStringsInSet(t *testing.T) {
 	allowed := map[string]bool{"type1": true, "type2": true, "type3": true}
 

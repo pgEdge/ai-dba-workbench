@@ -40,6 +40,35 @@ project adheres to
   `X-Total-Count` response header that reports the total number of
   matching rows; the JSON response body is unchanged. (#335)
 
+- Add a custom time range to the monitoring dashboards and the
+  event timeline, alongside the existing `1h`, `6h`, `24h`, `7d`,
+  and `30d` presets. The new Custom option opens a picker with
+  From and To fields, so that the graphs can be lined up with a
+  known incident window rather than a rolling window ending at
+  the present moment.
+  The `/api/v1/metrics/query` endpoint now accepts
+  `time_range=custom` together with RFC 3339 `time_start` and
+  `time_end` parameters. The server rejects a span longer than
+  366 days and a start at or after the present moment, and it
+  clamps an end in the future to the present moment, since a
+  picker set to the current day routinely overshoots by a few
+  minutes. The `/api/v1/timeline/events` endpoint applies the
+  same rules to its `start_time` and `end_time` parameters, and
+  the picker applies them too, keeping Apply disabled and naming
+  the rule that failed.
+  Auto-refresh is suspended whilst a custom window is active,
+  because re-fetching a fixed historical window returns identical
+  data on every poll; the selector shows a pause indicator, and
+  refreshes resume as soon as the user returns to a preset. The
+  window is held in memory only, so it is neither persisted nor
+  reflected in the page URL, and a reload returns to the last
+  preset.
+  The time-series charts honour the dashboard window, including
+  the charts on the query detail overlay, whilst the event
+  timeline honours the independent window set on its own control.
+  The query leaderboards and the performance and database summary
+  tiles do not yet follow the dashboard selector. (#345)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a

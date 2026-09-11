@@ -247,16 +247,6 @@ func RequireQueryTime(w http.ResponseWriter, r *http.Request, paramName string) 
 	return value, true
 }
 
-// ValidateTimeRange validates that endTime is after startTime. Sends an error
-// response and returns false if invalid.
-func ValidateTimeRange(w http.ResponseWriter, startTime, endTime time.Time) bool {
-	if endTime.Before(startTime) {
-		RespondError(w, http.StatusBadRequest, "end_time must be after start_time")
-		return false
-	}
-	return true
-}
-
 // ValidateStringsInSet validates that all strings in a list are in the allowed
 // set. Returns true if all are valid or if list is empty. Sends an error
 // response and returns false if any value is not in the set.

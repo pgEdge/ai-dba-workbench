@@ -34,26 +34,77 @@ hierarchy.
 
 ## Time Range Selector
 
-The time range selector controls the time window for
-all charts in the monitoring section. The selector
-appears as a toggle button group with the following
-options:
+The time range selector controls the time window for the
+time-series charts in the monitoring section. The event
+timeline carries a separate control of its own. The
+selector appears as a toggle button group with the
+following options:
 
 - 1h displays the last one hour of data.
 - 6h displays the last six hours of data.
 - 24h displays the last twenty-four hours of data.
 - 7d displays the last seven days of data.
 - 30d displays the last thirty days of data.
+- Custom displays an arbitrary window between a start
+  time and an end time that the user chooses.
 
 The selected time range persists across dashboard
 navigation. All time-series charts and KPI sparklines
 update when users change the time range.
+
+### Choosing a Custom Window
+
+The Custom option opens a picker with From and To
+date-time fields. The Apply button becomes available once
+both bounds carry a valid value and the end falls after
+the start. The toggle then displays the applied window in
+place of the word Custom.
+
+The server enforces the following limits on a custom
+window:
+
+- The start must fall before the present moment.
+- The span must not exceed 366 days.
+- An end time in the future is clamped to the present
+  moment rather than rejected.
+
+Auto-refresh pauses whilst a custom window is active,
+because a fixed historical window returns the same data
+on every poll. A pause icon beside the selector reports
+this state; selecting a preset again resumes automatic
+refreshes.
+
+A custom window lives in memory only. The Workbench
+neither stores the window nor records it in the page URL,
+so a browser reload returns to the last preset.
+
+### Views That Honour the Selector
+
+The time-series charts follow the dashboard time range,
+including the two charts on the query detail overlay. The
+headline statistics on that overlay report the latest
+collected sample instead.
+
+The event timeline follows its own independent range,
+which the dashboard selector never changes. The timeline
+supports a custom window through that separate control.
+
+The query leaderboards and the performance and database
+summary tiles do not follow the selector. The
+leaderboards report the latest collected sample, and the
+summary tiles always cover the last twenty-four hours.
 
 ## Event Timeline
 
 The event timeline displays notable events across the
 selected servers. The timeline appears above the
 performance summary tiles in the monitoring section.
+
+The timeline header carries its own range control,
+offering the same five presets and a Custom option that
+opens the same picker. The timeline range is independent
+of the dashboard time range selector; changing either one
+leaves the other exactly as it was.
 
 The event timeline tracks the following event types:
 

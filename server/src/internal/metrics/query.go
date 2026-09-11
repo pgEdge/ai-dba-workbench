@@ -116,6 +116,96 @@ func ParseTimeRange(timeRange string) (time.Time, time.Time, error) {
 	return now.Add(-duration), now, nil
 }
 
+// CustomTimeRange is the time_range value that selects an explicit
+// start and end timestamp instead of one of the rolling presets.
+const CustomTimeRange = "custom"
+
+// MaxCustomTimeSpan caps the length of a custom window. The bucket-width
+// heuristic derives from the span, so an unbounded window would let a
+// single request scan an arbitrary amount of history.
+const MaxCustomTimeSpan = 366 * 24 * time.Hour
+
+// TimeWindow is a resolved absolute query window. Every metrics query
+// runs against a TimeWindow, whether it came from a rolling preset or
+// from an explicit pair of timestamps.
+type TimeWindow struct {
+	Start time.Time
+	End   time.Time
+}
+
+// ResolveTimeWindow converts a time range selection into an absolute
+// window. Any timeRange other than "custom" delegates to ParseTimeRange
+// and ignores startISO and endISO; "custom" requires both timestamps in
+// RFC 3339 format and then applies the rules in ResolveCustomWindow,
+// naming the parameters time_start and time_end in any error.
+func ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow, error) {
+	if timeRange != CustomTimeRange {
+		start, end, err := ParseTimeRange(timeRange)
+		if err != nil {
+			return TimeWindow{}, fmt.Errorf(
+				"invalid time range %q: must be one of 1h, 6h, 24h, 7d, 30d, custom",
+				timeRange)
+		}
+		return TimeWindow{Start: start, End: end}, nil
+	}
+
+	if startISO == "" || endISO == "" {
+		return TimeWindow{}, fmt.Errorf(
+			"invalid time range %q: time_start and time_end are both required",
+			timeRange)
+	}
+
+	start, err := time.Parse(time.RFC3339, startISO)
+	if err != nil {
+		return TimeWindow{}, fmt.Errorf(
+			"invalid time_start %q: must be an RFC 3339 timestamp", startISO)
+	}
+	end, err := time.Parse(time.RFC3339, endISO)
+	if err != nil {
+		return TimeWindow{}, fmt.Errorf(
+			"invalid time_end %q: must be an RFC 3339 timestamp", endISO)
+	}
+
+	return ResolveCustomWindow(start, end, "time_start", "time_end")
+}
+
+// ResolveCustomWindow validates an already-parsed pair of timestamps and
+// returns the absolute window they describe. It is the single source of
+// truth for the custom-window rules, shared by every endpoint that takes
+// explicit bounds: the end must fall strictly after the start, the start
+// must fall before now, and the span must not exceed MaxCustomTimeSpan.
+// An end in the future is clamped to now rather than rejected, because a
+// picker set to the current day routinely overshoots by a few minutes.
+// startParam and endParam are the caller's query parameter names, so the
+// error message names the field the client actually sent.
+func ResolveCustomWindow(start, end time.Time, startParam, endParam string) (TimeWindow, error) {
+	start = start.UTC()
+	end = end.UTC()
+
+	if !end.After(start) {
+		return TimeWindow{}, fmt.Errorf(
+			"invalid time range: %s must be after %s", endParam, startParam)
+	}
+
+	now := time.Now().UTC()
+	if !start.Before(now) {
+		return TimeWindow{}, fmt.Errorf(
+			"invalid %s: must not be in the future", startParam)
+	}
+	// Clamping cannot collapse the window, because a start at or after
+	// now has already been rejected above.
+	if end.After(now) {
+		end = now
+	}
+
+	if end.Sub(start) > MaxCustomTimeSpan {
+		return TimeWindow{}, fmt.Errorf(
+			"invalid time range: span must not exceed 366 days")
+	}
+
+	return TimeWindow{Start: start, End: end}, nil
+}
+
 // IsMetricColumn determines whether a column represents a numeric metric
 // as opposed to a dimension identifier.
 func IsMetricColumn(name, dataType string) bool {
@@ -758,13 +848,15 @@ func classifyMetrics(
 
 // QueryTimeSeries executes a metrics query and returns the results as
 // MetricSeries slices. Each numeric column becomes its own series. When
-// multiple connection IDs are provided, results are combined.
+// multiple connection IDs are provided, results are combined. The window
+// is already resolved and validated by ResolveTimeWindow at the HTTP
+// boundary.
 func QueryTimeSeries(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	probeName string,
 	connectionIDs []int,
-	timeRange string,
+	window TimeWindow,
 	filters MetricFilters,
 	buckets int,
 	aggregation string,
@@ -774,10 +866,7 @@ func QueryTimeSeries(
 		return nil, fmt.Errorf("invalid probe name %q", probeName)
 	}
 
-	timeStart, timeEnd, err := ParseTimeRange(timeRange)
-	if err != nil {
-		return nil, err
-	}
+	timeStart, timeEnd := window.Start, window.End
 
 	// Verify probe exists
 	var count int

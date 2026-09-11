@@ -101,13 +101,14 @@ dialog.
 
 ## TextField Native Input Attributes
 
-`client/package.json` depends on `@mui/material` at `^5.14.20`, a
-caret range that resolves to the latest 5.x, so the `slotProps` API
-is available and a handful of components already use it
-(`ConnectionLostOverlay.tsx`, `ClusterFields.tsx` and
-`TopQueriesSection.tsx`). The established convention for native
-`<input>` attributes (`maxLength`, `min`, `max`, `aria-label`,
-`autoComplete` when not already a top-level prop) is nonetheless
+`client/package.json` depends on `@mui/material` at `^5.14.20`. The
+committed lockfile resolves that to `5.18.0`, where `slotProps` works
+and a handful of components already use it (`ConnectionLostOverlay.tsx`,
+`ClusterFields.tsx` and `TopQueriesSection.tsx`), but the declared
+minimum of `5.14.20` does not guarantee `slotProps` on `TextField`, so
+do not spread it further unless the minimum is raised. The convention
+for native `<input>` attributes (`maxLength`, `min`, `max`,
+`aria-label`, `autoComplete` when not already a top-level prop) is
 `inputProps` on `TextField`, used across some twenty files (for
 example, `ConnectionFields.tsx` uses `inputProps={{ min: 1, max:
 65535 }}` for the port field). Follow the convention of the file

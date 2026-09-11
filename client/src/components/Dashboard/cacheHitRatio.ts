@@ -40,7 +40,8 @@ export const CACHE_HIT_CAVEAT =
 
 /**
  * Ratio of hits to total block accesses as a percentage, or null when
- * there were no block accesses (or either input is missing).
+ * there were no block accesses, either input is missing, or either
+ * rate is negative (a negative rate is an invalid sample).
  */
 export const cacheHitRatio = (
     hit: number | null | undefined,
@@ -48,6 +49,7 @@ export const cacheHitRatio = (
 ): number | null => {
     if (typeof hit !== 'number' || typeof read !== 'number') { return null; }
     if (!Number.isFinite(hit) || !Number.isFinite(read)) { return null; }
+    if (hit < 0 || read < 0) { return null; }
     const total = hit + read;
     if (total <= 0) { return null; }
     return (hit / total) * 100;
@@ -55,8 +57,13 @@ export const cacheHitRatio = (
 
 /**
  * Build per-bucket cache hit ratio points from the hit and read rate
- * series of a metrics query. Buckets are paired by index and truncated
- * to the shorter series; an idle bucket yields a null value.
+ * series of a metrics query. The two series are joined by bucket time
+ * rather than by index: the metrics layer drops leading buckets with
+ * no value per metric, so the series may start at different buckets
+ * or have different lengths. Points are emitted for the union of
+ * timestamps in chronological order (both series share the same
+ * bucket grid of ISO strings, so sorting the union is safe), and a
+ * bucket that is idle or missing from either side yields a null value.
  */
 export const buildCacheHitRatioPoints = (
     series: MetricSeries[] | null,
@@ -66,18 +73,15 @@ export const buildCacheHitRatioPoints = (
     const readSeries = series.find(s => s.metric === BLKS_READ_PER_SEC);
     if (!hitSeries || !readSeries) { return []; }
 
-    const len = Math.min(hitSeries.data.length, readSeries.data.length);
-    const points: SparklinePoint[] = [];
-    for (let i = 0; i < len; i++) {
-        points.push({
-            time: hitSeries.data[i].time,
-            value: cacheHitRatio(
-                hitSeries.data[i].value,
-                readSeries.data[i].value,
-            ),
-        });
-    }
-    return points;
+    const hits = new Map(hitSeries.data.map(d => [d.time, d.value]));
+    const reads = new Map(readSeries.data.map(d => [d.time, d.value]));
+    const times = Array.from(new Set([...hits.keys(), ...reads.keys()]))
+        .sort();
+
+    return times.map(time => ({
+        time,
+        value: cacheHitRatio(hits.get(time), reads.get(time)),
+    }));
 };
 
 /**

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 )
 
 // saveAndClearFlags resets the package-level flag pointers and returns a
@@ -68,7 +69,7 @@ func TestLoadConfiguration_ExplicitConfigMissing(t *testing.T) {
 
 	*configFile = "/nonexistent/path/to/config.yaml"
 
-	cfg, err := loadConfiguration()
+	cfg, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error when explicit config file does not exist")
 	}
@@ -87,7 +88,7 @@ func TestLoadConfiguration_ExplicitConfigMalformed(t *testing.T) {
 	}
 
 	*configFile = configPath
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error for malformed YAML")
 	}
@@ -105,7 +106,9 @@ func TestLoadConfiguration_PasswordFileMissing(t *testing.T) {
 	*configFile = configPath
 	*pgPasswordFile = "/definitely/missing/password-file"
 
-	_, err := loadConfiguration()
+	// -pg-password-file is marked as passed, so the override applies
+	// and loadConfiguration then fails to read the named file.
+	_, err := loadConfiguration(flagutil.Set{flagPGPasswordFile: true})
 	if err == nil {
 		t.Fatal("expected error because password file is missing")
 	}
@@ -129,14 +132,14 @@ func TestLoadConfiguration_SecretFileMissing(t *testing.T) {
 	}
 
 	*configFile = configPath
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error because server secret file is missing")
 	}
 }
 
 // TestLoadConfiguration_Success exercises the full happy path of
-// loadConfiguration(): it writes a config file, a password file, and a
+// loadConfiguration: it writes a config file, a password file, and a
 // secret file all within the temp directory and explicitly references
 // them in the config YAML.
 func TestLoadConfiguration_Success(t *testing.T) {
@@ -166,7 +169,7 @@ func TestLoadConfiguration_Success(t *testing.T) {
 
 	*configFile = configPath
 
-	cfg, err := loadConfiguration()
+	cfg, err := loadConfiguration(nil)
 	if err != nil {
 		t.Fatalf("loadConfiguration error: %v", err)
 	}
@@ -198,7 +201,7 @@ func TestLoadConfiguration_NoConfigFileUsesDefaults(t *testing.T) {
 
 	// loadConfiguration must surface an error from LoadSecret since
 	// there is no secret file available in either default location.
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error because no secret file exists on default paths")
 	}
@@ -224,7 +227,7 @@ func TestLoadConfiguration_ExplicitConfigPermissionError(t *testing.T) {
 	}
 
 	*configFile = cfgPath
-	_, err := loadConfiguration()
+	_, err := loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error when explicit config path is unreadable")
 	}
@@ -264,7 +267,7 @@ func TestLoadConfiguration_AutoDiscoveredUnreadable(t *testing.T) {
 		t.Fatalf("Mkdir: %v", err)
 	}
 
-	_, err = loadConfiguration()
+	_, err = loadConfiguration(nil)
 	if err == nil {
 		t.Fatal("expected error from non-IsNotExist auto-discovery branch")
 	}
@@ -309,7 +312,7 @@ func TestLoadConfiguration_DefaultConfigFromUserDir(t *testing.T) {
 		t.Fatalf("write cfg: %v", err)
 	}
 
-	cfg, err := loadConfiguration()
+	cfg, err := loadConfiguration(nil)
 	if err != nil {
 		t.Fatalf("loadConfiguration: %v", err)
 	}

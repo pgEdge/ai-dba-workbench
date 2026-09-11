@@ -8,6 +8,12 @@ order; later sources override earlier ones:
 2. Configuration file.
 3. Command-line flags.
 
+The collector overrides a configuration file setting only when you
+actually pass the corresponding flag; a flag you omit never
+overrides the file, even though the flag has a built-in default. A
+flag you do pass always wins, including when the value you give it
+happens to equal that flag's default, such as `-pg-port 5432`.
+
 ## File Location
 
 The collector searches for its configuration file in the following

@@ -16,6 +16,7 @@ import (
 
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/pkg/flagutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -89,36 +90,43 @@ func (c *Config) LoadFromFile(filename string) error {
 	return nil
 }
 
-// ApplyFlags applies command line flags to override config values
-func (c *Config) ApplyFlags() {
-	if *pgHost != "" {
+// ApplyFlags applies command line flags to override config values.
+//
+// The passed set names the flags the operator actually supplied on
+// the command line, as reported by flagutil.Passed. Only those flags
+// override the configuration file, so a file value that happens to
+// equal a flag's registered default survives, and a flag explicitly
+// passed with its default value still wins. Deciding on the value
+// alone cannot tell those two cases apart.
+func (c *Config) ApplyFlags(passed flagutil.Set) {
+	if passed.Has(flagPGHost) {
 		c.Datastore.Host = *pgHost
 	}
-	if *pgHostAddr != "" {
+	if passed.Has(flagPGHostAddr) {
 		c.Datastore.HostAddr = *pgHostAddr
 	}
-	if *pgDatabase != "" {
+	if passed.Has(flagPGDatabase) {
 		c.Datastore.Database = *pgDatabase
 	}
-	if *pgUsername != "" {
+	if passed.Has(flagPGUsername) {
 		c.Datastore.Username = *pgUsername
 	}
-	if *pgPasswordFile != "" {
+	if passed.Has(flagPGPasswordFile) {
 		c.Datastore.PasswordFile = *pgPasswordFile
 	}
-	if *pgPort != 5432 {
+	if passed.Has(flagPGPort) {
 		c.Datastore.Port = *pgPort
 	}
-	if *pgSSLMode != "prefer" {
+	if passed.Has(flagPGSSLMode) {
 		c.Datastore.SSLMode = *pgSSLMode
 	}
-	if *pgSSLCert != "" {
+	if passed.Has(flagPGSSLCert) {
 		c.Datastore.SSLCert = *pgSSLCert
 	}
-	if *pgSSLKey != "" {
+	if passed.Has(flagPGSSLKey) {
 		c.Datastore.SSLKey = *pgSSLKey
 	}
-	if *pgSSLRootCert != "" {
+	if passed.Has(flagPGSSLRootCert) {
 		c.Datastore.SSLRootCert = *pgSSLRootCert
 	}
 }

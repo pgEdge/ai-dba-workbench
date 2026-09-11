@@ -269,7 +269,7 @@ project adheres to
 
 ### Removed
 
-- Remove 47 unused functions from the collector, server, and alerter,
+- Remove 48 unused functions from the collector, server, and alerter,
   along with the tests that existed only to exercise them. A
   reachability analysis with `govulncheck`'s sibling tool `deadcode`
   found 94 functions that no service entry point can reach; comparing

@@ -63,7 +63,7 @@ func TestExcludeWorkbenchQueriesClause(t *testing.T) {
 
 // TestSafeTopQueryOrdering asserts that the ordering pair interpolated
 // into the ORDER BY clause is whitelisted at the point of use, so the
-// TestSafeTopQueryOrdering covers the defence-in-depth fallback in
+// TestSafeTopQueryOrdering covers the defense-in-depth fallback in
 // buildTopQueriesSQL. The handler resolves request values to SQL
 // literals through validTopQueryOrderColumns and
 // validTopQueryOrderDirections before the builder ever sees them, so

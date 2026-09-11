@@ -704,17 +704,24 @@ func TestTopQueries_ExcludesInternalMarkerToo(t *testing.T) {
 	defer cleanup()
 	seedTopQueriesFixture(t, pool)
 
-	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO metrics.pg_stat_statements
+	// The marked statement is the captured query *text* being seeded, so
+	// it is bound as $2 rather than being part of the statement run
+	// here. Built before the call so that no concatenation appears in
+	// the Exec argument list, which static analysis reads as a SQL
+	// injection shape even when the value is parameterised.
+	markedQueryText := sqlmarker.Tag("INSERT INTO metrics.pg_stat_activity")
+
+	const seedMarkedRow = `
+        INSERT INTO metrics.pg_stat_statements
             (connection_id, collected_at, queryid, dbid, database_name,
              query, calls, total_exec_time, mean_exec_time, rows,
              shared_blks_hit, shared_blks_read)
          SELECT $1, MAX(collected_at), 1007, 100, 'alpha',
              $2, 70, 50, 1, 70, 700, 7
-         FROM metrics.pg_stat_statements WHERE connection_id = $1`,
-		topQueriesConnID,
-		"INSERT /* "+sqlmarker.Marker+" */ INTO metrics.pg_stat_activity",
-	); err != nil {
+         FROM metrics.pg_stat_statements WHERE connection_id = $1`
+
+	if _, err := pool.Exec(context.Background(), seedMarkedRow,
+		topQueriesConnID, markedQueryText); err != nil {
 		t.Fatalf("seeding an internally marked statement: %v", err)
 	}
 

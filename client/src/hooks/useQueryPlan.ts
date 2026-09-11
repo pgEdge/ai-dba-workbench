@@ -162,13 +162,44 @@ const PLANLESS_PATTERN =
 const CREATE_MATVIEW_PATTERN =
     /^create\s+(?:or\s+replace\s+)?materialized\s+view\b/i;
 
+/** CREATE [GLOBAL|LOCAL] [TEMP|UNLOGGED] TABLE prefix. */
+const CREATE_TABLE_PATTERN =
+    /^create\s+(?:global\s+|local\s+)?(?:temp(?:orary)?\s+|unlogged\s+)?table\b/i;
+
+/** Every occurrence of the AS keyword within a statement. */
+const AS_KEYWORD_PATTERN = /\bas\b/gi;
+
+/** Query keywords that may follow AS in a CREATE TABLE ... AS. */
+const CTAS_QUERY_KEYWORDS =
+    /^(?:select|values|table|execute|with)\b/i;
+
 /**
- * CREATE [TEMP|UNLOGGED] TABLE ... AS <query>.  The trailing
- * query keyword is required so that a plain CREATE TABLE with,
- * say, a GENERATED ALWAYS AS column is not misread as a CTAS.
+ * Return the offset just past the block comment opening at the
+ * start of `text`, or -1 when it is unterminated.  PostgreSQL
+ * nests block comments, and its lexer treats every `/*` inside
+ * a comment as opening a new level regardless of quotes, so a
+ * plain depth count matches the server.
  */
-const CREATE_TABLE_AS_PATTERN =
-    /^create\s+(?:global\s+|local\s+)?(?:temp(?:orary)?\s+|unlogged\s+)?table\b[\s\S]*?\bas\s+\(?\s*(?:select|values|table|execute|with)\b/i;
+function skipBlockComment(text: string): number {
+    let depth = 0;
+    let i = 0;
+
+    while (i < text.length) {
+        if (text.startsWith('/*', i)) {
+            depth += 1;
+            i += 2;
+        } else if (text.startsWith('*/', i)) {
+            depth -= 1;
+            i += 2;
+            if (depth === 0) {
+                return i;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    return -1;
+}
 
 /**
  * Strip leading whitespace, SQL comments, and opening
@@ -191,12 +222,36 @@ function stripLeadingNoise(query: string): string {
             continue;
         }
         if (text.startsWith('/*')) {
-            const close = text.indexOf('*/');
-            text = close === -1 ? '' : text.slice(close + 2);
+            const close = skipBlockComment(text);
+            text = close === -1 ? '' : text.slice(close);
             continue;
         }
         return text;
     }
+}
+
+/**
+ * Detect CREATE [TEMP|UNLOGGED] TABLE ... AS <query>.  A query
+ * keyword must follow some AS, with only whitespace, comments
+ * and opening parentheses in between, so that a plain CREATE
+ * TABLE with, say, a GENERATED ALWAYS AS column is not misread
+ * as a CTAS.  The noise between AS and the keyword is stripped
+ * with the same routine as the statement head, since a regex
+ * cannot skip nested block comments.
+ */
+function isCreateTableAs(text: string): boolean {
+    if (!CREATE_TABLE_PATTERN.test(text)) {
+        return false;
+    }
+    for (const match of text.matchAll(AS_KEYWORD_PATTERN)) {
+        const rest = stripLeadingNoise(
+            text.slice(match.index + match[0].length),
+        );
+        if (CTAS_QUERY_KEYWORDS.test(rest)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -221,7 +276,7 @@ export function classifyExplainSupport(
     if (
         EXPLAINABLE_LEADING_KEYWORDS.test(text)
         || CREATE_MATVIEW_PATTERN.test(text)
-        || CREATE_TABLE_AS_PATTERN.test(text)
+        || isCreateTableAs(text)
     ) {
         return 'plan';
     }

@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/worker"
 )
@@ -31,7 +29,7 @@ import (
 //
 // Claim C1 (the metric_staleness fire/clear loop and its missing
 // cooldown guard) was fixed in #405, and its pinned tests were removed
-// with that fix as the header above prescribes. The behaviour is now
+// with that fix as the header above prescribes. The behavior is now
 // covered against the corrected code in
 // staleness_alerts_integration_test.go and
 // staleness_alerts_errors_integration_test.go.
@@ -55,17 +53,6 @@ func engineDefectDemoEnabled(t *testing.T) {
 // does not flag inline multi-line SQL passed to Exec/QueryRow; every
 // value is still bound via $N.
 const (
-	insertStalenessRuleSQL = `
-        INSERT INTO alert_rules
-            (name, description, category, metric_name, default_operator,
-             default_threshold, default_severity, default_enabled, is_built_in)
-        VALUES ('metric_staleness',
-                'Metrics collection is stale; dashboards may show outdated data',
-                'availability', 'probe_staleness_ratio', '>', 3, 'warning',
-                TRUE, TRUE)
-        RETURNING id
-    `
-
 	insertArchiverRuleSQL = `
         INSERT INTO alert_rules
             (name, description, category, metric_name, default_operator,
@@ -86,33 +73,8 @@ const (
         RETURNING id
     `
 
-	insertProbeConfigSQL = `
-        INSERT INTO probe_configs
-            (name, connection_id, is_enabled, collection_interval_seconds)
-        VALUES ($1, NULL, TRUE, $2)
-    `
-
-	insertProbeAvailabilitySQL = `
-        INSERT INTO probe_availability
-            (connection_id, probe_name, is_available, last_collected)
-        VALUES ($1, $2, TRUE, NOW() - $3::interval)
-    `
-
-	selectAlertsForRuleSQL = `
-        SELECT id, status
-        FROM alerts
-        WHERE rule_id = $1
-        ORDER BY id
-    `
-
 	selectAlertStatusSQL = `
         SELECT status FROM alerts WHERE id = $1
-    `
-
-	insertSlotSampleSQL = `
-        INSERT INTO metrics.pg_replication_slots
-            (connection_id, slot_name, active, retained_bytes, collected_at)
-        VALUES ($1, $2, $3, $4, NOW())
     `
 
 	// createStatDatabaseTableSQL carries every metrics.pg_stat_database
@@ -204,35 +166,6 @@ func countTypes(jobs []notificationJob) map[database.NotificationType]int {
 		counts[job.notifTyp]++
 	}
 	return counts
-}
-
-// seedStalenessFixture inserts the metric_staleness rule plus a probe
-// whose last collection is far enough in the past to breach the
-// default staleness ratio of 3. It returns the rule id and the
-// connection id.
-func seedStalenessFixture(t *testing.T, pool *pgxpool.Pool) (int64, int) {
-	t.Helper()
-	ctx := context.Background()
-
-	var ruleID int64
-	if err := pool.QueryRow(ctx, insertStalenessRuleSQL).Scan(&ruleID); err != nil {
-		t.Fatalf("failed to insert metric_staleness rule: %v", err)
-	}
-
-	connID := insertTestConnection(t, pool, "audit-staleness")
-
-	if _, err := pool.Exec(ctx, insertProbeConfigSQL,
-		"pg_stat_activity", 60); err != nil {
-		t.Fatalf("failed to insert probe config: %v", err)
-	}
-	// 30 minutes stale against a 60 second interval is a ratio of 30,
-	// well above the seeded threshold of 3.
-	if _, err := pool.Exec(ctx, insertProbeAvailabilitySQL,
-		connID, "pg_stat_activity", "30 minutes"); err != nil {
-		t.Fatalf("failed to insert probe availability: %v", err)
-	}
-
-	return ruleID, connID
 }
 
 // TestAuditC2ArchiverRuleErrorIsSwallowed verifies the engine half of

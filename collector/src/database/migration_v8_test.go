@@ -33,13 +33,15 @@ func migrationV8(t *testing.T) Migration {
 	return Migration{}
 }
 
-// TestMigrationV8_RegisteredAsLatest verifies the migration is wired
-// into the schema manager and is the newest version, so a collector
-// upgrade actually applies it.
-func TestMigrationV8_RegisteredAsLatest(t *testing.T) {
+// TestMigrationV8_Registered verifies the migration is wired into the
+// schema manager and will be reached by an upgrade. It asserts that
+// LatestVersion is at least 8 rather than exactly 8, because later
+// migrations are expected to follow; migrationV8 itself fails if the
+// version is not registered at all.
+func TestMigrationV8_Registered(t *testing.T) {
 	sm := NewSchemaManager()
-	if got := sm.LatestVersion(); got != 8 {
-		t.Errorf("LatestVersion() = %d, want 8", got)
+	if got := sm.LatestVersion(); got < 8 {
+		t.Errorf("LatestVersion() = %d, want at least 8", got)
 	}
 	if desc := migrationV8(t).Description; desc == "" {
 		t.Error("migration 8 has an empty description")

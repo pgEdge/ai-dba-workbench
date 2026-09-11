@@ -8,9 +8,14 @@
  *-------------------------------------------------------------------------
  */
 
+/**
+ * One chart series. A null entry marks a bucket with no value and is
+ * drawn as a gap in line charts (and as an empty slot in bar charts)
+ * rather than as zero.
+ */
 export interface ChartDataSeries {
     name: string;
-    data: number[];
+    data: (number | null)[];
 }
 
 export interface ChartData {

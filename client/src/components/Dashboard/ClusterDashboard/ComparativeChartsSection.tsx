@@ -26,7 +26,8 @@ interface ComparativeChartsSectionProps {
 
 interface ConnectionMetrics {
     connectionName: string;
-    cacheHitRatio: number;
+    /** Percentage, or null when the latest interval saw no block access. */
+    cacheHitRatio: number | null;
     commitsPerSec: number;
     rollbackPercent: number;
     activeConnections: number;
@@ -99,9 +100,12 @@ const ComparativeChartsSection: React.FC<ComparativeChartsSectionProps> = ({ ser
                         return {
                             connectionName: conn.connection_name as string || `Server ${conn.connection_id}`,
                             connectionId: conn.connection_id as number,
+                            // The server already reports a percentage; a
+                            // null current (no block access) stays null so
+                            // the bar is left empty rather than drawn at 0.
                             cacheHitRatio: cache && typeof cache.current === 'number'
-                                ? Math.round(cache.current * 10000) / 100
-                                : 0,
+                                ? Math.round(cache.current * 100) / 100
+                                : null,
                             commitsPerSec: txns && typeof txns.commits_per_sec === 'number'
                                 ? Math.round(txns.commits_per_sec * 100) / 100
                                 : 0,

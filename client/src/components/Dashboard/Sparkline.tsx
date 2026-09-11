@@ -17,7 +17,8 @@ import type { SparklineProps } from './types';
  * A small inline chart for embedding in KPI tiles and summary rows.
  * Uses the existing Chart component with minimal configuration:
  * no axes, no legend, no toolbar. Configurable height (default 40px)
- * with optional area fill and smooth lines.
+ * with optional area fill and smooth lines. A point with a null value
+ * is passed through to ECharts as a gap in the line.
  */
 const Sparkline: React.FC<SparklineProps> = ({
     data,

@@ -201,8 +201,16 @@ export function buildXAxis(categories?: string[]): object {
  * positive and negative totals, preserving its true ~200-unit span
  * instead of collapsing to a tiny window around a netted zero.
  */
+/**
+ * Narrow a series entry to a finite number. Null marks a bucket with
+ * no value (drawn as a gap) and is skipped when sizing the axis, as
+ * are undefined entries from ragged series and non-finite numbers.
+ */
+const isFiniteNumber = (value: number | null | undefined): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
+
 export function buildYAxis(
-    seriesData?: number[][],
+    seriesData?: (number | null)[][],
     stacked?: boolean,
     zeroAnchored?: boolean,
 ): object {
@@ -245,7 +253,7 @@ export function buildYAxis(
         for (const s of series) {
             if (s.length > maxLen) {maxLen = s.length;}
             for (const value of s) {
-                if (!Number.isFinite(value)) {continue;}
+                if (!isFiniteNumber(value)) {continue;}
                 if (value > 0) {hasPositive = true;}
                 else if (value < 0) {hasNegative = true;}
             }
@@ -256,7 +264,7 @@ export function buildYAxis(
             let finiteAtIndex = false;
             for (const s of series) {
                 const value = s[i];
-                if (!Number.isFinite(value)) {continue;}
+                if (!isFiniteNumber(value)) {continue;}
                 finiteAtIndex = true;
                 if (value > 0) {posSum += value;}
                 else if (value < 0) {negSum += value;}
@@ -273,7 +281,7 @@ export function buildYAxis(
     } else {
         for (const s of series) {
             for (const value of s) {
-                if (!Number.isFinite(value)) {continue;}
+                if (!isFiniteNumber(value)) {continue;}
                 observe(value);
             }
         }

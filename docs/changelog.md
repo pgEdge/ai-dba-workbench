@@ -155,6 +155,25 @@ project adheres to
   overview generator, the shared rate limiter, the auth store, and the
   datastore it already stopped.
 
+- Fix the collector's partition dropper never enforcing
+  `retention_days`, which could fill the metrics datastore's disk
+  and take the Workbench down with it. Garbage collection was
+  scheduled five minutes after process start and every 24 hours
+  thereafter, with no record of when it last ran, so retention was
+  coupled to unbroken process uptime; a collector that restarted
+  more often than the startup delay never collected garbage even
+  once, and each restart returned it to the beginning of the five
+  minutes. A reporter saw partitions persist nine days past a
+  seven-day window across more than a hundred restarts, with no
+  dropper activity in the logs at all. The collector now records
+  each completed pass in a new `maintenance_runs` table and times
+  the next pass from that record rather than from process start, so
+  an overdue collection runs shortly after startup however many
+  times the process has restarted. This also closes the same gap
+  for rolling deployments and node drains, which failed
+  identically. A failed pass now backs off rather than retrying
+  immediately. (#437)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

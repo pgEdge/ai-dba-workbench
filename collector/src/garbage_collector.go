@@ -10,6 +10,8 @@
 package main
 
 import (
+	"errors"
+
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 
@@ -26,6 +28,13 @@ type GarbageCollector struct {
 	datastore    *database.Datastore
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
+
+	// Cadence, seeded from the constants above. These are fields rather
+	// than direct uses of the constants so that tests can drive the
+	// scheduling loop without waiting out real delays.
+	interval     time.Duration
+	startupGrace time.Duration
+	retryDelay   time.Duration
 }
 
 // NewGarbageCollector creates a new garbage collector
@@ -33,6 +42,9 @@ func NewGarbageCollector(datastore *database.Datastore) *GarbageCollector {
 	return &GarbageCollector{
 		datastore:    datastore,
 		shutdownChan: make(chan struct{}),
+		interval:     gcInterval,
+		startupGrace: gcStartupGrace,
+		retryDelay:   gcRetryDelay,
 	}
 }
 
@@ -45,46 +57,153 @@ func (gc *GarbageCollector) Start(ctx context.Context) error {
 	return nil
 }
 
-// run executes the garbage collection loop
+// Garbage collection cadence. The interval is the target period between
+// collections; the grace period is how long after startup, or after a
+// failure, the collector waits before trying.
+//
+// The grace period is deliberately short. Retention used to be scheduled
+// from process start, which coupled it to uptime: a collector that
+// restarted more often than the delay never enforced retention even
+// once, and a restart loop could therefore fill the datastore's disk
+// (issue #437). It is not zero only so that collection does not compete
+// with the burst of probes the scheduler runs at startup.
+const (
+	gcInterval     = 24 * time.Hour
+	gcStartupGrace = 30 * time.Second
+	gcRetryDelay   = 15 * time.Minute
+)
+
+// errNoDatastore reports a garbage collector constructed without a
+// datastore. Production always supplies one, so this exists to keep the
+// collection goroutine from panicking rather than to be handled.
+var errNoDatastore = errors.New("garbage collector has no datastore")
+
+// run executes the garbage collection loop. The next collection is timed
+// from the last recorded completion in the datastore rather than from
+// process start, so restarts resume the existing cycle instead of
+// beginning a fresh one.
 func (gc *GarbageCollector) run(ctx context.Context) {
 	defer gc.wg.Done()
 
-	// Wait a short time after startup before first collection
-	startupDelay := 5 * time.Minute
-	logger.Infof("Garbage collector will run first collection in %v", startupDelay)
-
-	select {
-	case <-gc.shutdownChan:
-		return
-	case <-time.After(startupDelay):
-		// Run first collection
-		gc.collectGarbage(ctx)
-	}
-
-	// Schedule regular collections every 24 hours
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
+	var lastAttemptFailed bool
 
 	for {
+		// Check for shutdown before touching the datastore, so a
+		// collector told to stop during startup exits promptly rather
+		// than waiting on a query.
 		select {
 		case <-gc.shutdownChan:
 			logger.Info("Stopping garbage collector")
 			return
-		case <-ticker.C:
-			gc.collectGarbage(ctx)
+		case <-ctx.Done():
+			logger.Info("Context canceled, stopping garbage collector")
+			return
+		default:
 		}
+
+		delay := gc.nextRunDelay(ctx, lastAttemptFailed)
+		logger.Infof("Garbage collector will run next collection in %v", delay)
+
+		select {
+		case <-gc.shutdownChan:
+			logger.Info("Stopping garbage collector")
+			return
+		case <-ctx.Done():
+			logger.Info("Context canceled, stopping garbage collector")
+			return
+		case <-time.After(delay):
+		}
+
+		lastAttemptFailed = gc.collectGarbage(ctx) != nil
 	}
 }
 
-// collectGarbage performs garbage collection for all probes
-func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
+// nextRunDelay returns how long to wait before the next collection.
+//
+// A task that has never run, or whose recorded completion is already
+// older than the interval, is due now and waits only the startup grace
+// period. Otherwise the delay carries the remainder of the current
+// cycle. A failed attempt backs off instead of retrying immediately, so
+// that an unreachable datastore does not produce a tight error loop.
+func (gc *GarbageCollector) nextRunDelay(ctx context.Context, lastAttemptFailed bool) time.Duration {
+	if lastAttemptFailed {
+		return gc.retryDelay
+	}
+
+	lastRun, found, err := gc.lastRun(ctx)
+	switch {
+	case err != nil:
+		// Treat an unreadable timestamp as due: dropping partitions a
+		// little early is harmless, whereas not dropping them at all is
+		// what filled a disk in issue #437.
+		logger.Errorf("Error reading last garbage collection time, treating collection as due: %v", err)
+	case !found:
+		logger.Info("No previous garbage collection recorded, collection is due")
+	default:
+		if time.Until(lastRun.Add(gc.interval)) <= gc.startupGrace {
+			logger.Infof("Last garbage collection was %v ago, collection is due",
+				time.Since(lastRun).Truncate(time.Second))
+		}
+	}
+
+	return gc.computeNextRunDelay(lastRun, found, err, lastAttemptFailed, time.Now())
+}
+
+// computeNextRunDelay holds the scheduling decision, separated from the
+// datastore read so it can be exercised directly.
+//
+// A task that has never run, or whose recorded completion is already
+// older than the interval, is due now and waits only the startup grace
+// period. Anything else carries the remainder of the current cycle.
+func (gc *GarbageCollector) computeNextRunDelay(lastRun time.Time, found bool, readErr error, lastAttemptFailed bool, now time.Time) time.Duration {
+	if lastAttemptFailed {
+		return gc.retryDelay
+	}
+	if readErr != nil || !found {
+		return gc.startupGrace
+	}
+
+	remaining := lastRun.Add(gc.interval).Sub(now)
+	if remaining <= gc.startupGrace {
+		return gc.startupGrace
+	}
+
+	return remaining
+}
+
+// lastRun reads the recorded completion time of the partition retention
+// task from the datastore.
+func (gc *GarbageCollector) lastRun(ctx context.Context) (time.Time, bool, error) {
+	if gc.datastore == nil {
+		return time.Time{}, false, errNoDatastore
+	}
+
+	conn, err := gc.datastore.GetConnection()
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	defer gc.datastore.ReturnConnection(conn)
+
+	return database.GetMaintenanceRun(ctx, conn, database.PartitionRetentionTask)
+}
+
+// collectGarbage performs garbage collection for all probes. It returns
+// an error only when the pass could not be attempted at all; a failure
+// to drop partitions for one probe is logged and does not abandon the
+// rest, nor prevent the pass being recorded as done.
+func (gc *GarbageCollector) collectGarbage(ctx context.Context) error {
 	logger.Info("Starting garbage collection...")
+
+	if gc.datastore == nil {
+		logger.Errorf("Error getting database connection for garbage collection: %v", errNoDatastore)
+		return errNoDatastore
+	}
 
 	// Get database connection
 	conn, err := gc.datastore.GetConnection()
 	if err != nil {
 		logger.Errorf("Error getting database connection for garbage collection: %v", err)
-		return
+		return err
 	}
 	defer gc.datastore.ReturnConnection(conn)
 
@@ -92,7 +211,7 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 	configsByConnection, err := probes.LoadProbeConfigs(ctx, conn)
 	if err != nil {
 		logger.Errorf("Error loading probe configs for garbage collection: %v", err)
-		return
+		return err
 	}
 
 	// Process each probe from all connections (including global defaults)
@@ -121,6 +240,16 @@ func (gc *GarbageCollector) collectGarbage(ctx context.Context) {
 	} else {
 		logger.Info("Garbage collection completed: no partitions to drop")
 	}
+
+	// Record the completion so the next run is timed from here rather
+	// than from the next process start.
+	if err := database.RecordMaintenanceRun(ctx, conn,
+		database.PartitionRetentionTask, time.Now()); err != nil {
+		logger.Errorf("Error recording garbage collection completion: %v", err)
+		return err
+	}
+
+	return nil
 }
 
 // collectGarbageForProbe performs garbage collection for a single probe

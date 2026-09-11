@@ -120,9 +120,9 @@ func newQueryExecTestHandler(
 		t.Fatalf("Failed to create query execution test schema: %v", err)
 	}
 
-	handler := NewConnectionHandler(
+	handler := NewConnectionHandlerWithSecurity(
 		database.NewTestDatastoreWithSecret(pool, queryExecTestSecret),
-		nil, auth.NewRBACChecker(nil))
+		nil, auth.NewRBACChecker(nil), false, nil, nil)
 
 	cleanup := func() {
 		_, _ = pool.Exec(context.Background(), queryExecTestTeardown)
@@ -484,7 +484,7 @@ func TestExecuteQuery_DeniesUnauthorisedCallers(t *testing.T) {
 			func(context.Context, int) (bool, string, error) {
 				return false, "someone-else", nil
 			})
-		h := NewConnectionHandler(ds, store, checker)
+		h := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
 
 		rec := postQuery(t, h, connID, `{"query":"SELECT 1"}`)
 
@@ -500,7 +500,8 @@ func TestExecuteQuery_DeniesUnauthorisedCallers(t *testing.T) {
 
 		userID := newGroupGrantedUser(t, store, "readonly_user", connID,
 			auth.AccessLevelRead)
-		h := NewConnectionHandler(ds, store, auth.NewRBACChecker(store))
+		h := NewConnectionHandlerWithSecurity(ds, store,
+			auth.NewRBACChecker(store), false, nil, nil)
 
 		ctx := context.WithValue(context.Background(),
 			auth.UserIDContextKey, userID)

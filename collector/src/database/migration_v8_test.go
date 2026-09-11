@@ -290,7 +290,9 @@ func TestMigrationV8_UpgradesLegacyRowsAndKeepsTuning(t *testing.T) {
 		t.Fatalf("failed to begin transaction: %v", err)
 	}
 	if err := migrationV8(t).Up(tunedTx); err != nil {
-		_ = tunedTx.Rollback(ctx)
+		if rbErr := tunedTx.Rollback(ctx); rbErr != nil {
+			t.Logf("rollback after a failed migration: %v", rbErr)
+		}
 		t.Fatalf("migration 8 failed on a tuned row: %v", err)
 	}
 	if err := tunedTx.Commit(ctx); err != nil {

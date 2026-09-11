@@ -128,6 +128,21 @@ project adheres to
 
 ### Fixed
 
+- Fix every cache hit ratio in the web client (the Cache Hit
+  performance tile, the server dashboard's KPI sparkline and
+  per-database cards, the database dashboard's KPI tile and Cache
+  Hit Ratio Over Time chart, and the cluster dashboard's comparative
+  chart) reporting a lifetime average since the last statistics
+  reset, which could not move when a current problem appeared. The
+  ratio is now computed from the change in `blks_hit` and
+  `blks_read` between consecutive samples within each time bucket.
+  Intervals with no block access render as a gap in the chart and
+  '--' for the headline value instead of 0%, samples following a
+  statistics reset are discarded rather than producing a bogus
+  ratio, and the tooltips note that `blks_hit` counts only
+  `shared_buffers` hits, so a lower ratio does not by itself
+  indicate slow I/O. (#401)
+
 - Stop the `test` and `coverage` targets in the server, collector and
   alerter Makefiles running `pkill -9` against every matching process
   on the host, which killed any developer-started dev server or

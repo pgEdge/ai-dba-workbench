@@ -28,6 +28,15 @@ rollbacks. The Cache Hit Ratio Over Time chart tracks
 the ratio across the selected time range. Each chart
 includes an AI Analysis button.
 
+The cache hit KPI and chart compute the ratio from the
+blocks read and hit within each interval rather than from
+the lifetime counters, so the line moves when the current
+workload changes. An interval with no block access shows
+as a gap in the chart and as '--' in the KPI tile. The
+ratio counts only `shared_buffers` hits; a block read may
+still be served from the operating system page cache, so
+a lower ratio does not by itself indicate slow I/O.
+
 ## Table Leaderboard
 
 The table leaderboard ranks tables using selectable

@@ -37,6 +37,10 @@ range for all replication relationships in the cluster.
 The comparative charts section presents side-by-side
 metrics for all servers in the cluster. The section
 allows administrators to identify performance
-disparities between cluster members. Users can click a
-server entry to navigate to the
-[server dashboard](server.md) for that server.
+disparities between cluster members. The cache hit ratio
+chart plots a per-interval ratio for each server, leaving
+a gap for intervals with no block access; because only
+`shared_buffers` hits count, a lower ratio does not by
+itself indicate slow I/O. Users can click a server entry
+to navigate to the [server dashboard](server.md) for that
+server.

@@ -25,6 +25,16 @@ database metrics:
 - Cache hit ratio as a percentage with trend data.
 - Temporary files created with a time-series chart.
 
+The cache hit ratio is computed from the blocks read and
+hit during each sample interval, so a current problem is
+visible immediately rather than being diluted by history
+since the last statistics reset. An interval with no block
+access shows as a gap in the sparkline and as '--' for the
+headline value. The ratio counts only `shared_buffers`
+hits; a block read may still be served from the operating
+system page cache, so a lower ratio does not by itself
+indicate slow I/O.
+
 ## WAL and Replication
 
 The WAL and replication section shows write-ahead log
@@ -36,8 +46,10 @@ slot details.
 
 The database summaries section lists all databases on
 the server with high-level metrics for each database.
-Users can click a database entry to navigate to the
-[database dashboard](database.md).
+The cache hit ratio on each card is a per-interval value
+and shows '--' when the database had no block access in
+the latest interval. Users can click a database entry to
+navigate to the [database dashboard](database.md).
 
 ## Connections
 

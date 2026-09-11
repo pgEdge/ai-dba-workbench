@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/worker"
 )
@@ -28,6 +26,13 @@ import (
 // defect, the test asserts the CURRENT (defective) behavior and the
 // comment states what the behavior SHOULD be, so the suite stays green
 // until the defect is fixed.
+//
+// Claim C1 (the metric_staleness fire/clear loop and its missing
+// cooldown guard) was fixed in #405, and its pinned tests were removed
+// with that fix as the header above prescribes. The behavior is now
+// covered against the corrected code in
+// staleness_alerts_integration_test.go and
+// staleness_alerts_errors_integration_test.go.
 //
 // Tests whose name ends in "Demo" assert the CORRECT behavior instead
 // and therefore fail against the current code. They are skipped unless
@@ -48,17 +53,6 @@ func engineDefectDemoEnabled(t *testing.T) {
 // does not flag inline multi-line SQL passed to Exec/QueryRow; every
 // value is still bound via $N.
 const (
-	insertStalenessRuleSQL = `
-        INSERT INTO alert_rules
-            (name, description, category, metric_name, default_operator,
-             default_threshold, default_severity, default_enabled, is_built_in)
-        VALUES ('metric_staleness',
-                'Metrics collection is stale; dashboards may show outdated data',
-                'availability', 'probe_staleness_ratio', '>', 3, 'warning',
-                TRUE, TRUE)
-        RETURNING id
-    `
-
 	insertArchiverRuleSQL = `
         INSERT INTO alert_rules
             (name, description, category, metric_name, default_operator,
@@ -79,33 +73,8 @@ const (
         RETURNING id
     `
 
-	insertProbeConfigSQL = `
-        INSERT INTO probe_configs
-            (name, connection_id, is_enabled, collection_interval_seconds)
-        VALUES ($1, NULL, TRUE, $2)
-    `
-
-	insertProbeAvailabilitySQL = `
-        INSERT INTO probe_availability
-            (connection_id, probe_name, is_available, last_collected)
-        VALUES ($1, $2, TRUE, NOW() - $3::interval)
-    `
-
-	selectAlertsForRuleSQL = `
-        SELECT id, status
-        FROM alerts
-        WHERE rule_id = $1
-        ORDER BY id
-    `
-
 	selectAlertStatusSQL = `
         SELECT status FROM alerts WHERE id = $1
-    `
-
-	insertSlotSampleSQL = `
-        INSERT INTO metrics.pg_replication_slots
-            (connection_id, slot_name, active, retained_bytes, collected_at)
-        VALUES ($1, $2, $3, $4, NOW())
     `
 
 	// createStatDatabaseTableSQL carries every metrics.pg_stat_database
@@ -197,263 +166,6 @@ func countTypes(jobs []notificationJob) map[database.NotificationType]int {
 		counts[job.notifTyp]++
 	}
 	return counts
-}
-
-// seedStalenessFixture inserts the metric_staleness rule plus a probe
-// whose last collection is far enough in the past to breach the
-// default staleness ratio of 3. It returns the rule id and the
-// connection id.
-func seedStalenessFixture(t *testing.T, pool *pgxpool.Pool) (int64, int) {
-	t.Helper()
-	ctx := context.Background()
-
-	var ruleID int64
-	if err := pool.QueryRow(ctx, insertStalenessRuleSQL).Scan(&ruleID); err != nil {
-		t.Fatalf("failed to insert metric_staleness rule: %v", err)
-	}
-
-	connID := insertTestConnection(t, pool, "audit-staleness")
-
-	if _, err := pool.Exec(ctx, insertProbeConfigSQL,
-		"pg_stat_activity", 60); err != nil {
-		t.Fatalf("failed to insert probe config: %v", err)
-	}
-	// 30 minutes stale against a 60 second interval is a ratio of 30,
-	// well above the seeded threshold of 3.
-	if _, err := pool.Exec(ctx, insertProbeAvailabilitySQL,
-		connID, "pg_stat_activity", "30 minutes"); err != nil {
-		t.Fatalf("failed to insert probe availability: %v", err)
-	}
-
-	return ruleID, connID
-}
-
-// TestAuditC1StalenessAlertFireClearLoop verifies audit claim C1. The
-// metric_staleness rule stores its alerts with alert_type='threshold'
-// and a non-NULL rule_id, so the alert cleaner picks them up. The
-// cleaner resolves the alert's metric name, "probe_staleness_ratio",
-// through GetLatestMetricValues, which has no registry entry for it
-// and therefore returns an error. checkAlertResolved treats that error
-// as "the condition no longer exists" and clears the alert, queueing
-// an ALERT_CLEAR notification. evaluateMetricStaleness then recreates
-// the alert on its next pass, because unlike triggerThresholdAlert it
-// performs no recently-cleared cooldown check.
-//
-// The result is an unbounded fire/clear notification loop on stable
-// input data, running at the cleaner's 30 second cadence and the
-// evaluator's 60 second cadence.
-//
-// The staleness path SHOULD either be excluded from the cleaner (it
-// has no registry metric) or SHOULD apply the same cooldown guard as
-// triggerThresholdAlert.
-func TestAuditC1StalenessAlertFireClearLoop(t *testing.T) {
-	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	capture := installNotificationCapture(t, engine)
-	ruleID, _ := seedStalenessFixture(t, pool)
-
-	// Precondition: the metric the cleaner will look up is genuinely
-	// unresolvable, which is what drives the error branch.
-	if _, err := engine.datastore.GetLatestMetricValues(ctx,
-		"probe_staleness_ratio"); err == nil {
-		t.Fatal("expected probe_staleness_ratio to be unimplemented")
-	} else if !strings.Contains(err.Error(), "not implemented") {
-		t.Fatalf("unexpected error for probe_staleness_ratio: %v", err)
-	}
-
-	const cycles = 3
-	for i := 0; i < cycles; i++ {
-		engine.evaluateThresholds(ctx)
-		engine.cleanResolvedAlerts(ctx)
-	}
-
-	rows, err := pool.Query(ctx, selectAlertsForRuleSQL, ruleID)
-	if err != nil {
-		t.Fatalf("failed to read alerts: %v", err)
-	}
-	defer rows.Close()
-
-	var statuses []string
-	for rows.Next() {
-		var id int64
-		var status string
-		if err := rows.Scan(&id, &status); err != nil {
-			t.Fatalf("failed to scan alert: %v", err)
-		}
-		statuses = append(statuses, status)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("row iteration error: %v", err)
-	}
-
-	// Current (defective) behavior: one brand new alert row per cycle,
-	// every one of them already cleared. There SHOULD be a single
-	// alert that stays active while the probe remains stale.
-	if len(statuses) != cycles {
-		t.Errorf("alert rows = %d, want %d (one created and cleared per cycle)",
-			len(statuses), cycles)
-	}
-	for i, status := range statuses {
-		if status != "cleared" {
-			t.Errorf("alert %d status = %q, want \"cleared\"", i, status)
-		}
-	}
-
-	jobs := capture.await(t, 2*cycles)
-	counts := countTypes(jobs)
-	if counts[database.NotificationTypeAlertFire] != cycles {
-		t.Errorf("fire notifications = %d, want %d",
-			counts[database.NotificationTypeAlertFire], cycles)
-	}
-	if counts[database.NotificationTypeAlertClear] != cycles {
-		t.Errorf("clear notifications = %d, want %d",
-			counts[database.NotificationTypeAlertClear], cycles)
-	}
-	t.Logf("after %d evaluate/clean cycles on stable data: %d alert rows, "+
-		"%d fire notifications, %d clear notifications",
-		cycles, len(statuses),
-		counts[database.NotificationTypeAlertFire],
-		counts[database.NotificationTypeAlertClear])
-}
-
-// TestAuditC1StalenessAlertFireClearLoopDemo asserts the behavior the
-// engine SHOULD have: a persistently stale probe produces exactly one
-// alert, which stays active and notifies once. It fails against the
-// current code, so it is skipped unless ALERTER_DEFECT_DEMO=1.
-func TestAuditC1StalenessAlertFireClearLoopDemo(t *testing.T) {
-	engineDefectDemoEnabled(t)
-
-	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	capture := installNotificationCapture(t, engine)
-	ruleID, _ := seedStalenessFixture(t, pool)
-
-	const cycles = 3
-	for i := 0; i < cycles; i++ {
-		engine.evaluateThresholds(ctx)
-		engine.cleanResolvedAlerts(ctx)
-	}
-
-	var total, active int
-	if err := pool.QueryRow(ctx, `
-        SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'active')
-        FROM alerts WHERE rule_id = $1
-    `, ruleID).Scan(&total, &active); err != nil {
-		t.Fatalf("failed to count alerts: %v", err)
-	}
-
-	if total != 1 {
-		t.Errorf("alert rows = %d, want 1 for a continuously stale probe", total)
-	}
-	if active != 1 {
-		t.Errorf("active alerts = %d, want 1; the probe is still stale", active)
-	}
-
-	jobs := capture.await(t, 1)
-	if counts := countTypes(jobs); counts[database.NotificationTypeAlertClear] != 0 {
-		t.Errorf("clear notifications = %d, want 0 while the probe is stale",
-			counts[database.NotificationTypeAlertClear])
-	}
-}
-
-// TestAuditC1StalenessPathSkipsCooldownGuard isolates the second half
-// of claim C1: evaluateMetricStaleness performs no
-// GetRecentlyClearedAlert check, so it re-fires immediately after a
-// clear, whereas triggerThresholdAlert suppresses a re-fire for
-// AlertCooldownPeriod. The two paths are driven back to back on the
-// same engine to make the asymmetry explicit.
-func TestAuditC1StalenessPathSkipsCooldownGuard(t *testing.T) {
-	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	installNotificationCapture(t, engine)
-
-	stalenessRuleID, stalenessConnID := seedStalenessFixture(t, pool)
-
-	// Control: a standard registry-backed rule that flows through
-	// triggerThresholdAlert.
-	ruleIDs := seedSpockBuiltInRules(t, pool)
-	slotRuleID := ruleIDs["replication_slot_retention_warn"]
-	slotConnID := insertTestConnection(t, pool, "audit-cooldown-control")
-	if _, err := pool.Exec(ctx, insertSlotSampleSQL,
-		slotConnID, "slot_a", false, int64(5_000_000_000)); err != nil {
-		t.Fatalf("failed to seed replication slot sample: %v", err)
-	}
-
-	// First pass creates both alerts.
-	engine.evaluateThresholds(ctx)
-
-	stalenessAlert, err := ds.GetActiveThresholdAlert(ctx, stalenessRuleID,
-		stalenessConnID, nil)
-	if err != nil || stalenessAlert == nil {
-		t.Fatalf("expected a staleness alert after the first pass "+
-			"(alert=%v err=%v)", stalenessAlert, err)
-	}
-	slotAlert, err := ds.GetActiveThresholdAlert(ctx, slotRuleID,
-		slotConnID, nil)
-	if err != nil || slotAlert == nil {
-		t.Fatalf("expected a slot retention alert after the first pass "+
-			"(alert=%v err=%v)", slotAlert, err)
-	}
-
-	// Clear both alerts right now, so both sit well inside
-	// AlertCooldownPeriod.
-	if err := ds.ClearAlert(ctx, stalenessAlert.ID); err != nil {
-		t.Fatalf("failed to clear staleness alert: %v", err)
-	}
-	if err := ds.ClearAlert(ctx, slotAlert.ID); err != nil {
-		t.Fatalf("failed to clear slot alert: %v", err)
-	}
-
-	// Sanity check that the cooldown lookup sees both clears.
-	for name, spec := range map[string]struct {
-		ruleID int64
-		connID int
-	}{
-		"staleness": {stalenessRuleID, stalenessConnID},
-		"slot":      {slotRuleID, slotConnID},
-	} {
-		recent, err := ds.GetRecentlyClearedAlert(ctx, spec.ruleID,
-			spec.connID, nil, AlertCooldownPeriod)
-		if err != nil {
-			t.Fatalf("GetRecentlyClearedAlert(%s) failed: %v", name, err)
-		}
-		if !recent {
-			t.Fatalf("expected %s alert to be inside the cooldown window", name)
-		}
-	}
-
-	// Second pass on unchanged data.
-	engine.evaluateThresholds(ctx)
-
-	newStaleness, err := ds.GetActiveThresholdAlert(ctx, stalenessRuleID,
-		stalenessConnID, nil)
-	if err != nil {
-		t.Fatalf("GetActiveThresholdAlert(staleness) failed: %v", err)
-	}
-	newSlot, err := ds.GetActiveThresholdAlert(ctx, slotRuleID, slotConnID, nil)
-	if err != nil {
-		t.Fatalf("GetActiveThresholdAlert(slot) failed: %v", err)
-	}
-
-	// Current (defective) behavior: the staleness path re-fires
-	// immediately. It SHOULD respect AlertCooldownPeriod like the
-	// control rule does.
-	if newStaleness == nil {
-		t.Error("expected the staleness path to re-fire inside the cooldown")
-	} else if newStaleness.ID == stalenessAlert.ID {
-		t.Errorf("expected a new staleness alert row, got the cleared one (%d)",
-			newStaleness.ID)
-	}
-	if newSlot != nil {
-		t.Errorf("control rule unexpectedly re-fired inside the cooldown "+
-			"(alert %d)", newSlot.ID)
-	}
 }
 
 // TestAuditC2ArchiverRuleErrorIsSwallowed verifies the engine half of

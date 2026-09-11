@@ -160,6 +160,50 @@ describe('useDatabaseSummaries', () => {
         expect(mockApiFetch).not.toHaveBeenCalled();
     });
 
+    it('ignores a stale response that resolves after a newer one', async () => {
+        // Hold each connection's response open so they can be resolved
+        // out of order, which is what happens when the user switches
+        // connection before the first request has come back.
+        const resolvers: Record<string, (names: string[]) => void> = {};
+        mockApiFetch.mockImplementation((url: string) => {
+            const id = new URLSearchParams(url.split('?')[1] ?? '')
+                .get('connection_id') ?? '';
+            return new Promise(resolve => {
+                resolvers[id] = (names: string[]) => resolve(
+                    okResponse({ databases: names.map(summary) }),
+                );
+            });
+        });
+
+        const { result, rerender } = renderHook(
+            ({ id }: { id: number }) => useDatabaseSummaries(id),
+            { initialProps: { id: 1 } },
+        );
+        await waitFor(() => {
+            expect(resolvers['1']).toBeDefined();
+        });
+
+        rerender({ id: 2 });
+        await waitFor(() => {
+            expect(resolvers['2']).toBeDefined();
+        });
+
+        // Connection 2 answers first, then connection 1's earlier
+        // request arrives late and must be discarded.
+        resolvers['2'](['two-db']);
+        await waitFor(() => {
+            expect(result.current.databases.map(d => d.database_name))
+                .toEqual(['two-db']);
+        });
+
+        resolvers['1'](['one-db']);
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+        expect(result.current.databases.map(d => d.database_name))
+            .toEqual(['two-db']);
+    });
+
     it('refetches when the refresh key changes', async () => {
         mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));
 

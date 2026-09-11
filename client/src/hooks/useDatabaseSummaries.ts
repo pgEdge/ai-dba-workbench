@@ -93,6 +93,14 @@ export const useDatabaseSummaries = (
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
+    // Identifies the most recently started request. isMountedRef alone
+    // cannot order overlapping fetches: the effect's cleanup sets it
+    // false, but the next run sets it true again before the earlier
+    // request resolves, so a slow response for one connection could
+    // land after a fast one for the next and overwrite it. Changing
+    // the selected connection, or a refreshKey tick, both re-run the
+    // effect without cancelling what is already in flight.
+    const requestIdRef = useRef<number>(0);
     const initialLoadDoneRef = useRef<boolean>(false);
     const userRef = useRef(user);
     userRef.current = user;
@@ -109,22 +117,35 @@ export const useDatabaseSummaries = (
         }
         setError(null);
 
+        const requestId = ++requestIdRef.current;
+        // A response is only applied if the component is still mounted
+        // and no newer request has been started since.
+        const isCurrent = (): boolean =>
+            isMountedRef.current && requestIdRef.current === requestId;
+
         try {
             const response = await apiFetch(url);
             await assertResponseOk(response);
 
-            if (isMountedRef.current) {
-                setDatabases(await extractDatabases(response));
-                initialLoadDoneRef.current = true;
+            // Checked before parsing as well as after, so that a
+            // response arriving for an unmounted hook or a superseded
+            // request is not parsed at all, and so that a request
+            // starting during the parse still wins.
+            if (isCurrent()) {
+                const rows = await extractDatabases(response);
+                if (isCurrent()) {
+                    setDatabases(rows);
+                    initialLoadDoneRef.current = true;
+                }
             }
         } catch (err) {
             logger.error('Error fetching database summaries:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError(toErrorMessage(err));
                 setDatabases([]);
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }

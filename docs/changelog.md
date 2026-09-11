@@ -265,6 +265,14 @@ project adheres to
   compaction analytics reporters, a probe-availability lookup, and three
   session tracing helpers.
 
+- Remove the chat compactor's analytics entirely, rather than leaving a
+  type that only ever writes. With its reporters gone, nothing could
+  read what `RecordCompaction` accumulated, so the `Analytics` type,
+  the `CompactionMetrics` and `EfficiencyReport` structures, the
+  `analytics` field, the `EnableAnalytics` option and the two recording
+  call sites all go together. `EnableAnalytics` defaulted to false, so
+  no deployment was collecting these figures in any case.
+
 ### Security
 
 - Ignore a blank password when updating a database connection, so an

@@ -119,15 +119,20 @@ type XIDAgeEntry struct {
 }
 
 // CacheHitRatioData holds cache hit ratio current value and time series.
+// Current is the ratio for the latest bucket in the requested range, and
+// is nil (JSON null) when there is no data or when that bucket saw no
+// block access at all.
 type CacheHitRatioData struct {
-	Current    float64              `json:"current"`
+	Current    *float64             `json:"current"`
 	TimeSeries []CacheHitRatioPoint `json:"time_series"`
 }
 
-// CacheHitRatioPoint is a single time-series data point for cache hit ratio.
+// CacheHitRatioPoint is a single time-series data point for cache hit
+// ratio. Value is nil (JSON null) for a bucket in which no blocks were
+// hit or read, so that idle intervals render as a gap rather than 0%.
 type CacheHitRatioPoint struct {
 	Time  time.Time `json:"time"`
-	Value float64   `json:"value"`
+	Value *float64  `json:"value"`
 }
 
 // TransactionData holds transaction throughput data.
@@ -158,9 +163,9 @@ type CheckpointPoint struct {
 
 // PerfAggregate holds aggregate metrics across multiple connections.
 type PerfAggregate struct {
-	CacheHitRatio float64 `json:"cache_hit_ratio"`
-	CommitsPerSec float64 `json:"commits_per_sec"`
-	RollbackPct   float64 `json:"rollback_percent"`
+	CacheHitRatio *float64 `json:"cache_hit_ratio"`
+	CommitsPerSec float64  `json:"commits_per_sec"`
+	RollbackPct   float64  `json:"rollback_percent"`
 }
 
 // DatabaseSummaryResponse is the response for the database summaries endpoint.
@@ -349,17 +354,16 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 		// Query 1: XID Age
 		connResp.XIDAgeEntries = h.queryXIDAage(ctx, tx, connID)
 
-		// Query 2: Cache Hit current
-		blksHit, blksRead, ratio := h.queryCacheHitCurrent(ctx, tx, connID)
+		// Query 2: Cache Hit ratio (current value and time series, both
+		// computed from per-interval counter deltas)
+		blksHit, blksRead, ratio, chSeries := h.queryCacheHit(
+			ctx, tx, connID, startTime, now, bucketInterval)
 		connResp.CacheHitRatio.Current = ratio
+		connResp.CacheHitRatio.TimeSeries = chSeries
 		totalBlksHit += blksHit
 		totalBlksRead += blksRead
 
-		// Query 3: Cache Hit time series
-		connResp.CacheHitRatio.TimeSeries = h.queryCacheHitTimeSeries(
-			ctx, tx, connID, startTime, now, bucketInterval)
-
-		// Query 4: Transaction throughput
+		// Query 3: Transaction throughput
 		cps, rbPct, tsSeries := h.queryTransactions(
 			ctx, tx, connID, startTime, now, bucketInterval)
 		connResp.Transactions.CommitsPerSec = cps
@@ -375,7 +379,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			}
 		}
 
-		// Query 5: Checkpoint activity
+		// Query 4: Checkpoint activity
 		connResp.Checkpoints.TimeSeries = h.queryCheckpoints(
 			ctx, tx, connID, startTime, now, bucketInterval)
 
@@ -394,11 +398,10 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 	if len(connectionIDs) > 1 {
 		agg := &PerfAggregate{}
 
-		// Weighted average for cache hit ratio
-		totalBlocks := totalBlksHit + totalBlksRead
-		if totalBlocks > 0 {
-			agg.CacheHitRatio = roundTo(totalBlksHit/totalBlocks*100.0, 1)
-		}
+		// Weighted average for cache hit ratio, using each connection's
+		// latest-bucket block deltas as the weights. Nil when every
+		// connection was idle in its latest bucket.
+		agg.CacheHitRatio = aggregateCacheHitRatio(totalBlksHit, totalBlksRead)
 
 		// Sum for commits/sec
 		agg.CommitsPerSec = roundTo(totalCommitsPerSec, 1)
@@ -515,81 +518,107 @@ func (h *PerfSummaryHandler) queryXIDAage(
 	return entries
 }
 
-// queryCacheHitCurrent returns the current cache hit ratio for a connection.
-// Returns blks_hit, blks_read, and the ratio percentage.
-func (h *PerfSummaryHandler) queryCacheHitCurrent(
-	ctx context.Context,
-	tx pgx.Tx,
-	connectionID int,
-) (float64, float64, float64) {
-	var blksHit, blksRead float64
-	err := tx.QueryRow(ctx, `
-        SELECT COALESCE(SUM(blks_hit), 0),
-               COALESCE(SUM(blks_read), 0)
-        FROM metrics.pg_stat_database
-        WHERE connection_id = $1
-          AND collected_at = (
-              SELECT MAX(collected_at)
-              FROM metrics.pg_stat_database
-              WHERE connection_id = $1
-          )
-    `, connectionID).Scan(&blksHit, &blksRead)
-	if err != nil {
-		log.Printf("[DEBUG] No cache hit data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return 0, 0, 0
-	}
-
+// aggregateCacheHitRatio returns the cache hit ratio percentage, rounded
+// to one decimal place, for the given block hit and read totals. It
+// returns nil when no blocks were accessed, so callers can report "no
+// data" rather than a spurious 0%.
+func aggregateCacheHitRatio(blksHit, blksRead float64) *float64 {
 	total := blksHit + blksRead
-	if total == 0 {
-		return blksHit, blksRead, 0
+	if total <= 0 {
+		return nil
 	}
-	return blksHit, blksRead, roundTo(blksHit/total*100.0, 2)
+	ratio := roundTo(blksHit/total*100.0, 1)
+	return &ratio
 }
 
-// queryCacheHitTimeSeries returns bucketed cache hit ratio over time.
-func (h *PerfSummaryHandler) queryCacheHitTimeSeries(
+// queryCacheHit returns the cache hit ratio for a connection computed from
+// per-interval deltas of the pg_stat_database block counters, bucketed
+// with date_bin. It returns the latest bucket's delta sums for blks_hit
+// and blks_read (used to weight the multi-connection aggregate), the
+// current ratio (the latest bucket's ratio, nil when there are no points
+// or the bucket saw no block access) and the bucketed time series.
+//
+// Each sample is the sum of the counters across all databases at one
+// collected_at. A sample whose delta from the previous sample is negative
+// for either counter (a stats reset or a server restart) is discarded, as
+// is the first sample in the range, which has no predecessor. Buckets
+// with valid samples but no block access are still emitted, with a nil
+// ratio, so that client series stay aligned across metrics.
+func (h *PerfSummaryHandler) queryCacheHit(
 	ctx context.Context,
 	tx pgx.Tx,
 	connectionID int,
 	startTime, endTime time.Time,
 	bucketInterval string,
-) []CacheHitRatioPoint {
+) (float64, float64, *float64, []CacheHitRatioPoint) {
 	rows, err := tx.Query(ctx, `
+        WITH deltas AS (
+            SELECT
+                collected_at,
+                SUM(blks_hit) AS total_hit,
+                SUM(blks_read) AS total_read,
+                LAG(SUM(blks_hit)) OVER (ORDER BY collected_at) AS prev_hit,
+                LAG(SUM(blks_read)) OVER (ORDER BY collected_at) AS prev_read
+            FROM metrics.pg_stat_database
+            WHERE connection_id = $3
+              AND collected_at >= $2
+              AND collected_at <= $4
+            GROUP BY collected_at
+        ),
+        valid_deltas AS (
+            SELECT
+                collected_at,
+                (total_hit - prev_hit) AS delta_hit,
+                (total_read - prev_read) AS delta_read
+            FROM deltas
+            WHERE prev_hit IS NOT NULL
+              AND prev_read IS NOT NULL
+              AND (total_hit - prev_hit) >= 0
+              AND (total_read - prev_read) >= 0
+        )
         SELECT date_bin($1::interval, collected_at, $2) AS bucket,
-               CASE WHEN (SUM(blks_hit) + SUM(blks_read)) = 0 THEN 0
-                    ELSE SUM(blks_hit)::float /
-                         (SUM(blks_hit) + SUM(blks_read))::float * 100.0
+               SUM(delta_hit)::float AS blks_hit,
+               SUM(delta_read)::float AS blks_read,
+               CASE WHEN SUM(delta_hit + delta_read) = 0 THEN NULL
+                    ELSE SUM(delta_hit)::float /
+                         SUM(delta_hit + delta_read)::float * 100.0
                END AS ratio
-        FROM metrics.pg_stat_database
-        WHERE connection_id = $3
-          AND collected_at >= $2
-          AND collected_at <= $4
+        FROM valid_deltas
         GROUP BY bucket
         ORDER BY bucket
     `, bucketInterval, startTime, connectionID, endTime)
 	if err != nil {
-		log.Printf("[DEBUG] No cache hit time series for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
-		return []CacheHitRatioPoint{}
+		log.Printf("[DEBUG] No cache hit data for connection %d: %s", connectionID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connectionID is an integer and err is sanitized via logging.SanitizeForLog
+		return 0, 0, nil, []CacheHitRatioPoint{}
 	}
 	defer rows.Close()
 
 	var points []CacheHitRatioPoint
+	var latestHit, latestRead float64
 	for rows.Next() {
 		var pt CacheHitRatioPoint
-		if err := rows.Scan(&pt.Time, &pt.Value); err != nil {
-			log.Printf("[DEBUG] Error scanning cache hit time series: %v", err)
-			continue
+		var blksHit, blksRead float64
+		if err := rows.Scan(&pt.Time, &blksHit, &blksRead, &pt.Value); err != nil {
+			// pgx closes the cursor on a scan failure and reports the
+			// error through rows.Err below.
+			break
 		}
-		pt.Value = roundTo(pt.Value, 2)
+		if pt.Value != nil {
+			v := roundTo(*pt.Value, 2)
+			pt.Value = &v
+		}
 		points = append(points, pt)
+		latestHit, latestRead = blksHit, blksRead
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[DEBUG] Error iterating cache hit time series: %v", err)
+		log.Printf("[DEBUG] Error iterating cache hit data: %v", err)
 	}
 	if points == nil {
-		points = []CacheHitRatioPoint{}
+		return 0, 0, nil, []CacheHitRatioPoint{}
 	}
-	return points
+
+	// The latest bucket is the "current" value.
+	return latestHit, latestRead, points[len(points)-1].Value, points
 }
 
 // queryTransactions returns the latest transaction throughput and time series.
@@ -908,8 +937,8 @@ func (h *PerfSummaryHandler) queryDatabaseSizes(
 	}
 }
 
-// queryDatabaseStats populates connection count and cache hit ratio from
-// pg_stat_database.
+// queryDatabaseStats populates the connection count from the latest
+// pg_stat_database snapshot.
 func (h *PerfSummaryHandler) queryDatabaseStats(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -917,8 +946,7 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 	dbMap map[string]*DatabaseSummary,
 ) {
 	rows, err := tx.Query(ctx, `
-        SELECT datname, numbackends,
-               COALESCE(blks_hit, 0), COALESCE(blks_read, 0)
+        SELECT datname, numbackends
         FROM metrics.pg_stat_database
         WHERE connection_id = $1
           AND collected_at = (
@@ -936,8 +964,7 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 	for rows.Next() {
 		var name string
 		var numBackends int
-		var blksHit, blksRead float64
-		if err := rows.Scan(&name, &numBackends, &blksHit, &blksRead); err != nil {
+		if err := rows.Scan(&name, &numBackends); err != nil {
 			log.Printf("[DEBUG] Error scanning database stats: %v", err)
 			continue
 		}
@@ -951,10 +978,6 @@ func (h *PerfSummaryHandler) queryDatabaseStats(
 			continue
 		}
 		db.ActiveConnections = numBackends
-		total := blksHit + blksRead
-		if total > 0 {
-			db.CacheHitRatio.Current = roundTo(blksHit/total*100.0, 2)
-		}
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[DEBUG] Error iterating database stats rows: %v", err)
@@ -1072,8 +1095,13 @@ func (h *PerfSummaryHandler) queryTransactionRates(
 	}
 }
 
-// queryDatabaseCacheHitTimeSeries populates per-database cache hit ratio
-// time series using date_bin bucketing.
+// queryDatabaseCacheHitTimeSeries populates each database's cache hit
+// ratio time series and current value from per-interval deltas of its
+// pg_stat_database block counters, bucketed with date_bin. The rules
+// match queryCacheHit: the first sample of each database has no delta, a
+// sample with a negative delta (stats reset) is discarded, and a bucket
+// with no block access is emitted with a nil ratio. Current is the latest
+// bucket's ratio, nil when there are no points or that bucket was idle.
 func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1083,16 +1111,36 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	dbMap map[string]*DatabaseSummary,
 ) {
 	rows, err := tx.Query(ctx, `
+        WITH deltas AS (
+            SELECT
+                datname,
+                collected_at,
+                blks_hit - LAG(blks_hit) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_hit,
+                blks_read - LAG(blks_read) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_read
+            FROM metrics.pg_stat_database
+            WHERE connection_id = $3
+              AND collected_at >= $2
+              AND collected_at <= $4
+        ),
+        valid_deltas AS (
+            SELECT datname, collected_at, delta_hit, delta_read
+            FROM deltas
+            WHERE delta_hit IS NOT NULL
+              AND delta_read IS NOT NULL
+              AND delta_hit >= 0
+              AND delta_read >= 0
+        )
         SELECT datname,
                date_bin($1::interval, collected_at, $2) AS bucket,
-               CASE WHEN (SUM(blks_hit) + SUM(blks_read)) = 0 THEN 0
-                    ELSE SUM(blks_hit)::float /
-                         (SUM(blks_hit) + SUM(blks_read))::float * 100.0
+               CASE WHEN SUM(delta_hit + delta_read) = 0 THEN NULL
+                    ELSE SUM(delta_hit)::float /
+                         SUM(delta_hit + delta_read)::float * 100.0
                END AS ratio
-        FROM metrics.pg_stat_database
-        WHERE connection_id = $3
-          AND collected_at >= $2
-          AND collected_at <= $4
+        FROM valid_deltas
         GROUP BY datname, bucket
         ORDER BY datname, bucket
     `, bucketInterval, startTime, connectionID, endTime)
@@ -1110,7 +1158,10 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 				err)
 			continue
 		}
-		pt.Value = roundTo(pt.Value, 2)
+		if pt.Value != nil {
+			v := roundTo(*pt.Value, 2)
+			pt.Value = &v
+		}
 		// Only queryDatabaseSizes may create entries. This query scans
 		// the entire requested time range, so it can still see rows for
 		// a database that was dropped partway through the window. Skip
@@ -1122,6 +1173,9 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 		}
 		db.CacheHitRatio.TimeSeries = append(
 			db.CacheHitRatio.TimeSeries, pt)
+		// Rows arrive ordered by bucket within each database, so the
+		// last point appended is the latest bucket.
+		db.CacheHitRatio.Current = pt.Value
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[DEBUG] Error iterating db cache hit time series: %v",

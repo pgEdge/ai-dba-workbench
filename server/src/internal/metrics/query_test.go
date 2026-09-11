@@ -200,6 +200,10 @@ func TestBuildMetricsQuery(t *testing.T) {
 		if strings.Contains(query, `COALESCE(data_buckets."xact_commit"`) {
 			t.Error("query should not COALESCE metric columns; LOCF is applied in Go")
 		}
+		if !strings.Contains(query, `FROM generate_series($3::timestamptz, `+
+			`$4::timestamptz, $1::interval) AS g(bucket_time)`) {
+			t.Error("bucket series must be generated in the FROM clause")
+		}
 
 		// Check args
 		if len(args) != 4 {
@@ -413,16 +417,6 @@ func TestGetAggSelectCols(t *testing.T) {
 	}
 }
 
-func TestGetQuotedSelectCols(t *testing.T) {
-	cols := GetQuotedSelectCols([]string{"col_a", "col_b"})
-	if len(cols) != 2 {
-		t.Fatalf("expected 2 cols, got %d", len(cols))
-	}
-	if cols[0] != `"col_a"` {
-		t.Errorf("expected quoted col, got %s", cols[0])
-	}
-}
-
 func TestGetQualifiedSelectCols(t *testing.T) {
 	cols := GetQualifiedSelectCols([]string{"xact_commit", "blks_hit"}, "data_buckets")
 	if len(cols) != 2 {
@@ -436,63 +430,6 @@ func TestGetQualifiedSelectCols(t *testing.T) {
 	if cols[1] != expected1 {
 		t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
 	}
-}
-
-func TestGetCoalescedSelectCols(t *testing.T) {
-	t.Run("numeric columns", func(t *testing.T) {
-		colTypes := map[string]string{
-			"xact_commit": "bigint",
-			"blks_hit":    "bigint",
-		}
-		cols := GetCoalescedSelectCols([]string{"xact_commit", "blks_hit"}, "data_buckets", colTypes)
-		if len(cols) != 2 {
-			t.Fatalf("expected 2 cols, got %d", len(cols))
-		}
-		expected0 := `COALESCE(data_buckets."xact_commit", 0) AS "xact_commit"`
-		if cols[0] != expected0 {
-			t.Errorf("cols[0] = %s, want %s", cols[0], expected0)
-		}
-		expected1 := `COALESCE(data_buckets."blks_hit", 0) AS "blks_hit"`
-		if cols[1] != expected1 {
-			t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
-		}
-	})
-
-	t.Run("interval columns", func(t *testing.T) {
-		colTypes := map[string]string{
-			"write_lag":  "interval",
-			"replay_lag": "interval",
-		}
-		cols := GetCoalescedSelectCols([]string{"write_lag", "replay_lag"}, "data_buckets", colTypes)
-		if len(cols) != 2 {
-			t.Fatalf("expected 2 cols, got %d", len(cols))
-		}
-		expected0 := `COALESCE(data_buckets."write_lag", '0 seconds'::interval) AS "write_lag"`
-		if cols[0] != expected0 {
-			t.Errorf("cols[0] = %s, want %s", cols[0], expected0)
-		}
-		expected1 := `COALESCE(data_buckets."replay_lag", '0 seconds'::interval) AS "replay_lag"`
-		if cols[1] != expected1 {
-			t.Errorf("cols[1] = %s, want %s", cols[1], expected1)
-		}
-	})
-
-	t.Run("mixed columns", func(t *testing.T) {
-		colTypes := map[string]string{
-			"sent_lsn":  "bigint",
-			"write_lag": "interval",
-		}
-		cols := GetCoalescedSelectCols([]string{"sent_lsn", "write_lag"}, "data_buckets", colTypes)
-		if len(cols) != 2 {
-			t.Fatalf("expected 2 cols, got %d", len(cols))
-		}
-		if !strings.Contains(cols[0], ", 0)") {
-			t.Errorf("numeric col should use 0 default, got %s", cols[0])
-		}
-		if !strings.Contains(cols[1], "'0 seconds'::interval") {
-			t.Errorf("interval col should use interval default, got %s", cols[1])
-		}
-	})
 }
 
 func TestToFloat64(t *testing.T) {
@@ -1586,7 +1523,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			`CASE WHEN (total_0 - prev_0) >= 0 AND elapsed_sec > 0`,
 			`(total_0 - prev_0)::float / elapsed_sec`,
 			`avg(rate_0) AS "seq_scan_per_sec"`,
-			`generate_series($3::timestamptz, $4::timestamptz, $1::interval)`,
+			`FROM generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS g(bucket_time)`,
 			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
 			`rate_buckets."seq_scan_per_sec"`,
 			`connection_id = $2`,

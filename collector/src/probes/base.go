@@ -47,19 +47,6 @@ type featureCacheKey struct {
 // avoids repeated catalog queries on every collection cycle.
 var featureCache sync.Map
 
-// InvalidateFeatureCache removes all cached feature-detection
-// results for the given connection name. Call this when a
-// monitored connection is recycled or its pool is refreshed
-// so that stale view/extension checks do not persist.
-func InvalidateFeatureCache(connectionName string) {
-	featureCache.Range(func(key, _ any) bool {
-		if k, ok := key.(featureCacheKey); ok && k.connectionName == connectionName {
-			featureCache.Delete(key)
-		}
-		return true
-	})
-}
-
 // cachedCheck returns a cached boolean result for a feature-detection
 // check identified by connectionName and checkName. If no cached value
 // exists, it calls checkFn, caches the result, and returns it.

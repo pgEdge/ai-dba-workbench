@@ -15,6 +15,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -264,6 +265,11 @@ func listKBProducts(kbPath string) (string, error) {
 	return sb.String(), nil
 }
 
+// generateKBQueryEmbedding embeds a search query using the
+// knowledgebase-specific embedding configuration, which is deliberately
+// independent of the generate_embeddings tool. It returns the query
+// vector alongside the configured provider name, so that searchKB can
+// compare the query against that provider's stored embeddings.
 func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, queryText string) ([]float32, string, error) {
 	// Use KB-specific embedding configuration (independent of generate_embeddings tool)
 	kbCfg := serverCfg.Knowledgebase
@@ -303,23 +309,105 @@ func generateKBQueryEmbedding(ctx context.Context, serverCfg *config.Config, que
 	return vector32, embCfg.Provider, nil
 }
 
-func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVersions []string, topN int, provider string) ([]KBSearchResult, error) {
-	// Open database
-	db, err := sql.Open("sqlite", kbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open knowledgebase: %w", err)
-	}
-	defer db.Close()
+// kbEmbeddingColumns is the fixed allow-list of embedding columns that
+// searchKB understands, in a stable order. Knowledgebase files vary by
+// vintage: older ones carry no gemini_embedding column at all, and a
+// provider-specific build may carry only one of these columns. These
+// names are only ever compared against the column names the driver
+// reports for a result set; none of them is interpolated into SQL.
+var kbEmbeddingColumns = []string{
+	"openai_embedding",
+	"voyage_embedding",
+	"ollama_embedding",
+	"gemini_embedding",
+}
 
-	// Build query. The IN clauses are extended only with hard-coded "?"
-	// placeholder strings; the actual project name/version values flow in
-	// via the args slice and are bound as query parameters, never
-	// interpolated into SQL, so this is safe from SQL injection.
+// kbProviderColumn maps a configured embedding provider onto the column
+// holding that provider's vectors. Unrecognized providers fall through
+// to openai, matching the historic behavior of this tool.
+func kbProviderColumn(provider string) string {
+	switch strings.ToLower(provider) {
+	case "voyage":
+		return "voyage_embedding"
+	case "ollama":
+		return "ollama_embedding"
+	case "gemini":
+		return "gemini_embedding"
+	default: // openai
+		return "openai_embedding"
+	}
+}
+
+// kbProviderName renders an embedding column as its provider name, for
+// use in user-facing error messages.
+func kbProviderName(column string) string {
+	return strings.TrimSuffix(column, "_embedding")
+}
+
+// kbAvailableProviders reports which of the supported embedding
+// providers the given result-set columns carry, in kbEmbeddingColumns
+// order, so that an error can tell the user what the knowledgebase does
+// contain.
+func kbAvailableProviders(columns []string) []string {
+	present := make(map[string]bool, len(columns))
+	for _, name := range columns {
+		present[name] = true
+	}
+
+	var providers []string
+	for _, column := range kbEmbeddingColumns {
+		if present[column] {
+			providers = append(providers, kbProviderName(column))
+		}
+	}
+	return providers
+}
+
+// kbMissingProviderError explains that the knowledgebase file carries no
+// column for the configured provider at all. Substituting another
+// provider's vectors would compare embeddings of differing dimensions
+// and score every chunk alike, so this is a hard error rather than a
+// silent degradation.
+func kbMissingProviderError(kbPath, providerColumn string, available []string) error {
+	if len(available) == 0 {
+		return fmt.Errorf(
+			"knowledgebase %q carries no embeddings at all (the chunks table has none of the "+
+				"supported embedding columns: %s), so it cannot be searched with provider %q",
+			kbPath, strings.Join(kbEmbeddingColumns, ", "), kbProviderName(providerColumn))
+	}
+	return fmt.Errorf(
+		"knowledgebase %q carries no %q embeddings (it has no %s column; embeddings present: %s); "+
+			"the configured knowledgebase embedding provider must match the provider used to build the "+
+			"knowledgebase, so either rebuild the knowledgebase with %q embeddings or configure one of: %s",
+		kbPath, kbProviderName(providerColumn), providerColumn,
+		strings.Join(available, ", "), kbProviderName(providerColumn),
+		strings.Join(available, ", "))
+}
+
+// kbEmptyProviderError explains that the provider's column exists but is
+// empty for every chunk the search matched, which leaves nothing to rank
+// and would otherwise be reported as a bland "no results".
+func kbEmptyProviderError(kbPath, providerColumn string, rowCount int) error {
+	return fmt.Errorf(
+		"knowledgebase %q has an empty %s column for all %d matching chunks, so it carries no %q "+
+			"embeddings; rebuild the knowledgebase with %q embeddings or configure a provider whose "+
+			"embeddings it contains",
+		kbPath, providerColumn, rowCount, kbProviderName(providerColumn),
+		kbProviderName(providerColumn))
+}
+
+// kbSearchQuery builds the chunks query and its bound arguments. The
+// statement is a literal that grows only by hard-coded "?" placeholder
+// strings; the project name and version values travel in the returned
+// argument slice and are bound as query parameters, never interpolated
+// into SQL, so this is safe from SQL injection. It selects every column
+// because the embedding columns a knowledgebase carries vary by vintage;
+// searchKB resolves the ones it needs by name from the result set, which
+// keeps identifiers out of the statement entirely.
+func kbSearchQuery(projectNames, projectVersions []string) (string, []any) {
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString(`
-        SELECT text, title, section, project_name, project_version, file_path,
-               openai_embedding, voyage_embedding, ollama_embedding
-        FROM chunks
+        SELECT * FROM chunks
         WHERE 1=1
     `)
 	args := []any{}
@@ -348,71 +436,143 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 		queryBuilder.WriteString(")")
 	}
 
-	query := queryBuilder.String()
-	rows, err := db.Query(query, args...) //nolint:gosec // G202: IN-clause is built from hard-coded "?" placeholders; values are bound parameters
-	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
-	}
-	defer rows.Close()
+	return queryBuilder.String(), args
+}
 
+// kbChunkRow holds the values scanned from one chunks row: the metadata
+// searchKB reports, plus the embedding blob of the configured provider.
+type kbChunkRow struct {
+	text           string
+	title          string
+	section        string
+	projectName    string
+	projectVersion string
+	filePath       string
+	embedding      []byte
+}
+
+// kbScanTargets builds the Scan destinations for a result set whose
+// columns are given, in order. Every destination is resolved by column
+// name, so a knowledgebase file may order or extend its columns freely;
+// columns the search does not need are read into a discard destination.
+// The returned slice writes into row on each Scan.
+func kbScanTargets(columns []string, providerColumn string, row *kbChunkRow) []any {
+	wanted := map[string]any{
+		"text":            &row.text,
+		"title":           &row.title,
+		"section":         &row.section,
+		"project_name":    &row.projectName,
+		"project_version": &row.projectVersion,
+		"file_path":       &row.filePath,
+		providerColumn:    &row.embedding,
+	}
+
+	targets := make([]any, len(columns))
+	for i, name := range columns {
+		if dest, ok := wanted[name]; ok {
+			targets[i] = dest
+			continue
+		}
+		targets[i] = new(any)
+	}
+	return targets
+}
+
+// kbRankChunks scores every row of rows against queryEmbedding using the
+// embedding in providerColumn, whose position is resolved by name from
+// columns, and returns the unsorted results. Rows that cannot be
+// scanned, that hold no embedding for the provider, or whose embedding is
+// malformed are skipped rather than misranked; if that leaves nothing to
+// rank because no row carried an embedding for the provider, the
+// resulting error says so rather than reporting an empty search.
+func kbRankChunks(rows *sql.Rows, columns []string, kbPath, providerColumn string, queryEmbedding []float32) ([]KBSearchResult, error) {
 	var results []KBSearchResult
+	var rowCount, emptyProviderRows int
+
+	var row kbChunkRow
+	scanTargets := kbScanTargets(columns, providerColumn, &row)
 
 	for rows.Next() {
-		var text, title, section, pName, pVersion, filePath string
-		var openaiBlob, voyageBlob, ollamaBlob []byte
+		row = kbChunkRow{}
+		if err := rows.Scan(scanTargets...); err != nil {
+			continue
+		}
+		rowCount++
 
-		err := rows.Scan(&text, &title, &section, &pName, &pVersion, &filePath,
-			&openaiBlob, &voyageBlob, &ollamaBlob)
-		if err != nil {
+		if len(row.embedding) == 0 {
+			emptyProviderRows++
 			continue
 		}
 
-		// Select appropriate embedding based on provider
-		var embBlob []byte
-		switch strings.ToLower(provider) {
-		case "voyage":
-			embBlob = voyageBlob
-		case "ollama":
-			embBlob = ollamaBlob
-		default: // openai
-			embBlob = openaiBlob
-		}
-
-		if len(embBlob) == 0 {
-			// Try other providers if selected one is empty
-			if len(openaiBlob) > 0 {
-				embBlob = openaiBlob
-			} else if len(voyageBlob) > 0 {
-				embBlob = voyageBlob
-			} else if len(ollamaBlob) > 0 {
-				embBlob = ollamaBlob
-			} else {
-				continue // No embeddings available
-			}
-		}
-
 		// Deserialize embedding
-		docEmbedding := deserializeEmbedding(embBlob)
+		docEmbedding := deserializeEmbedding(row.embedding)
 		if len(docEmbedding) == 0 {
 			continue
 		}
 
-		// Calculate cosine similarity
-		similarity := cosineSimilarity(queryEmbedding, docEmbedding)
-
 		results = append(results, KBSearchResult{
-			Text:           text,
-			Title:          title,
-			Section:        section,
-			ProjectName:    pName,
-			ProjectVersion: pVersion,
-			FilePath:       filePath,
-			Similarity:     similarity,
+			Text:           row.text,
+			Title:          row.title,
+			Section:        row.section,
+			ProjectName:    row.projectName,
+			ProjectVersion: row.projectVersion,
+			FilePath:       row.filePath,
+			Similarity:     cosineSimilarity(queryEmbedding, docEmbedding),
 		})
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating search results: %w", err)
+	}
+
+	// Distinguish an empty knowledgebase, or a filter that matched
+	// nothing, from a knowledgebase whose rows carry no embeddings for
+	// the configured provider; the latter is a misconfiguration and
+	// deserves an explicit error rather than a bland "no results".
+	if len(results) == 0 && rowCount > 0 && emptyProviderRows == rowCount {
+		return nil, kbEmptyProviderError(kbPath, providerColumn, rowCount)
+	}
+	return results, nil
+}
+
+// searchKB ranks the chunks of the knowledgebase at kbPath against
+// queryEmbedding, optionally filtered by project name and version, and
+// returns the topN most similar. Only the configured provider's
+// embeddings are considered: a knowledgebase that carries none for that
+// provider is reported as an error rather than searched with another
+// provider's vectors, whose dimensions would not match.
+func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVersions []string, topN int, provider string) ([]KBSearchResult, error) {
+	// Open database
+	db, err := sql.Open("sqlite", kbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open knowledgebase: %w", err)
+	}
+	defer db.Close()
+
+	query, args := kbSearchQuery(projectNames, projectVersions)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query knowledgebase %q: %w", kbPath, err)
+	}
+	defer rows.Close()
+
+	// Resolve the result-set columns before reading any rows, so that a
+	// knowledgebase lacking the configured provider's embeddings fails
+	// fast with an explanation rather than returning misranked chunks.
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect chunks table of knowledgebase %q: %w", kbPath, err)
+	}
+
+	providerColumn := kbProviderColumn(provider)
+	if !slices.Contains(columns, providerColumn) {
+		return nil, kbMissingProviderError(kbPath, providerColumn,
+			kbAvailableProviders(columns))
+	}
+
+	results, err := kbRankChunks(rows, columns, kbPath, providerColumn, queryEmbedding)
+	if err != nil {
+		return nil, err
 	}
 
 	// Sort by similarity (descending)
@@ -428,6 +588,11 @@ func searchKB(kbPath string, queryEmbedding []float32, projectNames, projectVers
 	return results, nil
 }
 
+// deserializeEmbedding decodes an embedding stored as a little-endian
+// sequence of float32 values. It returns nil for an empty blob, or for
+// one whose length is not a whole number of float32 values, so that a
+// malformed embedding causes the chunk to be skipped rather than
+// misranked.
 func deserializeEmbedding(data []byte) []float32 {
 	if len(data) == 0 || len(data)%4 != 0 {
 		return nil
@@ -441,6 +606,10 @@ func deserializeEmbedding(data []byte) []float32 {
 	return out
 }
 
+// cosineSimilarity returns the cosine similarity of two vectors. It
+// returns 0 when the vectors differ in length, which is why searchKB
+// must never mix providers: vectors of differing dimensions would score
+// every chunk 0 and destroy the ranking.
 func cosineSimilarity(a, b []float32) float64 {
 	if len(a) != len(b) {
 		return 0
@@ -460,6 +629,9 @@ func cosineSimilarity(a, b []float32) float64 {
 	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
+// formatKBResults renders ranked search results as the plain-text report
+// the tool returns, echoing the query and any project or version filter
+// so that the caller can see what was actually searched.
 func formatKBResults(results []KBSearchResult, query string, projectNames, projectVersions []string) string {
 	var sb strings.Builder
 

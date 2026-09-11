@@ -567,8 +567,11 @@ func seedTopQueries(t *testing.T, pool *pgxpool.Pool, connID int) {
 		connID, prev)
 }
 
-// decodeTopQueries decodes a top-queries response body.
-func decodeTopQueries(t *testing.T, rec *httptest.ResponseRecorder) []TopQueryRow {
+// decodeRollbackTopQueries decodes a top-queries response body. It is
+// local to this file because the shared helper in
+// perf_summary_top_queries_test.go also asserts the status and returns
+// the X-Total-Count header, which these rollback tests do not use.
+func decodeRollbackTopQueries(t *testing.T, rec *httptest.ResponseRecorder) []TopQueryRow {
 	t.Helper()
 	var rows []TopQueryRow
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
@@ -599,7 +602,7 @@ func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
 			t.Fatalf("status = %d, want %d (body %q)",
 				rec.Code, http.StatusOK, rec.Body.String())
 		}
-		rows := decodeTopQueries(t, rec)
+		rows := decodeRollbackTopQueries(t, rec)
 		if len(rows) != 2 {
 			t.Fatalf("rows = %d, want 2 (the older collection must be ignored)",
 				len(rows))
@@ -625,7 +628,7 @@ func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 		}
-		rows := decodeTopQueries(t, rec)
+		rows := decodeRollbackTopQueries(t, rec)
 		if len(rows) != 1 {
 			t.Fatalf("rows = %d, want 1 (limit clamped up to 1)", len(rows))
 		}
@@ -641,7 +644,7 @@ func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
 
 		h.handleTopQueries(rec, req)
 
-		rows := decodeTopQueries(t, rec)
+		rows := decodeRollbackTopQueries(t, rec)
 		if len(rows) != 1 || rows[0].QueryID != "111" {
 			t.Fatalf("rows = %+v, want only queryid 111", rows)
 		}
@@ -655,7 +658,7 @@ func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
 
 		h.handleTopQueries(rec, req)
 
-		rows := decodeTopQueries(t, rec)
+		rows := decodeRollbackTopQueries(t, rec)
 		if len(rows) != 1 || rows[0].QueryID != "111" {
 			t.Fatalf("rows = %+v, want the probe query excluded", rows)
 		}
@@ -687,7 +690,7 @@ func TestHandleTopQueries_MissingTableReturnsEmptyList(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if rows := decodeTopQueries(t, rec); len(rows) != 0 {
+	if rows := decodeRollbackTopQueries(t, rec); len(rows) != 0 {
 		t.Errorf("rows = %+v, want an empty list", rows)
 	}
 }
@@ -726,7 +729,7 @@ func TestHandleTopQueries_SkipsUnscannableRows(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %q)",
 			rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if rows := decodeTopQueries(t, rec); len(rows) != 0 {
+	if rows := decodeRollbackTopQueries(t, rec); len(rows) != 0 {
 		t.Errorf("rows = %+v, want the unscannable row skipped", rows)
 	}
 }

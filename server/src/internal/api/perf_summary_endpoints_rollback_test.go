@@ -77,11 +77,14 @@ CREATE TABLE metrics.pg_stat_statements (
     collected_at      timestamptz      NOT NULL,
     queryid           bigint           NOT NULL,
     dbid              oid,
+    userid            oid,
     database_name     text,
     query             text             NOT NULL,
     calls             bigint           NOT NULL DEFAULT 0,
     total_exec_time   double precision NOT NULL DEFAULT 0,
     mean_exec_time    double precision NOT NULL DEFAULT 0,
+    min_exec_time     double precision NOT NULL DEFAULT 0,
+    max_exec_time     double precision NOT NULL DEFAULT 0,
     rows              bigint           NOT NULL DEFAULT 0,
     shared_blks_hit   bigint           NOT NULL DEFAULT 0,
     shared_blks_read  bigint           NOT NULL DEFAULT 0
@@ -91,7 +94,9 @@ CREATE TABLE metrics.pg_stat_activity (
     connection_id  integer     NOT NULL,
     collected_at   timestamptz NOT NULL,
     datid          oid,
-    datname        text
+    datname        text,
+    usesysid       oid,
+    usename        text
 );
 `
 
@@ -531,7 +536,9 @@ func TestPerfSummaryEndpoints_ClosedPoolReturnsError(t *testing.T) {
 
 // seedTopQueries inserts two statements in the latest collection for the
 // connection, one of which looks like a collector probe, plus an older
-// collection that must be ignored.
+// collection that must be ignored. The activity sample resolves the
+// database OID and the first statement's role OID; the probe's role was
+// never sampled, so its username must resolve to an empty string.
 func seedTopQueries(t *testing.T, pool *pgxpool.Pool, connID int) {
 	t.Helper()
 
@@ -547,16 +554,18 @@ func seedTopQueries(t *testing.T, pool *pgxpool.Pool, connID int) {
 	}
 
 	exec(`INSERT INTO metrics.pg_stat_activity
-        (connection_id, collected_at, datid, datname)
-        VALUES ($1, $2, 16384, 'appdb')`, connID, latest)
+        (connection_id, collected_at, datid, datname, usesysid, usename)
+        VALUES ($1, $2, 16384, 'appdb', 16500, 'test_app_user')`, connID, latest)
 
 	exec(`INSERT INTO metrics.pg_stat_statements
-        (connection_id, collected_at, queryid, dbid, database_name, query,
-         calls, total_exec_time, mean_exec_time, rows, shared_blks_hit,
-         shared_blks_read)
+        (connection_id, collected_at, queryid, dbid, userid, database_name,
+         query, calls, total_exec_time, mean_exec_time, min_exec_time,
+         max_exec_time, rows, shared_blks_hit, shared_blks_read)
         VALUES
-        ($1, $2, 111, 16384, NULL, 'SELECT * FROM orders', 10, 500, 50, 100, 900, 100),
-        ($1, $2, 222, 16384, NULL, 'SELECT ai_dba_wb_probe()', 5, 900, 180, 5, 10, 1)`,
+        ($1, $2, 111, 16384, 16500, NULL, 'SELECT * FROM orders',
+         10, 500, 50, 5, 120, 100, 900, 100),
+        ($1, $2, 222, 16384, 16501, NULL, 'SELECT ai_dba_wb_probe()',
+         5, 900, 180, 20, 400, 5, 10, 1)`,
 		connID, latest)
 
 	exec(`INSERT INTO metrics.pg_stat_statements
@@ -614,6 +623,18 @@ func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
 		if rows[0].DatabaseName != "appdb" {
 			t.Errorf("database name = %q, want \"appdb\" from the activity join",
 				rows[0].DatabaseName)
+		}
+		if rows[0].Username != "" {
+			t.Errorf("username = %q, want \"\" (role 16501 never sampled)",
+				rows[0].Username)
+		}
+		if rows[0].MinExecTime != 20 || rows[0].MaxExecTime != 400 {
+			t.Errorf("min/max exec time = %v/%v, want 20/400",
+				rows[0].MinExecTime, rows[0].MaxExecTime)
+		}
+		if rows[1].Username != "test_app_user" {
+			t.Errorf("username = %q, want \"test_app_user\" from the activity join",
+				rows[1].Username)
 		}
 	})
 
@@ -778,8 +799,7 @@ func TestHandleTopQueries_RejectsInvalidRequests(t *testing.T) {
 			method: http.MethodGet,
 			url:    "/api/v1/metrics/top-queries?connection_id=1&order_by=drop",
 			status: http.StatusBadRequest,
-			want: "Invalid order_by: must be one of total_exec_time, calls, " +
-				"mean_exec_time, rows, shared_blks_hit, shared_blks_read",
+			want:   topQueryOrderByError,
 		},
 		{
 			name:   "invalid order",

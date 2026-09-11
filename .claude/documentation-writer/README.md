@@ -1,60 +1,46 @@
 # Documentation Writer Knowledge Base
 
-This directory contains documentation standards and templates for the pgEdge
-AI DBA Workbench project.
+This directory records where documentation lives in the pgEdge AI DBA
+Workbench repository. The style rules themselves are not kept here: the
+`pgedge-skills:pgedge-docs` plugin skill is the authoritative pgEdge style
+guide and is preloaded into the documentation-writer agent. The
+repo-specific deviations from that skill are listed in the agent prompt at
+`.claude/agents/documentation-writer.md` and in `CLAUDE.md`.
 
-## Purpose
+## Layout
 
-This knowledge base provides:
+Documentation is organised by audience rather than by sub-project, and the
+navigation is defined in the `nav` section of `mkdocs.yml`:
 
-- Templates for common document types.
-- Formatting rules and conventions stored in CLAUDE.md
-  and the documentation-writer agent prompt.
+| Content                          | Location                              |
+|----------------------------------|---------------------------------------|
+| Site entry point                 | `docs/index.md`                       |
+| Installation and first steps     | `docs/getting-started/`               |
+| Using the web client and tools   | `docs/user-guide/`                    |
+| Configuration, API and operations| `docs/admin-guide/`                   |
+| Architecture and contributing    | `docs/developer-guide/`               |
+| Per-sub-project developer pages  | `docs/developer-guide/<subproject>/`  |
+| Changelog                        | `docs/changelog.md`                   |
+| Licence                          | `docs/LICENSE.md` and `/LICENSE.md`   |
+| Sub-project README               | `/<subproject>/README.md`             |
+| Top-level README                 | `/README.md`                          |
 
-## Documents
+The static OpenAPI file at `docs/admin-guide/api/openapi.json` is generated
+with `cd server && make openapi`; do not edit it by hand. The endpoint
+summary table in `docs/admin-guide/api/reference.md` is maintained
+manually alongside it.
 
-### [templates.md](templates.md)
+## Conventions Specific to This Repository
 
-Ready-to-use templates:
+- README footers link to `docs/developer-guide/contributing.md` for
+  contributions, `https://docs.pgedge.com` for online documentation and
+  `LICENSE.md` for the licence.
+- Each README's table of contents mirrors the `mkdocs.yml` nav section.
+- Filenames under `docs/` are lowercase with hyphens between words.
+- Prose wraps at 79 characters; long URLs and nav paths are exempt.
 
-- README template
-- API documentation template
-- Feature documentation template
-- Changelog entry format
+## Maintenance
 
-## Quick Reference
-
-### Critical Rules
-
-1. **Line wrap at 79 characters** for all markdown files
-2. **Active voice** throughout
-3. **7-20 word sentences** that are grammatically complete
-4. **Blank line before every list** (including sub-lists)
-5. **No emojis** unless explicitly requested
-6. **Four-space indentation** in code blocks
-
-### Document Location
-
-| Document Type | Location |
-|---------------|----------|
-| Sub-project docs | `/docs/<subproject>/` |
-| Sub-project README | `/<subproject>/README.md` |
-| Top-level README | `/README.md` |
-| Changelog | `/docs/changelog.md` |
-
-### File Naming
-
-- Use **lowercase** for all files in `/docs/`
-- Use **hyphens** for multi-word names: `api-reference.md`
-- Each sub-project docs has an `index.md` entry point
-
-## Document Updates
-
-This knowledge base is the source of truth for documentation standards.
-Update these documents when:
-
-- Style guide changes
-- New templates needed
-- New patterns established
-
-Last Updated: 2026-02-26
+Update this file in the same change whenever the documentation layout,
+generated files or README conventions change. A stale entry is worse than
+none.

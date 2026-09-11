@@ -287,17 +287,12 @@ For Variant 2 handlers, add an integration test that:
 A second test should cover the denial case: a non-owner non-admin
 caller, with the same row, gets 403 and the row is unchanged.
 
-## Coverage Floor
+## Minimum Tests per Gate
 
-Per `CLAUDE.md`, every modified file must reach at least 90% line
-coverage. Cluster handlers depend heavily on the datastore, so most
-of the coverage uplift comes from the integration suite. CI runs
-`make coverage` with `TEST_AI_WORKBENCH_SERVER` set, exercising the
-integration paths; local runs without Postgres will show lower
-numbers but should still cover every newly-added gate via the
-unit-style "denied" and "admin allowed" tests above.
-
-When you add a gate, add at minimum:
+The coverage floor in `CLAUDE.md` applies; cluster handlers lean on
+the datastore, so most of the uplift comes from the integration
+suite, whilst the gate itself is covered by the unit-style tests
+above. When you add a gate, add at minimum:
 
 - One "denied" unit test (negative path, no Postgres).
 - One "admin allowed" unit test (gate passes, no Postgres).

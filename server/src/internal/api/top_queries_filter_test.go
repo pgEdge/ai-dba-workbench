@@ -26,11 +26,19 @@ import (
 // comment carried by the Workbench's own datastore traffic.
 func TestExcludeWorkbenchQueriesClause(t *testing.T) {
 	for _, marker := range []string{probeMarkerAlias, sqlmarker.Marker} {
-		want := "pss.query NOT LIKE '%" + marker + "%'"
+		want := "strpos(pss.query, '" + marker + "') = 0"
 		if !strings.Contains(excludeWorkbenchQueriesClause, want) {
 			t.Errorf("clause is missing %q: %s",
 				want, excludeWorkbenchQueriesClause)
 		}
+	}
+
+	// Both markers contain underscores, which LIKE treats as
+	// single-character wildcards, so LIKE would also match unrelated
+	// user queries and hide them. The match must be literal.
+	if strings.Contains(excludeWorkbenchQueriesClause, "LIKE") {
+		t.Errorf("clause must match literally rather than with LIKE: %s",
+			excludeWorkbenchQueriesClause)
 	}
 	if !strings.HasPrefix(excludeWorkbenchQueriesClause, "AND ") {
 		t.Errorf("clause must be appendable to a WHERE list: %s",
@@ -44,9 +52,9 @@ func TestExcludeWorkbenchQueriesClause(t *testing.T) {
 		t.Errorf("probeMarkerAlias = %q; it must match WrapQuery in the "+
 			"collector's probes package", probeMarkerAlias)
 	}
-	// A NULL query must survive the filter. NULL NOT LIKE '...' is NULL,
-	// not true, so the clause needs an explicit IS NULL arm; see the
-	// clause's own comment.
+	// A NULL query must survive the filter. strpos(NULL, '...') is
+	// NULL and NULL = 0 is NULL rather than true, so the clause needs
+	// an explicit IS NULL arm; see the clause's own comment.
 	if !strings.Contains(excludeWorkbenchQueriesClause, "pss.query IS NULL OR") {
 		t.Errorf("clause must let a NULL query through: %s",
 			excludeWorkbenchQueriesClause)
@@ -169,8 +177,8 @@ func TestBuildTopQueriesQuery(t *testing.T) {
 			excludeCollector: true,
 			wantArgs:         2,
 			wantContains: []string{
-				"NOT LIKE '%" + probeMarkerAlias + "%'",
-				"NOT LIKE '%" + sqlmarker.Marker + "%'",
+				"strpos(pss.query, '" + probeMarkerAlias + "') = 0",
+				"strpos(pss.query, '" + sqlmarker.Marker + "') = 0",
 			},
 		},
 		{
@@ -180,8 +188,8 @@ func TestBuildTopQueriesQuery(t *testing.T) {
 			wantArgs:         3,
 			wantContains: []string{
 				"AND pss.queryid::text = $3",
-				"NOT LIKE '%" + probeMarkerAlias + "%'",
-				"NOT LIKE '%" + sqlmarker.Marker + "%'",
+				"strpos(pss.query, '" + probeMarkerAlias + "') = 0",
+				"strpos(pss.query, '" + sqlmarker.Marker + "') = 0",
 			},
 		},
 	}

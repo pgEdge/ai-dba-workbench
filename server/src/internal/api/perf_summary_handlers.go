@@ -48,7 +48,11 @@ const probeMarkerAlias = sqlmarker.ProbeAlias
 // leaked through this filter (GitHub issue #364).
 //
 // The clause is a compile-time constant built from two constants, so it
-// carries no user input and needs no bound parameters. Note that it
+// carries no user input and needs no bound parameters. It matches with
+// strpos rather than LIKE because both markers contain underscores,
+// which LIKE treats as single-character wildcards: LIKE
+// '%ai_dba_wb_probe%' also matches a user query containing, say,
+// aiXdbaYwbZprobe, and would hide it. Note that it
 // deliberately does not exclude the datastore database wholesale: users
 // legitimately run their own tools against that database and expect to
 // see them here.
@@ -67,8 +71,8 @@ const probeMarkerAlias = sqlmarker.ProbeAlias
 // cannot positively identify as Workbench traffic must be shown rather
 // than hidden, so NULL query text survives the filter.
 const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
-	"pss.query NOT LIKE '%" + probeMarkerAlias + "%' AND " +
-	"pss.query NOT LIKE '%" + sqlmarker.Marker + "%'))"
+	"strpos(pss.query, '" + probeMarkerAlias + "') = 0 AND " +
+	"strpos(pss.query, '" + sqlmarker.Marker + "') = 0))"
 
 // validTimeRanges maps time_range parameter values to their duration.
 var validTimeRanges = map[string]time.Duration{

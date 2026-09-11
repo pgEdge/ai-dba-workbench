@@ -22,7 +22,10 @@ import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
 import { formatBytes, formatLag, formatValue } from '../../../utils/formatters';
-import { type ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
+import {
+    type ServerSectionProps, extractSparklineData, extractLatestValue,
+    extractLatestRate,
+} from './types';
 
 /** Number of data buckets for KPI sparklines */
 const KPI_BUCKETS = 30;
@@ -201,10 +204,10 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
     const checkpointChart = useMetrics(checkpointChartParams);
 
     // Extract current values
-    const walBytesRate = extractLatestValue(
+    const walBytesRate = extractLatestRate(
         walKpi.data, 'wal_bytes_per_sec'
     );
-    const walRecordsRate = extractLatestValue(
+    const walRecordsRate = extractLatestRate(
         walKpi.data, 'wal_records_per_sec'
     );
     const replayLag = extractLatestValue(replLagKpi.data, 'replay_lag');
@@ -231,17 +234,31 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         return (sum(requestedPoints) / total) * 100;
     }, [timedPoints, requestedPoints]);
 
-    /** Per-bucket total checkpoints, timed plus requested. */
+    /*
+     * The running requested share, so that the sparkline tracks the
+     * figure on the tile rather than a different quantity: each bucket
+     * holds the requested checkpoints seen up to and including that
+     * bucket divided by all checkpoints seen so far, as a percentage,
+     * which makes the final point equal the displayed value. Buckets
+     * before the first checkpoint have nothing to divide by and carry
+     * 0, which the Sparkline draws as a flat lead-in.
+     */
     const checkpointSparkline = useMemo((): MetricDataPoint[] => {
         const len = Math.max(timedPoints.length, requestedPoints.length);
         const points: MetricDataPoint[] = [];
+        let cumulativeRequested = 0;
+        let cumulativeTotal = 0;
         for (let i = 0; i < len; i++) {
             const timed = i < timedPoints.length ? timedPoints[i] : null;
             const requested = i < requestedPoints.length
                 ? requestedPoints[i] : null;
+            cumulativeRequested += requested?.value ?? 0;
+            cumulativeTotal += (timed?.value ?? 0) + (requested?.value ?? 0);
             points.push({
                 time: (timed ?? requested as MetricDataPoint).time,
-                value: (timed?.value ?? 0) + (requested?.value ?? 0),
+                value: cumulativeTotal > 0
+                    ? (cumulativeRequested / cumulativeTotal) * 100
+                    : 0,
             });
         }
         return points;

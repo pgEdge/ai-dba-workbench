@@ -37,13 +37,19 @@ func lastHourWindow() TimeWindow {
 
 // setupTimeSeriesFixture creates the metrics schema (if absent) and a probe
 // table carrying the counter and tuple columns the table dashboards depend
-// on. It inserts four connection-1 samples spaced one minute apart across the
+// on. It inserts five connection-1 samples spaced one minute apart across the
 // last few minutes so they fall inside a "1h" query window. The cumulative
 // counters advance by a fixed amount per minute, giving a clean 1.0-per-second
 // rate, whilst n_live_tup and n_dead_tup stay constant at 90 and 10 so the
-// dead-tuple ratio is a steady 10 percent. It returns a cleanup that drops the
-// table.
-func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) func() {
+// dead-tuple ratio is a steady 10 percent. The earliest sample, five minutes
+// back, sits outside the narrower windows the lookback tests use and so
+// serves as the pre-window sample that feeds the LAG.
+//
+// It returns the minute-truncated base time the sample offsets are relative
+// to, so tests can build windows that line up with the samples exactly
+// rather than re-reading the clock and risking a minute rollover, together
+// with a cleanup that drops the table.
+func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -85,10 +91,11 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) func() {
 		nTupIns int64
 	}
 	samples := []sample{
-		{-4 * time.Minute, 100, 1000, 50},
-		{-3 * time.Minute, 160, 1060, 110},
-		{-2 * time.Minute, 220, 1120, 170},
-		{-1 * time.Minute, 280, 1180, 230},
+		{-5 * time.Minute, 40, 940, 60},
+		{-4 * time.Minute, 100, 1000, 120},
+		{-3 * time.Minute, 160, 1060, 180},
+		{-2 * time.Minute, 220, 1120, 240},
+		{-1 * time.Minute, 280, 1180, 300},
 	}
 
 	insert := `INSERT INTO metrics."` + timeSeriesTestProbe + `"
@@ -105,7 +112,19 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) func() {
 		}
 	}
 
-	return func() { dropTable(context.Background(), pool, timeSeriesTestProbe) }
+	return now, func() { dropTable(context.Background(), pool, timeSeriesTestProbe) }
+}
+
+// windowSince returns the window running from minutes before base up to
+// base. Fixture samples are placed at whole-minute offsets from the same
+// base, so the window start lands exactly on a sample and the lookback
+// tests can say precisely which samples are inside the window and which one
+// sits just before it.
+func windowSince(base time.Time, minutes int) TimeWindow {
+	return TimeWindow{
+		Start: base.Add(-time.Duration(minutes) * time.Minute),
+		End:   base,
+	}
 }
 
 func TestScanSeriesRows_Integration(t *testing.T) {
@@ -204,7 +223,7 @@ func seriesByMetric(t *testing.T, series []MetricSeries, name string) MetricSeri
 func TestQueryTimeSeries_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
 	defer closePool()
-	cleanup := setupTimeSeriesFixture(t, pool)
+	base, cleanup := setupTimeSeriesFixture(t, pool)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -523,6 +542,76 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		}
 	})
 
+	t.Run("first rate bucket includes the rise from before the window", func(t *testing.T) {
+		// The window opens on the -4 min sample, leaving the -5 min sample
+		// just outside it. The counter rose 60 between the two, so the very
+		// first bucket must report 1.0/sec: before the sample query reached
+		// back past the window start, that first sample had no LAG, its rate
+		// was NULL, and the increase was simply lost.
+		window := windowSince(base, 4)
+		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, window, MetricFilters{}, 60, "avg",
+			[]string{"seq_scan_per_sec"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "seq_scan_per_sec")
+		if len(s.Data) == 0 {
+			t.Fatal("expected rate data points")
+		}
+		first := s.Data[0]
+		if !first.Time.Equal(window.Start) {
+			t.Errorf("first point at %s, want the window start %s",
+				first.Time, window.Start)
+		}
+		if first.Value < 0.9 || first.Value > 1.1 {
+			t.Errorf("first rate = %v, want near 1.0/sec", first.Value)
+		}
+	})
+
+	t.Run("no sample before the window leaves the first bucket empty", func(t *testing.T) {
+		// With the window opening on the earliest sample there is nothing
+		// earlier to borrow, so that sample still has no LAG and its bucket
+		// is dropped by LOCF: the behavior is unchanged from before the fix.
+		window := windowSince(base, 5)
+		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, window, MetricFilters{}, 60, "avg",
+			[]string{"seq_scan_per_sec"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "seq_scan_per_sec")
+		if len(s.Data) == 0 {
+			t.Fatal("expected rate data points")
+		}
+		first := s.Data[0]
+		wantFirst := window.Start.Add(time.Minute)
+		if !first.Time.Equal(wantFirst) {
+			t.Errorf("first point at %s, want %s (the second sample)",
+				first.Time, wantFirst)
+		}
+		if first.Value < 0.9 || first.Value > 1.1 {
+			t.Errorf("first rate = %v, want near 1.0/sec", first.Value)
+		}
+	})
+
+	t.Run("lookback respects the dimension filters", func(t *testing.T) {
+		// A filter that matches no row must not let the lookback pull in
+		// another entity's sample; the series stays empty.
+		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, windowSince(base, 4),
+			MetricFilters{IndexName: "some_other_index"},
+			60, "avg", []string{"idx_scan_per_sec"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "idx_scan_per_sec")
+		if len(s.Data) != 0 {
+			t.Errorf("expected no data for a non-matching index, got %d points",
+				len(s.Data))
+		}
+	})
+
 	t.Run("raw column request honors index_name filter", func(t *testing.T) {
 		// The raw-column path shares metricQueryBase, so IndexName must scope
 		// it too; a non-matching index yields an empty raw series.
@@ -558,8 +647,10 @@ const deltaTestProbe = "pg_stat_all_tables_delta_test"
 //	-1 min     5   counter reset, contributes nothing
 //	-0 min    25   delta 20
 //
-// It returns a cleanup that drops the table.
-func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) func() {
+// It returns the minute-truncated base time the offsets are relative to, so
+// tests can build windows lining up with the samples exactly, together with
+// a cleanup that drops the table.
+func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -604,13 +695,13 @@ func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) func() {
 		}
 	}
 
-	return func() { dropTable(context.Background(), pool, deltaTestProbe) }
+	return now, func() { dropTable(context.Background(), pool, deltaTestProbe) }
 }
 
 func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
 	defer closePool()
-	cleanup := setupDeltaFixture(t, pool)
+	base, cleanup := setupDeltaFixture(t, pool)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -695,6 +786,102 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 		r := seriesByMetric(t, series, "seq_scan_per_sec")
 		if len(r.Data) == 0 {
 			t.Error("expected per-second rate data alongside the delta")
+		}
+	})
+
+	t.Run("first bucket includes the increase from before the window", func(t *testing.T) {
+		// The window opens on the -4 min sample (1030), leaving the -5 min
+		// sample (1010) just outside it, so the first bucket must report the
+		// increase of 20 that happened between them. The remaining buckets
+		// are unchanged: 70 for the sample-less minute, nothing for the
+		// reset, then 20.
+		window := windowSince(base, 4)
+		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+			[]int{1}, window, MetricFilters{}, 60, "avg",
+			[]string{"seq_scan_delta"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "seq_scan_delta")
+		if len(s.Data) == 0 {
+			t.Fatal("expected delta data points")
+		}
+		if !s.Data[0].Time.Equal(window.Start) {
+			t.Errorf("first point at %s, want the window start %s",
+				s.Data[0].Time, window.Start)
+		}
+		if s.Data[0].Value != 20 {
+			t.Errorf("first bucket delta = %v, want 20 (the rise since the "+
+				"sample before the window)", s.Data[0].Value)
+		}
+
+		var total float64
+		var nonZero []float64
+		for _, p := range s.Data {
+			if p.Value < 0 {
+				t.Errorf("delta point = %v, want non-negative", p.Value)
+			}
+			total += p.Value
+			if p.Value != 0 {
+				nonZero = append(nonZero, p.Value)
+			}
+		}
+		if total != 110 {
+			t.Errorf("summed deltas = %v, want 110 (%v)", total, nonZero)
+		}
+		want := []float64{20, 70, 20}
+		if len(nonZero) != len(want) {
+			t.Fatalf("expected %d non-zero buckets, got %d: %v",
+				len(want), len(nonZero), nonZero)
+		}
+		for i := range want {
+			if nonZero[i] != want[i] {
+				t.Errorf("non-zero delta[%d] = %v, want %v",
+					i, nonZero[i], want[i])
+			}
+		}
+	})
+
+	t.Run("no sample before the window contributes nothing extra", func(t *testing.T) {
+		// The window opens on the earliest sample of all, so there is no
+		// earlier sample to borrow and that first sample still contributes
+		// nothing: the totals are exactly what they were before the fix.
+		window := windowSince(base, 6)
+		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+			[]int{1}, window, MetricFilters{}, 60, "avg",
+			[]string{"seq_scan_delta"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "seq_scan_delta")
+		if len(s.Data) == 0 {
+			t.Fatal("expected delta data points")
+		}
+		if s.Data[0].Value != 0 {
+			t.Errorf("first bucket delta = %v, want 0 (no earlier sample)",
+				s.Data[0].Value)
+		}
+		var total float64
+		var nonZero []float64
+		for _, p := range s.Data {
+			total += p.Value
+			if p.Value != 0 {
+				nonZero = append(nonZero, p.Value)
+			}
+		}
+		if total != 120 {
+			t.Errorf("summed deltas = %v, want 120 (%v)", total, nonZero)
+		}
+		want := []float64{10, 20, 70, 20}
+		if len(nonZero) != len(want) {
+			t.Fatalf("expected %d non-zero buckets, got %d: %v",
+				len(want), len(nonZero), nonZero)
+		}
+		for i := range want {
+			if nonZero[i] != want[i] {
+				t.Errorf("non-zero delta[%d] = %v, want %v",
+					i, nonZero[i], want[i])
+			}
 		}
 	})
 

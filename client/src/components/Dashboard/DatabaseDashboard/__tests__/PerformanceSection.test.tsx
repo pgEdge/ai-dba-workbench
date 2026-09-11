@@ -156,6 +156,15 @@ const seriesValuesFor = (title: string, name: string): string =>
             && el.getAttribute('data-series') === name)
         .map(el => el.getAttribute('data-values') ?? '')[0];
 
+/**
+ * Sparklines render through the same Chart mock but carry no title,
+ * so they are identified by their single 'value' series.
+ */
+const sparklineValues = (): string[] =>
+    screen.getAllByTestId('chart-series')
+        .filter(el => el.getAttribute('data-series') === 'value')
+        .map(el => el.getAttribute('data-values') ?? '');
+
 const renderSection = () => render(
     <PerformanceSection connectionId={3} databaseName="testdb" />,
 );
@@ -280,6 +289,32 @@ describe('PerformanceSection', () => {
             // 25.5 commits plus 2 rollbacks per second.
             expect(screen.getByText('27.5')).toBeInTheDocument();
             expect(screen.getByText('/s')).toBeInTheDocument();
+        });
+
+        it('reports an idle transaction rate as zero', async () => {
+            routeMetrics({
+                [TXN_KEY]: ready([
+                    series('xact_commit_per_sec', [12, 0]),
+                    series('xact_rollback_per_sec', [1, 0]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Transactions')).toBeInTheDocument();
+            });
+            expect(screen.getByText('0.0')).toBeInTheDocument();
+            expect(screen.queryByText('13.0')).not.toBeInTheDocument();
+        });
+
+        it('sums commits and rollbacks in the transaction sparkline', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Transactions')).toBeInTheDocument();
+            });
+            // 12 + 1 and 25.5 + 2, matching the 27.5/s on the tile.
+            expect(sparklineValues()).toContain('13,27.5');
         });
 
         it('reports the database size, cache and dead tuple tiles', async () => {

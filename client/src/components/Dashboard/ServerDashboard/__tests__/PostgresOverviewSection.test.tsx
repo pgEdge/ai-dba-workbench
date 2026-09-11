@@ -518,6 +518,23 @@ describe('PostgresOverviewSection', () => {
                 .toBeGreaterThanOrEqual(1);
         });
 
+        it('shows an idle commit rate as zero', async () => {
+            routeMetrics({
+                'xact_commit_per_sec': ready([
+                    series('xact_commit_per_sec', [12, 0]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getAllByText('Commits').length)
+                    .toBeGreaterThanOrEqual(1);
+            });
+            // A quiet bucket is a real 0/s, not a stale 12/s.
+            expect(screen.getByText('0.0')).toBeInTheDocument();
+            expect(screen.queryByText('12.0')).not.toBeInTheDocument();
+        });
+
         it('sums the temp byte deltas across the window', async () => {
             renderSection();
 

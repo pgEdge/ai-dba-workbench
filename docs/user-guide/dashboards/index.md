@@ -1,43 +1,72 @@
-# Dashboards
+# Dashboard Overview
 
-The monitoring dashboards provide a hierarchical view of
-PostgreSQL database health and performance. Users navigate
-through five levels of detail, from a fleet-wide estate
-overview down to individual database objects.
+Monitoring dashboards provide a hierarchical view of PostgreSQL database health
+and performance. You can navigate through five levels of detail, from a
+fleet-wide estate overview down to individual database objects.
 
-## Dashboard Hierarchy
+The dashboard system organizes metrics into five levels that progress from
+broad to specific. Select items in the cluster navigator or click drillable
+elements within each dashboard to move between levels.
 
-The dashboard system organizes metrics into five levels
-that progress from broad to specific.
+- The [ESTATE DASHBOARD](estate.md) shows fleet-wide health across all
+  monitored servers.
+- The [CLUSTER DASHBOARD](cluster.md) focuses on replication topology and
+  comparative metrics across cluster members.
+- A [SERVER DASHBOARD](server.md) displays system resources and PostgreSQL
+  performance for a single server.
+- A [DATABASE DASHBOARD](database.md) presents table and index leaderboards
+  with vacuum status for one database.
+- An [OBJECT DASHBOARD](object.md) provides detailed metrics for a specific
+  table, index, or query.
 
-- The [estate dashboard](estate.md) shows fleet-wide
-  health across all monitored servers.
-- The [cluster dashboard](cluster.md) focuses on
-  replication topology and comparative metrics across
-  cluster members.
-- The [server dashboard](server.md) displays system
-  resources and PostgreSQL performance for a single
-  server.
-- The [database dashboard](database.md) presents table
-  and index leaderboards with vacuum status for one
-  database.
-- The [object dashboard](object.md) provides detailed
-  metrics for a specific table, index, or query.
+!!! hint
 
-## Navigation
+    If you have enabled an [AI provider](../ai/enabling_ai.md), the Workbench
+    displays an informational analysis of each dashboard that you visit, and an
+    `Ask Ellie` chat assistant for interactive help. See
+    [Using AI Features](../ai/index.md) and [Ask Ellie](../ai/ask-ellie.md) for
+    details.
 
-Users navigate between dashboard levels by selecting
-items in the cluster navigator or by clicking drillable
-elements within each dashboard. The cluster navigator
-tree reflects the estate, cluster, server, and database
-hierarchy.
+## Using Common Dashboard Features
 
-## Time Range Selector
+Monitoring dashboards share a set of common UI features across their panes.
+Most panes display a chevron on the right side of the pane heading. Click the
+chevron to expand or collapse the pane.
 
-The time range selector controls the time window for
-all charts in the monitoring section. The selector
-appears as a toggle button group with the following
-options:
+The dashboards include the following additional interactive features:
+
+- Drillable elements let you navigate between dashboard levels; for example,
+  clicking a database entry in Database Summaries opens the database dashboard,
+  and clicking a server entry in Comparative Metrics opens the server
+  dashboard.
+- The Hide monitoring queries toggle on the `Top Queries` pane filters out the
+  Workbench's own monitoring queries.
+- Clicking a tile in the visual query plan diagram opens a popover with cost,
+  row estimate, and filter details for that node.
+
+Server nodes and clusters in the navigation pane display a gear icon to the
+right of the name when you hover over them with the mouse; click the gear icon
+to open the settings dialog for that resource. See
+[Server Settings](server.md#reviewing-server-settings) or
+[Cluster Settings](cluster.md#reviewing-cluster-settings) for details about the
+configuration of the selected node.
+
+
+## Using the Event Timeline
+
+The Event Timeline displays a timeline with indicators that show monitored
+events that have occurred within the selected time range. The Event Timeline
+appears on the estate, cluster, and server dashboards, scoped to the servers
+monitored at that level.
+
+Select an event icon to review a list of the alert's events; when applicable,
+the details include the threshold values that caused the alert.
+
+![Reviewing timeline tooltips](../../images/timeline_tooltip.png)
+
+The time range selector in the `Event Timeline` pane specifies how far back the
+pane displays events. The selector appears as a toggle button group with the
+following options:
 
 - 1h displays the last one hour of data.
 - 6h displays the last six hours of data.
@@ -45,111 +74,43 @@ options:
 - 7d displays the last seven days of data.
 - 30d displays the last thirty days of data.
 
-The selected time range persists across dashboard
-navigation. All time-series charts and KPI sparklines
-update when users change the time range.
+The selected time range persists across dashboard navigation. All time-series
+charts and KPI sparklines update when you change the time range.
 
-## Event Timeline
+![The time range selector in the Event Timeline](../../images/event_timeline.png)
 
-The event timeline displays notable events across the
-selected servers. The timeline appears above the
-performance summary tiles in the monitoring section.
+!!! note
 
-The event timeline tracks the following event types:
+    When no events fall within the selected range, the pane displays the
+    message `No events in this time range`. The pane suggests that you try
+    expanding the time range or adjusting the filters.
 
-- Configuration changes to PostgreSQL settings.
-- Alert activations and resolutions.
-- Server restarts and recovery events.
-- Extension installations and upgrades.
-- Other system-level events.
+### Monitored Event Types
 
-The event timeline refreshes in sync with the cluster
-navigator refresh cycle. Users can filter events by
-server and event type.
+You can use the event timeline to track the following event types by selecting
+or deselecting the colored buttons between the `Event Timeline` label and the
+time range selector:
 
-## AI Chart Analysis
+| Button | Description |
+|------------|------------------------------------------------------|
+| Config | Shows configuration change events for PostgreSQL settings. |
+| HBA | Shows changes to the host-based authentication file (`pg_hba.conf`). |
+| Ident | Shows changes to the ident authentication configuration (`pg_ident.conf`). |
+| Restart | Shows server restart and recovery events. |
+| Alert | Shows active alert events that have triggered. |
+| Cleared | Shows alert events that have resolved and cleared. |
+| Acked | Shows alert events that an operator has acknowledged. |
+| Extension | Shows extension installation and upgrade events. |
+| Blackouts | Shows scheduled maintenance blackout periods. |
 
-The AI chart analysis feature provides LLM-powered
-insights for any chart or KPI tile in the monitoring
-dashboards. The analysis examines data trends,
-identifies anomalies, and generates actionable
-recommendations.
+### Filtering and Stacking
 
-### Triggering an Analysis
+The Event Timeline refreshes in sync with the cluster navigator refresh cycle.
+You can filter events by server and event type. When multiple events occur at
+the same point in time, the timeline stacks them into a single icon with a
+badge showing the event count; hovering over the icon displays a tooltip that
+lists individual event names and a "+N more" indicator when the group contains
+more than three events.
 
-Charts, KPI tiles, leaderboards, and the vacuum status
-section each display a brain icon. Clicking the icon
-opens an analysis dialog and starts the LLM analysis.
+![Sorting Event Timeline details](../../images/event_timeline_details.png)
 
-The analysis follows these steps:
-
-1. The system checks for a cached analysis result.
-2. The system fetches server context from the
-   connection.
-3. The system fetches timeline events for the time
-   range.
-4. The system serializes the chart data and sends the
-   data to the LLM.
-5. The LLM produces a structured analysis report.
-
-The dialog displays a loading skeleton while the
-analysis runs. The final report renders as formatted
-markdown.
-
-### Analysis Reports
-
-Each chart analysis report contains a structured
-assessment of the metric data:
-
-- The summary section describes the current state of
-  the metric and its significance.
-- The trends and patterns section identifies notable
-  changes, spikes, or anomalies in the data.
-- The recommendations section suggests specific actions
-  to address any issues found.
-
-### Timeline Event Correlation
-
-The analysis includes timeline events from the chart's
-time range to identify correlations between metric
-changes and system events. The LLM considers the
-following event types:
-
-- Configuration changes to PostgreSQL settings.
-- Alert activations and resolutions.
-- Server restarts and recovery events.
-- Extension installations and upgrades.
-- Blackout periods and maintenance windows.
-
-### Running SQL Queries
-
-SQL code blocks in analysis reports include a play
-button in the upper right corner. The run button
-executes the query against the chart's associated
-database server. Results appear inline below the code
-block.
-
-Write statements such as `ALTER SYSTEM` display a
-confirmation dialog before executing. Read-only queries
-execute immediately.
-
-### Caching
-
-The system caches chart analysis results on the client
-side to avoid redundant LLM calls.
-
-- An amber brain icon indicates that a cached analysis
-  exists for the chart.
-- The cache uses stable identifiers as the cache key;
-  these include the metric description, connection,
-  database, and time range.
-- The cache expires after 30 minutes.
-- Clicking an amber brain icon opens the cached report
-  instantly.
-
-### Downloading Reports
-
-The dialog footer includes a Download button that saves
-the analysis as a markdown file. The downloaded file
-includes the chart details, the full analysis report,
-and a generation timestamp.

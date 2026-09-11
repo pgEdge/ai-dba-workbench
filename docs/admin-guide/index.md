@@ -98,3 +98,13 @@ The server returns standard HTTP error codes for authentication failures.
 | Rate Limited | `{ "error": "Too many requests" }` | 429 |
 
 The server does not expose specific error details for security reasons.
+
+## Related Documentation
+
+The following pages provide additional administration reference material.
+
+- [Alert Rules](alert-rules.md) describes the rules that trigger
+  notifications.
+- [Managing Users and Permissions](managing-users-and-permissions/permission_model.md)
+  covers tokens and access control.
+- [API Reference](api/reference.md) provides interactive API documentation.

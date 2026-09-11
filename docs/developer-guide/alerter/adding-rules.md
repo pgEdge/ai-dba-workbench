@@ -1,13 +1,12 @@
 # Adding Alert Rules
 
-This guide explains how to create custom alert rules for the
-alerter. Custom rules extend the built-in rule set with monitoring
-requirements specific to your organization.
+This guide explains how to create custom alert rules for the alerter. Custom
+rules extend the built-in rule set with monitoring requirements specific to
+your organization.
 
 ## Prerequisites
 
-Before creating a custom rule, ensure the following conditions
-are met:
+Before creating a custom rule, ensure the following conditions are met:
 
 - The metric you want to monitor is collected by the collector.
 - You understand the metric's normal value range.
@@ -15,13 +14,12 @@ are met:
 
 ## Creating a Rule
 
-Alert rules are stored in the `alert_rules` table in the
-datastore. You can create rules using SQL or through the API.
+Alert rules are stored in the `alert_rules` table in the datastore. You can
+create rules using SQL or through the API.
 
 ### Using SQL
 
-In the following example, a custom rule monitors temporary file
-usage:
+In the following example, a custom rule monitors temporary file usage:
 
 ```sql
 INSERT INTO alert_rules (
@@ -65,76 +63,63 @@ Each rule requires the following fields:
 
 ## Metric Names
 
-The metric name must match a metric that the alerter can query.
-The alerter supports the following metric name patterns.
+The metric name must match a metric that the alerter can query. The alerter
+supports the following metric name patterns.
 
 ### Connection Metrics
 
-- `pg_settings.max_connections` - The max_connections setting
-  value.
+- `pg_settings.max_connections` - The max_connections setting value.
 - `connection_utilization_percent` - Connection usage percentage.
 - `pg_stat_activity.blocked_count` - Number of blocked sessions.
-- `pg_stat_activity.idle_in_transaction_seconds` - Idle
-  transaction time.
-- `pg_stat_activity.max_query_duration_seconds` - Longest running
-  query.
-- `pg_stat_activity.max_xact_duration_seconds` - Longest
-  transaction.
-- `pg_stat_activity.max_lock_wait_seconds` - Longest lock wait
-  time.
+- `pg_stat_activity.idle_in_transaction_seconds` - Idle transaction time.
+- `pg_stat_activity.max_query_duration_seconds` - Longest running query.
+- `pg_stat_activity.max_xact_duration_seconds` - Longest transaction.
+- `pg_stat_activity.max_lock_wait_seconds` - Longest lock wait time.
 
 ### Replication Metrics
 
-- `pg_stat_replication.replay_lag_seconds` - Replication lag in
-  seconds.
+- `pg_stat_replication.replay_lag_seconds` - Replication lag in seconds.
 - `pg_stat_replication.lag_bytes` - Replication lag in bytes.
 - `pg_replication_slots.inactive` - Inactive replication slots.
 
 ### Database Metrics
 
 - `pg_stat_database.cache_hit_ratio` - Buffer cache hit ratio.
-- `pg_stat_database.deadlocks_delta` - New deadlocks per
-  interval.
-- `pg_stat_database.temp_files_delta` - New temporary files per
-  interval.
+- `pg_stat_database.deadlocks_delta` - New deadlocks per interval.
+- `pg_stat_database.temp_files_delta` - New temporary files per interval.
 
 ### Table Metrics
 
-- `pg_stat_all_tables.dead_tuple_percent` - Dead tuple
-  percentage.
+- `pg_stat_all_tables.dead_tuple_percent` - Dead tuple percentage.
 - `table_bloat_ratio` - Estimated table bloat.
 - `table_last_autovacuum_hours` - Hours since last autovacuum.
 - `age_percent` - Transaction ID age percentage.
 
 ### System Metrics
 
-- `pg_sys_cpu_usage_info.processor_time_percent` - CPU usage
-  percentage.
+- `pg_sys_cpu_usage_info.processor_time_percent` - CPU usage percentage.
 - `pg_sys_memory_info.used_percent` - Memory usage percentage.
 - `pg_sys_disk_info.used_percent` - Disk usage percentage.
-- `pg_sys_load_avg_info.load_avg_fifteen_minutes` - 15-minute
-  load average.
+- `pg_sys_load_avg_info.load_avg_fifteen_minutes` - 15-minute load average.
 
 ### Other Metrics
 
 - `pg_stat_wal.failed_count_delta` - Failed archive attempts.
-- `pg_stat_checkpointer.checkpoints_req_delta` - Requested
-  checkpoints.
-- `pg_stat_statements.slow_query_count` - Slow queries per
-  interval.
+- `pg_stat_checkpointer.checkpoints_req_delta` - Requested checkpoints.
+- `pg_stat_statements.slow_query_count` - Slow queries per interval.
 
 ## Adding Support for New Metrics
 
-If you need a metric that is not currently supported, you must add
-support in the alerter code before creating a rule.
+If you need a metric that is not currently supported, you must add support in
+the alerter code before creating a rule.
 
 ### Step 1: Add the Metric Query
 
 Edit `internal/database/queries.go` and add a case to the
 `GetLatestMetricValues` function.
 
-In the following example, a new metric query retrieves values from
-a custom table:
+In the following example, a new metric query retrieves values from a custom
+table:
 
 ```go
 case "your_new_metric_name":
@@ -169,8 +154,8 @@ case "your_new_metric_name":
 If the metric should support anomaly detection, add a case to the
 `GetHistoricalMetricValues` function.
 
-In the following example, a historical query retrieves data for
-baseline calculations:
+In the following example, a historical query retrieves data for baseline
+calculations:
 
 ```go
 case "your_new_metric_name":
@@ -189,8 +174,8 @@ case "your_new_metric_name":
 
 Verify the metric query returns expected values.
 
-In the following example, the queries check current metric values
-and verify the alerter can access the data:
+In the following example, the queries check current metric values and verify
+the alerter can access the data:
 
 ```sql
 -- Check current values
@@ -210,8 +195,7 @@ Select thresholds based on your operational requirements.
 
 ### Critical Thresholds
 
-Set critical thresholds for conditions that require immediate
-action:
+Set critical thresholds for conditions that require immediate action:
 
 - System running out of resources (disk, connections).
 - Replication failures or significant lag.
@@ -219,8 +203,7 @@ action:
 
 ### Warning Thresholds
 
-Set warning thresholds for conditions that should be
-investigated:
+Set warning thresholds for conditions that should be investigated:
 
 - Resources approaching limits.
 - Performance degradation.
@@ -235,11 +218,10 @@ Set informational thresholds for awareness:
 
 ## Per-Connection Overrides
 
-After creating a rule, you can customize thresholds for specific
-connections.
+After creating a rule, you can customize thresholds for specific connections.
 
-In the following example, an override sets a higher threshold for
-a specific connection:
+In the following example, an override sets a higher threshold for a specific
+connection:
 
 ```sql
 INSERT INTO alert_thresholds (
@@ -264,8 +246,8 @@ INSERT INTO alert_thresholds (
 
 Disable a rule globally by updating the rule.
 
-In the following example, the `UPDATE` statement disables a rule
-for all connections:
+In the following example, the `UPDATE` statement disables a rule for all
+connections:
 
 ```sql
 UPDATE alert_rules
@@ -273,8 +255,8 @@ SET default_enabled = false
 WHERE name = 'Rule Name';
 ```
 
-In the following example, an override disables a rule for a
-specific connection:
+In the following example, an override disables a rule for a specific
+connection:
 
 ```sql
 INSERT INTO alert_thresholds (rule_id, connection_id, enabled)
@@ -303,10 +285,8 @@ Follow these guidelines when creating rules:
 - Use descriptive names that explain what the rule detects.
 - Write clear descriptions that help operators understand alerts.
 - Choose appropriate categories for organization.
-- Set thresholds based on historical data and operational
-  experience.
-- Start with warning severity and escalate to critical after
-  validation.
+- Set thresholds based on historical data and operational experience.
+- Start with warning severity and escalate to critical after validation.
 - Document any dependencies or special considerations.
 - Test rules thoroughly before enabling rules in production.
 
@@ -314,8 +294,8 @@ Follow these guidelines when creating rules:
 
 Delete a custom rule by removing the rule from the database.
 
-In the following example, the `DELETE` statements remove a custom
-rule and any associated overrides:
+In the following example, the `DELETE` statements remove a custom rule and any
+associated overrides:
 
 ```sql
 -- First remove any overrides
@@ -329,5 +309,5 @@ WHERE rule_id = (
 DELETE FROM alert_rules WHERE name = 'Rule Name';
 ```
 
-Built-in rules should not be deleted. Disable built-in rules
-instead if you do not need the rules.
+Built-in rules should not be deleted. Disable built-in rules instead if you do
+not need the rules.

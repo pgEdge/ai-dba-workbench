@@ -1,8 +1,8 @@
 # Cron Expression Format
 
-The alerter uses standard 5-field cron expressions for scheduling
-blackout periods. This document describes the supported syntax and
-provides examples for common scheduling scenarios.
+The alerter uses standard 5-field cron expressions for scheduling blackout
+periods. This document describes the supported syntax and provides examples for
+common scheduling scenarios.
 
 ## Expression Format
 
@@ -28,8 +28,8 @@ The cron parser supports the following syntax elements.
 
 ### Wildcards
 
-The asterisk (`*`) matches any value in the field. In the
-following example, the expression triggers every minute:
+The asterisk (`*`) matches any value in the field. In the following example,
+the expression triggers every minute:
 
 ```
 * * * * *
@@ -37,9 +37,8 @@ following example, the expression triggers every minute:
 
 ### Specific Values
 
-A single number specifies an exact value. In the following
-example, the expression triggers at 3:00 AM on the first day of
-each month:
+A single number specifies an exact value. In the following example, the
+expression triggers at 3:00 AM on the first day of each month:
 
 ```
 0 3 1 * *
@@ -47,9 +46,8 @@ each month:
 
 ### Lists
 
-Comma-separated values specify multiple options. In the following
-example, the expression triggers at midnight on the 1st and 15th
-of each month:
+Comma-separated values specify multiple options. In the following example, the
+expression triggers at midnight on the 1st and 15th of each month:
 
 ```
 0 0 1,15 * *
@@ -57,8 +55,8 @@ of each month:
 
 ### Ranges
 
-A hyphen specifies a range of values. In the following example,
-the expression triggers every hour from 9 AM to 5 PM:
+A hyphen specifies a range of values. In the following example, the expression
+triggers every hour from 9 AM to 5 PM:
 
 ```
 0 9-17 * * *
@@ -66,8 +64,8 @@ the expression triggers every hour from 9 AM to 5 PM:
 
 ### Steps
 
-A slash specifies step values. In the following example, the
-expression triggers every 15 minutes:
+A slash specifies step values. In the following example, the expression
+triggers every 15 minutes:
 
 ```
 */15 * * * *
@@ -75,8 +73,8 @@ expression triggers every 15 minutes:
 
 ### Combined Syntax
 
-You can combine ranges with steps. In the following example, the
-expression triggers every other hour from 8 AM to 6 PM:
+You can combine ranges with steps. In the following example, the expression
+triggers every other hour from 8 AM to 6 PM:
 
 ```
 0 8-18/2 * * *
@@ -84,15 +82,14 @@ expression triggers every other hour from 8 AM to 6 PM:
 
 ## Timezone Handling
 
-Each blackout schedule includes a `timezone` field that specifies
-the timezone for the cron expression. The timezone uses IANA
-format such as `America/New_York` or `Europe/London`. When no
-timezone is specified, the alerter uses UTC.
+Each blackout schedule includes a `timezone` field that specifies the timezone
+for the cron expression. The timezone uses IANA format such as
+`America/New_York` or `Europe/London`. When no timezone is specified, the
+alerter uses UTC.
 
-The alerter converts the current time to the specified timezone
-before evaluating the cron expression. This approach ensures that
-scheduled blackouts trigger at the correct local time regardless
-of the server's system timezone.
+The alerter converts the current time to the specified timezone before
+evaluating the cron expression. This approach ensures that scheduled blackouts
+trigger at the correct local time regardless of the server's system timezone.
 
 ## Common Examples
 
@@ -154,15 +151,13 @@ This expression triggers every weekend day at midnight:
 
 ### Monthly Schedules
 
-This expression triggers at midnight on the first day of each
-month:
+This expression triggers at midnight on the first day of each month:
 
 ```
 0 0 1 * *
 ```
 
-This expression triggers at 4:30 AM on the 1st and 15th of each
-month:
+This expression triggers at 4:30 AM on the 1st and 15th of each month:
 
 ```
 30 4 1,15 * *
@@ -170,15 +165,13 @@ month:
 
 ### Business Hours
 
-This expression triggers every hour from 9 AM to 5 PM on
-weekdays:
+This expression triggers every hour from 9 AM to 5 PM on weekdays:
 
 ```
 0 9-17 * * 1-5
 ```
 
-This expression triggers every 30 minutes during business hours
-on weekdays:
+This expression triggers every 30 minutes during business hours on weekdays:
 
 ```
 0,30 9-17 * * 1-5
@@ -186,9 +179,8 @@ on weekdays:
 
 ## Blackout Schedule Configuration
 
-Blackout schedules are stored in the datastore and can be created
-through the API or database. Each schedule includes the following
-fields:
+Blackout schedules are stored in the datastore and can be created through the
+API or database. Each schedule includes the following fields:
 
 | Field | Description |
 |-------|-------------|
@@ -201,8 +193,8 @@ fields:
 | `connection_id` | Specific connection (null for all) |
 | `database_name` | Specific database (null for all) |
 
-In the following example, a blackout schedule is configured for
-Sunday maintenance in the Eastern timezone:
+In the following example, a blackout schedule is configured for Sunday
+maintenance in the Eastern timezone:
 
 ```yaml
 name: sunday_maintenance
@@ -213,19 +205,18 @@ reason: Weekly maintenance window
 enabled: true
 ```
 
-This configuration creates a 2-hour blackout starting at 2:00 AM
-Eastern time every Sunday.
+This configuration creates a 2-hour blackout starting at 2:00 AM Eastern time
+every Sunday.
 
 ## Validation
 
-The alerter validates cron expressions when blackout schedules are
-created or updated. Invalid expressions result in an error. Common
-validation errors include:
+The alerter validates cron expressions when blackout schedules are created or
+updated. Invalid expressions result in an error. Common validation errors
+include:
 
 - Invalid field values (e.g., minute value 60).
 - Incorrect number of fields (must be exactly 5).
 - Invalid syntax (e.g., unmatched ranges).
 
-You can test cron expressions before deploying by checking the
-next trigger time using online cron expression tools or the
-alerter debug logs.
+You can test cron expressions before deploying by checking the next trigger
+time using online cron expression tools or the alerter debug logs.

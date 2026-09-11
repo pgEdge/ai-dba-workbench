@@ -1,43 +1,36 @@
 # Metrics Tools
 
-The MCP server provides tools for querying historical
-metrics collected by the pgEdge AI DBA Workbench
-collector. These tools access the datastore database,
-which contains time-series metrics from all monitored
-PostgreSQL servers.
+The MCP server provides tools for querying historical metrics collected by the
+pgEdge AI DBA Workbench collector. These tools access the datastore database,
+which contains time-series metrics from all monitored PostgreSQL servers.
 
 ## Database Architecture
 
-The AI DBA Workbench uses a two-tier database
-architecture:
+The AI DBA Workbench uses a two-tier database architecture:
 
-- The datastore database contains metrics collected by
-  the collector over time; the `list_probes`,
-  `describe_probe`, and `query_metrics` tools query
-  this database.
-- The monitored databases are live PostgreSQL servers
-  being monitored; the `query_database`,
-  `get_schema_info`, and `execute_explain` tools
-  access these databases.
+- The datastore database contains metrics collected by the collector over time;
+  the `list_probes`, `describe_probe`, and `query_metrics` tools query this
+  database.
+- The monitored databases are live PostgreSQL servers being monitored; the
+  `query_database`, `get_schema_info`, and `execute_explain` tools access these
+  databases.
 
 ## Available Tools
 
 ### list_probes
 
-The `list_probes` tool lists all available metrics
-probes in the datastore.
+The `list_probes` tool lists all available metrics probes in the datastore.
 
 **Parameters**: None
 
 **Returns**: A TSV table with the following columns:
 
-- `name` contains the probe name for use with
-  `describe_probe` and `query_metrics`.
+- `name` contains the probe name for use with `describe_probe` and
+  `query_metrics`.
 - `description` contains a human-readable description.
-- `row_count` contains the approximate number of
-  metric rows collected.
-- `scope` indicates "server" for server-wide metrics
-  or "database" for per-database metrics.
+- `row_count` contains the approximate number of metric rows collected.
+- `scope` indicates "server" for server-wide metrics or "database" for
+  per-database metrics.
 
 In the following example, the tool lists all probes:
 
@@ -50,9 +43,8 @@ In the following example, the tool lists all probes:
 
 ### describe_probe
 
-The `describe_probe` tool returns detailed information
-about a specific metrics probe including all available
-columns and their data types.
+The `describe_probe` tool returns detailed information about a specific metrics
+probe including all available columns and their data types.
 
 **Parameters**:
 
@@ -65,11 +57,10 @@ columns and their data types.
 - `column_name` contains the name of the column.
 - `data_type` contains the PostgreSQL data type.
 - `description` contains a human-readable description.
-- `column_type` indicates "metric" for numeric values
-  or "dimension" for identifiers.
+- `column_type` indicates "metric" for numeric values or "dimension" for
+  identifiers.
 
-In the following example, the tool describes the
-`pg_stat_database` probe:
+In the following example, the tool describes the `pg_stat_database` probe:
 
 ```json
 {
@@ -82,8 +73,8 @@ In the following example, the tool describes the
 
 ### query_metrics
 
-The `query_metrics` tool queries collected metrics with
-time-based aggregation into buckets.
+The `query_metrics` tool queries collected metrics with time-based aggregation
+into buckets.
 
 **Parameters**:
 
@@ -103,11 +94,10 @@ time-based aggregation into buckets.
 **Returns**: A TSV table with the following columns:
 
 - `bucket_time` contains the start time of each bucket.
-- One column per requested metric contains the
-  aggregated values.
+- One column per requested metric contains the aggregated values.
 
-In the following example, the tool queries database
-statistics for the last 24 hours:
+In the following example, the tool queries database statistics for the last 24
+hours:
 
 ```json
 {
@@ -160,8 +150,8 @@ statistics for the last 24 hours:
 
 ### Performance Analysis
 
-In the following example, the tool identifies
-performance trends over seven days:
+In the following example, the tool identifies performance trends over seven
+days:
 
 ```json
 {
@@ -179,8 +169,8 @@ performance trends over seven days:
 
 ### Query Statistics
 
-In the following example, the tool analyzes slow
-queries from `pg_stat_statements`:
+In the following example, the tool analyzes slow queries from
+`pg_stat_statements`:
 
 ```json
 {
@@ -197,8 +187,7 @@ queries from `pg_stat_statements`:
 
 ### System Resource Monitoring
 
-In the following example, the tool tracks system
-resource usage over six hours:
+In the following example, the tool tracks system resource usage over six hours:
 
 ```json
 {
@@ -216,33 +205,30 @@ resource usage over six hours:
 
 Follow these guidelines when querying metrics:
 
-1. Start with `list_probes` to discover what metrics
-   are collected before querying.
-2. Use `describe_probe` to understand available columns
-   before constructing queries.
-3. Limit metrics by specifying only the columns you
-   need to reduce response size.
-4. Choose an appropriate bucket count; use 50 to 150
-   buckets for an overview and fewer for quick checks.
-5. Select time ranges carefully; start with shorter
-   ranges (1h, 6h) and expand as needed.
+1. Start with `list_probes` to discover what metrics are collected before
+   querying.
+2. Use `describe_probe` to understand available columns before constructing
+   queries.
+3. Limit metrics by specifying only the columns you need to reduce response
+   size.
+4. Choose an appropriate bucket count; use 50 to 150 buckets for an overview
+   and fewer for quick checks.
+5. Select time ranges carefully; start with shorter ranges (1h, 6h) and expand
+   as needed.
 6. Choose the right aggregation method:
 
    - `avg` is best for rates and averages over time.
-   - `sum` is best for cumulative metrics like
-     transaction counts.
-   - `max` is best for peak values like connection
-     counts.
+   - `sum` is best for cumulative metrics like transaction counts.
+   - `max` is best for peak values like connection counts.
    - `min` is best for minimum thresholds.
    - `last` is best for point-in-time values.
 
 ## Configuration
 
-The datastore tools are enabled by default. The tools
-can be disabled in the server configuration.
+The datastore tools are enabled by default. The tools can be disabled in the
+server configuration.
 
-In the following example, the configuration disables
-the datastore tools:
+In the following example, the configuration disables the datastore tools:
 
 ```yaml
 builtins:
@@ -252,13 +238,6 @@ builtins:
     query_metrics: false
 ```
 
-The tools require the server to be configured with a
-datastore connection. For configuration details, see
-[Server Configuration](../../getting-started/configuration/server.md).
-
-## Related Documentation
-
-- [Server Information](server-info.md) describes the
-  server details endpoint.
-- [Probes](../probes.md) covers probe management and
-  configuration.
+The tools require the server to be configured with a datastore connection. For
+configuration details, see
+[Server Configuration](../../configuration/server.md).

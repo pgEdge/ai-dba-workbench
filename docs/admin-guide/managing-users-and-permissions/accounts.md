@@ -234,7 +234,7 @@ following example, the `-delete-user` flag removes a user account:
 
 Rate limiting and account lockout behavior are controlled by authentication
 settings in the server configuration file
-([`/etc/pgedge/ai-dba-server.yaml`](../../getting-started/configuration/server.md)).
+([`/etc/pgedge/ai-dba-server.yaml`](../../configuration/server.md)).
 When a valid user name is provided for authentication, the server begins to
 track failed login attempts and the time period in which those attempts are
 made.

@@ -110,7 +110,7 @@ The following table lists all command-line flags:
 | `-db-sslmode` | Database SSL mode (overrides config) | None |
 
 For complete configuration documentation, see
-[docs/getting-started/configuration/alerter.md](../docs/getting-started/configuration/alerter.md).
+[docs/configuration/alerter.md](../docs/configuration/alerter.md).
 
 ## Running
 
@@ -164,7 +164,7 @@ For detailed documentation, see the
 
 The documentation includes the following topics:
 
-- [Configuration](../docs/getting-started/configuration/alerter.md)
+- [Configuration](../docs/configuration/alerter.md)
   covers all configuration options and command-line flags.
 - [Cron Expressions](../docs/developer-guide/alerter/cron-expressions.md)
   explains cron syntax for scheduling blackout periods.

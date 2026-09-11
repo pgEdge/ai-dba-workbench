@@ -46,10 +46,9 @@ openapi:
 # (DROP/CREATE the same tables), so running their test binaries concurrently
 # races.
 # -race enables the data-race detector; CI runs the same target.
-test: killall
+test:
 	@echo "Running tests..."
 	cd src && go test -race -p=1 -v ./...
-	@$(MAKE) --no-print-directory killall
 
 # Run linting
 lint:
@@ -76,13 +75,9 @@ fmt-check:
 # -race enables the data-race detector; CI runs the same target.
 # -v emits per-test output so this single invocation can replace the
 # separate `test` target inside `test-all` and halve total test time.
-# killall brackets the run because the test suite may leave stray
-# processes that interfere with subsequent test binaries (same
-# rationale as the `test` target).
-coverage: killall
+coverage:
 	@echo "Running tests with coverage..."
 	cd src && go test -race -p=1 -v -coverprofile=coverage.out ./...
-	@$(MAKE) --no-print-directory killall
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
 	@cd src && total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, "", $$3); print $$3}'); \
@@ -129,12 +124,15 @@ help:
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"
-	@echo "  killall   - Kill any running server processes"
+	@echo "  killall   - SIGTERM every matching process on the host, including"
+	@echo "              any dev server started from bin/; use deliberately"
 	@echo "  help      - Show this help message"
 	@echo ""
 	@echo "Binary is built to: $(ABS_BIN_DIR)/$(BINARY)"
 
-# Kill all running server processes
+# Kill every running server process on the host, including any started
+# from bin/ by a developer. Never wired into test targets; invoke
+# deliberately.
 killall:
-	@pkill -9 ai-dba-server 2>/dev/null || true
-	@pkill -9 -f "[g]o run.*mcp-server" 2>/dev/null || true
+	@pkill ai-dba-server 2>/dev/null || true
+	@pkill -f "[g]o run.*mcp-server" 2>/dev/null || true

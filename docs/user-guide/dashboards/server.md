@@ -58,6 +58,18 @@ workbench's own monitoring queries from the list. The
 toggle is on by default to focus on application
 queries.
 
+On an existing installation, the toggle only hides
+statements that PostgreSQL first recorded after the
+upgrade. `pg_stat_statements` identifies a statement by
+its parse tree, which ignores comments, so a statement
+already recorded before the upgrade keeps the untagged
+text it was first seen with, and the filter never
+matches it. Those entries also run on every collection
+cycle, so they are never evicted. Run `SELECT
+pg_stat_statements_reset();` once on each monitored
+instance after upgrading if you want the toggle to hide
+the monitoring queries already in the view.
+
 The toggle is a display convenience rather than a
 security or audit control. The filter matches a marker
 comment in the statement text, so a database user who

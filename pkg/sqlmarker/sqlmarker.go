@@ -20,6 +20,11 @@
 // because those statements are inserts, deletes, DDL, and multi-column
 // reads whose shape must not change. This package supplies the
 // complementary comment marker for those statements.
+//
+// Almost all tagged statements run against the datastore, but not
+// quite all: the collector also tags the database-list query in its
+// scheduler, which runs against each monitored server rather than
+// against the datastore.
 package sqlmarker
 
 import "strings"
@@ -30,6 +35,17 @@ import "strings"
 // updating that filter (and accepting that already-collected
 // pg_stat_statements rows will keep the old text).
 const Marker = "ai_dba_wb_internal"
+
+// ProbeAlias is the synthetic column alias the collector wraps around
+// every read-only probe query it runs against a monitored database;
+// see WrapQuery in the collector's probes package. It lives here, next
+// to Marker, because the server's "Hide monitoring queries" filter
+// matches on both and the two values were previously hand-copied
+// across module boundaries with nothing to catch a drift.
+//
+// The same caveat as Marker applies: changing it leaves
+// already-collected pg_stat_statements rows carrying the old value.
+const ProbeAlias = "ai_dba_wb_probe"
 
 // Comment is the SQL block comment carrying Marker. A block comment is
 // used rather than a line comment so that the marker is safe to embed
@@ -59,9 +75,25 @@ const Comment = "/* " + Marker + " */"
 // Note also that queryid is computed from the parse tree and ignores
 // comments, so a tagged statement and an otherwise identical untagged
 // one share a queryid, and pg_stat_statements keeps the text of
-// whichever form it saw first. That is acceptable here because these
-// statements are unique to the Workbench and no other client issues
-// them.
+// whichever form it saw first.
+//
+// That has a consequence for upgrades, and it is the opposite of
+// reassuring: because these statements are unique to the Workbench,
+// the untagged entry already in pg_stat_statements is the one that
+// stays. It was recorded before the upgrade, it runs on every
+// collection cycle so is never evicted, and its stored text is frozen
+// at the untagged form. Tagging the statement therefore does not hide
+// it; the marker never appears in the text the view returns, and the
+// filter never matches. Only statements first seen after the upgrade
+// are hidden, so an existing deployment needs a one-off
+// SELECT pg_stat_statements_reset() on the monitored instance for the
+// filter to take effect on everything else.
+//
+// Measured on PostgreSQL 18: five untagged executions followed by 25
+// tagged ones leave a single row, 30 calls, with the untagged text.
+// The only statements exempt are those whose parse tree also changed,
+// which in practice means ones that gained a bind parameter in the
+// same change.
 //
 // Tag is idempotent: sql already containing Marker is returned
 // unchanged. Leading whitespace and newlines are tolerated, so

@@ -286,7 +286,19 @@ project adheres to
   visible. Two classes stay untagged by design and still appear in the
   panel: the server's own datastore traffic for sessions, RBAC,
   conversations, and the timeline; and the collector's `probe_configs`
-  resolution path. (#364)
+  resolution path, along with the alerter's remaining direct datastore
+  queries in `alert_queries.go`, `anomaly_queries.go`,
+  `notification_queries.go` and `queries.go`.
+
+  On an existing installation the toggle only hides statements that
+  PostgreSQL first recorded after the upgrade. `pg_stat_statements`
+  identifies a statement by its parse tree, which ignores comments, so
+  an entry already present keeps the untagged text it was first seen
+  with and the filter never matches it; those entries run every
+  collection cycle, so they are never evicted either. Run `SELECT
+  pg_stat_statements_reset();` once on each monitored instance after
+  upgrading for the toggle to take effect on statements already in the
+  view. (#364)
 
 ### Removed
 

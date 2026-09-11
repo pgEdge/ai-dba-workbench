@@ -98,7 +98,7 @@ with `ai_dba_wb_internal`; they already carry `ai_dba_wb_probe`.
 
 ## Still Untagged
 
-Two classes of Workbench traffic remain untagged and therefore still
+Three classes of Workbench traffic remain untagged and therefore still
 appear in the Top Queries panel with the toggle on; do not describe the
 tagging as complete:
 
@@ -111,6 +111,41 @@ tagging as complete:
   `collector/src/probes/config_loader.go`. Note that
   `lastCollectionTimeQuery`, in that same file, *is* tagged, so the
   file is a mixture.
+- Most of the alerter's datastore traffic. Only `GetClusterPeers` moved
+  onto `queryInternal`; the direct `pool.Query`, `QueryRow` and `Exec`
+  sites across `alert_queries.go`, `anomaly_queries.go`,
+  `notification_queries.go` and `queries.go` are untagged, and they run
+  on the 60-second evaluation cycle so they are prominent in the panel.
+  Tagging them needs `QueryRow` and `Exec` twins of `queryInternal`,
+  since the existing helper only wraps `Query`.
+
+## Tagging Does Not Hide an Entry That Already Exists
+
+This is the trap that matters on upgrade, and it is the same mechanism
+as the testing note below, seen from the operator's side.
+
+Adding a marker to an existing statement does not hide it from a
+deployment that has already been running. `pg_stat_statements` keys on
+the parse tree, which ignores comments, so the tagged form collapses
+onto the untagged entry that is already there, and that entry keeps the
+untagged text it was first recorded with. The Workbench's own
+statements run every collection cycle, so they are never evicted
+either. The filter matches on text, so it never matches, and the panel
+looks exactly as it did before the upgrade.
+
+Measured on PostgreSQL 18: five untagged executions followed by 25
+tagged ones leave one row, 30 calls, still showing the untagged text.
+
+Two consequences worth remembering:
+
+- Only statements first seen after the upgrade are hidden. Operators
+  need a one-off `SELECT pg_stat_statements_reset()` on the monitored
+  instance for the filter to cover what is already recorded, and both
+  the changelog and the dashboard documentation must say so.
+- A statement whose parse tree changed in the same release is exempt,
+  because it gets a fresh `queryid`. That is why
+  `loadPartitionCandidates` was hidden immediately: it gained a `$1`
+  bind in the same change.
 
 ## Testing Notes for pg_stat_statements
 

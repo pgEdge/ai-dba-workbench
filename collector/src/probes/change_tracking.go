@@ -24,7 +24,7 @@ import (
 // column, so it must be stripped before hashing or the live and
 // stored hashes will never match and change-detection will misfire on
 // every collection cycle. See WrapQuery in base.go.
-const probeMarkerColumn = "ai_dba_wb_probe"
+const probeMarkerColumn = sqlmarker.ProbeAlias
 
 // HasDataChanged checks whether currentMetrics differ from the
 // most recently stored data for the given connection. The

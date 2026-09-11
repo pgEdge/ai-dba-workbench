@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // WrapQuery wraps a SQL query with a probe marker column so the server
@@ -29,7 +31,7 @@ func WrapQuery(probeName, query string) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"SELECT '%s' AS ai_dba_wb_probe, subq.* FROM (%s) AS subq",
+		"SELECT '%s' AS "+sqlmarker.ProbeAlias+", subq.* FROM (%s) AS subq",
 		probeName, query,
 	)
 }

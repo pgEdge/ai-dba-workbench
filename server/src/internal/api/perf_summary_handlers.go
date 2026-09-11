@@ -28,10 +28,10 @@ import (
 
 // probeMarkerAlias is the synthetic column alias that the collector
 // wraps around every read-only probe query it runs against a monitored
-// database; see WrapQuery in the collector's probes package. The
-// collector is a separate Go module, so the value is repeated here
-// rather than imported. Keep the two in step.
-const probeMarkerAlias = "ai_dba_wb_probe"
+// database; see WrapQuery in the collector's probes package. It comes
+// from pkg/sqlmarker so that the collector and the server cannot drift
+// apart on the value.
+const probeMarkerAlias = sqlmarker.ProbeAlias
 
 // excludeWorkbenchQueriesClause filters out the Workbench's own
 // statements from the Top Queries panel when the caller asks to hide
@@ -52,6 +52,13 @@ const probeMarkerAlias = "ai_dba_wb_probe"
 // deliberately does not exclude the datastore database wholesale: users
 // legitimately run their own tools against that database and expect to
 // see them here.
+//
+// This is a presentation filter and not a security boundary. Anyone
+// able to run SQL on a monitored database can hide their own statement
+// from this panel by including either marker in it, exactly as they
+// already could with the probe alias. That is an acceptable trade-off
+// for a display toggle, but do not build anything on the assumption
+// that a hidden statement is a Workbench statement.
 //
 // The pss.query IS NULL arm is not redundant. metrics.pg_stat_statements
 // stores query as a nullable column, and PostgreSQL evaluates

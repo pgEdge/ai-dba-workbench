@@ -171,8 +171,9 @@ func TestQueryCacheHit_LatestIntervalNotLifetimeAverage(t *testing.T) {
 	defer cleanup()
 
 	const connID = 501
-	// Two databases per sample so the query's SUM across databases is
-	// exercised; both follow the same healthy-then-poor shape.
+	// Two databases per sample so the summing of per-database deltas
+	// into a bucket is exercised; both follow the same healthy-then-poor
+	// shape.
 	seedCacheHitSamples(t, pool, connID, healthyThenPoorSamples("a", 0, 0))
 	seedCacheHitSamples(t, pool, connID, healthyThenPoorSamples("b", 5000, 500))
 
@@ -216,6 +217,62 @@ func TestQueryCacheHit_CounterResetDiscarded(t *testing.T) {
 	assertRatio(t, "points[1]", points[1].Value, 90.91)
 	assertRatio(t, "current", current, 90.91)
 	assertSaneRatios(t, points)
+}
+
+// TestQueryCacheHit_NewDatabaseExcludedFromInterval seeds a database
+// that first appears in the latest sample with large lifetime counters.
+// Deltas are taken per database, so it has no predecessor and must not
+// be counted as block activity in that interval; the ratio comes from
+// the existing database alone.
+func TestQueryCacheHit_NewDatabaseExcludedFromInterval(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 509
+	seedCacheHitSamples(t, pool, connID, []cacheHitSample{
+		{0, "old", 1000, 1000},
+		{1, "old", 1900, 1100},       // +900/+100 -> 90%
+		{1, "new", 1000000, 1000000}, // created since minute 0
+	})
+
+	hit, read, current, points := runQueryCacheHit(t, h, pool, connID)
+
+	if len(points) != 1 {
+		t.Fatalf("len(points) = %d, want 1: %#v", len(points), points)
+	}
+	assertRatio(t, "points[0]", points[0].Value, 90.0)
+	assertRatio(t, "current", current, 90.0)
+	if hit != 900 || read != 100 {
+		t.Errorf("latest deltas = (%v, %v), want (900, 100)", hit, read)
+	}
+}
+
+// TestQueryCacheHit_DroppedDatabaseKeepsInterval seeds a database that
+// disappears between two samples. Summing the counters across databases
+// first would make the interval's total fall and discard the sample;
+// per-database deltas keep the interval for the surviving database.
+func TestQueryCacheHit_DroppedDatabaseKeepsInterval(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 510
+	seedCacheHitSamples(t, pool, connID, []cacheHitSample{
+		{0, "keep", 1000, 1000},
+		{0, "gone", 1000000, 1000000}, // dropped before minute 1
+		{1, "keep", 1900, 1100},       // +900/+100 -> 90%
+	})
+
+	hit, read, current, points := runQueryCacheHit(t, h, pool, connID)
+
+	if len(points) != 1 {
+		t.Fatalf("len(points) = %d, want 1 (interval kept): %#v",
+			len(points), points)
+	}
+	assertRatio(t, "points[0]", points[0].Value, 90.0)
+	assertRatio(t, "current", current, 90.0)
+	if hit != 900 || read != 100 {
+		t.Errorf("latest deltas = (%v, %v), want (900, 100)", hit, read)
+	}
 }
 
 func TestQueryCacheHit_ZeroActivityIsNull(t *testing.T) {

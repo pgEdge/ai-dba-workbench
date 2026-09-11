@@ -538,12 +538,15 @@ func aggregateCacheHitRatio(blksHit, blksRead float64) *float64 {
 // current ratio (the latest bucket's ratio, nil when there are no points
 // or the bucket saw no block access) and the bucketed time series.
 //
-// Each sample is the sum of the counters across all databases at one
-// collected_at. A sample whose delta from the previous sample is negative
-// for either counter (a stats reset or a server restart) is discarded, as
-// is the first sample in the range, which has no predecessor. Buckets
-// with valid samples but no block access are still emitted, with a nil
-// ratio, so that client series stay aligned across metrics.
+// Deltas are computed per database (LAG partitioned by datname) and only
+// then summed into buckets, so a database created between two samples
+// does not contribute its lifetime counters to that interval and one
+// dropped between samples does not turn the interval's delta negative.
+// A per-database delta that is negative for either counter (a stats
+// reset or a server restart) is discarded, as is each database's first
+// sample in the range, which has no predecessor. Buckets with valid
+// deltas but no block access are still emitted, with a nil ratio, so
+// that client series stay aligned across metrics.
 func (h *PerfSummaryHandler) queryCacheHit(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -555,26 +558,24 @@ func (h *PerfSummaryHandler) queryCacheHit(
         WITH deltas AS (
             SELECT
                 collected_at,
-                SUM(blks_hit) AS total_hit,
-                SUM(blks_read) AS total_read,
-                LAG(SUM(blks_hit)) OVER (ORDER BY collected_at) AS prev_hit,
-                LAG(SUM(blks_read)) OVER (ORDER BY collected_at) AS prev_read
+                blks_hit - LAG(blks_hit) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_hit,
+                blks_read - LAG(blks_read) OVER (
+                    PARTITION BY datname ORDER BY collected_at
+                ) AS delta_read
             FROM metrics.pg_stat_database
             WHERE connection_id = $3
               AND collected_at >= $2
               AND collected_at <= $4
-            GROUP BY collected_at
         ),
         valid_deltas AS (
-            SELECT
-                collected_at,
-                (total_hit - prev_hit) AS delta_hit,
-                (total_read - prev_read) AS delta_read
+            SELECT collected_at, delta_hit, delta_read
             FROM deltas
-            WHERE prev_hit IS NOT NULL
-              AND prev_read IS NOT NULL
-              AND (total_hit - prev_hit) >= 0
-              AND (total_read - prev_read) >= 0
+            WHERE delta_hit IS NOT NULL
+              AND delta_read IS NOT NULL
+              AND delta_hit >= 0
+              AND delta_read >= 0
         )
         SELECT date_bin($1::interval, collected_at, $2) AS bucket,
                SUM(delta_hit)::float AS blks_hit,

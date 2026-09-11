@@ -86,6 +86,13 @@ project adheres to
 
 ### Fixed
 
+- Stop the `test` and `coverage` targets in the server, collector and
+  alerter Makefiles running `pkill -9` against every matching process
+  on the host, which killed any developer-started dev server or
+  service whenever a test suite ran. The standalone `killall` target
+  remains as an explicit, developer-invoked action and now sends
+  SIGTERM rather than SIGKILL. (#445)
+
 - Fix the `metric_staleness` alert rule firing and clearing in a
   loop, which sent a notification pair every cycle for as long as a
   probe remained stale. The alert cleaner resolved the rule's metric

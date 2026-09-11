@@ -33,9 +33,11 @@ run every sub-project (including the client) in turn.
 - `make fmt-check` fails if `gofmt -l .` lists any file.
 - `make test-all` is `fmt-check coverage lint`; it does not also run
   `test`, because `coverage` already runs the full suite verbosely.
-- `make killall` brackets `test` and `coverage`, killing stray
-  sub-project binaries and `go run` processes that earlier test runs
-  may have left behind.
+- `make killall` is a standalone, developer-invoked target that
+  SIGTERMs every sub-project binary and `go run` process on the host,
+  including a dev server started from `bin/`. It is not a prerequisite
+  of `test` or `coverage` (issue #445): the test suites spawn no
+  processes, so there is nothing for it to clean up.
 
 The server and alerter pass `-p=1` to `go test` on both `test` and
 `coverage`. Their integration tests in `internal/database`,

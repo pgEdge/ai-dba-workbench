@@ -275,11 +275,11 @@ func TestHandlePerfSummary_ReportsActiveConnections(t *testing.T) {
 		t.Errorf("connection %d active_connections = %d, want 11", connB, got)
 	}
 
-	// The pre-existing metrics must still be populated alongside it:
-	// 1000 hits against 100 reads across both databases is 90.91%.
-	if byID[connA].CacheHitRatio.Current != 90.91 {
-		t.Errorf("cache hit ratio = %v, want 90.91",
-			byID[connA].CacheHitRatio.Current)
+	// The pre-existing metrics must still be populated alongside it. The
+	// ratio is per interval: between the two samples the counters grew by
+	// 600 hits and 40 reads, which is 93.75%.
+	if cur := byID[connA].CacheHitRatio.Current; cur == nil || *cur != 93.75 {
+		t.Errorf("cache hit ratio = %v, want 93.75", cur)
 	}
 	if len(byID[connA].XIDAgeEntries) != 1 {
 		t.Errorf("expected 1 XID age entry, got %d",

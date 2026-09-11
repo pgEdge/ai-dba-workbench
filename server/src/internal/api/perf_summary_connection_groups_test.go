@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -806,7 +807,8 @@ func TestConnectionGroups_InvalidGroupBy(t *testing.T) {
 }
 
 // TestConnectionGroups_InvalidTimeRange verifies the 400 response for an
-// unsupported time range, reusing the wording of the sibling endpoints.
+// unsupported time range, which carries ResolveTimeWindow's own wording so
+// that it matches /metrics/query.
 func TestConnectionGroups_InvalidTimeRange(t *testing.T) {
 	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
 	defer cleanup()
@@ -817,9 +819,132 @@ func TestConnectionGroups_InvalidTimeRange(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code,
 			rec.Body.String())
 	}
-	want := "Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d"
+	want := `invalid time range "90m": must be one of 1h, 6h, 24h, 7d, 30d, custom`
 	if got := errorMessageFromBody(t, rec); got != want {
 		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
+// TestConnectionGroups_CustomWindowSelectsSnapshot verifies that a custom
+// window bounds the snapshot search exactly as the presets do: a window that
+// ends before the only snapshot finds nothing, and one that spans it finds
+// it.
+func TestConnectionGroups_CustomWindowSelectsSnapshot(t *testing.T) {
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	defer cleanup()
+
+	const connID = 511
+	now := time.Now().UTC()
+	latest := now.Add(-90 * time.Minute)
+	seedConnectionGroupsFixture(t, pool, connID, latest,
+		now.Add(-120*time.Minute))
+	iso := func(ts time.Time) string { return ts.Format(time.RFC3339) }
+
+	before := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
+		fmt.Sprintf("connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
+			connID, iso(now.Add(-4*time.Hour)), iso(now.Add(-3*time.Hour))),
+		nil))
+	if before.CollectedAt != nil || len(before.Groups) != 0 {
+		t.Errorf("a window ending before the snapshot must be empty; got %s",
+			rec2string(t, before))
+	}
+
+	spanning := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
+		fmt.Sprintf("connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
+			connID, iso(now.Add(-2*time.Hour)), iso(now.Add(-time.Hour))),
+		nil))
+	if spanning.CollectedAt == nil || len(spanning.Groups) == 0 {
+		t.Fatalf("a window spanning the snapshot must include it; got %s",
+			rec2string(t, spanning))
+	}
+	if diff := spanning.CollectedAt.Sub(latest); diff > time.Second ||
+		diff < -time.Second {
+		t.Errorf("collected_at = %v, want ~%v", spanning.CollectedAt, latest)
+	}
+}
+
+// TestConnectionGroups_CustomWindowFutureEndClamped verifies that a custom
+// window whose end lies in the future is clamped to now rather than
+// rejected, so the newest snapshot is still found.
+func TestConnectionGroups_CustomWindowFutureEndClamped(t *testing.T) {
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	defer cleanup()
+
+	const connID = 512
+	now := time.Now().UTC()
+	seedConnectionGroupsFixture(t, pool, connID, now.Add(-time.Minute),
+		now.Add(-6*time.Minute))
+
+	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
+		fmt.Sprintf("connection_id=%d&time_range=custom&time_start=%s&time_end=%s",
+			connID, now.Add(-2*time.Hour).Format(time.RFC3339),
+			now.Add(2*time.Hour).Format(time.RFC3339)),
+		nil))
+	if resp.CollectedAt == nil || len(resp.Groups) == 0 {
+		t.Errorf("a clamped window must still find the snapshot; got %s",
+			rec2string(t, resp))
+	}
+}
+
+// TestConnectionGroups_CustomWindowRejections verifies that every rejection
+// ResolveTimeWindow can raise surfaces as a 400 carrying the resolver's own
+// message.
+func TestConnectionGroups_CustomWindowRejections(t *testing.T) {
+	h, _, cleanup := newConnectionGroupsTestHandler(t, nil)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	iso := func(ts time.Time) string { return ts.Format(time.RFC3339) }
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr string
+	}{
+		{
+			name:    "missing both timestamps",
+			query:   "&time_range=custom",
+			wantErr: "time_start and time_end are both required",
+		},
+		{
+			name: "unparsable start",
+			query: "&time_range=custom&time_start=yesterday&time_end=" +
+				iso(now),
+			wantErr: "must be an RFC 3339 timestamp",
+		},
+		{
+			name: "end before start",
+			query: "&time_range=custom&time_start=" + iso(now.Add(-time.Hour)) +
+				"&time_end=" + iso(now.Add(-2*time.Hour)),
+			wantErr: "time_end must be after time_start",
+		},
+		{
+			name: "start in the future",
+			query: "&time_range=custom&time_start=" + iso(now.Add(time.Hour)) +
+				"&time_end=" + iso(now.Add(2*time.Hour)),
+			wantErr: "invalid time_start: must not be in the future",
+		},
+		{
+			name: "span beyond the cap",
+			query: "&time_range=custom&time_start=" +
+				iso(now.Add(-400*24*time.Hour)) + "&time_end=" + iso(now),
+			wantErr: "span must not exceed 366 days",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doConnectionGroupsRequest(h,
+				"connection_id=513"+tt.query, nil)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", rec.Code,
+					rec.Body.String())
+			}
+			if got := errorMessageFromBody(t, rec); !strings.Contains(
+				got, tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", got, tt.wantErr)
+			}
+		})
 	}
 }
 

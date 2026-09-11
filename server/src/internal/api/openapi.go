@@ -3495,7 +3495,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Parameters: []OpenAPIParameter{
 					queryParamIntRequired("connection_id", "Connection ID"),
 					queryParamString("group_by", "Grouping key: user, client or database (default: user)"),
-					queryParamString("time_range", "Time range: 1h, 6h, 24h, 7d or 30d (default: 24h)"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ConnectionGroupsResponse", "Connection counts by group"),

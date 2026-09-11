@@ -36,9 +36,20 @@ vi.mock('../../contexts/useAuth', () => ({
 }));
 
 let mockRefreshTrigger = 0;
+let mockTimeRange: {
+    range: string;
+    customStart?: string;
+    customEnd?: string;
+} = { range: '6h' };
 vi.mock('../../contexts/useDashboard', () => ({
-    useDashboard: () => ({ refreshTrigger: mockRefreshTrigger }),
+    useDashboard: () => ({
+        refreshTrigger: mockRefreshTrigger,
+        timeRange: mockTimeRange,
+    }),
 }));
+
+const CUSTOM_START = '2026-05-01T00:00:00.000Z';
+const CUSTOM_END = '2026-05-01T06:00:00.000Z';
 
 vi.mock('../../utils/logger', () => ({
     logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -113,6 +124,7 @@ describe('useConnectionGroups', () => {
         vi.clearAllMocks();
         mockUser = { id: 1, username: 'testuser' };
         mockRefreshTrigger = 0;
+        mockTimeRange = { range: '6h' };
     });
 
     afterEach(() => {
@@ -520,5 +532,124 @@ describe('useConnectionGroups', () => {
         });
 
         expect(result.current.groups).toEqual([]);
+    });
+
+    describe('with a custom time range', () => {
+        const customParams: ConnectionGroupsParams = {
+            ...params,
+            timeRange: 'custom',
+        };
+
+        it('emits the window bounds when the range is custom', async () => {
+            mockApiGet.mockResolvedValue(makeResponse());
+            mockTimeRange = {
+                range: 'custom',
+                customStart: CUSTOM_START,
+                customEnd: CUSTOM_END,
+            };
+
+            renderHook(() => useConnectionGroups(customParams));
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalled();
+            });
+
+            expect(paramOf(0, 'time_range')).toBe('custom');
+            expect(paramOf(0, 'time_start')).toBe(CUSTOM_START);
+            expect(paramOf(0, 'time_end')).toBe(CUSTOM_END);
+        });
+
+        it('omits the bounds for a preset range even when a window is held',
+            async () => {
+                mockApiGet.mockResolvedValue(makeResponse());
+                mockTimeRange = {
+                    range: '6h',
+                    customStart: CUSTOM_START,
+                    customEnd: CUSTOM_END,
+                };
+
+                renderHook(() => useConnectionGroups(params));
+
+                await waitFor(() => {
+                    expect(mockApiGet).toHaveBeenCalled();
+                });
+
+                expect(paramOf(0, 'time_range')).toBe('6h');
+                expect(paramOf(0, 'time_start')).toBeNull();
+                expect(paramOf(0, 'time_end')).toBeNull();
+            });
+
+        it('makes no request while a custom range lacks its bounds',
+            async () => {
+                mockApiGet.mockResolvedValue(makeResponse());
+                mockTimeRange = { range: 'custom', customStart: CUSTOM_START };
+
+                const { result } = renderHook(
+                    () => useConnectionGroups(customParams),
+                );
+
+                await act(async () => {});
+
+                expect(mockApiGet).not.toHaveBeenCalled();
+                expect(result.current.loading).toBe(false);
+                expect(result.current.error).toBeNull();
+            });
+
+        it('refetches when the custom window changes', async () => {
+            mockApiGet.mockResolvedValue(makeResponse());
+            mockTimeRange = {
+                range: 'custom',
+                customStart: CUSTOM_START,
+                customEnd: CUSTOM_END,
+            };
+
+            const { rerender } = renderHook(
+                () => useConnectionGroups(customParams),
+            );
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+            });
+
+            const newEnd = '2026-05-01T12:00:00.000Z';
+            mockTimeRange = {
+                range: 'custom',
+                customStart: CUSTOM_START,
+                customEnd: newEnd,
+            };
+            rerender();
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(2);
+            });
+            expect(paramOf(1, 'time_end')).toBe(newEnd);
+        });
+
+        it('still refetches on the refresh trigger with a custom range',
+            async () => {
+                mockApiGet.mockResolvedValue(makeResponse());
+                mockTimeRange = {
+                    range: 'custom',
+                    customStart: CUSTOM_START,
+                    customEnd: CUSTOM_END,
+                };
+
+                const { rerender } = renderHook(
+                    () => useConnectionGroups(customParams),
+                );
+
+                await waitFor(() => {
+                    expect(mockApiGet).toHaveBeenCalledTimes(1);
+                });
+
+                mockRefreshTrigger = 1;
+                rerender();
+
+                await waitFor(() => {
+                    expect(mockApiGet).toHaveBeenCalledTimes(2);
+                });
+                expect(paramOf(1, 'time_start')).toBe(CUSTOM_START);
+                expect(paramOf(1, 'time_end')).toBe(CUSTOM_END);
+            });
     });
 });

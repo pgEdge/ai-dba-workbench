@@ -78,7 +78,9 @@ project adheres to
   reverse-resolved client hostname where the server recorded one.
   A new `GET /api/v1/metrics/connection-groups` endpoint serves the
   section, returning at most 200 groups alongside a `total_groups`
-  count so that a truncated response can be recognised. (#346)
+  count so that a truncated response can be recognised, and it
+  honours a custom time range through the same `time_start` and
+  `time_end` parameters as the metrics query endpoint. (#346)
 
 ### Changed
 

@@ -41,13 +41,24 @@ const FETCH_ERROR_FALLBACK = 'Failed to fetch connection groups';
 /**
  * Build the request URL for a grouping, or return null when the
  * parameters are incomplete and no request should be made.
+ *
+ * The bounds of a custom window are not part of ConnectionGroupsParams;
+ * they come from DashboardContext, as they do for useMetrics. They are
+ * emitted only for the 'custom' range, which is the sole range for which
+ * the server accepts them, and a custom range without both bounds is a
+ * transient state the server rejects with a 400, so no request is made.
  */
 const buildRequestUrl = (
     connectionId: number | undefined,
     groupBy: ConnectionGroupBy | undefined,
     timeRange: TimeRange | undefined,
+    customStart?: string,
+    customEnd?: string,
 ): string | null => {
     if (connectionId === undefined || !groupBy || !timeRange) {
+        return null;
+    }
+    if (timeRange === 'custom' && (!customStart || !customEnd)) {
         return null;
     }
 
@@ -56,6 +67,10 @@ const buildRequestUrl = (
         group_by: groupBy,
         time_range: timeRange,
     });
+    if (timeRange === 'custom' && customStart && customEnd) {
+        searchParams.append('time_start', customStart);
+        searchParams.append('time_end', customEnd);
+    }
     return `/api/v1/metrics/connection-groups?${searchParams.toString()}`;
 };
 
@@ -89,7 +104,9 @@ export const useConnectionGroups = (
     params: ConnectionGroupsParams | null,
 ): UseConnectionGroupsReturn => {
     const { user } = useAuth();
-    const { refreshTrigger } = useDashboard();
+    const { refreshTrigger, timeRange: dashboardTimeRange } = useDashboard();
+    const customStart = dashboardTimeRange?.customStart;
+    const customEnd = dashboardTimeRange?.customEnd;
 
     const [groups, setGroups] = useState<ConnectionGroupRow[]>([]);
     const [collectedAt, setCollectedAt] = useState<string | null>(null);
@@ -118,7 +135,8 @@ export const useConnectionGroups = (
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
-        const url = buildRequestUrl(connectionId, groupBy, timeRange);
+        const url = buildRequestUrl(connectionId, groupBy, timeRange,
+            customStart, customEnd);
         if (!url) { return; }
 
         const requestId = ++requestIdRef.current;
@@ -157,7 +175,7 @@ export const useConnectionGroups = (
                 setLoading(false);
             }
         }
-    }, [connectionId, groupBy, timeRange]);
+    }, [connectionId, groupBy, timeRange, customStart, customEnd]);
 
     const refetch = useCallback((): void => {
         void fetchData();
@@ -184,7 +202,7 @@ export const useConnectionGroups = (
         return () => {
             isMountedRef.current = false;
         };
-    }, [isLoggedIn, fetchData, refreshTrigger]);
+    }, [isLoggedIn, fetchData, refreshTrigger, customStart, customEnd]);
 
     return { groups, collectedAt, loading, error, refetch };
 };

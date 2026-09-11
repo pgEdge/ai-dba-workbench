@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // ConnectionGroupsResponse is the top-level JSON response for
@@ -263,19 +264,22 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 		return
 	}
 
+	// Parse time_range (default "24h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query does; ResolveTimeWindow is the single source of truth
+	// for what counts as a valid window, so its error message is returned
+	// verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "24h"
 	}
-	duration, ok := validTimeRanges[timeRange]
-	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	now := time.Now().UTC()
-	startTime := now.Add(-duration)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -294,8 +298,8 @@ func (h *PerfSummaryHandler) handleConnectionGroups(
 	// even once ctx has been canceled or has timed out.
 	defer tx.Rollback(context.Background()) //nolint:errcheck // Rollback after commit is a no-op
 
-	response := h.queryConnectionGroups(ctx, tx, groupBy, connID, startTime,
-		now)
+	response := h.queryConnectionGroups(ctx, tx, groupBy, connID,
+		window.Start, window.End)
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("[ERROR] Failed to commit read-only transaction: %v", err)

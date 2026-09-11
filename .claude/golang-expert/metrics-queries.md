@@ -318,12 +318,12 @@ message is identical on both endpoints. Do not re-implement any of these
 checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
-`GET /api/v1/metrics/query` accepts `time_range=custom` alongside
-`time_start` and `time_end`, and maps any resolution error to `400`.
-The performance-summary and database-summary handlers in
-`perf_summary_handlers.go` still carry their own inline
-`validTimeRanges` maps and accept presets only; consolidating those is
-deliberately deferred.
+`GET /api/v1/metrics/query` and `GET /api/v1/metrics/connection-groups`
+accept `time_range=custom` alongside `time_start` and `time_end`, and
+map any resolution error to `400`. The performance-summary and
+database-summary handlers in `perf_summary_handlers.go` still use the
+inline `validTimeRanges` map and accept presets only; consolidating
+those is deliberately deferred.
 
 ## Latest-Snapshot Aggregations (server)
 

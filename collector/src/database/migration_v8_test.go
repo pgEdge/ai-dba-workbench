@@ -206,9 +206,7 @@ func TestMigrationV8_UpgradesLegacyRowsAndKeepsTuning(t *testing.T) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	// Rewind the three rules to the values an older collector seeded,
-	// and add a fourth row standing in for an operator who tuned the
-	// checkpoint threshold before upgrading.
+	// Rewind the three rules to the values an older collector seeded.
 	_, err := pool.Exec(ctx, `
 		UPDATE alert_rules
 		SET description = 'Checkpoints requested too frequently',
@@ -225,13 +223,6 @@ func TestMigrationV8_UpgradesLegacyRowsAndKeepsTuning(t *testing.T) {
 		SET description = 'Transaction ID wraparound approaching'
 		WHERE name = 'transaction_wraparound';
 
-		INSERT INTO alert_rules (name, description, category, metric_name,
-		    metric_unit, default_operator, default_threshold,
-		    default_severity, default_enabled, is_built_in)
-		VALUES ('checkpoint_warning_tuned', 'Tuned copy', 'wal',
-		    'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints',
-		    '>', 25, 'warning', TRUE, TRUE)
-		ON CONFLICT (name) DO NOTHING;
 	`)
 	if err != nil {
 		t.Fatalf("failed to rewind alert rules: %v", err)
@@ -275,19 +266,54 @@ func TestMigrationV8_UpgradesLegacyRowsAndKeepsTuning(t *testing.T) {
 			"max_wal_size", desc)
 	}
 
-	// The tuned row keeps its operator-chosen threshold, because the
-	// update only rewrites rows still at the old shipped default.
+	// An operator who changed the threshold before upgrading keeps
+	// their value, because the threshold update is guarded on the row
+	// still carrying the old shipped default of 50.
+	//
+	// This has to be a second run against the same row rather than a
+	// separately named one: alert_rules.name is unique, and the
+	// migration matches on name, so a row called anything else could
+	// never be touched and asserting that it was not would prove
+	// nothing about the guard.
+	if _, err := pool.Exec(ctx, `
+		UPDATE alert_rules
+		SET default_threshold = 25,
+		    description = 'Checkpoints requested too frequently',
+		    metric_unit = 'checkpoints'
+		WHERE name = 'checkpoint_warning'
+	`); err != nil {
+		t.Fatalf("failed to seed an operator-tuned threshold: %v", err)
+	}
+
+	tunedTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("failed to begin transaction: %v", err)
+	}
+	if err := migrationV8(t).Up(tunedTx); err != nil {
+		_ = tunedTx.Rollback(ctx)
+		t.Fatalf("migration 8 failed on a tuned row: %v", err)
+	}
+	if err := tunedTx.Commit(ctx); err != nil {
+		t.Fatalf("failed to commit migration 8 over a tuned row: %v", err)
+	}
+
 	var tuned float64
+	var tunedUnit string
 	err = pool.QueryRow(ctx, `
-		SELECT default_threshold FROM alert_rules
-		WHERE name = 'checkpoint_warning_tuned'
-	`).Scan(&tuned)
+		SELECT default_threshold, metric_unit FROM alert_rules
+		WHERE name = 'checkpoint_warning'
+	`).Scan(&tuned, &tunedUnit)
 	if err != nil {
 		t.Fatalf("failed to read the tuned rule: %v", err)
 	}
 	if tuned != 25 {
 		t.Errorf("tuned checkpoint threshold = %v, want 25 (unchanged)",
 			tuned)
+	}
+	// The description and unit are rewritten regardless, because only
+	// the threshold update carries the tuning guard.
+	if tunedUnit != "checkpoints/hour" {
+		t.Errorf("tuned rule unit = %q, want checkpoints/hour", tunedUnit)
 	}
 
 	for _, tc := range []struct {

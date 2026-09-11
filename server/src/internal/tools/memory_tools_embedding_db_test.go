@@ -29,11 +29,14 @@ import (
 // memoryEmbeddingTableDDL mirrors the chat_memories table that the memory
 // store reads from and writes to. The column is halfvec(4000) because the
 // store pads every embedding to embedding.MaxDimensions before insert and
-// before querying, so a shorter vector column would reject the padded
-// value; halfvec rather than vector is required because pgvector caps the
-// vector type at 2000 dimensions. The table is created inside a per-test
-// private schema (see newMemoryEmbeddingStore) so it never clobbers the
-// canonical public.chat_memories shared with other tests.
+// before querying, so a shorter column would reject the padded value, and
+// because halfvec is what production uses: store.go casts to ::halfvec and
+// the canonical table carries a halfvec_cosine_ops index. A vector(4000)
+// column would accept the padded value too, so matching production rather
+// than any type limit is the reason to use halfvec here. The table is
+// created inside a per-test private schema (see newMemoryEmbeddingStore)
+// so it never clobbers the canonical public.chat_memories shared with
+// other tests.
 const memoryEmbeddingTableDDL = `
 CREATE TABLE chat_memories (
     id BIGSERIAL PRIMARY KEY,

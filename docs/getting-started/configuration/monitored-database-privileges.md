@@ -152,7 +152,7 @@ following table shows the privilege each group of probes requires:
 | Probe or feature | Required privilege |
 |------------------|--------------------|
 | pg_server_info | pg_read_all_settings, for data_directory |
-| pg_settings | pg_read_all_settings, or restricted values are NULL |
+| pg_settings | pg_read_all_settings, or restricted rows are omitted |
 | pg_stat_activity | pg_read_all_stats, or other sessions are masked |
 | pg_stat_replication | pg_read_all_stats, for sender and receiver rows |
 | pg_node_role | pg_read_all_stats, plus superuser for subconninfo |
@@ -175,9 +175,15 @@ important dependencies are as follows:
 - The `pg_server_info` probe calls
   `current_setting('data_directory')`, which raises a hard error
   without `pg_read_all_settings` and so fails the whole probe.
-- Superuser-restricted values in `pg_settings` read as NULL without
-  `pg_read_all_settings`, even though the view itself is readable by
-  PUBLIC.
+- Superuser-restricted settings are omitted from `pg_settings`
+  entirely without `pg_read_all_settings`, rather than appearing with a
+  NULL `setting`; the view itself is readable by PUBLIC, so the rows
+  simply are not returned. The `pg_settings` probe runs a plain
+  `SELECT * FROM pg_settings`, so an unprivileged monitoring role
+  silently collects a smaller set of settings with nothing to indicate
+  the shortfall. Measured on PostgreSQL 18: 380 rows without the
+  privilege against 403 with it, and no NULL `setting` values in
+  either case.
 - The `query` column and other cross-session columns of
   `pg_stat_activity` are masked without `pg_read_all_stats`.
 - The `pg_stat_wal_receiver` view is defined with a `WHERE pid IS NOT

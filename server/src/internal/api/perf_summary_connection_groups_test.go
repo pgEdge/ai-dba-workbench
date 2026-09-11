@@ -298,6 +298,12 @@ func TestConnectionGroups_GroupByUser(t *testing.T) {
 			{GroupLabel: "(unknown)", Total: 2, Active: 1, Other: 1},
 			{GroupLabel: "reporter", Total: 1, Other: 1},
 		})
+		// An untruncated response reports exactly as many groups as it
+		// returns.
+		if resp.TotalGroups != int64(len(resp.Groups)) {
+			t.Errorf("total_groups = %d, want %d (query %q)",
+				resp.TotalGroups, len(resp.Groups), query)
+		}
 	}
 }
 
@@ -455,6 +461,11 @@ func TestConnectionGroups_GroupCapTruncatesSmallestGroups(t *testing.T) {
 		t.Fatalf("got %d groups, want the cap of %d", len(resp.Groups),
 			maxConnectionGroups)
 	}
+	// The pre-cap count is what lets a client tell 200-of-200 from
+	// 200-of-more.
+	if want := int64(maxConnectionGroups + 50); resp.TotalGroups != want {
+		t.Errorf("total_groups = %d, want %d", resp.TotalGroups, want)
+	}
 	// The 20 two-backend groups must be the head of the result, and the
 	// tail must be single-backend groups: truncation drops the smallest.
 	for i := 0; i < 20; i++ {
@@ -552,6 +563,9 @@ func TestConnectionGroups_EmptyResult(t *testing.T) {
 	if resp.CollectedAt != nil {
 		t.Errorf("collected_at = %v, want null", resp.CollectedAt)
 	}
+	if resp.TotalGroups != 0 {
+		t.Errorf("total_groups = %d, want 0", resp.TotalGroups)
+	}
 	if resp.Groups == nil || len(resp.Groups) != 0 {
 		t.Errorf("groups = %#v, want an empty array", resp.Groups)
 	}
@@ -597,9 +611,15 @@ func TestConnectionGroups_QueryErrorReturnsEmpty(t *testing.T) {
 // TestConnectionGroups_ScanErrorSkipsRow verifies the defensive handling in
 // the row loop: a row whose columns cannot be scanned into the response struct
 // is logged and dropped, and the endpoint still answers 200 with an empty
-// payload rather than panicking or emitting a half-populated group. The
-// condition is forced by redefining client_hostname as a bytea, so the client
-// grouping's MIN() aggregate yields a value that will not scan into a *string.
+// payload rather than panicking or emitting a half-populated group.
+//
+// The condition is forced by redefining client_hostname as text[]. The query
+// itself is still valid, because MIN(anyarray) exists, so tx.Query succeeds
+// and the failure happens inside rows.Scan when pgx refuses to decode a
+// binary text[] into a *string. Neither a bytea nor a scalar such as integer
+// would do: MIN(bytea) has no implementation, so that variant fails at
+// prepare time and never reaches the scan loop, and pgx happily renders any
+// scalar into a *string through its text fallback.
 func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
 	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
 	defer cleanup()
@@ -614,7 +634,7 @@ func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
             usename          text,
             datname          text,
             client_addr      inet,
-            client_hostname  bytea,
+            client_hostname  text[],
             state            text,
             backend_type     text
         );`); err != nil {
@@ -626,10 +646,37 @@ func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
         (connection_id, collected_at, pid, usename, datname, client_addr,
          client_hostname, state, backend_type)
         VALUES ($1, $2, 401, 'app_rw', 'sales', '192.0.2.10',
-                '\x0102'::bytea, 'active', 'client backend')`, connID,
+                ARRAY['app1.example.com'], 'active', 'client backend')`,
+		connID,
 		time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
+
+	// Prove the fixture exercises the intended path: the query must run,
+	// and it is Scan that rejects the row.
+	query, args := buildConnectionGroupsSQL("client", connID,
+		time.Now().UTC().Add(-time.Hour), time.Now().UTC())
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		t.Fatalf("fixture query failed at Query, so the scan path is not "+
+			"exercised: %v", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatalf("fixture query returned no rows: %v", rows.Err())
+	}
+	var probe ConnectionGroupRow
+	var probeCollectedAt *time.Time
+	var probeTotalGroups int64
+	if err := rows.Scan(
+		&probe.GroupLabel, &probe.ClientHostname, &probeCollectedAt,
+		&probe.Total, &probe.Active, &probe.Idle, &probe.IdleInTransaction,
+		&probe.Other, &probeTotalGroups,
+	); err == nil {
+		t.Fatal("fixture row scanned cleanly into the response struct; the " +
+			"test no longer forces a scan error")
+	}
+	rows.Close()
 
 	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
 		fmt.Sprintf("connection_id=%d&group_by=client", connID), nil))
@@ -640,6 +687,87 @@ func TestConnectionGroups_ScanErrorSkipsRow(t *testing.T) {
 	}
 	if resp.CollectedAt != nil {
 		t.Errorf("collected_at = %v, want null", resp.CollectedAt)
+	}
+	if resp.TotalGroups != 0 {
+		t.Errorf("total_groups = %d, want 0 when no row scanned",
+			resp.TotalGroups)
+	}
+}
+
+// TestConnectionGroups_RowsErrorReturnsPartialResult verifies the rows.Err()
+// branch: an error raised by the executor after the statement has been
+// prepared is not visible to tx.Query, which succeeds, and only surfaces once
+// the rows are iterated. The endpoint must log it and still answer 200 with
+// the empty shape.
+//
+// metrics.pg_stat_activity is replaced by a view whose client_hostname divides
+// by (pid - pid). The planner cannot fold that to a constant, so preparing the
+// statement succeeds, and the division by zero is raised only when the client
+// grouping evaluates MIN(client_hostname) at execution time.
+func TestConnectionGroups_RowsErrorReturnsPartialResult(t *testing.T) {
+	h, pool, cleanup := newConnectionGroupsTestHandler(t, nil)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+        DROP TABLE IF EXISTS metrics.pg_stat_activity CASCADE;
+        CREATE TABLE metrics.pg_stat_activity_base (
+            connection_id    integer     NOT NULL,
+            collected_at     timestamptz NOT NULL,
+            pid              integer     NOT NULL,
+            usename          text,
+            datname          text,
+            client_addr      inet,
+            state            text,
+            backend_type     text
+        );
+        CREATE VIEW metrics.pg_stat_activity AS
+            SELECT connection_id, collected_at, pid, usename, datname,
+                   client_addr, (1 / (pid - pid))::text AS client_hostname,
+                   state, backend_type
+            FROM metrics.pg_stat_activity_base;`); err != nil {
+		t.Fatalf("failed to install failing view: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `
+            DROP VIEW IF EXISTS metrics.pg_stat_activity;
+            DROP TABLE IF EXISTS metrics.pg_stat_activity_base;`)
+	}()
+
+	const connID = 516
+	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_activity_base
+        (connection_id, collected_at, pid, usename, datname, client_addr,
+         state, backend_type)
+        VALUES ($1, $2, 401, 'app_rw', 'sales', '192.0.2.10', 'active',
+                'client backend')`, connID,
+		time.Now().UTC().Add(-time.Minute)); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	// Prove the fixture exercises the intended path: Query must succeed
+	// and the error must arrive through rows.Err().
+	query, args := buildConnectionGroupsSQL("client", connID,
+		time.Now().UTC().Add(-time.Hour), time.Now().UTC())
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		t.Fatalf("fixture query failed at Query, so the rows.Err path is "+
+			"not exercised: %v", err)
+	}
+	for rows.Next() {
+	}
+	rows.Close()
+	if rows.Err() == nil {
+		t.Fatal("fixture query iterated cleanly; the test no longer forces " +
+			"an execution-time error")
+	}
+
+	resp := decodeConnectionGroups(t, doConnectionGroupsRequest(h,
+		fmt.Sprintf("connection_id=%d&group_by=client", connID), nil))
+
+	if len(resp.Groups) != 0 || resp.CollectedAt != nil ||
+		resp.TotalGroups != 0 {
+		t.Errorf("execution error must yield the empty shape; got %s",
+			rec2string(t, resp))
 	}
 }
 

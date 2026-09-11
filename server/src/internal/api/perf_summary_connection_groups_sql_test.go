@@ -184,6 +184,9 @@ func TestBuildConnectionGroupsSQL_StructuralInvariants(t *testing.T) {
 		"LIMIT 200",
 		"COUNT(*) FILTER (WHERE state = 'active') AS active",
 		"COUNT(*) FILTER (WHERE state = 'idle') AS idle",
+		// The pre-cap group count must be a window aggregate, so that it
+		// is evaluated over every group before ORDER BY and LIMIT apply.
+		"COUNT(*) OVER () AS total_groups",
 		"state LIKE 'idle in transaction%'",
 		"state NOT LIKE 'idle in transaction%'",
 		"GROUP BY group_label",

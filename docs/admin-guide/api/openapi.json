@@ -5551,7 +5551,7 @@
     "/metrics/connection-groups": {
       "get": {
         "summary": "Get connection counts grouped by user, client or database",
-        "description": "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups",
+        "description": "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups, and total_groups reports the count before the cap so that a truncated response can be recognized",
         "operationId": "getConnectionGroups",
         "tags": [
           "Metrics"
@@ -10752,10 +10752,16 @@
             "items": {
               "$ref": "#/components/schemas/ConnectionGroupRow"
             }
+          },
+          "total_groups": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of distinct groups in the snapshot before the 200-group cap was applied; the response is truncated when this exceeds the length of groups"
           }
         },
         "required": [
           "collected_at",
+          "total_groups",
           "groups"
         ]
       },

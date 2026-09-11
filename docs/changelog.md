@@ -77,7 +77,8 @@ project adheres to
   selected time range, and the By Client tab also shows the
   reverse-resolved client hostname where the server recorded one.
   A new `GET /api/v1/metrics/connection-groups` endpoint serves the
-  section. (#346)
+  section, returning at most 200 groups alongside a `total_groups`
+  count so that a truncated response can be recognised. (#346)
 
 ### Changed
 

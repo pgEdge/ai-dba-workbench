@@ -372,8 +372,25 @@ server from many source addresses can inflate it, so the final `SELECT`
 carries `LIMIT maxConnectionGroups` (200). With `total DESC` ordering,
 truncation only ever discards the smallest groups; no `(other)` roll-up row
 is synthesised, because a partial roll-up is more misleading than a plain
-cut. Quote the constant in the OpenAPI description so clients know the
-response is capped.
+cut. A bare cap is ambiguous, though, since 200-of-200 and 200-of-more look
+identical, so the tail also selects `COUNT(*) OVER () AS total_groups`,
+which is evaluated after `GROUP BY` and before `ORDER BY`/`LIMIT` and thus
+reports the pre-cap group count on every row; the handler copies it into
+`total_groups` in the response, and a client treats the result as
+truncated when it exceeds `len(groups)`. Quote the constant in the OpenAPI
+description so clients know the response is capped.
+
+When testing the row loop's error branches, note that pgx v5 renders any
+scalar column into a `*string` through its text fallback, so a mistyped
+scalar (`integer`, `timestamptz`) scans cleanly and a `bytea` fails at
+prepare time (`MIN(bytea)` does not exist), never reaching `rows.Scan`. A
+`text[]` column is the fixture that works: `MIN(anyarray)` exists, and pgx
+refuses to decode a binary array into `*string`. For the `rows.Err()`
+branch, replace the table with a view whose column divides by
+`(pid - pid)`; the planner cannot fold that, so the error is raised at
+execution time rather than at prepare time. `TestConnectionGroups_ScanErrorSkipsRow`
+and `TestConnectionGroups_RowsErrorReturnsPartialResult` are the worked
+examples, and each first proves its fixture takes the intended path.
 
 Two further conventions matter when reading `metrics.pg_stat_activity`:
 
@@ -383,9 +400,10 @@ Two further conventions matter when reading `metrics.pg_stat_activity`:
   every total.
 
 - Never render `client_addr` with a `::text` cast. `client_addr` is
-  `inet`, and on PostgreSQL 18 the text output carries the netmask, so a
-  cast yields `192.0.2.10/32` rather than `192.0.2.10`. Use
-  `host(client_addr)` instead. A NULL `client_addr` means the backend
+  `inet`, and the standard `inet` text output carries the netmask on
+  every supported PostgreSQL version (it reproduces identically on 16
+  and 18), so a cast yields `192.0.2.10/32` rather than `192.0.2.10`.
+  Use `host(client_addr)` instead. A NULL `client_addr` means the backend
   arrived over a Unix-domain socket, which is worth labelling as local
   rather than unknown.
 

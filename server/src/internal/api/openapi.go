@@ -1397,13 +1397,18 @@ func buildSchemas() map[string]*OpenAPISchema {
 					Nullable:    true,
 					Description: "Timestamp of the snapshot the counts were taken from, or null when no snapshot was found in the time range",
 				},
+				"total_groups": {
+					Type:        "integer",
+					Format:      "int64",
+					Description: "Number of distinct groups in the snapshot before the 200-group cap was applied; the response is truncated when this exceeds the length of groups",
+				},
 				"groups": {
 					Type:        "array",
 					Description: "Connection counts per group, ordered by total descending then group label ascending, capped at 200 groups",
 					Items:       &OpenAPISchema{Ref: "#/components/schemas/ConnectionGroupRow"},
 				},
 			},
-			Required: []string{"collected_at", "groups"},
+			Required: []string{"collected_at", "total_groups", "groups"},
 		},
 		"ConnectionGroupRow": {
 			Type: "object",
@@ -3483,7 +3488,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/connection-groups": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get connection counts grouped by user, client or database",
-				Description: "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups",
+				Description: "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups, and total_groups reports the count before the cap so that a truncated response can be recognized",
 				OperationID: "getConnectionGroups",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,

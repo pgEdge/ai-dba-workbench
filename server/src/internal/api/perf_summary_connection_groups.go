@@ -26,9 +26,13 @@ import (
 // ConnectionGroupsResponse is the top-level JSON response for
 // GET /api/v1/metrics/connection-groups. CollectedAt carries the timestamp
 // of the snapshot the counts were taken from, and is null when no snapshot
-// was found inside the requested window.
+// was found inside the requested window. TotalGroups is the number of
+// distinct groups in that snapshot before the maxConnectionGroups cap was
+// applied, so a client can tell a complete result from a truncated one:
+// the response is truncated exactly when TotalGroups exceeds len(Groups).
 type ConnectionGroupsResponse struct {
 	CollectedAt *time.Time           `json:"collected_at"`
+	TotalGroups int64                `json:"total_groups"`
 	Groups      []ConnectionGroupRow `json:"groups"`
 }
 
@@ -57,7 +61,8 @@ const defaultConnectionGroupBy = "user"
 // group_by=client. The bound keeps one snapshot's worth of pathological
 // activity from turning into an unbounded response body. Because the ordering
 // is total-descending, truncation discards only the least significant groups,
-// and no roll-up row is synthesized for the remainder.
+// and no roll-up row is synthesized for the remainder; the response instead
+// reports the pre-cap group count in total_groups.
 const maxConnectionGroups = 200
 
 // The connection-groups query is assembled entirely at compile time. The
@@ -96,10 +101,16 @@ const connectionGroupsQueryHead = `
 const connectionGroupsQueryLabelSuffix = ` AS group_label,
                `
 
-// connectionGroupsQueryTail carries the state buckets, the ordering and the
-// group cap. The LIMIT is written as a literal because a constant expression
-// cannot format an integer; TestBuildConnectionGroupsSQL_GroupLimit asserts it
-// stays in step with maxConnectionGroups.
+// connectionGroupsQueryTail carries the state buckets, the pre-cap group
+// count, the ordering and the group cap. The LIMIT is written as a literal
+// because a constant expression cannot format an integer;
+// TestBuildConnectionGroupsSQL_GroupLimit asserts it stays in step with
+// maxConnectionGroups.
+//
+// COUNT(*) OVER () is evaluated after GROUP BY but before ORDER BY and LIMIT,
+// so it counts every group the snapshot produced rather than the capped set.
+// It costs one WindowAgg pass over the grouped rows, which the aggregate had
+// to materialize in full anyway, and repeats the same value on every row.
 const connectionGroupsQueryTail = ` AS client_hostname,
                MAX(collected_at) AS collected_at,
                COUNT(*) AS total,
@@ -113,7 +124,8 @@ const connectionGroupsQueryTail = ` AS client_hostname,
                       OR (state <> 'active'
                           AND state <> 'idle'
                           AND state NOT LIKE 'idle in transaction%')
-               ) AS other
+               ) AS other,
+               COUNT(*) OVER () AS total_groups
         FROM snapshot
         GROUP BY group_label
         ORDER BY total DESC, group_label ASC
@@ -321,19 +333,22 @@ func (h *PerfSummaryHandler) queryConnectionGroups(
 	for rows.Next() {
 		var row ConnectionGroupRow
 		var collectedAt *time.Time
+		var totalGroups int64
 		if err := rows.Scan(
 			&row.GroupLabel, &row.ClientHostname, &collectedAt,
 			&row.Total, &row.Active, &row.Idle, &row.IdleInTransaction,
-			&row.Other,
+			&row.Other, &totalGroups,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning connection group row: %s", logging.SanitizeForLog(err.Error()))
 			continue
 		}
 		// Every group aggregates the same snapshot, so the first
-		// non-NULL timestamp describes the whole response.
+		// non-NULL timestamp describes the whole response, and every row
+		// carries the same window count.
 		if response.CollectedAt == nil {
 			response.CollectedAt = collectedAt
 		}
+		response.TotalGroups = totalGroups
 		response.Groups = append(response.Groups, row)
 	}
 	if err := rows.Err(); err != nil {

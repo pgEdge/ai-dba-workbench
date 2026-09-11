@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
@@ -112,13 +113,18 @@ func gcTestDatastore(t *testing.T) (*database.Datastore, func()) {
 	}
 
 	name := fmt.Sprintf("ai_wb_gc437_%d", time.Now().UnixNano())
-	if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+	// Build the statements up front: the name is a quoted identifier, not
+	// a bindable parameter, and a prepared string keeps the intent clear.
+	quoted := pgx.Identifier{name}.Sanitize()
+	createSQL := "CREATE DATABASE " + quoted
+	dropSQL := "DROP DATABASE IF EXISTS " + quoted
+	if _, err := adminPool.Exec(ctx, createSQL); err != nil {
 		adminPool.Close()
 		t.Skipf("cannot create a test database: %v", err)
 	}
 
 	dropDatabase := func() {
-		if _, err := adminPool.Exec(ctx, "DROP DATABASE IF EXISTS "+name); err != nil {
+		if _, err := adminPool.Exec(ctx, dropSQL); err != nil {
 			t.Logf("dropping test database %s: %v", name, err)
 		}
 	}

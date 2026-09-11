@@ -21,6 +21,12 @@ import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import {
+    CACHE_HIT_METRICS,
+    CACHE_HIT_CAVEAT,
+    buildCacheHitRatioPoints,
+    latestCacheHitRatio,
+} from '../cacheHitRatio';
+import {
     type DatabaseSectionProps,
     extractSparklineData,
     extractLatestValue,
@@ -36,6 +42,11 @@ const CHART_BUCKETS = 150;
 
 /** Chart height in pixels */
 const CHART_HEIGHT = 250;
+
+/** Analysis description for the cache hit ratio KPI and chart. */
+const CACHE_HIT_DESCRIPTION =
+    'Buffer cache hit ratio per interval (null buckets had no block '
+    + `access). ${CACHE_HIT_CAVEAT}`;
 
 /**
  * Determine status for cache hit ratio values.
@@ -117,6 +128,9 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         metrics: ['database_size_bytes'],
     }), [connectionId, databaseName, timeRange.range]);
 
+    // The ratio is derived from per-interval rates rather than the
+    // lifetime counters, so it reflects the current interval and an
+    // idle bucket becomes a gap (see issue #401).
     const cacheKpiParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_stat_database',
         connectionId,
@@ -124,7 +138,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'last',
-        metrics: ['blks_hit', 'blks_read'],
+        metrics: CACHE_HIT_METRICS,
     }), [connectionId, databaseName, timeRange.range]);
 
     const txnKpiParams = useMemo((): MetricQueryParams => ({
@@ -165,7 +179,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'last',
-        metrics: ['blks_hit', 'blks_read'],
+        metrics: CACHE_HIT_METRICS,
     }), [connectionId, databaseName, timeRange.range]);
 
     // Fetch KPI data
@@ -183,48 +197,17 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         sizeKpi.data, 'database_size_bytes'
     );
 
-    // Compute cache hit ratio from raw blks_hit and blks_read
-    const blksHit = extractLatestValue(
-        cacheKpi.data, 'blks_hit'
+    // Per-bucket cache hit ratio from the hit and read rates; idle
+    // buckets are null (gaps) and the headline is the latest bucket
+    // that has a ratio, so a trailing idle bucket does not blank it.
+    const cacheHitSparkline = useMemo(
+        () => buildCacheHitRatioPoints(cacheKpi.data),
+        [cacheKpi.data]
     );
-    const blksRead = extractLatestValue(
-        cacheKpi.data, 'blks_read'
+    const cacheHitRatio = useMemo(
+        () => latestCacheHitRatio(cacheHitSparkline),
+        [cacheHitSparkline]
     );
-    const cacheHitRatio = useMemo(() => {
-        if (blksHit === null && blksRead === null) { return null; }
-        const hit = blksHit ?? 0;
-        const read = blksRead ?? 0;
-        const total = hit + read;
-        if (total === 0) { return 100; }
-        return (hit / total) * 100;
-    }, [blksHit, blksRead]);
-
-    // Build per-point sparkline for cache hit ratio
-    const cacheHitSparkline = useMemo((): MetricDataPoint[] => {
-        if (!cacheKpi.data) { return []; }
-        const hitSeries = cacheKpi.data.find(
-            s => s.metric === 'blks_hit'
-        );
-        const readSeries = cacheKpi.data.find(
-            s => s.metric === 'blks_read'
-        );
-        if (!hitSeries || !readSeries) { return []; }
-
-        const len = Math.min(
-            hitSeries.data.length, readSeries.data.length
-        );
-        const points: MetricDataPoint[] = [];
-        for (let i = 0; i < len; i++) {
-            const h = hitSeries.data[i].value;
-            const r = readSeries.data[i].value;
-            const total = h + r;
-            points.push({
-                time: hitSeries.data[i].time,
-                value: total > 0 ? (h / total) * 100 : 0,
-            });
-        }
-        return points;
-    }, [cacheKpi.data]);
 
     // Transaction rate: use raw cumulative xact_commit
     const txnCommit = extractLatestValue(
@@ -293,43 +276,16 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         [txnChart.data]
     );
 
-    // Build cache hit ratio chart from per-point computation
+    // Build the cache hit ratio chart from the per-bucket ratio; null
+    // buckets are passed through so ECharts draws them as gaps.
     const cacheChartData = useMemo(() => {
-        if (!cacheChart.data) { return null; }
-        const hitSeries = cacheChart.data.find(
-            s => s.metric === 'blks_hit'
-        );
-        const readSeries = cacheChart.data.find(
-            s => s.metric === 'blks_read'
-        );
-        if (!hitSeries || !readSeries) { return null; }
-        if (
-            hitSeries.data.length === 0
-            && readSeries.data.length === 0
-        ) {
-            return null;
-        }
-
-        const len = Math.min(
-            hitSeries.data.length, readSeries.data.length
-        );
-        const ratioData: number[] = [];
-        const categories: string[] = [];
-        for (let i = 0; i < len; i++) {
-            const h = hitSeries.data[i].value;
-            const r = readSeries.data[i].value;
-            const total = h + r;
-            ratioData.push(
-                total > 0 ? (h / total) * 100 : 0
-            );
-            categories.push(hitSeries.data[i].time);
-        }
-
+        const points = buildCacheHitRatioPoints(cacheChart.data);
+        if (points.length === 0) { return null; }
         return {
-            categories,
+            categories: points.map(p => p.time),
             series: [{
                 name: 'Cache Hit Ratio %',
-                data: ratioData,
+                data: points.map(p => p.value),
             }],
         };
     }, [cacheChart.data]);
@@ -369,7 +325,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     status={getCacheHitStatus(cacheHitRatio)}
                     sparklineData={cacheHitSparkline}
                     analysisContext={{
-                        metricDescription: 'Buffer cache hit ratio over time',
+                        metricDescription: CACHE_HIT_DESCRIPTION,
                         connectionId,
                         databaseName,
                         timeRange: timeRange.range,
@@ -465,7 +421,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                             showTooltip
                             enableExport={false}
                             analysisContext={{
-                                metricDescription: 'Buffer cache hit ratio showing cache effectiveness',
+                                metricDescription: CACHE_HIT_DESCRIPTION,
                                 connectionId,
                                 databaseName,
                                 timeRange: timeRange.range,

@@ -24,6 +24,31 @@ vi.mock('../../../contexts/useAICapabilities', () => ({
     useAICapabilities: () => ({ aiEnabled: true, loading: false }),
 }));
 
+let mockCached = false;
+vi.mock('../../../hooks/useChartAnalysis', () => ({
+    hasCachedAnalysis: () => mockCached,
+}));
+
+// Expose the dialog's props so the tests can see the chart data the
+// tile hands over, including any null gaps, and drive onClose.
+vi.mock('../../ChartAnalysisDialog', () => ({
+    ChartAnalysisDialog: ({ open, onClose, chartData }: {
+        open: boolean;
+        onClose: () => void;
+        chartData: { categories?: string[]; series: { name: string; data: unknown[] }[] };
+    }) => (
+        <div
+            data-testid="analysis-dialog"
+            data-open={String(open)}
+            data-series={chartData.series[0].name}
+            data-values={JSON.stringify(chartData.series[0].data)}
+            data-categories={JSON.stringify(chartData.categories)}
+        >
+            <button type="button" onClick={onClose}>close</button>
+        </div>
+    ),
+}));
+
 const theme = createTheme();
 
 const renderKpiTile = (props: Record<string, unknown> = {}) => {
@@ -120,7 +145,78 @@ describe('KpiTile', () => {
 
         const tile = screen.getByRole('button');
         fireEvent.keyDown(tile, { key: 'Enter' });
+        fireEvent.keyDown(tile, { key: ' ' });
+        fireEvent.keyDown(tile, { key: 'a' });
 
-        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(onClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('renders every trend direction and status colour', () => {
+        (['up', 'down', 'flat'] as const).forEach((trend, idx) => {
+            renderKpiTile({ trend, trendValue: `t${idx}` });
+            expect(screen.getByText(`t${idx}`)).toBeInTheDocument();
+        });
+
+        renderKpiTile({ value: 'g', status: 'good' });
+        expect(screen.getByText('g')).toHaveStyle({ color: theme.palette.success.main });
+        renderKpiTile({ value: 'w', status: 'warning' });
+        expect(screen.getByText('w')).toHaveStyle({ color: theme.palette.warning.main });
+        renderKpiTile({ value: 'c', status: 'critical' });
+        expect(screen.getByText('c')).toHaveStyle({ color: theme.palette.error.main });
+    });
+
+    describe('AI analysis', () => {
+        const sparklineData = [
+            { time: '2025-01-01T00:00:00Z', value: 10 },
+            { time: '2025-01-01T01:00:00Z', value: null },
+            { time: '2025-01-01T02:00:00Z', value: 30 },
+        ];
+        const analysisContext = { metricDescription: 'CPU over time' };
+
+        it('does not offer analysis without a sparkline or context', () => {
+            renderKpiTile({ analysisContext });
+            expect(screen.queryByTestId('analysis-dialog')).not.toBeInTheDocument();
+
+            renderKpiTile({ sparklineData });
+            expect(screen.queryByTestId('analysis-dialog')).not.toBeInTheDocument();
+        });
+
+        it('opens and closes the dialog and hands over the sparkline with its gaps', () => {
+            const onClick = vi.fn();
+            renderKpiTile({ sparklineData, analysisContext, onClick });
+
+            const dialog = screen.getByTestId('analysis-dialog');
+            expect(dialog).toHaveAttribute('data-open', 'false');
+            expect(dialog).toHaveAttribute('data-series', 'CPU Usage');
+            expect(dialog).toHaveAttribute('data-values', '[10,null,30]');
+            expect(dialog).toHaveAttribute(
+                'data-categories',
+                JSON.stringify(sparklineData.map(p => p.time)),
+            );
+
+            // The analyse button sits inside the clickable tile, so the
+            // click must not also fire the tile's own onClick.
+            const analyse = screen.getAllByRole('button')
+                .find(el => el !== screen.getByLabelText(/CPU Usage/)
+                    && el.textContent !== 'close') as HTMLElement;
+            fireEvent.click(analyse);
+            expect(onClick).not.toHaveBeenCalled();
+            expect(dialog).toHaveAttribute('data-open', 'true');
+
+            fireEvent.click(screen.getByText('close'));
+            expect(dialog).toHaveAttribute('data-open', 'false');
+        });
+
+        it('marks the analyse button when a cached analysis exists', () => {
+            mockCached = true;
+            try {
+                renderKpiTile({ sparklineData, analysisContext });
+            } finally {
+                mockCached = false;
+            }
+            const analyse = screen.getAllByRole('button')
+                .find(el => el.textContent !== 'close') as HTMLElement;
+            expect(analyse.className).toContain('colorWarning');
+        });
     });
 });

@@ -231,6 +231,33 @@ describe('useChartAnalysis', () => {
         expect(userMessage).toContain('Latest: 50');
     });
 
+    it('leaves null gaps out of the statistics and prints them as N/A', async () => {
+        const { result } = renderHook(() => useChartAnalysis());
+
+        const input = makeChartInput({
+            data: {
+                categories: ['t0', 't1', 't2'],
+                series: [
+                    { name: 'ratio', data: [90, null, 70] },
+                    { name: 'idle', data: [null, null, null] },
+                ],
+            },
+        });
+
+        await act(async () => {
+            await result.current.analyze(input);
+        });
+
+        const body = JSON.parse(mockApiFetch.mock.calls[0][1].body);
+        const userMessage = body.messages[0].content[0].text;
+
+        expect(userMessage).toContain('Series "ratio" (2 points)');
+        expect(userMessage).toContain('Min: 70, Max: 90, Avg: 80.00, Latest: 70');
+        expect(userMessage).toContain('Series "idle": No data points');
+        expect(userMessage).toContain('1\tt1\tN/A\tN/A');
+        expect(userMessage).not.toContain('null');
+    });
+
     it('analyze sets analysis result on success', async () => {
         const analysisText = 'The chart shows normal patterns.';
         mockApiFetch.mockResolvedValueOnce(makeSuccessResponse(analysisText));

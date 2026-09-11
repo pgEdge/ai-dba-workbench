@@ -275,11 +275,13 @@ func TestHandlePerfSummary_ReportsActiveConnections(t *testing.T) {
 		t.Errorf("connection %d active_connections = %d, want 11", connB, got)
 	}
 
-	// The pre-existing metrics must still be populated alongside it:
-	// 1000 hits against 100 reads across both databases is 90.91%.
-	if byID[connA].CacheHitRatio.Current != 90.91 {
-		t.Errorf("cache hit ratio = %v, want 90.91",
-			byID[connA].CacheHitRatio.Current)
+	// The pre-existing metrics must still be populated alongside it. The
+	// ratio is per interval and per database: appdb grew by 500 hits and
+	// 40 reads between the two samples, which is 92.59%, whilst postgres
+	// only appears in the latest sample and so has no delta; its lifetime
+	// counters must not be counted as activity in the interval.
+	if cur := byID[connA].CacheHitRatio.Current; cur == nil || *cur != 92.59 {
+		t.Errorf("cache hit ratio = %v, want 92.59", cur)
 	}
 	if len(byID[connA].XIDAgeEntries) != 1 {
 		t.Errorf("expected 1 XID age entry, got %d",

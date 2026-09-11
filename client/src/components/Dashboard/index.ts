@@ -28,6 +28,7 @@ export type {
     TimeRangeState,
     AutoRefreshConfig,
     MetricDataPoint,
+    SparklinePoint,
     MetricSeries,
     MetricBaseline,
     SparklineProps,

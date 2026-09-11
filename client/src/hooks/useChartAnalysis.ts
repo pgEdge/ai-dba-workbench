@@ -118,7 +118,12 @@ function serializeChartData(data: ChartData): string {
     const lines: string[] = [];
 
     for (const series of data.series) {
-        const values = series.data;
+        // Null entries mark buckets with no value (drawn as gaps) and
+        // are left out of the statistics; the table below prints them
+        // as N/A.
+        const values = series.data.filter(
+            (v): v is number => v !== null
+        );
         if (values.length === 0) {
             lines.push(`Series "${series.name}": No data points`);
             continue;
@@ -164,9 +169,10 @@ function serializeChartData(data: ChartData): string {
                 row.push(data.categories[idx]);
             }
             for (const series of data.series) {
+                const cell = series.data[idx];
                 row.push(
-                    series.data[idx] !== undefined
-                        ? String(series.data[idx])
+                    cell !== undefined && cell !== null
+                        ? String(cell)
                         : 'N/A'
                 );
             }

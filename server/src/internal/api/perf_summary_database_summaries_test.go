@@ -255,10 +255,14 @@ func TestDatabaseSummaries_Issue362_DropsGhostDatabases(t *testing.T) {
 	if keep.ActiveConnections != 7 {
 		t.Errorf("ActiveConnections = %d, want 7", keep.ActiveConnections)
 	}
-	// blks_hit=900, blks_read=100 -> 90% current cache hit ratio.
-	if keep.CacheHitRatio.Current != 90.0 {
-		t.Errorf("CacheHitRatio.Current = %v, want 90.0",
-			keep.CacheHitRatio.Current)
+	// The latest interval moved blks_hit 400 -> 900 and blks_read
+	// 60 -> 100, so the current (per-interval) ratio is 500/540 = 92.59%.
+	// The lifetime ratio of the latest snapshot (900/1000 = 90%) must
+	// not be reported (issue #401).
+	if keep.CacheHitRatio.Current == nil ||
+		*keep.CacheHitRatio.Current != 92.59 {
+		t.Errorf("CacheHitRatio.Current = %v, want 92.59",
+			fmtFloatPtr(keep.CacheHitRatio.Current))
 	}
 	if len(keep.CacheHitRatio.TimeSeries) == 0 {
 		t.Errorf("CacheHitRatio.TimeSeries should be populated")

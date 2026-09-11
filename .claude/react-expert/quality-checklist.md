@@ -143,6 +143,43 @@ from the latest `pg_server_info` row through the latest-row mode of
 that probe only stores a row when the server configuration changes
 and a bucketed query would usually come back empty.
 
+### Ratios and gaps
+
+A ratio derived from counters must be computed per interval, never
+from the lifetime totals, because a since-`stats_reset` average
+cannot show a current problem (issue #401). `ChartDataSeries.data`
+and the `SparklinePoint` type in `client/src/components/Dashboard/types.ts`
+are `(number | null)[]` and `number | null` respectively: a null
+entry is a bucket with no value, ECharts draws it as a gap, the
+axis-range code in `Chart/options/common.ts` skips it, and
+`useChartAnalysis` leaves it out of the statistics it sends to the
+LLM. The rules are as follows:
+
+- Ask `/api/v1/metrics/query` for the derived `<counter>_per_sec`
+  metrics and compute the ratio per bucket; the shared helpers live
+  in `client/src/components/Dashboard/cacheHitRatio.ts`
+  (`buildCacheHitRatioPoints`, `latestCacheHitRatio`).
+
+- An idle bucket is null, never 0% and never 100%; a headline value
+  is the latest non-null bucket, shown as `--` when there is none.
+  Do not use `extractLatestValue` for a ratio, because its
+  non-zero scan would skip a genuine 0%.
+
+- Render a null headline in a neutral colour (`text.secondary`)
+  rather than the critical red, and keep nulls in bar data so the
+  bar is left empty rather than drawn at zero.
+
+- The server sends `cache_hit_ratio.current` and each
+  `time_series[i].value` as `number | null`; the client types in
+  `StatusPanel/PerformanceTiles/types.ts` and
+  `Dashboard/ServerDashboard/types.ts` mirror that, and headline and
+  worst-of computations skip nulls.
+
+- Cache hit ratio descriptions carry the page-cache caveat from
+  `CACHE_HIT_CAVEAT`: `blks_hit` counts `shared_buffers` hits only,
+  and a read may still be served from the OS page cache, so a lower
+  ratio does not by itself mean slow I/O.
+
 ## TypeScript Standards
 
 `client/package.json` depends on `@mui/material` at `^5.14.20`. The

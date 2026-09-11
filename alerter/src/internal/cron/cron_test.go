@@ -358,7 +358,7 @@ func TestPackageMatches(t *testing.T) {
 		// An unknown timezone falls back to UTC rather than erroring,
 		// so a blackout schedule with a mistyped timezone evaluates in
 		// UTC instead of failing loudly. Pinned here because that is a
-		// silent behaviour with real consequences for when a window
+		// silent behavior with real consequences for when a window
 		// takes effect.
 		{"unknown timezone falls back to UTC", "30 14 * * *", "Mars/Olympus_Mons", true, false},
 	}

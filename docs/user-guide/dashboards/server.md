@@ -76,3 +76,17 @@ comment in the statement text, so a database user who
 can run arbitrary SQL can hide a query by including
 that marker. Switching the toggle off restores the
 full list of statements.
+
+The panel header includes a database filter when the
+connection monitors more than one database. The filter
+defaults to "All databases"; selecting a single
+database restricts the list to queries that ran
+against that database.
+
+The panel footer includes a pager that lets users move
+through the full result set. The "Rows per page"
+selector offers 10, 20, 50, or 100 rows and defaults
+to 20 rows. The previous and next controls move
+between pages, and the "Showing X-Y of Z" indicator
+reports the range of rows on the current page and the
+total number of matching queries.

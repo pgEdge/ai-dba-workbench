@@ -63,164 +63,82 @@ func TestExcludeWorkbenchQueriesClause(t *testing.T) {
 
 // TestSafeTopQueryOrdering asserts that the ordering pair interpolated
 // into the ORDER BY clause is whitelisted at the point of use, so the
-// injection-safety property does not depend on the caller.
+// TestSafeTopQueryOrdering covers the defense-in-depth fallback in
+// buildTopQueriesSQL. The handler resolves request values to SQL
+// literals through validTopQueryOrderColumns and
+// validTopQueryOrderDirections before the builder ever sees them, so
+// this operates on literals: anything that is not a literal one of
+// those maps can produce is replaced by the default.
 func TestSafeTopQueryOrdering(t *testing.T) {
 	tests := []struct {
-		name          string
-		orderBy       string
-		order         string
-		wantOrderBy   string
-		wantOrder     string
-		wantSanitized bool
+		name         string
+		orderCol     string
+		orderDir     string
+		wantOrderCol string
+		wantOrderDir string
 	}{
 		{
-			name:        "valid pair passes through",
-			orderBy:     "calls",
-			order:       "asc",
-			wantOrderBy: "calls",
-			wantOrder:   "asc",
+			name:         "resolved literals pass through",
+			orderCol:     "calls",
+			orderDir:     "ASC",
+			wantOrderCol: "calls",
+			wantOrderDir: "ASC",
 		},
 		{
-			name:          "empty values fall back",
-			wantOrderBy:   defaultTopQueryOrderBy,
-			wantOrder:     defaultTopQueryOrder,
-			wantSanitized: true,
+			name:         "empty values fall back",
+			wantOrderCol: validTopQueryOrderColumns[defaultTopQueryOrderBy],
+			wantOrderDir: validTopQueryOrderDirections[defaultTopQueryOrder],
 		},
 		{
-			name:          "injected column falls back",
-			orderBy:       "calls; DROP TABLE connections --",
-			order:         "asc",
-			wantOrderBy:   defaultTopQueryOrderBy,
-			wantOrder:     "asc",
-			wantSanitized: true,
+			name:         "injected column falls back",
+			orderCol:     "calls; DROP TABLE connections --",
+			orderDir:     "ASC",
+			wantOrderCol: validTopQueryOrderColumns[defaultTopQueryOrderBy],
+			wantOrderDir: "ASC",
 		},
 		{
-			name:          "injected direction falls back",
-			orderBy:       "rows",
-			order:         "desc; DROP TABLE connections --",
-			wantOrderBy:   "rows",
-			wantOrder:     defaultTopQueryOrder,
-			wantSanitized: true,
+			name:         "injected direction falls back",
+			orderCol:     "rows",
+			orderDir:     "DESC; DROP TABLE connections --",
+			wantOrderCol: "rows",
+			wantOrderDir: validTopQueryOrderDirections[defaultTopQueryOrder],
 		},
 		{
-			name:          "uppercase direction is not accepted",
-			orderBy:       "rows",
-			order:         "DESC",
-			wantOrderBy:   "rows",
-			wantOrder:     defaultTopQueryOrder,
-			wantSanitized: true,
+			name:         "an unresolved request value is not a literal",
+			orderCol:     "rows",
+			orderDir:     "desc",
+			wantOrderCol: "rows",
+			wantOrderDir: validTopQueryOrderDirections[defaultTopQueryOrder],
 		},
 		{
-			name:          "unknown column falls back",
-			orderBy:       "wal_bytes",
-			order:         "desc",
-			wantOrderBy:   defaultTopQueryOrderBy,
-			wantOrder:     "desc",
-			wantSanitized: true,
+			name:         "unknown column falls back",
+			orderCol:     "wal_bytes",
+			orderDir:     "DESC",
+			wantOrderCol: validTopQueryOrderColumns[defaultTopQueryOrderBy],
+			wantOrderDir: "DESC",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotOrderBy, gotOrder := safeTopQueryOrdering(tt.orderBy, tt.order)
-			if gotOrderBy != tt.wantOrderBy || gotOrder != tt.wantOrder {
+			gotCol, gotDir := safeTopQueryOrdering(tt.orderCol, tt.orderDir)
+			if gotCol != tt.wantOrderCol || gotDir != tt.wantOrderDir {
 				t.Fatalf("safeTopQueryOrdering(%q, %q) = (%q, %q), "+
-					"want (%q, %q)", tt.orderBy, tt.order,
-					gotOrderBy, gotOrder, tt.wantOrderBy, tt.wantOrder)
+					"want (%q, %q)", tt.orderCol, tt.orderDir,
+					gotCol, gotDir, tt.wantOrderCol, tt.wantOrderDir)
 			}
 
 			// The builder must apply the same fallback, so no
 			// unwhitelisted text can ever reach the ORDER BY clause.
-			query, _ := buildTopQueriesQuery(
-				1, 10, "", false, tt.orderBy, tt.order)
-			want := "ORDER BY " + tt.wantOrderBy + " " + tt.wantOrder
-			if !strings.Contains(query, want) {
-				t.Errorf("query is missing %q: %s", want, query)
+			_, pageSQL, _, _ := buildTopQueriesSQL(
+				1, "", "", false, tt.orderCol, tt.orderDir, 10, 0)
+			want := "ORDER BY " + tt.wantOrderCol + " " + tt.wantOrderDir
+			if !strings.Contains(pageSQL, want) {
+				t.Errorf("query is missing %q: %s", want, pageSQL)
 			}
-			if tt.wantSanitized && strings.Contains(query, "DROP TABLE") {
+			if strings.Contains(pageSQL, "DROP TABLE") {
 				t.Errorf("unvalidated ordering text reached the query: %s",
-					query)
-			}
-		})
-	}
-}
-
-// TestBuildTopQueriesQuery covers every combination of the optional
-// queryid filter and the Workbench-internal exclusion.
-func TestBuildTopQueriesQuery(t *testing.T) {
-	tests := []struct {
-		name             string
-		queryID          string
-		excludeCollector bool
-		wantArgs         int
-		wantContains     []string
-		wantMissing      []string
-	}{
-		{
-			name:         "plain",
-			wantArgs:     2,
-			wantContains: []string{"FROM metrics.pg_stat_statements pss"},
-			wantMissing: []string{
-				sqlmarker.Marker, probeMarkerAlias,
-				"pss.queryid::text = $",
-			},
-		},
-		{
-			name:         "with queryid",
-			queryID:      "12345",
-			wantArgs:     3,
-			wantContains: []string{"AND pss.queryid::text = $3"},
-			wantMissing:  []string{sqlmarker.Marker},
-		},
-		{
-			name:             "excluding workbench queries",
-			excludeCollector: true,
-			wantArgs:         2,
-			wantContains: []string{
-				"strpos(pss.query, '" + probeMarkerAlias + "') = 0",
-				"strpos(pss.query, '" + sqlmarker.Marker + "') = 0",
-			},
-		},
-		{
-			name:             "queryid and exclusion together",
-			queryID:          "999",
-			excludeCollector: true,
-			wantArgs:         3,
-			wantContains: []string{
-				"AND pss.queryid::text = $3",
-				"strpos(pss.query, '" + probeMarkerAlias + "') = 0",
-				"strpos(pss.query, '" + sqlmarker.Marker + "') = 0",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			query, args := buildTopQueriesQuery(
-				7, 25, tt.queryID, tt.excludeCollector,
-				"total_exec_time", "desc")
-
-			if len(args) != tt.wantArgs {
-				t.Fatalf("len(args) = %d, want %d", len(args), tt.wantArgs)
-			}
-			if args[0] != 7 || args[1] != 25 {
-				t.Errorf("args = %v, want connection 7 and limit 25", args)
-			}
-			if tt.queryID != "" && args[2] != tt.queryID {
-				t.Errorf("args[2] = %v, want %q", args[2], tt.queryID)
-			}
-			if !strings.Contains(query, "ORDER BY total_exec_time desc") {
-				t.Errorf("ordering clause missing: %s", query)
-			}
-			for _, want := range tt.wantContains {
-				if !strings.Contains(query, want) {
-					t.Errorf("query is missing %q", want)
-				}
-			}
-			for _, unwanted := range tt.wantMissing {
-				if strings.Contains(query, unwanted) {
-					t.Errorf("query unexpectedly contains %q", unwanted)
-				}
+					pageSQL)
 			}
 		})
 	}

@@ -28,6 +28,18 @@ project adheres to
   and Spock grants, and documents the coverage gaps that remain
   without superuser access. (#351)
 
+- Add pagination and database filtering to the Top Queries panel on
+  the server dashboard. The panel footer now provides a page size
+  selector offering 10, 20, 50, or 100 rows, defaulting to 20, along
+  with previous and next controls and a "Showing X-Y of Z"
+  indicator, so users can page beyond the first rows. The panel
+  header shows a database filter when the connection monitors more
+  than one database; the filter defaults to "All databases". The
+  `GET /api/v1/metrics/top-queries` endpoint gained the `offset` and
+  `database_name` query parameters, and now returns an
+  `X-Total-Count` response header that reports the total number of
+  matching rows; the JSON response body is unchanged. (#335)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a

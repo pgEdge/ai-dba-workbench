@@ -67,6 +67,11 @@ project adheres to
   only the server default left the client-facing bug unchanged for
   real users. (#329)
 
+- Run the tests for the shared `pkg` module from the root `make test`
+  and `make test-all` targets, which previously skipped that module
+  entirely. This change affects test infrastructure only and does not
+  alter application behavior. (#364)
+
 ### Fixed
 
 - Fix the `metric_staleness` alert rule firing and clearing in a
@@ -298,6 +303,34 @@ project adheres to
   shutdown, and raising the memory limit modestly from 256M to
   512M; the collector connection-pool and timeout options are now
   documented in the sample configuration. (#308)
+
+- Fix the "Hide monitoring queries" toggle on the Server dashboard's
+  Top Queries panel failing to hide the collector's and alerter's
+  datastore query overhead. Only the collector's probe queries against
+  monitored databases carried a marker, so its bulk `metrics.*`
+  inserts, partition maintenance, and change-detection reads, together
+  with the alerter's metric-evaluation queries, stayed in the panel
+  whenever the metadata datastore shared a PostgreSQL instance with
+  the monitored databases, which is the usual deployment. The toggle
+  now hides those statements as well. Each statement is tagged
+  individually rather than excluding the metadata database wholesale,
+  so queries that other tools run against that same database remain
+  visible. Two classes stay untagged by design and still appear in the
+  panel: the server's own datastore traffic for sessions, RBAC,
+  conversations, and the timeline; and the collector's `probe_configs`
+  resolution path, along with the alerter's remaining direct datastore
+  queries in `alert_queries.go`, `anomaly_queries.go`,
+  `notification_queries.go` and `queries.go`.
+
+  On an existing installation the toggle only hides statements that
+  PostgreSQL first recorded after the upgrade. `pg_stat_statements`
+  identifies a statement by its parse tree, which ignores comments, so
+  an entry already present keeps the untagged text it was first seen
+  with and the filter never matches it; those entries run every
+  collection cycle, so they are never evicted either. Run `SELECT
+  pg_stat_statements_reset();` once on each monitored instance after
+  upgrading for the toggle to take effect on statements already in the
+  view. (#364)
 
 ### Removed
 

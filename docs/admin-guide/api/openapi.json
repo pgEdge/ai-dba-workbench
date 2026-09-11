@@ -6009,7 +6009,7 @@
           {
             "name": "exclude_collector",
             "in": "query",
-            "description": "Exclude collector queries",
+            "description": "Exclude Workbench-internal queries, including collector probe queries and the collector's and alerter's own datastore queries",
             "schema": {
               "type": "boolean"
             }

@@ -117,10 +117,7 @@ func TestPgStatStatementsProbe_ExecuteWithExtension(t *testing.T) {
 	if !ok {
 		t.Skip("pg_stat_statements extension not available")
 	}
-	if _, err := conn.Exec(ctx,
-		"SELECT count(*) FROM pg_stat_statements LIMIT 1"); err != nil {
-		t.Skipf("pg_stat_statements view not queryable: %v", err)
-	}
+	requirePgStatStatementsReadable(t, conn)
 
 	metrics, err := p.Execute(ctx, "stmts-with-ext", conn, pgVersion)
 	if err != nil {

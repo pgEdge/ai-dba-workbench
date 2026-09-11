@@ -278,6 +278,27 @@ func acquireConn(t *testing.T, pool *pgxpool.Pool) *pgxpool.Conn {
 	return conn
 }
 
+// requirePgStatStatementsReadable skips the test unless the
+// pg_stat_statements view can actually be read on conn.
+//
+// The check has to be a real read rather than an inspection of
+// shared_preload_libraries or pg_extension, because CREATE EXTENSION
+// can succeed whilst every select on the view still raises SQLSTATE
+// 55000 ("must be loaded via shared_preload_libraries"). That is how
+// the CI PostgreSQL containers are configured, and probing the read
+// also covers the extension being absent, unprivileged, or otherwise
+// unusable for any other reason.
+func requirePgStatStatementsReadable(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+
+	if _, err := conn.Exec(context.Background(),
+		"SELECT count(*) FROM pg_stat_statements"); err != nil {
+		t.Skipf("skipping: the pg_stat_statements view is not readable "+
+			"on this server, most likely because the library is not "+
+			"listed in shared_preload_libraries: %v", err)
+	}
+}
+
 // applyMetricsSchema creates the minimal `metrics` schema and the
 // partitioned parent tables required by every probe Store path. The
 // schema deliberately mirrors the production DDL only for columns

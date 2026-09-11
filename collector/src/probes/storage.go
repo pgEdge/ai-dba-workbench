@@ -17,7 +17,56 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
+
+// buildMetricsInsert builds one multi-row INSERT for a batch of metric
+// rows, returning the statement and its bind arguments. Column and
+// table identifiers are quoted by the caller and by pgx.Identifier, and
+// every value is passed as a bind parameter, so the statement carries
+// no interpolated data.
+//
+// The statement is tagged as Workbench-internal so the server's Top
+// Queries panel can filter out the collector's own write traffic
+// against the datastore; see sqlmarker.Tag for why the marker has to
+// sit immediately after the leading keyword. This is the single
+// chokepoint through which every probe's metric writes pass, which is
+// why the tagging lives here rather than in the individual probes.
+func buildMetricsInsert(fullTableName string, columns []string, batch [][]any) (string, []any) {
+	// Build column list with quoted identifiers
+	columnList := ""
+	for idx, col := range columns {
+		if idx > 0 {
+			columnList += ", "
+		}
+		columnList += pgx.Identifier{col}.Sanitize()
+	}
+
+	// Build VALUES clause with placeholders
+	valuesClause := ""
+	args := make([]any, 0, len(batch)*len(columns))
+	for rowIdx, row := range batch {
+		if rowIdx > 0 {
+			valuesClause += ", "
+		}
+		valuesClause += "("
+		for colIdx := range columns {
+			if colIdx > 0 {
+				valuesClause += ", "
+			}
+			placeholderNum := rowIdx*len(columns) + colIdx + 1
+			valuesClause += fmt.Sprintf("$%d", placeholderNum)
+			args = append(args, row[colIdx])
+		}
+		valuesClause += ")"
+	}
+
+	query := sqlmarker.Tag(fmt.Sprintf(
+		"INSERT INTO %s (%s) VALUES %s",
+		fullTableName, columnList, valuesClause))
+
+	return query, args
+}
 
 // StoreMetrics stores metrics using batched INSERT statements.
 func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, columns []string, values [][]any) error {
@@ -51,36 +100,7 @@ func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, col
 		}
 		batch := values[i:end]
 
-		// Build column list with quoted identifiers
-		columnList := ""
-		for idx, col := range columns {
-			if idx > 0 {
-				columnList += ", "
-			}
-			columnList += pgx.Identifier{col}.Sanitize()
-		}
-
-		// Build VALUES clause with placeholders
-		valuesClause := ""
-		args := make([]any, 0, len(batch)*len(columns))
-		for rowIdx, row := range batch {
-			if rowIdx > 0 {
-				valuesClause += ", "
-			}
-			valuesClause += "("
-			for colIdx := range columns {
-				if colIdx > 0 {
-					valuesClause += ", "
-				}
-				placeholderNum := rowIdx*len(columns) + colIdx + 1
-				valuesClause += fmt.Sprintf("$%d", placeholderNum)
-				args = append(args, row[colIdx])
-			}
-			valuesClause += ")"
-		}
-
-		// Execute INSERT
-		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", fullTableName, columnList, valuesClause)
+		query, args := buildMetricsInsert(fullTableName, columns, batch)
 		if _, err := txn.Exec(ctx, query, args...); err != nil {
 			return fmt.Errorf("failed to execute INSERT: %w", err)
 		}

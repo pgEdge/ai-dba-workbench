@@ -20,6 +20,7 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/connstring"
 	"github.com/pgedge/ai-workbench/pkg/datastoreconfig"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // Config interface defines the minimal configuration needed by Datastore
@@ -176,6 +177,33 @@ func (ds *Datastore) Close() {
 	}
 }
 
+// The collector re-reads its own connections table on every collection
+// cycle and writes back connection errors, so those statements are
+// tagged as Workbench-internal to keep them out of the server's Top
+// Queries panel when monitoring queries are hidden. See sqlmarker.Tag
+// for why the marker sits immediately after the leading keyword.
+var (
+	monitoredConnectionsQuery = sqlmarker.Tag(`
+        SELECT id, name, host, hostaddr, port, database_name, username,
+               password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
+               owner_username, owner_token, updated_at, connection_error
+        FROM connections
+        WHERE is_monitored = TRUE
+    `)
+
+	monitoredConnectionByIDQuery = sqlmarker.Tag(`
+        SELECT id, name, host, hostaddr, port, database_name, username,
+               password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
+               owner_username, owner_token, updated_at, connection_error
+        FROM connections
+        WHERE id = $1 AND is_monitored = TRUE
+    `)
+
+	setConnectionErrorStatement = sqlmarker.Tag(
+		"UPDATE connections SET connection_error = $1, " +
+			"updated_at = NOW() WHERE id = $2")
+)
+
 // GetMonitoredConnections returns all connections that should be monitored
 func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 	conn, err := ds.GetConnection()
@@ -186,13 +214,7 @@ func (ds *Datastore) GetMonitoredConnections() ([]MonitoredConnection, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	rows, err := conn.Query(ctx, `
-        SELECT id, name, host, hostaddr, port, database_name, username,
-               password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-               owner_username, owner_token, updated_at, connection_error
-        FROM connections
-        WHERE is_monitored = TRUE
-    `)
+	rows, err := conn.Query(ctx, monitoredConnectionsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query monitored connections: %w", err)
 	}
@@ -227,13 +249,8 @@ func (ds *Datastore) GetMonitoredConnectionByID(connectionID int) (MonitoredConn
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var c MonitoredConnection
-	err = conn.QueryRow(ctx, `
-        SELECT id, name, host, hostaddr, port, database_name, username,
-               password_encrypted, sslmode, sslcert, sslkey, sslrootcert,
-               owner_username, owner_token, updated_at, connection_error
-        FROM connections
-        WHERE id = $1 AND is_monitored = TRUE
-    `, connectionID).Scan(
+	err = conn.QueryRow(ctx, monitoredConnectionByIDQuery,
+		connectionID).Scan(
 		&c.ID, &c.Name, &c.Host, &c.HostAddr, &c.Port,
 		&c.DatabaseName, &c.Username, &c.PasswordEncrypted,
 		&c.SSLMode, &c.SSLCert, &c.SSLKey, &c.SSLRootCert,
@@ -250,8 +267,7 @@ func (ds *Datastore) GetMonitoredConnectionByID(connectionID int) (MonitoredConn
 // SetConnectionError updates the connection_error column for a connection.
 // Pass nil to clear the error, or a string pointer to set it.
 func SetConnectionError(ctx context.Context, conn *pgxpool.Conn, connectionID int, errorMsg *string) error {
-	_, err := conn.Exec(ctx,
-		"UPDATE connections SET connection_error = $1, updated_at = NOW() WHERE id = $2",
+	_, err := conn.Exec(ctx, setConnectionErrorStatement,
 		errorMsg, connectionID)
 	return err
 }

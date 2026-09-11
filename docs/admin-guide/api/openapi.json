@@ -9235,7 +9235,7 @@
           {
             "name": "start_time",
             "in": "query",
-            "description": "Start time (RFC3339). The span between start_time and end_time must not exceed 366 days",
+            "description": "Start time (RFC3339). Must fall before the present moment, and the span between start_time and end_time must not exceed 366 days",
             "required": true,
             "schema": {
               "type": "string"
@@ -9244,7 +9244,7 @@
           {
             "name": "end_time",
             "in": "query",
-            "description": "End time (RFC3339). Must be after start_time, and no more than 366 days after it",
+            "description": "End time (RFC3339). Must be after start_time, and no more than 366 days after it; an end in the future is clamped to the present moment",
             "required": true,
             "schema": {
               "type": "string"

@@ -225,6 +225,14 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | GET | `/api/v1/timeline/events` | List timeline events. |
 
+The endpoint takes absolute `start_time` and `end_time`
+values as RFC 3339 timestamps, and validates them with the
+same rules as a custom window on `/api/v1/metrics/query`,
+described under Metric Time Windows below: the end must fall
+strictly after the start, the start must fall before the
+present moment, the span must not exceed 366 days, and an
+end in the future is clamped to the present moment.
+
 ### Overview
 
 | Method | Endpoint | Description |

@@ -136,10 +136,8 @@ type TimeWindow struct {
 // ResolveTimeWindow converts a time range selection into an absolute
 // window. Any timeRange other than "custom" delegates to ParseTimeRange
 // and ignores startISO and endISO; "custom" requires both timestamps in
-// RFC 3339 format. An end time slightly in the future is clamped to now,
-// because a picker set to the current day routinely overshoots by a few
-// minutes, whilst a start time in the future, a non-positive span, and a
-// span longer than MaxCustomTimeSpan are all rejected.
+// RFC 3339 format and then applies the rules in ResolveCustomWindow,
+// naming the parameters time_start and time_end in any error.
 func ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow, error) {
 	if timeRange != CustomTimeRange {
 		start, end, err := ParseTimeRange(timeRange)
@@ -168,18 +166,31 @@ func ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow, error) {
 			"invalid time_end %q: must be an RFC 3339 timestamp", endISO)
 	}
 
+	return ResolveCustomWindow(start, end, "time_start", "time_end")
+}
+
+// ResolveCustomWindow validates an already-parsed pair of timestamps and
+// returns the absolute window they describe. It is the single source of
+// truth for the custom-window rules, shared by every endpoint that takes
+// explicit bounds: the end must fall strictly after the start, the start
+// must fall before now, and the span must not exceed MaxCustomTimeSpan.
+// An end in the future is clamped to now rather than rejected, because a
+// picker set to the current day routinely overshoots by a few minutes.
+// startParam and endParam are the caller's query parameter names, so the
+// error message names the field the client actually sent.
+func ResolveCustomWindow(start, end time.Time, startParam, endParam string) (TimeWindow, error) {
 	start = start.UTC()
 	end = end.UTC()
 
 	if !end.After(start) {
 		return TimeWindow{}, fmt.Errorf(
-			"invalid time range: time_end must be after time_start")
+			"invalid time range: %s must be after %s", endParam, startParam)
 	}
 
 	now := time.Now().UTC()
 	if !start.Before(now) {
 		return TimeWindow{}, fmt.Errorf(
-			"invalid time_start: must not be in the future")
+			"invalid %s: must not be in the future", startParam)
 	}
 	// Clamping cannot collapse the window, because a start at or after
 	// now has already been rejected above.

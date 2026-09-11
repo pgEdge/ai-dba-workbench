@@ -282,10 +282,15 @@ window is resolved exactly once, at the HTTP boundary. The types live in
   `7d`, `30d`) and always ends at now.
 - `TimeWindow{Start, End time.Time}` is the resolved window.
 - `ResolveTimeWindow(timeRange, startISO, endISO string) (TimeWindow,
-  error)` is the single source of truth for what constitutes a valid
-  window. A `timeRange` other than `custom` ignores the timestamps and
-  delegates to `ParseTimeRange`; `custom` requires both timestamps in
-  RFC 3339 form.
+  error)` is the entry point for `/metrics/query`. A `timeRange` other
+  than `custom` ignores the timestamps and delegates to `ParseTimeRange`;
+  `custom` requires both timestamps in RFC 3339 form, parses them, and
+  hands them to `ResolveCustomWindow` naming `time_start`/`time_end`.
+- `ResolveCustomWindow(start, end time.Time, startParam, endParam
+  string) (TimeWindow, error)` is the single source of truth for the
+  custom-window rules on already-parsed timestamps. The parameter names
+  are only used in error messages, so each endpoint reports the field
+  the client actually sent.
 - `QueryTimeSeries` takes a `metrics.TimeWindow`, not a time-range
   string, and does no window validation of its own. The
   `timeSeriesQueryFunc` seam in
@@ -302,12 +307,16 @@ guard, not a nicety: `BuildMetricsQuery` derives the bucket width from
 the span, so an unbounded window turns one request into an arbitrarily
 large scan.
 
-`MaxCustomTimeSpan` is shared, not metrics-only.
-`GET /api/v1/timeline/events` takes absolute `start_time` and `end_time`
-values, so it imports the same constant from the `metrics` package and
-rejects an over-long span with the identical message, `invalid time
-range: span must not exceed 366 days`. Do not declare a second cap; the
-`api` package already depends on `metrics`, so there is no cycle.
+The rules are shared, not metrics-only. `GET /api/v1/timeline/events`
+takes absolute `start_time` and `end_time` values; `resolveTimelineWindow`
+in `server/src/internal/api/timeline_handlers.go` parses them with
+`RequireQueryTime` (keeping that helper's `start_time is required` and
+`Invalid start_time format, expected RFC3339` messages) and then calls
+`metrics.ResolveCustomWindow(start, end, "start_time", "end_time")`, so
+a future start is a `400`, a future end is clamped, and the span cap
+message is identical on both endpoints. Do not re-implement any of these
+checks inline in a handler; the `api` package already depends on
+`metrics`, so there is no cycle.
 
 `GET /api/v1/metrics/query` accepts `time_range=custom` alongside
 `time_start` and `time_end`, and maps any resolution error to `400`.

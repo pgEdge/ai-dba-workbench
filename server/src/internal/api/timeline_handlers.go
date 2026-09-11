@@ -47,6 +47,29 @@ func (h *TimelineHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(ht
 	mux.HandleFunc("/api/v1/timeline/events", authWrapper(h.handleTimelineEvents))
 }
 
+// resolveTimelineWindow reads the required start_time and end_time
+// query parameters and resolves them through the same custom-window
+// rules as /api/v1/metrics/query, so a future start is rejected, a
+// future end is clamped to now, and the span is capped identically on
+// both endpoints. On failure it writes a 400 response and returns false.
+func resolveTimelineWindow(w http.ResponseWriter, r *http.Request) (metrics.TimeWindow, bool) {
+	startTime, ok := RequireQueryTime(w, r, "start_time")
+	if !ok {
+		return metrics.TimeWindow{}, false
+	}
+	endTime, ok := RequireQueryTime(w, r, "end_time")
+	if !ok {
+		return metrics.TimeWindow{}, false
+	}
+
+	window, err := metrics.ResolveCustomWindow(startTime, endTime, "start_time", "end_time")
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return metrics.TimeWindow{}, false
+	}
+	return window, true
+}
+
 // handleTimelineEvents handles GET /api/v1/timeline/events
 func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Request) {
 	if !RequireGET(w, r) {
@@ -69,34 +92,12 @@ func (h *TimelineHandler) handleTimelineEvents(w http.ResponseWriter, r *http.Re
 		return // Error already sent
 	}
 
-	// Parse start_time (required)
-	startTime, ok := RequireQueryTime(w, r, "start_time")
+	window, ok := resolveTimelineWindow(w, r)
 	if !ok {
 		return
 	}
-	filter.StartTime = startTime
-
-	// Parse end_time (required)
-	endTime, ok := RequireQueryTime(w, r, "end_time")
-	if !ok {
-		return
-	}
-	filter.EndTime = endTime
-
-	// Validate time range
-	if !ValidateTimeRange(w, filter.StartTime, filter.EndTime) {
-		return
-	}
-
-	// Cap the span. The timeline picker can now request an arbitrary
-	// absolute window, so an unbounded span would let a single request
-	// scan the whole of history. The cap matches the one the metrics
-	// endpoint applies to its custom windows.
-	if filter.EndTime.Sub(filter.StartTime) > metrics.MaxCustomTimeSpan {
-		RespondError(w, http.StatusBadRequest,
-			"invalid time range: span must not exceed 366 days")
-		return
-	}
+	filter.StartTime = window.Start
+	filter.EndTime = window.End
 
 	// Parse event_types (optional, comma-separated)
 	if eventTypes, ok := ParseQueryStringList(r, "event_types"); ok {

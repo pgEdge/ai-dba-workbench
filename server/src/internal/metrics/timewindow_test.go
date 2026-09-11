@@ -224,3 +224,64 @@ func TestResolveTimeWindow_NonUTCOffsetNormalised(t *testing.T) {
 		t.Errorf("span = %v, want 2h", got)
 	}
 }
+
+// TestResolveCustomWindow_ParameterNames confirms that the shared
+// resolver names the caller's own query parameters in its messages, so
+// the timeline endpoint reports start_time and end_time whilst the
+// metrics endpoint reports time_start and time_end.
+func TestResolveCustomWindow_ParameterNames(t *testing.T) {
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name    string
+		start   time.Time
+		end     time.Time
+		wantErr string
+	}{
+		{
+			name:    "reversed window names the end parameter first",
+			start:   now,
+			end:     now.Add(-time.Hour),
+			wantErr: "invalid time range: end_time must be after start_time",
+		},
+		{
+			name:    "future start names the start parameter",
+			start:   now.Add(time.Hour),
+			end:     now.Add(2 * time.Hour),
+			wantErr: "invalid start_time: must not be in the future",
+		},
+		{
+			name:    "span cap message carries no parameter name",
+			start:   now.Add(-367 * 24 * time.Hour),
+			end:     now,
+			wantErr: "invalid time range: span must not exceed 366 days",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			window, err := ResolveCustomWindow(tt.start, tt.end, "start_time", "end_time")
+			if err == nil {
+				t.Fatalf("expected error %q, got window %+v", tt.wantErr, window)
+			}
+			if err.Error() != tt.wantErr {
+				t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+
+	// A local-zone pair resolves to UTC and keeps its span.
+	loc := time.FixedZone("plus2", 2*3600)
+	start := now.Add(-4 * time.Hour).In(loc)
+	end := now.Add(-2 * time.Hour).In(loc)
+	window, err := ResolveCustomWindow(start, end, "start_time", "end_time")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if window.Start.Location() != time.UTC || window.End.Location() != time.UTC {
+		t.Errorf("window %+v is not in UTC", window)
+	}
+	if !window.Start.Equal(start) || !window.End.Equal(end) {
+		t.Errorf("window %+v does not match inputs %v..%v", window, start, end)
+	}
+}

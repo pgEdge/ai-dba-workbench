@@ -52,7 +52,8 @@ project adheres to
   366 days and a start at or after the present moment, and it
   clamps an end in the future to the present moment, since a
   picker set to the current day routinely overshoots by a few
-  minutes.
+  minutes. The `/api/v1/timeline/events` endpoint applies the
+  same rules to its `start_time` and `end_time` parameters.
   Auto-refresh is suspended whilst a custom window is active,
   because re-fetching a fixed historical window returns identical
   data on every poll; the selector shows a pause indicator, and

@@ -195,13 +195,20 @@ func insertTimelineClearedAlert(t *testing.T, pool *pgxpool.Pool, connID int, ti
 	}
 }
 
-// timelineRequest builds a GET request for the seeded window. The extra
-// query fragment lets a caller add connection filters.
+// timelineRequest builds a GET request for the seeded window, which
+// runs from two hours ago to now. The extra query fragment lets a
+// caller add connection filters.
 func timelineRequest(extra string) *http.Request {
 	now := time.Now().UTC()
+	return timelineWindowRequest(now.Add(-2*time.Hour), now, extra)
+}
+
+// timelineWindowRequest builds a GET request for an explicit window,
+// restricted to the alert_cleared events the test schema supports.
+func timelineWindowRequest(start, end time.Time, extra string) *http.Request {
 	url := "/api/v1/timeline/events?start_time=" +
-		now.Add(-2*time.Hour).Format(time.RFC3339) +
-		"&end_time=" + now.Format(time.RFC3339) +
+		start.Format(time.RFC3339) +
+		"&end_time=" + end.Format(time.RFC3339) +
 		"&event_types=alert_cleared&limit=100"
 	if extra != "" {
 		url += "&" + extra
@@ -279,6 +286,86 @@ func TestTimelineHandler_Integration_SuperuserSeesAllConnections(t *testing.T) {
 	ids := connectionIDsOf(result)
 	if !ids[env.connA] || !ids[env.connB] {
 		t.Errorf("Expected both connections in result, got %v", ids)
+	}
+}
+
+// TestTimelineHandler_Integration_CustomWindow drives explicit windows
+// through the full handler against Postgres. The seeded alerts cleared
+// thirty minutes ago, so a window that ends an hour ago must miss them
+// whilst one that ends a moment ago must find them; a window ending in
+// the future is accepted and clamped, and one starting in the future is
+// rejected with the same 400 that /metrics/query returns.
+func TestTimelineHandler_Integration_CustomWindow(t *testing.T) {
+	env := newTimelineTestEnv(t)
+
+	handler := NewTimelineHandler(env.datastore, env.authStore,
+		auth.NewRBACChecker(env.authStore))
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name        string
+		start       time.Time
+		end         time.Time
+		expectCode  int
+		expectCount int
+		expectErr   string
+	}{
+		{
+			name:        "window covering the seeded alerts",
+			start:       now.Add(-time.Hour),
+			end:         now.Add(-time.Minute),
+			expectCode:  http.StatusOK,
+			expectCount: 2,
+		},
+		{
+			name:        "window ending before the seeded alerts",
+			start:       now.Add(-3 * time.Hour),
+			end:         now.Add(-time.Hour),
+			expectCode:  http.StatusOK,
+			expectCount: 0,
+		},
+		{
+			name:        "window ending in the future is clamped and served",
+			start:       now.Add(-time.Hour),
+			end:         now.Add(time.Hour),
+			expectCode:  http.StatusOK,
+			expectCount: 2,
+		},
+		{
+			name:       "window starting in the future is rejected",
+			start:      now.Add(time.Hour),
+			end:        now.Add(2 * time.Hour),
+			expectCode: http.StatusBadRequest,
+			expectErr:  "invalid start_time: must not be in the future",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.handleTimelineEvents(rec,
+				withSuperuser(timelineWindowRequest(tt.start, tt.end, "")))
+
+			if rec.Code != tt.expectCode {
+				t.Fatalf("Expected status %d, got %d (body %s)",
+					tt.expectCode, rec.Code, rec.Body.String())
+			}
+			if tt.expectCode != http.StatusOK {
+				var response ErrorResponse
+				if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+					t.Fatalf("Failed to decode response: %v", err)
+				}
+				if response.Error != tt.expectErr {
+					t.Errorf("Expected error %q, got %q", tt.expectErr, response.Error)
+				}
+				return
+			}
+
+			result := decodeTimelineResult(t, rec)
+			if result.TotalCount != tt.expectCount {
+				t.Errorf("Expected %d events, got %d", tt.expectCount, result.TotalCount)
+			}
+		})
 	}
 }
 

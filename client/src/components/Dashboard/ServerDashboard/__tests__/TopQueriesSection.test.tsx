@@ -518,6 +518,75 @@ describe('TopQueriesSection', () => {
     });
 
     // -----------------------------------------------------------------
+    it('ignores a stale response that resolves after a newer one', async () => {
+        // Hold each offset's response open so they can be resolved out
+        // of order, which is what happens when a user clicks Next twice
+        // in quick succession on a slow link.
+        const resolvers: Record<string, (rows: TopQueryRow[]) => void> = {};
+        mockApiFetch.mockImplementation((url: string) => {
+            if (url.includes('database-summaries')) {
+                return Promise.resolve(okResponse({ databases: [] }));
+            }
+            const offset = paramOf(url, 'offset') ?? '0';
+            if (offset === '0') {
+                return Promise.resolve(okResponse(makeRows(20, 'a'), '60'));
+            }
+            return new Promise(resolve => {
+                resolvers[offset] = (rows: TopQueryRow[]) =>
+                    resolve(okResponse(rows, '60'));
+            });
+        });
+
+        renderSection();
+        await waitFor(() => {
+            expect(screen.getByText('Showing 1–20 of 60')).toBeInTheDocument();
+        });
+
+        const next = screen.getByRole('button', {
+            name: 'Next page of queries',
+        });
+        fireEvent.click(next);
+        await waitFor(() => {
+            expect(resolvers['20']).toBeDefined();
+        });
+
+        fireEvent.click(next);
+        await waitFor(() => {
+            expect(resolvers['40']).toBeDefined();
+        });
+
+        // Distinct query text per page, so the rows on screen identify
+        // which response was applied.
+        const pageRows = (label: string): TopQueryRow[] =>
+            Array.from({ length: 20 }, (_, i) => makeQueryRow({
+                queryid: `${label}${i}`,
+                query: `SELECT '${label}' AS page, ${i}`,
+            }));
+
+        // The newer request (offset 40) lands first, then the older one
+        // (offset 20) arrives late. The late response must be dropped.
+        resolvers['40'](pageRows('third'));
+        await waitFor(() => {
+            expect(screen.getByText('Showing 41–60 of 60')).toBeInTheDocument();
+        });
+        expect(
+            screen.getByText("SELECT 'third' AS page, 0"),
+        ).toBeInTheDocument();
+
+        resolvers['20'](pageRows('second'));
+
+        // Give the stale response a chance to be applied before
+        // asserting that it was not.
+        await waitFor(() => {
+            expect(screen.getByText('Showing 41–60 of 60')).toBeInTheDocument();
+        });
+        expect(screen.queryByText('Showing 21–40 of 60')).toBeNull();
+        expect(
+            screen.getByText("SELECT 'third' AS page, 0"),
+        ).toBeInTheDocument();
+        expect(screen.queryByText("SELECT 'second' AS page, 0")).toBeNull();
+    });
+
     // X-Total-Count handling
     // -----------------------------------------------------------------
 

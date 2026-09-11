@@ -176,6 +176,15 @@ const seriesValuesFor = (title: string, name: string): string =>
             && el.getAttribute('data-series') === name)
         .map(el => el.getAttribute('data-values') ?? '')[0];
 
+/**
+ * Sparklines render through the same Chart mock but carry no title,
+ * so they are identified by their single 'value' series.
+ */
+const sparklineValues = (): string[] =>
+    screen.getAllByTestId('chart-series')
+        .filter(el => el.getAttribute('data-series') === 'value')
+        .map(el => el.getAttribute('data-values') ?? '');
+
 /** Find a rendered chart element by its title. */
 const chartFor = (title: string): HTMLElement | undefined =>
     screen.getAllByTestId('chart')
@@ -333,6 +342,46 @@ describe('WalReplicationSection', () => {
             // Two requested out of six checkpoints in the window.
             expect(screen.getByText('33.3')).toBeInTheDocument();
             expect(screen.getByText('%')).toBeInTheDocument();
+        });
+
+        it('reports a zero WAL rate rather than an earlier reading', async () => {
+            routeMetrics({
+                [WAL_KEY]: ready([
+                    series('wal_bytes_per_sec', [1048576, 0]),
+                    series('wal_records_per_sec', [20, 0]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('WAL Bytes')).toBeInTheDocument();
+            });
+            // An idle counter is genuinely 0/s and must be shown as such.
+            expect(screen.getByText('0 B')).toBeInTheDocument();
+            expect(screen.getByText('0.0')).toBeInTheDocument();
+            expect(screen.queryByText('1.0 MB')).not.toBeInTheDocument();
+        });
+
+        it('tracks the running requested share in the sparkline', async () => {
+            routeMetrics({
+                [CHECKPOINT_KPI_KEY]: ready([
+                    series('num_timed_delta', [0, 3, 1]),
+                    series('num_requested_delta', [0, 1, 1]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Requested Checkpoints'))
+                    .toBeInTheDocument();
+            });
+            /*
+             * Nothing happened in the first bucket, then one requested
+             * out of four, then two out of six, so the final sparkline
+             * point matches the 33.3% on the tile.
+             */
+            expect(sparklineValues()).toContain('0,25,33.33333333333333');
+            expect(screen.getByText('33.3')).toBeInTheDocument();
         });
 
         it('shows a placeholder when no checkpoints occurred', async () => {

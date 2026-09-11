@@ -24,7 +24,10 @@ import ChartPanel from '../ChartPanel';
 import { apiGet } from '../../../utils/apiClient';
 import { logger } from '../../../utils/logger';
 import { formatBytes, formatValue, formatNumber } from '../../../utils/formatters';
-import { type ServerSectionProps, extractSparklineData, extractLatestValue } from './types';
+import {
+    type ServerSectionProps, extractSparklineData, extractLatestValue,
+    extractLatestRate,
+} from './types';
 
 /** Number of data buckets for KPI sparklines */
 const KPI_BUCKETS = 30;
@@ -245,7 +248,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const numBackends = extractLatestValue(
         connectionsKpi.data, 'numbackends'
     );
-    const xactCommitRate = extractLatestValue(
+    const xactCommitRate = extractLatestRate(
         txnKpi.data, 'xact_commit_per_sec'
     );
     const blksHit = extractLatestValue(

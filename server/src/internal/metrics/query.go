@@ -523,6 +523,74 @@ func BuildMetricsQuery(
 	return query, queryArgs, nil
 }
 
+// metricQueryParts holds the decomposed pieces of the shared metric query
+// WHERE clause, so that a caller needing a variant of it (notably the
+// rate/delta lookback below, which replaces the lower time bound) can
+// reassemble the clauses instead of string-editing a finished clause.
+type metricQueryParts struct {
+	// filterClauses holds only the dimension filters (database, schema,
+	// table, index, queryid), each already bound to its $N placeholder.
+	filterClauses []string
+	// args is the full ordered argument list: bucket interval, connection
+	// ID, start time, end time, then one value per filter clause.
+	args []any
+}
+
+// where returns the standard WHERE clause: the connection, both time
+// bounds, and every dimension filter.
+func (p metricQueryParts) where() string {
+	clauses := make([]string, 0, len(p.filterClauses)+3)
+	clauses = append(clauses,
+		"connection_id = $2",
+		"collected_at >= $3",
+		"collected_at <= $4")
+	clauses = append(clauses, p.filterClauses...)
+	return strings.Join(clauses, " AND ")
+}
+
+// lookbackWhere returns the WHERE clause used by the rate/delta sample
+// query. It is the standard clause with the lower time bound widened to
+// also admit the latest sample taken strictly before the window start that
+// matches the same connection and dimension filters.
+//
+// That extra sample exists only to feed the LAG: without it the first
+// in-window sample has no predecessor, so any counter increase between the
+// last pre-window sample and it is lost and the first bucket under-reports
+// (a NULL rate, and a zero delta). The rate_samples CTE therefore drops
+// rows before the window start again after the LAG has been computed, so
+// the borrowed sample never becomes a bucket of its own.
+//
+// COALESCE falls back to the window start when no earlier sample exists,
+// which reduces the clause to the standard lower bound and leaves the
+// behavior of a window with no history exactly as it was.
+//
+// The lookback is deliberately unbounded below: it takes the most recent
+// earlier sample however old it is, so a window that opens after a long
+// collection gap still attributes the counter's whole rise to its first
+// bucket, and the per-second rate divides that rise by the true elapsed
+// time. The scan is a MAX over an index-ordered column, but it is not
+// bounded to a single partition of the probe table.
+func (p metricQueryParts) lookbackWhere(probeName string) string {
+	priorClauses := make([]string, 0, len(p.filterClauses)+2)
+	priorClauses = append(priorClauses,
+		"connection_id = $2",
+		"collected_at < $3")
+	priorClauses = append(priorClauses, p.filterClauses...)
+
+	lowerBound := fmt.Sprintf(
+		"collected_at >= COALESCE((SELECT MAX(collected_at) "+
+			"FROM metrics.%s WHERE %s), $3)",
+		QuoteIdentifier(probeName), strings.Join(priorClauses, " AND "))
+
+	clauses := make([]string, 0, len(p.filterClauses)+3)
+	clauses = append(clauses,
+		"connection_id = $2",
+		lowerBound,
+		"collected_at <= $4")
+	clauses = append(clauses, p.filterClauses...)
+	return strings.Join(clauses, " AND ")
+}
+
 // metricQueryBase builds the shared WHERE clause and the leading query
 // arguments used by both the raw-column and derived-metric query builders.
 // The returned args are, in order: the bucket interval string, the
@@ -534,38 +602,47 @@ func metricQueryBase(
 	bucketWidth time.Duration,
 	filters MetricFilters,
 ) (string, []any) {
-	queryArgs := []any{
-		fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
-		connectionID,
-		timeStart,
-		timeEnd,
+	parts := metricQueryClauses(
+		connectionID, timeStart, timeEnd, bucketWidth, filters)
+	return parts.where(), parts.args
+}
+
+// metricQueryClauses builds the decomposed WHERE clause pieces and the
+// leading query arguments shared by every metrics query builder.
+func metricQueryClauses(
+	connectionID int,
+	timeStart, timeEnd time.Time,
+	bucketWidth time.Duration,
+	filters MetricFilters,
+) metricQueryParts {
+	parts := metricQueryParts{
+		args: []any{
+			fmt.Sprintf("%d seconds", int(bucketWidth.Seconds())),
+			connectionID,
+			timeStart,
+			timeEnd,
+		},
 	}
 	argNum := 5
 
-	whereClauses := []string{
-		"connection_id = $2",
-		"collected_at >= $3",
-		"collected_at <= $4",
-	}
-
 	if filters.DatabaseName != "" && filters.DatabaseColumn != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("%s = $%d", QuoteIdentifier(filters.DatabaseColumn), argNum))
-		queryArgs = append(queryArgs, filters.DatabaseName)
+		parts.args = append(parts.args, filters.DatabaseName)
 		argNum++
 	}
 
 	if filters.SchemaName != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("schemaname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.SchemaName)
+		parts.args = append(parts.args, filters.SchemaName)
 		argNum++
 	}
 
 	if filters.TableName != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("relname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.TableName)
+		parts.args = append(parts.args, filters.TableName)
 		argNum++
 	}
 
@@ -575,9 +652,9 @@ func metricQueryBase(
 	// execution time, exactly as an unsupported schemaname/relname filter
 	// would. This keeps the validation semantics identical across dimensions.
 	if filters.IndexName != "" {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("indexrelname = $%d", argNum))
-		queryArgs = append(queryArgs, filters.IndexName)
+		parts.args = append(parts.args, filters.IndexName)
 		argNum++
 	}
 
@@ -585,14 +662,14 @@ func metricQueryBase(
 	// as a bigint so the comparison can use the queryid index. Like the
 	// dimension filters above it applies no probe-column-existence check.
 	if filters.QueryID != nil {
-		whereClauses = append(whereClauses,
+		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("queryid = $%d", argNum))
-		queryArgs = append(queryArgs, *filters.QueryID)
+		parts.args = append(parts.args, *filters.QueryID)
 		// No argNum++ here: QueryID is the last filter. A new filter
 		// added below must add argNum++ above first.
 	}
 
-	return strings.Join(whereClauses, " AND "), queryArgs
+	return parts
 }
 
 // rateAggExpr builds the bucket-level aggregation expression for one
@@ -614,7 +691,7 @@ func rateAggExpr(aggregation string, idx int, outputName string) string {
 // deltaAggExpr builds the bucket-level aggregation expression for one
 // per-bucket delta column. The inner per-sample delta is exposed as
 // delta_<idx> in the rate_samples CTE and is already zero for a counter
-// reset or for the first sample of the window, so SUM is the only
+// reset or for a sample with no predecessor at all, so SUM is the only
 // meaningful bucket aggregate and the requested aggregation is ignored:
 // averaging or taking the last of a set of increments would under-report
 // the events that actually occurred in the bucket.
@@ -645,7 +722,12 @@ func ratioTupleExpr(aggregation, column string) string {
 //
 // Rates and deltas are computed from the same LAG over consecutive samples
 // and therefore share one rate_samples/rate_buckets pair, so both kinds may
-// be requested together for the same or for different base columns. Delta
+// be requested together for the same or for different base columns. The
+// sample query feeding that LAG reaches one sample back beyond the window
+// start (see metricQueryParts.lookbackWhere), so the counter increase
+// between the last sample before the window and the first sample inside it
+// lands in the first bucket rather than being dropped; the borrowed sample
+// is excluded from rate_samples' output and never becomes a bucket. Delta
 // outputs are COALESCEd to 0 after the LEFT JOIN rather than left NULL:
 // a bucket with no sample saw no counter reading, and its events are
 // counted by the next sample's delta, so carrying the previous bucket's
@@ -670,8 +752,9 @@ func BuildDerivedMetricsQuery(
 		bucketWidth = time.Second
 	}
 
-	whereSQL, queryArgs := metricQueryBase(
+	parts := metricQueryClauses(
 		connectionID, timeStart, timeEnd, bucketWidth, filters)
+	whereSQL, queryArgs := parts.where(), parts.args
 
 	// counters holds every metric derived from the sample-to-sample change
 	// of a cumulative counter column, whichever kind it is; they share the
@@ -705,11 +788,13 @@ func BuildDerivedMetricsQuery(
 					"LAG(SUM(%s)) OVER (ORDER BY collected_at) AS prev_%d",
 					qb, i))
 			if d.Kind == DerivedDelta {
-				// A missing LAG (the first sample of the window) and a
-				// negative delta (a counter reset from pg_stat_reset() or a
-				// server restart) both contribute nothing, matching the rate
-				// guard below. Zero rather than NULL keeps the bucket SUM
-				// defined whenever the bucket holds any sample at all.
+				// A missing LAG (only the very first sample the probe ever
+				// recorded for this connection and filter set, since the
+				// window borrows one earlier sample) and a negative delta (a
+				// counter reset from pg_stat_reset() or a server restart)
+				// both contribute nothing, matching the rate guard below.
+				// Zero rather than NULL keeps the bucket SUM defined
+				// whenever the bucket holds any sample at all.
 				sampleCols = append(sampleCols, fmt.Sprintf(
 					"CASE WHEN prev_%d IS NOT NULL "+
 						"AND (total_%d - prev_%d) >= 0 "+
@@ -730,6 +815,10 @@ func BuildDerivedMetricsQuery(
 				rateAggExpr(aggregation, i, d.OutputName))
 		}
 
+		// The inner sample query reads one extra sample from before the
+		// window (see lookbackWhere) purely so the first in-window sample
+		// has a LAG to subtract from; the outer WHERE then drops it again,
+		// so it contributes its counter reading without becoming a bucket.
 		ctes = append(ctes, fmt.Sprintf(`
         rate_samples AS (
             SELECT
@@ -746,11 +835,12 @@ func BuildDerivedMetricsQuery(
                 WHERE %s
                 GROUP BY collected_at
             ) samples
+            WHERE collected_at >= $3
         )`,
 			strings.Join(sampleCols, ",\n                "),
 			strings.Join(innerCols, ",\n                    "),
 			QuoteIdentifier(probeName),
-			whereSQL,
+			parts.lookbackWhere(probeName),
 		))
 
 		ctes = append(ctes, fmt.Sprintf(`

@@ -24,6 +24,7 @@ import {
     type DatabaseSectionProps,
     extractSparklineData,
     extractLatestValue,
+    extractLatestRate,
     formatValue,
     formatBytes,
 } from './types';
@@ -226,10 +227,10 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         return points;
     }, [cacheKpi.data]);
 
-    const txnCommit = extractLatestValue(
+    const txnCommit = extractLatestRate(
         txnKpi.data, 'xact_commit_per_sec'
     );
-    const txnRollback = extractLatestValue(
+    const txnRollback = extractLatestRate(
         txnKpi.data, 'xact_rollback_per_sec'
     );
     const txnRate = useMemo(() => {
@@ -238,6 +239,32 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         }
         return (txnCommit ?? 0) + (txnRollback ?? 0);
     }, [txnCommit, txnRollback]);
+
+    /*
+     * The tile shows commits plus rollbacks, so the sparkline sums the
+     * two rate series bucket by bucket rather than tracking commits
+     * alone; points are paired by index, and a series that is short or
+     * missing contributes 0 for the buckets it does not cover.
+     */
+    const txnSparkline = useMemo((): MetricDataPoint[] => {
+        const commitData = extractSparklineData(
+            txnKpi.data, 'xact_commit_per_sec'
+        );
+        const rollbackData = extractSparklineData(
+            txnKpi.data, 'xact_rollback_per_sec'
+        );
+        const len = Math.max(commitData.length, rollbackData.length);
+        const points: MetricDataPoint[] = [];
+        for (let i = 0; i < len; i++) {
+            const commit = i < commitData.length ? commitData[i] : null;
+            const rollback = i < rollbackData.length ? rollbackData[i] : null;
+            points.push({
+                time: (commit ?? rollback as MetricDataPoint).time,
+                value: (commit?.value ?? 0) + (rollback?.value ?? 0),
+            });
+        }
+        return points;
+    }, [txnKpi.data]);
 
     // Dead tuple ratio from raw n_dead_tup and n_live_tup
     const nDeadTup = extractLatestValue(
@@ -378,9 +405,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                     label="Transactions"
                     value={formatValue(txnRate)}
                     unit={txnRate !== null ? '/s' : undefined}
-                    sparklineData={extractSparklineData(
-                        txnKpi.data, 'xact_commit_per_sec'
-                    )}
+                    sparklineData={txnSparkline}
                     analysisContext={{
                         metricDescription: 'Transaction commits and rollbacks per second over time',
                         connectionId,

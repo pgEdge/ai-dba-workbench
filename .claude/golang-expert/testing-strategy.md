@@ -742,22 +742,32 @@ func executeCommand(cmd string) { ... }
 - `.github/workflows/ci-collector.yml`
 - `.github/workflows/ci-server.yml`
 - `.github/workflows/ci-alerter.yml`
+- `.github/workflows/ci-e2e.yml`
 - `.github/workflows/ci-client.yml`
 - `.github/workflows/ci-docs.yml`
 
-All workflows:
+The Go workflows:
 
-1. **Matrix**: Go 1.23, 1.24
-2. **Services**: PostgreSQL 14, 15, 16, 17, 18
-3. **Steps**: Build, test with coverage, lint, upload coverage HTML
-4. **Artifacts**: Coverage reports retained 7 days
+1. **Matrix**: Go 1.26.2
+2. **Steps**: Build, test with coverage, lint, upload coverage HTML
+3. **Artifacts**: Coverage reports retained 7 days
+
+Only four of them declare a PostgreSQL service:
+`ci-collector.yml`, `ci-server.yml` and `ci-alerter.yml` across
+PostgreSQL 14, 15, 16, 17 and 18, and `ci-e2e.yml` on 16 alone.
+`ci-client.yml` and `ci-docs.yml` need no database.
 
 ### CI Example (Server)
 
 ```yaml
 services:
   postgres:
-    image: postgres:${{ matrix.postgres-version }}
+    # pgvector, not plain postgres: the server, collector and alerter
+    # all have tests gated on the vector extension, and on a plain
+    # image those tests skip silently rather than fail. Pin the
+    # pgvector version so a new upstream release cannot change what CI
+    # tests underneath us.
+    image: pgvector/pgvector:0.8.6-pg${{ matrix.postgres-version }}
     env:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres

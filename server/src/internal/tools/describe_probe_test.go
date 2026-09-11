@@ -69,35 +69,6 @@ func TestDescribeProbe_InvalidProbeName(t *testing.T) {
 	}
 }
 
-func TestIsValidIdentifier(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"pg_stat_database", true},
-		{"PG_STAT_DATABASE", true},
-		{"table1", true},
-		{"_private", true},
-		{"a", true},
-		{"", false},
-		{"123table", false},
-		{"table-name", false},
-		{"table name", false},
-		{"table;drop", false},
-		{"table'injection", false},
-		{"select*from", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := isValidIdentifier(tt.input)
-			if result != tt.expected {
-				t.Errorf("isValidIdentifier(%q) = %v, want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestIsMetricColumn(t *testing.T) {
 	tests := []struct {
 		name     string

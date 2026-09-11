@@ -82,6 +82,27 @@ func (h *MetricsHandler) RegisterRoutes(
 		authWrapper(h.handleMetricsBaselines))
 }
 
+// parseQueryIDFilter reads the optional queryid filter from the request.
+// Query identifiers are 64-bit signed integers that clients carry as
+// decimal strings, so the value is parsed as a signed 64-bit integer and
+// the parsed value is what reaches the query layer; a leading sign is
+// therefore normalised rather than compared textually. It returns nil and
+// true when the parameter is absent, the parsed value and true when it is
+// valid, and false after sending a 400 response for a malformed value.
+func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (*int64, bool) {
+	raw := ParseQueryString(r, "queryid")
+	if raw == "" {
+		return nil, true
+	}
+	queryID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid queryid: must be a 64-bit integer")
+		return nil, false
+	}
+	return &queryID, true
+}
+
 // handleMetricsQuery handles GET /api/v1/metrics/query.
 func (h *MetricsHandler) handleMetricsQuery(
 	w http.ResponseWriter,
@@ -148,11 +169,16 @@ func (h *MetricsHandler) handleMetricsQuery(
 	}
 
 	// Parse optional filters
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
 	filters := metrics.MetricFilters{
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
 		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      queryID,
 	}
 
 	// Parse buckets (default 150)
@@ -257,11 +283,16 @@ func (h *MetricsHandler) handleLatestRows(
 		return
 	}
 
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
 	filters := metrics.MetricFilters{
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
 		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      queryID,
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

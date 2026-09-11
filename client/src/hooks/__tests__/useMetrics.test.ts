@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useMetrics, useBaselines } from '../useMetrics';
+import type { MetricQueryParams } from '../../components/Dashboard/types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -98,7 +99,7 @@ describe('useMetrics', () => {
     it('fetches data when params are provided', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
             connectionId: 1,
@@ -120,7 +121,7 @@ describe('useMetrics', () => {
     it('builds URL with all parameters', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_user_tables',
             timeRange: '7d',
             connectionId: 5,
@@ -153,7 +154,7 @@ describe('useMetrics', () => {
     it('builds URL with connection_ids array', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
             connectionIds: [1, 2, 3],
@@ -172,7 +173,7 @@ describe('useMetrics', () => {
     it('builds URL with index_name when indexName is set', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_all_indexes',
             timeRange: '24h',
             connectionId: 5,
@@ -197,7 +198,7 @@ describe('useMetrics', () => {
     it('omits index_name when indexName is not set', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_user_tables',
             timeRange: '24h',
             connectionId: 5,
@@ -218,7 +219,7 @@ describe('useMetrics', () => {
     it('builds URL with queryid when queryId is set', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_statements',
             timeRange: '24h',
             connectionId: 5,
@@ -240,7 +241,7 @@ describe('useMetrics', () => {
     it('omits queryid when queryId is not set', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_statements',
             timeRange: '24h',
             connectionId: 5,
@@ -264,7 +265,7 @@ describe('useMetrics', () => {
             }),
         );
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -285,7 +286,7 @@ describe('useMetrics', () => {
     it('sets error on API failure', async () => {
         mockApiGet.mockRejectedValueOnce(new Error('Network error'));
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -303,7 +304,7 @@ describe('useMetrics', () => {
     it('refetch triggers a new API call', async () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -327,7 +328,7 @@ describe('useMetrics', () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 
         const { rerender } = renderHook(
-            ({ params }) => useMetrics(params),
+            ({ params }: { params: MetricQueryParams }) => useMetrics(params),
             {
                 initialProps: {
                     params: {
@@ -359,7 +360,7 @@ describe('useMetrics', () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
         const { result, rerender } = renderHook(
-            ({ params }) => useMetrics(params),
+            ({ params }: { params: MetricQueryParams }) => useMetrics(params),
             {
                 initialProps: {
                     params: {
@@ -415,7 +416,7 @@ describe('useMetrics', () => {
     it('does not flash loading on auto-refresh after initial load', async () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };

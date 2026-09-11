@@ -290,9 +290,50 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesQueryIDFilter(t *testing.T) {
 	if !called {
 		t.Fatal("expected time-series query function to be called")
 	}
-	if gotFilters.QueryID != "-1234567890123456789" {
-		t.Errorf("expected QueryID %q reaching the query layer, got %q",
-			"-1234567890123456789", gotFilters.QueryID)
+	if gotFilters.QueryID == nil || *gotFilters.QueryID != -1234567890123456789 {
+		t.Errorf("expected QueryID %d reaching the query layer, got %v",
+			int64(-1234567890123456789), gotFilters.QueryID)
+	}
+}
+
+func TestHandleMetricsQuery_TimeSeriesMode_SignedQueryIDNormalised(t *testing.T) {
+	// ParseInt accepts an explicit leading '+', so "+42" (sent as %2B42)
+	// must reach the query layer as the integer 42 rather than being
+	// forwarded verbatim, where a textual comparison would never match.
+	var gotFilters metrics.MetricFilters
+	handler := &MetricsHandler{
+		datastore: &database.Datastore{},
+		queryTimeSeriesFn: func(
+			_ context.Context,
+			_ *pgxpool.Pool,
+			_ string,
+			_ []int,
+			_ string,
+			filters metrics.MetricFilters,
+			_ int,
+			_ string,
+			_ []string,
+		) ([]metrics.MetricSeries, error) {
+			gotFilters = filters
+			return []metrics.MetricSeries{}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/query?connection_id=1"+
+			"&probe_name=pg_stat_statements&time_range=1h"+
+			"&queryid=%2B42", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleMetricsQuery(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if gotFilters.QueryID == nil || *gotFilters.QueryID != 42 {
+		t.Errorf("expected QueryID 42 reaching the query layer, got %v",
+			gotFilters.QueryID)
 	}
 }
 

@@ -20,6 +20,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// ptrInt64 returns a pointer to v for populating MetricFilters.QueryID.
+func ptrInt64(v int64) *int64 {
+	return &v
+}
+
 func TestParseTimeRange(t *testing.T) {
 	tests := []struct {
 		input   string
@@ -316,7 +321,7 @@ func TestBuildMetricsQuery(t *testing.T) {
 			MetricFilters{
 				DatabaseName:   "mydb",
 				DatabaseColumn: "database_name",
-				QueryID:        "-1234567890123456789",
+				QueryID:        ptrInt64(-1234567890123456789),
 			},
 		)
 		if err != nil {
@@ -328,14 +333,14 @@ func TestBuildMetricsQuery(t *testing.T) {
 		if !strings.Contains(query, `"database_name" = $5`) {
 			t.Error("query should filter by database_name")
 		}
-		if !strings.Contains(query, "queryid::text = $6") {
+		if !strings.Contains(query, "queryid = $6") {
 			t.Errorf("query should filter by queryid, got:\n%s", query)
 		}
 		if len(args) != 6 {
 			t.Fatalf("expected 6 args, got %d", len(args))
 		}
-		if args[5] != "-1234567890123456789" {
-			t.Errorf("expected queryid arg, got %v", args[5])
+		if args[5] != int64(-1234567890123456789) {
+			t.Errorf("expected int64 queryid arg, got %#v", args[5])
 		}
 	})
 
@@ -355,20 +360,20 @@ func TestBuildMetricsQuery(t *testing.T) {
 			[]string{"calls"},
 			map[string]string{"calls": "bigint"},
 			1, start, end, 60, "sum",
-			MetricFilters{QueryID: ""},
+			MetricFilters{QueryID: nil},
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if withoutField != withEmptyField {
-			t.Errorf("empty QueryID changed SQL:\n%s\n---\n%s",
+			t.Errorf("nil QueryID changed SQL:\n%s\n---\n%s",
 				withoutField, withEmptyField)
 		}
 		if strings.Contains(withEmptyField, "queryid") {
-			t.Error("empty QueryID must not add a queryid clause")
+			t.Error("nil QueryID must not add a queryid clause")
 		}
 		if len(argsA) != len(argsB) {
-			t.Errorf("empty QueryID changed arg count: %d vs %d",
+			t.Errorf("nil QueryID changed arg count: %d vs %d",
 				len(argsA), len(argsB))
 		}
 	})
@@ -1284,11 +1289,11 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 			[]string{"query", "calls"},
 			map[string]string{"query": "text", "calls": "bigint"},
 			[]int{7},
-			MetricFilters{QueryID: "-1234567890123456789"},
+			MetricFilters{QueryID: ptrInt64(-1234567890123456789)},
 			"calls", "desc", 10,
 		)
 
-		if !strings.Contains(query, "queryid::text = $2") {
+		if !strings.Contains(query, "queryid = $2") {
 			t.Errorf("query should filter by queryid, got: %s", query)
 		}
 		if !strings.Contains(query, "LIMIT $3") {
@@ -1298,11 +1303,30 @@ func TestBuildLatestRowsQuery(t *testing.T) {
 		if len(args) != 3 {
 			t.Fatalf("expected 3 args, got %d", len(args))
 		}
-		if args[1] != "-1234567890123456789" {
-			t.Errorf("expected queryid arg, got %v", args[1])
+		if args[1] != int64(-1234567890123456789) {
+			t.Errorf("expected int64 queryid arg, got %#v", args[1])
 		}
 		if args[2] != 10 {
 			t.Errorf("expected limit arg 10, got %v", args[2])
+		}
+	})
+
+	t.Run("queryid zero is a real filter", func(t *testing.T) {
+		// Zero is a legitimate pg_stat_statements identifier, so the
+		// pointer form must distinguish it from "no filter".
+		query, args := buildLatestRowsQuery(
+			"pg_stat_statements",
+			[]string{"calls"},
+			map[string]string{"calls": "bigint"},
+			[]int{7},
+			MetricFilters{QueryID: ptrInt64(0)},
+			"calls", "desc", 10,
+		)
+		if !strings.Contains(query, "queryid = $2") {
+			t.Errorf("zero queryid should still filter, got: %s", query)
+		}
+		if len(args) != 3 || args[1] != int64(0) {
+			t.Errorf("expected int64 zero queryid arg, got %#v", args)
 		}
 	})
 
@@ -1807,18 +1831,18 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				Kind:       DerivedPerSec,
 			}},
 			1, start, end, 60, "avg",
-			MetricFilters{QueryID: "42"})
+			MetricFilters{QueryID: ptrInt64(42)})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(query, "queryid::text = $5") {
+		if !strings.Contains(query, "queryid = $5") {
 			t.Errorf("query should filter by queryid, got:\n%s", query)
 		}
 		if len(args) != 5 {
 			t.Fatalf("expected 5 args, got %d", len(args))
 		}
-		if args[4] != "42" {
-			t.Errorf("expected queryid arg '42', got %v", args[4])
+		if args[4] != int64(42) {
+			t.Errorf("expected int64 queryid arg 42, got %#v", args[4])
 		}
 	})
 

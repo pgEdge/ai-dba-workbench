@@ -84,21 +84,23 @@ func (h *MetricsHandler) RegisterRoutes(
 
 // parseQueryIDFilter reads the optional queryid filter from the request.
 // Query identifiers are 64-bit signed integers that clients carry as
-// strings, so the value is validated as a signed 64-bit integer and then
-// passed on in its original string form. It returns the value and true
-// when the parameter is absent or valid, and false after sending a 400
-// response for a malformed value.
-func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (string, bool) {
-	queryID := ParseQueryString(r, "queryid")
-	if queryID == "" {
-		return "", true
+// decimal strings, so the value is parsed as a signed 64-bit integer and
+// the parsed value is what reaches the query layer; a leading sign is
+// therefore normalised rather than compared textually. It returns nil and
+// true when the parameter is absent, the parsed value and true when it is
+// valid, and false after sending a 400 response for a malformed value.
+func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (*int64, bool) {
+	raw := ParseQueryString(r, "queryid")
+	if raw == "" {
+		return nil, true
 	}
-	if _, err := strconv.ParseInt(queryID, 10, 64); err != nil {
+	queryID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
 		RespondError(w, http.StatusBadRequest,
 			"Invalid queryid: must be a 64-bit integer")
-		return "", false
+		return nil, false
 	}
-	return queryID, true
+	return &queryID, true
 }
 
 // handleMetricsQuery handles GET /api/v1/metrics/query.

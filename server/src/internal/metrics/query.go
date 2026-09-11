@@ -54,10 +54,13 @@ type MetricFilters struct {
 	TableName      string
 	IndexName      string
 	// QueryID restricts results to a single pg_stat_statements query
-	// identifier. It is carried as a string because query identifiers are
-	// 64-bit values that JavaScript clients cannot represent exactly, and
-	// it is compared against queryid::text for the same reason.
-	QueryID string
+	// identifier. Clients carry identifiers as decimal strings because
+	// they are 64-bit values JavaScript cannot represent exactly; the
+	// handler parses the string and binds the int64 here so the filter
+	// compares queryid directly and the (connection_id, database_name,
+	// queryid, collected_at) index remains usable. A nil pointer means no
+	// filter; zero is a legitimate identifier and must stay expressible.
+	QueryID *int64
 }
 
 // maxLatestRowLimit bounds the number of rows a latest-row query may
@@ -571,14 +574,13 @@ func metricQueryBase(
 		argNum++
 	}
 
-	// QueryID filters on the pg_stat_statements query identifier, compared
-	// as text so the caller can pass the value it received in JSON without
-	// losing precision. Like the dimension filters above it applies no
-	// probe-column-existence check.
-	if filters.QueryID != "" {
+	// QueryID filters on the pg_stat_statements query identifier, bound
+	// as a bigint so the comparison can use the queryid index. Like the
+	// dimension filters above it applies no probe-column-existence check.
+	if filters.QueryID != nil {
 		whereClauses = append(whereClauses,
-			fmt.Sprintf("queryid::text = $%d", argNum))
-		queryArgs = append(queryArgs, filters.QueryID)
+			fmt.Sprintf("queryid = $%d", argNum))
+		queryArgs = append(queryArgs, *filters.QueryID)
 		// No argNum++ here: QueryID is the last filter. A new filter
 		// added below must add argNum++ above first.
 	}
@@ -1330,9 +1332,9 @@ func buildLatestRowsQuery(
 		argNum++
 	}
 
-	if filters.QueryID != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("queryid::text = $%d", argNum))
-		args = append(args, filters.QueryID)
+	if filters.QueryID != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("queryid = $%d", argNum))
+		args = append(args, *filters.QueryID)
 		argNum++
 	}
 

@@ -3383,7 +3383,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
 					queryParamInt("buckets", "Number of time buckets"),
 					queryParamString("aggregation", "Aggregation method"),
-					queryParamString("metrics", "Comma-separated metric names"),
+					queryParamString("metrics", "Comma-separated metric names. "+
+						"A name may be a raw probe column, a cumulative "+
+						"counter column suffixed with _per_sec for its "+
+						"per-second rate, or one suffixed with _delta for "+
+						"its per-bucket increase; a real column of that "+
+						"name always takes precedence."),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("MetricsQueryResult", "Metrics query results"),

@@ -181,7 +181,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['tx_bytes', 'rx_bytes'],
+        metrics: ['tx_bytes_per_sec', 'rx_bytes_per_sec'],
     }), [connectionId, timeRange.range]);
 
     // Fetch KPI data
@@ -293,8 +293,8 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     const networkChartData = useMemo(
         () => buildChartData(
             networkChart.data,
-            ['tx_bytes', 'rx_bytes'],
-            ['TX Bytes', 'RX Bytes'],
+            ['tx_bytes_per_sec', 'rx_bytes_per_sec'],
+            ['TX Bytes/s', 'RX Bytes/s'],
         ),
         [networkChart.data]
     );
@@ -403,6 +403,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         loading={cpuChart.loading && !cpuChartData}
                         hasData={hasSystemStats && !!cpuChartData}
                         emptyMessage="No CPU data available. Is the system_stats extension installed?"
+                        errorMessage={cpuChart.error}
                         height={CHART_HEIGHT}
                     >
                         {cpuChartData && (
@@ -434,6 +435,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         loading={memoryChart.loading && !memoryChartData}
                         hasData={hasSystemStats && !!memoryChartData}
                         emptyMessage="No memory data available. Is the system_stats extension installed?"
+                        errorMessage={memoryChart.error}
                         height={CHART_HEIGHT}
                     >
                         {memoryChartData && (
@@ -464,6 +466,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         loading={diskChart.loading && !diskChartData}
                         hasData={hasSystemStats && !!diskChartData}
                         emptyMessage="No disk data available. Is the system_stats extension installed?"
+                        errorMessage={diskChart.error}
                         height={CHART_HEIGHT}
                     >
                         {diskChartData && (
@@ -494,6 +497,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         loading={loadChart.loading && !loadChartData}
                         hasData={hasSystemStats && !!loadChartData}
                         emptyMessage="No load average data available. Is the system_stats extension installed?"
+                        errorMessage={loadChart.error}
                         height={CHART_HEIGHT}
                     >
                         {loadChartData && (
@@ -523,6 +527,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         loading={networkChart.loading && !networkChartData}
                         hasData={hasSystemStats && !!networkChartData}
                         emptyMessage="No network data available. Is the system_stats extension installed?"
+                        errorMessage={networkChart.error}
                         height={CHART_HEIGHT}
                     >
                         {networkChartData && (
@@ -536,7 +541,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Network throughput showing transmitted and received bytes',
+                                    metricDescription: 'Network throughput showing transmitted and received bytes per second',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,

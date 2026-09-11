@@ -79,8 +79,14 @@ project adheres to
   table the collector never creates, and now reads the archiver
   columns of `metrics.pg_stat_wal`. The `transaction_wraparound`
   rule evaluated a hardcoded 50.0 and now reports the transaction
-  ID age of the oldest non-template database as a percentage of
-  the wraparound limit. The `high_max_connections` and
+  ID age of the oldest database as a percentage of the
+  wraparound limit, template databases included; `template0`
+  does not allow connections, so autovacuum only reaches it on
+  the anti-wraparound path, which makes it the database most
+  likely to age while every user database stays fresh, and
+  excluding templates left the rule silent in exactly that
+  case. The dashboard's XID Age tile now counts templates for
+  the same reason. The `high_max_connections` and
   `connection_utilization` rules required a `pg_settings` snapshot
   from the last hour, which a change-tracked probe stops
   producing on a stable server, and now read the newest stored

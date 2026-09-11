@@ -1108,10 +1108,17 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
-	// The value is the transaction ID age of the oldest non-template
-	// database on the connection, expressed as a percentage of the 2^31-1
-	// wraparound limit; that is the same definition the dashboard's XID
-	// Age tile and the server's performance summary already use.
+	// The value is the transaction ID age of the oldest database on the
+	// connection, template databases included, expressed as a percentage
+	// of the 2^31-1 wraparound limit.
+	//
+	// Templates must be counted. Wraparound is decided by the oldest
+	// datfrozenxid in the cluster, and template0 has datallowconn = false
+	// so autovacuum only reaches it on the anti-wraparound path; with
+	// autovacuum disabled it is precisely the database that ages while
+	// every user database stays fresh. Filtering templates out therefore
+	// let the rule stay silent until the server began refusing writes.
+	// The dashboard's XID Age tile counts templates for the same reason.
 	//
 	// The query previously joined metrics.pg_stat_all_tables against
 	// pg_settings, discarded both, and returned the literal 50.0, so the
@@ -1131,7 +1138,6 @@ var metricRegistry = map[string]metricQueryConfig{
 				FROM metrics.pg_database
 				WHERE collected_at > NOW() - INTERVAL '1 hour'
 				  AND age_datfrozenxid IS NOT NULL
-				  AND datistemplate IS NOT TRUE
 				ORDER BY connection_id, datname, collected_at DESC
 			)
 			SELECT connection_id,

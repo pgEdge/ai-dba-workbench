@@ -410,7 +410,6 @@ func (h *PerfSummaryHandler) queryXIDAage(
               FROM metrics.pg_database
               WHERE connection_id = $1
           )
-          AND datistemplate = false
           AND age_datfrozenxid IS NOT NULL
         ORDER BY age_datfrozenxid DESC
     `, connectionID)

@@ -341,8 +341,8 @@ func TestDeadRuleWALArchiveFailedSingleSample(t *testing.T) {
 // TestDeadRuleTransactionWraparoundFires covers root cause 2. The metric
 // used to return the literal 50.0 regardless of the data, so
 // transaction_wraparound could not fire at its 75 percent threshold. The
-// value is now the age of the oldest non-template database as a
-// percentage of the 2^31-1 wraparound limit.
+// value is now the age of the oldest database as a percentage of the
+// 2^31-1 wraparound limit, template databases included.
 func TestDeadRuleTransactionWraparoundFires(t *testing.T) {
 	ds, pool, cleanup := newDeadRuleDatastore(t)
 	defer cleanup()
@@ -353,17 +353,56 @@ func TestDeadRuleTransactionWraparoundFires(t *testing.T) {
 		false, int64(1_800_000_000), now)
 	execDeadRuleSeed(t, pool, insertDeadRuleDatabaseSQL, connID, "quietdb",
 		false, int64(1_000_000), now)
-	// A template database with a huge age must not drive the metric.
+	// The oldest database drives the metric whether or not it is a
+	// template, because wraparound is decided by the oldest
+	// datfrozenxid in the cluster.
 	execDeadRuleSeed(t, pool, insertDeadRuleDatabaseSQL, connID, "template0",
 		true, int64(2_100_000_000), now)
 
 	value := deadRuleValueFor(t, ds, "age_percent", connID)
-	want := 1_800_000_000.0 / 2147483647.0 * 100.0
+	want := 2_100_000_000.0 / 2147483647.0 * 100.0
 	if diff := value - want; diff > 0.01 || diff < -0.01 {
 		t.Errorf("age_percent = %v, want %v", value, want)
 	}
 	if !(value > deadRuleWraparoundThreshold) {
 		t.Errorf("age_percent %v does not cross threshold %v",
+			value, deadRuleWraparoundThreshold)
+	}
+}
+
+// TestDeadRuleTransactionWraparoundCountsTemplateDatabases is the
+// regression test for the template filter this metric originally
+// carried. template0 has datallowconn = false, so autovacuum only
+// reaches it on the anti-wraparound path; with autovacuum off it is
+// exactly the database that ages while every user database stays fresh.
+// Filtering templates out left the alert silent in that case until the
+// server began refusing writes.
+func TestDeadRuleTransactionWraparoundCountsTemplateDatabases(t *testing.T) {
+	ds, pool, cleanup := newDeadRuleDatastore(t)
+	defer cleanup()
+
+	connID := insertDeadRuleConnection(t, pool, "wraparound-template-only")
+	now := time.Now().Add(-time.Minute)
+
+	// Every user database is fresh.
+	execDeadRuleSeed(t, pool, insertDeadRuleDatabaseSQL, connID, "appdb",
+		false, int64(5_000_000), now)
+	execDeadRuleSeed(t, pool, insertDeadRuleDatabaseSQL, connID, "postgres",
+		false, int64(5_000_000), now)
+	// template0 alone is past the threshold.
+	const templateAge = int64(1_700_000_000)
+	execDeadRuleSeed(t, pool, insertDeadRuleDatabaseSQL, connID, "template0",
+		true, templateAge, now)
+
+	value := deadRuleValueFor(t, ds, "age_percent", connID)
+	want := float64(templateAge) / 2147483647.0 * 100.0
+	if diff := value - want; diff > 0.01 || diff < -0.01 {
+		t.Errorf("age_percent = %v, want %v (template0 must drive the metric)",
+			value, want)
+	}
+	if !(value > deadRuleWraparoundThreshold) {
+		t.Errorf("age_percent %v does not cross threshold %v, so the alert "+
+			"would stay silent while template0 approaches wraparound",
 			value, deadRuleWraparoundThreshold)
 	}
 }

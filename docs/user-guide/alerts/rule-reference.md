@@ -339,11 +339,19 @@ wraparound.
 | Default Threshold | 75 |
 | Default Severity | critical |
 
-The value is the transaction ID age of the oldest
-non-template database on the server, expressed as a
-percentage of the 2147483647 wraparound limit. It comes
-from `age(datfrozenxid)` in `pg_database`, which the
-collector samples every 300 seconds.
+The value is the transaction ID age of the oldest database
+on the server, expressed as a percentage of the 2147483647
+wraparound limit. It comes from `age(datfrozenxid)` in
+`pg_database`, which the collector samples every 300
+seconds.
+
+Template databases count towards this metric, because
+wraparound is decided by the oldest transaction ID age in
+the cluster regardless of which database holds it. This
+matters in practice: `template0` does not allow
+connections, so autovacuum only reaches it on the
+anti-wraparound path, which makes it the database most
+likely to age while every user database stays fresh.
 
 Transaction ID wraparound prevention requires aggressive
 vacuuming. Monitor this metric carefully on busy

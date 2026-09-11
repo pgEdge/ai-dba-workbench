@@ -320,10 +320,19 @@ checks inline in a handler; the `api` package already depends on
 
 `GET /api/v1/metrics/query` and `GET /api/v1/metrics/connection-groups`
 accept `time_range=custom` alongside `time_start` and `time_end`, and
-map any resolution error to `400`. The performance-summary and
-database-summary handlers in `perf_summary_handlers.go` still use the
-inline `validTimeRanges` map and accept presets only; consolidating
-those is deliberately deferred.
+map any resolution error to `400`. The performance-summary,
+database-summary and query-stats handlers in `perf_summary_handlers.go`
+still use the inline `validTimeRanges` map and accept presets only;
+consolidating those is deliberately deferred.
+
+Every handler that accepts a `queryid` parameter (`/metrics/query`,
+`/metrics/latest`, `/metrics/top-queries` and `/metrics/query-stats`)
+parses it with `parseQueryIDFilter` in `metrics_handlers.go`, which
+returns a `*int64` and answers `400` to anything that is not a 64-bit
+integer. The value is bound uncast as `queryid = $N`, never through a
+`queryid::text` cast, so the `(connection_id, database_name, queryid,
+collected_at)` index stays usable. Responses still carry the identifier
+as a decimal string, because JavaScript cannot represent it exactly.
 
 ## Latest-Snapshot Aggregations (server)
 

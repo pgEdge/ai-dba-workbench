@@ -392,7 +392,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		committed := false
 		defer func() {
 			if !committed {
-				_ = tx.Rollback(ctx) //nolint:errcheck // rollback in defer after commit is expected to fail
+				_ = tx.Rollback(context.Background()) //nolint:errcheck // non-cancelable ctx (see contributing.md)
 			}
 		}()
 

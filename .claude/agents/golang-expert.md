@@ -22,6 +22,8 @@ Before implementing or advising, consult `.claude/golang-expert/`:
   for HTTP handlers, and the tests that lock them in
 - `testing-strategy.md` - Repo-specific Go testing conventions, Makefile
   targets and CI shape
+- `transaction-rollback.md` - Why every pgx rollback takes a
+  non-cancelable context, and the convention test that enforces it
 
 When a change alters code that one of these files describes, update the
 file in the same change; delete any entry that no longer matches the code.

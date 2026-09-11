@@ -14,6 +14,7 @@ import (
 	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 
 	"context"
 	"fmt"
@@ -628,15 +629,23 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 	return allMetrics, databases, false, ""
 }
 
-// getDatabaseList queries pg_database to get list of accessible databases
-func (ps *ProbeScheduler) getDatabaseList(ctx context.Context, conn *pgxpool.Conn) ([]string, error) {
-	rows, err := conn.Query(ctx, `
+// databaseListQuery lists the databases the collector should visit on a
+// monitored server. It runs on every collection cycle and, unlike the
+// probe queries, does not pass through probes.WrapQuery, so it is tagged
+// as Workbench-internal to keep it out of the server's Top Queries panel
+// when monitoring queries are hidden. See sqlmarker.Tag for why the
+// marker sits immediately after the leading keyword.
+var databaseListQuery = sqlmarker.Tag(`
 		SELECT datname
 		FROM pg_database
 		WHERE datallowconn = true
 		  AND NOT datistemplate
 		ORDER BY datname
 	`)
+
+// getDatabaseList queries pg_database to get list of accessible databases
+func (ps *ProbeScheduler) getDatabaseList(ctx context.Context, conn *pgxpool.Conn) ([]string, error) {
+	rows, err := conn.Query(ctx, databaseListQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pg_database: %w", err)
 	}

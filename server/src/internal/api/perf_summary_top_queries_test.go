@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -693,14 +694,63 @@ func TestTopQueries_QueryErrorReturnsEmptyWithZeroTotal(t *testing.T) {
 
 // TestTopQueries_ScanErrorSkipsRow verifies a row that fails to scan is
 // skipped without failing the request, whilst the total still counts it.
-func TestTopQueries_ScanErrorSkipsRow(t *testing.T) {
+// TestTopQueries_ExcludesInternalMarkerToo covers the second marker the
+// filter matches. The shared fixture seeds a statement carrying the
+// collector's probe column alias; this adds one carrying the
+// in-statement comment the Workbench puts on its own datastore traffic,
+// so both classes are proven to be hidden rather than just the first.
+func TestTopQueries_ExcludesInternalMarkerToo(t *testing.T) {
 	h, pool, cleanup := newTopQueriesTestHandler(t)
 	defer cleanup()
 	seedTopQueriesFixture(t, pool)
 
-	// A NULL query column fails the scan into a string destination. The
-	// last row in the default ordering is used so the rows preceding it
-	// are still delivered.
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO metrics.pg_stat_statements
+            (connection_id, collected_at, queryid, dbid, database_name,
+             query, calls, total_exec_time, mean_exec_time, rows,
+             shared_blks_hit, shared_blks_read)
+         SELECT $1, MAX(collected_at), 1007, 100, 'alpha',
+             $2, 70, 50, 1, 70, 700, 7
+         FROM metrics.pg_stat_statements WHERE connection_id = $1`,
+		topQueriesConnID,
+		"INSERT /* "+sqlmarker.Marker+" */ INTO metrics.pg_stat_activity",
+	); err != nil {
+		t.Fatalf("seeding an internally marked statement: %v", err)
+	}
+
+	// Unfiltered, it is present alongside the six fixture rows.
+	rows, total := decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&limit=100"))
+	if len(rows) != 7 || total != "7" {
+		t.Fatalf("unfiltered rows = %d, total = %q; want 7 and \"7\"",
+			len(rows), total)
+	}
+
+	// Filtered, both marked statements are gone.
+	rows, total = decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&limit=100&exclude_collector=true"))
+	if len(rows) != 5 || total != "5" {
+		t.Fatalf("filtered rows = %d, total = %q; want 5 and \"5\"",
+			len(rows), total)
+	}
+	for _, r := range rows {
+		if strings.Contains(r.Query, sqlmarker.Marker) {
+			t.Errorf("internally marked statement survived the filter: %s",
+				r.Query)
+		}
+	}
+}
+
+func TestTopQueries_NullQueryRowIsRetained(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+
+	// A NULL query column used to fail the scan and drop the row. Issue
+	// #364 changed that deliberately: a row that cannot be positively
+	// identified as Workbench traffic must be shown rather than hidden,
+	// so the column is scanned through a nullable destination and the
+	// row comes back with empty query text.
 	if _, err := pool.Exec(context.Background(),
 		`ALTER TABLE metrics.pg_stat_statements ALTER COLUMN query DROP NOT NULL`,
 	); err != nil {
@@ -715,9 +765,13 @@ func TestTopQueries_ScanErrorSkipsRow(t *testing.T) {
 
 	rows, total := decodeTopQueries(t, callTopQueries(t, h,
 		"connection_id=4242"))
-	if len(rows) != 5 {
-		t.Fatalf("got %d rows, want 5 (the unscannable row is skipped): %#v",
+	if len(rows) != 6 {
+		t.Fatalf("got %d rows, want 6 (the NULL-query row is kept): %#v",
 			len(rows), rows)
+	}
+	if rows[len(rows)-1].Query != "" {
+		t.Errorf("NULL query rendered as %q, want an empty string",
+			rows[len(rows)-1].Query)
 	}
 	if total != "6" {
 		t.Errorf("X-Total-Count = %q, want \"6\"", total)

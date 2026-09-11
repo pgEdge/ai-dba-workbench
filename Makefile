@@ -28,6 +28,8 @@ all:
 # Run tests for all sub-projects
 test:
 	@echo "Running tests for all sub-projects..."
+	@echo "Testing shared pkg module..."
+	@cd pkg && go test ./...
 	@echo "Testing collector..."
 	@cd collector && $(MAKE) test
 	@echo "Testing server..."
@@ -67,6 +69,8 @@ lint:
 # Run all tests (sub-project test-all)
 test-all:
 	@echo "Running all tests for sub-projects..."
+	@echo "Running all tests for shared pkg module..."
+	@cd pkg && go test ./...
 	@echo "Running all tests for collector..."
 	@cd collector && $(MAKE) test-all
 	@echo "Running all tests for server..."

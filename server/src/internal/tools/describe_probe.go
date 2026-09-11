@@ -174,8 +174,3 @@ Returns TSV with:
 		},
 	}
 }
-
-// isValidIdentifier delegates to the shared metrics package.
-func isValidIdentifier(s string) bool {
-	return metrics.IsValidIdentifier(s)
-}

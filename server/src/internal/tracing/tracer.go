@@ -117,14 +117,6 @@ func IsEnabled() bool {
 	return globalTracer.enabled
 }
 
-// GetFilePath returns the trace file path
-func GetFilePath() string {
-	if globalTracer == nil {
-		return ""
-	}
-	return globalTracer.filePath
-}
-
 // Close closes the trace file
 func Close() error {
 	if globalTracer == nil || !globalTracer.enabled || globalTracer.file == nil {
@@ -267,26 +259,6 @@ func LogLLMResponse(sessionID, tokenHash, requestID string, response any, durati
 	})
 }
 
-// LogSessionStart logs the start of a new session
-func LogSessionStart(sessionID, tokenHash string, metadata map[string]any) {
-	Log(TraceEntry{
-		SessionID: sessionID,
-		Type:      EntryTypeSessionStart,
-		TokenHash: truncateHash(tokenHash),
-		Metadata:  metadata,
-	})
-}
-
-// LogSessionEnd logs the end of a session
-func LogSessionEnd(sessionID, tokenHash string, metadata map[string]any) {
-	Log(TraceEntry{
-		SessionID: sessionID,
-		Type:      EntryTypeSessionEnd,
-		TokenHash: truncateHash(tokenHash),
-		Metadata:  metadata,
-	})
-}
-
 // LogError logs an error that occurred
 func LogError(sessionID, tokenHash, requestID, context string, err error) {
 	entry := TraceEntry{
@@ -313,9 +285,4 @@ func truncateHash(hash string) string {
 // GenerateRequestID creates a unique request ID
 func GenerateRequestID() string {
 	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), time.Now().UnixNano()%0xFFFF)
-}
-
-// GenerateSessionID creates a unique session ID
-func GenerateSessionID() string {
-	return fmt.Sprintf("sess_%d", time.Now().UnixNano())
 }

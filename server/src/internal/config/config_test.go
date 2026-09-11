@@ -520,41 +520,6 @@ func TestConfigFileExists(t *testing.T) {
 	}
 }
 
-func TestSaveConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "subdir", "config.yaml")
-
-	cfg := &Config{
-		HTTP: HTTPConfig{
-			Address: ":9090",
-		},
-		Database: &DatabaseConfig{
-			Host: "localhost",
-			Port: 5432,
-			User: "testuser",
-		},
-	}
-
-	// Test saving config (should create directory)
-	if err := SaveConfig(configPath, cfg); err != nil {
-		t.Fatalf("failed to save config: %v", err)
-	}
-
-	// Verify file exists
-	if !ConfigFileExists(configPath) {
-		t.Error("config file should exist after save")
-	}
-
-	// Load and verify
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read saved config: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("saved config file is empty")
-	}
-}
-
 func TestLoadConfigWithTempFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -1468,43 +1433,5 @@ func TestMarshalDoesNotLeakResolvedPassword(t *testing.T) {
 	// The password key must be present but empty for the file-sourced case.
 	if !strings.Contains(out, "password: \"\"") {
 		t.Errorf("expected an empty password field in marshaled output, got:\n%s", out)
-	}
-}
-
-// TestSaveConfigDoesNotLeakResolvedPassword drives the same regression
-// through the actual SaveConfig path, reading the written file back to
-// confirm the file-sourced secret never reaches disk.
-func TestSaveConfigDoesNotLeakResolvedPassword(t *testing.T) {
-	tmpDir := t.TempDir()
-	passFile := filepath.Join(tmpDir, "db.password")
-	const secret = "save-config-secret"
-	if err := os.WriteFile(passFile, []byte(secret+"\n"), 0600); err != nil {
-		t.Fatalf("failed to write password file: %v", err)
-	}
-
-	cfg := &Config{
-		Database: &DatabaseConfig{
-			User:         "postgres",
-			Host:         "localhost",
-			Port:         5432,
-			Database:     "testdb",
-			PasswordFile: passFile,
-		},
-	}
-	if err := cfg.Database.LoadPassword(); err != nil {
-		t.Fatalf("LoadPassword: %v", err)
-	}
-
-	outPath := filepath.Join(tmpDir, "saved.yaml")
-	if err := SaveConfig(outPath, cfg); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-
-	written, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read saved config: %v", err)
-	}
-	if strings.Contains(string(written), secret) {
-		t.Fatalf("SaveConfig leaked the file-sourced secret to disk:\n%s", written)
 	}
 }

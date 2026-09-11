@@ -3422,7 +3422,10 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("order", "Sort order (asc or desc)"),
 					queryParamString("queryid", "Filter by specific query ID"),
 					queryParamString("database_name", "Filter by exact database name"),
-					queryParamBool("exclude_collector", "Exclude collector queries"),
+					queryParamBool("exclude_collector",
+						"Exclude Workbench-internal queries, including "+
+							"collector probe queries and the collector's "+
+							"and alerter's own datastore queries"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponseWithHeaders("TopQueryRow", "Top queries",

@@ -288,14 +288,38 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 				TriggeredAt:    time.Now(),
 			}
 
-			// Check if there's already an active alert for this rule/connection
-			existing, err := e.datastore.GetActiveThresholdAlert(ctx, rule.ID, entry.ConnectionID, nil)
-			if err == nil && existing != nil {
+			// Check if there's already an active alert for this
+			// rule/connection/probe. The lookup is keyed by probe so that
+			// several stale probes on one connection raise one alert each
+			// rather than fighting over a single row.
+			existing, err := e.datastore.GetActiveThresholdAlertForProbe(ctx, rule.ID, entry.ConnectionID, entry.ProbeName)
+			if err != nil {
+				// Creating an alert now could duplicate one that already
+				// exists, so wait for the next pass instead.
+				e.log("ERROR: Failed to look up staleness alert for %s on connection %d: %v",
+					entry.ProbeName, entry.ConnectionID, err)
+				continue
+			}
+			if existing != nil {
 				if err := e.datastore.UpdateAlertValues(ctx, existing.ID, entry.StalenessRatio, threshold, operator, severity); err != nil {
 					e.log("ERROR: Failed to update staleness alert values: %v", err)
 				} else {
 					e.debugLog("Updated staleness alert for %s on connection %d", entry.ProbeName, entry.ConnectionID)
 				}
+				continue
+			}
+
+			// Check cooldown - don't re-fire if recently cleared. The
+			// registry-backed path applies the same guard in
+			// triggerThresholdAlert.
+			recentlyCleared, err := e.datastore.GetRecentlyClearedAlertForProbe(
+				ctx, rule.ID, entry.ConnectionID, entry.ProbeName, AlertCooldownPeriod)
+			if err != nil {
+				e.debugLog("Error checking staleness cooldown for %s on connection %d: %v",
+					entry.ProbeName, entry.ConnectionID, err)
+			} else if recentlyCleared {
+				e.debugLog("Skipping staleness alert for %s on connection %d: cooldown active (cleared within %v)",
+					entry.ProbeName, entry.ConnectionID, AlertCooldownPeriod)
 				continue
 			}
 

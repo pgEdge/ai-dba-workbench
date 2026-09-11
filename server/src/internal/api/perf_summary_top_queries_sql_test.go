@@ -71,7 +71,10 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		databaseName = "alpha"
 		limit        = 25
 		offset       = 50
-		excludeSQL   = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
+		// The exclusion clause is shared with the rest of the API and
+		// matches both markers literally; see
+		// excludeWorkbenchQueriesClause.
+		excludeSQL = excludeWorkbenchQueriesClause
 	)
 
 	tests := []struct {

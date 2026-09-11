@@ -21,10 +21,59 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
+
+// probeMarkerAlias is the synthetic column alias that the collector
+// wraps around every read-only probe query it runs against a monitored
+// database; see WrapQuery in the collector's probes package. It comes
+// from pkg/sqlmarker so that the collector and the server cannot drift
+// apart on the value.
+const probeMarkerAlias = sqlmarker.ProbeAlias
+
+// excludeWorkbenchQueriesClause filters out the Workbench's own
+// statements from the Top Queries panel when the caller asks to hide
+// monitoring queries.
+//
+// Two markers are needed. The collector's probe queries against
+// monitored databases carry probeMarkerAlias as a column alias, whilst
+// the Workbench's statements against its own datastore (the collector's
+// bulk metrics writes and partition maintenance, and the alerter's
+// metric-evaluation queries) carry sqlmarker.Marker as an in-statement
+// comment. Because the datastore usually shares a PostgreSQL instance
+// with the databases being monitored, pg_stat_statements captures both
+// classes, and before the second marker existed the datastore traffic
+// leaked through this filter (GitHub issue #364).
+//
+// The clause is a compile-time constant built from two constants, so it
+// carries no user input and needs no bound parameters. It matches with
+// strpos rather than LIKE because both markers contain underscores,
+// which LIKE treats as single-character wildcards: LIKE
+// '%ai_dba_wb_probe%' also matches a user query containing, say,
+// aiXdbaYwbZprobe, and would hide it. Note that it
+// deliberately does not exclude the datastore database wholesale: users
+// legitimately run their own tools against that database and expect to
+// see them here.
+//
+// This is a presentation filter and not a security boundary. Anyone
+// able to run SQL on a monitored database can hide their own statement
+// from this panel by including either marker in it, exactly as they
+// already could with the probe alias. That is an acceptable trade-off
+// for a display toggle, but do not build anything on the assumption
+// that a hidden statement is a Workbench statement.
+//
+// The pss.query IS NULL arm is not redundant. metrics.pg_stat_statements
+// stores query as a nullable column, and PostgreSQL evaluates
+// NULL NOT LIKE '...' to NULL rather than true, so without that arm any
+// row whose query text was not captured would be filtered out. A row we
+// cannot positively identify as Workbench traffic must be shown rather
+// than hidden, so NULL query text survives the filter.
+const excludeWorkbenchQueriesClause = "AND (pss.query IS NULL OR (" +
+	"strpos(pss.query, '" + probeMarkerAlias + "') = 0 AND " +
+	"strpos(pss.query, '" + sqlmarker.Marker + "') = 0))"
 
 // validTimeRanges maps time_range parameter values to their duration.
 var validTimeRanges = map[string]time.Duration{
@@ -422,7 +471,6 @@ func (h *PerfSummaryHandler) queryXIDAage(
               FROM metrics.pg_database
               WHERE connection_id = $1
           )
-          AND datistemplate = false
           AND age_datfrozenxid IS NOT NULL
         ORDER BY age_datfrozenxid DESC
     `, connectionID)
@@ -1043,6 +1091,51 @@ func (h *PerfSummaryHandler) queryDatabaseCacheHitTimeSeries(
 	}
 }
 
+// defaultTopQueryOrderBy and defaultTopQueryOrder are the request values
+// used when no ordering is requested. They are request values rather
+// than SQL literals because the handler substitutes them before looking
+// the request up in the whitelists; safeTopQueryOrdering resolves them
+// through the same maps when it needs the literal.
+const (
+	defaultTopQueryOrderBy = "total_exec_time"
+	defaultTopQueryOrder   = "desc"
+)
+
+// safeTopQueryOrdering maps an already-resolved ORDER BY column and
+// direction on to a pair that is safe to interpolate into SQL,
+// substituting the defaults for anything not produced by the
+// whitelists.
+//
+// handleTopQueries already rejects invalid values with HTTP 400, so in
+// practice this function never substitutes anything. It exists so that
+// the injection-safety property of buildTopQueriesSQL is local to the
+// code that does the interpolating rather than depending on a caller a
+// call frame away: any future caller, or any future relaxation of the
+// handler's parsing, still cannot reach the ORDER BY clause with
+// arbitrary text.
+func safeTopQueryOrdering(orderCol, orderDir string) (string, string) {
+	if !isAllowedLiteral(validTopQueryOrderColumns, orderCol) {
+		orderCol = validTopQueryOrderColumns[defaultTopQueryOrderBy]
+	}
+	if !isAllowedLiteral(validTopQueryOrderDirections, orderDir) {
+		orderDir = validTopQueryOrderDirections[defaultTopQueryOrder]
+	}
+	return orderCol, orderDir
+}
+
+// isAllowedLiteral reports whether v is one of the SQL literals a
+// request-value whitelist can resolve to. The whitelists map request
+// values to literals, and it is the literal that reaches the statement,
+// so membership is checked against the values rather than the keys.
+func isAllowedLiteral(whitelist map[string]string, v string) bool {
+	for _, allowed := range whitelist {
+		if allowed == v {
+			return true
+		}
+	}
+	return false
+}
+
 // buildTopQueriesSQL assembles the two statements behind the top-queries
 // endpoint and the argument slices that go with them. It is the only place
 // in this file where SQL text is composed, and it is deliberately pure so
@@ -1066,6 +1159,8 @@ func buildTopQueriesSQL(
 	orderCol, orderDir string,
 	limit, offset int,
 ) (countSQL, pageSQL string, filterArgs, pageArgs []any) {
+	orderCol, orderDir = safeTopQueryOrdering(orderCol, orderDir)
+
 	// Optional queryid filter, applied inside the CTE.
 	queryIDClause := ""
 	filterArgs = []any{connID}
@@ -1075,11 +1170,12 @@ func buildTopQueriesSQL(
 		filterArgs = append(filterArgs, queryID)
 	}
 
-	// Optional clause to exclude collector probe queries. It contains no
-	// caller-supplied data at all.
+	// Optional clause to exclude the Workbench's own queries, covering
+	// both the collector's probe alias and the collector's and alerter's
+	// datastore traffic. It contains no caller-supplied data at all.
 	excludeCollectorClause := ""
 	if excludeCollector {
-		excludeCollectorClause = "AND pss.query NOT LIKE '%ai_dba_wb_probe%'"
+		excludeCollectorClause = excludeWorkbenchQueriesClause
 	}
 
 	// The database filter is applied to the outer select so that it matches
@@ -1215,7 +1311,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// taken from the map, not the request string.
 	orderBy := ParseQueryString(r, "order_by")
 	if orderBy == "" {
-		orderBy = "total_exec_time"
+		orderBy = defaultTopQueryOrderBy
 	}
 	orderCol, ok := validTopQueryOrderColumns[orderBy]
 	if !ok {
@@ -1229,7 +1325,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// same way as the order column.
 	order := strings.ToLower(ParseQueryString(r, "order"))
 	if order == "" {
-		order = "desc"
+		order = defaultTopQueryOrder
 	}
 	orderDir, ok := validTopQueryOrderDirections[order]
 	if !ok {
@@ -1294,13 +1390,21 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	results := make([]TopQueryRow, 0)
 	for rows.Next() {
 		var row TopQueryRow
+		// query is nullable in metrics.pg_stat_statements, so it is
+		// scanned through a pointer; a row whose text was not captured
+		// is still reported, with an empty query string, rather than
+		// being dropped as an unscannable row.
+		var queryText *string
 		if err := rows.Scan(
-			&row.QueryID, &row.DatabaseName, &row.Query, &row.Calls,
+			&row.QueryID, &row.DatabaseName, &queryText, &row.Calls,
 			&row.TotalExecTime, &row.MeanExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning top query row: %v", err)
 			continue
+		}
+		if queryText != nil {
+			row.Query = *queryText
 		}
 		results = append(results, row)
 	}

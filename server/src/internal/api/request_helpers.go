@@ -178,24 +178,6 @@ func ParseQueryIntListSilent(r *http.Request, paramName string) []int {
 	return result
 }
 
-// ParseQueryTime parses a time query parameter in RFC3339 format. Returns the
-// time and true if parsing succeeds, or zero time and false if the parameter
-// is empty or invalid. Sends an error response if the format is invalid.
-func ParseQueryTime(w http.ResponseWriter, r *http.Request, paramName string) (time.Time, bool) {
-	valueStr := r.URL.Query().Get(paramName)
-	if valueStr == "" {
-		return time.Time{}, false
-	}
-
-	value, err := time.Parse(time.RFC3339, valueStr)
-	if err != nil {
-		log.Printf("[ERROR] Invalid %s format (expected RFC3339): %v", paramName, err)
-		RespondError(w, http.StatusBadRequest, "Invalid "+paramName+" format, expected RFC3339")
-		return time.Time{}, false
-	}
-	return value, true
-}
-
 // ParseQueryTimeSilent parses a time query parameter in RFC3339 format without
 // sending an error response. Returns the time and true if parsing succeeds,
 // or zero time and false if the parameter is empty or invalid.
@@ -270,21 +252,6 @@ func RequireQueryTime(w http.ResponseWriter, r *http.Request, paramName string) 
 func ValidateTimeRange(w http.ResponseWriter, startTime, endTime time.Time) bool {
 	if endTime.Before(startTime) {
 		RespondError(w, http.StatusBadRequest, "end_time must be after start_time")
-		return false
-	}
-	return true
-}
-
-// ValidateStringInSet validates that a string value is in the allowed set.
-// Returns true if valid or if value is empty (optional). Sends an error
-// response and returns false if the value is not in the set.
-func ValidateStringInSet(w http.ResponseWriter, value, paramName string, allowed map[string]bool) bool {
-	if value == "" {
-		return true
-	}
-	if !allowed[value] {
-		RespondError(w, http.StatusBadRequest,
-			fmt.Sprintf("Invalid %s: %s", paramName, value))
 		return false
 	}
 	return true

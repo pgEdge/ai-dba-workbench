@@ -20,6 +20,14 @@ project adheres to
   members of the group named with `-group`, including both member
   users and nested member groups. (#303)
 
+- Add a Monitored Database Privileges page to the configuration
+  documentation, describing the PostgreSQL grants a monitoring role
+  needs on a monitored instance. The page recommends a
+  least-privilege role based on `pg_monitor` plus per-database
+  `CONNECT`, covers the optional `pg_stat_statements`, `system_stats`,
+  and Spock grants, and documents the coverage gaps that remain
+  without superuser access. (#351)
+
 - Add pagination and database filtering to the Top Queries panel on
   the server dashboard. The panel footer now provides a page size
   selector offering 10, 20, 50, or 100 rows, defaulting to 20, along
@@ -71,7 +79,50 @@ project adheres to
   only the server default left the client-facing bug unchanged for
   real users. (#329)
 
+- Run the tests for the shared `pkg` module from the root `make test`
+  and `make test-all` targets, which previously skipped that module
+  entirely. This change affects test infrastructure only and does not
+  alter application behavior. (#364)
+
 ### Fixed
+
+- Fix the `metric_staleness` alert rule firing and clearing in a
+  loop, which sent a notification pair every cycle for as long as a
+  probe remained stale. The alert cleaner resolved the rule's metric
+  through the metric registry, where the bespoke staleness metric
+  has no entry, and treated the resulting lookup error as proof that
+  the condition had gone away. The cleaner now distinguishes a
+  metric it cannot evaluate, or a query that failed, from a metric
+  that ran and reported nothing; only the latter clears an alert.
+  Staleness alerts resolve through their own check against probe
+  availability, the staleness evaluator applies the same cooldown
+  guard as every other rule, and each stale probe on a connection
+  now raises its own alert rather than overwriting a shared one.
+  (#405)
+- Fix five built-in alert rules that could never fire. The
+  `wal_archive_failed` rule queried `metrics.pg_stat_archiver`, a
+  table the collector never creates, and now reads the archiver
+  columns of `metrics.pg_stat_wal`. The `transaction_wraparound`
+  rule evaluated a hardcoded 50.0 and now reports the transaction
+  ID age of the oldest database as a percentage of the
+  wraparound limit, template databases included; `template0`
+  does not allow connections, so autovacuum only reaches it on
+  the anti-wraparound path, which makes it the database most
+  likely to age while every user database stays fresh, and
+  excluding templates left the rule silent in exactly that
+  case. The dashboard's XID Age tile now counts templates for
+  the same reason. The `high_max_connections` and
+  `connection_utilization` rules required a `pg_settings` snapshot
+  from the last hour, which a change-tracked probe stops
+  producing on a stable server, and now read the newest stored
+  snapshot. The `cpu_usage_high` rule keyed on a Windows-only
+  column that is NULL on Linux and now derives the busy
+  percentage on both platforms. The `checkpoint_warning` rule
+  compared a per-probe-interval delta against an unreachable
+  threshold and now counts requested checkpoints per hour, with a
+  default threshold of 12. Tuned autovacuum settings are also
+  honoured again by `autovacuum_not_running`, which previously
+  always assumed the shipped defaults. (#406)
 
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
@@ -264,6 +315,74 @@ project adheres to
   shutdown, and raising the memory limit modestly from 256M to
   512M; the collector connection-pool and timeout options are now
   documented in the sample configuration. (#308)
+
+- Fix the "Hide monitoring queries" toggle on the Server dashboard's
+  Top Queries panel failing to hide the collector's and alerter's
+  datastore query overhead. Only the collector's probe queries against
+  monitored databases carried a marker, so its bulk `metrics.*`
+  inserts, partition maintenance, and change-detection reads, together
+  with the alerter's metric-evaluation queries, stayed in the panel
+  whenever the metadata datastore shared a PostgreSQL instance with
+  the monitored databases, which is the usual deployment. The toggle
+  now hides those statements as well. Each statement is tagged
+  individually rather than excluding the metadata database wholesale,
+  so queries that other tools run against that same database remain
+  visible. Two classes stay untagged by design and still appear in the
+  panel: the server's own datastore traffic for sessions, RBAC,
+  conversations, and the timeline; and the collector's `probe_configs`
+  resolution path, along with the alerter's remaining direct datastore
+  queries in `alert_queries.go`, `anomaly_queries.go`,
+  `notification_queries.go` and `queries.go`.
+
+  On an existing installation the toggle only hides statements that
+  PostgreSQL first recorded after the upgrade. `pg_stat_statements`
+  identifies a statement by its parse tree, which ignores comments, so
+  an entry already present keeps the untagged text it was first seen
+  with and the filter never matches it; those entries run every
+  collection cycle, so they are never evicted either. Run `SELECT
+  pg_stat_statements_reset();` once on each monitored instance after
+  upgrading for the toggle to take effect on statements already in the
+  view. (#364)
+
+### Removed
+
+- Remove 48 unused functions from the collector, server, and alerter,
+  along with the tests that existed only to exercise them. A
+  reachability analysis with `govulncheck`'s sibling tool `deadcode`
+  found 94 functions that no service entry point can reach; comparing
+  the result against the v1.0.0 tag confirmed that every one had
+  already been unreachable at that release, so none was recent work
+  awaiting a caller. This change takes the safe subset: 698 lines of
+  production code and 2,110 lines of dedicated tests.
+
+- Delete the alerter's unused `secretManager` implementation and the
+  `SecretManager` interface it satisfied, neither of which had any
+  caller, and delete the unused resource `Registry` type along with
+  its constructor and methods. The `Resource` and `Handler` types
+  declared alongside `Registry` remain, since the MCP resource
+  definitions still use them.
+
+- Remove the unused `HeaderStatusIndicator` component from the web
+  client, together with the `@dnd-kit/sortable` and `@dnd-kit/utilities`
+  dependencies; the client imports only `@dnd-kit/core`, which stays.
+
+- Remove a further 18 unused functions across the collector, server, and
+  alerter, together with the tests that existed only to exercise them.
+  The largest group is the alerter's notification-channel write API,
+  where ten methods covering channel creation, updates, deletion, email
+  recipients, connection links, notification history, and reminder state
+  had no caller; the alerter reads notification channels, whilst the
+  server owns every write. The rest are two pool accessors, two
+  compaction analytics reporters, a probe-availability lookup, and three
+  session tracing helpers.
+
+- Remove the chat compactor's analytics entirely, rather than leaving a
+  type that only ever writes. With its reporters gone, nothing could
+  read what `RecordCompaction` accumulated, so the `Analytics` type,
+  the `CompactionMetrics` and `EfficiencyReport` structures, the
+  `analytics` field, the `EnableAnalytics` option and the two recording
+  call sites all go together. `EnableAnalytics` defaulted to false, so
+  no deployment was collecting these figures in any case.
 
 ### Security
 

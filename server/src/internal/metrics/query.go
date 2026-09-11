@@ -352,34 +352,6 @@ func GetAggSelectCols(metricCols []string, aggregation string) []string {
 	return cols
 }
 
-// GetQuotedSelectCols returns column names with quoted identifiers for
-// use in SELECT clauses.
-func GetQuotedSelectCols(metricCols []string) []string {
-	var cols []string
-	for _, col := range metricCols {
-		cols = append(cols, QuoteIdentifier(col))
-	}
-	return cols
-}
-
-// GetCoalescedSelectCols returns column expressions qualified with a
-// table alias, wrapped in COALESCE to replace NULLs with a zero value.
-// For interval columns the default is '0 seconds'::interval; for all
-// other numeric types the default is 0.  This ensures LEFT JOIN gaps
-// produce zero values instead of NULLs.
-func GetCoalescedSelectCols(metricCols []string, tableAlias string, colTypes map[string]string) []string {
-	var cols []string
-	for _, col := range metricCols {
-		qualified := tableAlias + "." + QuoteIdentifier(col)
-		defaultVal := "0"
-		if colTypes[col] == "interval" {
-			defaultVal = "'0 seconds'::interval"
-		}
-		cols = append(cols, "COALESCE("+qualified+", "+defaultVal+") AS "+QuoteIdentifier(col))
-	}
-	return cols
-}
-
 // GetQualifiedSelectCols returns column expressions qualified with a
 // table alias. Unlike GetCoalescedSelectCols, NULL values from LEFT JOIN
 // gaps pass through so the caller can apply LOCF (Last Observation
@@ -427,7 +399,8 @@ func BuildMetricsQuery(
             GROUP BY date_bin($1::interval, collected_at, $3)
         ),
         all_buckets AS (
-            SELECT generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS bucket_time
+            SELECT bucket_time
+            FROM generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS g(bucket_time)
         )
         SELECT
             all_buckets.bucket_time,
@@ -682,7 +655,8 @@ func BuildDerivedMetricsQuery(
 
 	ctes = append(ctes, `
         all_buckets AS (
-            SELECT generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS bucket_time
+            SELECT bucket_time
+            FROM generate_series($3::timestamptz, $4::timestamptz, $1::interval) AS g(bucket_time)
         )`)
 
 	query := fmt.Sprintf(`

@@ -272,26 +272,6 @@ func (d *Datastore) DeleteOldAnomalyCandidates(ctx context.Context, cutoff time.
 	return result.RowsAffected(), nil
 }
 
-// GetProbeAvailability checks if a probe is available for a connection
-func (d *Datastore) GetProbeAvailability(ctx context.Context, connectionID int, probeName string) (*ProbeAvailability, error) {
-	var pa ProbeAvailability
-	err := d.pool.QueryRow(ctx, `
-		SELECT id, connection_id, database_name, probe_name, extension_name,
-		       is_available, last_checked, last_collected, unavailable_reason
-		FROM probe_availability
-		WHERE connection_id = $1 AND probe_name = $2
-		LIMIT 1
-	`, connectionID, probeName).Scan(
-		&pa.ID, &pa.ConnectionID, &pa.DatabaseName, &pa.ProbeName,
-		&pa.ExtensionName, &pa.IsAvailable, &pa.LastChecked,
-		&pa.LastCollected, &pa.UnavailableReason)
-
-	if err != nil {
-		return nil, err
-	}
-	return &pa, nil
-}
-
 // GetEnabledBlackoutSchedules retrieves all enabled blackout schedules
 func (d *Datastore) GetEnabledBlackoutSchedules(ctx context.Context) ([]*BlackoutSchedule, error) {
 	rows, err := d.pool.Query(ctx, `
@@ -430,7 +410,9 @@ func (d *Datastore) GetAlertRuleByName(ctx context.Context, name string) (*Alert
 // cluster as the given connection, including their latest node role.
 // Returns an empty slice if the connection has no cluster.
 func (d *Datastore) GetClusterPeers(ctx context.Context, connectionID int) ([]*ClusterPeerInfo, error) {
-	rows, err := d.pool.Query(ctx, `
+	// Tagged internal: this reads metrics.pg_node_role on the
+	// Workbench's own datastore on every alert evaluation cycle.
+	rows, err := d.queryInternal(ctx, `
 		SELECT c.id, c.name, COALESCE(lr.primary_role, 'unknown')
 		FROM connections c
 		LEFT JOIN LATERAL (

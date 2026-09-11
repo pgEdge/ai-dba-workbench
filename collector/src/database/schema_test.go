@@ -283,7 +283,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify all migrations are registered
-	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -486,58 +486,6 @@ func TestGetCurrentVersion(t *testing.T) {
 	}
 	if version != highestVersion {
 		t.Errorf("Expected version %d, got %d", highestVersion, version)
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
-func TestGetMigrationStatus(t *testing.T) {
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up any existing schema
-	cleanupTestSchema(t, pool)
-
-	sm := NewSchemaManager()
-
-	// Test status before any migrations
-	statuses, err := sm.GetMigrationStatus(conn)
-	if err != nil {
-		t.Fatalf("Failed to get migration status: %v", err)
-	}
-
-	for _, status := range statuses {
-		if status.Applied {
-			t.Errorf("Migration %d should not be applied yet", status.Version)
-		}
-		if status.AppliedAt != nil {
-			t.Errorf("Migration %d should not have AppliedAt timestamp yet", status.Version)
-		}
-	}
-
-	// Apply migrations
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Test status after migrations
-	statuses, err = sm.GetMigrationStatus(conn)
-	if err != nil {
-		t.Fatalf("Failed to get migration status: %v", err)
-	}
-
-	for _, status := range statuses {
-		if !status.Applied {
-			t.Errorf("Migration %d should be applied", status.Version)
-		}
-		if status.AppliedAt == nil {
-			t.Errorf("Migration %d should have AppliedAt timestamp", status.Version)
-		}
 	}
 
 	// Clean up

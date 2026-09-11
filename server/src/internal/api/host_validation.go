@@ -196,10 +196,3 @@ func (v *HostValidator) ValidatePort(port int) error {
 
 	return nil
 }
-
-// DefaultHostValidator returns a validator with secure defaults:
-// - Blocks internal network connections
-// - No allowed/blocked host lists
-func DefaultHostValidator() *HostValidator {
-	return NewHostValidator(false, nil, nil)
-}

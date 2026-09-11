@@ -540,3 +540,170 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		}
 	})
 }
+
+const deltaTestProbe = "pg_stat_all_tables_delta_test"
+
+// setupDeltaFixture creates a probe table carrying a single cumulative
+// counter and inserts a known progression of connection-1 samples, one per
+// minute, deliberately including a minute with no sample at all and a
+// counter reset. Because the query bucket width is 60 seconds for a "1h"
+// window, samples a minute apart always land in distinct buckets whatever
+// the window origin happens to be, so the per-bucket deltas are exact:
+//
+//	-6 min  1000   first sample, no LAG, contributes nothing
+//	-5 min  1010   delta 10
+//	-4 min  1030   delta 20
+//	-3 min  (none) bucket with no sample, must read 0
+//	-2 min  1100   delta 70, covering the sample-less minute
+//	-1 min     5   counter reset, contributes nothing
+//	-0 min    25   delta 20
+//
+// It returns a cleanup that drops the table.
+func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) func() {
+	t.Helper()
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS metrics"); err != nil {
+		t.Fatalf("failed to create metrics schema: %v", err)
+	}
+
+	dropTable(ctx, pool, deltaTestProbe)
+
+	ddl := `CREATE TABLE metrics."` + deltaTestProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        inserted_at   timestamp without time zone NOT NULL DEFAULT now(),
+        relname       name,
+        seq_scan      bigint
+    )`
+	if _, err := pool.Exec(ctx, ddl); err != nil {
+		t.Fatalf("failed to create delta fixture table: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	samples := []struct {
+		offset  time.Duration
+		seqScan int64
+	}{
+		{-6 * time.Minute, 1000},
+		{-5 * time.Minute, 1010},
+		{-4 * time.Minute, 1030},
+		{-2 * time.Minute, 1100},
+		{-1 * time.Minute, 5},
+		{0, 25},
+	}
+
+	insert := `INSERT INTO metrics."` + deltaTestProbe + `"
+        (connection_id, collected_at, relname, seq_scan)
+        VALUES ($1, $2, $3, $4)`
+	for i, s := range samples {
+		_, err := pool.Exec(ctx, insert, 1, now.Add(s.offset), "orders", s.seqScan)
+		if err != nil {
+			dropTable(ctx, pool, deltaTestProbe)
+			t.Fatalf("failed to insert delta fixture sample %d: %v", i, err)
+		}
+	}
+
+	return func() { dropTable(context.Background(), pool, deltaTestProbe) }
+}
+
+func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
+	pool, closePool := newLatestRowsTestPool(t)
+	defer closePool()
+	cleanup := setupDeltaFixture(t, pool)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	t.Run("per-bucket deltas with zero fill and reset guard", func(t *testing.T) {
+		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
+			[]string{"seq_scan_delta"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "seq_scan_delta")
+
+		// Every bucket of the hour is emitted, not just the six carrying a
+		// sample: sample-less buckets are COALESCEd to 0 rather than left
+		// NULL for the caller's LOCF fill to duplicate.
+		if len(s.Data) < 50 {
+			t.Fatalf("expected the whole window to be filled, got %d points",
+				len(s.Data))
+		}
+
+		var total float64
+		var nonZero []float64
+		for _, p := range s.Data {
+			if p.Value < 0 {
+				t.Errorf("delta point = %v, want non-negative", p.Value)
+			}
+			total += p.Value
+			if p.Value != 0 {
+				nonZero = append(nonZero, p.Value)
+			}
+		}
+
+		// 10 + 20 + 70 + 20; the first sample and the reset add nothing.
+		if total != 120 {
+			t.Errorf("summed deltas = %v, want 120 (%v)", total, nonZero)
+		}
+		want := []float64{10, 20, 70, 20}
+		if len(nonZero) != len(want) {
+			t.Fatalf("expected %d non-zero buckets, got %d: %v",
+				len(want), len(nonZero), nonZero)
+		}
+		for i := range want {
+			if nonZero[i] != want[i] {
+				t.Errorf("non-zero delta[%d] = %v, want %v",
+					i, nonZero[i], want[i])
+			}
+		}
+
+		// The sample-less minute sits between the 20 and the 70, so at least
+		// one zero-valued bucket must separate them.
+		zeros := len(s.Data) - len(nonZero)
+		if zeros == 0 {
+			t.Error("expected zero-filled buckets between the samples")
+		}
+	})
+
+	t.Run("delta and per_sec requested together", func(t *testing.T) {
+		requested := []string{"seq_scan_per_sec", "seq_scan_delta"}
+		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", requested)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(series) != len(requested) {
+			t.Fatalf("expected %d series, got %d", len(requested), len(series))
+		}
+		for i, want := range requested {
+			if series[i].Metric != want {
+				t.Errorf("series[%d].Metric = %q, want %q",
+					i, series[i].Metric, want)
+			}
+		}
+		d := seriesByMetric(t, series, "seq_scan_delta")
+		var total float64
+		for _, p := range d.Data {
+			total += p.Value
+		}
+		if total != 120 {
+			t.Errorf("summed deltas alongside per_sec = %v, want 120", total)
+		}
+		r := seriesByMetric(t, series, "seq_scan_per_sec")
+		if len(r.Data) == 0 {
+			t.Error("expected per-second rate data alongside the delta")
+		}
+	})
+
+	t.Run("unknown delta base rejected", func(t *testing.T) {
+		_, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
+			[]string{"no_such_column_delta"})
+		if err == nil {
+			t.Fatal("expected error for unknown delta base column")
+		}
+	})
+}

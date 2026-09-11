@@ -136,9 +136,12 @@ order, into three results: raw column names, a `[]DerivedMetric`, and the
 combined output order. The routing rules are deliberate and order-sensitive:
 
 - A name matching a real numeric column is always a raw metric; a real
-  column wins even when it ends in `_per_sec`.
+  column wins even when it ends in `_per_sec` or `_delta`.
 - A name ending in `_per_sec` whose prefix is a real numeric column becomes
   a `DerivedPerSec` rate (delta of the counter over elapsed seconds).
+- A name ending in `_delta` whose prefix is a real numeric column becomes a
+  `DerivedDelta`: the per-bucket increase of a cumulative counter, which is
+  what a dashboard bar chart wants in place of the ever-growing raw total.
 - The literal `dead_tuple_ratio` is accepted only when the probe exposes
   both `n_live_tup` and `n_dead_tup`; it is a 0-100 percentage.
 - A repeated name is silently de-duplicated; anything else is a client
@@ -152,6 +155,24 @@ the discovered column set and `QuoteIdentifier`-wrapped; never interpolate a
 caller-supplied metric name that has not passed `classifyMetrics`. Negative
 counter deltas (resets/restarts) and non-positive elapsed times are dropped
 to NULL so they never yield a bogus rate.
+
+`DerivedPerSec` and `DerivedDelta` share one `rate_samples`/`rate_buckets`
+CTE pair, since both derive from the same `LAG` over consecutive samples, so
+a request may mix them freely for the same or different base columns: each
+counter gets a `total_i`/`prev_i` pair, then either a `rate_i` or a
+`delta_i` sample column. Two rules are specific to deltas and must not be
+"tidied away":
+
+- The bucket aggregate is always `SUM(delta_i)`; the `aggregation` request
+  parameter is deliberately ignored, because averaging or taking the last of
+  a set of increments under-reports the events in the bucket. A reset or the
+  first sample of the window yields 0 rather than NULL, so the bucket SUM
+  stays defined whenever the bucket holds any sample.
+- The final SELECT wraps each delta in `COALESCE(..., 0)` after the LEFT
+  JOIN, so a bucket with no sample reads 0. Leaving it NULL would hand it to
+  `scanSeriesRows`'s LOCF fill, which would repeat the previous bucket's
+  increase even though the events of the sample-less bucket are already
+  counted by the next sample's delta: a double count.
 
 Both the raw and derived branches feed the shared `scanSeriesRows` helper,
 which scans a bucket-time-plus-N-values result set, applies LOCF per
@@ -182,7 +203,13 @@ The derived path and `scanSeriesRows` are covered by
 convention as `query_db_test.go`). Its fixture inserts minute-spaced samples
 with counters rising 60 per minute (a clean 1.0/sec rate) and constant
 live/dead tuple counts (a steady 10% ratio), then exercises raw, `_per_sec`,
-`dead_tuple_ratio`, and mixed requests end-to-end. The two `scanSeriesRows`
+`dead_tuple_ratio`, and mixed requests end-to-end. A second fixture in the
+same file covers `_delta` with a deliberately awkward progression: a first
+sample with no `LAG`, a minute carrying no sample at all, and a counter
+reset, asserting the exact non-zero per-bucket deltas, the 0 fill, and that
+the reset contributes nothing. Minute-spaced samples always land in distinct
+60-second buckets whatever the window origin is, which is what makes those
+exact assertions safe. The two `scanSeriesRows`
 error returns in `QueryTimeSeries` are driven deterministically by passing
 an aggregation that names no SQL function, which makes the built query fail
 at execution; `scanSeriesRows`'s own `pool.Query` and `rows.Scan` error
@@ -489,6 +516,8 @@ run.
   probe-scoped alert lookups.
 - #406: Five built-in alert rules that could never fire; fixed in the
   alerter metric registry plus collector migration 8.
+- #400: `_delta` (`DerivedDelta`) added alongside `_per_sec` so dashboard
+  charts plot per-bucket counter increases instead of cumulative totals.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to
   `QueryTimeSeries` to fix blank Activity Charts; retired #339's
   `resolveMetricValue` in favour of the `finiteFloat` guard in `toFloat64`.

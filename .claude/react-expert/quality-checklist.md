@@ -131,13 +131,42 @@ The rules for new or modified charts are as follows:
   anything derived from it describes the monitored database rather
   than the whole server, and the title should say so.
 
-- Label a cumulative series as cumulative in the legend, so that a
-  reader does not mistake it for a rate.
+- Never plot a raw `pg_stat_*` counter on a time-series chart. The
+  metrics API derives `<column>_per_sec` (the LAG delta over the
+  elapsed seconds, aggregated across the bucket, so query it with
+  `aggregation: 'avg'`) and `<column>_delta` (the per-bucket sum of
+  counter increases, with empty buckets reported as 0 and the
+  `aggregation` parameter ignored). Use `_per_sec` for anything that
+  reads as a rate and `_delta` for anything counted per interval,
+  such as checkpoints or bytes spilled to temporary files, and carry
+  the unit in the legend and the tile ('Commits/s', 'WAL Bytes/s',
+  unit `/s`). Cumulative sessions, which are deliberately shown as a
+  running total, are the one remaining exception, and its legend says
+  'Cumulative Sessions' so that a reader does not mistake it for a
+  rate.
+
+- Keep a KPI tile's arithmetic consistent with the metric it reads:
+  a `_per_sec` tile reports the latest bucket, whereas a `_delta`
+  tile sums its buckets across the selected window (Temp Bytes) or
+  derives a ratio from those sums (Requested Checkpoints, which is
+  the requested share of all checkpoints and shows '--' when no
+  checkpoint occurred). A `metricDescription` that describes a
+  cumulative total whilst the tile plots a rate, or the reverse, is
+  a bug: the AI analysis reads it.
+
+- Report a failed metrics query rather than letting it read as an
+  absence of data. `ChartPanel` takes an optional `errorMessage`,
+  rendered in `color="error"` in place of `emptyMessage` whenever it
+  is set and the query is not loading, and every chart should pass
+  the `error` from its `useMetrics` result. An older server answers
+  an unknown derived metric with HTTP 400 'metric not found in
+  probe', which would otherwise show as a bare 'No data' message.
 
 The reference implementation is
 `client/src/components/Dashboard/ServerDashboard/PostgresOverviewSection.tsx`,
-which draws backends with a `max_connections` reference series and
-keeps cumulative sessions on a separate chart. It reads the limit
+which draws backends with a `max_connections` reference series,
+keeps cumulative sessions on a separate chart and queries rate
+metrics for transactions, block I/O and tuple operations. It reads the limit
 from the latest `pg_server_info` row through the latest-row mode of
 `/api/v1/metrics/query` (`limit` and `order_by` parameters), since
 that probe only stores a row when the server configuration changes

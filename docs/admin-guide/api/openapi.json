@@ -5548,6 +5548,106 @@
         ]
       }
     },
+    "/metrics/connection-groups": {
+      "get": {
+        "summary": "Get connection counts grouped by user, client or database",
+        "description": "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups, and total_groups reports the count before the cap so that a truncated response can be recognized",
+        "operationId": "getConnectionGroups",
+        "tags": [
+          "Metrics"
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "description": "Grouping key: user, client or database (default: user)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection counts by group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionGroupsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/metrics/database-summaries": {
       "get": {
         "summary": "Get database summaries",
@@ -10603,6 +10703,82 @@
           "database_name",
           "username",
           "password"
+        ]
+      },
+      "ConnectionGroupRow": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections in the active state"
+          },
+          "client_hostname": {
+            "type": "string",
+            "description": "Reverse-resolved client hostname, populated only for the client grouping",
+            "nullable": true
+          },
+          "group_label": {
+            "type": "string",
+            "description": "Group label: the user name, client address or database name"
+          },
+          "idle": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections in the idle state"
+          },
+          "idle_in_transaction": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections idle in transaction, including the aborted variant"
+          },
+          "other": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections in any other state, including an unknown state"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total client connections in the group"
+          }
+        },
+        "required": [
+          "group_label",
+          "client_hostname",
+          "total",
+          "active",
+          "idle",
+          "idle_in_transaction",
+          "other"
+        ]
+      },
+      "ConnectionGroupsResponse": {
+        "type": "object",
+        "properties": {
+          "collected_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the snapshot the counts were taken from, or null when no snapshot was found in the time range",
+            "nullable": true
+          },
+          "groups": {
+            "type": "array",
+            "description": "Connection counts per group, ordered by total descending then group label ascending, capped at 200 groups",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGroupRow"
+            }
+          },
+          "total_groups": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of distinct groups in the snapshot before the 200-group cap was applied; the response is truncated when this exceeds the length of groups"
+          }
+        },
+        "required": [
+          "collected_at",
+          "total_groups",
+          "groups"
         ]
       },
       "ConnectionUpdateRequest": {

@@ -58,6 +58,7 @@ func TestBuildOpenAPISpec(t *testing.T) {
 		"/llm/models",
 		"/llm/chat",
 		"/chat/compact",
+		"/metrics/connection-groups",
 	}
 
 	for _, path := range keyPaths {
@@ -92,6 +93,8 @@ func TestBuildOpenAPISpec(t *testing.T) {
 		"TimelineEvent",
 		"Conversation",
 		"Message",
+		"ConnectionGroupsResponse",
+		"ConnectionGroupRow",
 	}
 
 	for _, schema := range keySchemas {
@@ -248,35 +251,37 @@ func TestBuildOpenAPISpec_SecurityRequirements(t *testing.T) {
 
 func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 	// The custom time-range feature is only discoverable through the spec,
-	// so /metrics/query must document both timestamps and advertise the
-	// custom value on time_range. The perf-summary paths keep the preset
-	// list, since they do not accept a custom window.
+	// so every path that accepts it must document both timestamps and
+	// advertise the custom value on time_range. The perf-summary paths keep
+	// the preset list, since they do not accept a custom window.
 	spec := BuildOpenAPISpec()
 
-	op := spec.Paths["/metrics/query"].Get
-	if op == nil {
-		t.Fatal("Expected GET operation on /metrics/query")
-	}
-
-	params := make(map[string]string, len(op.Parameters))
-	for _, p := range op.Parameters {
-		params[p.Name] = p.Description
-	}
-
-	for _, name := range []string{"time_start", "time_end"} {
-		desc, ok := params[name]
-		if !ok {
-			t.Errorf("Expected %s query parameter on /metrics/query", name)
-			continue
+	for _, path := range []string{"/metrics/query", "/metrics/connection-groups"} {
+		op := spec.Paths[path].Get
+		if op == nil {
+			t.Fatalf("Expected GET operation on %s", path)
 		}
-		if !strings.Contains(desc, "RFC 3339") {
-			t.Errorf("Expected %s description to mention RFC 3339, got %q",
-				name, desc)
+
+		params := make(map[string]string, len(op.Parameters))
+		for _, p := range op.Parameters {
+			params[p.Name] = p.Description
 		}
-	}
-	if desc := params["time_range"]; !strings.Contains(desc, "custom") {
-		t.Errorf("Expected time_range description to mention custom, got %q",
-			desc)
+
+		for _, name := range []string{"time_start", "time_end"} {
+			desc, ok := params[name]
+			if !ok {
+				t.Errorf("Expected %s query parameter on %s", name, path)
+				continue
+			}
+			if !strings.Contains(desc, "RFC 3339") {
+				t.Errorf("Expected %s description on %s to mention RFC 3339, got %q",
+					name, path, desc)
+			}
+		}
+		if desc := params["time_range"]; !strings.Contains(desc, "custom") {
+			t.Errorf("Expected time_range description on %s to mention custom, got %q",
+				path, desc)
+		}
 	}
 
 	perfOp := spec.Paths["/metrics/performance-summary"].Get

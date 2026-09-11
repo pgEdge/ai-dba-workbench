@@ -318,12 +318,167 @@ message is identical on both endpoints. Do not re-implement any of these
 checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
-`GET /api/v1/metrics/query` accepts `time_range=custom` alongside
-`time_start` and `time_end`, and maps any resolution error to `400`.
-The performance-summary and database-summary handlers in
-`perf_summary_handlers.go` still carry their own inline
-`validTimeRanges` maps and accept presets only; consolidating those is
-deliberately deferred.
+`GET /api/v1/metrics/query` and `GET /api/v1/metrics/connection-groups`
+accept `time_range=custom` alongside `time_start` and `time_end`, and
+map any resolution error to `400`. The performance-summary and
+database-summary handlers in `perf_summary_handlers.go` still use the
+inline `validTimeRanges` map and accept presets only; consolidating
+those is deliberately deferred.
+
+## Latest-Snapshot Aggregations (server)
+
+Some dashboard panels want a point-in-time picture rather than a time
+series. `GET /api/v1/metrics/connection-groups`
+(`server/src/internal/api/perf_summary_connection_groups.go`) is the
+reference implementation: it aggregates the single newest `collected_at`
+for a connection inside the requested `time_range`, so the range only
+selects which snapshot counts as the latest and nothing is averaged or
+peaked across it. The pattern is a `latest` CTE holding
+`MAX(collected_at)`, a `snapshot` CTE joined to it, and the aggregation
+on top; `collected_at` is returned to the client so the UI can show the
+age of what it is displaying, and it is null when the window held no
+snapshot.
+
+### Bound the partition key in every CTE, not just the first
+
+`metrics.*` probe tables are `PARTITION BY RANGE (collected_at)`, so any CTE
+that reads one must constrain `collected_at` with the window bounds
+*directly*. Constraining it only indirectly, by joining to a CTE that
+already narrowed it (`JOIN latest l ON psa.collected_at = l.collected_at`),
+gives the planner nothing to prune with, and it keeps every retained
+partition in the plan. Repeating the bounds is a semantic no-op but a
+substantial planning win.
+
+Measured on a 90-daily-partition fixture with `plan_cache_mode =
+force_generic_plan` (the mode pgx's statement cache settles into), for
+`connection-groups`: without the repeated bounds the snapshot `Append`
+carried all 90 partitions as sub-plans and the plan ran to 283 lines with
+104 partition scan nodes; with them, both `Append` nodes reported
+`Subplans Removed: 88`, leaving 2 sub-plans each and a 54-line plan with no
+partition scan nodes at all. Mean per-execution latency over 300 executions
+fell from 0.575 ms to 0.445 ms, and the result sets were byte-identical
+across all five time ranges and both connections. Note that execution-side
+buffer counts were the same either way (`shared hit=13`), because runtime
+pruning already stopped the executor from touching the irrelevant
+partitions; the win is in plan size and per-execution node setup, and it
+grows with the partition count.
+
+### Bound group cardinality
+
+Where a grouping key is influenceable from outside the workbench, cap the
+row count. For `connection-groups`, `group_by=client` has cardinality up to
+the monitored server's `max_connections`, and anyone who can reach that
+server from many source addresses can inflate it, so the final `SELECT`
+carries `LIMIT maxConnectionGroups` (200). With `total DESC` ordering,
+truncation only ever discards the smallest groups; no `(other)` roll-up row
+is synthesised, because a partial roll-up is more misleading than a plain
+cut. A bare cap is ambiguous, though, since 200-of-200 and 200-of-more look
+identical, so the tail also selects `COUNT(*) OVER () AS total_groups`,
+which is evaluated after `GROUP BY` and before `ORDER BY`/`LIMIT` and thus
+reports the pre-cap group count on every row; the handler copies it into
+`total_groups` in the response, and a client treats the result as
+truncated when it exceeds `len(groups)`. Quote the constant in the OpenAPI
+description so clients know the response is capped.
+
+When testing the row loop's error branches, note that pgx v5 renders any
+scalar column into a `*string` through its text fallback, so a mistyped
+scalar (`integer`, `timestamptz`) scans cleanly and a `bytea` fails at
+prepare time (`MIN(bytea)` does not exist), never reaching `rows.Scan`. A
+`text[]` column is the fixture that works: `MIN(anyarray)` exists, and pgx
+refuses to decode a binary array into `*string`. For the `rows.Err()`
+branch, replace the table with a view whose column divides by
+`(pid - pid)`; the planner cannot fold that, so the error is raised at
+execution time rather than at prepare time. `TestConnectionGroups_ScanErrorSkipsRow`
+and `TestConnectionGroups_RowsErrorReturnsPartialResult` are the worked
+examples, and each first proves its fixture takes the intended path.
+
+Two further conventions matter when reading `metrics.pg_stat_activity`:
+
+- Always restrict to `backend_type = 'client backend'`. The probe stores
+  every backend, including background workers such as the walwriter and
+  autovacuum workers, and counting those as "connections" inflates
+  every total.
+
+- Never render `client_addr` with a `::text` cast. `client_addr` is
+  `inet`, and the standard `inet` text output carries the netmask on
+  every supported PostgreSQL version (it reproduces identically on 16
+  and 18), so a cast yields `192.0.2.10/32` rather than `192.0.2.10`.
+  Use `host(client_addr)` instead. A NULL `client_addr` means the backend
+  arrived over a Unix-domain socket, which is worth labelling as local
+  rather than unknown.
+
+### Compose query variants as compile-time constants, not with Sprintf
+
+Where an endpoint lets the caller choose a grouping or an ordering, do not
+build the SQL with a runtime `fmt.Sprintf` over whitelisted fragments. Go
+permits constant concatenation, so assemble one complete `const` per
+variant instead: a shared head, a shared tail, and the per-variant
+expressions spliced between them with `+`. `connection-groups` is the
+worked example, with `connectionGroupsQueryHead`,
+`connectionGroupsQueryLabelSuffix` and `connectionGroupsQueryTail` shared
+across the three finished queries (`connectionGroupsQueryByUser`,
+`connectionGroupsQueryByClient` and `connectionGroupsQueryByDatabase`), and
+a `map[string]string` (`connectionGroupQueries`) mapping the accepted
+parameter values to those queries. `buildConnectionGroupsSQL` then
+degenerates to a map lookup returning `(query string, args []any)`, with
+the default variant as the fallback for an unrecognised key; the handler
+still rejects unknown values with a 400 first, listing the accepted values
+from a sorted key helper so the message is stable despite Go's randomised
+map iteration.
+
+This is worth doing for three reasons. The whitelist property becomes a
+compiler guarantee rather than a convention, since there is no expression
+anywhere that could splice a caller-supplied value into SQL. The `%%`
+escaping wrinkle in `LIKE 'idle in transaction%'` disappears with the
+format string. And Codacy's Opengrep `go_sql_rule-concat-sqli` rule fires
+Error-level on `tx.Query(ctx, query, args...)` whenever `query` came from a
+`Sprintf`, even with every value bound; removing the pattern clears the
+finding on its merits instead of needing a `nosemgrep` suppression. Prefer
+this shape over `nosemgrep` for new code where the variants are a small
+fixed set; the existing `nosemgrep` in `internal/metrics/query.go` remains
+appropriate there, because its identifiers are discovered from
+`information_schema` at run time and genuinely cannot be constants.
+
+One caveat: the `LIMIT` cannot be formatted from a Go integer constant
+inside a constant expression, so the literal is written into the tail and a
+test (`TestBuildConnectionGroupsSQL_GroupLimit`) asserts it stays in step
+with `maxConnectionGroups`. `TestConnectionGroupQueriesShareOneBody`
+likewise asserts the variants still share one head and tail, so nobody
+quietly turns three composed constants into three divergent copies of a
+30-line query.
+
+### Sanitise every logged error, consistently
+
+Errors that may carry values echoed from the database go through
+`logging.SanitizeForLog(err.Error())` with a `%s` verb, never a bare `%v`.
+Apply it to all three error sites in a scan loop (the query error, the
+per-row scan error, and the `rows.Err()` check), not just the first; a file
+that sanitises one and not the others is worse than one that is uniformly
+careful, because the inconsistency reads as intentional. Much of
+`perf_summary_handlers.go` still logs raw errors with `%v` and is due a
+separate sweep.
+
+### Query errors are "no data", not 500s
+
+The metrics endpoints deliberately answer 200 with an empty payload when
+their query fails, because the common cause is a probe that has never
+run against the connection, and a dashboard panel showing "no data"
+beats one showing an error. Follow `handleTopQueries` and
+`handleConnectionGroups`: log the error at DEBUG through
+`logging.SanitizeForLog` and return the empty shape.
+
+### Package-level test-database interference
+
+The `internal/api` package's database-backed tests share one Postgres
+database and each install and drop their own trimmed `metrics.*`
+fixture. Running the whole package under `go test -race -p=1` fails
+intermittently, with a varying set of unrelated tests reporting
+`relation "connections" does not exist` or `commit failed: connection
+reset`. This predates the connection-groups work and reproduces with
+those tests skipped entirely; do not treat it as a regression in
+whichever change happens to be in flight, and prefer verifying a
+specific change with a targeted `-run` before interpreting a full-package
+run.
 
 ## Related Issues
 
@@ -340,3 +495,6 @@ deliberately deferred.
 - #345: Custom time ranges; `ResolveTimeWindow`/`TimeWindow` added and
   `QueryTimeSeries` switched from a time-range string to a resolved
   window.
+
+- #346: `GET /api/v1/metrics/connection-groups`, the reference
+  latest-snapshot aggregation over `metrics.pg_stat_activity`.

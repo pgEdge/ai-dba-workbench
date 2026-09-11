@@ -13,24 +13,73 @@ metrics:
 - Memory usage percentage with a time-series chart.
 - Disk usage percentage with a time-series chart.
 - Load average values with a time-series chart.
-- Network I/O throughput with a time-series chart.
+- Network I/O throughput as bytes transmitted and
+  received per second, with a time-series chart.
 
 ## PostgreSQL Overview
 
 The PostgreSQL overview section displays server-level
-database metrics:
+database metrics. The charts built on cumulative
+PostgreSQL counters plot rates rather than the raw
+counter totals, so a rising line shows a busier server
+rather than the simple passage of time.
 
-- Active connections relative to the maximum allowed.
-- Transactions per second with a time-series chart.
-- Cache hit ratio as a percentage with trend data.
-- Temporary files created with a time-series chart.
+The section displays the following KPI tiles:
+
+- The Backends tile shows the active connections
+  relative to the maximum allowed.
+- The Commits tile shows the current commits per
+  second.
+- The Cache Hit Ratio tile shows the ratio as a
+  percentage with trend data.
+- The Temp Bytes tile shows the bytes spilled to
+  temporary files across the selected time range, with
+  a sparkline of the bytes spilled in each interval.
+
+The section displays the following time-series charts:
+
+- The Connections (Monitored Database) chart plots the
+  backends connected to each monitored database.
+- The Sessions Established (Monitored Database) chart
+  plots the sessions opened against each monitored
+  database.
+- The Transactions chart plots commits and rollbacks
+  per second.
+- The Block I/O chart plots blocks hit and blocks read
+  per second.
+- The Tuple Operations chart plots the rows fetched,
+  inserted, updated, and deleted per second.
 
 ## WAL and Replication
 
 The WAL and replication section shows write-ahead log
-activity and replication status for the server. The
-section includes WAL generation rates and replication
-slot details.
+activity, checkpoint behaviour, and replication status
+for the server.
+
+The section displays the following KPI tiles:
+
+- The WAL Bytes tile shows the current WAL bytes
+  written per second.
+- The WAL Records tile shows the current WAL records
+  written per second.
+- The Replication Lag tile shows the current lag for
+  the server's replicas.
+- The Requested Checkpoints tile shows the percentage
+  of the checkpoints in the selected time range that
+  PostgreSQL requested rather than scheduled. A high
+  percentage suggests that `max_wal_size` is too low.
+
+The section displays the following charts:
+
+- The WAL Activity Over Time chart plots the WAL bytes
+  and WAL records written per second.
+- The Replication Lag Over Time chart plots the write,
+  flush, and replay lag.
+- The Checkpoints Over Time chart is a stacked bar
+  chart of the timed and requested checkpoints
+  completed in each interval.
+- The Checkpoint Buffers Written chart plots the
+  buffers that checkpoints wrote per second.
 
 ## Database Summaries
 

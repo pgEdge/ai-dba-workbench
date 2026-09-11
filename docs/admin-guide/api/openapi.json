@@ -6033,7 +6033,7 @@
           {
             "name": "metrics",
             "in": "query",
-            "description": "Comma-separated metric names",
+            "description": "Comma-separated metric names. A name may be a raw probe column, a cumulative counter column suffixed with _per_sec for its per-second rate, or one suffixed with _delta for its per-bucket increase; a real column of that name always takes precedence.",
             "schema": {
               "type": "string"
             }

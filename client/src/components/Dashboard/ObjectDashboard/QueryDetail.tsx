@@ -34,6 +34,7 @@ import type { MetricQueryParams } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX, spinKeyframes } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
+import ChartPanel from '../ChartPanel';
 import TimeRangeSelector from '../TimeRangeSelector';
 import { Chart } from '../../Chart';
 import { QueryAnalysisDialog } from '../../QueryAnalysisDialog';
@@ -270,8 +271,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 queryId: queryData.queryid,
                 timeRange: timeRange.range,
                 buckets: CHART_BUCKETS,
-                aggregation: 'sum',
-                metrics: ['calls'],
+                aggregation: 'avg',
+                metrics: ['calls_per_sec'],
             };
         },
         [
@@ -295,8 +296,8 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const callsChartData = useMemo(
         () => buildChartData(
             callsChart.data,
-            ['calls'],
-            ['Calls'],
+            ['calls_per_sec'],
+            ['Calls/s'],
         ),
         [callsChart.data]
     );
@@ -654,17 +655,16 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             >
                 <Box sx={CHART_SECTION_SX}>
                     <Box>
-                        {execTimeChart.loading
-                            && !execTimeChartData ? (
-                                <Box sx={{
-                                    display: 'flex',
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    height: CHART_HEIGHT,
-                                }}>
-                                    <CircularProgress size={24} aria-label="Loading chart" />
-                                </Box>
-                            ) : execTimeChartData ? (
+                        <ChartPanel
+                            title="Execution Time Over Time"
+                            loading={execTimeChart.loading
+                                && !execTimeChartData}
+                            hasData={!!execTimeChartData}
+                            emptyMessage="No execution time data available"
+                            errorMessage={execTimeChart.error}
+                            height={CHART_HEIGHT}
+                        >
+                            {execTimeChartData && (
                                 <Chart
                                     type="line"
                                     data={execTimeChartData}
@@ -683,59 +683,38 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                                         timeRange: timeRange.range,
                                     }}
                                 />
-                            ) : (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                    sx={{
-                                        textAlign: 'center',
-                                        py: 4,
-                                    }}
-                                >
-                                    No execution time data available
-                                </Typography>
                             )}
+                        </ChartPanel>
                     </Box>
 
                     <Box>
-                        {callsChart.loading
-                            && !callsChartData ? (
-                                <Box sx={{
-                                    display: 'flex',
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    height: CHART_HEIGHT,
-                                }}>
-                                    <CircularProgress size={24} aria-label="Loading chart" />
-                                </Box>
-                            ) : callsChartData ? (
+                        <ChartPanel
+                            title="Calls Over Time"
+                            loading={callsChart.loading && !callsChartData}
+                            hasData={!!callsChartData}
+                            emptyMessage="No call frequency data available"
+                            errorMessage={callsChart.error}
+                            height={CHART_HEIGHT}
+                        >
+                            {callsChartData && (
                                 <Chart
-                                    type="bar"
+                                    type="line"
                                     data={callsChartData}
                                     title="Calls Over Time"
                                     height={CHART_HEIGHT}
+                                    smooth
                                     showLegend
                                     showTooltip
                                     enableExport={false}
                                     analysisContext={{
-                                        metricDescription: 'Query call frequency over time',
+                                        metricDescription: 'Query calls per second over time',
                                         connectionId,
                                         databaseName,
                                         timeRange: timeRange.range,
                                     }}
                                 />
-                            ) : (
-                                <Typography
-                                    variant="body2"
-                                    color="text.secondary"
-                                    sx={{
-                                        textAlign: 'center',
-                                        py: 4,
-                                    }}
-                                >
-                                    No call frequency data available
-                                </Typography>
                             )}
+                        </ChartPanel>
                     </Box>
                 </Box>
             </CollapsibleSection>

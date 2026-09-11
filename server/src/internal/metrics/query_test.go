@@ -998,6 +998,94 @@ func TestClassifyMetrics(t *testing.T) {
 		}
 	})
 
+	t.Run("valid delta base accepted", func(t *testing.T) {
+		raw, derived, order, err := classifyMetrics(
+			[]string{"seq_scan_delta"}, tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 0 {
+			t.Errorf("expected no raw columns, got %v", raw)
+		}
+		if len(derived) != 1 {
+			t.Fatalf("expected 1 derived, got %d", len(derived))
+		}
+		if derived[0].Kind != DerivedDelta {
+			t.Errorf("expected DerivedDelta, got %v", derived[0].Kind)
+		}
+		if derived[0].BaseColumn != "seq_scan" {
+			t.Errorf("expected base seq_scan, got %q", derived[0].BaseColumn)
+		}
+		if derived[0].OutputName != "seq_scan_delta" {
+			t.Errorf("unexpected output name %q", derived[0].OutputName)
+		}
+		if len(order) != 1 || order[0] != "seq_scan_delta" {
+			t.Errorf("unexpected order: %v", order)
+		}
+	})
+
+	t.Run("delta suffix on non-column rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"bogus_delta"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error for non-column delta base")
+		}
+		if !strings.Contains(err.Error(), "bogus_delta") {
+			t.Errorf("error should name the metric, got %q", err.Error())
+		}
+		if !strings.Contains(err.Error(), "per-bucket delta") {
+			t.Errorf("error should explain the delta case, got %q", err.Error())
+		}
+	})
+
+	t.Run("bare delta suffix rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"_delta"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error for bare _delta")
+		}
+	})
+
+	t.Run("real column ending in delta wins over derived", func(t *testing.T) {
+		cols := []string{"seq_scan", "custom_delta"}
+		raw, derived, _, err := classifyMetrics(
+			[]string{"custom_delta"}, cols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 0 {
+			t.Errorf("expected raw treatment, got derived %v", derived)
+		}
+		if len(raw) != 1 || raw[0] != "custom_delta" {
+			t.Errorf("expected raw [custom_delta], got %v", raw)
+		}
+	})
+
+	t.Run("per_sec and delta on the same column coexist", func(t *testing.T) {
+		_, derived, order, err := classifyMetrics(
+			[]string{"seq_scan_per_sec", "seq_scan_delta"},
+			tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 2 {
+			t.Fatalf("expected 2 derived, got %d", len(derived))
+		}
+		if derived[0].Kind != DerivedPerSec || derived[1].Kind != DerivedDelta {
+			t.Errorf("unexpected kinds: %v", derived)
+		}
+		if derived[0].BaseColumn != "seq_scan" ||
+			derived[1].BaseColumn != "seq_scan" {
+			t.Errorf("both should share base seq_scan, got %v", derived)
+		}
+		want := []string{"seq_scan_per_sec", "seq_scan_delta"}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Errorf("order[%d] = %q, want %q", i, order[i], want[i])
+			}
+		}
+	})
+
 	t.Run("mixed raw and derived preserves order", func(t *testing.T) {
 		raw, derived, order, err := classifyMetrics(
 			[]string{"seq_scan", "idx_scan_per_sec", "dead_tuple_ratio"},
@@ -1607,6 +1695,13 @@ func TestRateAggExpr(t *testing.T) {
 	})
 }
 
+func TestDeltaAggExpr(t *testing.T) {
+	expr := deltaAggExpr(3, "seq_scan_delta")
+	if expr != `SUM(delta_3) AS "seq_scan_delta"` {
+		t.Errorf("unexpected expr: %s", expr)
+	}
+}
+
 func TestBuildDerivedMetricsQuery(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -1922,6 +2017,122 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Contains(query, `SUM("n_live_tup")`) ||
 			strings.Contains(query, `SUM("n_dead_tup")`) {
 			t.Errorf("last aggregation should not SUM tuple counts:\n%s", query)
+		}
+	})
+
+	t.Run("single delta", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{
+				OutputName: "seq_scan_delta",
+				BaseColumn: "seq_scan",
+				Kind:       DerivedDelta,
+			}},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		checks := []string{
+			`SUM("seq_scan") AS total_0`,
+			`LAG(SUM("seq_scan")) OVER (ORDER BY collected_at) AS prev_0`,
+			`CASE WHEN prev_0 IS NOT NULL AND (total_0 - prev_0) >= 0 ` +
+				`THEN (total_0 - prev_0) ELSE 0 END AS delta_0`,
+			`SUM(delta_0) AS "seq_scan_delta"`,
+			`COALESCE(rate_buckets."seq_scan_delta", 0) AS "seq_scan_delta"`,
+			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
+		}
+		for _, c := range checks {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, "rate_0") {
+			t.Errorf("delta-only query should not emit a rate column:\n%s", query)
+		}
+		if len(args) != 4 {
+			t.Errorf("expected 4 args, got %d", len(args))
+		}
+	})
+
+	for _, agg := range []string{"avg", "last", "max"} {
+		t.Run("delta ignores aggregation "+agg, func(t *testing.T) {
+			// SUM is the only meaningful bucket aggregate for an increment,
+			// so the requested aggregation must not reach the delta column.
+			query, _, err := BuildDerivedMetricsQuery(
+				"pg_stat_all_tables",
+				[]DerivedMetric{{
+					OutputName: "seq_scan_delta",
+					BaseColumn: "seq_scan",
+					Kind:       DerivedDelta,
+				}},
+				1, start, end, 60, agg, MetricFilters{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(query, `SUM(delta_0) AS "seq_scan_delta"`) {
+				t.Errorf("%s should still SUM the delta:\n%s", agg, query)
+			}
+			if strings.Contains(query, "array_agg(delta_0") {
+				t.Errorf("%s should not array_agg the delta:\n%s", agg, query)
+			}
+		})
+	}
+
+	t.Run("mixed per_sec and delta share the rate CTEs", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{
+				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
+				{OutputName: "n_tup_ins_delta", BaseColumn: "n_tup_ins", Kind: DerivedDelta},
+			},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`SUM("seq_scan") AS total_0`,
+			`SUM("n_tup_ins") AS total_1`,
+			`avg(rate_0) AS "seq_scan_per_sec"`,
+			`SUM(delta_1) AS "n_tup_ins_delta"`,
+			`rate_buckets."seq_scan_per_sec"`,
+			`COALESCE(rate_buckets."n_tup_ins_delta", 0)`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		// One shared pair of CTEs, not two.
+		if n := strings.Count(query, "rate_samples AS"); n != 1 {
+			t.Errorf("expected exactly 1 rate_samples CTE, got %d", n)
+		}
+		if n := strings.Count(query, "rate_buckets AS"); n != 1 {
+			t.Errorf("expected exactly 1 rate_buckets CTE, got %d", n)
+		}
+		if n := strings.Count(query,
+			"LEFT JOIN rate_buckets ON all_buckets.bucket_time"); n != 1 {
+			t.Errorf("expected exactly 1 rate_buckets join, got %d", n)
+		}
+	})
+
+	t.Run("delta and ratio together", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{
+				{OutputName: "seq_scan_delta", BaseColumn: "seq_scan", Kind: DerivedDelta},
+				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
+			},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`COALESCE(rate_buckets."seq_scan_delta", 0)`,
+			"ratio_buckets.dead_tuple_ratio",
+			"LEFT JOIN rate_buckets", "LEFT JOIN ratio_buckets",
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
 		}
 	})
 

@@ -13,15 +13,17 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SystemResourcesSection from '../SystemResourcesSection';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricSeries } from '../../types';
+import type { MetricQueryParams, MetricSeries } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
 
-const mockUseMetrics = vi.fn<[], UseMetricsReturn>();
+type UseMetricsFn = (params: MetricQueryParams | null) => UseMetricsReturn;
+
+const mockUseMetrics = vi.fn<UseMetricsFn>();
 vi.mock('../../../../hooks/useMetrics', () => ({
-    useMetrics: () => mockUseMetrics(),
+    useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
 }));
 
 vi.mock('../../../../contexts/useDashboard', () => ({
@@ -374,6 +376,53 @@ describe('SystemResourcesSection', () => {
             expect(screen.getByText('Load Average')).toBeInTheDocument();
             // Three placeholders: Memory, Disk, Load all show '--'.
             expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(3);
+        });
+    });
+
+    describe('network chart', () => {
+        it('requests per-second network metrics', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(mockUseMetrics).toHaveBeenCalled();
+            });
+            const requested = mockUseMetrics.mock.calls
+                .map(([params]) => (params?.metrics ?? []).join(','));
+            expect(requested).toContain('tx_bytes_per_sec,rx_bytes_per_sec');
+        });
+
+        it('reports a query error in place of the empty message', async () => {
+            mockUseMetrics.mockImplementation((params) => {
+                const key = (params?.metrics ?? []).join(',');
+                if (key === 'tx_bytes_per_sec,rx_bytes_per_sec') {
+                    return {
+                        data: null,
+                        loading: false,
+                        error: 'metric not found in probe',
+                        refetch: vi.fn(),
+                    };
+                }
+                return realMetrics();
+            });
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('metric not found in probe'))
+                    .toBeInTheDocument();
+            });
         });
     });
 });

@@ -11,25 +11,41 @@ The table detail view displays the following metrics:
 
 - Table size and total size including indexes and TOAST.
 - Table bloat estimate as a percentage.
-- Sequential scan count versus index scan count.
-- Insert, update, and delete modification counts.
 - Live tuple and dead tuple counts with trend data.
+- The cumulative sequential scan count for the table.
+
+The activity charts plot rates rather than the raw
+cumulative counters, so a rising line shows a busier
+table rather than the simple passage of time:
+
+- The Tuple Operations Over Time chart plots the rows
+  inserted, updated, deleted, and HOT updated per
+  second.
+- The Sequential vs Index Scans Over Time chart plots
+  sequential scans and index scans per second.
+- The Dead Tuple Ratio Over Time chart plots the
+  percentage of tuples that are dead.
 
 ## Index Detail
 
 The index detail view displays the following metrics:
 
 - Index size in a human-readable format.
-- Index scan count with a time-series chart.
-- Tuples read and tuples fetched counts.
+- The cumulative index scan, tuples read, and tuples
+  fetched counts.
+
+The Scan Activity chart plots index scans per second
+across the selected time range.
 
 ## Query Detail
 
 The query detail view displays the following metrics:
 
 - Total and mean execution time.
-- Total rows returned and rows per call.
-- Call count with a time-series chart.
+- The total call count and the average rows per call.
+
+The Calls Over Time chart plots the calls per second
+across the selected time range.
 
 ## Query Plan
 

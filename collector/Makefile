@@ -123,5 +123,5 @@ help:
 # from bin/ by a developer. Never wired into test targets; invoke
 # deliberately.
 killall:
-	@pkill ai-dba-collector 2>/dev/null || true
+	@pkill -f "[a]i-dba-collector" 2>/dev/null || true
 	@pkill -f "[g]o run.*collector" 2>/dev/null || true

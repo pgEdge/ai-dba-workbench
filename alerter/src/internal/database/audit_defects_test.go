@@ -50,7 +50,9 @@ func defectDemoEnabled(t *testing.T) {
 // deliberately faithful on one point: metrics.pg_stat_wal exists (it
 // carries the archiver columns in production) and
 // metrics.pg_stat_archiver does NOT, because the collector never
-// creates such a table.
+// creates such a table. The one deliberate addition is
+// metrics.pg_database, which no current query reads; see the comment
+// on the table itself.
 const auditDefectsSchema = `
 DROP SCHEMA IF EXISTS metrics CASCADE;
 DROP TABLE IF EXISTS metric_baselines CASCADE;
@@ -121,6 +123,34 @@ CREATE TABLE metrics.pg_stat_database (
     collected_at TIMESTAMPTZ NOT NULL
 );
 
+-- metrics.pg_database carries the transaction-ID wraparound
+-- indicators. No registry query reads it today, because age_percent
+-- returns a hardcoded 50.0 (see
+-- TestAuditC3TransactionWraparoundReturnsConstant). The table is
+-- present, and seeded, so that repointing age_percent at
+-- age_datfrozenxid makes the C3 test fail on the value it asserts
+-- rather than on an undefined-table error that looks like a broken
+-- fixture. The column names and types mirror the collector schema in
+-- collector/src/database/schema.go; the partitioning and the primary
+-- key are omitted, as they are for every other table here.
+CREATE TABLE metrics.pg_database (
+    connection_id INTEGER NOT NULL,
+    datname TEXT NOT NULL,
+    datdba OID,
+    encoding INTEGER,
+    datlocprovider "char",
+    datistemplate BOOLEAN,
+    datallowconn BOOLEAN,
+    datconnlimit INTEGER,
+    datfrozenxid XID,
+    datminmxid XID,
+    dattablespace OID,
+    age_datfrozenxid BIGINT,
+    age_datminmxid BIGINT,
+    database_size_bytes BIGINT,
+    collected_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE metrics.pg_stat_statements (
     connection_id INTEGER NOT NULL,
     database_name TEXT NOT NULL,
@@ -182,6 +212,16 @@ const (
             (connection_id, database_name, datname, blks_hit, blks_read,
              collected_at)
         VALUES ($1, $2, $3, $4, $5, $6)
+    `
+
+	insertAuditPgDatabaseSQL = `
+        INSERT INTO metrics.pg_database
+            (connection_id, datname, datdba, encoding, datistemplate,
+             datallowconn, datconnlimit, datfrozenxid, datminmxid,
+             age_datfrozenxid, age_datminmxid, database_size_bytes,
+             collected_at)
+        VALUES ($1, $2, 10, 6, $3, TRUE, -1, '5000'::xid, '1'::xid,
+                $4, 1, $5, $6)
     `
 
 	insertAuditStatStatementsSQL = `
@@ -406,6 +446,37 @@ func TestAuditC3TransactionWraparoundReturnsConstant(t *testing.T) {
 			connID, "appdb", relname, liveTup,
 			nowMinus(t, pool, "1 minute")); err != nil {
 			t.Fatalf("failed to seed pg_stat_all_tables: %v", err)
+		}
+	}
+
+	// Seed the wraparound indicators the metric ought to read. The
+	// current query ignores metrics.pg_database entirely, so these rows
+	// change nothing today; they exist so that repointing age_percent at
+	// metrics.pg_database.age_datfrozenxid makes this test fail on the
+	// asserted value instead of on a 42P01 undefined-table error, which
+	// would read as a broken fixture rather than as the fix landing.
+	//
+	// The oldest non-template database sits at 1.5e9 of the 2^31-1
+	// wraparound horizon, or roughly 70%: high enough to be a realistic
+	// warning-level cluster, still below the seeded "> 75" threshold.
+	// template1 is deliberately older, at roughly 93%, so a replacement
+	// query that forgets to exclude template databases reports a value
+	// that differs from both 50 and 70.
+	pgDatabaseRows := []struct {
+		datname      string
+		isTemplate   bool
+		ageFrozenXID int64
+		sizeBytes    int64
+	}{
+		{"appdb", false, 1_500_000_000, 104_857_600},
+		{"postgres", false, 200_000_000, 8_388_608},
+		{"template1", true, 2_000_000_000, 8_388_608},
+	}
+	for _, r := range pgDatabaseRows {
+		if _, err := pool.Exec(ctx, insertAuditPgDatabaseSQL,
+			connID, r.datname, r.isTemplate, r.ageFrozenXID, r.sizeBytes,
+			nowMinus(t, pool, "1 minute")); err != nil {
+			t.Fatalf("failed to seed pg_database row %q: %v", r.datname, err)
 		}
 	}
 

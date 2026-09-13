@@ -302,6 +302,114 @@ func TestParseDatabaseAnalysisResponseNoTextContent(t *testing.T) {
 	}
 }
 
+// TestParseDatabaseAnalysisResponseUnparseableText covers responses that
+// carry real text which nonetheless describes none of the supplied
+// databases. An empty parse is as unusable as no text at all, so it must
+// report llmproxy.ErrNoTextContent rather than hand back an empty map
+// that getAIAnalysis would cache and render as a blank panel.
+func TestParseDatabaseAnalysisResponseUnparseableText(t *testing.T) {
+	databases := []DatabaseInfo{{Name: "myapp"}, {Name: "analytics"}}
+
+	tests := []struct {
+		name    string
+		text    string
+		wantErr bool
+	}{
+		{
+			name:    "no colon-delimited lines",
+			text:    "I was unable to determine the purpose of these.\n",
+			wantErr: true,
+		},
+		{
+			name:    "names match no known database",
+			text:    "postgres: The default database.\ntemplate1: A template.\n",
+			wantErr: true,
+		},
+		{
+			name:    "descriptions are empty",
+			text:    "myapp:   \nanalytics:\n",
+			wantErr: true,
+		},
+		{
+			name:    "markdown fence only",
+			text:    "```\n```\n",
+			wantErr: true,
+		},
+		{
+			name:    "one valid line still succeeds",
+			text:    "Here is the analysis.\nmyapp: A web application store.\n",
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &pgllm.ChatResponse{
+				Content: []pgllm.ContentBlock{
+					{Type: pgllm.BlockText, Text: tc.text},
+				},
+			}
+
+			result, err := parseDatabaseAnalysisResponse(resp, databases)
+			if tc.wantErr {
+				if !errors.Is(err, llmproxy.ErrNoTextContent) {
+					t.Fatalf("expected ErrNoTextContent, got %v", err)
+				}
+				if result != nil {
+					t.Errorf("expected nil result on error, got %v", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result["myapp"] != "A web application store." {
+				t.Errorf("unexpected myapp description: %q", result["myapp"])
+			}
+		})
+	}
+}
+
+// TestServerInfoGetAIAnalysisUnparseableText verifies that the empty parse
+// reaches the caller as an error and caches nothing, so the endpoint
+// reports a 502 instead of serving a blank analysis for the cache TTL.
+func TestServerInfoGetAIAnalysisUnparseableText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "I cannot determine their purpose."}, "finish_reason": "stop"}]
+		}`))
+	}))
+	defer srv.Close()
+
+	h := &ServerInfoHandler{
+		llmConfig: &llmproxy.Config{
+			Provider:      "openai",
+			Model:         "gpt-4o",
+			OpenAIAPIKey:  "test-key",
+			OpenAIBaseURL: srv.URL,
+		},
+		cache: make(map[int]*aiCacheEntry),
+	}
+
+	result, err := h.getAIAnalysis(
+		context.Background(), 11,
+		[]DatabaseInfo{{Name: "mydb"}}, nil,
+	)
+	if !errors.Is(err, llmproxy.ErrNoTextContent) {
+		t.Fatalf("expected ErrNoTextContent, got %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil analysis on error, got %v", result)
+	}
+	h.cacheMu.RLock()
+	_, ok := h.cache[11]
+	h.cacheMu.RUnlock()
+	if ok {
+		t.Error("expected no cache entry when the analysis is unusable")
+	}
+}
+
 func TestServerInfoAttachExtensionsToDatabases(t *testing.T) {
 	h := &ServerInfoHandler{}
 

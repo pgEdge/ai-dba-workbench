@@ -735,8 +735,10 @@ func (h *ServerInfoHandler) getAIAnalysis(
 
 	// Parse the response into per-database analysis. A response with no
 	// text block (the shape a reasoning model produces when its thinking
-	// exhausts the output budget) is reported rather than cached as an
-	// empty analysis.
+	// exhausts the output budget), and one whose text describes none of
+	// the databases, are both reported rather than cached as an empty
+	// analysis. The empty-databases gate above has already returned, so
+	// an empty parse can only mean unusable model output.
 	analysis, err := parseDatabaseAnalysisResponse(resp, databases)
 	if err != nil {
 		return nil, err
@@ -797,12 +799,16 @@ func buildDatabaseAnalysisPrompt(databases []DatabaseInfo) string {
 // parseDatabaseAnalysisResponse extracts per-database descriptions from
 // the LLM response text.
 //
-// A response that carries no text block, or whose text is whitespace
-// only, yields llmproxy.ErrNoTextContent. Reasoning models charge their
+// A response that carries no text block, whose text is whitespace only,
+// or whose text yields no description for any of the supplied databases,
+// yields llmproxy.ErrNoTextContent. Reasoning models charge their
 // thinking blocks against the same output budget as the answer, so an
-// under-sized budget produces exactly this shape of response; reporting
-// it as an error surfaces the misconfiguration instead of caching an
+// under-sized budget produces exactly these shapes of response; reporting
+// them as an error surfaces the misconfiguration instead of caching an
 // empty analysis for the whole cache TTL.
+//
+// The caller guarantees a non-empty databases slice, so an empty result
+// always means unusable model output rather than nothing to analyze.
 func parseDatabaseAnalysisResponse(
 	resp *pgllm.ChatResponse,
 	databases []DatabaseInfo,
@@ -860,6 +866,12 @@ func parseDatabaseAnalysisResponse(
 		if dbNames[name] && desc != "" {
 			result[name] = desc
 		}
+	}
+
+	// Text that matched no known database is as unusable as no text at
+	// all: returning it would cache a blank analysis for the whole TTL.
+	if len(result) == 0 {
+		return nil, llmproxy.ErrNoTextContent
 	}
 
 	return result, nil

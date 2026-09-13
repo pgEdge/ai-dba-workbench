@@ -266,12 +266,14 @@ embedding:
   ollama_url: "http://localhost:11434"
 
 #=========================================================================
-# LLM CONFIGURATION (Web Client Chat Proxy)
+# LLM CONFIGURATION (Chat Proxy and AI Analysis)
 #=========================================================================
 #
 # The server proxies LLM requests for web clients and CLI tools that
-# don't have direct access to LLM APIs. API keys must be configured
-# for the chosen provider.
+# don't have direct access to LLM APIs. These settings also govern the
+# AI Overview and the server-info AI database analysis, which the
+# server generates itself. API keys must be configured for the chosen
+# provider.
 #
 llm:
   # LLM provider: "anthropic", "openai", "gemini", or "ollama"
@@ -342,8 +344,17 @@ llm:
   # Generation Parameters
   #-----------------------------------------------------------------------
 
-  # Maximum tokens for LLM response
+  # Maximum number of output tokens for a single LLM response.
   # Default: 4096
+  #
+  # This budget applies to the chat proxy, the AI Overview, and the
+  # server-info AI database analysis. Reasoning models (for example
+  # Qwen3, DeepSeek-R1 distills, or gpt-oss served through llama.cpp)
+  # charge their thinking tokens against this same budget. A small
+  # budget is consumed entirely by the thinking block, so the model
+  # never emits any answer text. Raise this value if a summary or an
+  # analysis comes back empty; a value of 0 or less selects the
+  # default.
   max_tokens: 4096
 
   # Maximum iterations for agentic tool-calling loops

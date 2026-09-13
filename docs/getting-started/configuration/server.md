@@ -118,7 +118,7 @@ embedding:
   # gemini_api_key_file: "~/.gemini-api-key"
 
 #=====================================================
-# LLM CONFIGURATION (Web Client Chat Proxy)
+# LLM CONFIGURATION (Chat Proxy and AI Analysis)
 #=====================================================
 llm:
   provider: "anthropic"
@@ -417,6 +417,11 @@ does not require an API key. For Anthropic, OpenAI,
 and Gemini, the corresponding API key file must
 contain a valid key.
 
+The settings in this section govern every AI feature
+the server drives. The features include the Ask Ellie
+chat proxy, the AI Overview, and the server-info AI
+database analysis.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `provider` | string | `anthropic` | LLM provider |
@@ -425,7 +430,7 @@ contain a valid key.
 | `openai_api_key_file` | string | | OpenAI key path |
 | `gemini_api_key_file` | string | | Gemini key path |
 | `ollama_url` | string | `http://localhost:11434` | Ollama URL |
-| `max_tokens` | int | `4096` | Max response tokens |
+| `max_tokens` | int | `4096` | Max output tokens per response |
 | `temperature` | float | `0.7` | Sampling temperature |
 | `max_iterations` | int | `50` | Max tool-call iterations |
 | `compact_tool_descriptions` | string | `auto` | Tool description mode |
@@ -433,6 +438,54 @@ contain a valid key.
 | `anthropic_base_url` | string | `https://api.anthropic.com/v1` | Anthropic base URL |
 | `openai_base_url` | string | `https://api.openai.com/v1` | OpenAI base URL |
 | `gemini_base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
+
+#### Output Token Budget (`max_tokens`)
+
+The `max_tokens` option caps the number of output
+tokens a model may generate for a single response.
+The budget applies to the following AI features:
+
+- The Ask Ellie chat proxy sends the budget with every
+  chat request that the proxy forwards to a provider.
+- The AI Overview applies the budget to the estate
+  summary and to each scoped summary.
+- The server-info AI database analysis applies the
+  budget to the per-database descriptions.
+
+The default value is `4096` tokens; a value less than
+or equal to zero falls back to the default. Earlier
+releases capped the AI Overview and the server-info
+analysis at 512 tokens and ignored the configured
+value on both paths.
+
+A reasoning model counts its internal thinking tokens
+against this same budget. A budget that suits a
+conventional model can therefore leave no room for the
+answer itself. The model then returns a response that
+contains no text, and the affected panel has nothing
+to render. Raise `max_tokens` when a summary or an
+analysis comes back empty; alternatively, select a
+model that emits less reasoning.
+
+The server reports an empty response instead of
+discarding the response silently. A scoped AI Overview
+request fails with an error, and the estate summary
+records the failure in the server log. The
+`GET /api/v1/server-info/{id}/ai-analysis` endpoint
+returns `502` with a message that names the likely
+cause.
+
+In the following example, the `llm` section raises the
+budget for a reasoning model that a local llama.cpp
+server hosts:
+
+```yaml
+llm:
+  provider: "openai"
+  model: "qwen3-8b"
+  openai_base_url: "http://localhost:8080/v1"
+  max_tokens: 8192
+```
 
 #### Request Timeout (`timeout_seconds`)
 
@@ -521,6 +574,11 @@ llm:
   model: "my-local-model"
   openai_base_url: "http://localhost:8080/v1"
 ```
+
+A local server that hosts a reasoning model usually
+needs a larger output budget than the default. For
+details, see
+[Output Token Budget](#output-token-budget-max_tokens).
 
 ### Knowledgebase (`knowledgebase`)
 

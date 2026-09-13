@@ -51,6 +51,7 @@ func TestNewConfig(t *testing.T) {
 		{"correlation window", cfg.Correlation.WindowSeconds, 120},
 		{"llm embedding provider", cfg.LLM.EmbeddingProvider, "ollama"},
 		{"llm reasoning provider", cfg.LLM.ReasoningProvider, "ollama"},
+		{"llm max tokens", cfg.LLM.MaxTokens, DefaultLLMMaxTokens},
 		{"gemini embedding model", cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-001"},
 		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-flash"},
 	}
@@ -617,6 +618,67 @@ llm:
 		if cfg.LLM.Gemini.ReasoningModel != "gemini-2.5-pro" {
 			t.Errorf("gemini reasoning_model = %q, expected %q",
 				cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-pro")
+		}
+	})
+
+	t.Run("llm max_tokens round-trip and fallback", func(t *testing.T) {
+		// llm.max_tokens caps the tier-3 reasoning budget (issue #399).
+		// An explicit positive value must survive the merge; an omitted
+		// or non-positive value must resolve to DefaultLLMMaxTokens so a
+		// reasoning model always has room for both its thinking block and
+		// the verdict.
+		tests := []struct {
+			name string
+			yaml string
+			want int
+		}{
+			{
+				name: "explicit value is honored",
+				yaml: "llm:\n  max_tokens: 16384\n",
+				want: 16384,
+			},
+			{
+				name: "omitted key keeps the default",
+				yaml: "llm:\n  reasoning_provider: ollama\n",
+				want: DefaultLLMMaxTokens,
+			},
+			{
+				name: "explicit zero falls back to the default",
+				yaml: "llm:\n  max_tokens: 0\n",
+				want: DefaultLLMMaxTokens,
+			},
+			{
+				name: "negative value falls back to the default",
+				yaml: "llm:\n  max_tokens: -1\n",
+				want: DefaultLLMMaxTokens,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				configFile := filepath.Join(t.TempDir(), "llm.yaml")
+				if err := os.WriteFile(configFile, []byte(tt.yaml), 0644); err != nil {
+					t.Fatalf("failed to create config file: %v", err)
+				}
+
+				cfg := NewConfig()
+				if err := cfg.LoadFromFile(configFile); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if cfg.LLM.MaxTokens != tt.want {
+					t.Errorf("llm.max_tokens = %d, want %d", cfg.LLM.MaxTokens, tt.want)
+				}
+
+				// A bare Config (no NewConfig defaults) must reach the
+				// same value through LoadFromFile's defaulting pass.
+				bare := &Config{}
+				if err := bare.LoadFromFile(configFile); err != nil {
+					t.Fatalf("unexpected error loading into bare config: %v", err)
+				}
+				if bare.LLM.MaxTokens != tt.want {
+					t.Errorf("bare llm.max_tokens = %d, want %d", bare.LLM.MaxTokens, tt.want)
+				}
+			})
 		}
 	})
 

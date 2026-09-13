@@ -211,7 +211,14 @@ response fields:
 
 The server returns `null` when no LLM provider is
 configured. The server also returns `null` when the
-connection has no databases to analyze.
+connection has no databases to analyze, and when the
+call to the provider fails.
+
+The server returns `502` when the provider answers
+with no usable text. A reasoning model produces this
+result when its thinking tokens exhaust the configured
+`llm.max_tokens` budget. Raise the budget, or select a
+model that emits less reasoning.
 
 ### Caching
 
@@ -254,6 +261,10 @@ following table describes the possible error statuses:
 | 401 | The request lacks a valid authentication token. |
 | 403 | The user does not have access to the connection. |
 | 500 | An internal server error occurred. |
+| 502 | The model returned no usable analysis text. |
+
+The `502` status applies to the AI analysis endpoint
+only.
 
 ## Configuration
 
@@ -263,8 +274,9 @@ The endpoint returns empty fields when the collector
 has not yet gathered data for a metric category.
 
 The AI analysis endpoint requires an LLM provider to
-be configured in the server settings. For LLM provider
-setup instructions, see
+be configured in the server settings. The `llm.max_tokens`
+setting caps the length of each analysis response. For
+LLM provider setup instructions, see
 [Server Configuration](../../getting-started/configuration/server.md).
 
 ## Related Documentation

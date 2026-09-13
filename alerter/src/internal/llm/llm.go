@@ -163,10 +163,17 @@ func NewEmbeddingProvider(cfg *config.Config) (EmbeddingProvider, error) {
 
 // NewReasoningProvider creates a reasoning provider based on configuration.
 // Returns nil and no error if reasoning is disabled or provider is not configured.
+//
+// The operator-configured llm.max_tokens is passed to every provider so a
+// reasoning model has room for both its thinking block and the
+// classification verdict; newLibReasoning substitutes
+// DefaultReasoningMaxTokens when the setting is unset or non-positive.
 func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 	if cfg == nil {
 		return nil, nil
 	}
+
+	maxTokens := cfg.LLM.MaxTokens
 
 	switch cfg.LLM.ReasoningProvider {
 	case "openai":
@@ -174,28 +181,28 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 		if apiKey == "" && cfg.LLM.OpenAI.BaseURL == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL)
+		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL, maxTokens)
 
 	case "anthropic":
 		apiKey := cfg.GetAnthropicAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("anthropic: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL)
+		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL, maxTokens)
 
 	case "gemini":
 		apiKey := cfg.GetGeminiAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("gemini: %w", ErrAPIKeyMissing)
 		}
-		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL)
+		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL, maxTokens)
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434"
 		}
-		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL)
+		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL, maxTokens)
 
 	case "", "none", "disabled":
 		return nil, nil

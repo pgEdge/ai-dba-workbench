@@ -194,10 +194,11 @@ project adheres to
   `public`, so both checks failed and the probe fell back to the
   PostgreSQL 12 query. Rows arrived with `shared_blk_read_time`,
   `shared_blk_write_time`, `local_blk_read_time` and
-  `local_blk_write_time` stored as NULL and `toplevel` fixed at true.
+  `local_blk_write_time` stored as NULL and `toplevel` fixed at `TRUE`.
   The checks now resolve the view through the search path, exactly as
-  the probe's own query does, so a relocated extension is detected
-  wherever it was installed. (#439)
+  the probe's own query does, so a relocated extension is detected in
+  whichever schema it was installed, provided that schema is on the
+  collector role's search path. (#439)
 
 - Fix every cache hit ratio in the web client (the Cache Hit
   performance tile, the server dashboard's KPI sparkline and

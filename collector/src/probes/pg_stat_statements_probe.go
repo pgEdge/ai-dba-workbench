@@ -115,8 +115,16 @@ func (p *PgStatStatementsProbe) checkHasBlkReadTime(ctx context.Context, conn *p
 
 // Execute runs the probe against a monitored connection
 func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
+	// The probe is database-scoped, and the scheduler opens one pool per
+	// database on the same connection, so the feature cache is keyed by
+	// database as well as by connection: the extension may be installed,
+	// or installed into a schema on the search path, in one database and
+	// not another, and a result cached for one must not decide the query
+	// shape for the other.
+	cacheScope := connectionName + "/" + monitoredConn.Conn().Config().Database
+
 	// Check if extension is available (cached)
-	available, err := cachedCheck(connectionName, "pg_stat_statements_ext", func() (bool, error) {
+	available, err := cachedCheck(cacheScope, "pg_stat_statements_ext", func() (bool, error) {
 		return CheckExtensionExists(ctx, connectionName, monitoredConn, "pg_stat_statements")
 	})
 	if err != nil {
@@ -129,7 +137,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 
 	// Check if we have the new shared_blk_read_time column (PG 17+) (cached)
-	hasSharedBlkTime, err := cachedCheck(connectionName, "pg_stat_statements_shared_blk_time", func() (bool, error) {
+	hasSharedBlkTime, err := cachedCheck(cacheScope, "pg_stat_statements_shared_blk_time", func() (bool, error) {
 		return p.checkHasSharedBlkTime(ctx, monitoredConn)
 	})
 	if err != nil {
@@ -139,7 +147,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	// Check if we have the blk_read_time column (PG 13-16) (cached)
 	hasBlkReadTime := false
 	if !hasSharedBlkTime {
-		hasBlkReadTime, err = cachedCheck(connectionName, "pg_stat_statements_blk_read_time", func() (bool, error) {
+		hasBlkReadTime, err = cachedCheck(cacheScope, "pg_stat_statements_blk_read_time", func() (bool, error) {
 			return p.checkHasBlkReadTime(ctx, monitoredConn)
 		})
 		if err != nil {

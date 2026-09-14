@@ -344,12 +344,33 @@ func TestPgStatStatementsProbe_CheckColumnHelpers(t *testing.T) {
 		"SET search_path TO pgss_relocated, public"); err != nil {
 		t.Fatalf("set search_path: %v", err)
 	}
-	switch pgVersion := detectPgVersion(t, conn); {
-	case pgVersion >= 17:
-		expectChecks("relocated view on PostgreSQL 17+", true, false)
-	case pgVersion >= 13:
-		expectChecks("relocated view on PostgreSQL 13-16", false, true)
-	default:
-		expectChecks("relocated view on PostgreSQL 12", false, false)
+	// The column set follows the installed extension version, not the
+	// server's: 1.11 (PostgreSQL 17) renamed blk_read_time to
+	// shared_blk_read_time, and 1.8 (PostgreSQL 13) introduced toplevel
+	// alongside the blk_read_time column the probe looks for.
+	var extVersion string
+	if err := conn.QueryRow(ctx, `
+        SELECT extversion FROM pg_catalog.pg_extension
+        WHERE extname = 'pg_stat_statements'
+    `).Scan(&extVersion); err != nil {
+		t.Fatalf("read extension version: %v", err)
 	}
+	switch {
+	case extensionVersionAtLeast(extVersion, 1, 11):
+		expectChecks("relocated view, extension "+extVersion, true, false)
+	case extensionVersionAtLeast(extVersion, 1, 8):
+		expectChecks("relocated view, extension "+extVersion, false, true)
+	default:
+		expectChecks("relocated view, extension "+extVersion, false, false)
+	}
+}
+
+// extensionVersionAtLeast reports whether a pg_extension.extversion string
+// such as "1.11" is at least major.minor.
+func extensionVersionAtLeast(version string, major, minor int) bool {
+	var gotMajor, gotMinor int
+	if _, err := fmt.Sscanf(version, "%d.%d", &gotMajor, &gotMinor); err != nil {
+		return false
+	}
+	return gotMajor > major || (gotMajor == major && gotMinor >= minor)
 }

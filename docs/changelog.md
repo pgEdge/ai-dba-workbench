@@ -192,10 +192,10 @@ project adheres to
   Gemini models attach an opaque `thoughtSignature` to each function
   call and reject the next request with a 400 error unless it is
   echoed back unchanged, and the pinned `pgedge-go-llm-lib` neither
-  captured nor replayed it. The server now uses library release
-  v0.3.1, which carries the signature on the `tool_use` block through
-  the chat endpoint and back to Gemini, so the existing client loop
-  needs no change. The same release reports tool failures to Gemini
+  captured nor replayed it. The server and alerter now use library
+  release v0.3.1, which carries the signature on the `tool_use` block
+  through the chat endpoint and back to Gemini, so the existing client
+  loop needs no change. The same release reports tool failures to Gemini
   instead of letting the model retry the identical call, and hides
   Gemini models that cannot hold a text conversation from the model
   list. (#425)

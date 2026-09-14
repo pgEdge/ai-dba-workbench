@@ -551,21 +551,33 @@ project adheres to
   non-empty password, is unaffected. (#332)
 
 - Move the collector, server, and alerter to Go 1.26.8, and update
-  `golang.org/x/text` to v0.40.0. Together these clear four
-  vulnerabilities that `govulncheck` confirmed were reachable from
-  Workbench code: an infinite loop in `golang.org/x/text` normalisation
-  reached through connection-pool setup, a privacy leak in the
-  `crypto/tls` Encrypted Client Hello handling, unescaped input in
-  `net/textproto` error messages, and inefficient candidate hostname
-  parsing in `crypto/x509`. The Go version is raised in the module
-  files, the three service `Dockerfile` builder stages, and the CI and
-  release workflows; the release workflow matters most, because it
-  previously built the published binaries with the affected toolchain.
+  `golang.org/x/text` from v0.33.0 to v0.40.0. Scanning the previous
+  toolchain and dependency set with `govulncheck` v1.6.0 reported ten
+  advisories reachable from Workbench code in the server module, ten in
+  the alerter, seven in `pkg`, and six in the collector. All but one are
+  Go standard library issues fixed in the 1.26.4, 1.26.5, and 1.26.6
+  patch releases, in `crypto/tls`, `crypto/x509`, `encoding/asn1`,
+  `encoding/xml`, `net/http`, `net/textproto`, and `net/url`; the
+  exception is an infinite loop in `golang.org/x/text` normalisation
+  reached through connection-pool setup. After this change `govulncheck`
+  reports no reachable vulnerabilities in any of the four modules. The
+  Go version is raised in the module files, the three service
+  `Dockerfile` builder stages, and the CI and release workflows; the
+  release workflow matters most, because it previously built the
+  published binaries with the affected toolchain. The server, alerter,
+  and collector CI workflows now also run for changes under `pkg/`,
+  matching the Docker workflow, so a change to the shared module can no
+  longer publish service images without first passing their lint, vet,
+  and test jobs.
 
 - Update the web client's ECharts dependency to v6.1.0, which resolves a
-  cross-site scripting vulnerability, and refresh the transitive
-  `postcss`, `js-yaml`, and `brace-expansion` packages. The client now
-  reports no known vulnerabilities.
+  cross-site scripting advisory, and move the `vitest` development
+  dependencies to v4.1.11, which refreshes the transitive `postcss`,
+  `js-yaml`, `nanoid`, `brace-expansion`, `fflate`, and `vite` packages.
+  Before this change `npm audit` reported eleven findings (six moderate,
+  five high), of which only the ECharts advisory affected the shipped
+  client bundle; the rest sat in the development dependency tree. After
+  it, `npm audit` reports no known vulnerabilities.
 
 ## [1.0.0] - 2026-06-08
 

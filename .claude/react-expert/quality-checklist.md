@@ -155,8 +155,9 @@ The rules for new or modified charts are as follows:
   'no data'. Any arithmetic over points must skip nulls explicitly:
   `extractLatestValue` and `extractLatestRate` (copies in the
   `ServerDashboard`, `DatabaseDashboard` and `ObjectDashboard`
-  `types.ts` files) return the last non-null point, still skipping
-  zeros for gauges; a ratio with a null on either side is null; a sum
+  `types.ts` files) return the last non-null point, a valid zero
+  reading included, since only null marks a missing bucket; a ratio
+  with a null on either side is null; a sum
   across a window ignores null buckets and is null when none carry a
   reading; and `Sparkline` renders nothing for an all-null series.
   Filling a null with 0 (`value ?? 0`) is only acceptable inside a

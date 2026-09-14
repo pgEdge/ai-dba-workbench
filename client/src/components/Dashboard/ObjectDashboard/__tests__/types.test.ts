@@ -13,6 +13,7 @@ import {
     extractSparklineData,
     extractLatestValue,
     buildChartData,
+    formatTimestamp,
 } from '../types';
 import type { MetricDataPoint, MetricSeries } from '../../types';
 
@@ -48,8 +49,9 @@ describe('ObjectDashboard types helpers', () => {
             expect(extractLatestValue([series('a', [1, 2, 3])], 'a')).toBe(3);
         });
 
-        it('falls back to the last non-zero value for a gauge', () => {
-            expect(extractLatestValue([series('a', [1, 7, 0])], 'a')).toBe(7);
+        it('returns a trailing zero rather than an earlier value', () => {
+            expect(extractLatestValue([series('a', [1, 7, 0])], 'a')).toBe(0);
+            expect(extractLatestValue([series('a', [10, 0])], 'a')).toBe(0);
         });
 
         it('returns 0 when every point is zero', () => {
@@ -68,6 +70,8 @@ describe('ObjectDashboard types helpers', () => {
 
         it('skips a null in the middle and a leading null', () => {
             expect(extractLatestValue([series('a', [null, 4, null, 0])], 'a'))
+                .toBe(0);
+            expect(extractLatestValue([series('a', [null, 4, null])], 'a'))
                 .toBe(4);
         });
 
@@ -79,6 +83,25 @@ describe('ObjectDashboard types helpers', () => {
         it('returns 0 when the only readings are zero amongst nulls', () => {
             expect(extractLatestValue([series('a', [null, 0, null])], 'a'))
                 .toBe(0);
+        });
+    });
+
+    describe('formatTimestamp', () => {
+        it('formats a timestamp for display', () => {
+            const formatted = formatTimestamp('2026-01-02T03:04:05Z');
+            expect(formatted).not.toBe('Never');
+            expect(formatted).toContain('2026');
+        });
+
+        it('reports a missing timestamp as Never', () => {
+            expect(formatTimestamp(undefined)).toBe('Never');
+            expect(formatTimestamp('')).toBe('Never');
+        });
+
+        it('reports an unparseable timestamp as an invalid date', () => {
+            // toLocaleString returns 'Invalid Date' rather than
+            // throwing, so the catch is a belt-and-braces fallback.
+            expect(formatTimestamp('not a date')).toBe('Invalid Date');
         });
     });
 

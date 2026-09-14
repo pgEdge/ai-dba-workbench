@@ -57,8 +57,9 @@ describe('ServerDashboard types helpers', () => {
             expect(extractLatestValue([series('a', [1, 2, 3])], 'a')).toBe(3);
         });
 
-        it('falls back to the last non-zero value for a gauge', () => {
-            expect(extractLatestValue([series('a', [1, 7, 0])], 'a')).toBe(7);
+        it('returns a trailing zero rather than an earlier value', () => {
+            expect(extractLatestValue([series('a', [1, 7, 0])], 'a')).toBe(0);
+            expect(extractLatestValue([series('a', [10, 0])], 'a')).toBe(0);
         });
 
         it('returns 0 when every point is zero', () => {
@@ -97,6 +98,8 @@ describe('ServerDashboard types helpers', () => {
             expect(extractLatestValue([series('a', [4, 6, null])], 'a'))
                 .toBe(6);
             expect(extractLatestValue([series('a', [null, 4, null, 0])], 'a'))
+                .toBe(0);
+            expect(extractLatestValue([series('a', [null, 4, null])], 'a'))
                 .toBe(4);
         });
 

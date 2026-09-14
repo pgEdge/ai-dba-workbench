@@ -30,7 +30,6 @@ import {
     type DatabaseSectionProps,
     extractSparklineData,
     extractLatestValue,
-    extractLatestRate,
     formatValue,
     formatBytes,
 } from './types';
@@ -97,6 +96,14 @@ const sumNullable = (
 ): number | null => {
     if (a == null && b == null) { return null; }
     return (a ?? 0) + (b ?? 0);
+};
+
+/** The last non-null reading in a point series, or null when none. */
+const latestNonNull = (points: MetricDataPoint[]): number | null => {
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== null) { return points[i].value; }
+    }
+    return null;
 };
 
 /**
@@ -239,24 +246,14 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         [cacheHitSparkline]
     );
 
-    const txnCommit = extractLatestRate(
-        txnKpi.data, 'xact_commit_per_sec'
-    );
-    const txnRollback = extractLatestRate(
-        txnKpi.data, 'xact_rollback_per_sec'
-    );
-    const txnRate = useMemo(() => {
-        if (txnCommit === null && txnRollback === null) {
-            return null;
-        }
-        return (txnCommit ?? 0) + (txnRollback ?? 0);
-    }, [txnCommit, txnRollback]);
-
     /*
      * The tile shows commits plus rollbacks, so the sparkline sums the
      * two rate series bucket by bucket rather than tracking commits
      * alone; points are paired by index, and a series that is short or
-     * missing contributes 0 for the buckets it does not cover.
+     * missing contributes 0 for the buckets it does not cover. The
+     * headline is the latest non-null bucket of that summed series, so
+     * commits and rollbacks always come from the same bucket rather
+     * than each from its own latest reading.
      */
     const txnSparkline = useMemo((): MetricDataPoint[] => {
         const commitData = extractSparklineData(
@@ -277,6 +274,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         }
         return points;
     }, [txnKpi.data]);
+    const txnRate = useMemo(() => latestNonNull(txnSparkline), [txnSparkline]);
 
     // Dead tuple ratio from raw n_dead_tup and n_live_tup
     const nDeadTup = extractLatestValue(

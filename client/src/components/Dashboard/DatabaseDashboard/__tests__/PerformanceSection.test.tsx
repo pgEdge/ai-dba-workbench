@@ -559,11 +559,11 @@ describe('PerformanceSection', () => {
             // Both null: gap; one side null: the other stands alone.
             expect(kpi('Transactions').getAttribute('data-sparkline'))
                 .toBe('[null,12,2]');
-            // Each rate headlines its own latest non-null bucket (12
-            // commits, 2 rollbacks) rather than treating the trailing
-            // null commit rate as 0.
+            // The headline is the latest bucket of the summed series
+            // (2 rollbacks, null commits), not 12 commits from one
+            // bucket added to 2 rollbacks from another.
             expect(kpi('Transactions').getAttribute('data-value'))
-                .toBe('14.0');
+                .toBe('2.0');
             // The chart passes each series through untouched.
             expect(chartValues(TXN_TITLE, 'Commits/s')).toBe('[null,12,null]');
             expect(chartValues(TXN_TITLE, 'Rollbacks/s')).toBe('[null,null,2]');

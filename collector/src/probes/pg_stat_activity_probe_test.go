@@ -11,7 +11,6 @@ package probes
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -165,17 +164,21 @@ func TestPgStatActivityProbe_StoresQueryID(t *testing.T) {
 
 	// Wait until the sleeper shows up as active, then take its query_id
 	// as the expected value. The column does not exist before PG14.
-	queryIDExpr := "query_id"
+	// Both branches are complete literal statements rather than one
+	// statement with the column spliced in, so that no query text is
+	// ever built by concatenation.
+	sleeperQuery := "SELECT state, query_id FROM pg_stat_activity " +
+		"WHERE pid = $1"
 	if pgVersion < 14 {
-		queryIDExpr = "NULL::bigint"
+		sleeperQuery = "SELECT state, NULL::bigint FROM pg_stat_activity " +
+			"WHERE pid = $1"
 	}
 	var expected *int64
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var state *string
-		err := conn.QueryRow(ctx, fmt.Sprintf(
-			"SELECT state, %s FROM pg_stat_activity WHERE pid = $1",
-			queryIDExpr), sleeperPID).Scan(&state, &expected)
+		err := conn.QueryRow(ctx, sleeperQuery, sleeperPID).
+			Scan(&state, &expected)
 		if err == nil && state != nil && *state == "active" {
 			break
 		}

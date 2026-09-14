@@ -20,20 +20,36 @@ export interface ServerSectionProps {
     connectionName?: string;
 }
 
-/** Database summary card data from the performance-summary API */
+/**
+ * Cache hit ratio over the requested range, as sent by the
+ * performance-summary and database-summaries endpoints. The server
+ * computes it from per-interval deltas of the pg_stat_database block
+ * counters, differenced per database before summing. Both `current`
+ * and a bucket `value` are null when no block access happened in that
+ * interval; a null bucket is drawn as a gap rather than as 0%.
+ */
+export interface CacheHitRatioData {
+    current: number | null;
+    time_series: { time: string; value: number | null }[];
+}
+
+/**
+ * The part of a performance-summary response the server dashboard
+ * reads. The endpoint returns one entry per requested connection.
+ */
+export interface ServerCacheHitSummary {
+    connections?: {
+        connection_id: number;
+        cache_hit_ratio?: CacheHitRatioData;
+    }[];
+}
+
+/** Database summary card data from the database-summaries API */
 export interface DatabaseSummary {
     database_name: string;
     size_bytes: number;
     size_pretty: string;
-    /**
-     * Cache hit ratio over the requested range. Both `current` and a
-     * bucket `value` are null when no block access happened in that
-     * interval; a null bucket is drawn as a gap rather than as 0%.
-     */
-    cache_hit_ratio: {
-        current: number | null;
-        time_series: { time: string; value: number | null }[];
-    };
+    cache_hit_ratio: CacheHitRatioData;
     transaction_rate: number;
     dead_tuple_ratio: number;
     active_connections: number;

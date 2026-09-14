@@ -9,9 +9,18 @@
  */
 
 /**
- * Cache hit ratio helpers shared by the dashboard sections that derive
- * the ratio client-side from the `blks_hit_per_sec` and
- * `blks_read_per_sec` metrics of `/api/v1/metrics/query`.
+ * Cache hit ratio helpers for the dashboards.
+ *
+ * The Database dashboard derives the ratio client-side from the
+ * `blks_hit_per_sec` and `blks_read_per_sec` metrics of
+ * `/api/v1/metrics/query`, which is safe only because it passes a
+ * `databaseName`: the derived-metrics query differences the counters
+ * after summing them across whichever rows match, so a request that is
+ * not scoped to one database would be corrupted by a database created
+ * or dropped inside the window. A server-wide ratio must come from
+ * `/api/v1/metrics/performance-summary` instead (see
+ * `useServerCacheHit`), where the server differences per database
+ * before summing; only `latestCacheHitRatio` applies to that series.
  *
  * The ratio is computed per bucket from per-interval rates, never from
  * lifetime counters, so it reflects the current interval rather than a

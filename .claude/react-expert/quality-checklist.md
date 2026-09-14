@@ -184,10 +184,25 @@ axis-range code in `Chart/options/common.ts` skips it, and
 `useChartAnalysis` leaves it out of the statistics it sends to the
 LLM. The rules are as follows:
 
-- Ask `/api/v1/metrics/query` for the derived `<counter>_per_sec`
-  metrics and compute the ratio per bucket; the shared helpers live
-  in `client/src/components/Dashboard/cacheHitRatio.ts`
-  (`buildCacheHitRatioPoints`, `latestCacheHitRatio`).
+- For a ratio scoped to one database, ask `/api/v1/metrics/query`
+  for the derived `<counter>_per_sec` metrics with a `databaseName`
+  and compute the ratio per bucket; the shared helpers live in
+  `client/src/components/Dashboard/cacheHitRatio.ts`
+  (`buildCacheHitRatioPoints`, `latestCacheHitRatio`). The Database
+  dashboard's `PerformanceSection` is the worked example.
+
+- Never derive a server-wide ratio from `blks_hit_per_sec` and
+  `blks_read_per_sec` requested without a database. The
+  derived-metrics query sums the counters across databases and only
+  then differences them, so a database created inside the window
+  adds its lifetime counter to one interval and a dropped one drives
+  the delta negative. Read `cache_hit_ratio` from
+  `/api/v1/metrics/performance-summary` instead, where the server
+  differences per database before summing; the
+  `useServerCacheHit` hook in `client/src/hooks/` does this for the
+  server dashboard's `PostgresOverviewSection`. That endpoint accepts
+  presets only, so the hook maps a custom range onto the shortest
+  preset that covers its span (`summaryTimeRange`).
 
 - An idle bucket is null, never 0% and never 100%; a headline value
   is the latest non-null bucket, shown as `--` when there is none.

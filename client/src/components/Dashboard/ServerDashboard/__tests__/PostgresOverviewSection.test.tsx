@@ -12,7 +12,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import PostgresOverviewSection from '../PostgresOverviewSection';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../../types';
+import type { UseServerCacheHitResult } from '../../../../hooks/useServerCacheHit';
+import type { MetricQueryParams, MetricSeries, SparklinePoint, TimeRangeState } from '../../types';
 import type { ChartData } from '../../../Chart/types';
 
 // ---------------------------------------------------------------------------
@@ -26,10 +27,28 @@ vi.mock('../../../../hooks/useMetrics', () => ({
     useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
 }));
 
+type UseServerCacheHitFn = (
+    connectionId: number,
+    timeRange: TimeRangeState,
+    refreshKey?: number,
+) => UseServerCacheHitResult;
+
+const mockUseServerCacheHit = vi.fn<UseServerCacheHitFn>();
+vi.mock('../../../../hooks/useServerCacheHit', () => ({
+    useServerCacheHit: (
+        connectionId: number,
+        timeRange: TimeRangeState,
+        refreshKey?: number,
+    ) => mockUseServerCacheHit(connectionId, timeRange, refreshKey),
+}));
+
+const DASHBOARD_TIME_RANGE: TimeRangeState = { range: '1h' };
+const DASHBOARD_REFRESH_TRIGGER = 3;
+
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
-        timeRange: { range: '1h' },
-        refreshTrigger: 0,
+        timeRange: DASHBOARD_TIME_RANGE,
+        refreshTrigger: DASHBOARD_REFRESH_TRIGGER,
     }),
 }));
 
@@ -88,9 +107,25 @@ vi.mock('../../../Chart', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Rates requested by the Block I/O chart (issue #400). */
+const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
+
 const CONNECTIONS_TITLE = 'Connections (Monitored Database)';
 const SESSIONS_TITLE = 'Sessions Established (Monitored Database)';
-const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
+
+/** Build the cache hit series the performance summary would return. */
+const cachePoints = (values: (number | null)[]): SparklinePoint[] =>
+    values.map((value, idx) => ({
+        time: `2024-01-01T00:0${idx}:00Z`,
+        value,
+    }));
+
+/** A resolved useServerCacheHit result for the given ratios. */
+const cacheReady = (values: (number | null)[]): UseServerCacheHitResult => ({
+    points: cachePoints(values),
+    loading: false,
+    error: null,
+});
 
 /** Build a MetricSeries for the given metric and values. */
 const series = (metric: string, values: number[]): MetricSeries => ({
@@ -235,6 +270,7 @@ describe('PostgresOverviewSection', () => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         routeMetrics();
+        mockUseServerCacheHit.mockReturnValue(cacheReady([90, 95]));
         mockApiGet.mockResolvedValue([{ max_connections: 100 }]);
     });
 
@@ -498,7 +534,7 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getAllByText('Commits').length)
                 .toBeGreaterThanOrEqual(1);
             expect(screen.getByText('12')).toBeInTheDocument();
-            // 95 hits against 5 reads gives a 95.0% ratio.
+            // The latest bucket of the performance summary series.
             expect(screen.getByText('95.0')).toBeInTheDocument();
             expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
         });
@@ -555,6 +591,7 @@ describe('PostgresOverviewSection', () => {
 
         it('renders placeholders when the KPI queries return nothing', async () => {
             mockUseMetrics.mockImplementation(() => ready([]));
+            mockUseServerCacheHit.mockReturnValue(cacheReady([]));
             renderSection();
 
             await waitFor(() => {
@@ -571,33 +608,43 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getByLabelText('Loading')).toBeInTheDocument();
         });
 
-        it('requests the per-second block metrics for the cache KPI only', async () => {
+        it('shows the section spinner whilst only the cache summary is loading', () => {
+            mockUseServerCacheHit.mockReturnValue({
+                points: [],
+                loading: true,
+                error: null,
+            });
+            // The spinner is gated on the connections KPI having no data
+            // yet, so hold that query in flight too.
+            routeMetrics({ numbackends: loading() });
+            renderSection();
+
+            expect(screen.getByLabelText('Loading')).toBeInTheDocument();
+        });
+
+        it('reads the cache hit ratio from the performance summary', async () => {
             renderSection();
 
             await waitFor(() => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
-            // The Block I/O chart requests the same rates at chart
-            // resolution (issue #400); only the KPI query is checked here.
+            // The hook follows the dashboard range and refresh cycle.
+            expect(mockUseServerCacheHit).toHaveBeenCalledWith(
+                7, DASHBOARD_TIME_RANGE, DASHBOARD_REFRESH_TRIGGER,
+            );
+            // The cache KPI no longer queries the metrics endpoint at
+            // all; the Block I/O chart still requests the per-second
+            // rates at chart resolution (issue #400).
             const cacheCalls = mockUseMetrics.mock.calls
                 .map(([p]) => p)
-                .filter(p => (p?.metrics ?? []).join(',') === CACHE_KEY
-                    && p?.buckets === 30);
+                .filter(p => (p?.metrics ?? []).join(',') === CACHE_KEY);
             expect(cacheCalls.length).toBeGreaterThanOrEqual(1);
-            cacheCalls.forEach(p => {
-                expect(p?.probeName).toBe('pg_stat_database');
-                expect(p?.aggregation).toBe('avg');
-            });
+            cacheCalls.forEach(p => expect(p?.buckets).toBe(150));
             expect(seriesValuesFor('Block I/O', 'Blocks Hit/s')).toBe('90,95');
         });
 
         it('shows the placeholder when every cache bucket is idle', async () => {
-            routeMetrics({
-                [CACHE_KEY]: ready([
-                    series('blks_hit_per_sec', [0, 0]),
-                    series('blks_read_per_sec', [0, 0]),
-                ]),
-            });
+            mockUseServerCacheHit.mockReturnValue(cacheReady([null, null]));
             renderSection();
 
             await waitFor(() => {
@@ -611,12 +658,7 @@ describe('PostgresOverviewSection', () => {
         });
 
         it('draws an idle bucket as a gap and headlines the latest ratio', async () => {
-            routeMetrics({
-                [CACHE_KEY]: ready([
-                    series('blks_hit_per_sec', [90, 0, 60]),
-                    series('blks_read_per_sec', [10, 0, 40]),
-                ]),
-            });
+            mockUseServerCacheHit.mockReturnValue(cacheReady([90, null, 60]));
             renderSection();
 
             await waitFor(() => {
@@ -628,12 +670,7 @@ describe('PostgresOverviewSection', () => {
         });
 
         it('keeps the previous ratio when the newest bucket is idle', async () => {
-            routeMetrics({
-                [CACHE_KEY]: ready([
-                    series('blks_hit_per_sec', [80, 0]),
-                    series('blks_read_per_sec', [20, 0]),
-                ]),
-            });
+            mockUseServerCacheHit.mockReturnValue(cacheReady([80, null]));
             renderSection();
 
             await waitFor(() => {
@@ -641,12 +678,18 @@ describe('PostgresOverviewSection', () => {
             });
         });
 
-        it('shows the placeholder when the hit series is missing entirely', async () => {
-            routeMetrics({
-                [CACHE_KEY]: ready([
-                    series('blks_read_per_sec', [10, 20]),
-                ]),
+        it('reports a genuine 0% rather than skipping it', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([80, 0]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Cache Hit Ratio: 0.0 %'))
+                    .toBeInTheDocument();
             });
+        });
+
+        it('shows the placeholder when the summary has no series', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([]));
             renderSection();
 
             await waitFor(() => {

@@ -15,18 +15,14 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { Storage as StorageIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
+import { useServerCacheHit } from '../../../hooks/useServerCacheHit';
 import type { MetricQueryParams, MetricSeries } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
-import {
-    CACHE_HIT_METRICS,
-    CACHE_HIT_CAVEAT,
-    buildCacheHitRatioPoints,
-    latestCacheHitRatio,
-} from '../cacheHitRatio';
+import { CACHE_HIT_CAVEAT, latestCacheHitRatio } from '../cacheHitRatio';
 import { apiGet } from '../../../utils/apiClient';
 import { logger } from '../../../utils/logger';
 import { formatBytes, formatValue, formatNumber } from '../../../utils/formatters';
@@ -161,7 +157,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     connectionId,
     connectionName,
 }) => {
-    const { timeRange } = useDashboard();
+    const { timeRange, refreshTrigger } = useDashboard();
 
     // KPI queries (30 buckets) - all from pg_stat_database
     const connectionsKpiParams = useMemo((): MetricQueryParams => ({
@@ -180,18 +176,6 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
         metrics: ['xact_commit_per_sec'],
-    }), [connectionId, timeRange.range]);
-
-    // The ratio is derived from per-interval rates rather than the
-    // lifetime counters, so it reflects the current interval and an
-    // idle bucket becomes a gap (see issue #401).
-    const cacheKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_stat_database',
-        connectionId,
-        timeRange: timeRange.range,
-        buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: CACHE_HIT_METRICS,
     }), [connectionId, timeRange.range]);
 
     const tempKpiParams = useMemo((): MetricQueryParams => ({
@@ -248,7 +232,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     // Fetch KPI data
     const connectionsKpi = useMetrics(connectionsKpiParams);
     const txnKpi = useMetrics(txnKpiParams);
-    const cacheKpi = useMetrics(cacheKpiParams);
+    // The server-wide cache hit ratio comes from the performance
+    // summary, where the server differences the block counters per
+    // database before summing them (issue #401). Requesting the
+    // blks_*_per_sec derived metrics without a database would sum the
+    // counters across databases first, so a database created or
+    // dropped inside the window would corrupt the interval's delta.
+    const cacheKpi = useServerCacheHit(connectionId, timeRange, refreshTrigger);
     const tempKpi = useMetrics(tempKpiParams);
 
     // Fetch chart data
@@ -265,13 +255,9 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const xactCommitRate = extractLatestRate(
         txnKpi.data, 'xact_commit_per_sec'
     );
-    // Per-bucket cache hit ratio from the hit and read rates; idle
-    // buckets are null (gaps) and the headline is the latest bucket
-    // that has a ratio.
-    const cacheHitRatioSparkline = useMemo(
-        () => buildCacheHitRatioPoints(cacheKpi.data),
-        [cacheKpi.data]
-    );
+    // Idle buckets are null (gaps) and the headline is the latest
+    // bucket that has a ratio.
+    const cacheHitRatioSparkline = cacheKpi.points;
     const cacheHitRatio = useMemo(
         () => latestCacheHitRatio(cacheHitRatioSparkline),
         [cacheHitRatioSparkline]

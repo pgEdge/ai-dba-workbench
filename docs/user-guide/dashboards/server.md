@@ -58,11 +58,7 @@ access shows as a gap in the sparkline and as '--' for the
 headline value. The ratio counts only `shared_buffers`
 hits; a block read may still be served from the operating
 system page cache, so a lower ratio does not by itself
-indicate slow I/O. The tile reads the ratio from the
-performance summary, which accepts the preset ranges only,
-so under a custom time range it shows the shortest preset
-that covers the selected span, ending at the present
-moment.
+indicate slow I/O.
 
 ## WAL and Replication
 

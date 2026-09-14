@@ -200,9 +200,9 @@ LLM. The rules are as follows:
   `/api/v1/metrics/performance-summary` instead, where the server
   differences per database before summing; the
   `useServerCacheHit` hook in `client/src/hooks/` does this for the
-  server dashboard's `PostgresOverviewSection`. That endpoint accepts
-  presets only, so the hook maps a custom range onto the shortest
-  preset that covers its span (`summaryTimeRange`).
+  server dashboard's `PostgresOverviewSection`, sending `time_start`
+  and `time_end` for a custom range and making no request whilst a
+  custom range still lacks a bound, as `useConnectionGroups` does.
 
 - An idle bucket is null, never 0% and never 100%; a headline value
   is the latest non-null bucket, shown as `--` when there is none.

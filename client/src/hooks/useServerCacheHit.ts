@@ -29,44 +29,31 @@ export interface UseServerCacheHitResult {
     error: string | null;
 }
 
-/** The presets the performance-summary endpoint accepts, shortest first. */
-const SUMMARY_PRESETS: { range: string; ms: number }[] = [
-    { range: '1h', ms: 60 * 60 * 1000 },
-    { range: '6h', ms: 6 * 60 * 60 * 1000 },
-    { range: '24h', ms: 24 * 60 * 60 * 1000 },
-    { range: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
-    { range: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
-];
-
-/** The preset used when a custom window cannot be measured. */
-const DEFAULT_SUMMARY_RANGE = '24h';
-
 /**
- * Map the dashboard time range onto a preset the performance-summary
- * endpoint accepts. The endpoint has no custom-window support (only
- * `/api/v1/metrics/query` does), so a custom range is approximated by
- * the shortest preset that covers its span, ending now rather than at
- * the custom end. A custom range with missing or unparsable bounds
- * falls back to 24 hours.
+ * Build the performance-summary endpoint URL for one connection, or
+ * return null when no request should be made. The bounds of a custom
+ * window come from DashboardContext, as they do for useMetrics and
+ * useConnectionGroups; they are sent only for the 'custom' range, and a
+ * custom range without both bounds is a transient state the server
+ * rejects with a 400, so no request is made.
  */
-export const summaryTimeRange = (timeRange: TimeRangeState): string => {
-    if (timeRange.range !== 'custom') { return timeRange.range; }
+const buildSummaryUrl = (
+    connectionId: number,
+    timeRange: TimeRangeState,
+): string | null => {
+    const { range, customStart, customEnd } = timeRange;
+    if (range === 'custom' && (!customStart || !customEnd)) { return null; }
 
-    const start = Date.parse(timeRange.customStart ?? '');
-    const end = Date.parse(timeRange.customEnd ?? '');
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-        return DEFAULT_SUMMARY_RANGE;
+    const searchParams = new URLSearchParams({
+        connection_id: connectionId.toString(),
+        time_range: range,
+    });
+    if (range === 'custom' && customStart && customEnd) {
+        searchParams.append('time_start', customStart);
+        searchParams.append('time_end', customEnd);
     }
-    const span = end - start;
-    const preset = SUMMARY_PRESETS.find(p => p.ms >= span);
-    return preset?.range ?? SUMMARY_PRESETS[SUMMARY_PRESETS.length - 1].range;
+    return `/api/v1/metrics/performance-summary?${searchParams.toString()}`;
 };
-
-/** Build the performance-summary endpoint URL for one connection. */
-const buildSummaryUrl = (connectionId: number, range: string): string => (
-    `/api/v1/metrics/performance-summary`
-    + `?connection_id=${connectionId}&time_range=${range}`
-);
 
 /** Throw a descriptive error when the response reports a failure. */
 const assertResponseOk = async (response: Response): Promise<void> => {
@@ -138,12 +125,14 @@ export const useServerCacheHit = (
     userRef.current = user;
 
     const isLoggedIn = !!user;
-    const range = summaryTimeRange(timeRange);
+    const { range, customStart, customEnd } = timeRange;
 
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
-        const url = buildSummaryUrl(connectionId, range);
+        const url = buildSummaryUrl(connectionId,
+            { range, customStart, customEnd });
+        if (!url) { return; }
 
         if (!initialLoadDoneRef.current) {
             setLoading(true);
@@ -176,7 +165,7 @@ export const useServerCacheHit = (
                 setLoading(false);
             }
         }
-    }, [connectionId, range]);
+    }, [connectionId, range, customStart, customEnd]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

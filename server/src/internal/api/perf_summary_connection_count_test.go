@@ -315,7 +315,20 @@ func TestHandlePerfSummary_RejectsBadRequests(t *testing.T) {
 			name: "invalid time range",
 			url: "/api/v1/metrics/performance-summary" +
 				"?connection_id=81&time_range=99z",
-			want: "Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d",
+			want: `invalid time range "99z": must be one of 1h, 6h, 24h, 7d, 30d, custom`,
+		},
+		{
+			name: "custom without bounds",
+			url: "/api/v1/metrics/performance-summary" +
+				"?connection_id=81&time_range=custom",
+			want: `invalid time range "custom": time_start and time_end are both required`,
+		},
+		{
+			name: "custom with an unparsable start",
+			url: "/api/v1/metrics/performance-summary" +
+				"?connection_id=81&time_range=custom" +
+				"&time_start=yesterday&time_end=2026-01-01T01:00:00Z",
+			want: `invalid time_start "yesterday": must be an RFC 3339 timestamp`,
 		},
 	}
 
@@ -334,5 +347,170 @@ func TestHandlePerfSummary_RejectsBadRequests(t *testing.T) {
 				t.Errorf("unexpected error: %q", resp.Error)
 			}
 		})
+	}
+}
+
+// TestHandlePerfSummary_CustomWindow asserts that time_range=custom with
+// time_start and time_end restricts the cache hit ratio to exactly that
+// window: samples either side of it, carrying a very different ratio,
+// must not appear in the series or the headline, and the echoed
+// time_range is "custom".
+func TestHandlePerfSummary_CustomWindow(t *testing.T) {
+	h, pool, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	const connID = 83
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	windowStart := now.Add(-3 * time.Hour)
+	windowEnd := now.Add(-2 * time.Hour)
+
+	seed := func(at time.Time, hit, read int64) {
+		if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+            (connection_id, collected_at, datname, blks_hit, blks_read)
+            VALUES ($1, $2, 'appdb', $3, $4)`, connID, at, hit, read); err != nil {
+			t.Fatalf("seed pg_stat_database: %v", err)
+		}
+	}
+	// Before the window: an interval at 10%.
+	seed(windowStart.Add(-20*time.Minute), 1000, 1000)
+	seed(windowStart.Add(-10*time.Minute), 1100, 1900)
+	// Inside the window: one interval at 90%.
+	seed(windowStart.Add(10*time.Minute), 5000, 5000)
+	seed(windowStart.Add(20*time.Minute), 5900, 5100)
+	// After the window: an interval at 10%.
+	seed(windowEnd.Add(10*time.Minute), 9000, 9000)
+	seed(windowEnd.Add(20*time.Minute), 9100, 9900)
+
+	url := "/api/v1/metrics/performance-summary?connection_id=83" +
+		"&time_range=custom&time_start=" +
+		windowStart.Format(time.RFC3339) +
+		"&time_end=" + windowEnd.Format(time.RFC3339)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp PerfSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.TimeRange != "custom" {
+		t.Errorf("time_range = %q, want custom", resp.TimeRange)
+	}
+	if len(resp.Connections) != 1 {
+		t.Fatalf("expected 1 connection, got %d", len(resp.Connections))
+	}
+	ch := resp.Connections[0].CacheHitRatio
+	// A one hour window has 60 second buckets, so the two in-window
+	// samples yield exactly one delta bucket.
+	if len(ch.TimeSeries) != 1 {
+		t.Fatalf("len(time_series) = %d, want 1: %#v",
+			len(ch.TimeSeries), ch.TimeSeries)
+	}
+	if got := ch.TimeSeries[0].Time; got.Before(windowStart) || !got.Before(windowEnd) {
+		t.Errorf("bucket %v lies outside [%v, %v)", got, windowStart, windowEnd)
+	}
+	if ch.Current == nil || *ch.Current != 90.0 {
+		t.Errorf("current = %v, want 90", fmtFloatPtr(ch.Current))
+	}
+}
+
+// TestHandlePerfSummary_RejectsNonGET covers the method guard.
+func TestHandlePerfSummary_RejectsNonGET(t *testing.T) {
+	h, _, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/metrics/performance-summary?connection_id=81", nil)
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected status %d, got %d",
+			http.StatusMethodNotAllowed, rec.Code)
+	}
+}
+
+// TestHandlePerfSummary_DefaultsToOneHour checks that an omitted
+// time_range resolves to the 1h preset and is echoed as such.
+func TestHandlePerfSummary_DefaultsToOneHour(t *testing.T) {
+	h, _, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/performance-summary?connection_id=81", nil)
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp PerfSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.TimeRange != "1h" {
+		t.Errorf("time_range = %q, want 1h", resp.TimeRange)
+	}
+}
+
+// TestHandlePerfSummary_ShortCustomWindowUsesBucketFloor drives a five
+// minute custom window, whose one sixtieth is below the ten second
+// floor: two samples 30 seconds apart must then land in separate
+// 10 second buckets rather than being merged by a 5 second bucket
+// rounding to zero.
+func TestHandlePerfSummary_ShortCustomWindowUsesBucketFloor(t *testing.T) {
+	h, pool, cleanup := newPerfSummaryTestHandler(t)
+	defer cleanup()
+
+	const connID = 84
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	windowStart := now.Add(-10 * time.Minute)
+	windowEnd := windowStart.Add(5 * time.Minute)
+
+	for i, hit := range []int64{1000, 1900, 2800} {
+		at := windowStart.Add(time.Duration(i) * 30 * time.Second)
+		if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_database
+            (connection_id, collected_at, datname, blks_hit, blks_read)
+            VALUES ($1, $2, 'appdb', $3, $4)`, connID, at, hit, int64(100*(i+1))); err != nil {
+			t.Fatalf("seed pg_stat_database: %v", err)
+		}
+	}
+
+	url := "/api/v1/metrics/performance-summary?connection_id=84" +
+		"&time_range=custom&time_start=" +
+		windowStart.Format(time.RFC3339) +
+		"&time_end=" + windowEnd.Format(time.RFC3339)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+
+	h.handlePerfSummary(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body %q)",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp PerfSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	series := resp.Connections[0].CacheHitRatio.TimeSeries
+	if len(series) != 2 {
+		t.Fatalf("len(time_series) = %d, want 2 (one per 30s delta): %#v",
+			len(series), series)
+	}
+	for i, pt := range series {
+		if pt.Value == nil || *pt.Value != 90.0 {
+			t.Errorf("point %d = %s, want 90", i, fmtFloatPtr(pt.Value))
+		}
 	}
 }

@@ -199,9 +199,12 @@ project adheres to
   statistics reset are discarded rather than producing a bogus
   ratio, and the tooltips note that `blks_hit` counts only
   `shared_buffers` hits, so a lower ratio does not by itself
-  indicate slow I/O. The server dashboard's tile reads the ratio
-  from the performance summary, so under a custom time range it
-  shows the shortest preset range covering the selected span. (#401)
+  indicate slow I/O. (#401)
+- Add custom time range support to the
+  `/api/v1/metrics/performance-summary` endpoint: `time_range=custom`
+  with `time_start` and `time_end` resolves through the same rules as
+  `/api/v1/metrics/query`, so the server dashboard's Cache Hit Ratio
+  tile follows a custom range like every other panel. (#401)
 
 - Stop the `test` and `coverage` targets in the server, collector and
   alerter Makefiles running `pkill -9` against every matching process

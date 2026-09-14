@@ -331,27 +331,32 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 		}
 	}
 
-	// Parse time range
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query and /metrics/connection-groups do; ResolveTimeWindow
+	// is the single source of truth for what counts as a valid window, so
+	// its error message is returned verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "1h"
 	}
-	duration, ok := validTimeRanges[timeRange]
-	if !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Calculate bucket interval: duration / 60, minimum 10 seconds
-	bucketSeconds := int(duration.Seconds()) / 60
+	// Calculate bucket interval: window / 60, minimum 10 seconds
+	bucketSeconds := int(window.End.Sub(window.Start).Seconds()) / 60
 	if bucketSeconds < 10 {
 		bucketSeconds = 10
 	}
 	bucketInterval := fmt.Sprintf("%d seconds", bucketSeconds)
 
-	now := time.Now().UTC()
-	startTime := now.Add(-duration)
+	now := window.End.UTC()
+	startTime := window.Start.UTC()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()

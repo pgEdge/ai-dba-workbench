@@ -108,7 +108,8 @@ difference an aggregated value; #449 is reworking
 piecemeal. Until then the web client must not derive a server-wide
 ratio from `blks_hit_per_sec`/`blks_read_per_sec` requested without a
 `database_name`; the server dashboard reads `cache_hit_ratio` from
-`/api/v1/metrics/performance-summary` instead.
+`/api/v1/metrics/performance-summary` instead, passing `time_start` and
+`time_end` for a custom range.
 
 ### Testing the error branches
 
@@ -529,14 +530,16 @@ message is identical on both endpoints. Do not re-implement any of these
 checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
-`GET /api/v1/metrics/query` and `GET /api/v1/metrics/connection-groups`
-accept `time_range=custom` alongside `time_start` and `time_end`, and
-map any resolution error to `400`. The performance-summary and
-database-summary handlers in `perf_summary_handlers.go` still use the
-inline `validTimeRanges` map and accept presets only; consolidating
-those is deliberately deferred. `handleQueryStats` resolves its window
-through `ResolveTimeWindow` and so accepts `custom` with `time_start`
-and `time_end`.
+`GET /api/v1/metrics/query`, `GET /api/v1/metrics/connection-groups`,
+`GET /api/v1/metrics/performance-summary` and
+`GET /api/v1/metrics/query-stats` accept `time_range=custom` alongside
+`time_start` and `time_end`, resolve the window through
+`ResolveTimeWindow` and map any resolution error to `400`;
+`performance-summary` derives its bucket width from the resolved
+window (span / 60, 10 second floor). The database-summaries handler
+in `perf_summary_handlers.go` still uses the inline `validTimeRanges`
+map and accepts presets only; consolidating that is deliberately
+deferred.
 
 Every handler that accepts a `queryid` parameter (`/metrics/query`,
 `/metrics/latest`, `/metrics/top-queries` and `/metrics/query-stats`)

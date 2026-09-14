@@ -10,7 +10,7 @@
 
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useServerCacheHit, summaryTimeRange } from '../useServerCacheHit';
+import { useServerCacheHit } from '../useServerCacheHit';
 import type { TimeRangeState } from '../../components/Dashboard/types';
 
 // ---------------------------------------------------------------------------
@@ -57,52 +57,6 @@ const summaryFor = (
     }],
 });
 
-describe('summaryTimeRange', () => {
-    it('passes a preset through unchanged', () => {
-        expect(summaryTimeRange({ range: '7d' })).toBe('7d');
-    });
-
-    it('picks the shortest preset covering a custom span', () => {
-        expect(summaryTimeRange({
-            range: 'custom',
-            customStart: '2026-01-01T00:00:00Z',
-            customEnd: '2026-01-01T00:30:00Z',
-        })).toBe('1h');
-        expect(summaryTimeRange({
-            range: 'custom',
-            customStart: '2026-01-01T00:00:00Z',
-            customEnd: '2026-01-01T06:00:00Z',
-        })).toBe('6h');
-        expect(summaryTimeRange({
-            range: 'custom',
-            customStart: '2026-01-01T00:00:00Z',
-            customEnd: '2026-01-03T00:00:00Z',
-        })).toBe('7d');
-    });
-
-    it('caps a very long custom span at 30 days', () => {
-        expect(summaryTimeRange({
-            range: 'custom',
-            customStart: '2025-01-01T00:00:00Z',
-            customEnd: '2026-01-01T00:00:00Z',
-        })).toBe('30d');
-    });
-
-    it('falls back to 24h when the custom bounds are unusable', () => {
-        expect(summaryTimeRange({ range: 'custom' })).toBe('24h');
-        expect(summaryTimeRange({
-            range: 'custom',
-            customStart: 'not a date',
-            customEnd: '2026-01-01T00:00:00Z',
-        })).toBe('24h');
-        expect(summaryTimeRange({
-            range: 'custom',
-            customStart: '2026-01-02T00:00:00Z',
-            customEnd: '2026-01-01T00:00:00Z',
-        })).toBe('24h');
-    });
-});
-
 describe('useServerCacheHit', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -126,7 +80,7 @@ describe('useServerCacheHit', () => {
         );
     });
 
-    it('maps a custom range onto a covering preset in the URL', async () => {
+    it('sends the real bounds for a custom range', async () => {
         mockApiFetch.mockResolvedValue(okResponse(summaryFor(3, [])));
 
         renderHook(() => useServerCacheHit(3, {
@@ -136,9 +90,53 @@ describe('useServerCacheHit', () => {
         }));
 
         await waitFor(() => {
-            expect(mockApiFetch).toHaveBeenCalledWith(
-                expect.stringContaining('time_range=6h'),
-            );
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        const params = new URLSearchParams(url.split('?')[1]);
+        expect(url.startsWith('/api/v1/metrics/performance-summary?')).toBe(true);
+        expect(params.get('connection_id')).toBe('3');
+        expect(params.get('time_range')).toBe('custom');
+        expect(params.get('time_start')).toBe('2026-01-01T00:00:00Z');
+        expect(params.get('time_end')).toBe('2026-01-01T02:00:00Z');
+    });
+
+    it('omits the bounds for a preset range', async () => {
+        mockApiFetch.mockResolvedValue(okResponse(summaryFor(3, [])));
+
+        renderHook(() => useServerCacheHit(3, { range: '7d' }));
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        expect(url).toContain('time_range=7d');
+        expect(url).not.toContain('time_start');
+        expect(url).not.toContain('time_end');
+    });
+
+    it('makes no request whilst a custom range lacks a bound', async () => {
+        mockApiFetch.mockResolvedValue(okResponse(summaryFor(3, [50])));
+
+        const { result, rerender } = renderHook(
+            ({ tr }: { tr: TimeRangeState }) => useServerCacheHit(3, tr),
+            { initialProps: { tr: { range: 'custom', customStart: '2026-01-01T00:00:00Z' } } },
+        );
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+        expect(mockApiFetch).not.toHaveBeenCalled();
+        expect(result.current.points).toEqual([]);
+
+        // Once the second bound arrives the request goes out.
+        rerender({ tr: {
+            range: 'custom',
+            customStart: '2026-01-01T00:00:00Z',
+            customEnd: '2026-01-01T01:00:00Z',
+        } });
+        await waitFor(() => {
+            expect(result.current.points.map(p => p.value)).toEqual([50]);
         });
     });
 

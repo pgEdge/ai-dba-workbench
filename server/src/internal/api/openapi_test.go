@@ -252,11 +252,16 @@ func TestBuildOpenAPISpec_SecurityRequirements(t *testing.T) {
 func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 	// The custom time-range feature is only discoverable through the spec,
 	// so every path that accepts it must document both timestamps and
-	// advertise the custom value on time_range. The perf-summary paths keep
-	// the preset list, since they do not accept a custom window.
+	// advertise the custom value on time_range. The database-summaries path
+	// keeps the preset list, since it does not accept a custom window.
 	spec := BuildOpenAPISpec()
 
-	for _, path := range []string{"/metrics/query", "/metrics/connection-groups", "/metrics/query-stats"} {
+	for _, path := range []string{
+		"/metrics/query",
+		"/metrics/connection-groups",
+		"/metrics/performance-summary",
+		"/metrics/query-stats",
+	} {
 		op := spec.Paths[path].Get
 		if op == nil {
 			t.Fatalf("Expected GET operation on %s", path)
@@ -284,13 +289,13 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 		}
 	}
 
-	perfOp := spec.Paths["/metrics/performance-summary"].Get
-	if perfOp == nil {
-		t.Fatal("Expected GET operation on /metrics/performance-summary")
+	dbOp := spec.Paths["/metrics/database-summaries"].Get
+	if dbOp == nil {
+		t.Fatal("Expected GET operation on /metrics/database-summaries")
 	}
-	for _, p := range perfOp.Parameters {
+	for _, p := range dbOp.Parameters {
 		if p.Name == "time_start" || p.Name == "time_end" {
-			t.Errorf("Unexpected %s parameter on /metrics/performance-summary",
+			t.Errorf("Unexpected %s parameter on /metrics/database-summaries",
 				p.Name)
 		}
 	}

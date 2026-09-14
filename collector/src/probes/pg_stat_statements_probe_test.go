@@ -190,6 +190,64 @@ func TestPgStatStatementsProbe_ExecuteWithoutStatsInfoView(t *testing.T) {
 	}
 }
 
+// TestPgStatStatementsProbe_ExecuteTimingColumnVariants drives the two
+// query shapes selected by the timing-column checks (PostgreSQL 17+ and
+// 13-16) by seeding the feature cache, so every variant is shown to carry
+// the stats_reset column. On a server that lacks the old blk_read_time
+// column the 13-16 shape fails at execution; the test then only requires
+// that the failure is the missing column rather than a malformed query.
+func TestPgStatStatementsProbe_ExecuteTimingColumnVariants(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	p := newPgStatStatementsProbeForTest()
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+	requirePgStatStatementsReadable(t, conn)
+
+	cases := []struct {
+		name          string
+		sharedBlkTime bool
+		blkReadTime   bool
+		missingColumn string
+	}{
+		{"pg17_shared_blk_time", true, false, "shared_blk_read_time"},
+		{"pg13_16_blk_read_time", false, true, "blk_read_time"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			connName := "stmts-variant-" + tc.name
+			seed := map[string]bool{
+				"pg_stat_statements_ext":             true,
+				"pg_stat_statements_shared_blk_time": tc.sharedBlkTime,
+				"pg_stat_statements_blk_read_time":   tc.blkReadTime,
+			}
+			for check, val := range seed {
+				key := featureCacheKey{connectionName: connName, checkName: check}
+				featureCache.Store(key, val)
+				defer featureCache.Delete(key)
+			}
+			infoKey := featureCacheKey{connectionName: connName,
+				checkName: "pg_stat_statements_info_view"}
+			defer featureCache.Delete(infoKey)
+
+			metrics, err := p.Execute(ctx, connName, conn, pgVersion)
+			if err != nil {
+				if !strings.Contains(err.Error(), tc.missingColumn) {
+					t.Fatalf("Execute: %v", err)
+				}
+				t.Logf("server lacks %s; query shape still exercised",
+					tc.missingColumn)
+				return
+			}
+			for _, m := range metrics {
+				if _, present := m["stats_reset"]; !present {
+					t.Fatal("stats_reset column missing from Execute result")
+				}
+			}
+		})
+	}
+}
+
 func TestStatsResetSelect(t *testing.T) {
 	if got := statsResetSelect(true); !strings.Contains(got,
 		"FROM pg_stat_statements_info") ||

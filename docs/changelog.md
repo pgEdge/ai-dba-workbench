@@ -246,6 +246,19 @@ project adheres to
 
 ### Fixed
 
+- Fix the `pg_stat_statements` collector probe discarding the block
+  timing columns on every modern server. The probe chose its query
+  shape by looking for the version-specific columns in
+  `information_schema.columns` with `table_schema = 'pg_catalog'`, but
+  `CREATE EXTENSION` installs the view into the current schema, normally
+  `public`, so both checks failed and the probe fell back to the
+  PostgreSQL 12 query. Rows arrived with `shared_blk_read_time`,
+  `shared_blk_write_time`, `local_blk_read_time` and
+  `local_blk_write_time` stored as NULL and `toplevel` fixed at true.
+  The checks now resolve the view through the search path, exactly as
+  the probe's own query does, so a relocated extension is detected
+  wherever it was installed. (#439)
+
 - Fix Ask Ellie failing with `Function call is missing a
   thought_signature in functionCall parts` on every question that
   needs a tool call when the LLM provider is Gemini. Google's current

@@ -71,44 +71,47 @@ func (p *PgStatStatementsProbe) GetQuery() string {
     `, PgStatStatementsQueryLimit)
 }
 
-// checkHasSharedBlkTime checks if pg_stat_statements has shared_blk_read_time column (PG 17+)
-func (p *PgStatStatementsProbe) checkHasSharedBlkTime(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+// checkHasColumn reports whether the pg_stat_statements view that the
+// probe's own queries will reach through the search path exposes the
+// named column. The extension is installed into the current schema at
+// CREATE EXTENSION time, normally public, and is often relocated on
+// managed services, so the view is resolved with pg_table_is_visible
+// rather than by assuming a schema: filtering information_schema on
+// table_schema = 'pg_catalog' matched nothing on an ordinary install and
+// silently dropped every probe onto the PostgreSQL 12 query shape (#439).
+func (p *PgStatStatementsProbe) checkHasColumn(ctx context.Context, conn *pgxpool.Conn, column string) (bool, error) {
 	var hasColumn bool
 	err := conn.QueryRow(ctx, `
         SELECT EXISTS (
             SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'pg_catalog'
-              AND table_name = 'pg_stat_statements'
-              AND column_name = 'shared_blk_read_time'
+            FROM pg_catalog.pg_attribute a
+            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+            WHERE c.relname = 'pg_stat_statements'
+              AND c.relkind = 'v'
+              AND pg_catalog.pg_table_is_visible(c.oid)
+              AND a.attname = $1
+              AND a.attnum > 0
+              AND NOT a.attisdropped
         )
-    `).Scan(&hasColumn)
+    `, column).Scan(&hasColumn)
 
 	if err != nil {
-		return false, fmt.Errorf("failed to check for shared_blk_read_time column: %w", err)
+		return false, fmt.Errorf("failed to check for %s column: %w", column, err)
 	}
 
 	return hasColumn, nil
 }
 
-// checkHasBlkReadTime checks if pg_stat_statements has blk_read_time column (PG 13-16)
+// checkHasSharedBlkTime checks if pg_stat_statements has the
+// shared_blk_read_time column (PostgreSQL 17 and later).
+func (p *PgStatStatementsProbe) checkHasSharedBlkTime(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	return p.checkHasColumn(ctx, conn, "shared_blk_read_time")
+}
+
+// checkHasBlkReadTime checks if pg_stat_statements has the blk_read_time
+// column (PostgreSQL 13 to 16).
 func (p *PgStatStatementsProbe) checkHasBlkReadTime(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
-	var hasColumn bool
-	err := conn.QueryRow(ctx, `
-        SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'pg_catalog'
-              AND table_name = 'pg_stat_statements'
-              AND column_name = 'blk_read_time'
-        )
-    `).Scan(&hasColumn)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check for blk_read_time column: %w", err)
-	}
-
-	return hasColumn, nil
+	return p.checkHasColumn(ctx, conn, "blk_read_time")
 }
 
 // checkHasStatsInfoView reports whether the pg_stat_statements_info view

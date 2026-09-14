@@ -346,7 +346,14 @@ project adheres to
   the probe that stopped; metrics that report only whilst the
   condition holds, or that describe an object an operator can
   legitimately drop, such as a replication slot or a standby, still
-  clear on absence. (#407)
+  clear on absence, but only whilst the collector probe behind the
+  metric is still collecting for that connection. Every metric bounds
+  the age of the samples it reads, so a stopped collector empties a
+  query exactly as a recovered condition does; the cleaner now checks
+  the probe's freshness first, and a probe that has stalled, that an
+  operator has disabled, or that belongs to a connection which is no
+  longer monitored leaves the alert active until somebody clears or
+  acknowledges it. (#407)
 
 - Fix the `slow_query_count` rule latching until a manual
   `pg_stat_statements_reset()`. The rule counted the queries whose

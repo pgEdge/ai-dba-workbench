@@ -675,6 +675,32 @@ Before the flag existed, any metric whose window could empty (a 5 minute
 window on a 300 second probe, say) cleared and re-fired on every late
 collection.
 
+`clearWhenAbsent` alone is not enough, because every one of those queries
+bounds `collected_at`, so a stopped collector empties them exactly as a
+recovered condition does. Each registry entry therefore also carries
+`probeName`, the collector probe that fills the metrics table its latest
+query reads (`pg_stat_activity`, `pg_replication_slots`,
+`pg_stat_database` and so on; `pg_stat_archiver.failed_count_delta` reads
+`metrics.pg_stat_wal`, `age_percent` reads `metrics.pg_database`, and
+`table_last_autovacuum_hours` reads `metrics.pg_stat_all_tables`),
+exposed through `Datastore.MetricProbeName`. `resolveAbsentMetric` reads
+`GetProbeStalenessByConnection`, the same source the staleness evaluator
+uses, and hands the classification to the pure `classifyAbsentMetric`:
+the alert clears only when that probe is listed for the alert's
+connection with a staleness ratio at or below
+`probeFreshnessRatioLimit` (3 intervals, matching the 15 minute windows
+at the 300 second default and the default `metric_staleness` threshold).
+A stalled probe, a probe missing from the view (the query filters on
+`is_available`, `is_enabled`, `is_monitored` and a non-NULL
+`last_collected`, so a disabled or unmonitored one disappears entirely),
+an entry with no `probeName`, or a failed staleness read all leave the
+alert active and log at operator level rather than debug. The trade-off
+is deliberate: disabling a probe or unmonitoring a connection keeps the
+alert until someone clears or acknowledges it, which beats announcing a
+resolution nobody observed. `TestMetricRegistryProbeName` requires every
+entry to name a probe its latest SQL actually reads, and
+`TestClassifyAbsentMetric` pins the four verdicts.
+
 Before the metric is queried, the cleaner applies the same
 `required_extension` gate the evaluator does. `cleanResolvedAlerts` calls
 `resolveExtensionGates` once per pass: it walks the active threshold
@@ -1103,7 +1129,8 @@ run.
   policy with nullable points (`MetricDataPoint.Value *float64`,
   `MaxCarryIntervals`) replacing uniform LOCF.
 - #407: Missing metric data treated as resolution; introduced the
-  `clearWhenAbsent` registry flag, the freshness-cutoff test and the
+  `clearWhenAbsent` registry flag, the `probeName` field and its
+  probe-freshness gate on clearing, the freshness-cutoff test and the
   latest-sample reductions for `cache_hit_ratio` and `slow_query_count`.
 - #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
   `required_extension` enforced in evaluation and resolution,

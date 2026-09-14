@@ -50,7 +50,50 @@ const (
         DELETE FROM metrics.pg_stat_database
         WHERE connection_id = $1 AND database_name = $2
     `
+
+	// probeConfigSeedSQL registers a server-wide probe config at the
+	// collector's 300 second default interval, once per probe name.
+	probeConfigSeedSQL = `
+        INSERT INTO probe_configs
+            (name, connection_id, is_enabled, collection_interval_seconds)
+        SELECT $1, NULL, TRUE, 300
+         WHERE NOT EXISTS (
+               SELECT 1 FROM probe_configs
+                WHERE name = $1 AND connection_id IS NULL)
+    `
+
+	probeAvailabilitySeedSQL = `
+        INSERT INTO probe_availability
+            (connection_id, probe_name, is_available, last_collected)
+        VALUES ($1, $2, TRUE, NOW() - $3::interval)
+        ON CONFLICT (connection_id, probe_name) DO UPDATE
+           SET is_available = TRUE, last_collected = EXCLUDED.last_collected
+    `
 )
+
+// seedProbeReporting makes the named probe visible in the probe staleness
+// view for one connection, with its last collection the given interval
+// ago. The cleaner reads that view before it accepts an absent metric row
+// as a recovery, so the tests that expect a clearWhenAbsent metric to
+// clear have to model a collector that is still running (GitHub issue
+// #407).
+func seedProbeReporting(t *testing.T, pool *pgxpool.Pool, connID int, probe, age string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, probeConfigSeedSQL, probe); err != nil {
+		t.Fatalf("failed to seed probe_configs for %s: %v", probe, err)
+	}
+	if _, err := pool.Exec(ctx, probeAvailabilitySeedSQL, connID, probe, age); err != nil {
+		t.Fatalf("failed to seed probe_availability for %s: %v", probe, err)
+	}
+}
+
+// seedFreshProbe is seedProbeReporting for a probe that collected moments
+// ago, which is the normal state of a monitored connection.
+func seedFreshProbe(t *testing.T, pool *pgxpool.Pool, connID int, probe string) {
+	t.Helper()
+	seedProbeReporting(t, pool, connID, probe, "30 seconds")
+}
 
 // seedColdCache writes four samples for one database whose newest
 // interval is a 0% cache hit ratio (30000 reads, no hits), which the
@@ -212,6 +255,8 @@ func TestCleaner_MissingRowClearsFlaggedAlert(t *testing.T) {
 	}
 	recoveredConn := insertTestConnection(t, pool, "slot-inactive-recovers")
 	stillDownConn := insertTestConnection(t, pool, "slot-inactive-stays")
+	seedFreshProbe(t, pool, recoveredConn, "pg_replication_slots")
+	seedFreshProbe(t, pool, stillDownConn, "pg_replication_slots")
 
 	sample := time.Now().UTC().Add(-2 * time.Minute)
 	insertReplicationSlotRow(t, pool, recoveredConn, sample, "slot_a", false, 100)
@@ -246,6 +291,7 @@ func TestCleaner_NoDataClearsFlaggedAlert(t *testing.T) {
 	disableAllRulesExcept(t, pool, "replication_slot_retention_high")
 
 	connID := insertTestConnection(t, pool, "slot-retention-stale")
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
 	const fifteenGiB = int64(15) * 1024 * 1024 * 1024
 	insertReplicationSlotRow(t, pool, connID, time.Now().UTC().Add(-1*time.Minute),
 		"slot_a", true, fifteenGiB)
@@ -263,4 +309,118 @@ func TestCleaner_NoDataClearsFlaggedAlert(t *testing.T) {
 
 	engine.cleanResolvedAlerts(ctx)
 	assertAlertCleared(t, ds, pool, rules["replication_slot_retention_high"], connID, alert.ID)
+}
+
+// slotInactiveEnv fires the critical replication_slot_inactive alert for
+// one connection and then removes every slot row, so
+// pg_replication_slots.inactive reports no data at all. What the cleaner
+// does next depends only on whether the pg_replication_slots probe is
+// still reporting, which each caller seeds differently.
+func slotInactiveEnv(t *testing.T, connName string) (*Engine, *pgxpool.Pool, int, int64, func()) {
+	t.Helper()
+	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
+
+	ctx := context.Background()
+	var ruleID int64
+	if err := pool.QueryRow(ctx, insertSlotInactiveRuleSQL).Scan(&ruleID); err != nil {
+		cleanup()
+		t.Fatalf("failed to insert replication_slot_inactive rule: %v", err)
+	}
+	connID := insertTestConnection(t, pool, connName)
+	insertReplicationSlotRow(t, pool, connID, time.Now().UTC().Add(-2*time.Minute),
+		"slot_a", false, 100)
+
+	engine.evaluateThresholds(ctx)
+	alert := assertAlertFired(t, ds, ruleID, connID, "critical")
+
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM metrics.pg_replication_slots WHERE connection_id = $1`,
+		connID); err != nil {
+		cleanup()
+		t.Fatalf("failed to delete slot rows: %v", err)
+	}
+	if _, err := ds.GetLatestMetricValues(ctx, "pg_replication_slots.inactive"); err == nil {
+		cleanup()
+		t.Fatal("test setup expects the metric to report no data")
+	}
+	return engine, pool, connID, alert.ID, cleanup
+}
+
+// TestCleaner_AbsentMetricWithFreshProbeClears is the positive half of the
+// probe-freshness gate: the slots probe collected 30 seconds ago and
+// reports no inactive slot, so the absence really is the recovery signal
+// and the critical alert clears.
+func TestCleaner_AbsentMetricWithFreshProbeClears(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-fresh-probe")
+	defer cleanup()
+
+	capture := installNotificationCapture(t, engine)
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
+
+	engine.cleanResolvedAlerts(context.Background())
+
+	if status := alertStatus(t, pool, alertID); status != "cleared" {
+		t.Errorf("alert status with a fresh probe = %q, want \"cleared\"", status)
+	}
+	counts := countTypes(capture.await(t, 1))
+	if counts[database.NotificationTypeAlertClear] != 1 {
+		t.Errorf("notifications = %v, want one clear", counts)
+	}
+}
+
+// TestCleaner_AbsentMetricWithStaleProbeStaysActive covers the bug this
+// gate exists for: fifteen minutes after collection stopped the slot
+// query goes empty whether or not the slot recovered, and clearing on
+// that reported a genuinely inactive slot as resolved. The probe's last
+// collection is 40 minutes old, eight times its 300 second interval, so
+// the alert must stay active and no clear notification may be queued.
+func TestCleaner_AbsentMetricWithStaleProbeStaysActive(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-stale-probe")
+	defer cleanup()
+
+	capture := installNotificationCapture(t, engine)
+	seedProbeReporting(t, pool, connID, "pg_replication_slots", "40 minutes")
+
+	engine.cleanResolvedAlerts(context.Background())
+
+	if status := alertStatus(t, pool, alertID); status != "active" {
+		t.Errorf("alert status with a stale probe = %q, want \"active\"", status)
+	}
+	assertNoClearQueued(t, capture)
+}
+
+// TestCleaner_AbsentMetricWithUnreportedProbeStaysActive covers the probe
+// that is missing from the staleness view altogether, which is what a
+// probe that was disabled, that has never collected, or whose connection
+// stopped being monitored looks like: the view filters all three out. An
+// unknown probe is not evidence of recovery, so the alert stays active.
+func TestCleaner_AbsentMetricWithUnreportedProbeStaysActive(t *testing.T) {
+	engine, pool, _, alertID, cleanup := slotInactiveEnv(t, "slot-absent-no-probe-row")
+	defer cleanup()
+
+	capture := installNotificationCapture(t, engine)
+
+	engine.cleanResolvedAlerts(context.Background())
+
+	if status := alertStatus(t, pool, alertID); status != "active" {
+		t.Errorf("alert status with no probe_availability row = %q, want \"active\"", status)
+	}
+	assertNoClearQueued(t, capture)
+}
+
+// assertNoClearQueued fails if a clear notification was queued within a
+// short grace period.
+func assertNoClearQueued(t *testing.T, capture *notificationCapture) {
+	t.Helper()
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case job := <-capture.jobs:
+			if job.notifTyp == database.NotificationTypeAlertClear {
+				t.Fatal("a clear notification was queued for an alert that must stay active")
+			}
+		case <-deadline:
+			return
+		}
+	}
 }

@@ -288,6 +288,29 @@ metric; add one alongside the field. A metric name that the registry
 does not know returns `false`, so a metric evaluated outside the
 registry never clears on absent data.
 
+### Naming the Collector Probe
+
+Every registry entry also sets `probeName` to the collector probe
+that fills the metrics table its latest query reads, such as
+`pg_stat_activity`, `pg_replication_slots` or `pg_stat_database`. The
+`TestMetricRegistryProbeName` test requires the name to match a table
+the query selects from, so an entry whose query reads a table other
+than its metric prefix suggests names that table's probe: the
+`pg_stat_archiver.failed_count_delta` metric reads
+`metrics.pg_stat_wal`, for example.
+
+The cleaner uses the probe name to tell a condition that ended from
+data that stopped arriving. Because every query bounds `collected_at`,
+a stopped collector empties the result set exactly as a recovered
+condition does, so an alert on a `clearWhenAbsent` metric clears only
+when that probe is currently collecting for the alert's connection,
+judged from the same probe staleness information the
+`metric_staleness` rule uses. A probe that has stalled, that an
+operator has disabled, or that belongs to a connection which is no
+longer monitored leaves the alert active until somebody clears or
+acknowledges it, which is the safe direction: the alternative is
+reporting a resolution that nobody observed.
+
 ## Choosing Thresholds
 
 Select thresholds based on your operational requirements.

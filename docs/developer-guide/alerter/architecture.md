@@ -208,9 +208,12 @@ A metric that returns no value for an alert is a separate case from
 a metric that returns a value below the threshold. The metric
 registry records, for each metric, whether a missing row means the
 condition has ended or that the data has stopped arriving; the
-cleaner clears the alert only in the first case. The Adding Alert
-Rules document describes the `clearWhenAbsent` field that carries
-this classification.
+cleaner clears the alert only in the first case, and then only whilst
+the collector probe behind the metric is still collecting for that
+connection, so a stopped collector cannot look like a recovery. The
+Adding Alert Rules document describes the `clearWhenAbsent` field that
+carries this classification and the `probeName` field that names the
+probe.
 
 ### Retention Manager
 

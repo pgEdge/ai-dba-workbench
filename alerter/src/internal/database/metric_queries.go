@@ -189,6 +189,16 @@ func (d *Datastore) MetricClearsWhenAbsent(metricName string) bool {
 	return metricRegistry[metricName].clearWhenAbsent
 }
 
+// MetricProbeName returns the collector probe that fills the metrics table
+// metricName's latest query reads, or the empty string for a metric the
+// registry does not know. The alert cleaner uses it to check that the data
+// feeding a clearWhenAbsent metric is still current before it treats an
+// absent row as a recovery. See the probeName field on metricQueryConfig
+// and GitHub issue #407.
+func (d *Datastore) MetricProbeName(metricName string) string {
+	return metricRegistry[metricName].probeName
+}
+
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).

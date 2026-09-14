@@ -55,6 +55,21 @@ type metricQueryConfig struct {
 	// to true only for the second kind, and say why on the entry. See
 	// GitHub issue #407.
 	clearWhenAbsent bool
+
+	// probeName is the collector probe that fills the metrics table the
+	// latest query reads (pg_stat_activity, pg_replication_slots,
+	// pg_stat_database and so on). Every entry names one, and it must
+	// match a table the query selects from, which the registry audit
+	// test checks.
+	//
+	// The alert cleaner uses it to tell "the condition ended" from "the
+	// data stopped arriving" for the clearWhenAbsent entries: those
+	// queries all bound collected_at, so once collection stops they go
+	// empty and a genuine condition would otherwise be reported as
+	// resolved. The cleaner therefore only believes an absent row when
+	// this probe is currently reporting for the alert's connection. See
+	// GitHub issue #407.
+	probeName string
 }
 
 // cpuBusyPercentExpr is the SQL expression that derives a portable CPU
@@ -92,6 +107,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// no time filter, matching what the historical variant already did.
 	// See GitHub issue #406.
 	"pg_settings.max_connections": {
+		probeName: "pg_settings",
 		latestSQL: `
 			SELECT DISTINCT ON (connection_id)
 			       connection_id, setting::float as value, collected_at
@@ -119,6 +135,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// still comes from metrics.pg_stat_activity, which the 5 minute window
 	// on active_counts bounds. See GitHub issue #406.
 	"connection_utilization_percent": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			WITH active_counts AS (
 				SELECT connection_id, COUNT(*) as active
@@ -172,6 +189,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.count": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
@@ -206,6 +224,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// separately) rather than that lag data has stopped arriving; the lag
 	// alert clears. See GitHub issue #407.
 	"pg_stat_replication.replay_lag_seconds": {
+		probeName: "pg_stat_replication",
 		latestSQL: `
 			SELECT connection_id,
 			       EXTRACT(EPOCH FROM (NOW() - replay_lsn_timestamp))::float as value,
@@ -221,6 +240,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_replication.lag_bytes": {
+		probeName: "pg_stat_replication",
 		latestSQL: `
 			WITH recent_replication AS (
 				SELECT connection_id,
@@ -249,6 +269,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_replication_slots.retained_bytes": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH recent_slots AS (
 				SELECT connection_id,
@@ -309,6 +330,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// the source pg_replication_slots.active column directly, so the query
 	// can decide inactivity from a single table.
 	"pg_replication_slots.inactive": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH latest_per_slot AS (
 				SELECT DISTINCT ON (connection_id, slot_name)
@@ -344,6 +366,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// connection whose slots have all been dropped stores no rows, so the
 	// entry is clearWhenAbsent. See GitHub issue #407.
 	"pg_replication_slots.inactive_count": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
@@ -388,6 +411,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// flag are there for the reasons given on inactive_count above. See
 	// GitHub issue #407.
 	"pg_replication_slots.max_retained_bytes": {
+		probeName: "pg_replication_slots",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
@@ -437,6 +461,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// missed cycle without flapping but short enough that the alert clears
 	// promptly when source rows age out of the rolling window.
 	"spock_exception_log.recent_count": {
+		probeName: "spock_exception_log",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
@@ -482,6 +507,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// non-empty sample cannot keep an otherwise-resolved alert active after
 	// the source-side rolling window has drained.
 	"spock_resolutions.recent_count": {
+		probeName: "spock_resolutions",
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
@@ -518,6 +544,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_replication.standby_disconnected": {
+		probeName: "pg_stat_replication",
 		latestSQL: `
 			WITH recent_standby AS (
 				SELECT connection_id,
@@ -545,6 +572,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_node_role.subscription_worker_down": {
+		probeName: "pg_node_role",
 		latestSQL: `
 			WITH recent_node_role AS (
 				SELECT connection_id,
@@ -572,6 +600,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.blocked_count": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COUNT(*)::float as value,
@@ -606,6 +635,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.idle_in_transaction_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
@@ -643,6 +673,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.max_lock_wait_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
@@ -668,6 +699,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.max_query_duration_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - query_start))), 0)::float as value,
@@ -705,6 +737,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_activity.max_xact_duration_seconds": {
+		probeName: "pg_stat_activity",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(MAX(EXTRACT(EPOCH FROM (collected_at - xact_start))), 0)::float as value,
@@ -740,6 +773,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_stat_all_tables.dead_tuple_percent": {
+		probeName: "pg_stat_all_tables",
 		latestSQL: `
 			WITH recent_tables AS (
 				SELECT connection_id,
@@ -800,6 +834,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// and connections with a single sample in the window report 0 rather
 	// than dropping out of the result set entirely. See GitHub issue #406.
 	"pg_stat_archiver.failed_count_delta": {
+		probeName: "pg_stat_wal",
 		latestSQL: `
 			WITH archiver_data AS (
 				SELECT connection_id,
@@ -835,6 +870,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// and a connection with a single sample reports 0 instead of vanishing
 	// from the result set. See GitHub issue #406.
 	"pg_stat_checkpointer.checkpoints_req_delta": {
+		probeName: "pg_stat_checkpointer",
 		latestSQL: `
 			WITH checkpointer_data AS (
 				SELECT connection_id,
@@ -872,6 +908,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// clearWhenAbsent and an alert waits for the next busy interval. See
 	// GitHub issue #407.
 	"pg_stat_database.cache_hit_ratio": {
+		probeName: "pg_stat_database",
 		latestSQL: `
 			WITH db_blocks AS (
 				SELECT connection_id,
@@ -981,6 +1018,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// raw samples it aggregates, so baseline warmup still counts samples
 	// rather than buckets. See GitHub issue #409.
 	"pg_stat_database.deadlocks_delta": {
+		probeName: "pg_stat_database",
 		latestSQL: `
 			WITH db_deadlocks AS (
 				SELECT connection_id,
@@ -1044,6 +1082,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// over 15 minutes depended on the probe interval and dropped
 	// single-sample connections. See GitHub issue #409.
 	"pg_stat_database.temp_files_delta": {
+		probeName: "pg_stat_database",
 		latestSQL: `
 			WITH db_temp_files AS (
 				SELECT connection_id,
@@ -1122,6 +1161,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// database with statements but no slow ones reports 0 rather than
 	// disappearing from the result set. See GitHub issue #407.
 	"pg_stat_statements.slow_query_count": {
+		probeName: "pg_stat_statements",
 		latestSQL: `
 			WITH samples AS (
 				SELECT connection_id,
@@ -1187,6 +1227,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// busy buckets. The result is clamped to 0-100 so a partial row cannot
 	// produce a nonsensical percentage. See GitHub issue #406.
 	"pg_sys_cpu_usage_info.processor_time_percent": {
+		probeName: "pg_sys_cpu_usage_info",
 		latestSQL: `
 			SELECT connection_id,
 			       ` + cpuBusyPercentExpr + ` as value,
@@ -1212,6 +1253,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_sys_disk_info.used_percent": {
+		probeName: "pg_sys_disk_info",
 		latestSQL: `
 			WITH recent_disk AS (
 				SELECT connection_id,
@@ -1254,6 +1296,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_sys_load_avg_info.load_avg_fifteen_minutes": {
+		probeName: "pg_sys_load_avg_info",
 		latestSQL: `
 			SELECT connection_id,
 			       COALESCE(load_avg_fifteen_minutes, 0)::float as value,
@@ -1280,6 +1323,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	},
 
 	"pg_sys_memory_info.used_percent": {
+		probeName: "pg_sys_memory_info",
 		latestSQL: `
 			SELECT connection_id,
 			       CASE
@@ -1333,6 +1377,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// which the pg_database probe collects every 300 seconds. See GitHub
 	// issue #406.
 	"age_percent": {
+		probeName: "pg_database",
 		latestSQL: `
 			WITH latest_ages AS (
 				SELECT DISTINCT ON (connection_id, datname)
@@ -1364,6 +1409,7 @@ var metricRegistry = map[string]metricQueryConfig{
 	// autovacuum_vacuum_scale_factor values were ignored. See GitHub issue
 	// #406.
 	"table_last_autovacuum_hours": {
+		probeName: "pg_stat_all_tables",
 		latestSQL: `
 			WITH recent_tables AS (
 				SELECT connection_id,

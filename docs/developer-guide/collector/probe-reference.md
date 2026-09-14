@@ -36,13 +36,27 @@ backend processes.
   wait events
 - Use Cases: Connection monitoring, identifying
   long-running queries, detecting locks
+- Version Notes: PostgreSQL 14+ supplies `query_id`;
+  earlier versions store a null in that column
 
 **Columns Collected**: datid, datname, pid,
 leader_pid, usesysid, usename, application_name,
 client_addr, client_hostname, client_port,
 backend_start, xact_start, query_start,
 state_change, wait_event_type, wait_event, state,
-backend_xid, backend_xmin, query, backend_type
+backend_xid, backend_xmin, query, query_id,
+backend_type
+
+The `query_id` column carries the identifier of the
+statement the backend was running when the probe
+sampled the view, and schema migration 12 adds the
+column to `metrics.pg_stat_activity`. The value joins
+an activity sample to `metrics.pg_stat_statements`,
+which is how the server attributes a client address
+to a query. PostgreSQL stores a null whenever the
+backend is idle, and the column is null for every row
+collected from a server running PostgreSQL 13 or
+earlier, or running with `compute_query_id` off.
 
 ### pg_stat_checkpointer
 

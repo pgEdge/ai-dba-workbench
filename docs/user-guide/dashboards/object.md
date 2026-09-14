@@ -63,6 +63,28 @@ query, beside the query text under the Database User
 heading. The view displays "Unknown" when the collector
 cannot resolve the role that owns the statement.
 
+Beside that value, the Last Observed Client heading
+names the client last seen running the query. The
+value shows the client address on its own, or
+"hostname (address)" when the monitored server
+resolved a hostname, and a tooltip reports when the
+collector saw the client. The value reads "local" for
+a client that connected over a Unix-domain socket on
+the database host, because such a connection has no
+network address of its own.
+
+The client attribution is best effort, because the
+collector samples `pg_stat_activity` at intervals
+rather than watching every statement. The view can
+therefore name a client only for statements that
+happened to be in flight when a sample was taken, and
+it reports the client observed most recently rather
+than the only client that ever ran the query. The
+view displays "Not observed" when no sample has
+caught the query in flight, which is always the case
+on PostgreSQL releases before 14 and on servers where
+`compute_query_id` is off.
+
 The execution time and call count charts cover only the
 selected query, so the values reconcile with the tiles
 above.

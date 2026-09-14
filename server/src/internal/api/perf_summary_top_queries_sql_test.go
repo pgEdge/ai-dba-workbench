@@ -15,10 +15,12 @@ import (
 	"testing"
 )
 
-// topQueriesCTEHead is the invariant part of the generated CTE, in
+// topQueriesCTEHead is the invariant leading part of the generated CTE, in
 // whitespace-normalised form: everything from the WITH keyword up to and
-// including the latest-snapshot predicate on deduped. The optional filter
-// clauses and the trailing ORDER BY follow it.
+// including last_client's query_id IS NOT NULL predicate. The optional
+// queryid predicate inside last_client follows it, then
+// topQueriesCTEBody, then the optional deduped filters and the trailing
+// ORDER BY.
 const topQueriesCTEHead = "WITH latest AS ( " +
 	"SELECT MAX(collected_at) AS collected_at " +
 	"FROM metrics.pg_stat_statements " +
@@ -41,6 +43,21 @@ const topQueriesCTEHead = "WITH latest AS ( " +
 	"AND usesysid IS NOT NULL " +
 	"AND usename IS NOT NULL " +
 	"ORDER BY usesysid, collected_at DESC " +
+	"), last_client AS ( " +
+	"SELECT DISTINCT ON (query_id, datid, usesysid) " +
+	"query_id, datid, usesysid, " +
+	"COALESCE(host(client_addr), 'local') AS client_addr, " +
+	"client_hostname, collected_at " +
+	"FROM metrics.pg_stat_activity " +
+	"WHERE connection_id = $1 " +
+	"AND collected_at >= (SELECT collected_at FROM latest) " +
+	"- INTERVAL '1 hour' " +
+	"AND query_id IS NOT NULL"
+
+// topQueriesCTEBody is the part of the CTE between last_client's optional
+// queryid predicate and deduped's own optional filters.
+const topQueriesCTEBody = "ORDER BY query_id, datid, usesysid, " +
+	"collected_at DESC " +
 	"), deduped AS ( " +
 	"SELECT DISTINCT ON (pss.queryid) " +
 	"pss.queryid::text, " +
@@ -49,10 +66,14 @@ const topQueriesCTEHead = "WITH latest AS ( " +
 	"pss.query, pss.calls, pss.total_exec_time, " +
 	"pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time, " +
 	"pss.rows, " +
-	"pss.shared_blks_hit, pss.shared_blks_read " +
+	"pss.shared_blks_hit, pss.shared_blks_read, " +
+	"lc.client_addr, lc.client_hostname, " +
+	"lc.collected_at AS client_observed_at " +
 	"FROM metrics.pg_stat_statements pss " +
 	"LEFT JOIN db_names dn ON pss.dbid = dn.datid " +
 	"LEFT JOIN user_names un ON pss.userid = un.usesysid " +
+	"LEFT JOIN last_client lc ON pss.queryid = lc.query_id " +
+	"AND pss.dbid = lc.datid AND pss.userid = lc.usesysid " +
 	"WHERE pss.connection_id = $1 " +
 	"AND pss.collected_at = (SELECT collected_at FROM latest)"
 
@@ -101,11 +122,17 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		queryID          *int64
 		databaseName     string
 		excludeCollector bool
-		wantFilters      string
-		wantDBClause     string
-		wantTail         string
-		wantFilterArgs   []any
-		wantPageArgs     []any
+		// wantLastClient is the optional queryid predicate pushed into
+		// the last_client CTE. It shares its placeholder with
+		// wantFilters' pss.queryid predicate rather than binding a
+		// second parameter, which is what the argument assertions below
+		// pin down.
+		wantLastClient string
+		wantFilters    string
+		wantDBClause   string
+		wantTail       string
+		wantFilterArgs []any
+		wantPageArgs   []any
 	}{
 		{
 			name:           "no filters",
@@ -142,6 +169,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		{
 			name:           "queryid only",
 			queryID:        &queryID,
+			wantLastClient: "AND query_id = $2",
 			wantFilters:    "AND pss.queryid = $2",
 			wantTail:       "LIMIT $3 OFFSET $4",
 			wantFilterArgs: []any{connID, queryID},
@@ -151,6 +179,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			name:             "queryid and exclude collector",
 			queryID:          &queryID,
 			excludeCollector: true,
+			wantLastClient:   "AND query_id = $2",
 			wantFilters:      "AND pss.queryid = $2 " + excludeSQL,
 			wantTail:         "LIMIT $3 OFFSET $4",
 			wantFilterArgs:   []any{connID, queryID},
@@ -160,6 +189,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			name:           "queryid and database name",
 			queryID:        &queryID,
 			databaseName:   databaseName,
+			wantLastClient: "AND query_id = $2",
 			wantFilters:    "AND pss.queryid = $2",
 			wantDBClause:   "WHERE database_name = $3",
 			wantTail:       "LIMIT $4 OFFSET $5",
@@ -172,6 +202,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			queryID:          &queryID,
 			databaseName:     databaseName,
 			excludeCollector: true,
+			wantLastClient:   "AND query_id = $2",
 			wantFilters:      "AND pss.queryid = $2 " + excludeSQL,
 			wantDBClause:     "WHERE database_name = $3",
 			wantTail:         "LIMIT $4 OFFSET $5",
@@ -187,7 +218,8 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 				connID, tc.queryID, tc.databaseName, tc.excludeCollector,
 				"total_exec_time", "DESC", limit, offset)
 
-			wantCTE := joinSQL(topQueriesCTEHead, tc.wantFilters,
+			wantCTE := joinSQL(topQueriesCTEHead, tc.wantLastClient,
+				topQueriesCTEBody, tc.wantFilters,
 				"ORDER BY pss.queryid )")
 			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped",
 				tc.wantDBClause)

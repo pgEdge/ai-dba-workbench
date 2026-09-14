@@ -53,6 +53,7 @@ import {
     buildChartData,
     formatNumber,
     formatTime,
+    formatTimestamp,
     formatValue,
 } from './types';
 
@@ -111,6 +112,57 @@ function formatRelativeTime(date: Date): string {
         return `Updated ${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
     }
     return `Updated ${date.toLocaleDateString()}`;
+}
+
+/**
+ * Address the server reports for a backend connected over a
+ * Unix-domain socket, which has no network address of its own.
+ */
+const LOCAL_SOCKET_ADDR = 'local';
+
+/**
+ * Describe the client last seen running a statement. The observation
+ * timestamp is null when no pg_stat_activity snapshot has ever caught
+ * the query in flight, which is the only reliable signal that no
+ * client was observed: the address itself is reported as 'local' for
+ * a Unix-domain-socket backend. A hostname is shown alongside the
+ * address when resolved.
+ */
+function formatObservedClient(
+    addr: string | null,
+    hostname: string | null,
+    observedAt: string | null,
+): string {
+    if (observedAt === null) {
+        return 'Not observed';
+    }
+    if (!addr) {
+        return 'Unknown';
+    }
+    return hostname ? `${hostname} (${addr})` : addr;
+}
+
+/**
+ * Tooltip text warning that the client association is best-effort.
+ */
+function observedClientTooltip(
+    addr: string | null,
+    observedAt: string | null,
+): string {
+    const base = 'pg_stat_activity is sampled periodically, so this is '
+        + 'the client seen running the query in the most recent '
+        + 'snapshot that caught it in flight. Other clients may also '
+        + 'have run it.';
+    if (observedAt === null) {
+        return 'No pg_stat_activity snapshot has caught this query in '
+            + 'flight yet. ' + base;
+    }
+    const when = formatTimestamp(observedAt);
+    const local = addr === LOCAL_SOCKET_ADDR
+        ? ' The client connected over a Unix-domain socket on the '
+            + 'database host, so it has no network address.'
+        : '';
+    return `${base}${local} Last seen ${when}.`;
 }
 
 /**
@@ -362,6 +414,16 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         ? queryData.username
         : 'Unknown';
 
+    const observedClient = formatObservedClient(
+        queryData?.client_addr ?? null,
+        queryData?.client_hostname ?? null,
+        queryData?.client_observed_at ?? null,
+    );
+    const observedClientTitle = observedClientTooltip(
+        queryData?.client_addr ?? null,
+        queryData?.client_observed_at ?? null,
+    );
+
     // Compute rows per call
     const rowsPerCall = useMemo(() => {
         if (!queryData || queryData.calls === 0) { return null; }
@@ -430,6 +492,25 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                     >
                         {databaseUser}
                     </Typography>
+                    <Typography
+                        component="span"
+                        sx={{
+                            ...SERVER_INFO_LABEL_BASE_SX,
+                            color: 'text.secondary',
+                        }}
+                    >
+                        Last Observed Client
+                    </Typography>
+                    <Tooltip title={observedClientTitle}>
+                        <Typography
+                            component="span"
+                            tabIndex={0}
+                            sx={SERVER_INFO_VALUE_BASE_SX}
+                            data-testid="query-client"
+                        >
+                            {observedClient}
+                        </Typography>
+                    </Tooltip>
                 </Box>
                 <Typography sx={QUERY_TEXT_SX}>
                     {displayQuery}

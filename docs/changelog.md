@@ -94,8 +94,14 @@ project adheres to
   (`GET /api/v1/metrics/query`). A metric named `<column>_delta`
   reports the increase of a cumulative counter within each time
   bucket, which suits a bar chart of rare events such as checkpoints;
-  a bucket containing no sample reports zero, and the `aggregation`
-  parameter does not apply. (#400)
+  a bucket containing no sample reports zero, a connection with no
+  samples in the window returns no data points, and the `aggregation`
+  parameter does not apply. The `_per_sec` and `_delta` forms compute
+  the change of each monitored entity's counter separately before
+  adding them together, so a network interface or database that
+  appears or disappears between samples no longer produces a spike or
+  a stale value, and the sample before the window is only used when
+  it is recent enough not to inflate the first bucket. (#400)
 
 ### Changed
 

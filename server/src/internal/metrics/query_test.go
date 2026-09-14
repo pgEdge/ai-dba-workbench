@@ -1708,7 +1708,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 
 	t.Run("empty derived rejected", func(t *testing.T) {
 		_, _, err := BuildDerivedMetricsQuery(
-			"pg_stat_all_tables", nil, 1, start, end, 60, "avg",
+			"pg_stat_all_tables", nil, nil, 1, start, end, 60, "avg",
 			MetricFilters{})
 		if err == nil {
 			t.Fatal("expected error for empty derived slice")
@@ -1723,7 +1723,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1764,7 +1764,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "n_tup_ins_per_sec", BaseColumn: "n_tup_ins", Kind: DerivedPerSec},
 				{OutputName: "n_tup_upd_per_sec", BaseColumn: "n_tup_upd", Kind: DerivedPerSec},
 			},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1788,7 +1788,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				OutputName: "dead_tuple_ratio",
 				Kind:       DerivedDeadTupleRatio,
 			}},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1819,7 +1819,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
 				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
 			},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1850,7 +1850,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, end, 60, "avg",
+			nil, 1, start, end, 60, "avg",
 			MetricFilters{
 				DatabaseName:   "mydb",
 				DatabaseColumn: "database_name",
@@ -1884,7 +1884,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "idx_scan",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, end, 60, "avg",
+			nil, 1, start, end, 60, "avg",
 			MetricFilters{
 				SchemaName: "public",
 				TableName:  "orders",
@@ -1925,7 +1925,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "calls",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, end, 60, "avg",
+			nil, 1, start, end, 60, "avg",
 			MetricFilters{QueryID: ptrInt64(42)})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1949,7 +1949,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, end, 60, "last", MetricFilters{})
+			nil, 1, start, end, 60, "last", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1965,7 +1965,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		_, _, err := BuildDerivedMetricsQuery(
 			"pg_stat_all_tables",
 			[]DerivedMetric{{OutputName: "weird", Kind: DerivedMetricKind(99)}},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err == nil {
 			t.Fatal("expected error for unknown derived kind")
 		}
@@ -1980,7 +1980,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, tinyEnd, 60, "avg", MetricFilters{})
+			nil, 1, start, tinyEnd, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2000,7 +2000,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				OutputName: "dead_tuple_ratio",
 				Kind:       DerivedDeadTupleRatio,
 			}},
-			1, start, end, 60, "last", MetricFilters{})
+			nil, 1, start, end, 60, "last", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2028,7 +2028,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedDelta,
 			}},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2037,8 +2037,13 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			`LAG(SUM("seq_scan")) OVER (ORDER BY collected_at) AS prev_0`,
 			`CASE WHEN prev_0 IS NOT NULL AND (total_0 - prev_0) >= 0 ` +
 				`THEN (total_0 - prev_0) ELSE 0 END AS delta_0`,
+			`SUM(delta_0) AS delta_0`,
 			`SUM(delta_0) AS "seq_scan_delta"`,
-			`COALESCE(rate_buckets."seq_scan_delta", 0) AS "seq_scan_delta"`,
+			// The zero fill is gated on the window holding a sample at all,
+			// so a connection with no rows yields NULL buckets (no points)
+			// rather than a full window of zeros.
+			`CASE WHEN EXISTS (SELECT 1 FROM rate_samples) ` +
+				`THEN COALESCE(rate_buckets."seq_scan_delta", 0) END AS "seq_scan_delta"`,
 			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
 		}
 		for _, c := range checks {
@@ -2065,7 +2070,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 					BaseColumn: "seq_scan",
 					Kind:       DerivedDelta,
 				}},
-				1, start, end, 60, agg, MetricFilters{})
+				nil, 1, start, end, 60, agg, MetricFilters{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2085,7 +2090,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
 				{OutputName: "n_tup_ins_delta", BaseColumn: "n_tup_ins", Kind: DerivedDelta},
 			},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2121,7 +2126,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "seq_scan_delta", BaseColumn: "seq_scan", Kind: DerivedDelta},
 				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
 			},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2144,7 +2149,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 					OutputName: "dead_tuple_ratio",
 					Kind:       DerivedDeadTupleRatio,
 				}},
-				1, start, end, 60, agg, MetricFilters{})
+				nil, 1, start, end, 60, agg, MetricFilters{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2197,10 +2202,13 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 	}}
 
 	// The sample query must admit the newest sample taken strictly before
-	// the window so the first in-window sample has a LAG to subtract from.
+	// the window so the first in-window sample has a LAG to subtract from,
+	// but only from within lookbackBound of the window start, so a
+	// predecessor left behind by a long collection gap is not borrowed.
 	const wantLookback = `collected_at >= COALESCE((SELECT MAX(collected_at) ` +
 		`FROM metrics."pg_stat_all_tables" WHERE connection_id = $2 ` +
-		`AND collected_at < $3), $3)`
+		`AND collected_at < $3 AND collected_at >= $3 - ` + lookbackBound +
+		`), $3)`
 
 	for _, tc := range []struct {
 		name    string
@@ -2211,7 +2219,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 	} {
 		t.Run(tc.name+" reaches one sample before the window", func(t *testing.T) {
 			query, args, err := BuildDerivedMetricsQuery(
-				"pg_stat_all_tables", tc.derived, 1, start, end, 60, "avg",
+				"pg_stat_all_tables", tc.derived, nil, 1, start, end, 60, "avg",
 				MetricFilters{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -2222,7 +2230,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 			}
 			// The borrowed pre-window sample must be dropped again after the
 			// LAG so it never becomes a bucket of its own.
-			if !strings.Contains(query, ") samples\n            WHERE collected_at >= $3") {
+			if !strings.Contains(query, ") samples\n                WHERE collected_at >= $3") {
 				t.Errorf("rate_samples must exclude pre-window rows:\n%s", query)
 			}
 			// The upper bound and the argument layout are untouched.
@@ -2239,7 +2247,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 		// The extra sample must belong to the same entity, or the LAG would
 		// subtract another table's counter from this one's.
 		query, args, err := BuildDerivedMetricsQuery(
-			"pg_stat_all_tables", perSec, 1, start, end, 60, "avg",
+			"pg_stat_all_tables", perSec, nil, 1, start, end, 60, "avg",
 			MetricFilters{
 				DatabaseName:   "mydb",
 				DatabaseColumn: "database_name",
@@ -2251,7 +2259,8 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 		}
 		want := `COALESCE((SELECT MAX(collected_at) ` +
 			`FROM metrics."pg_stat_all_tables" WHERE connection_id = $2 ` +
-			`AND collected_at < $3 AND "database_name" = $5 ` +
+			`AND collected_at < $3 AND collected_at >= $3 - ` + lookbackBound +
+			` AND "database_name" = $5 ` +
 			`AND schemaname = $6 AND relname = $7), $3)`
 		if !strings.Contains(query, want) {
 			t.Errorf("query missing filtered lookback %q\n---\n%s", want, query)
@@ -2270,11 +2279,12 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 				BaseColumn: "calls",
 				Kind:       DerivedPerSec,
 			}},
-			1, start, end, 60, "avg", MetricFilters{QueryID: ptrInt64(42)})
+			nil, 1, start, end, 60, "avg", MetricFilters{QueryID: ptrInt64(42)})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := `AND collected_at < $3 AND queryid = $5), $3)`
+		want := `AND collected_at < $3 AND collected_at >= $3 - ` +
+			lookbackBound + ` AND queryid = $5), $3)`
 		if !strings.Contains(query, want) {
 			t.Errorf("query missing %q\n---\n%s", want, query)
 		}
@@ -2289,7 +2299,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 				OutputName: "dead_tuple_ratio",
 				Kind:       DerivedDeadTupleRatio,
 			}},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2308,7 +2318,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
 				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
 			},
-			1, start, end, 60, "avg", MetricFilters{})
+			nil, 1, start, end, 60, "avg", MetricFilters{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2394,4 +2404,136 @@ func TestMetricQueryParts(t *testing.T) {
 			t.Errorf("second where() differs: %q", got)
 		}
 	})
+}
+
+func TestLookbackBound(t *testing.T) {
+	// The bound is expressed in the query's own bucket-width argument so the
+	// $N layout stays shared with BuildMetricsQuery, and it is the larger of
+	// a few bucket widths and a fixed floor covering the coarsest charted
+	// probe interval (600s) several times over on a 1h window.
+	if !strings.HasPrefix(lookbackBound, "GREATEST($1::interval * ") {
+		t.Errorf("lookbackBound must scale with the bucket width: %q", lookbackBound)
+	}
+	if !strings.Contains(lookbackBound, "INTERVAL '30 minutes'") {
+		t.Errorf("lookbackBound must keep the 30-minute floor: %q", lookbackBound)
+	}
+	if strings.ContainsAny(lookbackBound, "26789") {
+		t.Errorf("lookbackBound multiplier changed; revisit the justification: %q",
+			lookbackBound)
+	}
+}
+
+func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
+	derived := []DerivedMetric{
+		{OutputName: "tx_bytes_per_sec", BaseColumn: "tx_bytes", Kind: DerivedPerSec},
+		{OutputName: "rx_bytes_delta", BaseColumn: "rx_bytes", Kind: DerivedDelta},
+	}
+
+	t.Run("entity keys partition the LAG and group the samples", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_sys_network_info", derived, []string{"interface_name"},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		checks := []string{
+			// Each counter is differenced against the same interface's
+			// previous reading, and so is the elapsed time.
+			`LAG(SUM("tx_bytes")) OVER (PARTITION BY "interface_name" ORDER BY collected_at) AS prev_0`,
+			`LAG(SUM("rx_bytes")) OVER (PARTITION BY "interface_name" ORDER BY collected_at) AS prev_1`,
+			`LAG(collected_at) OVER (PARTITION BY "interface_name" ORDER BY collected_at)`,
+			// One row per interface and sample in the innermost query.
+			`SELECT
+                        collected_at, "interface_name",`,
+			`GROUP BY collected_at, "interface_name"`,
+			// The per-interface changes are summed per sample time, so the
+			// bucket stage still sees one row per sample.
+			`SUM(rate_0) AS rate_0`,
+			`SUM(delta_1) AS delta_1`,
+			`) entity_samples
+            GROUP BY collected_at`,
+		}
+		for _, c := range checks {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if n := strings.Count(query, "PARTITION BY"); n != 3 {
+			t.Errorf("expected 3 partitioned window functions, got %d:\n%s", n, query)
+		}
+		// Entity keys are identifiers, never bound values.
+		if len(args) != 4 {
+			t.Errorf("expected 4 args, got %d", len(args))
+		}
+	})
+
+	t.Run("several entity keys are quoted and listed in order", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_statements", derived[:1],
+			[]string{"database_name", "queryid", "userid", "dbid", "toplevel"},
+			1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := `PARTITION BY "database_name", "queryid", "userid", "dbid", "toplevel" ORDER BY collected_at`
+		if !strings.Contains(query, want) {
+			t.Errorf("query missing %q\n---\n%s", want, query)
+		}
+	})
+
+	t.Run("no entity keys reduces to the single-row form", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_wal", derived, nil, 1, start, end, 60, "avg",
+			MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(query, "PARTITION BY") {
+			t.Errorf("single-row probe must not partition:\n%s", query)
+		}
+		for _, c := range []string{
+			`LAG(SUM("tx_bytes")) OVER (ORDER BY collected_at) AS prev_0`,
+			`GROUP BY collected_at
+                ) samples`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+	})
+
+	t.Run("ratio-only query ignores entity keys", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_all_tables",
+			[]DerivedMetric{{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio}},
+			[]string{"relname"}, 1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(query, `"relname"`) {
+			t.Errorf("ratio query must not reference entity keys:\n%s", query)
+		}
+	})
+}
+
+func TestNeedsEntityKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		derived []DerivedMetric
+		want    bool
+	}{
+		{"none", nil, false},
+		{"ratio only", []DerivedMetric{{Kind: DerivedDeadTupleRatio}}, false},
+		{"per_sec", []DerivedMetric{{Kind: DerivedPerSec}}, true},
+		{"delta", []DerivedMetric{{Kind: DerivedDelta}}, true},
+		{"ratio then delta", []DerivedMetric{{Kind: DerivedDeadTupleRatio}, {Kind: DerivedDelta}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := needsEntityKeys(tc.derived); got != tc.want {
+				t.Errorf("needsEntityKeys = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

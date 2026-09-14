@@ -411,6 +411,53 @@ func GetProbeMetricColumns(ctx context.Context, pool *pgxpool.Pool, probeName st
 	return metricCols, colTypes, rows.Err()
 }
 
+// GetProbeEntityKeyColumns discovers the columns that identify a distinct
+// monitored entity within one sample of a probe table: the columns of the
+// table's primary key other than connection_id and collected_at, in key
+// order. Every metrics table declares such a key (interface_name for
+// pg_sys_network_info, datname for pg_stat_database, queryid and its
+// companions for pg_stat_statements), and a single-row probe whose key is
+// just (connection_id, collected_at) yields an empty slice. Text-typed
+// value columns such as pg_stat_wal's last_archived_wal are deliberately
+// not treated as entity keys, which is why this reads the constraint
+// rather than reusing EntityKeyColumns.
+func GetProbeEntityKeyColumns(ctx context.Context, pool *pgxpool.Pool, probeName string) ([]string, error) {
+	query := `
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+            ON kcu.constraint_schema = tc.constraint_schema
+            AND kcu.constraint_name = tc.constraint_name
+        WHERE tc.table_schema = 'metrics'
+            AND tc.table_name = $1
+            AND tc.constraint_type = 'PRIMARY KEY'
+        ORDER BY kcu.ordinal_position
+    `
+
+	rows, err := pool.Query(ctx, query, probeName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		if name == "connection_id" || name == "collected_at" {
+			continue
+		}
+		if !IsValidIdentifier(name) {
+			return nil, fmt.Errorf("invalid entity key column %q", name)
+		}
+		keys = append(keys, name)
+	}
+
+	return keys, rows.Err()
+}
+
 // ResolveDatabaseColumn discovers which database-name column exists in a
 // probe table. It prefers "database_name" and falls back to "datname".
 // If neither column exists, it returns an empty string.
@@ -523,6 +570,29 @@ func BuildMetricsQuery(
 	return query, queryArgs, nil
 }
 
+// lookbackBound is the SQL interval expression bounding how far before the
+// window start the rate/delta lookback (metricQueryParts.lookbackWhere) may
+// reach for a predecessor sample. It is expressed in the query's own bucket
+// width ($1) so it needs no extra argument, and it is the larger of:
+//
+//   - Three bucket widths. The stale-predecessor harm scales with the
+//     bucket: a borrowed sample k widths back can inflate the first bucket
+//     to k times a normal one, so k is kept small. One width is too few,
+//     because a probe interval only slightly longer than the bucket would
+//     never resolve and the first bucket would always under-report.
+//   - A 30-minute floor. At the 150-bucket default a 1h window has 24s
+//     buckets, and the coarsest counter probes charted (pg_stat_wal,
+//     pg_stat_checkpointer, pg_sys_network_info) run every 600s, so three
+//     widths alone would never reach their predecessor on the short
+//     windows. On those windows the sample-less buckets already read zero
+//     (the "comb"), so a first bucket carrying up to 30 minutes of
+//     increase is at worst three teeth tall rather than a spike.
+//
+// At the 7d and 30d presets the bucket term dominates (67 minutes and 4.8
+// hours a bucket), so a collector outage of a day or more falls outside
+// the bound and the window starts from zero instead of a spike.
+const lookbackBound = "GREATEST($1::interval * 3, INTERVAL '30 minutes')"
+
 // metricQueryParts holds the decomposed pieces of the shared metric query
 // WHERE clause, so that a caller needing a variant of it (notably the
 // rate/delta lookback below, which replaces the lower time bound) can
@@ -560,21 +630,28 @@ func (p metricQueryParts) where() string {
 // rows before the window start again after the LAG has been computed, so
 // the borrowed sample never becomes a bucket of its own.
 //
-// COALESCE falls back to the window start when no earlier sample exists,
-// which reduces the clause to the standard lower bound and leaves the
-// behavior of a window with no history exactly as it was.
+// COALESCE falls back to the window start when no earlier sample exists
+// within reach, which reduces the clause to the standard lower bound and
+// leaves the behavior of a window with no history exactly as it was: the
+// first in-window sample then has no LAG and contributes a zero delta and
+// no rate.
 //
-// The lookback is deliberately unbounded below: it takes the most recent
-// earlier sample however old it is, so a window that opens after a long
-// collection gap still attributes the counter's whole rise to its first
-// bucket, and the per-second rate divides that rise by the true elapsed
-// time. The scan is a MAX over an index-ordered column, but it is not
-// bounded to a single partition of the probe table.
+// The search for that earlier sample is bounded below by
+// lookbackBound, so a predecessor left behind by a long collection gap is
+// not borrowed. Without the bound, a window opened after the collector had
+// been down for days would attribute every commit of those days to its
+// first bucket, and autoscale would flatten the real buckets onto the axis;
+// the per-second form is damped by dividing by the true elapsed time but
+// still presents a multi-day average as the first bucket's rate. Beyond
+// the bound the first bucket under-reports by one probe interval instead,
+// which is the lesser harm. The bound also confines the MAX scan to at
+// most a couple of partitions of the probe table.
 func (p metricQueryParts) lookbackWhere(probeName string) string {
-	priorClauses := make([]string, 0, len(p.filterClauses)+2)
+	priorClauses := make([]string, 0, len(p.filterClauses)+3)
 	priorClauses = append(priorClauses,
 		"connection_id = $2",
-		"collected_at < $3")
+		"collected_at < $3",
+		"collected_at >= $3 - "+lookbackBound)
 	priorClauses = append(priorClauses, p.filterClauses...)
 
 	lowerBound := fmt.Sprintf(
@@ -722,20 +799,39 @@ func ratioTupleExpr(aggregation, column string) string {
 //
 // Rates and deltas are computed from the same LAG over consecutive samples
 // and therefore share one rate_samples/rate_buckets pair, so both kinds may
-// be requested together for the same or for different base columns. The
-// sample query feeding that LAG reaches one sample back beyond the window
-// start (see metricQueryParts.lookbackWhere), so the counter increase
-// between the last sample before the window and the first sample inside it
-// lands in the first bucket rather than being dropped; the borrowed sample
-// is excluded from rate_samples' output and never becomes a bucket. Delta
-// outputs are COALESCEd to 0 after the LEFT JOIN rather than left NULL:
-// a bucket with no sample saw no counter reading, and its events are
-// counted by the next sample's delta, so carrying the previous bucket's
-// value forward (which the caller's LOCF fill would do for a NULL) would
-// double count them.
+// be requested together for the same or for different base columns.
+//
+// entityCols names the probe's entity-key columns (the primary key less
+// connection_id and collected_at, see GetProbeEntityKeyColumns), such as
+// interface_name for pg_sys_network_info or datname for pg_stat_database.
+// The LAG is partitioned by them, so each entity's counter is differenced
+// against its own previous reading and only the resulting per-entity
+// changes are summed. Summing the counters first and differencing the sum
+// would be wrong whenever the entity set changes between samples: an
+// interface that disappears drops the sum by its lifetime total, which the
+// reset guard turns into a lost sample, and one that appears folds its
+// lifetime total into a single interval. With the partition a vanished
+// entity simply stops contributing and a new one contributes nothing until
+// its second sample. A single-row probe has no entity columns and reduces
+// to the unpartitioned form.
+//
+// The sample query feeding that LAG reaches one sample back beyond the
+// window start (see metricQueryParts.lookbackWhere), so the counter
+// increase between the last sample before the window and the first sample
+// inside it lands in the first bucket rather than being dropped; the
+// borrowed sample is excluded from rate_samples' output and never becomes
+// a bucket. Delta outputs are COALESCEd to 0 after the LEFT JOIN rather
+// than left NULL: a bucket with no sample saw no counter reading, and its
+// events are counted by the next sample's delta, so carrying the previous
+// bucket's value forward (which the caller's LOCF fill would do for a
+// NULL) would double count them. That zero fill is gated on the window
+// holding at least one sample at all, so a connection whose probe has
+// never run, is disabled or is failing yields no points and the dashboard
+// shows its no-data state instead of a confident flat zero.
 func BuildDerivedMetricsQuery(
 	probeName string,
 	derived []DerivedMetric,
+	entityCols []string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	buckets int,
@@ -777,16 +873,34 @@ func BuildDerivedMetricsQuery(
 	var joins []string
 
 	if len(counters) > 0 {
+		// Every entity-key column is validated against information_schema
+		// by GetProbeEntityKeyColumns and quoted here; nothing caller
+		// supplied reaches this list.
+		var entityKeys []string
+		for _, col := range entityCols {
+			entityKeys = append(entityKeys, QuoteIdentifier(col))
+		}
+		// With entity keys the LAG runs per entity and the inner GROUP BY
+		// keeps one row per entity and sample; without them both collapse
+		// to the single-row form.
+		partition := ""
+		groupBy := "collected_at"
+		if len(entityKeys) > 0 {
+			partition = "PARTITION BY " + strings.Join(entityKeys, ", ") + " "
+			groupBy = "collected_at, " + strings.Join(entityKeys, ", ")
+		}
+
 		var innerCols []string
 		var sampleCols []string
+		var entitySumCols []string
 		var bucketCols []string
 		for i, d := range counters {
 			qb := QuoteIdentifier(d.BaseColumn)
 			innerCols = append(innerCols,
 				fmt.Sprintf("SUM(%s) AS total_%d", qb, i),
 				fmt.Sprintf(
-					"LAG(SUM(%s)) OVER (ORDER BY collected_at) AS prev_%d",
-					qb, i))
+					"LAG(SUM(%s)) OVER (%sORDER BY collected_at) AS prev_%d",
+					qb, partition, i))
 			if d.Kind == DerivedDelta {
 				// A missing LAG (only the very first sample the probe ever
 				// recorded for this connection and filter set, since the
@@ -800,6 +914,8 @@ func BuildDerivedMetricsQuery(
 						"AND (total_%d - prev_%d) >= 0 "+
 						"THEN (total_%d - prev_%d) ELSE 0 "+
 						"END AS delta_%d", i, i, i, i, i, i))
+				entitySumCols = append(entitySumCols,
+					fmt.Sprintf("SUM(delta_%d) AS delta_%d", i, i))
 				bucketCols = append(bucketCols, deltaAggExpr(i, d.OutputName))
 				continue
 			}
@@ -811,14 +927,21 @@ func BuildDerivedMetricsQuery(
 				"CASE WHEN (total_%d - prev_%d) >= 0 AND elapsed_sec > 0 "+
 					"THEN (total_%d - prev_%d)::float / elapsed_sec "+
 					"END AS rate_%d", i, i, i, i, i))
+			// SUM skips a NULL per-entity rate, so one entity's reset
+			// drops only its own share of that sample's total rate; the
+			// sample is NULL only when every entity was discarded.
+			entitySumCols = append(entitySumCols,
+				fmt.Sprintf("SUM(rate_%d) AS rate_%d", i, i))
 			bucketCols = append(bucketCols,
 				rateAggExpr(aggregation, i, d.OutputName))
 		}
 
-		// The inner sample query reads one extra sample from before the
-		// window (see lookbackWhere) purely so the first in-window sample
-		// has a LAG to subtract from; the outer WHERE then drops it again,
-		// so it contributes its counter reading without becoming a bucket.
+		// The innermost query reads one extra sample from before the window
+		// (see lookbackWhere) purely so the first in-window sample has a LAG
+		// to subtract from; the middle WHERE then drops it again, so it
+		// contributes its counter reading without becoming a bucket. The
+		// per-entity changes are then summed per sample time so the bucket
+		// stage sees one row per sample whatever the entity count.
 		ctes = append(ctes, fmt.Sprintf(`
         rate_samples AS (
             SELECT
@@ -827,20 +950,30 @@ func BuildDerivedMetricsQuery(
             FROM (
                 SELECT
                     collected_at,
-                    %s,
-                    EXTRACT(EPOCH FROM collected_at
-                        - LAG(collected_at) OVER (ORDER BY collected_at)
-                    ) AS elapsed_sec
-                FROM metrics.%s
-                WHERE %s
-                GROUP BY collected_at
-            ) samples
-            WHERE collected_at >= $3
+                    %s
+                FROM (
+                    SELECT
+                        %s,
+                        %s,
+                        EXTRACT(EPOCH FROM collected_at
+                            - LAG(collected_at) OVER (%sORDER BY collected_at)
+                        ) AS elapsed_sec
+                    FROM metrics.%s
+                    WHERE %s
+                    GROUP BY %s
+                ) samples
+                WHERE collected_at >= $3
+            ) entity_samples
+            GROUP BY collected_at
         )`,
-			strings.Join(sampleCols, ",\n                "),
-			strings.Join(innerCols, ",\n                    "),
+			strings.Join(entitySumCols, ",\n                "),
+			strings.Join(sampleCols, ",\n                    "),
+			groupBy,
+			strings.Join(innerCols, ",\n                        "),
+			partition,
 			QuoteIdentifier(probeName),
 			parts.lookbackWhere(probeName),
+			groupBy,
 		))
 
 		ctes = append(ctes, fmt.Sprintf(`
@@ -893,10 +1026,15 @@ func BuildDerivedMetricsQuery(
 				"rate_buckets."+QuoteIdentifier(d.OutputName))
 		case DerivedDelta:
 			// 0, not NULL, for a bucket the LEFT JOIN did not match: see
-			// the double-counting note on this function.
+			// the double-counting note on this function. The zero fill
+			// applies only when the window holds a sample at all; with
+			// none, every bucket stays NULL, the caller has no last value
+			// to carry and the series comes back empty. The EXISTS is
+			// uncorrelated, so the planner evaluates it once per query.
 			q := QuoteIdentifier(d.OutputName)
-			selectCols = append(selectCols,
-				fmt.Sprintf("COALESCE(rate_buckets.%s, 0) AS %s", q, q))
+			selectCols = append(selectCols, fmt.Sprintf(
+				"CASE WHEN EXISTS (SELECT 1 FROM rate_samples) "+
+					"THEN COALESCE(rate_buckets.%s, 0) END AS %s", q, q))
 		case DerivedDeadTupleRatio:
 			selectCols = append(selectCols, "ratio_buckets.dead_tuple_ratio")
 		}
@@ -1020,6 +1158,18 @@ func classifyMetrics(
 	return rawCols, derived, outputOrder, nil
 }
 
+// needsEntityKeys reports whether any of the derived metrics is computed
+// from sample-to-sample counter changes and so needs the probe's entity-key
+// columns to partition its LAG.
+func needsEntityKeys(derived []DerivedMetric) bool {
+	for _, d := range derived {
+		if d.Kind == DerivedPerSec || d.Kind == DerivedDelta {
+			return true
+		}
+	}
+	return false
+}
+
 // QueryTimeSeries executes a metrics query and returns the results as
 // MetricSeries slices. Each numeric column becomes its own series. When
 // multiple connection IDs are provided, results are combined. The window
@@ -1083,6 +1233,17 @@ func QueryTimeSeries(
 		filters.DatabaseColumn = dbCol
 	}
 
+	// Counter-derived metrics difference each entity's readings separately,
+	// so they need the probe's entity-key columns; the ratio reads absolute
+	// values and does not.
+	var entityCols []string
+	if needsEntityKeys(derived) {
+		entityCols, err = GetProbeEntityKeyColumns(ctx, pool, probeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get probe entity keys: %w", err)
+		}
+	}
+
 	// Collect data across all connections
 	dataMap := make(map[seriesKey][]MetricDataPoint)
 
@@ -1105,7 +1266,7 @@ func QueryTimeSeries(
 
 		if len(derived) > 0 {
 			query, queryArgs, err := BuildDerivedMetricsQuery(
-				probeName, derived, connID, timeStart, timeEnd,
+				probeName, derived, entityCols, connID, timeStart, timeEnd,
 				buckets, aggregation, filters)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build derived query: %w", err)

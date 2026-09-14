@@ -152,8 +152,27 @@ result.
 A delta answers "how many events happened during this
 bucket", which suits a bar chart of rare events such
 as checkpoints. A bucket that contains no sample
-reports zero, and the `aggregation` parameter does not
-apply.
+reports zero when the window contains at least one
+sample, and the `aggregation` parameter does not
+apply. A connection with no samples in the window
+returns no data points for either derived form,
+rather than a series of zeros.
+
+For a probe that stores one row per monitored entity
+in each sample, such as one row per network interface
+or per database, both forms compute the change of each
+entity's counter separately and then add the changes
+together. An entity that disappears between samples
+does not produce a negative change, and an entity that
+appears does not contribute its existing total.
+
+The first sample in the window is compared with the
+most recent sample before the window, provided that
+sample is no older than the larger of three bucket
+widths and 30 minutes before the window starts. Beyond
+that, the first sample contributes nothing, so a long
+gap in collection does not appear as a spike in the
+first bucket.
 
 The `dead_tuple_ratio` metric requires a probe that
 collects both `n_live_tup` and `n_dead_tup`, such as

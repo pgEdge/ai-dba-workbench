@@ -150,7 +150,8 @@ combined output order. The routing rules are deliberate and order-sensitive:
 `BuildDerivedMetricsQuery` builds the derived SQL. It shares the bucketing,
 gap-filling (`generate_series`), filtering, and `$N` argument layout of
 `BuildMetricsQuery`, so the caller scans and applies LOCF identically for
-raw and derived series. Per-second base columns must stay validated against
+raw and derived series; it additionally takes the probe's entity-key
+columns (see below). Per-second base columns must stay validated against
 the discovered column set and `QuoteIdentifier`-wrapped; never interpolate a
 caller-supplied metric name that has not passed `classifyMetrics`. Negative
 counter deltas (resets/restarts) and non-positive elapsed times are dropped
@@ -172,7 +173,57 @@ counter gets a `total_i`/`prev_i` pair, then either a `rate_i` or a
   JOIN, so a bucket with no sample reads 0. Leaving it NULL would hand it to
   `scanSeriesRows`'s LOCF fill, which would repeat the previous bucket's
   increase even though the events of the sample-less bucket are already
-  counted by the next sample's delta: a double count.
+  counted by the next sample's delta: a double count. The COALESCE is
+  gated on `EXISTS (SELECT 1 FROM rate_samples)`, i.e. on the window
+  holding at least one in-window sample (the borrowed pre-window sample is
+  already excluded from `rate_samples`). Without the gate a connection
+  whose probe never ran, is disabled or is failing produced 151 zero
+  points and a confident flat-zero chart or a "0 B" KPI where the raw
+  column and the `_per_sec` form produced none; with it every bucket is
+  NULL, `scanSeriesRows` has no last value to carry, and the series is
+  empty so the dashboard shows its no-data state. A single in-window
+  sample is enough to re-enable the zero fill.
+
+### The LAG is partitioned by the probe's entity keys
+
+`rate_samples` is three queries deep. The innermost groups the probe rows
+by `collected_at` plus the probe's entity-key columns and computes
+`SUM(col)`, `LAG(SUM(col)) OVER (PARTITION BY <entity keys> ORDER BY
+collected_at)` and the elapsed seconds, so each entity's counter is
+differenced against its own previous reading; the middle query turns
+those into per-entity `rate_i`/`delta_i` values and drops the borrowed
+pre-window row; the outer query sums the per-entity values per
+`collected_at`, so `rate_buckets` still sees one row per sample whatever
+the entity count. Summing the counters first and differencing the sum
+(the previous shape) was wrong whenever the entity set changed between
+samples: on `pg_sys_network_info`, keyed per `interface_name`, an
+interface being torn down dropped the sum by its lifetime total, the
+reset guard nulled the sample and LOCF republished the previous
+throughput, whilst an interface coming up folded its whole lifetime
+counter into one interval and spiked the axis. With the partition a
+vanished entity simply stops contributing and a new one contributes
+nothing until its second sample. A per-entity rate that is NULL (that
+entity reset) drops out of the per-sample `SUM`, so the total rate loses
+only that entity's share.
+
+The entity keys come from `GetProbeEntityKeyColumns`: the columns of the
+probe table's primary key other than `connection_id` and `collected_at`,
+in key order (`interface_name`; `datname`; `database_name, queryid,
+userid, dbid, toplevel`; nothing for a single-row probe such as
+`pg_stat_wal`, which then reduces to the unpartitioned form). Every
+`metrics.*` table declares such a key. Do not substitute
+`EntityKeyColumns`/`IsEntityKeyColumn` here: those treat every text
+column as identity, and `pg_stat_wal.last_archived_wal` or
+`pg_sys_network_info.ip_address` would fragment the partition so that
+every sample became a first sample. `QueryTimeSeries` discovers the keys
+only when `needsEntityKeys` reports a counter-derived metric in the
+request; the ratio reads absolute values and ignores them. The keys are
+validated with `IsValidIdentifier` and `QuoteIdentifier`-wrapped; they
+are identifiers from `information_schema`, never bound values, so the
+`$N` layout is unchanged. Fixture tables for the derived path must
+therefore declare a primary key when they mean to exercise the
+partition; the existing table-probe fixtures declare none and run
+unpartitioned.
 
 ### The rate/delta sample query reaches one sample before the window
 
@@ -183,23 +234,46 @@ between the last sample before the window start and it would be lost: a
 inner sample query therefore widens its lower bound with
 `metricQueryParts.lookbackWhere`, which replaces `collected_at >= $3` with
 `collected_at >= COALESCE((SELECT MAX(collected_at) FROM metrics.<probe>
-WHERE connection_id = $2 AND collected_at < $3 AND <same dimension
-filters>), $3)`, and the CTE's outer `WHERE collected_at >= $3` then drops
-the borrowed sample again so it never becomes a bucket of its own. The
-`COALESCE` fallback means a window with no earlier sample behaves exactly
-as it did before.
+WHERE connection_id = $2 AND collected_at < $3 AND collected_at >= $3 -
+<lookbackBound> AND <same dimension filters>), $3)`, and the CTE's middle
+`WHERE collected_at >= $3` then drops the borrowed sample again so it never
+becomes a bucket of its own. The `COALESCE` fallback means a window with
+no earlier sample within reach behaves exactly as it did before the
+lookback existed. The collector stamps every entity of one probe run
+with the same `collected_at`, which is why one borrowed timestamp serves
+every partition.
+
+The search is bounded below by the `lookbackBound` constant,
+`GREATEST($1::interval * 3, INTERVAL '30 minutes')`: the larger of three
+bucket widths and a 30-minute floor, expressed in the query's own bucket
+argument so it adds nothing to the argument list. The bound exists
+because a predecessor left behind by a long collection gap inflates the
+first bucket: a collector down for three days followed by a 1h window on
+`xact_commit_delta` reported three days of commits in the first bucket
+and autoscale flattened every real bucket, and the `_per_sec` form,
+though damped by dividing by the true elapsed time, presented a
+three-day average as the first bucket's rate. The multiplier is small
+because a borrowed sample k widths back can inflate the first bucket to
+k times a normal one, but one width is too few (a probe interval only
+slightly longer than the bucket would never resolve). The floor covers
+the 1h preset, where 150 buckets are 24s wide and the coarsest charted
+counter probes (`pg_stat_wal`, `pg_stat_checkpointer`,
+`pg_sys_network_info`) run every 600s; on those windows the sample-less
+buckets already read zero, so a first bucket carrying up to 30 minutes
+of increase is at most a few teeth tall. At the 7d and 30d presets the
+bucket term dominates (3.4 and 14.4 hours), so an outage of a day or
+more falls outside the bound and the window starts from zero. Beyond the
+bound the first bucket under-reports by one probe interval, which is the
+lesser harm. Change the constant only together with its justification
+comment in `query.go` and `TestLookbackBound`.
 
 Three things must stay true. The lookback subquery repeats the same
 dimension filters as the outer clause, or the LAG would subtract another
-entity's counter. It reuses the existing `$2`/`$3` placeholders and adds no
-arguments, so the `$N` layout stays shared with `BuildMetricsQuery`. And
-neither the raw-column path nor the `dead_tuple_ratio` CTE looks back at
-all: both read absolute values rather than differences, so an out-of-window
-row would simply be wrong. The lookback is unbounded below, so it may scan
-back through several partitions of the probe table to find the previous
-sample; that is deliberate, because bounding it to one bucket width would
-silently reinstate the bug whenever the collection interval exceeds the
-bucket width.
+entity's counter. It reuses the existing `$1`/`$2`/`$3` placeholders and
+adds no arguments, so the `$N` layout stays shared with
+`BuildMetricsQuery`. And neither the raw-column path nor the
+`dead_tuple_ratio` CTE looks back at all: both read absolute values rather
+than differences, so an out-of-window row would simply be wrong.
 
 `metricQueryBase` now delegates to `metricQueryClauses`, which returns a
 `metricQueryParts` holding the dimension filter clauses and the argument
@@ -248,7 +322,19 @@ existed. A second fixture in the same file covers `_delta` with a
 deliberately awkward progression: a first sample with no `LAG`, a minute
 carrying no sample at all, and a counter reset, asserting the exact
 non-zero per-bucket deltas, the 0 fill, and that the reset contributes
-nothing.
+nothing. A third, `setupNetworkFixture`, is shaped like
+`pg_sys_network_info` with its real primary key and an interface set that
+changes under the window (one interface resets and is then torn down,
+another appears carrying a large lifetime counter); it asserts the exact
+per-minute totals for both `_delta` and `_per_sec`, that a connection
+with no rows and a window with no samples each yield zero points, and
+that a single in-window sample still zero-fills. A fourth,
+`setupLookbackFixture`, holds one scenario per connection for the
+lookback bound: a reset straddling the window boundary, a predecessor
+beyond and one inside the 30-minute floor, and a predecessor beyond and
+one inside three 1-hour buckets. Asserting exact values at exact bucket
+times needs the window anchored on the minute (`windowSince`), not on
+`time.Now()`, or the bucket boundaries drift off the samples.
 Minute-spaced samples always land in distinct 60-second buckets whatever
 the window origin is, which is what makes those exact assertions safe. The
 two `scanSeriesRows` error returns in `QueryTimeSeries` are driven

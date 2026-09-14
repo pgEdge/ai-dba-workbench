@@ -1145,6 +1145,209 @@ func TestClassifyMetrics(t *testing.T) {
 			}
 		}
 	})
+
+	// Column kind rules (issue #402). These use real probe names so the
+	// static registry, not a test override, decides the kind.
+	dbCols := []string{
+		"numbackends", "xact_commit", "blk_read_time", "active_time",
+		"sessions",
+	}
+	stmtCols := []string{"calls", "total_exec_time", "mean_exec_time"}
+	cpuCols := []string{"idle_mode_percent"}
+
+	t.Run("per_sec on a gauge names the kind", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"n_dead_tup_per_sec"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		want := `metric "n_dead_tup_per_sec" not supported for probe ` +
+			`"pg_stat_all_tables": "n_dead_tup" is a gauge, not a cumulative counter`
+		if err.Error() != want {
+			t.Errorf("error = %q\nwant    %q", err.Error(), want)
+		}
+	})
+
+	t.Run("per_sec on a time counter points at _pct", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"blk_read_time_per_sec"}, dbCols, "pg_stat_database")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		for _, frag := range []string{
+			`"blk_read_time" is a cumulative time counter, not a cumulative counter`,
+			`request "blk_read_time_pct"`,
+		} {
+			if !strings.Contains(err.Error(), frag) {
+				t.Errorf("error %q lacks %q", err.Error(), frag)
+			}
+		}
+	})
+
+	t.Run("per_sec on a session time counter points at _sessions", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"active_time_per_sec"}, dbCols, "pg_stat_database")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		for _, frag := range []string{
+			`"active_time" is a session time counter, not a cumulative counter`,
+			`request "active_time_sessions"`,
+		} {
+			if !strings.Contains(err.Error(), frag) {
+				t.Errorf("error %q lacks %q", err.Error(), frag)
+			}
+		}
+	})
+
+	t.Run("per_sec on a watermark and a ratio rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"mean_exec_time_per_sec"}, stmtCols, "pg_stat_statements")
+		if err == nil || !strings.Contains(err.Error(), "is a lifetime watermark") {
+			t.Errorf("watermark: got %v", err)
+		}
+		if err != nil && strings.Contains(err.Error(), "request") {
+			t.Errorf("watermark error should carry no hint: %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"idle_mode_percent_per_sec"}, cpuCols, "pg_sys_cpu_usage_info")
+		if err == nil || !strings.Contains(err.Error(), "is a ratio") {
+			t.Errorf("ratio: got %v", err)
+		}
+	})
+
+	t.Run("per_sec on a real counter carries the /s unit", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"xact_commit_per_sec", "sessions_per_sec"}, dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 2 {
+			t.Fatalf("expected 2 derived, got %d", len(derived))
+		}
+		for _, d := range derived {
+			if d.Kind != DerivedPerSec || d.Unit != "/s" {
+				t.Errorf("%s: kind %v unit %q", d.OutputName, d.Kind, d.Unit)
+			}
+		}
+	})
+
+	t.Run("delta accepts counter and time kinds with matching units", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"xact_commit_delta", "blk_read_time_delta", "active_time_delta"},
+			dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantUnits := map[string]string{
+			"xact_commit_delta":   "",
+			"blk_read_time_delta": "ms",
+			"active_time_delta":   "ms",
+		}
+		for _, d := range derived {
+			if d.Kind != DerivedDelta {
+				t.Errorf("%s: kind %v, want DerivedDelta", d.OutputName, d.Kind)
+			}
+			if d.Unit != wantUnits[d.OutputName] {
+				t.Errorf("%s: unit %q, want %q", d.OutputName, d.Unit, wantUnits[d.OutputName])
+			}
+		}
+	})
+
+	t.Run("delta on a gauge rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"numbackends_delta"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"numbackends" is a gauge, not a cumulative counter`) {
+			t.Errorf("got %v", err)
+		}
+	})
+
+	t.Run("pct accepted only on a time counter", func(t *testing.T) {
+		_, derived, order, err := classifyMetrics(
+			[]string{"blk_read_time_pct"}, dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Kind != DerivedTimeShare ||
+			derived[0].BaseColumn != "blk_read_time" || derived[0].Unit != "%" {
+			t.Errorf("unexpected derived %+v", derived)
+		}
+		if len(order) != 1 || order[0] != "blk_read_time_pct" {
+			t.Errorf("unexpected order %v", order)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"xact_commit_pct"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"xact_commit" is a cumulative counter, not a cumulative time counter`) {
+			t.Errorf("counter: got %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"active_time_pct"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"active_time" is a session time counter, not a cumulative time counter`) {
+			t.Errorf("session time: got %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"nothing_pct"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(), "to compute a share of wall-clock time") {
+			t.Errorf("missing base: got %v", err)
+		}
+	})
+
+	t.Run("sessions accepted only on a session time counter", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"active_time_sessions"}, dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Kind != DerivedSessionAverage ||
+			derived[0].BaseColumn != "active_time" || derived[0].Unit != "sessions" {
+			t.Errorf("unexpected derived %+v", derived)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"blk_read_time_sessions"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"blk_read_time" is a cumulative time counter, not a session time counter`) {
+			t.Errorf("time counter: got %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"nothing_sessions"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(), "to compute an average session count") {
+			t.Errorf("missing base: got %v", err)
+		}
+	})
+
+	t.Run("real column ending in a derived suffix stays raw", func(t *testing.T) {
+		cols := []string{"blk_read_time", "cache_pct", "peak_sessions"}
+		raw, derived, _, err := classifyMetrics(
+			[]string{"cache_pct", "peak_sessions"}, cols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 2 || len(derived) != 0 {
+			t.Errorf("raw %v derived %v", raw, derived)
+		}
+	})
+
+	t.Run("dead_tuple_ratio carries the percent unit", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"dead_tuple_ratio"}, tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Unit != "%" {
+			t.Errorf("unexpected derived %+v", derived)
+		}
+	})
+
+	t.Run("unregistered probe treats every column as a gauge", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"hits_per_sec"}, []string{"hits"}, "not_a_probe")
+		if err == nil || !strings.Contains(err.Error(), `"hits" is a gauge`) {
+			t.Errorf("got %v", err)
+		}
+	})
 }
 
 func TestEntityKeyColumns(t *testing.T) {
@@ -2167,6 +2370,76 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("time share and session average are scaled rates", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_database",
+			[]DerivedMetric{
+				{OutputName: "blk_read_time_pct", BaseColumn: "blk_read_time", Kind: DerivedTimeShare},
+				{OutputName: "active_time_sessions", BaseColumn: "active_time", Kind: DerivedSessionAverage},
+				{OutputName: "xact_commit_per_sec", BaseColumn: "xact_commit", Kind: DerivedPerSec},
+			},
+			[]string{"datname"}, 1, start, end, 60, "avg", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`SUM("blk_read_time") AS total_0`,
+			`CASE WHEN (total_0 - prev_0) >= 0 AND elapsed_sec > 0 ` +
+				`THEN 100.0 * (total_0 - prev_0)::float / (elapsed_sec * 1000.0) END AS rate_0`,
+			`CASE WHEN (total_1 - prev_1) >= 0 AND elapsed_sec > 0 ` +
+				`THEN (total_1 - prev_1)::float / (elapsed_sec * 1000.0) END AS rate_1`,
+			`CASE WHEN (total_2 - prev_2) >= 0 AND elapsed_sec > 0 ` +
+				`THEN (total_2 - prev_2)::float / elapsed_sec END AS rate_2`,
+			`SUM(rate_0) AS rate_0`,
+			`SUM(rate_1) AS rate_1`,
+			`avg(rate_0) AS "blk_read_time_pct"`,
+			`avg(rate_1) AS "active_time_sessions"`,
+			`avg(rate_2) AS "xact_commit_per_sec"`,
+			`rate_buckets."blk_read_time_pct",`,
+			`rate_buckets."active_time_sessions",`,
+			`rate_buckets."xact_commit_per_sec"`,
+			`PARTITION BY "datname" ORDER BY collected_at`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, "delta_") || strings.Contains(query, "ratio_buckets") {
+			t.Error("scaled rates must not emit delta or ratio CTE columns")
+		}
+		if len(args) != 4 {
+			t.Errorf("expected 4 args, got %d", len(args))
+		}
+	})
+
+	t.Run("time share applies the last aggregation", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_database",
+			[]DerivedMetric{{OutputName: "blk_read_time_pct", BaseColumn: "blk_read_time", Kind: DerivedTimeShare}},
+			nil, 1, start, end, 60, "last", MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, `FILTER (WHERE rate_0 IS NOT NULL))[1] AS "blk_read_time_pct"`) {
+			t.Errorf("last aggregation not applied:\n%s", query)
+		}
+	})
+}
+
+func TestRateSampleExpr(t *testing.T) {
+	for _, tc := range []struct {
+		kind DerivedMetricKind
+		want string
+	}{
+		{DerivedPerSec, "(total_3 - prev_3)::float / elapsed_sec"},
+		{DerivedTimeShare, "100.0 * (total_3 - prev_3)::float / (elapsed_sec * 1000.0)"},
+		{DerivedSessionAverage, "(total_3 - prev_3)::float / (elapsed_sec * 1000.0)"},
+	} {
+		if got := rateSampleExpr(tc.kind, 3); got != tc.want {
+			t.Errorf("rateSampleExpr(%v) = %q, want %q", tc.kind, got, tc.want)
+		}
+	}
 }
 
 func TestRatioTupleExpr(t *testing.T) {
@@ -2528,6 +2801,8 @@ func TestNeedsEntityKeys(t *testing.T) {
 		{"ratio only", []DerivedMetric{{Kind: DerivedDeadTupleRatio}}, false},
 		{"per_sec", []DerivedMetric{{Kind: DerivedPerSec}}, true},
 		{"delta", []DerivedMetric{{Kind: DerivedDelta}}, true},
+		{"time share", []DerivedMetric{{Kind: DerivedTimeShare}}, true},
+		{"session average", []DerivedMetric{{Kind: DerivedSessionAverage}}, true},
 		{"ratio then delta", []DerivedMetric{{Kind: DerivedDeadTupleRatio}, {Kind: DerivedDelta}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

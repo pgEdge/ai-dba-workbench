@@ -39,6 +39,16 @@ const (
 	// chart wants, whereas a raw counter column would plot the
 	// ever-growing cumulative total instead.
 	DerivedDelta
+	// DerivedTimeShare is the share of wall-clock time a cumulative time
+	// counter (milliseconds, KindTimeCounter) advanced by between samples,
+	// on a 0-100 scale: 100 * delta_ms / (elapsed_sec * 1000). It is a rate
+	// with a scale factor and shares the _per_sec CTEs.
+	DerivedTimeShare
+	// DerivedSessionAverage is the average number of sessions that spent
+	// the interval in a state, from a session time counter (milliseconds
+	// summed across sessions, KindSessionTimeCounter): delta_ms /
+	// (elapsed_sec * 1000). It too is a scaled rate.
+	DerivedSessionAverage
 )
 
 // DerivedMetric describes a single computed metric to include in a query.
@@ -51,6 +61,11 @@ type DerivedMetric struct {
 	BaseColumn string
 	// Kind selects how the metric is computed.
 	Kind DerivedMetricKind
+	// Unit is the unit reported on the resulting MetricSeries: "/s" for a
+	// rate, "%" for a time share or the dead-tuple ratio, "sessions" for
+	// a session average, and "" or "ms" for a delta depending on whether
+	// the base column counts events or milliseconds.
+	Unit string
 }
 
 // MetricFilters holds optional dimension filters for metric queries.
@@ -749,6 +764,24 @@ func metricQueryClauses(
 	return parts
 }
 
+// rateSampleExpr returns the per-sample value expression for the rate-like
+// derived kinds, in terms of the total_<idx>/prev_<idx> counter pair and
+// elapsed_sec of the rate_samples CTE. A per-second rate divides the
+// counter increase by the elapsed seconds; a time share expresses a
+// millisecond increase as a percentage of the elapsed wall-clock time; a
+// session average expresses a millisecond increase summed across sessions
+// as the number of sessions that would account for it.
+func rateSampleExpr(kind DerivedMetricKind, idx int) string {
+	delta := fmt.Sprintf("(total_%d - prev_%d)::float", idx, idx)
+	switch kind {
+	case DerivedTimeShare:
+		return "100.0 * " + delta + " / (elapsed_sec * 1000.0)"
+	case DerivedSessionAverage:
+		return delta + " / (elapsed_sec * 1000.0)"
+	}
+	return delta + " / elapsed_sec"
+}
+
 // rateAggExpr builds the bucket-level aggregation expression for one
 // per-second rate column. The inner per-sample rate is exposed as rate_<idx>
 // in the rate_samples CTE. NULL per-sample rates (counter resets or invalid
@@ -859,7 +892,7 @@ func BuildDerivedMetricsQuery(
 	hasRatio := false
 	for _, d := range derived {
 		switch d.Kind {
-		case DerivedPerSec, DerivedDelta:
+		case DerivedPerSec, DerivedDelta, DerivedTimeShare, DerivedSessionAverage:
 			counters = append(counters, d)
 		case DerivedDeadTupleRatio:
 			hasRatio = true
@@ -922,11 +955,13 @@ func BuildDerivedMetricsQuery(
 			// Discard negative deltas (a counter reset from pg_stat_reset()
 			// or a server restart) and non-positive elapsed times (duplicate
 			// or out-of-order samples) so neither yields a bogus rate; such
-			// rows become NULL and are dropped by the bucket aggregate.
+			// rows become NULL and are dropped by the bucket aggregate. The
+			// time share and session average are the same rate with a
+			// scale factor, so they share the guard and the rate_i slot.
 			sampleCols = append(sampleCols, fmt.Sprintf(
 				"CASE WHEN (total_%d - prev_%d) >= 0 AND elapsed_sec > 0 "+
-					"THEN (total_%d - prev_%d)::float / elapsed_sec "+
-					"END AS rate_%d", i, i, i, i, i))
+					"THEN %s END AS rate_%d",
+				i, i, rateSampleExpr(d.Kind, i), i))
 			// SUM skips a NULL per-entity rate, so one entity's reset
 			// drops only its own share of that sample's total rate; the
 			// sample is NULL only when every entity was discarded.
@@ -1021,7 +1056,7 @@ func BuildDerivedMetricsQuery(
 	var selectCols []string
 	for _, d := range derived {
 		switch d.Kind {
-		case DerivedPerSec:
+		case DerivedPerSec, DerivedTimeShare, DerivedSessionAverage:
 			selectCols = append(selectCols,
 				"rate_buckets."+QuoteIdentifier(d.OutputName))
 		case DerivedDelta:
@@ -1063,17 +1098,103 @@ func BuildDerivedMetricsQuery(
 	return query, queryArgs, nil
 }
 
+// derivedSuffixRule describes one derived-metric name suffix: which kinds
+// of base column it accepts, what it computes and what unit it reports.
+type derivedSuffixRule struct {
+	suffix string
+	kind   DerivedMetricKind
+	// purpose completes "no numeric column X to compute <purpose>".
+	purpose string
+	// wants names the kind a mismatch error contrasts against.
+	wants ColumnKind
+	// accepts reports whether a base column of the given kind is valid.
+	accepts func(ColumnKind) bool
+	// unit returns the reported unit for a base column of the given kind.
+	unit func(ColumnKind) string
+}
+
+// derivedSuffixRules lists the suffix forms in the order they are tried.
+// None is a suffix of another, so the order carries no precedence.
+var derivedSuffixRules = []derivedSuffixRule{
+	{
+		suffix:  "_per_sec",
+		kind:    DerivedPerSec,
+		purpose: "a per-second rate",
+		wants:   KindCounter,
+		accepts: func(k ColumnKind) bool { return k == KindCounter },
+		unit:    func(ColumnKind) string { return "/s" },
+	},
+	{
+		suffix:  "_delta",
+		kind:    DerivedDelta,
+		purpose: "a per-bucket delta",
+		wants:   KindCounter,
+		accepts: func(k ColumnKind) bool {
+			return k == KindCounter || k == KindTimeCounter ||
+				k == KindSessionTimeCounter
+		},
+		unit: func(k ColumnKind) string {
+			if k == KindTimeCounter || k == KindSessionTimeCounter {
+				return "ms"
+			}
+			return ""
+		},
+	},
+	{
+		suffix:  "_pct",
+		kind:    DerivedTimeShare,
+		purpose: "a share of wall-clock time",
+		wants:   KindTimeCounter,
+		accepts: func(k ColumnKind) bool { return k == KindTimeCounter },
+		unit:    func(ColumnKind) string { return "%" },
+	},
+	{
+		suffix:  "_sessions",
+		kind:    DerivedSessionAverage,
+		purpose: "an average session count",
+		wants:   KindSessionTimeCounter,
+		accepts: func(k ColumnKind) bool { return k == KindSessionTimeCounter },
+		unit:    func(ColumnKind) string { return "sessions" },
+	},
+}
+
+// derivedKindError explains why base cannot feed the requested derived
+// metric m, naming the column's registered kind. For a _per_sec request on
+// a time kind it points at the derived name that does make sense, because
+// a millisecond counter divided by seconds is a dimensionless number that
+// only looks like a rate.
+func derivedKindError(
+	m, probeName, base string, got ColumnKind, rule derivedSuffixRule,
+) error {
+	hint := ""
+	if rule.kind == DerivedPerSec {
+		switch got {
+		case KindTimeCounter:
+			hint = fmt.Sprintf("; request %q for the share of wall-clock time",
+				base+"_pct")
+		case KindSessionTimeCounter:
+			hint = fmt.Sprintf("; request %q for the average number of sessions",
+				base+"_sessions")
+		}
+	}
+	return fmt.Errorf(
+		"metric %q not supported for probe %q: %q is a %s, not a %s%s",
+		m, probeName, base, got, rule.wants, hint)
+}
+
 // classifyMetrics splits the requested metric names into raw columns and
 // derived metrics while preserving request order. When no metrics are
 // requested, all discovered numeric columns are treated as raw metrics.
 //
 // A name that matches a real numeric column is a raw metric (a real column
-// always wins, even if it happens to end in "_per_sec" or "_delta"). A name
-// ending in "_per_sec" whose prefix is a real numeric column becomes a
-// per-second rate, and a name ending in "_delta" whose prefix is a real
-// numeric column becomes a per-bucket counter delta. The literal name
-// "dead_tuple_ratio" is accepted only when the probe exposes both
-// n_live_tup and n_dead_tup. Anything else is a client error.
+// always wins, even if it happens to end in a derived suffix). Otherwise a
+// name ending in one of the derivedSuffixRules suffixes is a derived metric
+// whose prefix must be a real numeric column of a kind the rule accepts,
+// per the probe's column kind registry (ColumnKindFor): "_per_sec" needs a
+// cumulative counter, "_delta" a counter or either time kind, "_pct" a
+// cumulative time counter and "_sessions" a session time counter. The
+// literal name "dead_tuple_ratio" is accepted only when the probe exposes
+// both n_live_tup and n_dead_tup. Anything else is a client error.
 func classifyMetrics(
 	requestedMetrics []string,
 	metricCols []string,
@@ -1108,37 +1229,23 @@ func classifyMetrics(
 		}
 		seen[m] = struct{}{}
 
-		switch {
-		case available[m]:
+		if available[m] {
 			rawCols = append(rawCols, m)
 			outputOrder = append(outputOrder, m)
-		case strings.HasSuffix(m, "_per_sec"):
-			base := strings.TrimSuffix(m, "_per_sec")
-			if !available[base] {
-				return nil, nil, nil, fmt.Errorf(
-					"metric %q not found in probe %q: no numeric column %q "+
-						"to compute a per-second rate", m, probeName, base)
-			}
-			derived = append(derived, DerivedMetric{
-				OutputName: m,
-				BaseColumn: base,
-				Kind:       DerivedPerSec,
-			})
+			continue
+		}
+
+		d, matched, err := classifyDerivedSuffix(m, probeName, available)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if matched {
+			derived = append(derived, d)
 			outputOrder = append(outputOrder, m)
-		case strings.HasSuffix(m, "_delta"):
-			base := strings.TrimSuffix(m, "_delta")
-			if !available[base] {
-				return nil, nil, nil, fmt.Errorf(
-					"metric %q not found in probe %q: no numeric column %q "+
-						"to compute a per-bucket delta", m, probeName, base)
-			}
-			derived = append(derived, DerivedMetric{
-				OutputName: m,
-				BaseColumn: base,
-				Kind:       DerivedDelta,
-			})
-			outputOrder = append(outputOrder, m)
-		case m == "dead_tuple_ratio":
+			continue
+		}
+
+		if m == "dead_tuple_ratio" {
 			if !available["n_live_tup"] || !available["n_dead_tup"] {
 				return nil, nil, nil, fmt.Errorf(
 					"metric %q not supported for probe %q: requires "+
@@ -1147,15 +1254,48 @@ func classifyMetrics(
 			derived = append(derived, DerivedMetric{
 				OutputName: m,
 				Kind:       DerivedDeadTupleRatio,
+				Unit:       "%",
 			})
 			outputOrder = append(outputOrder, m)
-		default:
-			return nil, nil, nil, fmt.Errorf(
-				"metric %q not found in probe %q", m, probeName)
+			continue
 		}
+
+		return nil, nil, nil, fmt.Errorf(
+			"metric %q not found in probe %q", m, probeName)
 	}
 
 	return rawCols, derived, outputOrder, nil
+}
+
+// classifyDerivedSuffix matches m against derivedSuffixRules. It returns
+// matched=false when no rule's suffix applies, and an error when a suffix
+// applies but the base column is missing or of the wrong kind.
+func classifyDerivedSuffix(
+	m, probeName string, available map[string]bool,
+) (DerivedMetric, bool, error) {
+	for _, rule := range derivedSuffixRules {
+		if !strings.HasSuffix(m, rule.suffix) {
+			continue
+		}
+		base := strings.TrimSuffix(m, rule.suffix)
+		if !available[base] {
+			return DerivedMetric{}, true, fmt.Errorf(
+				"metric %q not found in probe %q: no numeric column %q "+
+					"to compute %s", m, probeName, base, rule.purpose)
+		}
+		kind := ColumnKindFor(probeName, base)
+		if !rule.accepts(kind) {
+			return DerivedMetric{}, true,
+				derivedKindError(m, probeName, base, kind, rule)
+		}
+		return DerivedMetric{
+			OutputName: m,
+			BaseColumn: base,
+			Kind:       rule.kind,
+			Unit:       rule.unit(kind),
+		}, true, nil
+	}
+	return DerivedMetric{}, false, nil
 }
 
 // needsEntityKeys reports whether any of the derived metrics is computed
@@ -1163,7 +1303,8 @@ func classifyMetrics(
 // columns to partition its LAG.
 func needsEntityKeys(derived []DerivedMetric) bool {
 	for _, d := range derived {
-		if d.Kind == DerivedPerSec || d.Kind == DerivedDelta {
+		switch d.Kind {
+		case DerivedPerSec, DerivedDelta, DerivedTimeShare, DerivedSessionAverage:
 			return true
 		}
 	}
@@ -1282,6 +1423,13 @@ func QueryTimeSeries(
 		}
 	}
 
+	// Raw columns carry no unit (the client knows its own columns); a
+	// derived metric reports the unit classifyMetrics assigned it.
+	units := make(map[string]string, len(derived))
+	for _, d := range derived {
+		units[d.OutputName] = d.Unit
+	}
+
 	// Build result series in the requested metric order.
 	var result []MetricSeries
 	for _, metric := range outputOrder {
@@ -1301,7 +1449,7 @@ func QueryTimeSeries(
 				Name:   name,
 				Metric: metric,
 				Data:   data,
-				Unit:   "",
+				Unit:   units[metric],
 			})
 		}
 	}

@@ -11,6 +11,8 @@ package metrics
 
 import (
 	"context"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +60,10 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()
 	}
 
 	dropTable(ctx, pool, timeSeriesTestProbe)
+	// The fixture table is not a real probe, so it has to register its
+	// counters itself or every _per_sec request is refused as a gauge.
+	registerProbeKindsForTest(t, timeSeriesTestProbe,
+		countersForTest("seq_scan", "idx_scan", "n_tup_ins"))
 
 	// indexrelname carries the index dimension so the IndexName filter can be
 	// exercised end-to-end, mirroring the pg_stat_all_indexes probe shape.
@@ -659,6 +665,7 @@ func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, deltaTestProbe)
+	registerProbeKindsForTest(t, deltaTestProbe, countersForTest("seq_scan"))
 
 	ddl := `CREATE TABLE metrics."` + deltaTestProbe + `" (
         connection_id integer NOT NULL,
@@ -927,6 +934,7 @@ func setupNetworkFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, networkTestProbe)
+	registerProbeKindsForTest(t, networkTestProbe, countersForTest("tx_bytes"))
 
 	ddl := `CREATE TABLE metrics."` + networkTestProbe + `" (
         connection_id  integer NOT NULL,
@@ -1171,6 +1179,7 @@ func setupLookbackFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) 
 	}
 
 	dropTable(ctx, pool, lookbackTestProbe)
+	registerProbeKindsForTest(t, lookbackTestProbe, countersForTest("wal_records"))
 
 	ddl := `CREATE TABLE metrics."` + lookbackTestProbe + `" (
         connection_id integer NOT NULL,
@@ -1403,6 +1412,148 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		cancel()
 		if _, err := GetProbeEntityKeyColumns(cctx, pool, lookbackTestProbe); err == nil {
 			t.Error("expected an error from a canceled context")
+		}
+	})
+}
+
+// timeShareTestProbe is shaped like pg_stat_database's time columns, keyed
+// per datname, for the _pct and _sessions derived kinds (issue #402).
+const timeShareTestProbe = "pg_stat_database_ts_test"
+
+// setupTimeShareFixture creates a probe table carrying a cumulative time
+// counter (blk_read_time), a session time counter (active_time), a gauge
+// (numbackends) and a plain counter (xact_commit), registered with those
+// kinds via the test hook. Each time column rises 30000 ms per minute: half
+// of the 60000 ms of wall-clock time, so blk_read_time_pct is exactly 50
+// and active_time_sessions exactly 0.5; xact_commit rises 60 per minute.
+// It returns the minute-truncated base time the offsets hang off.
+func setupTimeShareFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
+	t.Helper()
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS metrics"); err != nil {
+		t.Fatalf("failed to create metrics schema: %v", err)
+	}
+
+	dropTable(ctx, pool, timeShareTestProbe)
+	registerProbeKindsForTest(t, timeShareTestProbe, probeRegistryEntry{
+		kinds: columnKinds(
+			counters("xact_commit"),
+			timeCounters("blk_read_time"),
+			sessionTimeCounters("active_time"),
+		),
+	})
+
+	ddl := `CREATE TABLE metrics."` + timeShareTestProbe + `" (
+        connection_id integer NOT NULL,
+        collected_at  timestamp with time zone NOT NULL,
+        inserted_at   timestamp without time zone NOT NULL DEFAULT now(),
+        datname       text NOT NULL,
+        numbackends   integer,
+        xact_commit   bigint,
+        blk_read_time double precision,
+        active_time   double precision,
+        PRIMARY KEY (connection_id, collected_at, datname)
+    )`
+	if _, err := pool.Exec(ctx, ddl); err != nil {
+		t.Fatalf("failed to create time share fixture table: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	insert := `INSERT INTO metrics."` + timeShareTestProbe + `"
+        (connection_id, collected_at, datname, numbackends, xact_commit,
+         blk_read_time, active_time)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	for i := 0; i <= 4; i++ {
+		offset := -time.Duration(4-i) * time.Minute
+		_, err := pool.Exec(ctx, insert,
+			1, now.Add(offset), "northwind", 3, 1000+60*i,
+			float64(100000+30000*i), float64(500000+30000*i))
+		if err != nil {
+			dropTable(ctx, pool, timeShareTestProbe)
+			t.Fatalf("failed to insert time share fixture sample %d: %v", i, err)
+		}
+	}
+
+	return now, func() { dropTable(context.Background(), pool, timeShareTestProbe) }
+}
+
+func TestQueryTimeSeriesTimeShare_Integration(t *testing.T) {
+	pool, closePool := newLatestRowsTestPool(t)
+	defer closePool()
+	base, cleanup := setupTimeShareFixture(t, pool)
+	defer cleanup()
+
+	ctx := context.Background()
+	window := windowSince(base, 4)
+
+	t.Run("pct and sessions values and units", func(t *testing.T) {
+		series, err := QueryTimeSeries(ctx, pool, timeShareTestProbe,
+			[]int{1}, window, MetricFilters{}, 4, "avg",
+			[]string{
+				"blk_read_time_pct", "active_time_sessions",
+				"blk_read_time_delta", "xact_commit_per_sec", "numbackends",
+			})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		pct := seriesByMetric(t, series, "blk_read_time_pct")
+		if pct.Unit != "%" {
+			t.Errorf("blk_read_time_pct unit = %q, want %%", pct.Unit)
+		}
+		sess := seriesByMetric(t, series, "active_time_sessions")
+		if sess.Unit != "sessions" {
+			t.Errorf("active_time_sessions unit = %q, want sessions", sess.Unit)
+		}
+		delta := seriesByMetric(t, series, "blk_read_time_delta")
+		if delta.Unit != "ms" {
+			t.Errorf("blk_read_time_delta unit = %q, want ms", delta.Unit)
+		}
+		rate := seriesByMetric(t, series, "xact_commit_per_sec")
+		if rate.Unit != "/s" {
+			t.Errorf("xact_commit_per_sec unit = %q, want /s", rate.Unit)
+		}
+		raw := seriesByMetric(t, series, "numbackends")
+		if raw.Unit != "" {
+			t.Errorf("raw column unit = %q, want empty", raw.Unit)
+		}
+
+		// The window opens on the earliest sample, which then has no LAG
+		// and no derived value; the remaining four minutes each carry one.
+		for i := 1; i <= 4; i++ {
+			ts := base.Add(-time.Duration(4-i) * time.Minute)
+			if got := pointAt(t, pct, ts); math.Abs(got-50) > 1e-9 {
+				t.Errorf("blk_read_time_pct at %s = %v, want 50", ts, got)
+			}
+			if got := pointAt(t, sess, ts); math.Abs(got-0.5) > 1e-9 {
+				t.Errorf("active_time_sessions at %s = %v, want 0.5", ts, got)
+			}
+			if got := pointAt(t, delta, ts); math.Abs(got-30000) > 1e-9 {
+				t.Errorf("blk_read_time_delta at %s = %v, want 30000", ts, got)
+			}
+			if got := pointAt(t, rate, ts); math.Abs(got-1) > 1e-9 {
+				t.Errorf("xact_commit_per_sec at %s = %v, want 1", ts, got)
+			}
+		}
+		if got := pointAt(t, raw, base); got != 3 {
+			t.Errorf("numbackends at %s = %v, want 3", base, got)
+		}
+	})
+
+	t.Run("kind mismatches are client errors", func(t *testing.T) {
+		for _, tc := range []struct{ metric, want string }{
+			{"numbackends_per_sec", `"numbackends" is a gauge`},
+			{"blk_read_time_per_sec", `request "blk_read_time_pct"`},
+			{"active_time_per_sec", `request "active_time_sessions"`},
+			{"xact_commit_pct", `not a cumulative time counter`},
+			{"blk_read_time_sessions", `not a session time counter`},
+		} {
+			_, err := QueryTimeSeries(ctx, pool, timeShareTestProbe,
+				[]int{1}, window, MetricFilters{}, 4, "avg", []string{tc.metric})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("%s: got %v, want an error containing %q", tc.metric, err, tc.want)
+			}
 		}
 	})
 }

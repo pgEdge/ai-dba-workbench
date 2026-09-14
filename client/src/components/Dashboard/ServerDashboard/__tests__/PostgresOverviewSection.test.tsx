@@ -655,9 +655,10 @@ describe('PostgresOverviewSection', () => {
             });
             const tile = screen.getByLabelText('Cache Hit Ratio: --');
             // An idle bucket is a gap, not 0% and not 100%, so every
-            // sparkline point is null.
-            const spark = tile.querySelector('[data-testid="chart-series"]');
-            expect(spark?.getAttribute('data-json')).toBe('[null,null]');
+            // sparkline point is null and Sparkline draws nothing at
+            // all (a 0% series would have drawn a flat line).
+            expect(tile.querySelector('[data-testid="chart-series"]'))
+                .toBeNull();
         });
 
         it('draws an idle bucket as a gap and headlines the latest ratio', async () => {
@@ -730,27 +731,6 @@ describe('PostgresOverviewSection', () => {
             });
             expect(screen.getAllByText('--').length)
                 .toBeGreaterThanOrEqual(1);
-        });
-
-        it('leaves a cache ratio gap where either block count is null', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_hit', [90, null, 99]),
-                    series('blks_read', [10, 5, 1]),
-                ]),
-            });
-            renderSection();
-
-            await waitFor(() => {
-                expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
-            });
-            // 99 hits against 1 read on the tile; the sparkline carries
-            // a gap in the middle bucket rather than a spurious 0.
-            expect(screen.getByText('99.0')).toBeInTheDocument();
-            const sparkline = screen.getAllByTestId('chart-series')
-                .filter(el => el.getAttribute('data-series') === 'value')
-                .map(el => el.getAttribute('data-values') ?? '');
-            expect(sparkline).toContain('90,,99');
         });
     });
 });

@@ -537,28 +537,13 @@ describe('PerformanceSection', () => {
         });
     });
 
+    /*
+     * The server emits null for a bucket it cannot fill (a collector
+     * gap, a counter reset or a rate it cannot derive). Null cache
+     * buckets are covered by the cache hit ratio tests above and by
+     * cacheHitRatio.test.ts; these cover the section's own arithmetic.
+     */
     describe('null buckets', () => {
-        it('leaves a cache ratio gap where either block count is null', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_hit', [90, null, 99]),
-                    series('blks_read', [10, 5, null]),
-                ]),
-            });
-            renderSection();
-
-            await waitFor(() => {
-                expect(screen.getByText('Cache Hit Ratio'))
-                    .toBeInTheDocument();
-            });
-            // The tile reads the latest non-null pair (99 hits, 10 reads
-            // via extractLatestValue), and the sparkline and chart both
-            // carry a gap for each bucket with a missing side.
-            expect(sparklineValues()).toContain('90,,');
-            expect(seriesValuesFor(CACHE_TITLE, 'Cache Hit Ratio %'))
-                .toBe('90,,');
-        });
-
         it('sums the transaction sparkline around null buckets', async () => {
             routeMetrics({
                 [TXN_KEY]: ready([
@@ -569,11 +554,19 @@ describe('PerformanceSection', () => {
             renderSection();
 
             await waitFor(() => {
-                expect(screen.getByText('Transactions')).toBeInTheDocument();
+                expect(kpi('Transactions')).toBeInTheDocument();
             });
             // Both null: gap; one side null: the other stands alone.
-            expect(sparklineValues()).toContain(',12,2');
-            expect(seriesValuesFor(TXN_TITLE, 'Commits/s')).toBe(',12,');
+            expect(kpi('Transactions').getAttribute('data-sparkline'))
+                .toBe('[null,12,2]');
+            // Each rate headlines its own latest non-null bucket (12
+            // commits, 2 rollbacks) rather than treating the trailing
+            // null commit rate as 0.
+            expect(kpi('Transactions').getAttribute('data-value'))
+                .toBe('14.0');
+            // The chart passes each series through untouched.
+            expect(chartValues(TXN_TITLE, 'Commits/s')).toBe('[null,12,null]');
+            expect(chartValues(TXN_TITLE, 'Rollbacks/s')).toBe('[null,null,2]');
         });
 
         it('shows a placeholder when the rate series is all null', async () => {
@@ -586,15 +579,17 @@ describe('PerformanceSection', () => {
             renderSection();
 
             await waitFor(() => {
-                expect(screen.getByText('Transactions')).toBeInTheDocument();
+                expect(kpi('Transactions')).toBeInTheDocument();
             });
-            expect(screen.getAllByText('--').length)
-                .toBeGreaterThanOrEqual(1);
+            expect(kpi('Transactions').getAttribute('data-value')).toBe('--');
+            expect(kpi('Transactions').getAttribute('data-unit')).toBe('');
+            expect(kpi('Transactions').getAttribute('data-sparkline'))
+                .toBe('[null,null]');
         });
 
         it('leaves a dead tuple ratio gap where a count is null', async () => {
             routeMetrics({
-                'n_dead_tup,n_live_tup': ready([
+                [DEAD_TUPLE_KEY]: ready([
                     series('n_dead_tup', [5, null]),
                     series('n_live_tup', [95, 95]),
                 ]),
@@ -602,10 +597,14 @@ describe('PerformanceSection', () => {
             renderSection();
 
             await waitFor(() => {
-                expect(screen.getByText('Dead Tuple Ratio'))
-                    .toBeInTheDocument();
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
             });
-            expect(sparklineValues()).toContain('5,');
+            // The null bucket is a gap, not a spurious 0%, and the
+            // headline falls back to the last bucket with both counts.
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
+                .toBe('[5,null]');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('5.0');
         });
     });
 });

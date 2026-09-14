@@ -458,6 +458,7 @@ func TestPgStatStatementsProbe_CheckColumnHelpers(t *testing.T) {
 		restore = append(restore,
 			"DROP SCHEMA IF EXISTS pgss_relocated CASCADE")
 		for _, stmt := range restore {
+			//nosemgrep: go_sql_rule-concat-sqli -- fixed cleanup DDL; the only interpolated value is the extension's original schema name from pg_namespace, sanitized by pgx.Identifier
 			if _, err := conn.Exec(ctx, stmt); err != nil {
 				t.Logf("cleanup %q: %v", stmt, err)
 			}

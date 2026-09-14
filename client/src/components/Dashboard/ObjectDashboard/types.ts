@@ -90,7 +90,15 @@ export const extractSparklineData = (
 };
 
 /**
- * Extract the latest value from a metric series.
+ * Extract the latest value from a gauge-style metric series.
+ *
+ * The backend reports a bucket with no reading as `null`, which is
+ * skipped. A gauge that legitimately reads 0 is rare and a trailing 0
+ * has historically meant a bucket that was filled before collection
+ * caught up, so this also scans backwards for the last non-zero value
+ * to avoid showing a spurious 0. That fallback is wrong for rates,
+ * where 0 is a genuine reading for an idle counter, so use
+ * `extractLatestRate` for `_per_sec` metrics instead.
  */
 export const extractLatestValue = (
     data: MetricSeries[] | null,
@@ -99,20 +107,24 @@ export const extractLatestValue = (
     const points = extractSparklineData(data, metricName);
     if (points.length === 0) { return null; }
 
-    // Scan backwards to find the last non-zero value. This handles
-    // the common case where the most recent time bucket has no data
-    // yet (empty buckets are filled with 0 by the backend).
+    // Scan backwards for the last non-null, non-zero value, skipping
+    // buckets the backend could not fill.
+    let sawValue = false;
     for (let i = points.length - 1; i >= 0; i--) {
-        if (points[i].value !== 0) {
-            return points[i].value;
-        }
+        const value = points[i].value;
+        if (value === null) { continue; }
+        sawValue = true;
+        if (value !== 0) { return value; }
     }
 
-    return 0;
+    return sawValue ? 0 : null;
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 export const buildChartData = (
     series: MetricSeries[] | null,

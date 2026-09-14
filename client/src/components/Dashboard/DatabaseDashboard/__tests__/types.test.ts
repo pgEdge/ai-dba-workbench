@@ -19,7 +19,7 @@ import {
 import type { MetricDataPoint } from '../../types';
 
 /** Build a metric series in the shape useMetrics returns. */
-const series = (metric: string, values: number[]) => ({
+const series = (metric: string, values: (number | null)[]) => ({
     name: metric,
     metric,
     data: values.map((value, idx): MetricDataPoint => ({
@@ -111,6 +111,36 @@ describe('DatabaseDashboard types helpers', () => {
             expect(getVacuumStatus(longAgo)).toBe('critical');
             expect(getVacuumStatus(undefined)).toBe('critical');
             expect(getVacuumStatus('not a date')).toBe('critical');
+        });
+    });
+
+    describe('null buckets', () => {
+        it('extractLatestValue skips trailing, middle and leading nulls', () => {
+            expect(extractLatestValue([series('a', [4, 6, null])], 'a'))
+                .toBe(6);
+            expect(extractLatestValue([series('a', [null, 4, null, 0])], 'a'))
+                .toBe(4);
+        });
+
+        it('extractLatestValue is null for an all-null series', () => {
+            expect(extractLatestValue([series('a', [null, null])], 'a'))
+                .toBeNull();
+        });
+
+        it('extractLatestValue reports 0 when only zeros sit amongst nulls', () => {
+            expect(extractLatestValue([series('a', [null, 0, null])], 'a'))
+                .toBe(0);
+        });
+
+        it('extractLatestRate returns the last non-null point, zero included', () => {
+            expect(extractLatestRate([series('a', [5, 0, null])], 'a')).toBe(0);
+            expect(extractLatestRate([series('a', [null, 9, null, null])], 'a'))
+                .toBe(9);
+        });
+
+        it('extractLatestRate is null for an all-null series', () => {
+            expect(extractLatestRate([series('a', [null, null])], 'a'))
+                .toBeNull();
         });
     });
 });

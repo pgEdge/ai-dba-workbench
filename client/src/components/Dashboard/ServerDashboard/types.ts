@@ -116,25 +116,26 @@ export const extractSparklineData = (
 
 /**
  * Check whether a metric series contains any non-zero data points.
- * Returns false when all values are zero, which typically indicates
- * the underlying extension is not installed.
+ * Returns false when all values are zero or null, which typically
+ * indicates the underlying extension is not installed.
  */
 export const hasNonZeroData = (
     data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): boolean => {
     const points = extractSparklineData(data, metricName);
-    return points.some(p => p.value !== 0);
+    return points.some(p => p.value !== null && p.value !== 0);
 };
 
 /**
  * Extract the latest value from a gauge-style metric series.
  *
- * Empty time buckets are filled with 0 by the backend, so the most
- * recent bucket often reads 0 simply because it has not been
- * collected yet; this scans backwards for the last non-zero value to
- * avoid showing a spurious 0. That fallback is wrong for rates, where
- * 0 is a genuine reading for an idle counter, so use
+ * The backend reports a bucket with no reading as `null`, which is
+ * skipped. A gauge that legitimately reads 0 is rare and a trailing 0
+ * has historically meant a bucket that was filled before collection
+ * caught up, so this also scans backwards for the last non-zero value
+ * to avoid showing a spurious 0. That fallback is wrong for rates,
+ * where 0 is a genuine reading for an idle counter, so use
  * `extractLatestRate` for `_per_sec` metrics instead.
  */
 export const extractLatestValue = (
@@ -144,29 +145,34 @@ export const extractLatestValue = (
     const points = extractSparklineData(data, metricName);
     if (points.length === 0) { return null; }
 
-    // Scan backwards to find the last non-zero value. This handles
-    // the common case where the most recent time bucket has no data
-    // yet (empty buckets are filled with 0 by the backend).
+    // Scan backwards for the last non-null, non-zero value, skipping
+    // buckets the backend could not fill.
+    let sawValue = false;
     for (let i = points.length - 1; i >= 0; i--) {
-        if (points[i].value !== 0) {
-            return points[i].value;
-        }
+        const value = points[i].value;
+        if (value === null) { continue; }
+        sawValue = true;
+        if (value !== 0) { return value; }
     }
 
-    return 0;
+    return sawValue ? 0 : null;
 };
 
 /**
  * Extract the latest value from a rate metric series, such as any
  * `_per_sec` metric. Unlike `extractLatestValue` this returns the
- * final data point whatever its value, because a genuine 0 means the
- * underlying counter was idle over the bucket and must be shown as 0.
+ * final non-null data point whatever its value, because a genuine 0
+ * means the underlying counter was idle over the bucket and must be
+ * shown as 0. Null buckets (a collector gap, a counter reset or a rate
+ * that cannot be derived) are skipped; an all-null series yields null.
  */
 export const extractLatestRate = (
     data: { name: string; metric: string; data: MetricDataPoint[] }[] | null,
     metricName: string,
 ): number | null => {
     const points = extractSparklineData(data, metricName);
-    if (points.length === 0) { return null; }
-    return points[points.length - 1].value;
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== null) { return points[i].value; }
+    }
+    return null;
 };

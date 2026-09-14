@@ -100,7 +100,20 @@ interface TooltipParam {
     axisValue: string;
     marker: string;
     seriesName: string;
-    value: number;
+    value: number | null | undefined;
+}
+
+/**
+ * Text shown in the tooltip for a bucket that carries no value: the
+ * server emits `null` for a collector gap, a counter reset or a rate it
+ * cannot derive, and ECharts hands the formatter that null (or nothing
+ * at all for a `'-'` placeholder).
+ */
+const NO_VALUE_LABEL = 'no data';
+
+/** Type guard for a usable data point value. */
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
 }
 
 export function buildTooltip(show: boolean): object {
@@ -119,9 +132,16 @@ export function buildTooltip(show: boolean): object {
                 : formatDateTimeFull(d);
 
             const lines = list.map((p) => {
-                const val = typeof p.value === 'number'
-                    ? formatNumericValue(p.value)
-                    : String(p.value);
+                let val: string;
+                if (p.value === null || p.value === undefined
+                    || (typeof p.value === 'number'
+                        && Number.isNaN(p.value))) {
+                    val = NO_VALUE_LABEL;
+                } else if (typeof p.value === 'number') {
+                    val = formatNumericValue(p.value);
+                } else {
+                    val = String(p.value);
+                }
                 return `${p.marker} ${p.seriesName}: ${val}`;
             });
 

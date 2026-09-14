@@ -57,10 +57,16 @@ export interface AutoRefreshConfig {
     intervalMs: number;
 }
 
-/** Metric data point from query_metrics API */
+/**
+ * Metric data point from the metrics query API. The server emits every
+ * bucket for every series in a response, so all series share their
+ * bucket times; a bucket with no value (a collector gap, a counter
+ * reset or a rate that cannot be derived) carries `null` rather than
+ * being omitted or filled with 0.
+ */
 export interface MetricDataPoint {
     time: string;
-    value: number;
+    value: number | null;
 }
 
 /**

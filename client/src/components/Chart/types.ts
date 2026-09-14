@@ -15,6 +15,7 @@
  */
 export interface ChartDataSeries {
     name: string;
+    /** A `null` entry is a gap: ECharts breaks the line or omits the bar. */
     data: (number | null)[];
 }
 

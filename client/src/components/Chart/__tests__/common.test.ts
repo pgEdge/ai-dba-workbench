@@ -561,4 +561,82 @@ describe('buildTooltip formatter', () => {
         ]);
         expect(html).toContain('Status: online');
     });
+
+    it('labels a null, undefined or NaN value as no data', () => {
+        const tooltip = buildTooltip(true) as TooltipOpts;
+        const html = tooltip.formatter([
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Gap',
+                value: null,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Missing',
+                value: undefined,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Bad',
+                value: NaN,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'CPU',
+                value: 42,
+            },
+        ]);
+        expect(html).toContain('Gap: no data');
+        expect(html).toContain('Missing: no data');
+        expect(html).toContain('Bad: no data');
+        expect(html).toContain('CPU: 42');
+        expect(html).not.toContain('null');
+        expect(html).not.toContain('NaN');
+        expect(html).not.toContain('undefined');
+    });
+});
+
+describe('buildYAxis null handling', () => {
+    interface YAxisOpts {
+        min?: number;
+        max?: number;
+    }
+
+    it('ignores null gaps when padding a flat plain series', () => {
+        const yAxis = buildYAxis([
+            [null, 50, null, 50],
+        ]) as unknown as YAxisOpts;
+        expect(yAxis.min).toBeCloseTo(45);
+        expect(yAxis.max).toBeCloseTo(55);
+    });
+
+    it('omits min/max when every point is null', () => {
+        const yAxis = buildYAxis([[null, null]]) as unknown as YAxisOpts;
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('skips null points when totalling a stacked series', () => {
+        const yAxis = buildYAxis([
+            [10, null, 10],
+            [null, null, 10],
+        ], true, true) as unknown as YAxisOpts;
+        // Index 1 has no finite value and is skipped; index 0 totals 10
+        // and index 2 totals 20, so the range is left to auto-scale.
+        expect(yAxis).not.toHaveProperty('min');
+        expect(yAxis).not.toHaveProperty('max');
+    });
+
+    it('pads a flat stacked total when nulls interleave', () => {
+        const yAxis = buildYAxis([
+            [10, null, 10],
+            [null, null, null],
+        ], true, true) as unknown as YAxisOpts;
+        expect(yAxis.min).toBe(0);
+        expect(yAxis.max).toBeCloseTo(11);
+    });
 });

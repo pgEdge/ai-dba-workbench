@@ -76,11 +76,13 @@ database-backed packages: `requireLocalTestDSN` in
 either package reads `TEST_AI_WORKBENCH_SERVER`. Each skips when
 `SKIP_DB_TESTS` is set or the URL is empty, and fails hard, before
 connecting, on a non-loopback host and on a database name outside
-`ai_workbench`, `ai_workbench_pr<number>` (the per-task databases that
-concurrent local sessions use so their schema resets do not collide) and
-`postgres` (the CI default); `TestAllowedTestDatabase` pins the pattern,
-including the plausible names such as `ai_workbench_prod` that it must
-refuse. Route any new alerter integration entry point through the
+`ai_workbench`, `ai_workbench_<tag>` (the per-task databases that
+concurrent local sessions use so their schema resets do not collide,
+where the tag must be lower-case alphanumeric and hold at least one
+digit, as `pr407`, `issue407` and `sess2` all do) and `postgres` (the CI
+default); `TestAllowedTestDatabase` pins both directions, including the
+production-shaped names such as `ai_workbench_prod` that the digit
+requirement refuses. Route any new alerter integration entry point through the
 helper rather than reading the variable again. The server and collector
 suites still rely on the operator. Never derive a test URL from
 `bin/ai-dba-server.yaml`.

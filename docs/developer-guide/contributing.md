@@ -173,26 +173,37 @@ Follow these Go-specific guidelines:
 
 #### Transaction Rollbacks
 
-Roll every pgx transaction back on a non-cancelable
-context, never on the request-derived context:
+Roll every pgx transaction back through the shared
+`github.com/pgedge/ai-workbench/pkg/rollback` helper,
+never by calling `Rollback` on the transaction directly:
 
 ```go
 tx, err := pool.Begin(ctx)
 if err != nil {
     return fmt.Errorf("begin transaction: %w", err)
 }
-defer tx.Rollback(context.Background()) //nolint:errcheck
+defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 ```
 
-The pgx v5 driver fails a rollback outright once its
-context is cancelled, and it then discards the pooled
-connection whilst the transaction is still open on the
-server. A client that disconnects mid-request therefore
-leaks a connection in an aborted-transaction state. The
-statements inside the transaction still use the request
-context; only the rollback differs. A convention test in
-`server/src/internal/database/rollback_convention_test.go`
-enforces the rule across all three Go modules.
+Use `rollback.ToSavepoint(ctx, tx, name)` in place of a
+hand-written `ROLLBACK TO SAVEPOINT` statement. Both
+functions run the rollback on a context derived from
+`ctx` with `context.WithoutCancel` and a
+`rollback.Timeout` deadline of five seconds. When a
+rollback is given a request context that the client has
+already cancelled, the pgx v5 driver fails the rollback
+and closes the connection; the server then ends the
+transaction itself, so the cost is connection churn and
+a lost pool slot whilst the pool reconnects. A plain
+`context.Background()` avoids that but has no deadline,
+so a rollback to a hung server could pin a pool slot and
+the goroutine indefinitely; the helper bounds the wait
+and keeps the request's tracing values. The statements
+inside the transaction still use the request context;
+only the rollback differs. A convention test in each Go
+module rejects direct `Rollback` calls and hand-written
+`ROLLBACK` SQL outside the helper package; the package
+doc comment in `pkg/rollback` gives the full reasoning.
 
 ### Documentation
 

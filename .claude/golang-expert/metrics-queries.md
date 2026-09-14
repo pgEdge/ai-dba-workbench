@@ -67,6 +67,63 @@ performs the JOIN. The regression test at
 that every branch filters orphans. When adding a new metric branch,
 extend both.
 
+## Per-Entity Counter Deltas (server)
+
+The same rule applies to the api package, and
+`queryCacheHit` and `queryDatabaseCacheHitTimeSeries` in
+`server/src/internal/api/perf_summary_handlers.go` are its reference
+implementations (issue #401). `metrics.pg_stat_database` stores one row
+per database per sample, so a cumulative counter such as `blks_hit` must
+be differenced per database before anything is summed: a `deltas` CTE
+takes `blks_hit - LAG(blks_hit) OVER (PARTITION BY datname ORDER BY
+collected_at)`, a `valid_deltas` CTE drops rows where either delta is
+NULL (the database's first sample in the window) or negative (a stats
+reset or restart), and only then does the outer query `SUM` the deltas
+into `date_bin` buckets. Differencing an already aggregated value, as in
+`LAG(SUM(blks_hit)) OVER (ORDER BY collected_at)`, is wrong for two
+reasons that both show up in practice: a database created between two
+samples adds its whole lifetime counter to that interval, and a database
+dropped between two samples drives the delta negative so the interval is
+discarded. The per-database tests in `perf_summary_cache_hit_test.go`
+(`TestQueryCacheHit_NewDatabaseExcludedFromInterval`,
+`TestQueryCacheHit_DroppedDatabaseKeepsInterval` and
+`TestQueryCacheHit_ResetInOneDatabaseKeepsOther`) pin each case; the
+last one is the only case where filtering per row and filtering per
+bucket differ.
+
+Two consequences for callers. A bucket whose deltas are all valid but
+sum to zero block accesses is emitted with a NULL ratio rather than 0%,
+so the JSON `current`, `time_series[].value` and
+`aggregate.cache_hit_ratio` are all nullable (`*float64` in Go and
+`nullable: true` in the OpenAPI schemas `CacheHitRatioData`,
+`CacheHitRatioPoint` and `PerfAggregate`). And the bucket width is
+`duration / 60` with a 10 second floor, so `current` is the last minute
+of a 1h range but the last 12 hours of a 30d range; say so in any
+comment or documentation that describes it.
+
+`queryTransactions` in the same file, `BuildDerivedMetricsQuery` in
+`internal/metrics/query.go` and the alerter's `queryStatsSQL` still
+difference an aggregated value; #449 is reworking
+`BuildDerivedMetricsQuery` to partition by entity, so do not patch it
+piecemeal. Until then the web client must not derive a server-wide
+ratio from `blks_hit_per_sec`/`blks_read_per_sec` requested without a
+`database_name`; the server dashboard reads `cache_hit_ratio` from
+`/api/v1/metrics/performance-summary` instead.
+
+### Testing the error branches
+
+pgx prepares statements by default, so a missing table fails inside
+`tx.Query` and reaches the early return, whilst an execution-time
+failure surfaces through `rows.Err()` after `rows.Next()` returns false.
+To drive the latter deterministically, rename the fixture table and put
+a view of the same name over it whose `blks_read` column divides by
+`(blks_read - blks_read)`, which the planner cannot fold
+(`installFailingCacheHitView`). A `rows.Scan` failure is not reachable
+in `queryCacheHit` with real rows, because every output column is an
+explicit `::float` cast or a `date_bin` over a bounded `timestamptz`;
+the per-database sibling scans `datname` into a `string`, so a NULL
+`datname` fixture row drives its scan-error branch.
+
 ## Schema References
 
 Metrics tables live under the `metrics` schema
@@ -706,3 +763,6 @@ run.
 
 - #346: `GET /api/v1/metrics/connection-groups`, the reference
   latest-snapshot aggregation over `metrics.pg_stat_activity`.
+- #401: Cache hit ratios computed from per-database counter deltas in
+  `queryCacheHit` and `queryDatabaseCacheHitTimeSeries`; nullable
+  ratio fields.

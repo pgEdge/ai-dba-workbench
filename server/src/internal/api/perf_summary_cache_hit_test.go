@@ -532,3 +532,197 @@ func TestAggregateCacheHitRatio(t *testing.T) {
 		})
 	}
 }
+
+// resetWhileOtherActiveSamples seeds two databases sampled at the same
+// minutes. "steady" adds 900 hits and 100 reads per interval throughout.
+// "reset" has its counters fall between minute 1 and minute 2 (a stats
+// reset), then adds 50 hits and 50 reads in the final interval. This is
+// the one case in which discarding the reset per database row differs
+// from discarding it per bucket: the minute 2 bucket must keep steady's
+// 90% delta whilst dropping reset's negative one, and the minute 3
+// bucket sums both databases again.
+func resetWhileOtherActiveSamples() []cacheHitSample {
+	return []cacheHitSample{
+		{0, "steady", 1000, 1000},
+		{1, "steady", 1900, 1100},
+		{2, "steady", 2800, 1200},
+		{3, "steady", 3700, 1300},
+		{0, "reset", 5000, 500},
+		{1, "reset", 5900, 600},
+		{2, "reset", 10, 1},  // stats reset: negative delta, discarded
+		{3, "reset", 60, 51}, // +50/+50 -> 50%
+	}
+}
+
+// TestQueryCacheHit_ResetInOneDatabaseKeepsOther checks that a stats
+// reset in one database does not discard the bucket for a database that
+// stayed active in the same interval, and that the reset database
+// rejoins the sum once it has a valid delta again.
+func TestQueryCacheHit_ResetInOneDatabaseKeepsOther(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 516
+	seedCacheHitSamples(t, pool, connID, resetWhileOtherActiveSamples())
+
+	hit, read, current, points := runQueryCacheHit(t, h, pool, connID)
+
+	if len(points) != 3 {
+		t.Fatalf("len(points) = %d, want 3: %#v", len(points), points)
+	}
+	// Minute 1: both databases at 90%.
+	assertRatio(t, "points[0]", points[0].Value, 90.0)
+	// Minute 2: steady alone (900/100), reset's row discarded.
+	assertRatio(t, "points[1]", points[1].Value, 90.0)
+	// Minute 3: steady 900/100 plus reset 50/50 -> 950/1100 = 86.36%.
+	assertRatio(t, "points[2]", points[2].Value, 86.36)
+	assertRatio(t, "current", current, 86.36)
+	if hit != 950 || read != 150 {
+		t.Errorf("latest deltas = (%v, %v), want (950, 150)", hit, read)
+	}
+	assertSaneRatios(t, points)
+}
+
+// TestDatabaseCacheHit_ResetInOneDatabaseKeepsOther is the per-database
+// counterpart: the steady database keeps every bucket, the reset
+// database loses only the bucket in which its counters fell.
+func TestDatabaseCacheHit_ResetInOneDatabaseKeepsOther(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 517
+	seedCacheHitSamples(t, pool, connID, resetWhileOtherActiveSamples())
+
+	dbMap := runQueryDatabaseCacheHit(t, h, pool, connID, "steady", "reset")
+
+	steady := dbMap["steady"].CacheHitRatio
+	if len(steady.TimeSeries) != 3 {
+		t.Fatalf("steady: len(TimeSeries) = %d, want 3: %#v",
+			len(steady.TimeSeries), steady.TimeSeries)
+	}
+	for i, pt := range steady.TimeSeries {
+		assertRatio(t, fmt.Sprintf("steady points[%d]", i), pt.Value, 90.0)
+	}
+	assertRatio(t, "steady current", steady.Current, 90.0)
+
+	reset := dbMap["reset"].CacheHitRatio
+	if len(reset.TimeSeries) != 2 {
+		t.Fatalf("reset: len(TimeSeries) = %d, want 2 (reset bucket "+
+			"discarded): %#v", len(reset.TimeSeries), reset.TimeSeries)
+	}
+	assertRatio(t, "reset points[0]", reset.TimeSeries[0].Value, 90.0)
+	assertRatio(t, "reset points[1]", reset.TimeSeries[1].Value, 50.0)
+	assertRatio(t, "reset current", reset.Current, 50.0)
+	// The reset bucket is minute 2, so the surviving points are minutes
+	// 1 and 3.
+	if got := reset.TimeSeries[1].Time.Sub(reset.TimeSeries[0].Time); got != 2*time.Minute {
+		t.Errorf("reset bucket spacing = %v, want 2m", got)
+	}
+}
+
+// installFailingCacheHitView replaces metrics.pg_stat_database with a
+// view over a renamed copy of the table whose blks_read column divides
+// by (blks_read - blks_read). The planner cannot fold that to a
+// constant, so the query prepares cleanly and only fails at execution,
+// which is the path that reaches rows.Err rather than the tx.Query
+// error return. Samples are seeded so that the failing expression is
+// actually evaluated. The returned function restores the schema.
+func installFailingCacheHitView(t *testing.T, pool *pgxpool.Pool, connID int) func() {
+	t.Helper()
+	ctx := context.Background()
+	stmts := []string{
+		`ALTER TABLE metrics.pg_stat_database RENAME TO pg_stat_database_src`,
+		`CREATE VIEW metrics.pg_stat_database AS
+            SELECT connection_id, collected_at, datname, blks_hit,
+                   blks_read / (blks_read - blks_read) AS blks_read
+            FROM metrics.pg_stat_database_src`,
+		`INSERT INTO metrics.pg_stat_database_src
+            (connection_id, collected_at, datname, blks_hit, blks_read)
+            VALUES ($1, $2, 'db', 100, 10), ($1, $3, 'db', 200, 20)`,
+	}
+	for i, stmt := range stmts {
+		var err error
+		if i == len(stmts)-1 {
+			_, err = pool.Exec(ctx, stmt, connID, cacheHitBase,
+				cacheHitBase.Add(time.Minute))
+		} else {
+			_, err = pool.Exec(ctx, stmt)
+		}
+		if err != nil {
+			t.Fatalf("install failing view: %v", err)
+		}
+	}
+	return func() {
+		for _, stmt := range []string{
+			`DROP VIEW IF EXISTS metrics.pg_stat_database`,
+			`ALTER TABLE metrics.pg_stat_database_src RENAME TO pg_stat_database`,
+		} {
+			if _, err := pool.Exec(ctx, stmt); err != nil {
+				t.Errorf("restore schema: %v", err)
+			}
+		}
+	}
+}
+
+// TestQueryCacheHit_ExecutionErrorReturnsNoData drives the rows.Err
+// branch of queryCacheHit. A scan failure is not reachable with real
+// rows, because every output column is an explicit float cast or a
+// date_bin over a bounded timestamptz, so the execution-time failure is
+// the path that exercises the post-loop error handling; the result must
+// be the same empty shape as a query that failed to prepare.
+func TestQueryCacheHit_ExecutionErrorReturnsNoData(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 518
+	restore := installFailingCacheHitView(t, pool, connID)
+	defer restore()
+
+	hit, read, current, points := runQueryCacheHit(t, h, pool, connID)
+
+	if points == nil || len(points) != 0 {
+		t.Errorf("points = %#v, want empty non-nil slice", points)
+	}
+	assertNilRatio(t, "current", current)
+	if hit != 0 || read != 0 {
+		t.Errorf("latest deltas = (%v, %v), want (0, 0)", hit, read)
+	}
+}
+
+// TestDatabaseCacheHit_ExecutionErrorLeavesEntriesEmpty is the
+// per-database counterpart of the execution-error test.
+func TestDatabaseCacheHit_ExecutionErrorLeavesEntriesEmpty(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	const connID = 519
+	restore := installFailingCacheHitView(t, pool, connID)
+	defer restore()
+
+	db := runQueryDatabaseCacheHit(t, h, pool, connID, "db")["db"]
+
+	if len(db.CacheHitRatio.TimeSeries) != 0 {
+		t.Errorf("TimeSeries = %#v, want empty", db.CacheHitRatio.TimeSeries)
+	}
+	assertNilRatio(t, "current", db.CacheHitRatio.Current)
+}
+
+// TestDatabaseCacheHit_QueryError drops the metrics tables so that the
+// query fails to prepare, mirroring TestQueryCacheHit_QueryError.
+func TestDatabaseCacheHit_QueryError(t *testing.T) {
+	h, pool, cleanup := newDatabaseSummariesTestHandler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		databaseSummariesTestSchemaTeardown); err != nil {
+		t.Fatalf("teardown for query-error test failed: %v", err)
+	}
+
+	db := runQueryDatabaseCacheHit(t, h, pool, 520, "db")["db"]
+
+	if len(db.CacheHitRatio.TimeSeries) != 0 {
+		t.Errorf("TimeSeries = %#v, want empty", db.CacheHitRatio.TimeSeries)
+	}
+	assertNilRatio(t, "current", db.CacheHitRatio.Current)
+}

@@ -5,11 +5,13 @@ on:
         branches: [ main, master ]
         paths:
             - 'alerter/**'
+            - 'pkg/**'
             - '.github/workflows/ci-alerter.yml'
     pull_request:
         branches: [ main, master ]
         paths:
             - 'alerter/**'
+            - 'pkg/**'
             - '.github/workflows/ci-alerter.yml'
 
 jobs:

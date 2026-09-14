@@ -5,11 +5,13 @@ on:
         branches: [ main, master ]
         paths:
             - 'server/**'
+            - 'pkg/**'
             - '.github/workflows/ci-server.yml'
     pull_request:
         branches: [ main, master ]
         paths:
             - 'server/**'
+            - 'pkg/**'
             - '.github/workflows/ci-server.yml'
 
 jobs:

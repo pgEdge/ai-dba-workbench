@@ -234,15 +234,6 @@ func ddlColumns(ddl, probe string) (map[string]bool, bool) {
 	return cols, true
 }
 
-// pendingDDLColumns lists reset columns the registry names ahead of the
-// collector migration that adds them, so this test passes whether or not
-// that migration has landed in the checkout. Remove an entry once its
-// migration is in schema.go.
-var pendingDDLColumns = map[string]map[string]bool{
-	// Collector migration 10, issue #402, section 5 of the design spec.
-	"pg_stat_statements": {"stats_reset": true},
-}
-
 // registryEntryProblems returns a description of every way entry, filed
 // under probe, disagrees with the collector DDL; nil means it agrees.
 func registryEntryProblems(ddl, probe string, entry probeRegistryEntry) []string {
@@ -267,7 +258,7 @@ func registryEntryProblems(ddl, probe string, entry probeRegistryEntry) []string
 			continue
 		}
 		r := entry.resetColumn(col)
-		if r == "" || cols[r] || pendingDDLColumns[probe][r] {
+		if r == "" || cols[r] {
 			continue
 		}
 		problems = append(problems,

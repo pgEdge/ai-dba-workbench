@@ -241,10 +241,7 @@ counter a gauge. `TestProbeRegistryMatchesCollectorDDL` reads the
 collector's `schema.go` (relative to the package, skipping if absent) and
 fails on any registered column, reset column or exclusion column that the
 `CREATE TABLE` or a later `ADD COLUMN` does not declare, and on any probe
-without a `CREATE TABLE`. `pendingDDLColumns` in that test lists reset
-columns registered ahead of the collector migration that adds them
-(`pg_stat_statements.stats_reset`, migration 10); remove the entry once the
-migration is in `schema.go`. When a probe gains a counter column, add it to
+without a `CREATE TABLE`. When a probe gains a counter column, add it to
 the registry in the same change or `_per_sec` on it is refused.
 
 Integration fixtures create tables under their own names

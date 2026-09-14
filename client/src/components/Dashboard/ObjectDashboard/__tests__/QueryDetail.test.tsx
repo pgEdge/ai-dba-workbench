@@ -615,6 +615,99 @@ describe('QueryDetail', () => {
                 });
             });
 
+        it('marks the period average unavailable when the request failed',
+            async () => {
+                mockQueryStatsReturn = {
+                    stats: null,
+                    loading: false,
+                    error: 'stats unavailable',
+                    refetch: vi.fn(),
+                };
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText(
+                            'Avg Time (Last 1h): Unavailable',
+                        ),
+                    ).toBeInTheDocument();
+                });
+                expect(
+                    screen.queryByLabelText('Avg Time (Last 1h): --'),
+                ).not.toBeInTheDocument();
+            });
+
+        it('prefers the error state over a pending refetch', async () => {
+            mockQueryStatsReturn = {
+                stats: null,
+                loading: true,
+                error: 'stats unavailable',
+                refetch: vi.fn(),
+            };
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText('Avg Time (Last 1h): Unavailable'),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.queryByLabelText('Avg Time (Last 1h): Loading...'),
+            ).not.toBeInTheDocument();
+        });
+
+        it('shows a loading placeholder before the first stats arrive',
+            async () => {
+                mockQueryStatsReturn = {
+                    stats: null,
+                    loading: true,
+                    error: null,
+                    refetch: vi.fn(),
+                };
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText(
+                            'Avg Time (Last 1h): Loading...',
+                        ),
+                    ).toBeInTheDocument();
+                });
+                expect(
+                    screen.queryByLabelText('Avg Time (Last 1h): --'),
+                ).not.toBeInTheDocument();
+            });
+
+        it('keeps the previous average visible during a refetch', async () => {
+            mockQueryStatsReturn = {
+                ...mockQueryStatsReturn,
+                loading: true,
+            };
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText('Avg Time (Last 1h): 12.5 ms'),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('labels the period average for a custom range', async () => {
+            mockTimeRange = 'custom';
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText(
+                        'Avg Time (Custom Range): 12.5 ms',
+                    ),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.queryByText(/Avg Time \(Last custom\)/),
+            ).not.toBeInTheDocument();
+        });
+
         it('shows the database user that ran the statement', async () => {
             renderDetail();
 
@@ -644,6 +737,7 @@ describe('QueryDetail', () => {
                 expect(mockUseQueryStats).toHaveBeenCalledWith({
                     connectionId: 4,
                     queryId: QUERY_ID,
+                    databaseName: 'testdb',
                     timeRange: '1h',
                 });
             });
@@ -669,6 +763,7 @@ describe('QueryDetail', () => {
                     expect(mockUseQueryStats).toHaveBeenCalledWith({
                         connectionId: 4,
                         queryId: QUERY_ID,
+                        databaseName: 'testdb',
                         timeRange: '1h',
                     });
                 });
@@ -688,6 +783,7 @@ describe('QueryDetail', () => {
                     expect(mockUseQueryStats).toHaveBeenCalledWith({
                         connectionId: 4,
                         queryId: QUERY_ID,
+                        databaseName: 'testdb',
                         timeRange: '24h',
                     });
                 });

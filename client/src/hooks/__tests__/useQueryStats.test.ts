@@ -30,8 +30,16 @@ vi.mock('../../contexts/useAuth', () => ({
 }));
 
 let mockRefreshTrigger = 0;
+let mockTimeRange: {
+    range: string;
+    customStart?: string;
+    customEnd?: string;
+} = { range: '6h' };
 vi.mock('../../contexts/useDashboard', () => ({
-    useDashboard: () => ({ refreshTrigger: mockRefreshTrigger }),
+    useDashboard: () => ({
+        refreshTrigger: mockRefreshTrigger,
+        timeRange: mockTimeRange,
+    }),
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -45,7 +53,20 @@ vi.mock('../../utils/logger', () => ({
 const params: QueryStatsParams = {
     connectionId: 7,
     queryId: '-1234567890',
+    databaseName: 'testdb',
     timeRange: '6h',
+};
+
+const CUSTOM_START = '2026-05-01T00:00:00.000Z';
+const CUSTOM_END = '2026-05-02T00:00:00.000Z';
+
+/** A fetch that stays pending until the returned resolver is called. */
+const deferredFetch = (): ((value: unknown) => void) => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockApiFetch.mockReturnValueOnce(
+        new Promise(resolve => { resolveFetch = resolve; }),
+    );
+    return (value: unknown) => { resolveFetch(value); };
 };
 
 const makeStats = (avg: number | null = 42.5) => ({
@@ -80,6 +101,7 @@ describe('useQueryStats', () => {
         vi.clearAllMocks();
         mockUser = { id: 1, username: 'testuser' };
         mockRefreshTrigger = 0;
+        mockTimeRange = { range: '6h' };
     });
 
     afterEach(() => {
@@ -116,7 +138,10 @@ describe('useQueryStats', () => {
         expect(url).toContain('/api/v1/metrics/query-stats?');
         expect(url).toContain('connection_id=7');
         expect(url).toContain('queryid=-1234567890');
+        expect(url).toContain('database_name=testdb');
         expect(url).toContain('time_range=6h');
+        expect(url).not.toContain('time_start=');
+        expect(url).not.toContain('time_end=');
         expect(result.current.stats?.avg_exec_time).toBe(42.5);
         expect(result.current.loading).toBe(false);
         expect(result.current.error).toBeNull();
@@ -252,5 +277,177 @@ describe('useQueryStats', () => {
         });
 
         expect(result.current.stats).toBeNull();
+    });
+    it('sends the custom bounds for a custom time range', async () => {
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+        mockApiFetch.mockResolvedValue(okResponse(makeStats()));
+
+        const { result } = renderHook(
+            () => useQueryStats({ ...params, timeRange: 'custom' }),
+        );
+
+        await waitFor(() => {
+            expect(result.current.stats).not.toBeNull();
+        });
+        const url = mockApiFetch.mock.calls[0][0] as string;
+        expect(url).toContain('time_range=custom');
+        expect(url).toContain(
+            `time_start=${encodeURIComponent(CUSTOM_START)}`,
+        );
+        expect(url).toContain(
+            `time_end=${encodeURIComponent(CUSTOM_END)}`,
+        );
+    });
+
+    it('issues no request for a custom range missing a bound', () => {
+        mockTimeRange = { range: 'custom', customStart: CUSTOM_START };
+
+        const { result } = renderHook(
+            () => useQueryStats({ ...params, timeRange: 'custom' }),
+        );
+
+        expect(mockApiFetch).not.toHaveBeenCalled();
+        expect(result.current.loading).toBe(false);
+        expect(result.current.error).toBeNull();
+    });
+
+    it('refetches when the custom bounds change', async () => {
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+        mockApiFetch.mockResolvedValue(okResponse(makeStats()));
+
+        const { rerender } = renderHook(
+            () => useQueryStats({ ...params, timeRange: 'custom' }),
+        );
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(1);
+        });
+
+        const laterEnd = '2026-05-03T00:00:00.000Z';
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: laterEnd,
+        };
+        rerender();
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(2);
+        });
+        const url = mockApiFetch.mock.calls[1][0] as string;
+        expect(url).toContain(`time_end=${encodeURIComponent(laterEnd)}`);
+    });
+
+    it('keeps the newer result when an older request completes last', async () => {
+        const resolveFirst = deferredFetch();
+        const resolveSecond = deferredFetch();
+
+        const { result, rerender } = renderHook(
+            ({ p }: { p: QueryStatsParams }) => useQueryStats(p),
+            { initialProps: { p: params } },
+        );
+        rerender({ p: { ...params, timeRange: '24h' } });
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(2);
+        });
+
+        await act(async () => {
+            resolveSecond(okResponse(makeStats(99)));
+        });
+        await waitFor(() => {
+            expect(result.current.stats?.avg_exec_time).toBe(99);
+        });
+        expect(result.current.loading).toBe(false);
+
+        await act(async () => {
+            resolveFirst(okResponse(makeStats(1)));
+        });
+
+        expect(result.current.stats?.avg_exec_time).toBe(99);
+        expect(result.current.error).toBeNull();
+    });
+
+    it('ignores an error from a superseded request', async () => {
+        const resolveFirst = deferredFetch();
+        const resolveSecond = deferredFetch();
+
+        const { result, rerender } = renderHook(
+            ({ p }: { p: QueryStatsParams }) => useQueryStats(p),
+            { initialProps: { p: params } },
+        );
+        rerender({ p: { ...params, timeRange: '24h' } });
+
+        await waitFor(() => {
+            expect(mockApiFetch).toHaveBeenCalledTimes(2);
+        });
+
+        await act(async () => {
+            resolveSecond(okResponse(makeStats(99)));
+        });
+        await waitFor(() => {
+            expect(result.current.stats?.avg_exec_time).toBe(99);
+        });
+
+        await act(async () => {
+            resolveFirst(errorResponse(500, { error: 'too late' }));
+        });
+
+        expect(result.current.error).toBeNull();
+        expect(result.current.stats?.avg_exec_time).toBe(99);
+    });
+
+    it('clears state and ignores a late response when params become null', async () => {
+        const resolveFirst = deferredFetch();
+
+        const { result, rerender } = renderHook(
+            ({ p }: { p: QueryStatsParams | null }) => useQueryStats(p),
+            { initialProps: { p: params as QueryStatsParams | null } },
+        );
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(true);
+        });
+
+        rerender({ p: null });
+
+        expect(result.current.loading).toBe(false);
+        expect(result.current.stats).toBeNull();
+        expect(result.current.error).toBeNull();
+
+        await act(async () => {
+            resolveFirst(okResponse(makeStats()));
+        });
+
+        expect(result.current.stats).toBeNull();
+        expect(result.current.loading).toBe(false);
+        expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears previously loaded stats when params become null', async () => {
+        mockApiFetch.mockResolvedValue(okResponse(makeStats()));
+
+        const { result, rerender } = renderHook(
+            ({ p }: { p: QueryStatsParams | null }) => useQueryStats(p),
+            { initialProps: { p: params as QueryStatsParams | null } },
+        );
+
+        await waitFor(() => {
+            expect(result.current.stats).not.toBeNull();
+        });
+
+        rerender({ p: null });
+
+        expect(result.current.stats).toBeNull();
+        expect(result.current.error).toBeNull();
+        expect(result.current.loading).toBe(false);
     });
 });

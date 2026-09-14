@@ -300,13 +300,31 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             return {
                 connectionId,
                 queryId: queryData.queryid,
+                databaseName,
                 timeRange: timeRange.range,
             };
         },
-        [connectionId, timeRange.range, queryData?.queryid]
+        [connectionId, databaseName, timeRange.range, queryData?.queryid]
     );
 
-    const { stats: periodStats } = useQueryStats(queryStatsParams);
+    const {
+        stats: periodStats,
+        loading: periodStatsLoading,
+        error: periodStatsError,
+    } = useQueryStats(queryStatsParams);
+
+    // The period average tile distinguishes a failed request from a
+    // pending one and from a period with no data; an error wins over
+    // a pending refetch so a failure is never masked by a spinner.
+    const periodAvgLabel = timeRange.range === 'custom'
+        ? 'Avg Time (Custom Range)'
+        : `Avg Time (Last ${timeRange.range})`;
+    const periodAvgValue = periodStatsError
+        ? 'Unavailable'
+        : periodStatsLoading && !periodStats
+            ? 'Loading...'
+            : formatTime(periodStats?.avg_exec_time ?? null);
+    const periodAvgStatus = periodStatsError ? 'critical' : undefined;
 
     const execTimeChartData = useMemo(
         () => buildChartData(
@@ -694,12 +712,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label={
-                            `Avg Time (Last ${timeRange.range})`
-                        }
-                        value={formatTime(
-                            periodStats?.avg_exec_time ?? null
-                        )}
+                        label={periodAvgLabel}
+                        value={periodAvgValue}
+                        status={periodAvgStatus}
                     />
                     <KpiTile
                         label="Min Time (All Time)"

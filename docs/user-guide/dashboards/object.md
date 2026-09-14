@@ -45,7 +45,11 @@ The query detail view displays the following metrics:
 - Mean execution time over the lifetime of the query,
   shown as "Mean Time (All Time)".
 - Average execution time over the selected time range,
-  labelled with that range as "Avg Time (Last 24h)".
+  labelled with that range as "Avg Time (Last 24h)", or as
+  "Avg Time (Custom Range)" when a custom window is active.
+  The tile shows "Unavailable" when the statistics request
+  fails, so that a broken request looks different from a
+  query that ran no calls in the period.
 - Minimum and maximum execution time over the lifetime
   of the query.
 - Total rows returned and rows per call.

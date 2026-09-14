@@ -815,3 +815,51 @@ func nowMinus(t *testing.T, pool *pgxpool.Pool, interval string) (ts any) {
 	}
 	return ts
 }
+
+// TestMetricRegistryProbeName walks the registry and asserts that every
+// entry names a collector probe, and that the probe named is a metrics
+// table the latest query actually reads. The alert cleaner refuses to
+// treat an absent row as a recovery unless that probe is currently
+// reporting, so an entry with a missing or wrong probe name either never
+// clears or clears on the freshness of some other probe. See GitHub issue
+// #407.
+func TestMetricRegistryProbeName(t *testing.T) {
+	names := make([]string, 0, len(metricRegistry))
+	for name := range metricRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		cfg := metricRegistry[name]
+		if cfg.probeName == "" {
+			t.Errorf("%s names no collector probe; set probeName to the probe "+
+				"that fills the table its latest query reads", name)
+			continue
+		}
+		if !strings.Contains(cfg.latestSQL, "metrics."+cfg.probeName) {
+			t.Errorf("%s names probe %q but its latest query does not read "+
+				"metrics.%s", name, cfg.probeName, cfg.probeName)
+		}
+	}
+}
+
+// TestMetricProbeName pins the accessor the cleaner reads, including the
+// zero value for a metric the registry does not know.
+func TestMetricProbeName(t *testing.T) {
+	ds := &Datastore{}
+	cases := map[string]string{
+		"pg_replication_slots.inactive_count": "pg_replication_slots",
+		"pg_stat_activity.blocked_count":      "pg_stat_activity",
+		"spock_resolutions.recent_count":      "spock_resolutions",
+		"table_last_autovacuum_hours":         "pg_stat_all_tables",
+		"pg_stat_archiver.failed_count_delta": "pg_stat_wal",
+		"age_percent":                         "pg_database",
+		"probe_staleness_ratio":               "",
+	}
+	for name, want := range cases {
+		if got := ds.MetricProbeName(name); got != want {
+			t.Errorf("MetricProbeName(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

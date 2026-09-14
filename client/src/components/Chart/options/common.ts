@@ -285,8 +285,12 @@ export function buildYAxis(
         if (zeroAnchored) {
             // The chart's marks fill from the zero baseline, so the
             // padded range must span zero to avoid clipping the fill or
-            // bar at that baseline.
-            axis.min = Math.min(0, flat - padding);
+            // bar at that baseline. A flat zero is the baseline itself:
+            // there is nothing below it to show, and a count or rate
+            // that cannot be negative (an all-zero bar chart of
+            // checkpoints, say) must not draw an axis running to -1, so
+            // it pads upward only.
+            axis.min = flat === 0 ? 0 : Math.min(0, flat - padding);
             axis.max = Math.max(0, flat + padding);
         } else {
             // A plain line has no baseline fill, so a tight window

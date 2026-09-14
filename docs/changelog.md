@@ -162,7 +162,8 @@ project adheres to
   that were requested rather than timed; a high percentage suggests
   that `max_wal_size` is too low. A chart whose metric a probe does
   not collect now shows the error the server returned instead of a
-  generic "No data" message. (#400)
+  generic "No data" message, and a bar or area chart whose values are
+  all zero no longer draws a y-axis running below zero. (#400)
 
 ### Fixed
 

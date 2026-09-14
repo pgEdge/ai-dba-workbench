@@ -12,7 +12,7 @@
 #      build-deb.sh download these tarballs from the release URL, so the
 #      release MUST exist before the RPM/DEB build cells run.
 #   3. Build RPMs (almalinux 9/10, amd64+arm64) and DEBs (jammy / noble /
-#      bullseye / bookworm / trixie, amd64+arm64) via pgedge-builder-action.
+#      bookworm / trixie, amd64+arm64) via pgedge-builder-action.
 #   4. Push RPMs to dnf.pgedge.com and DEBs to apt.pgedge.com (batched
 #      multi-target invocation per family; cross-repo lock is per
 #      (family, repo_type)).
@@ -98,7 +98,7 @@ jobs:
                   # emits cells with pg_version="" (see pgedge-detect-build-matrix README).
                   archs: '["amd64","arm64"]'
                   rpm_images: '["almalinux:9","almalinux:10"]'
-                  deb_images: '["ubuntu:jammy","ubuntu:noble","ubuntu:resolute","debian:bullseye","debian:bookworm","debian:trixie"]'
+                  deb_images: '["ubuntu:jammy","ubuntu:noble","ubuntu:resolute","debian:bookworm","debian:trixie"]'
 
     # =========================================================================
     # Tag parsing → (repo_type, component-version, component-buildnum).  On

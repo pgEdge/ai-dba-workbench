@@ -424,3 +424,27 @@ func assertNoClearQueued(t *testing.T, capture *notificationCapture) {
 		}
 	}
 }
+
+// TestCleaner_AbsentMetricWithUnreadableProbesStaysActive covers the last
+// way the freshness check can come back inconclusive: the staleness query
+// itself fails. A failed read says nothing about whether the condition
+// ended, so the alert stays active rather than clearing on a database
+// error.
+func TestCleaner_AbsentMetricWithUnreadableProbesStaysActive(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-probe-error")
+	defer cleanup()
+
+	ctx := context.Background()
+	capture := installNotificationCapture(t, engine)
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
+	if _, err := pool.Exec(ctx, dropProbeAvailabilityTableSQL); err != nil {
+		t.Fatalf("failed to drop probe_availability: %v", err)
+	}
+
+	engine.cleanResolvedAlerts(ctx)
+
+	if status := alertStatus(t, pool, alertID); status != "active" {
+		t.Errorf("alert status after a failed probe read = %q, want \"active\"", status)
+	}
+	assertNoClearQueued(t, capture)
+}

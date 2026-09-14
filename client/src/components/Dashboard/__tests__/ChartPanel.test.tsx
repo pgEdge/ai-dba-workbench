@@ -92,6 +92,52 @@ describe('ChartPanel', () => {
         expect(screen.getByText('Custom empty message for testing')).toBeInTheDocument();
     });
 
+    it('renders the error message in place of the empty message', () => {
+        renderChartPanel({
+            hasData: false,
+            loading: false,
+            errorMessage: 'metric not found in probe',
+        });
+
+        expect(screen.getByText('metric not found in probe'))
+            .toBeInTheDocument();
+        expect(screen.queryByText('No data available'))
+            .not.toBeInTheDocument();
+    });
+
+    it('prefers the loading spinner over the error message', () => {
+        renderChartPanel({
+            hasData: false,
+            loading: true,
+            errorMessage: 'metric not found in probe',
+        });
+
+        expect(screen.getByLabelText('Loading chart')).toBeInTheDocument();
+        expect(screen.queryByText('metric not found in probe'))
+            .not.toBeInTheDocument();
+    });
+
+    it('keeps rendering the chart when data arrived despite an error', () => {
+        renderChartPanel({
+            hasData: true,
+            loading: false,
+            errorMessage: 'stale error',
+        });
+
+        expect(screen.getByTestId('chart-content')).toBeInTheDocument();
+        expect(screen.queryByText('stale error')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the empty message when the error is null', () => {
+        renderChartPanel({
+            hasData: false,
+            loading: false,
+            errorMessage: null,
+        });
+
+        expect(screen.getByText('No data available')).toBeInTheDocument();
+    });
+
     it('renders custom title', () => {
         renderChartPanel({
             hasData: false,

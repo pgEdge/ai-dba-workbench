@@ -122,6 +122,77 @@ statistics for the last 24 hours:
 }
 ```
 
+## Derived Metrics
+
+Most PostgreSQL statistics columns are cumulative
+counters that only ever rise, which makes the raw
+values hard to read on a chart. The metrics query
+endpoint of the REST API,
+`GET /api/v1/metrics/query`, therefore accepts three
+derived names in its `metrics` parameter in addition
+to the columns the probe collects. The `query_metrics`
+MCP tool accepts the probe's own columns only, and
+rejects the derived names described here.
+
+The following table describes the derived metrics:
+
+| Name | Description |
+|------|-------------|
+| `<column>_per_sec` | The per-second rate of change of a counter column, computed from consecutive samples. |
+| `<column>_delta` | The increase in a counter column within each time bucket, summed across the samples in the bucket. |
+| `dead_tuple_ratio` | The percentage of tuples that are dead, from `n_live_tup` and `n_dead_tup`. |
+
+A per-second rate discards a negative change between
+two samples, because a counter falls only when the
+statistics are reset rather than because work was
+undone. The bucket value follows the `aggregation`
+parameter, and `avg` gives the most representative
+result.
+
+A delta answers "how many events happened during this
+bucket", which suits a bar chart of rare events such
+as checkpoints. A bucket that contains no sample
+reports zero when the window contains at least one
+sample, and the `aggregation` parameter does not
+apply. A connection with no samples in the window
+returns no data points for either derived form,
+rather than a series of zeros.
+
+For a probe that stores one row per monitored entity
+in each sample, such as one row per network interface
+or per database, both forms compute the change of each
+entity's counter separately and then add the changes
+together. An entity that disappears between samples
+does not produce a negative change, and an entity that
+appears does not contribute its existing total.
+
+The first sample in the window is compared with the
+most recent sample before the window, provided that
+sample is no older than the larger of three bucket
+widths and 30 minutes before the window starts. Beyond
+that, the first sample contributes nothing, so a long
+gap in collection does not appear as a spike in the
+first bucket.
+
+The `dead_tuple_ratio` metric requires a probe that
+collects both `n_live_tup` and `n_dead_tup`, such as
+`pg_stat_all_tables`.
+
+In the following example, the request returns the
+commit and rollback rates for the last six hours:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+    "https://workbench.example.com/api/v1/metrics/query?probe_name=pg_stat_database&connection_id=1&time_range=6h&buckets=72&aggregation=avg&metrics=xact_commit_per_sec,xact_rollback_per_sec"
+```
+
+A request for a derived metric whose base column the
+probe does not collect fails rather than returning
+empty data. The endpoint answers with HTTP status 400
+and an error message that names the metric and the
+probe, and the dashboards display that message in the
+affected chart panel rather than an empty chart.
+
 ## Common Probes
 
 ### Server-Wide Probes
@@ -235,6 +306,11 @@ Follow these guidelines when querying metrics:
      counts.
    - `min` is best for minimum thresholds.
    - `last` is best for point-in-time values.
+
+7. Request a derived metric rather than a raw counter
+   column when charting activity over time through the
+   REST API; `_per_sec` suits a line chart and `_delta`
+   suits a bar chart of rare events.
 
 ## Configuration
 

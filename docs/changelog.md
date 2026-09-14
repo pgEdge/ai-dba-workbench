@@ -90,6 +90,19 @@ project adheres to
   classification verdict. A value of zero or less selects the
   default. (#399)
 
+- Add a `_delta` derived metric to the metrics query API
+  (`GET /api/v1/metrics/query`). A metric named `<column>_delta`
+  reports the increase of a cumulative counter within each time
+  bucket, which suits a bar chart of rare events such as checkpoints;
+  a bucket containing no sample reports zero, a connection with no
+  samples in the window returns no data points, and the `aggregation`
+  parameter does not apply. The `_per_sec` and `_delta` forms compute
+  the change of each monitored entity's counter separately before
+  adding them together, so a network interface or database that
+  appears or disappears between samples no longer produces a spike or
+  a stale value, and the sample before the window is only used when
+  it is recent enough not to inflate the first bucket. (#400)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a
@@ -133,6 +146,24 @@ project adheres to
   and `make test-all` targets, which previously skipped that module
   entirely. This change affects test infrastructure only and does not
   alter application behavior. (#364)
+
+- Plot rates rather than raw cumulative counters on the dashboard
+  charts that are built on `pg_stat_*` counters, so that a chart
+  reflects the current workload instead of an ever-rising total. The
+  server dashboard now plots commits and rollbacks, blocks hit and
+  read, tuple operations, WAL bytes and records, checkpoint buffers
+  written, and network throughput per second; the database dashboard
+  plots commits and rollbacks per second and reports transactions per
+  second; and the object dashboard plots query calls per second. The
+  Checkpoints chart is now a stacked bar chart of the timed and
+  requested checkpoints in each interval, a Checkpoint Buffers Written
+  chart has been added, and the Checkpoints KPI has become Requested
+  Checkpoints, the percentage of checkpoints in the selected range
+  that were requested rather than timed; a high percentage suggests
+  that `max_wal_size` is too low. A chart whose metric a probe does
+  not collect now shows the error the server returned instead of a
+  generic "No data" message, and a bar or area chart whose values are
+  all zero no longer draws a y-axis running below zero. (#400)
 
 ### Fixed
 

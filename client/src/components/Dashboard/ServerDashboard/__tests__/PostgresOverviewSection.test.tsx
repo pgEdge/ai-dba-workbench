@@ -116,6 +116,14 @@ const loading = (): UseMetricsReturn => ({
     refetch: vi.fn(),
 });
 
+/** A UseMetricsReturn that failed, as an older server would. */
+const failed = (message: string): UseMetricsReturn => ({
+    data: null,
+    loading: false,
+    error: message,
+    refetch: vi.fn(),
+});
+
 /**
  * Route each useMetrics call to a response based on the metrics it
  * requests, mirroring how the component issues one query per concern.
@@ -136,24 +144,31 @@ const routeMetrics = (
                     series('numbackends', [10, 12]),
                     series('sessions', [8000, 8100]),
                 ]);
-            case 'xact_commit,xact_rollback':
+            case 'xact_commit_per_sec':
+                return ready([series('xact_commit_per_sec', [12, 25.5])]);
+            case 'xact_commit_per_sec,xact_rollback_per_sec':
                 return ready([
-                    series('xact_commit', [100, 200]),
-                    series('xact_rollback', [1, 2]),
+                    series('xact_commit_per_sec', [100, 200]),
+                    series('xact_rollback_per_sec', [1, 2]),
                 ]);
             case 'blks_hit,blks_read':
                 return ready([
                     series('blks_hit', [90, 95]),
                     series('blks_read', [10, 5]),
                 ]);
-            case 'temp_bytes':
-                return ready([series('temp_bytes', [1024, 2048])]);
+            case 'blks_hit_per_sec,blks_read_per_sec':
+                return ready([
+                    series('blks_hit_per_sec', [90, 95]),
+                    series('blks_read_per_sec', [10, 5]),
+                ]);
+            case 'temp_bytes_delta':
+                return ready([series('temp_bytes_delta', [1024, 2048])]);
             default:
                 return ready([
-                    series('tup_fetched', [1, 2]),
-                    series('tup_inserted', [3, 4]),
-                    series('tup_updated', [5, 6]),
-                    series('tup_deleted', [7, 8]),
+                    series('tup_fetched_per_sec', [1, 2]),
+                    series('tup_inserted_per_sec', [3, 4]),
+                    series('tup_updated_per_sec', [5, 6]),
+                    series('tup_deleted_per_sec', [7, 8]),
                 ]);
         }
     });
@@ -426,11 +441,49 @@ describe('PostgresOverviewSection', () => {
                 expect(screen.getByText('Transactions')).toBeInTheDocument();
             });
             expect(seriesNamesFor('Transactions'))
-                .toEqual(['Commits', 'Rollbacks']);
+                .toEqual(['Commits/s', 'Rollbacks/s']);
             expect(seriesNamesFor('Block I/O'))
-                .toEqual(['Blocks Hit', 'Blocks Read']);
+                .toEqual(['Blocks Hit/s', 'Blocks Read/s']);
             expect(seriesNamesFor('Tuple Operations'))
-                .toEqual(['Fetched', 'Inserted', 'Updated', 'Deleted']);
+                .toEqual([
+                    'Fetched/s', 'Inserted/s', 'Updated/s', 'Deleted/s',
+                ]);
+        });
+
+        it('requests rate metrics rather than raw counters', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Transactions')).toBeInTheDocument();
+            });
+            const requested = mockUseMetrics.mock.calls
+                .map(([params]) => (params?.metrics ?? []).join(','));
+            expect(requested).toContain(
+                'xact_commit_per_sec,xact_rollback_per_sec'
+            );
+            expect(requested).toContain(
+                'blks_hit_per_sec,blks_read_per_sec'
+            );
+            expect(requested).toContain(
+                'tup_fetched_per_sec,tup_inserted_per_sec,'
+                + 'tup_updated_per_sec,tup_deleted_per_sec'
+            );
+            expect(requested).toContain('temp_bytes_delta');
+        });
+
+        it('reports a query error in place of the empty message', async () => {
+            routeMetrics({
+                'xact_commit_per_sec,xact_rollback_per_sec':
+                    failed('metric not found in probe'),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('metric not found in probe'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.queryByText('No transaction data available'))
+                .not.toBeInTheDocument();
         });
     });
 
@@ -446,11 +499,61 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getAllByText('Backends').length)
                 .toBeGreaterThanOrEqual(2);
             expect(screen.getAllByText('Commits').length)
-                .toBeGreaterThanOrEqual(2);
+                .toBeGreaterThanOrEqual(1);
             expect(screen.getByText('12')).toBeInTheDocument();
             // 95 hits against 5 reads gives a 95.0% ratio.
             expect(screen.getByText('95.0')).toBeInTheDocument();
             expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+        });
+
+        it('shows the latest commit rate per second', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getAllByText('Commits').length)
+                    .toBeGreaterThanOrEqual(1);
+            });
+            expect(screen.getByText('25.5')).toBeInTheDocument();
+            expect(screen.getAllByText('/s').length)
+                .toBeGreaterThanOrEqual(1);
+        });
+
+        it('shows an idle commit rate as zero', async () => {
+            routeMetrics({
+                'xact_commit_per_sec': ready([
+                    series('xact_commit_per_sec', [12, 0]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getAllByText('Commits').length)
+                    .toBeGreaterThanOrEqual(1);
+            });
+            // A quiet bucket is a real 0/s, not a stale 12/s.
+            expect(screen.getByText('0.0')).toBeInTheDocument();
+            expect(screen.queryByText('12.0')).not.toBeInTheDocument();
+        });
+
+        it('sums the temp byte deltas across the window', async () => {
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            // 1024 plus 2048 bytes spilled over the two buckets.
+            expect(screen.getByText('3.0 KB')).toBeInTheDocument();
+        });
+
+        it('shows a placeholder when no temp byte data is returned', async () => {
+            routeMetrics({ 'temp_bytes_delta': ready([]) });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(1);
         });
 
         it('renders placeholders when the KPI queries return nothing', async () => {

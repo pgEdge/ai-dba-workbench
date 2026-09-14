@@ -202,6 +202,8 @@ describe('buildYAxis range padding', () => {
     });
 
     it('pads a fixed range around a flat zero series', () => {
+        // A plain line has no baseline fill, so the window stays
+        // centred on the flat value to keep the line off the axis edge.
         const yAxis = buildYAxis([
             [0, 0, 0],
         ]) as unknown as YAxisOpts;
@@ -396,10 +398,11 @@ describe('buildYAxis stacked range padding', () => {
         expect(yAxis.max).toBe(0);
     });
 
-    it('pads a fixed range around an all-zero stacked series', () => {
+    it('pads an all-zero stacked series upward from the baseline', () => {
         // Neither sign is present, so the flat zero baseline is observed
-        // and padded to the fixed [-1, 1] window; the zero-anchored
-        // range already straddles the baseline so it is unchanged.
+        // and padded to a fixed [0, 1] window: a stacked chart is
+        // zero-anchored, and an all-zero count (a window with no
+        // checkpoints, say) must not draw an axis running down to -1.
         const yAxis = buildYAxis(
             [
                 [0, 0, 0],
@@ -407,7 +410,7 @@ describe('buildYAxis stacked range padding', () => {
             true,
             true,
         ) as unknown as YAxisOpts;
-        expect(yAxis.min).toBe(-1);
+        expect(yAxis.min).toBe(0);
         expect(yAxis.max).toBe(1);
     });
 });
@@ -445,13 +448,17 @@ describe('buildYAxis zero-anchored range padding', () => {
         expect(yAxis.max).toBe(0);
     });
 
-    it('pads a fixed range straddling zero for a flat zero zero-anchored series', () => {
+    it('pads a flat zero zero-anchored series upward only', () => {
+        // Bars and filled lines grow from the baseline and there is
+        // nothing below a flat zero to show, so the window is [0, 1]
+        // rather than straddling zero; the plain-line case above keeps
+        // its centred [-1, 1] window.
         const yAxis = buildYAxis(
             [[0, 0, 0]],
             false,
             true,
         ) as unknown as YAxisOpts;
-        expect(yAxis.min).toBe(-1);
+        expect(yAxis.min).toBe(0);
         expect(yAxis.max).toBe(1);
     });
 

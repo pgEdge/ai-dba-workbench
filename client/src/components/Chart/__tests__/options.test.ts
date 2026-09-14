@@ -213,6 +213,22 @@ describe('buildBarOptions', () => {
         });
     });
 
+    it('keeps an all-zero stacked bar chart on or above the baseline', () => {
+        // Regression: the Checkpoints Over Time chart over a window with
+        // no checkpoints holds two all-zero series, and the y-axis ran
+        // to -1 for a count that cannot be negative.
+        const zeros: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [
+                { name: 'timed', data: [0, 0, 0] },
+                { name: 'requested', data: [0, 0, 0] },
+            ],
+        };
+        const result = buildBarOptions(zeros, { stacked: true }) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBe(1);
+    });
+
     it('anchors a flat unstacked bar chart to the zero baseline', () => {
         // Bars always grow from zero, so a flat 100 pads to a
         // baseline-inclusive [0, 110] even when the bars are not

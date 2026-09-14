@@ -18,6 +18,15 @@ const mockApiPost = vi.fn();
 const mockApiPut = vi.fn();
 const mockApiDelete = vi.fn();
 
+/*
+ * The tests in this file drive multi-step dialogs through userEvent and
+ * run close to Vitest's five-second default on an idle machine, so under
+ * the full suite's parallel load they timed out for reasons unrelated to
+ * the change being worked on (#422). The ceiling applies to this file
+ * only; a genuine hang still fails.
+ */
+vi.setConfig({ testTimeout: 20_000 });
+
 vi.mock('../../../utils/apiClient', () => ({
     apiGet: (...args: unknown[]) => mockApiGet(...args),
     apiPost: (...args: unknown[]) => mockApiPost(...args),

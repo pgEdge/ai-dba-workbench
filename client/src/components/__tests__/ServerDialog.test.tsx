@@ -16,6 +16,15 @@ import ServerDialog from '../ServerDialog';
 import { renderWithTheme } from '../../test/renderWithTheme';
 
 // Mock AlertOverridesPanel to avoid fetch calls during ServerDialog tests
+/*
+ * The tests in this file drive multi-step dialogs through userEvent and
+ * run close to Vitest's five-second default on an idle machine, so under
+ * the full suite's parallel load they timed out for reasons unrelated to
+ * the change being worked on (#422). The ceiling applies to this file
+ * only; a genuine hang still fails.
+ */
+vi.setConfig({ testTimeout: 20_000 });
+
 vi.mock('../AlertOverridesPanel', () => ({
     default: ({ scope, scopeId }: { scope: string; scopeId: number }) => (
         <div data-testid="alert-overrides-panel">

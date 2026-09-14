@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +67,36 @@ type Config struct {
 // accommodate tool definitions and message history, consistent with the
 // DecodeJSONBody pattern used elsewhere in the API layer.
 const maxChatBodySize = 5 << 20 // 5 MB
+
+// DefaultAnalysisMaxTokens is the output-token budget applied to the
+// direct (non-proxy) analysis clients when the operator has not
+// configured llm.max_tokens.
+//
+// The value matches the documented default of the server's
+// llm.max_tokens setting, so an analysis request behaves identically
+// whether the operator leaves the key unset or writes the default value
+// explicitly.
+//
+// It deliberately replaces the previous 512-token cap. Reasoning models
+// served through an OpenAI-compatible endpoint (llama.cpp hosting Qwen3,
+// DeepSeek-R1 distills, gpt-oss, and similar) emit their thinking tokens
+// against the same max_tokens budget as the answer. A 512-token budget is
+// routinely consumed in full by the thinking block, so the model never
+// emits a text block and the caller sees an empty summary. 4096 leaves
+// several thousand tokens of thinking room ahead of the 3-5 sentence
+// (roughly 150-token) answer these prompts request, while still bounding
+// the response for non-reasoning models.
+const DefaultAnalysisMaxTokens = 4096
+
+// ErrNoTextContent reports that an LLM response carried no usable text
+// content. It is returned by the analysis paths instead of an empty
+// summary so the failure surfaces to the operator rather than rendering
+// as a blank panel. The message names the most common cause: a reasoning
+// model that spent its whole output budget on thinking tokens.
+var ErrNoTextContent = errors.New(
+	"LLM response contained no text content; the model may have " +
+		"exhausted its output token budget on reasoning tokens: " +
+		"increase llm.max_tokens or select a model that emits less reasoning")
 
 // NewHandler builds the library LLM proxy from cfg and returns the
 // http.Handler that serves the /api/v1/llm routes. The provider map
@@ -270,24 +301,52 @@ func (c *Config) providerOptions(name, apiKey, baseURL string) pgllm.Options {
 	return opts
 }
 
+// AnalysisMaxTokens resolves the output-token budget for the direct
+// (non-proxy) analysis clients. It returns the operator-configured
+// llm.max_tokens when that value is positive and DefaultAnalysisMaxTokens
+// otherwise, so an unset, zero, or negative setting can never produce an
+// unusable budget.
+//
+// The method is nil-receiver safe: callers that have not yet proven the
+// config is present (AI may be disabled entirely) can still ask for a
+// budget without a panic.
+func (c *Config) AnalysisMaxTokens() int {
+	if c == nil || c.MaxTokens <= 0 {
+		return DefaultAnalysisMaxTokens
+	}
+	return c.MaxTokens
+}
+
 // BuildClientOptions constructs the library Options for a direct
 // (non-proxy) LLM client that targets c.Provider. It is the single
 // source of truth for the per-provider credential selection, custom-header
-// wiring, and timeout-only-when-positive rule shared by the overview and
-// server-info analysis paths, mirroring the proxy shim's providerOptions.
+// wiring, max-token resolution, and timeout-only-when-positive rule shared
+// by the overview and server-info analysis paths, mirroring the proxy
+// shim's providerOptions.
+//
+// Design note: max-tokens is resolved here from c.MaxTokens (via
+// AnalysisMaxTokens) rather than accepted as a parameter. The two analysis
+// call sites previously each passed their own hardcoded 512-token
+// constant, which silently ignored the operator's llm.max_tokens setting
+// and let the paths drift apart. Resolving inside the shared helper makes
+// divergence impossible: a caller cannot pass a different budget. Callers
+// that must also stamp the budget onto their pgllm.ChatRequest read the
+// same value from AnalysisMaxTokens, so request and client stay in step.
+// Temperature remains a parameter because the two paths legitimately tune
+// it per prompt.
 //
 // Unlike providerOptions (which serves the streaming gateway and applies
 // the operator-configured MaxTokens/Temperature only when positive), the
-// analysis callers always supply their own positive MaxTokens and
-// Temperature constants, so both are set unconditionally from the
-// arguments. The caller is responsible for guarding a nil *Config or an
-// empty Provider before calling; this method assumes c is non-nil.
+// analysis path always sets both: the resolved max-tokens is positive by
+// construction and the callers supply positive temperature constants. The
+// caller is responsible for guarding a nil *Config or an empty Provider
+// before calling; this method assumes c is non-nil.
 //
 // Header-loading failures are logged to stderr and treated as no headers,
 // so a header misconfiguration never blocks analysis. The returned Options
 // still needs pgllm.NewClient(c.Provider, opts) at the call site so each
 // caller keeps its own client-construction error logging.
-func (c *Config) BuildClientOptions(maxTokens int, temperature float64) pgllm.Options {
+func (c *Config) BuildClientOptions(temperature float64) pgllm.Options {
 	var apiKey, baseURL string
 	switch c.Provider {
 	case "anthropic":
@@ -311,7 +370,7 @@ func (c *Config) BuildClientOptions(maxTokens int, temperature float64) pgllm.Op
 		Model:         c.Model,
 		BaseURL:       baseURL,
 		CustomHeaders: headers,
-		MaxTokens:     pgllm.Int(maxTokens),
+		MaxTokens:     pgllm.Int(c.AnalysisMaxTokens()),
 		Temperature:   pgllm.Float(temperature),
 	}
 	if c.LLMConfig != nil && c.LLMConfig.TimeoutSeconds > 0 {

@@ -81,6 +81,14 @@ project adheres to
   count so that a truncated response can be recognised, and it
   honours a custom time range through the same `time_start` and
   `time_end` parameters as the metrics query endpoint. (#346)
+- Add an `llm.max_tokens` setting to the alerter, which caps the
+  output tokens of a reasoning call. The cap applies to tier 3
+  anomaly classification and to acknowledged-alert re-evaluation.
+  The setting defaults to `4096` tokens and replaces a hardcoded
+  500-token limit. A reasoning model could consume that smaller
+  limit entirely on its thinking block, leaving no room for the
+  classification verdict. A value of zero or less selects the
+  default. (#399)
 
 ### Changed
 
@@ -466,6 +474,20 @@ project adheres to
   pg_stat_statements_reset();` once on each monitored instance after
   upgrading for the toggle to take effect on statements already in the
   view. (#364)
+
+- Fix the AI Overview and the server-info AI database analysis
+  rendering blank with no error. The failure appeared when a local
+  reasoning model served the request. Both paths capped their
+  responses at a hardcoded 512 output tokens and ignored the
+  configured `llm.max_tokens` value. A reasoning model counts its
+  thinking tokens against that budget. The model therefore spent
+  the whole budget before emitting any answer text. Both paths now
+  honour `llm.max_tokens`, which defaults to `4096` tokens and
+  previously governed only the streaming chat proxy. A response
+  that carries no text is now reported rather than cached as an
+  empty result. The `GET /api/v1/server-info/{id}/ai-analysis`
+  endpoint returns `502` with a message that names the likely
+  cause. (#399)
 
 ### Removed
 

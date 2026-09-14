@@ -136,6 +136,56 @@ one produces 401s or 403s that look like permission bugs.
 holding a named permission. The gate-ordering tests for mutating
 handlers are described in `rbac-patterns.md`.
 
+## HTTP Handler Tests: Never Point at Unreachable URLs
+
+The analysis paths build a real HTTP client through
+`(*llmproxy.Config).BuildClientOptions`, which sets
+`pgllm.Options.RequestTimeout` from `llm.timeout_seconds`; that setting
+defaults to 120 seconds in `server/src/internal/config/config.go`. A
+handler test that reaches a live provider endpoint, or an address that
+accepts the connection without answering, therefore blocks for up to two
+minutes instead of failing fast, and the cost lands on every `make test`
+and `make coverage` run. A locally refused connection is the benign
+case and returns at once.
+
+Stub the endpoint with `httptest.NewServer` and return a minimal valid
+body. The stubs in `server/src/internal/overview/generator_test.go` and
+`server/src/internal/api/server_info_handlers_test.go` are the patterns
+to copy; both decode the request body, which is also how the
+`max_tokens` assertions described below are made.
+
+When auditing a slow test, look for a base URL set to a literal
+`http://localhost:...` or to a real provider address.
+
+## AI Analysis Paths: Token Budget and Empty Responses
+
+The non-streaming analysis paths, the estate and scoped overview in
+`internal/overview/` and the server-info database analysis in
+`internal/api/server_info_handlers.go`, share two conventions that
+tests must uphold.
+
+The first convention is that no caller hardcodes an output-token
+budget. `(*llmproxy.Config).BuildClientOptions(temperature)` resolves
+the budget internally from `llm.max_tokens` through
+`AnalysisMaxTokens`, falling back to
+`llmproxy.DefaultAnalysisMaxTokens`, which is 4096, when the setting is
+unset, zero or negative. A caller that also stamps `MaxTokens` onto a
+`pgllm.ChatRequest` must read `AnalysisMaxTokens` rather than a local
+constant. Cover the configured, unset and negative cases, and assert
+the value on the wire by decoding `max_tokens` from the request body
+inside the `httptest` stub.
+
+The second convention is that a response carrying no text block, or
+whitespace-only text, is an error rather than an empty summary. Both
+paths return `llmproxy.ErrNoTextContent`, which the server-info handler
+maps to HTTP 502. Reasoning models charge their thinking blocks against
+the same budget as the answer, so this is the shape a starved budget
+produces; reproduce it with a content block of type `"thinking"`, for
+which the library exposes no named constant, or with an empty assistant
+message. The alerter mirrors both conventions in
+`alerter/src/internal/llm/reasoning.go`, using
+`config.DefaultLLMMaxTokens` and its own `ErrNoTextContent`.
+
 ## Linting
 
 Every sub-project runs golangci-lint v2 (`version: "2"` configs; note

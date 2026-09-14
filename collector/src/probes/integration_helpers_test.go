@@ -532,7 +532,8 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			shared_blk_read_time DOUBLE PRECISION,
 			shared_blk_write_time DOUBLE PRECISION,
 			local_blk_read_time DOUBLE PRECISION,
-			local_blk_write_time DOUBLE PRECISION
+			local_blk_write_time DOUBLE PRECISION,
+			stats_reset TIMESTAMPTZ
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_extension (

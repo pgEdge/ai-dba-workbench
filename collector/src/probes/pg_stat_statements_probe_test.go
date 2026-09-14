@@ -38,7 +38,7 @@ func TestPgStatStatementsProbe_Surface(t *testing.T) {
 	}
 	q := p.GetQuery()
 	for _, s := range []string{"queryid", "calls", "total_exec_time",
-		"pg_stat_statements"} {
+		"pg_stat_statements", "NULL::timestamptz AS stats_reset"} {
 		if !strings.Contains(q, s) {
 			t.Errorf("GetQuery missing %q", s)
 		}
@@ -128,9 +128,76 @@ func TestPgStatStatementsProbe_ExecuteWithExtension(t *testing.T) {
 	for _, m := range metrics {
 		m["_database_name"] = "testdb"
 	}
+	// Every row must carry stats_reset, and on a server whose extension
+	// exposes pg_stat_statements_info it must be a real timestamp.
+	hasInfo, err := p.checkHasStatsInfoView(ctx, conn)
+	if err != nil {
+		t.Fatalf("checkHasStatsInfoView: %v", err)
+	}
+	for _, m := range metrics {
+		v, present := m["stats_reset"]
+		if !present {
+			t.Fatal("stats_reset column missing from Execute result")
+		}
+		if hasInfo {
+			if _, isTime := v.(time.Time); !isTime {
+				t.Errorf("stats_reset = %T (%v), want time.Time", v, v)
+			}
+		} else if v != nil {
+			t.Errorf("stats_reset = %v, want NULL without the info view", v)
+		}
+	}
 	if err := p.Store(ctx, conn, 1, time.Now().UTC(),
 		metrics); err != nil {
 		t.Fatalf("Store: %v", err)
+	}
+}
+
+// TestPgStatStatementsProbe_ExecuteWithoutStatsInfoView drives the
+// NULL::timestamptz branch by seeding the feature cache to say the
+// pg_stat_statements_info view is absent, as it is on pg_stat_statements
+// before 1.9, so the query shape for older extensions is exercised on a
+// modern server.
+func TestPgStatStatementsProbe_ExecuteWithoutStatsInfoView(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	p := newPgStatStatementsProbeForTest()
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+	requirePgStatStatementsReadable(t, conn)
+
+	const connName = "stmts-no-info-view"
+	key := featureCacheKey{connectionName: connName,
+		checkName: "pg_stat_statements_info_view"}
+	featureCache.Store(key, false)
+	defer featureCache.Delete(key)
+
+	metrics, err := p.Execute(ctx, connName, conn, pgVersion)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(metrics) == 0 {
+		t.Fatal("expected at least one pg_stat_statements row")
+	}
+	for _, m := range metrics {
+		v, present := m["stats_reset"]
+		if !present {
+			t.Fatal("stats_reset column missing from Execute result")
+		}
+		if v != nil {
+			t.Errorf("stats_reset = %v, want NULL when the info view is absent", v)
+		}
+	}
+}
+
+func TestStatsResetSelect(t *testing.T) {
+	if got := statsResetSelect(true); !strings.Contains(got,
+		"FROM pg_stat_statements_info") ||
+		!strings.HasSuffix(got, "AS stats_reset") {
+		t.Errorf("statsResetSelect(true) = %q", got)
+	}
+	if got := statsResetSelect(false); got != "NULL::timestamptz AS stats_reset" {
+		t.Errorf("statsResetSelect(false) = %q", got)
 	}
 }
 
@@ -150,6 +217,7 @@ func TestPgStatStatementsProbe_StoreSyntheticAndDedup(t *testing.T) {
 
 	// Build three rows: one with NULL queryid (should be skipped), two
 	// with the same uniqueness key (one should be deduped).
+	statsReset := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	common := map[string]any{
 		"_database_name":      testDatabase,
 		"userid":              int64(10),
@@ -173,6 +241,7 @@ func TestPgStatStatementsProbe_StoreSyntheticAndDedup(t *testing.T) {
 		"local_blks_written":  int64(0),
 		"temp_blks_read":      int64(0),
 		"temp_blks_written":   int64(0),
+		"stats_reset":         statsReset,
 	}
 	mkRow := func(queryid any) map[string]any {
 		row := make(map[string]any, len(common)+1)
@@ -218,6 +287,18 @@ func TestPgStatStatementsProbe_StoreSyntheticAndDedup(t *testing.T) {
 	if q100 != 1 {
 		t.Errorf("expected exactly 1 row for queryid=100, got %d",
 			q100)
+	}
+
+	// stats_reset must round-trip through Store unchanged.
+	var storedReset time.Time
+	if err := conn.QueryRow(ctx, `
+		SELECT stats_reset FROM metrics.pg_stat_statements
+		WHERE connection_id = $1 AND database_name = $2 AND queryid = 99
+	`, testConnID, testDatabase).Scan(&storedReset); err != nil {
+		t.Fatalf("read stats_reset: %v", err)
+	}
+	if !storedReset.Equal(statsReset) {
+		t.Errorf("stats_reset = %v, want %v", storedReset, statsReset)
 	}
 
 	// Calling Store with only NULL queryid rows must short-circuit
@@ -273,5 +354,21 @@ func TestPgStatStatementsProbe_CheckColumnHelpers(t *testing.T) {
 	}
 	if _, err := p.checkHasBlkReadTime(ctx, conn); err != nil {
 		t.Errorf("checkHasBlkReadTime: %v", err)
+	}
+
+	// The info-view check must agree with the catalog: the view exists
+	// exactly when the installed extension is 1.9 or later.
+	hasInfo, err := p.checkHasStatsInfoView(ctx, conn)
+	if err != nil {
+		t.Fatalf("checkHasStatsInfoView: %v", err)
+	}
+	var want bool
+	if err := conn.QueryRow(ctx,
+		`SELECT to_regclass('pg_stat_statements_info') IS NOT NULL`,
+	).Scan(&want); err != nil {
+		t.Fatalf("to_regclass: %v", err)
+	}
+	if hasInfo != want {
+		t.Errorf("checkHasStatsInfoView = %v, catalog says %v", hasInfo, want)
 	}
 }

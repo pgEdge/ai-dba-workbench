@@ -139,12 +139,13 @@ export function buildTooltip(show: boolean): object {
 
             const lines = list.map((p) => {
                 let val: string;
-                if (p.value === null || p.value === undefined
-                    || (typeof p.value === 'number'
-                        && Number.isNaN(p.value))) {
+                if (p.value === null || p.value === undefined) {
                     val = NO_VALUE_LABEL;
                 } else if (typeof p.value === 'number') {
-                    val = formatNumericValue(p.value);
+                    // NaN and +/-Infinity carry no reading either.
+                    val = isFiniteNumber(p.value)
+                        ? formatNumericValue(p.value)
+                        : NO_VALUE_LABEL;
                 } else {
                     val = String(p.value);
                 }

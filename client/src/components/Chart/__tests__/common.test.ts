@@ -562,7 +562,7 @@ describe('buildTooltip formatter', () => {
         expect(html).toContain('Status: online');
     });
 
-    it('labels a null, undefined or NaN value as no data', () => {
+    it('labels a null, undefined or non-finite value as no data', () => {
         const tooltip = buildTooltip(true) as TooltipOpts;
         const html = tooltip.formatter([
             {
@@ -586,6 +586,18 @@ describe('buildTooltip formatter', () => {
             {
                 axisValue: '2026-04-20T14:05:06Z',
                 marker: '*',
+                seriesName: 'Up',
+                value: Infinity,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
+                seriesName: 'Down',
+                value: -Infinity,
+            },
+            {
+                axisValue: '2026-04-20T14:05:06Z',
+                marker: '*',
                 seriesName: 'CPU',
                 value: 42,
             },
@@ -593,9 +605,12 @@ describe('buildTooltip formatter', () => {
         expect(html).toContain('Gap: no data');
         expect(html).toContain('Missing: no data');
         expect(html).toContain('Bad: no data');
+        expect(html).toContain('Up: no data');
+        expect(html).toContain('Down: no data');
         expect(html).toContain('CPU: 42');
         expect(html).not.toContain('null');
         expect(html).not.toContain('NaN');
+        expect(html).not.toContain('Infinity');
         expect(html).not.toContain('undefined');
     });
 });

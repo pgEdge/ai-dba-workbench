@@ -17,9 +17,10 @@ BINARY := ai-dba-alerter
 
 # Minimum acceptable total statement coverage, in percent; the coverage
 # target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
-# this default is pinned just below the total measured on 11 September
-# 2026 so the gate holds the line today, and it should be raised towards
-# 90 as coverage grows. Override for local experiments with
+# this default is pinned just below the total measured on 14 September
+# 2026 (70.9%, lifted from 70.0% by the issue #407 tests) so the gate
+# holds the line today, and it should be raised towards 90 as coverage
+# grows. Override for local experiments with
 # `make coverage COVERAGE_MIN=80`.
 COVERAGE_MIN ?= 70
 

@@ -117,7 +117,9 @@ monitoring:
 The slot retention rules evaluate the maximum retained
 WAL across all replication slots on a server; the
 alerter fires a rule when any single slot retains more
-WAL than the threshold permits.
+WAL than the threshold permits. Both rules read only
+samples collected in the last 15 minutes, so neither
+rule fires on stale data after a collector stops.
 
 ## Hierarchical Overrides
 
@@ -280,6 +282,17 @@ cleaner worker runs every 30 seconds and re-evaluates
 active alerts. When a metric value no longer violates
 the threshold, the alerter marks the alert as `cleared`
 and records the `cleared_at` timestamp.
+
+Missing data is not treated as a resolved condition. Where
+a metric reports a value for every monitored connection,
+such as a CPU percentage or a cache hit ratio, a
+connection that stops returning a value has stopped
+reporting rather than recovered, so the alerter leaves the
+alert active and the `metric_staleness` rule reports the
+probe that stopped. Where a metric reports only whilst the
+condition holds, such as an inactive replication slot or a
+blocked session, the absence of a value is the recovery
+signal and the alerter clears the alert.
 
 ## Blackout Interaction
 

@@ -40,6 +40,21 @@ type metricQueryConfig struct {
 	historicalSQL  string
 	scan           scanType
 	historicalScan historicalScanType
+
+	// clearWhenAbsent tells the alert cleaner what a missing row means.
+	//
+	// Some latest queries emit a row for every healthy connection (a CPU
+	// percentage, a per-hour checkpoint count, a cache hit ratio) so a
+	// connection that vanishes from the result set has stopped reporting,
+	// not recovered; the cleaner must leave its alert active and let the
+	// metric_staleness rule say why. Other queries emit a row only while
+	// the condition holds (a disconnected standby, a blocked backend, an
+	// inactive slot), or describe an object that can legitimately be
+	// dropped (a replication slot, a standby); for those a missing row is
+	// the recovery signal and the cleaner must clear the alert. Set this
+	// to true only for the second kind, and say why on the entry. See
+	// GitHub issue #407.
+	clearWhenAbsent bool
 }
 
 // cpuBusyPercentExpr is the SQL expression that derives a portable CPU
@@ -185,6 +200,11 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// A primary with no connected standby has no pg_stat_replication row,
+	// so a missing row means the standby has gone (decommissioned or
+	// disconnected, which pg_stat_replication.standby_disconnected reports
+	// separately) rather than that lag data has stopped arriving; the lag
+	// alert clears. See GitHub issue #407.
 	"pg_stat_replication.replay_lag_seconds": {
 		latestSQL: `
 			SELECT connection_id,
@@ -194,9 +214,10 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE collected_at > NOW() - INTERVAL '5 minutes'
 			  AND replay_lsn_timestamp IS NOT NULL
 		`,
-		historicalSQL:  "",
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		historicalSQL:   "",
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_replication.lag_bytes": {
@@ -222,6 +243,9 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Same reasoning as replay_lag_seconds: no row means no standby,
+		// so the lag alert clears. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_replication_slots.retained_bytes": {
@@ -249,13 +273,25 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Dropping every replication slot is the operator's usual remedy
+		// for runaway WAL retention, and it leaves the probe with nothing
+		// to store, so a missing row is the recovery signal. See GitHub
+		// issue #407.
+		clearWhenAbsent: true,
 	},
 
 	// pg_replication_slots.inactive emits a single row per connection with
 	// value=1 whenever the most recent sample for at least one replication
-	// slot recorded in the last five minutes has active=false. No row is
+	// slot recorded in the last fifteen minutes has active=false. No row is
 	// emitted for connections whose slots are all currently active, which
-	// clears the matching `==` alert as soon as every slot recovers.
+	// clears the matching `==` alert as soon as every slot recovers; that
+	// is why the entry is clearWhenAbsent.
+	//
+	// The window is three times the probe's 300 second interval. It was
+	// five minutes, exactly one interval, so a single late collection
+	// emptied it, the cleaner read the empty result as recovery, and the
+	// critical replication_slot_inactive alert cleared and re-fired on the
+	// next sample. See GitHub issue #407.
 	//
 	// The latest-sample-per-slot reduction is essential: without it, a slot
 	// that was inactive at t-4m but active at t-1m would still match the
@@ -278,7 +314,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				SELECT DISTINCT ON (connection_id, slot_name)
 				       connection_id, slot_name, active, collected_at
 				FROM metrics.pg_replication_slots
-				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				ORDER BY connection_id, slot_name, collected_at DESC
 			)
 			SELECT connection_id,
@@ -288,9 +324,10 @@ var metricRegistry = map[string]metricQueryConfig{
 			WHERE active = false
 			GROUP BY connection_id
 		`,
-		historicalSQL:  "",
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		historicalSQL:   "",
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
 	},
 
 	// pg_replication_slots.inactive_count counts replication slots that
@@ -298,11 +335,20 @@ var metricRegistry = map[string]metricQueryConfig{
 	// for each connection. The COUNT(*) FILTER aggregate yields zero when
 	// every slot is active (the alert clears) and the inactive count when
 	// any slot has dropped its WAL receiver.
+	//
+	// The latest CTE only considers samples from the last fifteen minutes
+	// (three 300 second probe intervals). Without the cutoff the newest
+	// sample was whatever the table still held, so once the collector
+	// stopped, or the connection stopped being monitored, the alert kept
+	// firing on days-old data until retention purged the partition. A
+	// connection whose slots have all been dropped stores no rows, so the
+	// entry is clearWhenAbsent. See GitHub issue #407.
 	"pg_replication_slots.inactive_count": {
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
 				  FROM metrics.pg_replication_slots
+				 WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				 GROUP BY connection_id
 			)
 			SELECT s.connection_id,
@@ -312,6 +358,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			  JOIN latest l
 			    ON s.connection_id = l.connection_id
 			   AND s.collected_at  = l.collected_at
+			 WHERE s.collected_at > NOW() - INTERVAL '15 minutes'
 			 GROUP BY s.connection_id, l.collected_at
 		`,
 		historicalSQL: `
@@ -325,8 +372,9 @@ var metricRegistry = map[string]metricQueryConfig{
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
 	},
 
 	// pg_replication_slots.max_retained_bytes returns the maximum
@@ -335,11 +383,16 @@ var metricRegistry = map[string]metricQueryConfig{
 	// to handle WAL retention values larger than int64; the cast to float
 	// is safe for the threshold ranges the operator-facing alert rules
 	// configure (1 GiB warning, 10 GiB critical).
+	//
+	// The fifteen minute cutoff on the latest CTE and the clearWhenAbsent
+	// flag are there for the reasons given on inactive_count above. See
+	// GitHub issue #407.
 	"pg_replication_slots.max_retained_bytes": {
 		latestSQL: `
 			WITH latest AS (
 				SELECT connection_id, MAX(collected_at) AS collected_at
 				  FROM metrics.pg_replication_slots
+				 WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				 GROUP BY connection_id
 			)
 			SELECT s.connection_id,
@@ -349,6 +402,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			  JOIN latest l
 			    ON s.connection_id = l.connection_id
 			   AND s.collected_at  = l.collected_at
+			 WHERE s.collected_at > NOW() - INTERVAL '15 minutes'
 			 GROUP BY s.connection_id, l.collected_at
 		`,
 		historicalSQL: `
@@ -362,8 +416,9 @@ var metricRegistry = map[string]metricQueryConfig{
 			 GROUP BY s.connection_id, s.collected_at
 			 ORDER BY s.connection_id, s.collected_at
 		`,
-		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
+		scan:            scanBasic,
+		historicalScan:  historicalScanBasic,
+		clearWhenAbsent: true,
 	},
 
 	// spock_exception_log.recent_count counts rows in the latest
@@ -411,6 +466,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The probe short-circuits Store on an empty result, so a connection
+		// with no recent exceptions has no fresh sample and the query emits no
+		// row: absence is how the alert clears. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	// spock_resolutions.recent_count mirrors spock_exception_log.recent_count
@@ -452,6 +511,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// As for spock_exception_log.recent_count: no fresh sample means no
+		// recent resolutions, so absence clears the alert. See GitHub issue
+		// #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_replication.standby_disconnected": {
@@ -475,6 +538,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The query emits a row only while receiver_status is NULL, so a
+		// reconnected standby produces no row and the alert must clear on
+		// absence. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_node_role.subscription_worker_down": {
@@ -499,6 +566,9 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The query emits a row only while a subscription worker is down, so
+		// absence is the recovery signal. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_activity.blocked_count": {
@@ -529,6 +599,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// The COUNT runs over lock waiters only, so a connection with no
+		// blocked backends emits no row; absence means nothing is blocked. See
+		// GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_activity.idle_in_transaction_seconds": {
@@ -562,6 +636,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some backend is idle in transaction, so a
+		// connection with none emits no row and the alert clears on absence.
+		// See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_activity.max_lock_wait_seconds": {
@@ -584,6 +662,9 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some backend waits on a lock, so absence means
+		// nothing is waiting and the alert clears. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_activity.max_query_duration_seconds": {
@@ -617,6 +698,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some client backend is running a query, so an
+		// idle server emits no row; the long-running query has finished and
+		// the alert clears on absence. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_activity.max_xact_duration_seconds": {
@@ -648,6 +733,10 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
+		// Rows exist only while some client backend has an open transaction,
+		// so absence means the long transaction has ended and the alert clears.
+		// See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 
 	"pg_stat_all_tables.dead_tuple_percent": {
@@ -769,6 +858,19 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanBasic,
 	},
 
+	// The latest query reduces to the newest qualifying delta (at least
+	// 10000 blocks moved) per connection and database. It used to return
+	// every delta row in the fifteen minute window, about three per
+	// database at the 300 second probe interval, with no ORDER BY. The
+	// evaluator fires when any row violates whilst the cleaner stops at
+	// the first row for the alert, so the same data could fire and clear
+	// the alert in one cycle (violation in the newest interval) or latch
+	// it (violation in the oldest). DISTINCT ON ... ORDER BY collected_at
+	// DESC makes both sides read one value, the most recent. A database
+	// that moved fewer than 10000 blocks in every interval emits no row:
+	// its ratio is unmeasurable rather than healthy, so the entry is not
+	// clearWhenAbsent and an alert waits for the next busy interval. See
+	// GitHub issue #407.
 	"pg_stat_database.cache_hit_ratio": {
 		latestSQL: `
 			WITH db_blocks AS (
@@ -800,7 +902,8 @@ var metricRegistry = map[string]metricQueryConfig{
 				WHERE prev_blks_hit IS NOT NULL
 				  AND (blks_hit - prev_blks_hit + blks_read - prev_blks_read) >= 10000
 			)
-			SELECT connection_id,
+			SELECT DISTINCT ON (connection_id, database_name)
+			       connection_id,
 			       database_name,
 			       CASE
 			           WHEN (delta_hit + delta_read) > 0
@@ -809,6 +912,7 @@ var metricRegistry = map[string]metricQueryConfig{
 			       END as value,
 			       collected_at
 			FROM deltas
+			ORDER BY connection_id, database_name, collected_at DESC
 		`,
 		historicalSQL: `
 			WITH db_blocks AS (
@@ -996,28 +1100,77 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanWithDBAndSamples,
 	},
 
+	// The value is the number of queryids whose mean execution time over
+	// the most recent probe interval exceeded 1000 ms. The query used to
+	// test pg_stat_statements.mean_exec_time, which is a lifetime average
+	// since the last pg_stat_statements_reset(): a query that ran slowly
+	// once kept the count elevated for ever, whether or not it ran again,
+	// and the alert cleared only on a manual stats reset or eviction.
+	//
+	// The interval mean is delta(total_exec_time) / delta(calls) between
+	// the newest sample in the fifteen minute window (three samples at the
+	// 300 second probe interval) and the sample before it. The LAG runs
+	// within each statement identity (queryid plus userid, dbid and
+	// toplevel, the table's key), because each identity is its own
+	// counter that a reset can zero independently and differencing across
+	// them subtracts one identity's counter from another's. An identity
+	// whose calls did not increase contributes nothing, which skips
+	// statements that never ran in the interval and statements whose
+	// counters were reset (calls fell), and a queryid with no executing
+	// identity has a NULL mean that the FILTER does not count. COUNT(*)
+	// FILTER over every queryid seen in the newest samples means a
+	// database with statements but no slow ones reports 0 rather than
+	// disappearing from the result set. See GitHub issue #407.
 	"pg_stat_statements.slow_query_count": {
 		latestSQL: `
-			WITH recent_statements AS (
+			WITH samples AS (
 				SELECT connection_id,
 				       database_name,
 				       queryid,
-				       mean_exec_time,
+				       calls,
+				       total_exec_time,
 				       collected_at,
+				       LAG(calls) OVER identity as prev_calls,
+				       LAG(total_exec_time) OVER identity as prev_total_exec_time,
 				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name, queryid
+				           PARTITION BY connection_id, database_name, queryid,
+				                        userid, dbid, toplevel
 				           ORDER BY collected_at DESC
 				       ) as rn
 				FROM metrics.pg_stat_statements
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WINDOW identity AS (
+				    PARTITION BY connection_id, database_name, queryid,
+				                 userid, dbid, toplevel
+				    ORDER BY collected_at
+				)
+			),
+			newest AS (
+				SELECT connection_id,
+				       database_name,
+				       queryid,
+				       collected_at,
+				       CASE WHEN calls > prev_calls
+				            THEN calls - prev_calls END as delta_calls,
+				       CASE WHEN calls > prev_calls
+				            THEN total_exec_time - prev_total_exec_time END as delta_exec_time
+				FROM samples
+				WHERE rn = 1
+			),
+			per_query AS (
+				SELECT connection_id,
+				       database_name,
+				       queryid,
+				       SUM(delta_exec_time) / NULLIF(SUM(delta_calls), 0) as interval_mean_ms,
+				       MAX(collected_at) as collected_at
+				FROM newest
+				GROUP BY connection_id, database_name, queryid
 			)
 			SELECT connection_id,
 			       database_name,
-			       COUNT(*)::float as value,
+			       COUNT(*) FILTER (WHERE interval_mean_ms > 1000)::float as value,
 			       MAX(collected_at) as collected_at
-			FROM recent_statements
-			WHERE rn = 1
-			  AND mean_exec_time > 1000
+			FROM per_query
 			GROUP BY connection_id, database_name
 		`,
 		historicalSQL:  "",
@@ -1278,5 +1431,9 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalSQL:  "",
 		scan:           scanWithDBObject,
 		historicalScan: historicalScanBasic,
+		// The exceeding CTE keeps only tables whose dead tuples are over the
+		// autovacuum threshold, so once autovacuum has caught up the database
+		// emits no row; absence is the recovery signal. See GitHub issue #407.
+		clearWhenAbsent: true,
 	},
 }

@@ -11,6 +11,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -529,23 +530,27 @@ func TestMetricRegistry_PgReplicationSlotsInactive_DeduplicatesSlots(t *testing.
 }
 
 // TestMetricRegistry_PgReplicationSlotsInactive_StaleSampleExcluded
-// verifies that the 5-minute freshness cutoff excludes inactive slots
-// whose sample is older than the cutoff. A stale connection (sample
-// outside the cutoff) is paired with a fresh connection (sample inside
-// the cutoff) so the query exercises the success path; the assertion
-// then proves the stale connection is absent and the fresh connection
-// is present.
+// verifies the fifteen minute freshness cutoff on
+// pg_replication_slots.inactive. A connection whose only inactive-slot
+// sample is 16 minutes old must not appear; one whose sample is 10
+// minutes old, older than the 5 minute window the metric used before
+// #407 but well inside the widened one, must still report value=1. The
+// probe runs every 300 seconds, so a window of exactly one interval
+// emptied whenever a collection ran late and the critical alert flapped.
 func TestMetricRegistry_PgReplicationSlotsInactive_StaleSampleExcluded(t *testing.T) {
 	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	staleConnID := insertConnection(t, pool, "slot-inactive-stale")
+	lateConnID := insertConnection(t, pool, "slot-inactive-late")
 	freshConnID := insertConnection(t, pool, "slot-inactive-fresh")
 
-	stale := time.Now().UTC().Add(-6 * time.Minute)
+	stale := time.Now().UTC().Add(-16 * time.Minute)
+	late := time.Now().UTC().Add(-10 * time.Minute)
 	fresh := time.Now().UTC().Add(-1 * time.Minute)
 	insertReplicationSlotRow(t, pool, staleConnID, stale, "slot_a", false, 100)
+	insertReplicationSlotRow(t, pool, lateConnID, late, "slot_a", false, 100)
 	insertReplicationSlotRow(t, pool, freshConnID, fresh, "slot_a", false, 100)
 
 	results, err := ds.GetLatestMetricValues(ctx, "pg_replication_slots.inactive")
@@ -554,31 +559,77 @@ func TestMetricRegistry_PgReplicationSlotsInactive_StaleSampleExcluded(t *testin
 			"returned unexpected error: %v", err)
 	}
 
-	var sawFresh bool
+	seen := map[int]float64{}
 	for _, mv := range results {
-		switch mv.ConnectionID {
-		case staleConnID:
-			t.Errorf("pg_replication_slots.inactive returned a value "+
-				"for stale connection %d whose only sample (at %s) was "+
-				"outside the 5-minute freshness cutoff: got value %v",
-				staleConnID, stale.Format(time.RFC3339), mv.Value)
-		case freshConnID:
-			sawFresh = true
-			if mv.Value != 1 {
-				t.Errorf("pg_replication_slots.inactive value for fresh "+
-					"connection %d = %v; want 1",
-					freshConnID, mv.Value)
-			}
-		default:
-			t.Errorf("pg_replication_slots.inactive returned an "+
-				"unexpected connection_id=%d (value %v); only the fresh "+
-				"connection (%d) should appear in the result set",
-				mv.ConnectionID, mv.Value, freshConnID)
+		seen[mv.ConnectionID] = mv.Value
+	}
+	if v, ok := seen[staleConnID]; ok {
+		t.Errorf("pg_replication_slots.inactive returned value %v for stale "+
+			"connection %d whose only sample (at %s) was outside the "+
+			"15-minute freshness cutoff", v, staleConnID, stale.Format(time.RFC3339))
+	}
+	for _, id := range []int{lateConnID, freshConnID} {
+		if v, ok := seen[id]; !ok || v != 1 {
+			t.Errorf("pg_replication_slots.inactive for connection %d = %v "+
+				"(present=%v); want 1", id, v, ok)
 		}
 	}
-	if !sawFresh {
-		t.Errorf("pg_replication_slots.inactive did not return the "+
-			"fresh connection %d; results=%+v", freshConnID, results)
+	if len(seen) != 2 {
+		t.Errorf("pg_replication_slots.inactive returned %d connections; want 2: %+v",
+			len(seen), results)
+	}
+}
+
+// TestMetricRegistry_PgReplicationSlots_StaleSampleExcluded verifies that
+// inactive_count and max_retained_bytes ignore samples older than fifteen
+// minutes. Before #407 neither had a cutoff, so once the collector stopped
+// (or the connection stopped being monitored) the retention alerts fired
+// on the last sample the table held until retention purged it. A
+// connection with only a stale sample must be absent; when no connection
+// has a fresh sample the query returns ErrNoMetricData.
+func TestMetricRegistry_PgReplicationSlots_StaleSampleExcluded(t *testing.T) {
+	ds, pool, cleanup := newMetricRegistryTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	staleConnID := insertConnection(t, pool, "slot-stale-only")
+	stale := time.Now().UTC().Add(-16 * time.Minute)
+	const twoGiB = int64(2) * 1024 * 1024 * 1024
+	insertReplicationSlotRow(t, pool, staleConnID, stale, "slot_a", false, twoGiB)
+
+	for _, metric := range []string{
+		"pg_replication_slots.inactive_count",
+		"pg_replication_slots.max_retained_bytes",
+	} {
+		if _, err := ds.GetLatestMetricValues(ctx, metric); !errors.Is(err, ErrNoMetricData) {
+			t.Errorf("GetLatestMetricValues(%s) with only a 16-minute-old sample: "+
+				"err = %v, want ErrNoMetricData", metric, err)
+		}
+	}
+
+	// A fresh connection alongside the stale one: only the fresh one
+	// appears, and its value comes from its own newest sample.
+	freshConnID := insertConnection(t, pool, "slot-fresh")
+	fresh := time.Now().UTC().Add(-1 * time.Minute)
+	insertReplicationSlotRow(t, pool, freshConnID, fresh, "slot_a", true, 100)
+	insertReplicationSlotRow(t, pool, freshConnID, fresh, "slot_b", false, 300)
+
+	want := map[string]float64{
+		"pg_replication_slots.inactive_count":     1,
+		"pg_replication_slots.max_retained_bytes": 300,
+	}
+	for metric, wantValue := range want {
+		results, err := ds.GetLatestMetricValues(ctx, metric)
+		if err != nil {
+			t.Fatalf("GetLatestMetricValues(%s) failed: %v", metric, err)
+		}
+		if len(results) != 1 || results[0].ConnectionID != freshConnID {
+			t.Errorf("%s returned %+v; want only connection %d", metric, results, freshConnID)
+			continue
+		}
+		if results[0].Value != wantValue {
+			t.Errorf("%s = %v; want %v", metric, results[0].Value, wantValue)
+		}
 	}
 }
 

@@ -125,10 +125,8 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	values, err := e.datastore.GetLatestMetricValues(ctx, *alert.MetricName)
 	if err != nil {
 		if errors.Is(err, database.ErrNoMetricData) {
-			// The query ran and reported nothing for any connection —
-			// the condition no longer exists (e.g. all values filtered
-			// out), so clear
-			e.clearResolvedAlert(ctx, alert, 0)
+			// The query ran and reported nothing for any connection.
+			e.resolveAbsentMetric(ctx, alert, "no connection reports it")
 			return
 		}
 		// The metric could not be evaluated at all: either it has no
@@ -160,8 +158,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	}
 
 	if !found {
-		// Metric no longer reports for this connection/database — clear
-		e.clearResolvedAlert(ctx, alert, 0)
+		e.resolveAbsentMetric(ctx, alert, "no row for this connection and database")
 		return
 	}
 
@@ -201,6 +198,24 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 	e.debugLog("Probe %s on connection %d is no longer reported; clearing alert %d",
 		*alert.ProbeName, alert.ConnectionID, alert.ID)
 	e.clearResolvedAlert(ctx, alert, 0)
+}
+
+// resolveAbsentMetric decides what to do with an active alert whose metric
+// returned no row for it. A missing row is only a recovery signal for
+// metrics whose query goes quiet when the condition ends or whose subject
+// can legitimately disappear (the registry marks those clearWhenAbsent);
+// for every other metric it means the data has stopped arriving, and
+// clearing on it made alerts flap or resolve falsely whenever a probe ran
+// late or a collector stopped. Those alerts stay active until fresh data
+// shows the condition has ended, and the metric_staleness rule reports
+// the stalled probe. See GitHub issue #407.
+func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert, reason string) {
+	if e.datastore.MetricClearsWhenAbsent(*alert.MetricName) {
+		e.clearResolvedAlert(ctx, alert, 0)
+		return
+	}
+	e.debugLog("Metric %s has no current value for alert %d (%s); leaving it active until data returns",
+		*alert.MetricName, alert.ID, reason)
 }
 
 // clearResolvedAlert clears an alert and queues a notification

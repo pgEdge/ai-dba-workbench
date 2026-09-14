@@ -146,6 +146,15 @@ extension.
 A high slow query count indicates performance problems
 that should be investigated.
 
+The alerter counts the queries whose mean execution time
+over the most recent probe interval exceeded 1000 ms. It
+derives that mean from the change in total execution time
+divided by the change in call count between the two most
+recent samples, so a query counts only whilst it is
+actually running slowly. A query that ran slowly once no
+longer keeps the count elevated after the query stops
+running.
+
 ## Replication Rules
 
 ### High Replication Lag (Time)
@@ -193,6 +202,10 @@ inactive.
 Inactive replication slots prevent WAL cleanup and can
 cause disk exhaustion. Drop unused slots or reconnect
 the subscriber.
+
+The alerter reads the most recent sample for each slot
+recorded in the last 15 minutes, so a single late
+collection does not clear the alert.
 
 ### High Replication Slot WAL Retention
 
@@ -385,6 +398,12 @@ delta-based approach reflects recent performance rather
 than cumulative counters. The alerter excludes databases
 with fewer than 10,000 total block operations in an
 interval to avoid noise from idle databases.
+
+Both the threshold evaluator and the alert cleaner read
+the most recent interval that meets the 10,000 block
+minimum, so the two always compare the same value. A
+database that goes idle leaves an existing alert active
+until a busier interval measures the ratio again.
 
 ### Deadlocks Detected
 

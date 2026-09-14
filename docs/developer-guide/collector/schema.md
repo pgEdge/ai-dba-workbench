@@ -256,12 +256,22 @@ CREATE TABLE metrics.pg_stat_activity (
     backend_xid TEXT,
     backend_xmin TEXT,
     query TEXT,
+    query_id BIGINT,
     backend_type TEXT
 ) PARTITION BY RANGE (collected_at);
 ```
 
 The columns map directly to `pg_stat_activity` view
 columns, plus `connection_id` and `collected_at`.
+
+Schema migration 10 adds the `query_id` column, which
+joins an activity sample to the matching `queryid` in
+`metrics.pg_stat_statements`. PostgreSQL adds the
+underlying column in release 14 and populates it only
+whilst `compute_query_id` is on, so the column is
+null for idle backends and for every row collected
+from a server that predates release 14 or runs with
+that setting off.
 
 ### Example: pg_stat_database
 

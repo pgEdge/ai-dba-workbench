@@ -71,6 +71,14 @@ export interface TopQueryRow {
     shared_blks_hit: number;
     shared_blks_read: number;
     database_name: string;
+    /**
+     * Last observed client, from the pg_stat_activity snapshot join;
+     * each is null when the client was never observed. Optional
+     * because this section does not render them.
+     */
+    client_addr?: string | null;
+    client_hostname?: string | null;
+    client_observed_at?: string | null;
 }
 
 /** The groupings supported by the connection-groups endpoint */

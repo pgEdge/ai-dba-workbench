@@ -97,7 +97,10 @@ CREATE TABLE metrics.pg_stat_activity (
     datid          oid,
     datname        text,
     usesysid       oid,
-    usename        text
+    usename        text,
+    client_addr    inet,
+    client_hostname text,
+    query_id       bigint
 );
 `
 

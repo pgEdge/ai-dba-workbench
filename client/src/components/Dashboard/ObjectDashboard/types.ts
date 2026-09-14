@@ -74,6 +74,23 @@ export interface QueryDetailData {
      * collector could not resolve the role OID to a name.
      */
     username: string;
+    /**
+     * Client address seen running the statement in the most recent
+     * pg_stat_activity snapshot that caught it in flight. A backend
+     * connected over a Unix-domain socket is reported as 'local',
+     * since it has no network address; use `client_observed_at`,
+     * rather than this field, to tell whether the query was ever
+     * observed in flight at all.
+     */
+    client_addr: string | null;
+    /** Resolved client hostname, when the server had one. */
+    client_hostname: string | null;
+    /**
+     * RFC 3339 time of the snapshot in which the client was seen;
+     * null if and only if no snapshot ever caught the query in
+     * flight.
+     */
+    client_observed_at: string | null;
 }
 
 /**

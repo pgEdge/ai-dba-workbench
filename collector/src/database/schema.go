@@ -3188,6 +3188,32 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #10: Add query_id to the activity metrics so an activity
+	// sample can be joined to metrics.pg_stat_statements.queryid, which is
+	// what lets the server attribute a client address to a query (GitHub
+	// issue #384). The column lands on the partitioned parent table;
+	// PostgreSQL 14-18 propagate ADD COLUMN to existing and future
+	// partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     10,
+		Description: "Add query_id column to activity metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_stat_activity
+					ADD COLUMN IF NOT EXISTS query_id BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_stat_activity.query_id IS
+					'pg_stat_activity.query_id of the statement the backend was running when sampled. NULL on servers before PostgreSQL 14, where the column does not exist, where compute_query_id is off, and for idle backends. It is the join key to metrics.pg_stat_statements.queryid, and because pg_stat_activity is a point-in-time view the association is best-effort: only statements in flight at sample time are captured.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add query_id column to activity metrics: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -122,6 +122,19 @@ project adheres to
   one must now be a 64-bit integer; any other value is rejected
   with a `400` instead of matching nothing. (#350)
 
+- Add `_pct` and `_sessions` derived metrics to the metrics query
+  API (`GET /api/v1/metrics/query`). A metric named `<column>_pct`
+  reports the share of wall-clock time that a cumulative millisecond
+  column such as `blk_read_time` advanced by, and `<column>_sessions`
+  reports the average number of sessions in a state from the
+  `session_time`, `active_time` and `idle_in_transaction_time` columns
+  of `pg_stat_database`. Each series in the response now carries a
+  `unit` field (`/s`, `ms`, `%`, `sessions` or empty). The collector
+  records `pg_stat_statements_info.stats_reset` in a new
+  `stats_reset` column of the `pg_stat_statements` probe where the
+  extension is version 1.9 or later, as shipped with PostgreSQL 14;
+  the column is added by collector schema migration 10. (#402)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a
@@ -183,6 +196,23 @@ project adheres to
   not collect now shows the error the server returned instead of a
   generic "No data" message, and a bar or area chart whose values are
   all zero no longer draws a y-axis running below zero. (#400)
+
+- Make the `value` of a data point in the metrics query response
+  nullable, and emit every time bucket in every series so that all
+  series in a response share the same bucket times. A bucket is
+  `null` when two consecutive samples are more than three collection
+  intervals apart, when a probe's `stats_reset` marker changed between
+  them, or, for a raw column, when the last observed value is more
+  than three collection intervals old; a rate or delta series no
+  longer repeats a stale value into an empty bucket. The requested
+  bucket count is clamped so that no bucket is narrower than the
+  probe's collection interval. The `pg_sys_network_info` probe leaves
+  the `lo` and `lo0` loopback interfaces out of every query. A
+  `_per_sec` request on a column that is not a cumulative counter,
+  such as a gauge or `mean_exec_time`, is now rejected with HTTP 400
+  and a message naming the column's kind, rather than returning a
+  meaningless series. The dashboards draw a `null` bucket as a break
+  in a line or a missing bar. (#402)
 
 ### Fixed
 

@@ -234,10 +234,11 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const txnKpi = useMetrics(txnKpiParams);
     // The server-wide cache hit ratio comes from the performance
     // summary, where the server differences the block counters per
-    // database before summing them (issue #401). Requesting the
-    // blks_*_per_sec derived metrics without a database would sum the
-    // counters across databases first, so a database created or
-    // dropped inside the window would corrupt the interval's delta.
+    // database before summing them and computes the ratio from the
+    // summed deltas (issue #401). Building it client-side from two
+    // separate blks_*_per_sec series would divide one already-averaged
+    // rate by another, so the ratio is taken from the endpoint that
+    // computes it in one pass.
     const cacheKpi = useServerCacheHit(connectionId, timeRange, refreshTrigger);
     const tempKpi = useMetrics(tempKpiParams);
 

@@ -255,13 +255,18 @@ the registration every fixture column is a gauge and the fixture's
 
 `BuildDerivedMetricsQuery` builds the derived SQL. It shares the bucketing,
 gap-filling (`generate_series`), filtering, and `$N` argument layout of
-`BuildMetricsQuery`, so the caller scans and applies LOCF identically for
-raw and derived series; it additionally takes the probe's entity-key
-columns (see below). Per-second base columns must stay validated against
-the discovered column set and `QuoteIdentifier`-wrapped; never interpolate a
-caller-supplied metric name that has not passed `classifyMetrics`. Negative
-counter deltas (resets/restarts) and non-positive elapsed times are dropped
-to NULL so they never yield a bogus rate.
+`BuildMetricsQuery`, so the caller scans raw and derived series with the
+same `scanSeriesRows`; it additionally takes the probe's entity-key
+columns (see below), the probe's full column list from
+`GetProbeAllColumns` (so it can tell whether a registered reset marker is
+actually present), and a `maxElapsed` gap bound, which it binds as one
+extra trailing argument after the filter values (only when a
+counter-derived metric is requested; a ratio-only query binds nothing,
+because PostgreSQL rejects an argument no placeholder uses). Per-second
+base columns must stay validated against the discovered column set and
+`QuoteIdentifier`-wrapped; never interpolate a caller-supplied metric name
+that has not passed `classifyMetrics`. The per-sample guards are described
+under "Reset guard, gap rejection, bucket clamp and fill policy" below.
 
 `DerivedPerSec`, `DerivedTimeShare`, `DerivedSessionAverage` and
 `DerivedDelta` share one `rate_samples`/`rate_buckets` CTE pair, since all
@@ -277,21 +282,24 @@ rules are specific to deltas and must not be "tidied away":
   parameter is deliberately ignored, because averaging or taking the last of
   a set of increments under-reports the events in the bucket. A reset or the
   first sample of the window yields 0 rather than NULL, so the bucket SUM
-  stays defined whenever the bucket holds any sample.
+  stays defined whenever the bucket holds any accepted sample; only an
+  interval rejected by the gap bound is NULL (see below).
 - The final SELECT wraps each delta in `COALESCE(..., 0)` after the LEFT
-  JOIN, so a bucket with no sample reads 0. Leaving it NULL would hand it to
-  `scanSeriesRows`'s LOCF fill, which would repeat the previous bucket's
-  increase even though the events of the sample-less bucket are already
-  counted by the next sample's delta: a double count. The COALESCE is
-  gated on `EXISTS (SELECT 1 FROM rate_samples)`, i.e. on the window
-  holding at least one in-window sample (the borrowed pre-window sample is
-  already excluded from `rate_samples`). Without the gate a connection
-  whose probe never ran, is disabled or is failing produced 151 zero
-  points and a confident flat-zero chart or a "0 B" KPI where the raw
+  JOIN, so a bucket with no sample reads 0: a sample-less bucket saw no
+  counter reading, and its events are counted by the next sample's delta,
+  so anything other than zero would double count them. The COALESCE is
+  gated twice. First on `EXISTS (SELECT 1 FROM rate_samples)`, i.e. on the
+  window holding at least one in-window sample (the borrowed pre-window
+  sample is already excluded from `rate_samples`): without the gate a
+  connection whose probe never ran, is disabled or is failing produced 151
+  zero points and a confident flat-zero chart or a "0 B" KPI where the raw
   column and the `_per_sec` form produced none; with it every bucket is
-  NULL, `scanSeriesRows` has no last value to carry, and the series is
-  empty so the dashboard shows its no-data state. A single in-window
-  sample is enough to re-enable the zero fill.
+  NULL and the client shows its no-data state. A single in-window sample
+  is enough to re-enable the zero fill. Second on `NOT
+  COALESCE(rate_buckets.gap_i, false)`, where `rate_buckets` computes
+  `COUNT(delta_i) = 0 AS gap_i`: a bucket that holds samples but whose
+  every interval was rejected by the gap bound is a gap (NULL), not a
+  zero, because the events in a rejected interval are unknown.
 
 ### The LAG is partitioned by the probe's entity keys
 
@@ -307,7 +315,8 @@ the entity count. Summing the counters first and differencing the sum
 (the previous shape) was wrong whenever the entity set changed between
 samples: on `pg_sys_network_info`, keyed per `interface_name`, an
 interface being torn down dropped the sum by its lifetime total, the
-reset guard nulled the sample and LOCF republished the previous
+negative-delta guard nulled the sample and the then-uniform
+carry-forward republished the previous
 throughput, whilst an interface coming up folded its whole lifetime
 counter into one interval and spiked the axis. With the partition a
 vanished entity simply stops contributing and a new one contributes
@@ -376,6 +385,21 @@ bound the first bucket under-reports by one probe interval, which is the
 lesser harm. Change the constant only together with its justification
 comment in `query.go` and `TestLookbackBound`.
 
+Since #402 the gap bound (three probe intervals, next section) decides
+whether a borrowed predecessor actually counts: the lookback bound only
+limits how far the `MAX(collected_at)` scan reaches, and a predecessor it
+finds is still rejected as a gap when it is more than three probe
+intervals before the first in-window sample. Because the bucket clamp
+keeps every bucket at least one probe interval wide, "three bucket
+widths" is never shorter than "three probe intervals", so a predecessor
+beyond the bucket term of `lookbackBound` would have been rejected
+anyway; the 30-minute floor still matters only in that it lets a
+predecessor be found on a short window, after which the gap rule has the
+final say. The two cases render differently: a predecessor out of the
+lookback's reach leaves the first sample with no `LAG`, so its delta is 0
+and its rate NULL, whereas a borrowed-but-rejected predecessor makes the
+first bucket a gap (NULL delta and NULL rate).
+
 Three things must stay true. The lookback subquery repeats the same
 dimension filters as the outer clause, or the LAG would subtract another
 entity's counter. It reuses the existing `$1`/`$2`/`$3` placeholders and
@@ -390,10 +414,77 @@ list separately; `where()` reassembles the standard clause and
 `lookbackWhere()` the widened one. Add a new dimension filter in
 `metricQueryClauses` only, and both clauses pick it up.
 
-Both the raw and derived branches feed the shared `scanSeriesRows` helper,
-which scans a bucket-time-plus-N-values result set, applies LOCF per
-connection and metric name via `lastKnown`, and treats a NULL bucket or a
-non-finite sample as a gap.
+### Reset guard, gap rejection, bucket clamp and fill policy
+
+Issue #402 added four rules that `QueryTimeSeries` applies to every
+request. They all hang off the probe's collection interval, resolved once
+per request by `ResolveProbeInterval` (`probe_interval.go`): the
+server-scope `probe_configs` rows for the requested connections, with the
+global row standing in for any connection without one, then
+`DefaultProbeInterval` (300 s, the collector's own fallback); the largest
+interval wins because one bucket width serves every series in the
+response. The table is the collector's, so the metrics package tests
+create a minimal `probe_configs` with `setProbeIntervalForTest`
+(`probe_interval_db_test.go`) when the test database lacks the collector
+schema, and every fixture registers its probe at 60 s (or per connection
+for the lookback fixture) so minute-spaced samples keep their exact
+bucket assertions; without a row a fixture would resolve to 300 s and a
+1h window would clamp to twelve 300 s buckets.
+
+- **Reset guard.** For each counter-derived metric whose
+  `ResetColumnFor(probe, col)` is non-empty and whose marker column is in
+  the `allCols` list, the innermost sample query adds `MAX(reset) AS
+  reset_i` and `LAG(MAX(reset)) OVER (<partition> ORDER BY collected_at)
+  AS prev_reset_i`, and the per-sample CASE adds `reset_i IS NOT DISTINCT
+  FROM prev_reset_i`, so a `stats_reset` change between consecutive
+  samples invalidates the interval even when the counter happens to read
+  higher; `IS NOT DISTINCT FROM` keeps an interval whose marker is NULL on
+  both sides valid. `_per_sec`, `_pct` and `_sessions` become NULL, and
+  `_delta` contributes 0, exactly as for a negative delta. An absent
+  marker column (a collector schema predating migration 10) is dropped
+  silently and the negative-delta guard alone applies;
+  `MinCollectorSchemaVersion` was deliberately not bumped.
+- **Gap rejection.** `MaxElapsedIntervals = 3`; `QueryTimeSeries` passes
+  `maxElapsed = 3 * interval` and the builder binds it as the trailing
+  argument. The rate CASE is `CASE WHEN (total_i - prev_i) >= 0 AND
+  elapsed_sec > 0 AND elapsed_sec <= $N::float8 [AND reset_i IS NOT
+  DISTINCT FROM prev_reset_i] THEN <expr> END`; the delta CASE is `CASE
+  WHEN prev_i IS NULL THEN 0 WHEN elapsed_sec > $N::float8 THEN NULL WHEN
+  (total_i - prev_i) >= 0 [AND reset guard] THEN (total_i - prev_i) ELSE
+  0 END`. A first-ever sample (no `LAG`) still contributes 0, so the
+  start of a probe's history reads as zero events, not as a gap; only a
+  known-too-long interval is NULL. The bucket-level `gap_i` flag turns an
+  all-rejected bucket into a NULL bucket (see the delta rules above).
+- **Loopback exclusion.** `metricQueryClauses` takes the probe name and
+  appends `ProbeEntityExclusion(probe)` (a fixed fragment with no bound
+  value, so the `$N` layout is unchanged) to the filter clauses, which
+  `where()` and `lookbackWhere()` both emit, so the raw query, the derived
+  sample query and its lookback subquery all leave `lo`/`lo0` out of
+  `pg_sys_network_info`.
+- **Bucket clamp.** After resolving the interval, `maxBuckets = max(1,
+  window / interval)` and `buckets = min(buckets, maxBuckets)`, applied to
+  raw and derived queries alike so series stay aligned. A bucket narrower
+  than the interval cannot hold a sample of its own and only produced the
+  "comb" of zero and carried buckets. `generate_series` is inclusive of
+  the window end, so a clamped 1h window on a 300 s probe returns 13
+  points (12 buckets plus the end), as before the clamp for any bucket
+  count.
+- **Fill policy and null points.** `MetricDataPoint.Value` is a
+  `*float64` (JSON `"value": null`). `scanSeriesRows` takes a
+  `[]fillPolicy` parallel to `names` plus the interval: `fillGauge` (raw
+  columns and `dead_tuple_ratio`, via `derivedFillPolicy`) repeats the
+  last real value whilst `bucketTime - lastSeenTime <= MaxCarryIntervals
+  * interval` (`MaxCarryIntervals = 3`) and emits nil beyond that;
+  `fillNone` (`_per_sec`, `_delta`, `_pct`, `_sessions`) never repeats.
+  Every bucket is emitted for every series, nulls included, so all series
+  in a response have identical length and bucket times; a series whose
+  query matched no rows is all nulls rather than empty, and the client
+  treats an all-null series as no data. There is no shared `lastKnown`
+  map any more: the carry state is local to one `scanSeriesRows` call,
+  which is fine because raw and derived names never overlap.
+
+`scanSeriesRows` scans a bucket-time-plus-N-values result set and treats a
+NULL bucket or a non-finite sample identically under the fill policy.
 
 ### NaN/Inf handling: finiteFloat, not resolveMetricValue
 
@@ -401,8 +492,9 @@ Non-finite samples (NaN, +/-Inf) must be treated as gaps, never plotted,
 because `encoding/json` cannot marshal them and one bad value would blank
 the whole response. This guard lives in `toFloat64` via the `finiteFloat`
 helper: `toFloat64` returns `(0, false)` for a non-finite float64/float32/
-`pgtype.Numeric`, and `scanSeriesRows` then treats `!ok` as a gap (LOCF
-carry-forward, or skip when there is no prior value). An earlier design
+`pgtype.Numeric`, and `scanSeriesRows` then treats `!ok` as a gap (a
+gauge carry-forward within the carry bound, otherwise a null point). An
+earlier design
 (#339) guarded NaN/Inf in a `resolveMetricValue` helper inside the scan
 loop; that was retired in favour of guarding inside `toFloat64`, because the
 `toFloat64` guard is broader and benefits every caller, including the
@@ -427,27 +519,40 @@ exactly with the samples instead of re-reading the clock; the lookback
 tests use a window that opens on the second sample, leaving the first just
 outside it, and assert the first bucket carries the increase since that
 outside sample, plus a companion case whose window opens on the earliest
-sample of all and so must behave exactly as it did before the lookback
-existed. A second fixture in the same file covers `_delta` with a
-deliberately awkward progression: a first sample with no `LAG`, a minute
-carrying no sample at all, and a counter reset, asserting the exact
+sample of all and so has a null first rate bucket. A second fixture in the
+same file covers `_delta` with a deliberately awkward progression: a first
+sample with no `LAG`, a minute carrying no sample at all (a two-interval
+spacing, inside the gap bound), and a counter reset, asserting the exact
 non-zero per-bucket deltas, the 0 fill, and that the reset contributes
-nothing. A third, `setupNetworkFixture`, is shaped like
-`pg_sys_network_info` with its real primary key and an interface set that
-changes under the window (one interface resets and is then torn down,
-another appears carrying a large lifetime counter); it asserts the exact
-per-minute totals for both `_delta` and `_per_sec`, that a connection
-with no rows and a window with no samples each yield zero points, and
-that a single in-window sample still zero-fills. A fourth,
-`setupLookbackFixture`, holds one scenario per connection for the
-lookback bound: a reset straddling the window boundary, a predecessor
-beyond and one inside the 30-minute floor, and a predecessor beyond and
-one inside three 1-hour buckets. A fifth, `setupTimeShareFixture`, is
+nothing; it registers a `stats_reset` marker its table does not have, to
+exercise the silent drop. A third, `setupNetworkFixture`, is shaped like
+`pg_sys_network_info` with its real primary key, the real probe's
+loopback exclusion and a `lo` row on every sample, and an interface set
+that changes under the window (one interface resets and is then torn
+down, another appears carrying a large lifetime counter); it asserts the
+exact per-minute totals for both `_delta` and `_per_sec`, that the raw
+path ignores `lo` too, that a connection with no rows and a window with
+no samples each yield all-null series, and that a single in-window sample
+still zero-fills. A fourth, `setupLookbackFixture`, holds one scenario
+per connection for the lookback bound: a reset straddling the window
+boundary, a predecessor beyond the 30-minute floor (not borrowed, first
+delta 0) and one inside it but beyond three 60 s intervals (borrowed and
+rejected, first bucket a gap), and, on hourly connections, a predecessor
+beyond and one inside three 1-hour buckets. A fifth, `setupTimeShareFixture`, is
 shaped like `pg_stat_database`'s time columns with `blk_read_time`
 registered as a time counter and `active_time` as a session time counter,
 each rising 30000 ms per minute, so `blk_read_time_pct` is exactly 50 and
 `active_time_sessions` exactly 0.5; it also asserts the `Unit` on each
-series and the kind-mismatch errors end to end. Asserting exact values at
+series and the kind-mismatch errors end to end. A sixth,
+`setupGuardFixture` in `query_guards_db_test.go`, carries a real
+`stats_reset` column and one scenario per connection for #402: a marker
+change with a rising counter (null rate, zero delta), a four-minute gap
+followed by a two-minute one (rejected, then accepted), a gauge that
+stops reporting (carried for three buckets, then null), and a connection
+with a 300 s server-scope interval for the bucket clamp (13 points on a
+1h window with 150 requested). The pointer-valued points have helpers:
+`pointAt` fails on a null, `assertNullAt` demands one, `nonNull`,
+`sumValues` and `assertAllNull` cover the rest. Asserting exact values at
 exact bucket times needs the window anchored on the minute (`windowSince`), not on
 `time.Now()`, or the bucket boundaries drift off the samples.
 Minute-spaced samples always land in distinct 60-second buckets whatever
@@ -815,7 +920,11 @@ run.
 - #402: Column kind registry (`column_kinds.go`) gating `_per_sec` and
   `_delta` by kind; `_pct` (`DerivedTimeShare`) and `_sessions`
   (`DerivedSessionAverage`) added; `DerivedMetric.Unit` reported on each
-  series.
+  series. Also the `stats_reset` guard, the three-interval gap bound
+  (`MaxElapsedIntervals`), `ResolveProbeInterval` and the bucket clamp,
+  the loopback exclusion in `metricQueryClauses`, and the per-series fill
+  policy with nullable points (`MetricDataPoint.Value *float64`,
+  `MaxCarryIntervals`) replacing uniform LOCF.
 - #400: `_delta` (`DerivedDelta`) added alongside `_per_sec` so dashboard
   charts plot per-bucket counter increases instead of cumulative totals.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to

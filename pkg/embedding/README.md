@@ -8,13 +8,19 @@ embeddings using multiple AI providers.
 The package abstracts the differences between embedding providers and offers a
 consistent API for generating vector representations of text.
 
+The package wraps `github.com/pgEdge/pgedge-go-llm-lib`, the shared pgEdge LLM
+library, and delegates the actual provider calls to its `llm.Client`. Only the
+Workbench `Config` mapping, the default models, and the model allow-list
+validation live in this package.
+
 The package includes the following features:
 
 - A unified Provider interface supports multiple embedding backends.
 - OpenAI, Voyage AI, Gemini, and Ollama providers are available out of
   the box.
 - Configurable logging tracks API calls, performance, and errors.
-- Automatic model dimension detection simplifies configuration.
+- Construction-time validation rejects unknown models for the OpenAI,
+  Voyage AI, and Gemini providers.
 
 ## Supported Providers
 
@@ -24,13 +30,12 @@ The OpenAI provider connects to OpenAI's embedding API.
 
 The following models are supported:
 
-| Model | Dimensions |
-|-------|------------|
-| `text-embedding-3-large` | 3072 |
-| `text-embedding-3-small` | 1536 |
-| `text-embedding-ada-002` | 1536 |
+- `text-embedding-3-large`
+- `text-embedding-3-small`
+- `text-embedding-ada-002`
 
-The default model is `text-embedding-3-small`.
+The default model is `text-embedding-3-small`. The provider rejects any
+model outside this set at construction time.
 
 ### Voyage AI
 
@@ -38,14 +43,13 @@ The Voyage AI provider connects to Voyage AI's embedding API.
 
 The following models are supported:
 
-| Model | Dimensions |
-|-------|------------|
-| `voyage-3` | 1024 |
-| `voyage-3-lite` | 512 |
-| `voyage-2` | 1024 |
-| `voyage-2-lite` | 1024 |
+- `voyage-3`
+- `voyage-3-lite`
+- `voyage-2`
+- `voyage-2-lite`
 
-The default model is `voyage-3-lite`.
+The default model is `voyage-3-lite`. The provider rejects any model
+outside this set at construction time.
 
 ### Gemini
 
@@ -54,11 +58,11 @@ embedding API.
 
 The following models are supported:
 
-| Model | Dimensions |
-|-------|------------|
-| `gemini-embedding-001` | 3072 |
-| `gemini-embedding-2` | 3072 |
-| `gemini-embedding-2-preview` | 3072 |
+- `gemini-embedding-001`
+- `gemini-embedding-2`
+- `gemini-embedding-2-preview`
+
+The provider rejects any model outside this set at construction time.
 
 The default model is `gemini-embedding-001`, the model the KB Builder
 uses. When Gemini supplies knowledgebase embeddings, the configured
@@ -84,13 +88,13 @@ The Ollama provider connects to a local Ollama instance for offline use.
 
 The following models are commonly used:
 
-| Model | Dimensions |
-|-------|------------|
-| `nomic-embed-text` | 768 |
-| `mxbai-embed-large` | 1024 |
-| `all-minilm` | 384 |
+- `nomic-embed-text`
+- `mxbai-embed-large`
+- `all-minilm`
 
-The default model is `nomic-embed-text` and the default URL is
+The Ollama provider accepts any model name and discovers the model at
+runtime, so it does not validate the model against a fixed set. The
+default model is `nomic-embed-text` and the default URL is
 `http://localhost:11434`.
 
 ## Usage
@@ -140,9 +144,6 @@ type Provider interface {
     // Embed generates an embedding vector for the given text.
     Embed(ctx context.Context, text string) ([]float64, error)
 
-    // Dimensions returns the number of dimensions in the embedding vector.
-    Dimensions() int
-
     // ModelName returns the name of the model being used.
     ModelName() string
 
@@ -185,7 +186,7 @@ The `PGEDGE_LLM_LOG_LEVEL` environment variable controls logging verbosity.
 |-------|-------------|
 | `none` | Disables all LLM logging (default) |
 | `info` | Logs basic information including API calls and errors |
-| `debug` | Logs detailed information including timing and dimensions |
+| `debug` | Logs detailed information including timing and vector length |
 | `trace` | Logs very detailed information including request previews |
 
 In the following example, the environment variable enables debug logging:
@@ -204,7 +205,7 @@ The following log levels are available:
 
 - `LogLevelNone` disables all logging.
 - `LogLevelInfo` logs API calls, errors, and token usage.
-- `LogLevelDebug` logs text lengths, dimensions, timing, and models.
+- `LogLevelDebug` logs text lengths, vector lengths, timing, and models.
 - `LogLevelTrace` logs full request and response details.
 
 ### Programmatic Configuration

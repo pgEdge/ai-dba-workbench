@@ -334,17 +334,6 @@ func (s *AuthStore) GrantConnectionPrivilege(groupID int64, connectionID int, ac
 		return fmt.Errorf("failed to grant connection privilege: %w", err)
 	}
 
-	// If granting "All Connections", remove individual connection grants
-	if connectionID == ConnectionIDAll {
-		_, err = s.db.Exec(
-			"DELETE FROM connection_privileges WHERE group_id = ? AND connection_id != ?",
-			groupID, ConnectionIDAll,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to clean up individual connection privileges: %w", err)
-		}
-	}
-
 	return nil
 }
 

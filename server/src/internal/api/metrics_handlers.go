@@ -17,16 +17,38 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
+
+// timeSeriesQueryFunc matches the signature of metrics.QueryTimeSeries.
+// Tests inject a fake to assert the parsed MetricFilters (notably the
+// IndexName the Index detail dashboard's Scan Activity chart depends on)
+// actually reach the query layer, without requiring a live pool.
+type timeSeriesQueryFunc func(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	connectionIDs []int,
+	window metrics.TimeWindow,
+	filters metrics.MetricFilters,
+	buckets int,
+	aggregation string,
+	requestedMetrics []string,
+) ([]metrics.MetricSeries, error)
 
 // MetricsHandler handles REST API endpoints for monitoring dashboard
 // metric queries and baselines.
 type MetricsHandler struct {
 	datastore *database.Datastore
 	authStore *auth.AuthStore
+
+	// queryTimeSeriesFn performs the time-series query. When nil the
+	// handler falls back to metrics.QueryTimeSeries; tests substitute a
+	// fake to capture the MetricFilters reaching the query layer.
+	queryTimeSeriesFn timeSeriesQueryFunc
 }
 
 // NewMetricsHandler creates a new MetricsHandler.
@@ -58,6 +80,27 @@ func (h *MetricsHandler) RegisterRoutes(
 		authWrapper(h.handleMetricsQuery))
 	mux.HandleFunc("/api/v1/metrics/baselines",
 		authWrapper(h.handleMetricsBaselines))
+}
+
+// parseQueryIDFilter reads the optional queryid filter from the request.
+// Query identifiers are 64-bit signed integers that clients carry as
+// decimal strings, so the value is parsed as a signed 64-bit integer and
+// the parsed value is what reaches the query layer; a leading sign is
+// therefore normalised rather than compared textually. It returns nil and
+// true when the parameter is absent, the parsed value and true when it is
+// valid, and false after sending a 400 response for a malformed value.
+func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (*int64, bool) {
+	raw := ParseQueryString(r, "queryid")
+	if raw == "" {
+		return nil, true
+	}
+	queryID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid queryid: must be a 64-bit integer")
+		return nil, false
+	}
+	return &queryID, true
 }
 
 // handleMetricsQuery handles GET /api/v1/metrics/query.
@@ -99,22 +142,43 @@ func (h *MetricsHandler) handleMetricsQuery(
 		return
 	}
 
-	// Parse time_range (default "1h")
+	// Latest-row mode: when the caller supplies limit and/or order_by,
+	// return the most recent raw rows instead of a bucketed time series.
+	// The two modes produce genuinely different response shapes.
+	limitStr := ParseQueryString(r, "limit")
+	orderByParam := ParseQueryString(r, "order_by")
+	if limitStr != "" || orderByParam != "" {
+		h.handleLatestRows(w, r, connectionIDs, probeName, limitStr, orderByParam)
+		return
+	}
+
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps;
+	// ResolveTimeWindow is the single source of truth for what counts as
+	// a valid window, so its error message is returned verbatim.
 	timeRange := ParseQueryString(r, "time_range")
 	if timeRange == "" {
 		timeRange = "1h"
 	}
-	if _, ok := metrics.ValidTimeRanges[timeRange]; !ok {
-		RespondError(w, http.StatusBadRequest,
-			"Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d")
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// Parse optional filters
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
 	filters := metrics.MetricFilters{
 		DatabaseName: ParseQueryString(r, "database_name"),
 		SchemaName:   ParseQueryString(r, "schema_name"),
 		TableName:    ParseQueryString(r, "table_name"),
+		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      queryID,
 	}
 
 	// Parse buckets (default 150)
@@ -160,9 +224,84 @@ func (h *MetricsHandler) handleMetricsQuery(
 	defer cancel()
 
 	pool := h.datastore.GetPool()
-	result, err := metrics.QueryTimeSeries(
-		ctx, pool, probeName, connectionIDs, timeRange,
+	queryFn := h.queryTimeSeriesFn
+	if queryFn == nil {
+		queryFn = metrics.QueryTimeSeries
+	}
+	result, err := queryFn(
+		ctx, pool, probeName, connectionIDs, window,
 		filters, buckets, aggregation, requestedMetrics)
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, result)
+}
+
+// handleLatestRows serves the latest-row variant of GET
+// /api/v1/metrics/query, returning the most recent raw rows for the probe
+// table as flat JSON objects keyed by column name.
+func (h *MetricsHandler) handleLatestRows(
+	w http.ResponseWriter,
+	r *http.Request,
+	connectionIDs []int,
+	probeName string,
+	limitStr string,
+	orderByParam string,
+) {
+	// Parse limit (default 1) following the bounds-checking style used
+	// for buckets: reject anything outside the accepted range.
+	limit := 1
+	if limitStr != "" {
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 1 || l > 100 {
+			RespondError(w, http.StatusBadRequest,
+				"Invalid limit: must be between 1 and 100")
+			return
+		}
+		limit = l
+	}
+
+	// Reject syntactically invalid order_by before column discovery; the
+	// semantic column-existence check happens against discovered columns
+	// inside QueryLatestRows.
+	if orderByParam != "" && !metrics.IsValidIdentifier(orderByParam) {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid order_by: must contain only letters, numbers, and underscores")
+		return
+	}
+
+	// Parse order (default "desc") against an asc/desc allow-list.
+	order := strings.ToLower(ParseQueryString(r, "order"))
+	if order == "" {
+		order = "desc"
+	}
+	if order != "asc" && order != "desc" {
+		RespondError(w, http.StatusBadRequest,
+			"Invalid order: must be asc or desc")
+		return
+	}
+
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return // error already sent
+	}
+	filters := metrics.MetricFilters{
+		DatabaseName: ParseQueryString(r, "database_name"),
+		SchemaName:   ParseQueryString(r, "schema_name"),
+		TableName:    ParseQueryString(r, "table_name"),
+		IndexName:    ParseQueryString(r, "index_name"),
+		QueryID:      queryID,
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pool := h.datastore.GetPool()
+	result, err := metrics.QueryLatestRows(
+		ctx, pool, probeName, connectionIDs, filters,
+		orderByParam, order, limit)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return

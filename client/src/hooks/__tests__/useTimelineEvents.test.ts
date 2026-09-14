@@ -8,9 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useTimelineEvents, type TimelineEvent, type TimeRangePreset } from '../useTimelineEvents';
+import { DEFAULT_RETRY_BASE_DELAY_MS } from '../useRetryingFetch';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -74,6 +75,10 @@ describe('useTimelineEvents', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockLastRefresh = 0;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('returns initial state with default options', () => {
@@ -396,6 +401,37 @@ describe('useTimelineEvents', () => {
         // Verify data is still present and loading is false
         expect(result.current.loading).toBe(false);
         expect(result.current.events).toHaveLength(2);
+    });
+
+    it('retries after a failed fetch and heals on recovery', async () => {
+        vi.useFakeTimers();
+        mockApiGet
+            .mockRejectedValueOnce(new Error('network down'))
+            .mockResolvedValue(makeApiResponse());
+
+        const { result } = renderHook(() =>
+            useTimelineEvents({ connectionId: 1 }),
+        );
+
+        // Let the initial (failing) fetch settle.
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(result.current.error).toBe('network down');
+        expect(result.current.retrying).toBe(true);
+        expect(result.current.events).toEqual([]);
+
+        // The scheduled retry fires after the base backoff delay.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_RETRY_BASE_DELAY_MS);
+        });
+
+        expect(mockApiGet).toHaveBeenCalledTimes(2);
+        expect(result.current.events).toHaveLength(2);
+        expect(result.current.error).toBeNull();
+        expect(result.current.retrying).toBe(false);
     });
 
     it('includes limit parameter in query string', async () => {

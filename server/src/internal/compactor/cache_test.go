@@ -201,37 +201,3 @@ func TestCompactionCache_GenerateKey(t *testing.T) {
 		t.Error("Expected different key for different recentWindow")
 	}
 }
-
-func TestCompactionCache_Size(t *testing.T) {
-	cache := NewCompactionCache(0)
-
-	if cache.Size() != 0 {
-		t.Errorf("Empty cache size = %v, want 0", cache.Size())
-	}
-
-	messages := []Message{
-		{Role: "user", Content: "Hello"},
-	}
-
-	result := CompactResponse{
-		Messages: []Message{{Role: "user", Content: "Hello"}},
-	}
-
-	cache.Set(messages, 1000, 10, result)
-
-	if cache.Size() != 1 {
-		t.Errorf("Cache size after one insert = %v, want 1", cache.Size())
-	}
-
-	cache.Set(messages, 2000, 10, result) // Different params = different entry
-
-	if cache.Size() != 2 {
-		t.Errorf("Cache size after two inserts = %v, want 2", cache.Size())
-	}
-
-	cache.Clear()
-
-	if cache.Size() != 0 {
-		t.Errorf("Cache size after clear = %v, want 0", cache.Size())
-	}
-}

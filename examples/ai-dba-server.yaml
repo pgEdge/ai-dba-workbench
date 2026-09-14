@@ -214,6 +214,13 @@ embedding:
   #   - openai: text-embedding-3-small
   #   - gemini: gemini-embedding-001
   #   - ollama: nomic-embed-text
+  #
+  # The configured embedding model must not produce vectors with
+  # more than 4000 dimensions. Embeddings are stored as halfvec(4000)
+  # and zero-padded to 4000 dimensions, which is pgvector's HNSW index
+  # limit for the halfvec type. Models that exceed 4000 dimensions are
+  # not supported; the server rejects such a model with an error rather
+  # than truncating the vector.
   model: "nomic-embed-text"
 
   #-----------------------------------------------------------------------
@@ -376,10 +383,23 @@ knowledgebase:
   enabled: false
 
   # Path to SQLite knowledgebase database
-  # Defaults to the pgEdge package install path; only set this to
-  # override the default location.
+  #
+  # The pgedge-ai-kb packages install one database file per
+  # embedding provider and model into
+  # /usr/share/pgedge/pgedge-ai-kb/ on Linux. Each file is named
+  # kb-<provider>-<model>.db, where <provider> and <model> match
+  # the embedding_provider and embedding_model configured below.
+  # For the default ollama provider with the nomic-embed-text
+  # model, the file is kb-ollama-nomic-embed-text.db, giving the
+  # path /usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db.
+  # The exact location can vary by deployment method (native
+  # package, Docker, or manual install) and operating system.
+  #
+  # The built-in default still points at the legacy
+  # postgres-mcp-kb location, so set database_path explicitly when
+  # using the current pgedge-ai-kb packages.
   # Default: /usr/share/pgedge/postgres-mcp-kb/kb.db
-  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
+  # database_path: "/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db"
 
   #-----------------------------------------------------------------------
   # Knowledgebase Embedding Configuration
@@ -387,6 +407,7 @@ knowledgebase:
   #-----------------------------------------------------------------------
 
   # Embedding provider for knowledgebase similarity search
+  # The Embedding provider must be one of the following: ollama, voyage, openai, gemini
   # Default: ollama
   embedding_provider: "ollama"
 

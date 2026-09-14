@@ -189,6 +189,16 @@ func TestStoreAnomalyEmbeddingAndFindSimilar(t *testing.T) {
 		t.Errorf("update path: %v", err)
 	}
 
+	// An oversized embedding (beyond the supported maximum width) must
+	// be rejected by the PadTo guard before reaching the database.
+	oversized := make([]float32, 4001)
+	if err := ds.StoreAnomalyEmbedding(ctx, c.ID, oversized, "too-big"); err == nil {
+		t.Errorf("expected StoreAnomalyEmbedding to reject oversized vector")
+	}
+	if _, err := ds.FindSimilarAnomalies(ctx, oversized, c2.ID, 0.5, 10); err == nil {
+		t.Errorf("expected FindSimilarAnomalies to reject oversized vector")
+	}
+
 	// Force the second-Exec error path: drop the embedding_id column
 	// after the first Exec succeeds. The follow-up UPDATE on
 	// anomaly_candidates references the missing column and must error.
@@ -204,6 +214,54 @@ func TestStoreAnomalyEmbeddingAndFindSimilar(t *testing.T) {
 	}
 	if err := ds.StoreAnomalyEmbedding(ctx, c3.ID, []float32{1.0, 0.0, 0.0}, "model-bad"); err == nil {
 		t.Errorf("expected StoreAnomalyEmbedding to fail when embedding_id column is missing")
+	}
+}
+
+// TestFindSimilarAnomaliesScanError exercises the row-scan error branch
+// of FindSimilarAnomalies. A candidate row with a NULL metric_name
+// cannot be scanned into the non-pointer SimilarAnomaly.MetricName
+// field, so the query must surface a wrapped scan error.
+func TestFindSimilarAnomaliesScanError(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if !pgvectorAvailable(ctx, pool) {
+		t.Skip("pgvector not available; skipping embedding tests")
+	}
+	if err := createAnomalyEmbeddingsTable(ctx, pool); err != nil {
+		t.Skipf("anomaly_embeddings could not be created: %v", err)
+	}
+
+	connID := insertTestConnection(t, pool, "scan-err-conn")
+
+	// Relax the NOT NULL constraint so a NULL metric_name row can be
+	// seeded; the production schema keeps the constraint.
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE anomaly_candidates ALTER COLUMN metric_name DROP NOT NULL`); err != nil {
+		t.Fatalf("drop NOT NULL on metric_name: %v", err)
+	}
+
+	// Seed a processed candidate with a NULL metric_name and a matching
+	// embedding so it is eligible for the similarity query.
+	var candID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO anomaly_candidates
+			(connection_id, metric_name, metric_value, z_score, detected_at,
+			 context, tier1_pass, processed_at, final_decision)
+		VALUES ($1, NULL, 1.0, 4.0, NOW(), '{}', true, NOW(), 'alert')
+		RETURNING id
+	`, connID).Scan(&candID); err != nil {
+		t.Fatalf("seed NULL metric_name candidate: %v", err)
+	}
+	if err := ds.StoreAnomalyEmbedding(ctx, candID, []float32{1.0, 0.0, 0.0}, "m"); err != nil {
+		t.Fatalf("StoreAnomalyEmbedding: %v", err)
+	}
+
+	// Exclude a different (non-existent) candidate so the NULL row is
+	// returned; scanning it into a non-pointer string must error.
+	if _, err := ds.FindSimilarAnomalies(ctx, []float32{1.0, 0.0, 0.0}, candID+1000, 0.0, 10); err == nil {
+		t.Errorf("expected scan error for NULL metric_name row")
 	}
 }
 

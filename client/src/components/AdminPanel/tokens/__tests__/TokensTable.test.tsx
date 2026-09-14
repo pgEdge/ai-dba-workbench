@@ -67,7 +67,7 @@ const renderComponent = (props: Partial<React.ComponentProps<typeof TokensTable>
         onRowClick: vi.fn(),
         onEdit: vi.fn(),
         onDelete: vi.fn(),
-        getMcpPrivilegeName: (id: number) => id === -1 ? 'All MCP Privileges' : `Privilege ${id}`,
+        getMcpPrivilegeName: (id: number) => id === -1 ? "All the owner's MCP privileges" : `Privilege ${id}`,
     };
     return render(
         <ThemeProvider theme={theme}>

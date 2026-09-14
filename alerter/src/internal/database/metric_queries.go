@@ -11,13 +11,68 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
+
+// Sentinel errors returned by GetLatestMetricValues. Callers need to tell
+// the three failure modes apart, because they have opposite consequences
+// for an active alert: a metric that the registry cannot answer at all,
+// or a query that failed, says nothing about whether the alerting
+// condition still holds, whereas an empty result set means the condition
+// genuinely reports nothing for any connection.
+var (
+	// ErrMetricNotSupported reports that the metric has no entry in
+	// metricRegistry, or has an entry whose scan type is unknown. Metrics
+	// evaluated by bespoke code paths (probe_staleness_ratio, for example)
+	// are deliberately absent from the registry and always fail this way.
+	ErrMetricNotSupported = errors.New("metric not implemented")
+
+	// ErrNoMetricData reports that the registry query ran successfully but
+	// returned no rows.
+	ErrNoMetricData = errors.New("no data found for metric")
+)
+
+// rowQuerier is the subset of *pgxpool.Pool that queryTagged needs. It
+// exists so the tagging behavior can be asserted without a database:
+// the end-to-end proof that the marker survives into
+// pg_stat_statements needs a live server with the extension loaded,
+// which is not available everywhere, whilst the tagging itself must be
+// verified on every run.
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// queryTagged tags sql as Workbench-internal and runs it on q.
+func queryTagged(ctx context.Context, q rowQuerier, sql string,
+	args ...any) (pgx.Rows, error) {
+	return q.Query(ctx, sqlmarker.Tag(sql), args...)
+}
+
+// queryInternal runs a datastore query on behalf of the metric
+// registry, tagging the SQL as Workbench-internal first.
+//
+// Every registry query (latestSQL and historicalSQL alike) funnels
+// through this one function, which is deliberate: the registry in
+// metric_registry.go holds well over a hundred SQL literals, and
+// tagging them individually would guarantee that the next one added
+// went untagged. Tagging here means the alerter's metric-evaluation
+// traffic against metrics.* never shows up in the server's Top Queries
+// panel when monitoring queries are hidden. See sqlmarker.Tag for why
+// the marker has to sit after the leading keyword rather than in front
+// of the statement.
+func (d *Datastore) queryInternal(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return queryTagged(ctx, d.pool, sql, args...)
+}
 
 // queryMetricValues executes a SQL query that returns rows with three columns
 // (connection_id, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValues(ctx context.Context, sql string) ([]MetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql)
+	rows, err := d.queryInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +95,7 @@ func (d *Datastore) queryMetricValues(ctx context.Context, sql string) ([]Metric
 // queryMetricValuesWithDB executes a SQL query that returns rows with four columns
 // (connection_id, database_name, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValuesWithDB(ctx context.Context, sql string) ([]MetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql)
+	rows, err := d.queryInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +120,7 @@ func (d *Datastore) queryMetricValuesWithDB(ctx context.Context, sql string) ([]
 // queryMetricValuesWithDBAndObject executes a SQL query that returns rows with five columns
 // (connection_id, database_name, object_name, value, collected_at) and scans them into MetricValue structs.
 func (d *Datastore) queryMetricValuesWithDBAndObject(ctx context.Context, sql string) ([]MetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql)
+	rows, err := d.queryInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +149,7 @@ func (d *Datastore) queryMetricValuesWithDBAndObject(ctx context.Context, sql st
 func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string) ([]MetricValue, error) {
 	cfg, ok := metricRegistry[metricName]
 	if !ok {
-		return nil, fmt.Errorf("metric %s not implemented", metricName)
+		return nil, fmt.Errorf("metric %s: %w", metricName, ErrMetricNotSupported)
 	}
 
 	var results []MetricValue
@@ -108,7 +163,8 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	case scanWithDBObject:
 		results, err = d.queryMetricValuesWithDBAndObject(ctx, cfg.latestSQL)
 	default:
-		return nil, fmt.Errorf("unknown scan type for metric: %s", metricName)
+		return nil, fmt.Errorf("unknown scan type for metric %s: %w",
+			metricName, ErrMetricNotSupported)
 	}
 
 	if err != nil {
@@ -116,30 +172,17 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	}
 
 	if len(results) == 0 {
-		return nil, fmt.Errorf("no data found for metric %s", metricName)
+		return nil, fmt.Errorf("%w: %s", ErrNoMetricData, metricName)
 	}
 
 	return results, nil
-}
-
-// GetLatestMetricValue retrieves the most recent value for a metric (single value).
-// This is a convenience wrapper that returns the first value found.
-func (d *Datastore) GetLatestMetricValue(ctx context.Context, metricName string) (value float64, connectionID int, dbName *string, err error) {
-	values, err := d.GetLatestMetricValues(ctx, metricName)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	if len(values) == 0 {
-		return 0, 0, nil, fmt.Errorf("no data found for metric %s", metricName)
-	}
-	return values[0].Value, values[0].ConnectionID, values[0].DatabaseName, nil
 }
 
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).
 func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +205,7 @@ func (d *Datastore) queryHistoricalMetricValuesBasic(ctx context.Context, sql st
 // queryHistoricalMetricValuesWithDB executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is a non-null string.
 func (d *Datastore) queryHistoricalMetricValuesWithDB(ctx context.Context, sql string, lookbackDays int) ([]HistoricalMetricValue, error) {
-	rows, err := d.pool.Query(ctx, sql, lookbackDays)
+	rows, err := d.queryInternal(ctx, sql, lookbackDays)
 	if err != nil {
 		return nil, err
 	}

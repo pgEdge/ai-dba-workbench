@@ -581,32 +581,6 @@ func TestExtractIPFromRemoteAddr(t *testing.T) {
 // Additional Context Helper Tests
 // =============================================================================
 
-func TestGetIPAddressFromContext(t *testing.T) {
-	t.Run("with IP address", func(t *testing.T) {
-		ctx := context.WithValue(context.Background(), IPAddressContextKey, "192.168.1.100")
-		ip := GetIPAddressFromContext(ctx)
-		if ip != "192.168.1.100" {
-			t.Errorf("Expected '192.168.1.100', got %q", ip)
-		}
-	})
-
-	t.Run("without IP address", func(t *testing.T) {
-		ctx := context.Background()
-		ip := GetIPAddressFromContext(ctx)
-		if ip != "" {
-			t.Errorf("Expected empty string for missing IP, got %q", ip)
-		}
-	})
-
-	t.Run("with wrong type", func(t *testing.T) {
-		ctx := context.WithValue(context.Background(), IPAddressContextKey, 12345)
-		ip := GetIPAddressFromContext(ctx)
-		if ip != "" {
-			t.Errorf("Expected empty string for wrong type, got %q", ip)
-		}
-	})
-}
-
 func TestGetUsernameFromContext(t *testing.T) {
 	t.Run("with username", func(t *testing.T) {
 		ctx := context.WithValue(context.Background(), UsernameContextKey, "testuser")

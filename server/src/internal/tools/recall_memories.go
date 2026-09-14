@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -122,7 +123,7 @@ func RecallMemoriesTool(memoryStore *memory.Store, cfg *config.Config) Tool {
 				if err == nil {
 					vector, err := provider.Embed(ctx, query)
 					if err == nil && len(vector) > 0 {
-						queryEmbedding = float64sToFloat32s(vector)
+						queryEmbedding = vec.Float64ToFloat32(vector)
 					}
 					// If embedding generation fails, fall through to text search
 				}

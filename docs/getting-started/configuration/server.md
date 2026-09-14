@@ -137,7 +137,7 @@ llm:
 #=====================================================
 knowledgebase:
   enabled: false
-  # database_path: "/usr/share/pgedge/postgres-mcp-kb/kb.db"
+  # database_path: "/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db"
   embedding_provider: "ollama"
   embedding_model: "nomic-embed-text"
   embedding_ollama_url: "http://localhost:11434"
@@ -254,9 +254,11 @@ builtins:
 | `-add-group` | Add a new RBAC group |
 | `-delete-group` | Delete an RBAC group |
 | `-list-groups` | List all RBAC groups |
+| `-list-members` | List the members of a group |
 | `-add-member` | Add a user or group to a group |
 | `-remove-member` | Remove a member from a group |
 | `-group string` | Group name for group commands |
+| `-group-description string` | Group description for add-group |
 | `-member-group string` | Member group for nesting |
 | `-set-superuser` | Set superuser status |
 | `-unset-superuser` | Remove superuser status |
@@ -375,6 +377,15 @@ default, 3072 dimensions), `gemini-embedding-2`, and
 `gemini-embedding-2-preview` (also 3072 dimensions). Model
 availability varies by Gemini API key tier; run ListModels to verify
 which embedding models a given key can access.
+
+The configured `model` must not produce vectors with more than 4000
+dimensions. The server stores chat memory embeddings as `halfvec(4000)`
+and zero-pads each embedding to 4000 dimensions; 4000 is pgvector's
+HNSW index limit for the `halfvec` type. The server rejects a model
+that exceeds 4000 dimensions with a clear error rather than truncating
+the vector. Storing embeddings as `halfvec` requires pgvector `0.7.0`
+or newer; upgrading an existing installation against an older pgvector
+causes the embedding-column migration to fail.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -513,6 +524,24 @@ llm:
 
 ### Knowledgebase (`knowledgebase`)
 
+The `pgedge-ai-kb` packages install one knowledgebase database
+per embedding provider and model. On Linux these files live in
+`/usr/share/pgedge/pgedge-ai-kb/`, and each file is named
+`kb-<provider>-<model>.db`. The `<provider>` and `<model>` parts
+match the configured `embedding_provider` and `embedding_model`
+values. For the default ollama provider with the
+`nomic-embed-text` model, the file is
+`kb-ollama-nomic-embed-text.db`. The full default path is
+therefore
+`/usr/share/pgedge/pgedge-ai-kb/kb-ollama-nomic-embed-text.db`.
+The exact location can vary by deployment method and operating
+system.
+
+The built-in `database_path` default still points at the legacy
+`/usr/share/pgedge/postgres-mcp-kb/kb.db` location. Set
+`database_path` explicitly when you use the current
+`pgedge-ai-kb` packages, so the server reads the installed file.
+
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
 or `ollama`. The Gemini provider supports `gemini-embedding-001` (the
 default, 3072 dimensions), `gemini-embedding-2`, and
@@ -529,7 +558,7 @@ similarity search.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable knowledgebase |
-| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` | SQLite database path |
+| `database_path` | string | `/usr/share/pgedge/postgres-mcp-kb/kb.db` (legacy; see note above) | SQLite knowledgebase database path |
 | `embedding_provider` | string | `ollama` | Embedding provider |
 | `embedding_model` | string | `nomic-embed-text` | Embedding model |
 | `embedding_ollama_url` | string | `http://localhost:11434` | Ollama URL |

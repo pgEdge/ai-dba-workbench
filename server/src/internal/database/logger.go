@@ -139,38 +139,6 @@ func LogMetadataDetails(connStr string, schemaCount, tableCount, columnCount int
 		sanitized, schemaCount, tableCount, columnCount)
 }
 
-// LogQuery logs a database query execution
-func LogQuery(query string, duration time.Duration, rowCount int, err error) {
-	queryPreview := truncate(strings.TrimSpace(query), 100)
-	if err != nil {
-		globalLogger.Info("Query failed: query=%s, duration=%s, error=%v",
-			queryPreview, duration, err)
-	} else {
-		globalLogger.Info("Query succeeded: query=%s, row_count=%d, duration=%s",
-			queryPreview, rowCount, duration)
-	}
-}
-
-// LogQueryDetails logs detailed query information
-func LogQueryDetails(query string, args []any) {
-	queryPreview := truncate(strings.TrimSpace(query), 200)
-	globalLogger.Debug("Starting query: query=%s, arg_count=%d",
-		queryPreview, len(args))
-}
-
-// LogQueryTrace logs trace-level query information
-func LogQueryTrace(query string, args []any) {
-	globalLogger.Trace("Query trace: query=%s, args=%v",
-		strings.TrimSpace(query), args)
-}
-
-// LogPoolStats logs connection pool statistics
-func LogPoolStats(connStr string, acquiredConns, idleConns, maxConns int32) {
-	sanitized := SanitizeConnStr(connStr)
-	globalLogger.Debug("Pool stats: connection=%s, acquired=%d, idle=%d, max=%d",
-		sanitized, acquiredConns, idleConns, maxConns)
-}
-
 // SanitizeConnStr sanitizes a PostgreSQL connection string by replacing the
 // password with "***". This should be used when displaying connection strings
 // to users or in error messages.
@@ -219,12 +187,4 @@ func SanitizeConnStr(connStr string) string {
 	user := credentials[:colonIdx]
 	// Password is everything after the first :
 	return scheme + user + ":***@" + hostAndRest
-}
-
-// truncate truncates a string to maxLen characters, adding "..." if truncated
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

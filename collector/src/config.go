@@ -70,7 +70,7 @@ func NewConfig() *Config {
 			DatastoreMaxWaitSeconds: 60,
 			MaxConnectionsPerServer: 3,
 			MonitoredMaxIdleSeconds: 300,
-			MonitoredMaxWaitSeconds: 60,
+			MonitoredMaxWaitSeconds: 120,
 		},
 	}
 }

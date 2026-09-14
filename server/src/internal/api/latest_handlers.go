@@ -390,23 +390,16 @@ func resolveDatabaseColumnCached(
 }
 
 // BuildDimensionColumns identifies entity key columns suitable for the
-// DISTINCT ON clause. These are text/name-type columns that are not
-// internal bookkeeping columns.
+// DISTINCT ON clause. It delegates to metrics.EntityKeyColumns so this
+// endpoint and the generic latest-row query path share one definition
+// of what counts as an identity column and can never drift apart. The
+// shared helper excludes text-typed value columns (e.g. the "_pretty"
+// size renderings) that would otherwise fragment a single entity.
 func BuildDimensionColumns(
 	allColumns []string,
 	colTypes map[string]string,
 ) []string {
-	var dims []string
-	for _, col := range allColumns {
-		if internalColumns[col] {
-			continue
-		}
-		dt := colTypes[col]
-		if dt == "text" || dt == "character varying" || dt == "name" {
-			dims = append(dims, col)
-		}
-	}
-	return dims
+	return metrics.EntityKeyColumns(allColumns, colTypes)
 }
 
 // queryLatestSnapshot builds and executes the DISTINCT ON query that

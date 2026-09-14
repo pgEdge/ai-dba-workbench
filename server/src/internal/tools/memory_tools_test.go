@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
@@ -656,7 +657,7 @@ func TestIsToolEnabledForMemoryTools(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// float64sToFloat32s helper test
+// vec.Float64ToFloat32 conversion (used by the memory tools)
 // ---------------------------------------------------------------------------
 
 func TestFloat64sToFloat32s(t *testing.T) {
@@ -689,7 +690,7 @@ func TestFloat64sToFloat32s(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := float64sToFloat32s(tt.src)
+			got := vec.Float64ToFloat32(tt.src)
 			if len(got) != len(tt.want) {
 				t.Fatalf("length mismatch: got %d, want %d",
 					len(got), len(tt.want))

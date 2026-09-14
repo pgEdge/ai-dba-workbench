@@ -166,7 +166,11 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
         <Box sx={styles.indentedBlock}>
             <FeatureItem
                 title="Time Range Selector"
-                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, or 30 days. The selected range applies to all charts in the monitoring section."
+                description="Choose from 1 hour, 6 hours, 24 hours, 7 days, 30 days, or Custom. The selected range applies to the time-series charts in the monitoring section; the event timeline has a separate control of its own."
+            />
+            <FeatureItem
+                title="Custom Time Range"
+                description="The Custom option opens a picker with From and To fields for an arbitrary window, so you can line the charts up with a known incident. The span must not exceed 366 days and the start must be in the past. A custom window is not saved, so a reload returns to the last preset. The query leaderboards and the summary tiles do not follow a custom window."
             />
             <FeatureItem
                 title="Drill-Down Navigation"
@@ -174,11 +178,11 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
             />
             <FeatureItem
                 title="Auto-Refresh"
-                description="Charts and metrics refresh automatically to keep data current."
+                description="Charts and metrics refresh automatically to keep data current. Refreshing pauses whilst a custom time range is active, because a fixed historical window returns the same data on every poll, and resumes when you select a preset again."
             />
             <FeatureItem
                 title="Event Timeline"
-                description="A timeline below the charts shows configuration changes, alerts, server restarts, and other notable events in the selected time range."
+                description="A timeline below the charts shows configuration changes, alerts, server restarts, and other notable events in its own selected time range. The timeline has an independent range control, including a Custom option, so the dashboard time range selector does not move the timeline."
             />
         </Box>
 

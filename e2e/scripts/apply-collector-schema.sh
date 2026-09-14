@@ -49,10 +49,26 @@ if [ ! -x "${COLLECTOR_BIN}" ]; then
     )
 fi
 
+# Ask the collector which schema version it will converge to. This is a
+# database-free query: the binary just reports the highest migration it
+# was built with, so the target stays correct automatically as new
+# migrations are added -- no version number is hardcoded in this script.
+TARGET_VERSION="$("${COLLECTOR_BIN}" --print-latest-schema-version \
+    2>/dev/null || echo "")"
+if ! printf '%s' "${TARGET_VERSION}" | grep -Eq '^[1-9][0-9]*$'; then
+    echo "ERROR: could not determine target schema version from" \
+        "collector (got: '${TARGET_VERSION}')" >&2
+    exit 1
+fi
+echo "==> Collector target schema version: ${TARGET_VERSION}"
+
 # Run the collector long enough for NewDatastore() to apply the
-# migrations, then stop it. We poll for `schema_version` to converge
-# rather than parse log output (more robust against logger format
-# changes).
+# migrations, then stop it. We poll for `schema_version` to converge to
+# the target version above rather than parse log output (more robust
+# against logger format changes). Waiting for the full target -- not
+# merely the first non-zero row -- avoids a race where the collector is
+# killed after an early migration commits but before it finishes the
+# rest, leaving the datastore below the version the server requires.
 echo "==> Running collector to apply datastore schema"
 "${COLLECTOR_BIN}" --config="${COLLECTOR_CONFIG}" \
     > "${COLLECTOR_LOG}" 2>&1 &
@@ -91,15 +107,20 @@ while :; do
         exit 1
     fi
 
-    # Has the schema_version table been populated yet?
+    # Has the collector applied every migration yet? Compare the
+    # recorded MAX(version) against the target the binary reported.
+    # A missing table or a failed query yields an empty string, which
+    # the numeric guard below treats as "not ready yet".
     version="$("${PSQL_BIN}" \
         -h "${E2E_DB_HOST}" -p "${E2E_DB_PORT}" \
         -U "${E2E_DB_USER}" -d "${E2E_DB_NAME}" \
         -tAc "SELECT COALESCE(MAX(version), 0) FROM schema_version" \
         2>/dev/null || echo "")"
 
-    if [ -n "${version}" ] && [ "${version}" != "0" ]; then
-        echo "==> Collector schema version: ${version}"
+    if printf '%s' "${version}" | grep -Eq '^[0-9]+$' \
+        && [ "${version}" -ge "${TARGET_VERSION}" ]; then
+        echo "==> Collector schema version: ${version}" \
+            "(target ${TARGET_VERSION})"
         break
     fi
 

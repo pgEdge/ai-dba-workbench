@@ -93,26 +93,10 @@ func (p *Parser) Matches(expr string, t time.Time, timezone string) (bool, error
 	return nextScheduled.Equal(currentMinute), nil
 }
 
-// Validate checks if a cron expression is valid without returning a schedule.
-func (p *Parser) Validate(expr string) error {
-	_, err := p.Parse(expr)
-	return err
-}
-
 // DefaultParser is a package-level parser for convenience.
 var DefaultParser = NewParser()
-
-// Parse parses a cron expression using the default parser.
-func Parse(expr string) (Schedule, error) {
-	return DefaultParser.Parse(expr)
-}
 
 // Matches checks if a time matches a cron expression using the default parser.
 func Matches(expr string, t time.Time, timezone string) (bool, error) {
 	return DefaultParser.Matches(expr, t, timezone)
-}
-
-// Validate validates a cron expression using the default parser.
-func Validate(expr string) error {
-	return DefaultParser.Validate(expr)
 }

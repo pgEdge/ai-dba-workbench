@@ -257,55 +257,6 @@ func TestLogMetadataDetails(t *testing.T) {
 	}
 }
 
-func TestLogQuery(t *testing.T) {
-	// Save original level
-	original := GetLogLevel()
-	defer SetLogLevel(original)
-
-	tests := []struct {
-		name     string
-		logLevel LogLevel
-		query    string
-		duration time.Duration
-		rowCount int
-		err      error
-	}{
-		{
-			name:     "successful query",
-			logLevel: LogLevelInfo,
-			query:    "SELECT * FROM users WHERE id = 1",
-			duration: 10 * time.Millisecond,
-			rowCount: 1,
-			err:      nil,
-		},
-		{
-			name:     "failed query",
-			logLevel: LogLevelInfo,
-			query:    "SELECT * FROM invalid_table",
-			duration: 5 * time.Millisecond,
-			rowCount: 0,
-			err:      os.ErrInvalid,
-		},
-		{
-			name:     "long query - should truncate",
-			logLevel: LogLevelInfo,
-			query:    "SELECT * FROM users WHERE name = 'very long name that should be truncated in the log output because it exceeds the maximum length allowed for logging purposes'",
-			duration: 10 * time.Millisecond,
-			rowCount: 1,
-			err:      nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			SetLogLevel(tt.logLevel)
-
-			// Call logging function (should not panic)
-			LogQuery(tt.query, tt.duration, tt.rowCount, tt.err)
-		})
-	}
-}
-
 func TestSanitizeConnStr(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -339,49 +290,6 @@ func TestSanitizeConnStr(t *testing.T) {
 			got := SanitizeConnStr(tt.input)
 			if got != tt.expected {
 				t.Errorf("SanitizeConnStr(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestTruncate(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{
-			name:     "short string",
-			input:    "hello",
-			maxLen:   10,
-			expected: "hello",
-		},
-		{
-			name:     "exact length",
-			input:    "hello",
-			maxLen:   5,
-			expected: "hello",
-		},
-		{
-			name:     "needs truncation",
-			input:    "hello world this is a long string",
-			maxLen:   10,
-			expected: "hello worl...",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			maxLen:   10,
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := truncate(tt.input, tt.maxLen)
-			if got != tt.expected {
-				t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.expected)
 			}
 		})
 	}

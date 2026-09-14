@@ -1698,35 +1698,6 @@ func TestBuildAlertFiredQuerySummaryUnchanged(t *testing.T) {
 	}
 }
 
-// TestFormatAlertClearedDuration exercises the boundary cases of the
-// duration formatter: short (< 60s), medium (< 1h), long (>= 1h), and
-// the negative/zero edges that the SQL companion expression clamps.
-func TestFormatAlertClearedDuration(t *testing.T) {
-	cases := []struct {
-		name string
-		in   time.Duration
-		want string
-	}{
-		{"zero", 0, "0s"},
-		{"one_second", time.Second, "1s"},
-		{"just_under_a_minute", 59 * time.Second, "59s"},
-		{"exact_minute", 60 * time.Second, "1m 0s"},
-		{"two_minutes_fifteen", 2*time.Minute + 15*time.Second, "2m 15s"},
-		{"just_under_an_hour", 59*time.Minute + 59*time.Second, "59m 59s"},
-		{"exact_hour", time.Hour, "1h 0m"},
-		{"one_hour_twenty_three", time.Hour + 23*time.Minute, "1h 23m"},
-		{"long_duration", 5*time.Hour + 7*time.Minute + 42*time.Second, "5h 7m"},
-		{"negative_clamped_to_zero", -3 * time.Second, "0s"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := formatAlertClearedDuration(tc.in); got != tc.want {
-				t.Errorf("formatAlertClearedDuration(%v) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestBuildAlertAcknowledgedQuery(t *testing.T) {
 	query := buildAlertAcknowledgedQuery("")
 

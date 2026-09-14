@@ -154,11 +154,11 @@ const AdminUsers: React.FC = () => {
             setError(null);
             const [usersData, connResult] = await Promise.all([
                 apiGet<{ users: RbacUser[] }>('/api/v1/rbac/users'),
-                apiGet<{ connections: { id: number; name: string }[] }>('/api/v1/connections').catch(() => null),
+                apiGet<{ id: number; name: string }[]>('/api/v1/connections').catch(() => null),
             ]);
             setUsers(usersData.users || []);
             if (connResult) {
-                setConnections(connResult.connections || []);
+                setConnections(connResult ?? []);
             }
         } catch (err: unknown) {
             setError(extractErrorMessage(err));

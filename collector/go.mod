@@ -1,6 +1,6 @@
 module github.com/pgedge/ai-workbench/collector
 
-go 1.26.0
+go 1.26.1
 
 toolchain go1.26.2
 

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	embeddingpkg "github.com/pgedge/ai-workbench/pkg/embedding"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -75,7 +77,14 @@ func (s *Store) Store(
 
 	var embeddingArg any
 	if embedding != nil {
-		embeddingArg = formatEmbedding(embedding)
+		// Zero-pad to the fixed halfvec width so any provider's
+		// dimensionality fits the column; reject vectors larger than
+		// the supported maximum rather than truncating them.
+		padded, err := embeddingpkg.PadTo(embedding, embeddingpkg.MaxDimensions)
+		if err != nil {
+			return nil, err
+		}
+		embeddingArg = formatEmbedding(padded)
 	}
 
 	mem := &Memory{
@@ -93,7 +102,7 @@ func (s *Store) Store(
 		`INSERT INTO chat_memories
              (username, scope, category, content, pinned, embedding,
               model_name, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9)
+         VALUES ($1, $2, $3, $4, $5, $6::halfvec, $7, $8, $9)
          RETURNING id`,
 		mem.Username, mem.Scope, mem.Category, mem.Content,
 		mem.Pinned, embeddingArg, mem.ModelName,
@@ -156,7 +165,13 @@ func (s *Store) searchByVector(
 	limit int,
 	embedding []float32,
 ) ([]Memory, error) {
-	embStr := formatEmbedding(embedding)
+	// Pad the query vector to the same fixed width as the stored
+	// vectors so cosine distance is computed over identical layouts.
+	padded, err := embeddingpkg.PadTo(embedding, embeddingpkg.MaxDimensions)
+	if err != nil {
+		return nil, err
+	}
+	embStr := formatEmbedding(padded)
 
 	var conditions []string
 	args := []any{embStr}
@@ -193,7 +208,7 @@ func (s *Store) searchByVector(
                 model_name, created_at, updated_at
          FROM chat_memories
          WHERE %s
-         ORDER BY embedding <=> $1::vector
+         ORDER BY embedding <=> $1::halfvec
          LIMIT $%d`,
 		whereClause, paramIdx)
 

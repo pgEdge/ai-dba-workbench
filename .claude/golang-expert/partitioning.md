@@ -38,16 +38,44 @@ the datastore session's `TimeZone` setting cannot reinterpret them.
 Use the layout `"2006-01-02 15:04:05Z07:00"` with a UTC value; Go
 emits `Z` for UTC which Postgres accepts as a timestamptz literal.
 
-The shared helper lives at
-`collector/src/probes/base.go`:
+The shared helpers live at
+`collector/src/probes/partition.go`:
 
 - `weeklyPartitionBounds(t time.Time) (nameSuffix string, from, to time.Time)`
 - `const partitionBoundLayout = "2006-01-02 15:04:05Z07:00"`
+- The statements the maintenance pass issues, each tagged as
+  Workbench-internal (see `internal-query-markers.md`): the
+  `partitionExistsQuery` and `partitionCandidatesQuery` variables,
+  which are fixed literals that bind their one variable as `$1`, and
+  the `createPartitionSQL`, `dropPartitionSQL`, and
+  `protectedPartitionsQuery` builders, which have to interpolate a
+  relation name because an identifier cannot be a bind parameter.
+
+Every relation name interpolated by those three builders is quoted
+with `pgx.Identifier{"metrics", name}.Sanitize()`, and the range
+bounds are formatted from `time.Time` values, so no caller-supplied
+text reaches a statement verbatim. The suppressions come in pairs and
+sit in different places: `#nosec G201` goes on the builder, because
+gosec flags the `fmt.Sprintf` that assembles the SQL, whilst
+`//nosemgrep: go_sql_rule-concat-sqli` goes on the line immediately
+before the `Query`, `QueryRow`, or `Exec` call, because Opengrep flags
+the sink and honours the annotation only on the finding's own line or
+the one above it. Every partition call site needs the `//nosemgrep`
+form, including the two that bind their variable as `$1`, because the
+tagging alone makes the SQL non-constant; the `#nosec` form is only
+needed where a builder actually formats a string. Keep whichever
+annotations a site already has when moving this code around.
+`lastCollectionTimeQuery` in
+`collector/src/probes/config_loader.go` follows the same pattern.
 
 Unit tests in `collector/src/probes/base_test.go` cover the known
 off-by-one timezone cases (Sunday-in-UTC that looks like Monday in a
 positive-offset zone, Monday-in-UTC that looks like Sunday in a
-negative-offset zone).
+negative-offset zone). `TestDropExpiredPartitions` in
+`collector/src/probes/helpers_integration_test.go` covers the drop
+path against a real database. The only production caller of
+`DropExpiredPartitions` is the garbage collector in
+`collector/src/garbage_collector.go`.
 
 ## Expiry Comparisons
 
@@ -78,11 +106,17 @@ error `"conn busy"`. This is distinct from pool exhaustion, which
 surfaces as an acquire timeout.
 
 `DropExpiredPartitions` in
-`collector/src/probes/base.go` previously tripped this by calling
+`collector/src/probes/partition.go` previously tripped this by calling
 `conn.Exec(ctx, dropSQL)` inside a `for rows.Next()` loop that was
 iterating the partition catalog on the same connection. It was
 fixed (issue #62) by reading the catalog query fully into a slice,
 letting the Rows close, and only then issuing the DROP statements.
+
+The partition helpers take the `DatastoreQuerier` interface rather than
+`*pgxpool.Conn`. `*pgxpool.Conn` satisfies it, so callers are
+unaffected, but unit tests can inject a fake that records the SQL
+issued and returns errors from `Query`, `Scan`, and `Exec`. Prefer that
+over an integration test when covering an error branch.
 
 Rules for the datastore connection shared across a GC pass:
 
@@ -99,3 +133,37 @@ Rules for the datastore connection shared across a GC pass:
   client-side protocol violation, not transient contention, and
   retries will only succeed because the loop body has moved past
   the busy state — the underlying bug stays.
+
+## Scheduling Retention: Never Couple It to Process Uptime
+
+Retention enforcement must not be scheduled from process start.
+The garbage collector originally waited five minutes after startup
+and then ticked every 24 hours, holding no record of when it last
+ran. That made retention a function of *unbroken uptime*: a
+collector restarting more often than the startup delay never
+collected garbage at all, and every restart put it back to the
+beginning of the delay. In issue #437 an OOM restart loop therefore
+filled a datastore's disk, because partitions were never dropped
+across more than a hundred restarts.
+
+The pattern to follow instead:
+
+- Persist each completed pass. `maintenance_runs` holds one row per
+  task (`database.PartitionRetentionTask` for the dropper), written
+  by `database.RecordMaintenanceRun`.
+- Time the next pass from that record, not from process start, so a
+  restart resumes the cycle rather than beginning a new one. See
+  `computeNextRunDelay` in `collector/src/garbage_collector.go`.
+- Treat "never run" and "cannot read the record" as due now. Failing
+  towards collecting slightly early is harmless; failing towards not
+  collecting is what fills a disk.
+- Keep the startup grace period short, and only long enough to stay
+  clear of the probe burst the scheduler runs at startup. A long
+  grace period reintroduces the original bug for any process that
+  does not live that long.
+- Back a failed pass off rather than retrying immediately, so an
+  unreachable datastore does not produce a tight error loop.
+
+The same reasoning applies to any periodic maintenance added later:
+if the schedule lives only in memory, an unstable process silently
+stops doing the work, and nothing in the logs says so.

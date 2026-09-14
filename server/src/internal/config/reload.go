@@ -147,10 +147,3 @@ func (rc *ReloadableConfig) OnReload(fn func(*Config)) {
 	defer rc.mu.Unlock()
 	rc.onReload = append(rc.onReload, fn)
 }
-
-// GetPath returns the configuration file path
-func (rc *ReloadableConfig) GetPath() string {
-	rc.mu.RLock()
-	defer rc.mu.RUnlock()
-	return rc.path
-}

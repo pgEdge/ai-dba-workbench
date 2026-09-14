@@ -29,7 +29,7 @@ import (
 // RBAC checks pass without requiring a database.
 func newTestConnectionHandlerWithRBAC() *ConnectionHandler {
 	rbac := auth.NewRBACChecker(nil)
-	return NewConnectionHandler(nil, nil, rbac)
+	return NewConnectionHandlerWithSecurity(nil, nil, rbac, false, nil, nil)
 }
 
 func TestExecuteQuery_MethodNotAllowed(t *testing.T) {

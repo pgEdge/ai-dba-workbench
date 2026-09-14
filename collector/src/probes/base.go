@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
 // WrapQuery wraps a SQL query with a probe marker column so the server
@@ -29,7 +31,7 @@ func WrapQuery(probeName, query string) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"SELECT '%s' AS ai_dba_wb_probe, subq.* FROM (%s) AS subq",
+		"SELECT '%s' AS "+sqlmarker.ProbeAlias+", subq.* FROM (%s) AS subq",
 		probeName, query,
 	)
 }
@@ -46,19 +48,6 @@ type featureCacheKey struct {
 // during the lifetime of a PostgreSQL connection, so caching them
 // avoids repeated catalog queries on every collection cycle.
 var featureCache sync.Map
-
-// InvalidateFeatureCache removes all cached feature-detection
-// results for the given connection name. Call this when a
-// monitored connection is recycled or its pool is refreshed
-// so that stale view/extension checks do not persist.
-func InvalidateFeatureCache(connectionName string) {
-	featureCache.Range(func(key, _ any) bool {
-		if k, ok := key.(featureCacheKey); ok && k.connectionName == connectionName {
-			featureCache.Delete(key)
-		}
-		return true
-	})
-}
 
 // cachedCheck returns a cached boolean result for a feature-detection
 // check identified by connectionName and checkName. If no cached value

@@ -283,7 +283,7 @@ func TestNewSchemaManager(t *testing.T) {
 	}
 
 	// Verify all migrations are registered
-	expectedVersions := []int{1, 2, 3, 4, 5}
+	expectedVersions := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	if len(sm.migrations) != len(expectedVersions) {
 		t.Fatalf("Expected %d migrations, got %d", len(expectedVersions), len(sm.migrations))
 	}
@@ -301,6 +301,36 @@ func TestNewSchemaManager(t *testing.T) {
 		if sm.migrations[i].Up == nil {
 			t.Errorf("Migration %d has nil Up function", i)
 		}
+	}
+}
+
+// TestLatestVersion verifies that LatestVersion computes the maximum
+// registered migration version rather than trusting registration order.
+// The migrations are deliberately supplied out of order (2, 5, 3) so a
+// regression that simply returned the last-registered version would fail
+// this test; only a real max scan yields 5. This keeps the e2e harness's
+// "wait for full convergence" signal correct as migrations are added.
+func TestLatestVersion(t *testing.T) {
+	sm := &SchemaManager{
+		migrations: []Migration{
+			{Version: 2},
+			{Version: 5},
+			{Version: 3},
+		},
+	}
+
+	if got := sm.LatestVersion(); got != 5 {
+		t.Errorf("LatestVersion() = %d, want 5", got)
+	}
+}
+
+// TestLatestVersionEmpty verifies the zero-value / no-migration guard so
+// a manager with no registered migrations reports 0 rather than
+// panicking or returning a stale value.
+func TestLatestVersionEmpty(t *testing.T) {
+	sm := &SchemaManager{}
+	if got := sm.LatestVersion(); got != 0 {
+		t.Errorf("LatestVersion() with no migrations = %d, want 0", got)
 	}
 }
 
@@ -456,58 +486,6 @@ func TestGetCurrentVersion(t *testing.T) {
 	}
 	if version != highestVersion {
 		t.Errorf("Expected version %d, got %d", highestVersion, version)
-	}
-
-	// Clean up
-	cleanupTestSchema(t, pool)
-}
-
-func TestGetMigrationStatus(t *testing.T) {
-	pool, conn := getTestConnection(t)
-	if pool == nil {
-		return
-	}
-	defer pool.Close()
-	defer conn.Release()
-
-	// Clean up any existing schema
-	cleanupTestSchema(t, pool)
-
-	sm := NewSchemaManager()
-
-	// Test status before any migrations
-	statuses, err := sm.GetMigrationStatus(conn)
-	if err != nil {
-		t.Fatalf("Failed to get migration status: %v", err)
-	}
-
-	for _, status := range statuses {
-		if status.Applied {
-			t.Errorf("Migration %d should not be applied yet", status.Version)
-		}
-		if status.AppliedAt != nil {
-			t.Errorf("Migration %d should not have AppliedAt timestamp yet", status.Version)
-		}
-	}
-
-	// Apply migrations
-	if err := sm.Migrate(conn); err != nil {
-		t.Fatalf("Failed to migrate: %v", err)
-	}
-
-	// Test status after migrations
-	statuses, err = sm.GetMigrationStatus(conn)
-	if err != nil {
-		t.Fatalf("Failed to get migration status: %v", err)
-	}
-
-	for _, status := range statuses {
-		if !status.Applied {
-			t.Errorf("Migration %d should be applied", status.Version)
-		}
-		if status.AppliedAt == nil {
-			t.Errorf("Migration %d should have AppliedAt timestamp", status.Version)
-		}
 	}
 
 	// Clean up

@@ -74,7 +74,14 @@ type OpenAPIRequestBody struct {
 // OpenAPIResponse describes a single response.
 type OpenAPIResponse struct {
 	Description string                      `json:"description"`
+	Headers     map[string]OpenAPIHeader    `json:"headers,omitempty"`
 	Content     map[string]OpenAPIMediaType `json:"content,omitempty"`
+}
+
+// OpenAPIHeader describes a single response header.
+type OpenAPIHeader struct {
+	Description string         `json:"description,omitempty"`
+	Schema      *OpenAPISchema `json:"schema,omitempty"`
 }
 
 // OpenAPIMediaType describes a media type.
@@ -566,30 +573,81 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Required: []string{"role", "content"},
 		},
 		"ProvidersResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "Response from GET /llm/providers (library llm/proxy contract)",
 			Properties: map[string]*OpenAPISchema{
 				"providers": {
 					Type:  "array",
 					Items: &OpenAPISchema{Ref: "#/components/schemas/ProviderInfo"},
 				},
-				"defaultModel": {Type: "string", Description: "Default model name"},
+				"default_provider": {Type: "string", Description: "Name of the default provider"},
 			},
 		},
 		"ProviderInfo": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"name":      {Type: "string", Description: "Provider identifier"},
-				"display":   {Type: "string", Description: "Display name"},
-				"isDefault": {Type: "boolean", Description: "Whether this is the default provider"},
+				"name":         {Type: "string", Description: "Provider identifier (e.g. anthropic, openai, ollama)"},
+				"display_name": {Type: "string", Description: "Human-readable provider name"},
+				"model":        {Type: "string", Description: "Configured model for this provider"},
+				"default":      {Type: "boolean", Description: "Whether this is the default provider"},
 			},
 		},
 		"ModelsResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "Response from GET /llm/models (library llm/proxy contract)",
 			Properties: map[string]*OpenAPISchema{
 				"models": {
-					Type:  "array",
-					Items: &OpenAPISchema{Ref: "#/components/schemas/ModelInfo"},
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "Model identifiers available from the named provider",
 				},
+			},
+		},
+		"LLMContentBlock": {
+			Type:        "object",
+			Description: "A single typed content block within an LLM message (llm.ContentBlock). The type field selects which payload fields are populated.",
+			Properties: map[string]*OpenAPISchema{
+				"type": {
+					Type:        "string",
+					Description: "Block type discriminator",
+					Enum:        []string{"text", "image", "document", "tool_use", "tool_result"},
+				},
+				"text":          {Type: "string", Description: "Text payload (text and simple tool_result blocks)"},
+				"image":         {Type: "object", Description: "Image payload (url or base64 data plus media_type)"},
+				"document":      {Type: "object", Description: "Document payload (url or base64 data plus media_type)"},
+				"tool_use":      {Type: "object", Description: "Tool call payload (id, name, input)"},
+				"tool_use_id":   {Type: "string", Description: "Identifies the tool_use this tool_result responds to"},
+				"is_error":      {Type: "boolean", Description: "Set on a tool_result block when the tool errored"},
+				"cache_control": {Type: "object", Description: "Anthropic-specific prompt-cache marker; ignored by other providers"},
+			},
+			Required: []string{"type"},
+		},
+		"LLMMessage": {
+			Type:        "object",
+			Description: "A chat message in the library llm/proxy contract. Content is always an array of typed content blocks; the legacy string form is no longer accepted.",
+			Properties: map[string]*OpenAPISchema{
+				"role": {
+					Type:        "string",
+					Description: "Message role",
+					Enum:        []string{"user", "assistant", "system", "tool"},
+				},
+				"content": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/LLMContentBlock"},
+					Description: "Typed content blocks (array form is required)",
+				},
+			},
+			Required: []string{"role", "content"},
+		},
+		"LLMTokenUsage": {
+			Type:        "object",
+			Description: "Token consumption for a request (llm.TokenUsage).",
+			Properties: map[string]*OpenAPISchema{
+				"prompt_tokens":               {Type: "integer", Description: "Tokens in the prompt"},
+				"completion_tokens":           {Type: "integer", Description: "Tokens in the completion"},
+				"total_tokens":                {Type: "integer", Description: "Total tokens consumed"},
+				"cache_creation_input_tokens": {Type: "integer", Description: "Tokens written to the prompt cache (Anthropic only)"},
+				"cache_read_input_tokens":     {Type: "integer", Description: "Tokens served from the prompt cache (Anthropic only)"},
 			},
 		},
 		"ModelInfo": {
@@ -600,38 +658,228 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 		},
 		"ChatRequest": {
-			Type: "object",
+			Type:        "object",
+			Description: "Request body for POST /llm/chat and POST /llm/chat/stream (library proxy.ChatRequest).",
 			Properties: map[string]*OpenAPISchema{
 				"messages": {
 					Type:  "array",
-					Items: &OpenAPISchema{Ref: "#/components/schemas/Message"},
+					Items: &OpenAPISchema{Ref: "#/components/schemas/LLMMessage"},
 				},
 				"tools": {
 					Type:        "array",
 					Items:       &OpenAPISchema{Type: "object"},
-					Description: "MCP tools available to the LLM",
+					Description: "Tools available to the LLM (name, description, input_schema)",
 				},
-				"provider": {Type: "string", Description: "Override default provider"},
-				"model":    {Type: "string", Description: "Override default model"},
-				"debug":    {Type: "boolean", Description: "Enable debug mode for token usage"},
+				"system_prompt": {Type: "string", Description: "System prompt prepended to the conversation"},
+				"max_tokens":    {Type: "integer", Description: "Maximum tokens for the response"},
+				"temperature":   {Type: "number", Description: "Sampling temperature"},
+				"provider":      {Type: "string", Description: "Override the default provider for this request"},
+				"model":         {Type: "string", Description: "Override the configured model for this request"},
+				"response_format": {
+					Type:        "object",
+					Description: "Structured-output mode (text, json_object, or json_schema)",
+				},
+				"tool_choice": {
+					Type:        "object",
+					Description: "Constrains tool-use behavior (auto, none, required, specific)",
+				},
+				"stop_sequences": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "Strings that terminate generation when produced",
+				},
+				"tool_descriptions": {
+					Type:        "string",
+					Description: "Selects which tool description text providers send",
+					Enum:        []string{"", "full", "compact", "auto"},
+				},
 			},
 			Required: []string{"messages"},
 		},
 		"ChatResponse": {
-			Type: "object",
+			Type:        "object",
+			Description: "Response body for POST /llm/chat (library proxy.ChatResponse).",
 			Properties: map[string]*OpenAPISchema{
 				"content": {
 					Type:        "array",
-					Items:       &OpenAPISchema{Type: "object"},
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/LLMContentBlock"},
 					Description: "Response content blocks",
 				},
-				"stop_reason": {Type: "string", Description: "Reason for stopping generation"},
-				"token_usage": {
-					Type:        "object",
-					Description: "Token usage statistics (when debug enabled)",
+				"stop_reason": {
+					Type:        "string",
+					Description: "Reason generation stopped",
+					Enum:        []string{"end_turn", "max_tokens", "stop_sequence", "tool_use", "content_filter", "error"},
+				},
+				"usage": {Ref: "#/components/schemas/LLMTokenUsage"},
+			},
+		},
+		"LLMStreamChunk": {
+			Type: "object",
+			Description: "Data payload of a Server-Sent Event from POST /llm/chat/stream. " +
+				"Most events carry a JSON-encoded llm.StreamChunk whose type field selects " +
+				"which other fields are populated; the stream terminates with an event named " +
+				"done (a final chunk carrying usage). If the upstream stream fails, the proxy " +
+				"instead emits a terminal event named error whose data is an ErrorResponse " +
+				"object ({\"error\":\"...\"}) rather than a stream chunk. The optional error " +
+				"field below documents that terminal payload.",
+			Properties: map[string]*OpenAPISchema{
+				"type": {
+					Type:        "string",
+					Description: "Chunk type discriminator (present on every non-error event)",
+					Enum:        []string{"text", "tool_use_start", "tool_use_delta", "done"},
+				},
+				"text":     {Type: "string", Description: "Incremental text delta (text chunks)"},
+				"tool_use": {Type: "object", Description: "Tool call descriptor (tool_use_start chunks)"},
+				"partial":  {Type: "string", Description: "Incremental tool-argument JSON fragment (tool_use_delta chunks)"},
+				"usage":    {Ref: "#/components/schemas/LLMTokenUsage"},
+				"error": {
+					Type: "string",
+					Description: "Error detail carried by the terminal event named error " +
+						"(event: error\\ndata: {\"error\":\"...\"}). Present only when the " +
+						"stream fails; mutually exclusive with type.",
+				},
+			},
+		},
+		"EmbedRequest": {
+			Type:        "object",
+			Description: "Request body for POST /llm/embed (library proxy.EmbedRequest).",
+			Properties: map[string]*OpenAPISchema{
+				"provider": {Type: "string", Description: "Override the default provider"},
+				"model":    {Type: "string", Description: "Override the configured model"},
+				"input": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "One or more strings to embed",
+				},
+			},
+			Required: []string{"input"},
+		},
+		"EmbedResponse": {
+			Type:        "object",
+			Description: "Response body for POST /llm/embed (library proxy.EmbedResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"embeddings": {
+					Type: "array",
+					Items: &OpenAPISchema{
+						Type:  "array",
+						Items: &OpenAPISchema{Type: "number"},
+					},
+					Description: "One embedding vector per input string, in order",
+				},
+			},
+		},
+		"EmbedMultimodalRequest": {
+			Type:        "object",
+			Description: "Request body for POST /llm/embed/multimodal (library proxy.EmbedMultimodalRequest).",
+			Properties: map[string]*OpenAPISchema{
+				"provider": {Type: "string", Description: "Override the default provider"},
+				"model":    {Type: "string", Description: "Override the configured model"},
+				"inputs": {
+					Type:        "array",
+					Description: "One or more multimodal inputs; each is embedded to a single vector",
+					Items: &OpenAPISchema{
+						Type: "object",
+						Properties: map[string]*OpenAPISchema{
+							"content": {
+								Type:        "array",
+								Description: "Ordered text and/or image content blocks for this input",
+								Items:       &OpenAPISchema{Ref: "#/components/schemas/MultimodalContent"},
+							},
+						},
+						Required: []string{"content"},
+					},
+				},
+			},
+			Required: []string{"inputs"},
+		},
+		"MultimodalContent": {
+			Type:        "object",
+			Description: "A single text or image content block within a multimodal input.",
+			Properties: map[string]*OpenAPISchema{
+				"type": {
+					Type:        "string",
+					Description: "Content block type",
+					Enum:        []string{"text", "image"},
+				},
+				"text":         {Type: "string", Description: "Text content (text blocks)"},
+				"image_url":    {Type: "string", Description: "URL of the image to embed (image blocks)"},
+				"image_base64": {Type: "string", Description: "Base64-encoded image bytes (image blocks)"},
+				"mime_type":    {Type: "string", Description: "MIME type of the image, e.g. image/png (image blocks)"},
+			},
+			Required: []string{"type"},
+		},
+		"EmbedMultimodalResponse": {
+			Type:        "object",
+			Description: "Response body for POST /llm/embed/multimodal (library proxy.EmbedMultimodalResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"embeddings": {
+					Type: "array",
+					Items: &OpenAPISchema{
+						Type:  "array",
+						Items: &OpenAPISchema{Type: "number"},
+					},
+					Description: "One embedding vector per input, in order",
+				},
+			},
+		},
+		"RerankRequest": {
+			Type:        "object",
+			Description: "Request body for POST /llm/rerank (library proxy.RerankRequest).",
+			Properties: map[string]*OpenAPISchema{
+				"provider": {Type: "string", Description: "Override the default provider"},
+				"model":    {Type: "string", Description: "Override the configured model"},
+				"query":    {Type: "string", Description: "Query to rank documents against"},
+				"documents": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Type: "string"},
+					Description: "Candidate documents to rank",
+				},
+				"top_k": {Type: "integer", Description: "Return at most the top-K most relevant documents"},
+			},
+			Required: []string{"query", "documents"},
+		},
+		"RerankResponse": {
+			Type:        "object",
+			Description: "Response body for POST /llm/rerank (library proxy.RerankResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"results": {
+					Type: "array",
+					Items: &OpenAPISchema{
+						Type: "object",
+						Properties: map[string]*OpenAPISchema{
+							"index":           {Type: "integer", Description: "Position in the original documents slice"},
+							"relevance_score": {Type: "number", Description: "Provider relevance score"},
+							"document":        {Type: "string", Description: "Document text (only when the provider returns it)"},
+						},
+					},
+					Description: "Ranked documents, ordered by descending relevance",
+				},
+				"usage": {
+					Type: "object",
 					Properties: map[string]*OpenAPISchema{
-						"input_tokens":  {Type: "integer"},
-						"output_tokens": {Type: "integer"},
+						"total_tokens": {Type: "integer", Description: "Total tokens consumed by the rerank call"},
+					},
+				},
+			},
+		},
+		"LLMHealthResponse": {
+			Type:        "object",
+			Description: "Response body for GET /llm/health (library proxy.HealthResponse).",
+			Properties: map[string]*OpenAPISchema{
+				"status": {
+					Type:        "string",
+					Description: "Overall proxy health",
+					Enum:        []string{"ok", "degraded"},
+				},
+				"providers": {
+					Type:        "object",
+					Description: "Per-provider health keyed by provider name",
+					AdditionalProperties: &OpenAPISchema{
+						Type: "object",
+						Properties: map[string]*OpenAPISchema{
+							"status": {Type: "string", Enum: []string{"ok", "down"}},
+							"error":  {Type: "string", Description: "Error detail when status is down"},
+						},
 					},
 				},
 			},
@@ -1139,6 +1387,47 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"shared_blks_hit":  {Type: "integer", Format: "int64", Description: "Shared blocks hit"},
 				"shared_blks_read": {Type: "integer", Format: "int64", Description: "Shared blocks read"},
 			},
+		},
+		"ConnectionGroupsResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"collected_at": {
+					Type:        "string",
+					Format:      "date-time",
+					Nullable:    true,
+					Description: "Timestamp of the snapshot the counts were taken from, or null when no snapshot was found in the time range",
+				},
+				"total_groups": {
+					Type:        "integer",
+					Format:      "int64",
+					Description: "Number of distinct groups in the snapshot before the 200-group cap was applied; the response is truncated when this exceeds the length of groups",
+				},
+				"groups": {
+					Type:        "array",
+					Description: "Connection counts per group, ordered by total descending then group label ascending, capped at 200 groups",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/ConnectionGroupRow"},
+				},
+			},
+			Required: []string{"collected_at", "total_groups", "groups"},
+		},
+		"ConnectionGroupRow": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"group_label":         {Type: "string", Description: "Group label: the user name, client address or database name"},
+				"client_hostname":     {Type: "string", Nullable: true, Description: "Reverse-resolved client hostname, populated only for the client grouping"},
+				"total":               {Type: "integer", Format: "int64", Description: "Total client connections in the group"},
+				"active":              {Type: "integer", Format: "int64", Description: "Connections in the active state"},
+				"idle":                {Type: "integer", Format: "int64", Description: "Connections in the idle state"},
+				"idle_in_transaction": {Type: "integer", Format: "int64", Description: "Connections idle in transaction, including the aborted variant"},
+				"other":               {Type: "integer", Format: "int64", Description: "Connections in any other state, including an unknown state"},
+			},
+			// Every field is emitted unconditionally: ConnectionGroupRow
+			// tags none of them omitempty, so client_hostname is always
+			// present, as null for the user and database groupings. In
+			// OpenAPI required and nullable are orthogonal, so a key that
+			// is always present but may be null is correctly described as
+			// both.
+			Required: []string{"group_label", "client_hostname", "total", "active", "idle", "idle_in_transaction", "other"},
 		},
 		"LatestSnapshotResponse": {
 			Type: "object",
@@ -1993,8 +2282,8 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Tags:        []string{"Timeline"},
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
-					queryParamStringRequired("start_time", "Start time (RFC3339)"),
-					queryParamStringRequired("end_time", "End time (RFC3339)"),
+					queryParamStringRequired("start_time", "Start time (RFC3339). Must fall before the present moment, and the span between start_time and end_time must not exceed 366 days"),
+					queryParamStringRequired("end_time", "End time (RFC3339). Must be after start_time, and no more than 366 days after it; an end in the future is clamped to the present moment"),
 					queryParamInt("connection_id", "Filter by connection ID"),
 					queryParamString("connection_ids", "Filter by multiple connection IDs (comma-separated)"),
 					queryParamString("event_types", "Filter by event types (comma-separated)"),
@@ -2114,11 +2403,11 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 		},
 
-		// LLM
+		// LLM proxy (library llm/proxy gateway mounted at /llm)
 		"/llm/providers": {
 			Get: &OpenAPIOperation{
 				Summary:     "List LLM providers",
-				Description: "Returns available LLM providers and the default model",
+				Description: "Returns the configured LLM providers, including each provider's display name and the default provider. Public; no authentication required.",
 				OperationID: "listLLMProviders",
 				Tags:        []string{"LLM"},
 				Responses: map[string]OpenAPIResponse{
@@ -2130,7 +2419,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/llm/models": {
 			Get: &OpenAPIOperation{
 				Summary:     "List LLM models",
-				Description: "Returns available models for a specific provider",
+				Description: "Returns the model identifiers available from a named provider. Public; no authentication required.",
 				OperationID: "listLLMModels",
 				Tags:        []string{"LLM"},
 				Parameters:  []OpenAPIParameter{queryParamStringRequired("provider", "Provider name (anthropic, openai, ollama)")},
@@ -2141,16 +2430,103 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 		},
 
+		"/llm/health": {
+			Get: &OpenAPIOperation{
+				Summary:     "LLM proxy health",
+				Description: "Returns the overall proxy health and the health of each configured provider. Public; no authentication required.",
+				OperationID: "llmHealth",
+				Tags:        []string{"LLM"},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("LLMHealthResponse", "Proxy and per-provider health"),
+				},
+			},
+		},
+
 		"/llm/chat": {
 			Post: &OpenAPIOperation{
 				Summary:     "Send chat message to LLM",
-				Description: "Sends messages to the configured LLM and returns the response",
+				Description: "Sends messages to the configured LLM and returns a single response. Messages carry typed content blocks; the system prompt is supplied in system_prompt and token usage is reported in usage. Requires authentication (bearer token or session cookie).",
 				OperationID: "chatWithLLM",
 				Tags:        []string{"LLM"},
 				Security:    bearerAuth,
-				RequestBody: jsonRequestBody("ChatRequest", "Chat messages and tools", true),
+				RequestBody: jsonRequestBody("ChatRequest", "Chat messages, tools, and generation parameters", true),
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("ChatResponse", "LLM response"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/chat/stream": {
+			Post: &OpenAPIOperation{
+				Summary:     "Stream a chat response from the LLM",
+				Description: "Sends messages to the configured LLM and streams the response as Server-Sent Events. Each event's data field is a JSON-encoded stream chunk; the stream ends with an event named done (or error). Requires authentication (bearer token or session cookie).",
+				OperationID: "chatWithLLMStream",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("ChatRequest", "Chat messages, tools, and generation parameters", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": {
+						Description: "Server-Sent Event stream of chat chunks",
+						Content: map[string]OpenAPIMediaType{
+							"text/event-stream": {
+								Schema: &OpenAPISchema{Ref: "#/components/schemas/LLMStreamChunk"},
+							},
+						},
+					},
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/embed": {
+			Post: &OpenAPIOperation{
+				Summary:     "Generate embeddings",
+				Description: "Embeds one or more input strings and returns one vector per input. Requires authentication (bearer token or session cookie).",
+				OperationID: "embedWithLLM",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("EmbedRequest", "Input strings to embed", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("EmbedResponse", "Embedding vectors"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/embed/multimodal": {
+			Post: &OpenAPIOperation{
+				Summary:     "Generate multimodal embeddings",
+				Description: "Embeds one or more multimodal inputs, each a sequence of text and/or image content blocks, and returns one vector per input. Requires authentication (bearer token or session cookie).",
+				OperationID: "embedMultimodalWithLLM",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("EmbedMultimodalRequest", "Multimodal inputs to embed", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("EmbedMultimodalResponse", "Embedding vectors"),
+					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"500": jsonResponse("ErrorResponse", "LLM error"),
+				},
+			},
+		},
+
+		"/llm/rerank": {
+			Post: &OpenAPIOperation{
+				Summary:     "Rerank documents",
+				Description: "Ranks candidate documents by relevance to a query and returns them in descending order of relevance. Requires authentication (bearer token or session cookie).",
+				OperationID: "rerankWithLLM",
+				Tags:        []string{"LLM"},
+				Security:    bearerAuth,
+				RequestBody: jsonRequestBody("RerankRequest", "Query and candidate documents", true),
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("RerankResponse", "Ranked documents"),
 					"400": jsonResponse("ErrorResponse", "Invalid request or provider not configured"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"500": jsonResponse("ErrorResponse", "LLM error"),
@@ -2994,10 +3370,17 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("connection_ids", "Comma-separated connection IDs"),
 					queryParamInt("connection_id", "Single connection ID"),
 					queryParamStringRequired("probe_name", "Probe name to query"),
-					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 					queryParamString("database_name", "Filter by database name"),
 					queryParamString("schema_name", "Filter by schema name"),
 					queryParamString("table_name", "Filter by table name"),
+					queryParamString("index_name", "Filter by index name"),
+					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
 					queryParamInt("buckets", "Number of time buckets"),
 					queryParamString("aggregation", "Aggregation method"),
 					queryParamString("metrics", "Comma-separated metric names"),
@@ -3081,14 +3464,46 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Security:    bearerAuth,
 				Parameters: []OpenAPIParameter{
 					queryParamIntRequired("connection_id", "Connection ID"),
-					queryParamInt("limit", "Maximum number of queries to return"),
+					queryParamInt("limit", "Maximum number of queries to return (default 10, max 100)"),
+					queryParamInt("offset", "Number of rows to skip for pagination (default 0, must be zero or greater)"),
 					queryParamString("order_by", "Column to sort by"),
 					queryParamString("order", "Sort order (asc or desc)"),
 					queryParamString("queryid", "Filter by specific query ID"),
-					queryParamBool("exclude_collector", "Exclude collector queries"),
+					queryParamString("database_name", "Filter by exact database name"),
+					queryParamBool("exclude_collector",
+						"Exclude Workbench-internal queries, including "+
+							"collector probe queries and the collector's "+
+							"and alerter's own datastore queries"),
 				},
 				Responses: map[string]OpenAPIResponse{
-					"200": jsonArrayResponse("TopQueryRow", "Top queries"),
+					"200": jsonArrayResponseWithHeaders("TopQueryRow", "Top queries",
+						totalCountHeader("Total number of matching queries, ignoring limit and offset")),
+					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse", "Permission denied"),
+				},
+			},
+		},
+
+		"/metrics/connection-groups": {
+			Get: &OpenAPIOperation{
+				Summary:     "Get connection counts grouped by user, client or database",
+				Description: "Returns the client connections in the most recent pg_stat_activity snapshot within the requested time range, grouped by database user, client address or database, and broken down by backend state. At most 200 groups are returned; because the groups are ordered by total descending, any truncation discards only the smallest groups, and total_groups reports the count before the cap so that a truncated response can be recognized",
+				OperationID: "getConnectionGroups",
+				Tags:        []string{"Metrics"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamIntRequired("connection_id", "Connection ID"),
+					queryParamString("group_by", "Grouping key: user, client or database (default: user)"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 24h); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonResponse("ConnectionGroupsResponse", "Connection counts by group"),
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
@@ -3817,6 +4232,29 @@ func jsonResponse(schemaRef, description string) OpenAPIResponse {
 			"application/json": {
 				Schema: &OpenAPISchema{Ref: "#/components/schemas/" + schemaRef},
 			},
+		},
+	}
+}
+
+// jsonArrayResponseWithHeaders builds a JSON array response that also
+// documents one or more response headers, such as the X-Total-Count
+// pagination total.
+func jsonArrayResponseWithHeaders(
+	itemSchemaRef, description string,
+	headers map[string]OpenAPIHeader,
+) OpenAPIResponse {
+	resp := jsonArrayResponse(itemSchemaRef, description)
+	resp.Headers = headers
+	return resp
+}
+
+// totalCountHeader documents the X-Total-Count response header carrying the
+// number of rows matching the request filters, ignoring limit and offset.
+func totalCountHeader(description string) map[string]OpenAPIHeader {
+	return map[string]OpenAPIHeader{
+		"X-Total-Count": {
+			Description: description,
+			Schema:      &OpenAPISchema{Type: "integer"},
 		},
 	}
 }

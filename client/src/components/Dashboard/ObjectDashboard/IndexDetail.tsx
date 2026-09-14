@@ -145,7 +145,7 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
         connectionId,
         databaseName,
         schemaName,
-        tableName: objectName,
+        indexName: objectName,
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
@@ -226,10 +226,9 @@ const IndexDetail: React.FC<ObjectDetailProps> = ({
                 <Box sx={KPI_GRID_SX}>
                     <KpiTile
                         label="Index Size"
-                        value={indexData?.index_size_pretty
-                            ?? formatBytes(
-                                indexData?.index_size ?? null
-                            )}
+                        value={formatBytes(
+                            indexData?.index_size ?? null
+                        )}
                     />
                     <KpiTile
                         label="Index Scans"

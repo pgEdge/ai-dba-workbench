@@ -24,7 +24,6 @@ import {
     Dns as ClusterIcon,
     Language as EstateIcon,
     Info as InfoIcon,
-    DarkMode as BlackoutIcon,
 } from '@mui/icons-material';
 import {
     HEADER_CONTAINER_SX,
@@ -33,6 +32,7 @@ import {
     HEADER_NAME_SX,
 } from './styles';
 import { useBlackouts } from '../../contexts/useBlackouts';
+import BlackoutIcon from '../shared/BlackoutIcon';
 import type { Selection } from '../../types/selection';
 
 interface SelectionHeaderProps {

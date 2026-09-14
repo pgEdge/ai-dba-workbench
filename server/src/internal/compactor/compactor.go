@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
 
 // reTableReference matches table name references in text (e.g., "users table")
@@ -36,7 +35,6 @@ type Compactor struct {
 	providerEstimator *ProviderTokenEstimator
 	llmSummarizer     *LLMSummarizer
 	cache             *CompactionCache
-	analytics         *Analytics
 	maxTokens         int
 	recentWindow      int
 	keepAnchors       bool
@@ -66,7 +64,6 @@ func NewCompactor(req CompactRequest) *Compactor {
 			TokenCounterType:       TokenCounterGeneric,
 			EnableLLMSummarization: false,
 			EnableCaching:          false,
-			EnableAnalytics:        false,
 		}
 	}
 
@@ -81,18 +78,12 @@ func NewCompactor(req CompactRequest) *Compactor {
 		cache = NewCompactionCache(options.CacheTTL)
 	}
 
-	var analytics *Analytics
-	if options.EnableAnalytics {
-		analytics = NewAnalytics()
-	}
-
 	return &Compactor{
 		classifier:        NewClassifier(options.PreserveToolResults),
 		tokenEstimator:    NewTokenEstimator(),
 		providerEstimator: NewProviderTokenEstimator(options.TokenCounterType),
 		llmSummarizer:     NewLLMSummarizer(options.EnableLLMSummarization),
 		cache:             cache,
-		analytics:         analytics,
 		maxTokens:         maxTokens,
 		recentWindow:      recentWindow,
 		keepAnchors:       req.KeepAnchors,
@@ -103,7 +94,6 @@ func NewCompactor(req CompactRequest) *Compactor {
 // Compact performs smart compaction on the message history.
 // The context parameter should be derived from the HTTP request for proper cancellation support.
 func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResponse {
-	startTime := time.Now()
 	originalCount := len(messages)
 
 	// Check cache first
@@ -134,11 +124,6 @@ func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResp
 				TokensSaved:      0,
 				CompressionRatio: 1.0,
 			},
-		}
-
-		// Record analytics
-		if c.analytics != nil {
-			c.analytics.RecordCompaction(result.CompactionInfo, time.Since(startTime))
 		}
 
 		return result
@@ -229,11 +214,6 @@ func (c *Compactor) Compact(ctx context.Context, messages []Message) CompactResp
 			TokensSaved:      tokensSaved,
 			CompressionRatio: compressionRatio,
 		},
-	}
-
-	// Record analytics
-	if c.analytics != nil {
-		c.analytics.RecordCompaction(result.CompactionInfo, time.Since(startTime))
 	}
 
 	// Cache result

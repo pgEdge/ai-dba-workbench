@@ -10,7 +10,83 @@ project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add a `-group-description` CLI flag that sets a group's
+  description when creating it with `-add-group`, matching the
+  description support already available in the web console. (#301)
+
+- Add a `-list-members` CLI flag to the server, which lists the
+  members of the group named with `-group`, including both member
+  users and nested member groups. (#303)
+
+- Add a Monitored Database Privileges page to the configuration
+  documentation, describing the PostgreSQL grants a monitoring role
+  needs on a monitored instance. The page recommends a
+  least-privilege role based on `pg_monitor` plus per-database
+  `CONNECT`, covers the optional `pg_stat_statements`, `system_stats`,
+  and Spock grants, and documents the coverage gaps that remain
+  without superuser access. (#351)
+
+- Add pagination and database filtering to the Top Queries panel on
+  the server dashboard. The panel footer now provides a page size
+  selector offering 10, 20, 50, or 100 rows, defaulting to 20, along
+  with previous and next controls and a "Showing X-Y of Z"
+  indicator, so users can page beyond the first rows. The panel
+  header shows a database filter when the connection monitors more
+  than one database; the filter defaults to "All databases". The
+  `GET /api/v1/metrics/top-queries` endpoint gained the `offset` and
+  `database_name` query parameters, and now returns an
+  `X-Total-Count` response header that reports the total number of
+  matching rows; the JSON response body is unchanged. (#335)
+
+- Add a custom time range to the monitoring dashboards and the
+  event timeline, alongside the existing `1h`, `6h`, `24h`, `7d`,
+  and `30d` presets. The new Custom option opens a picker with
+  From and To fields, so that the graphs can be lined up with a
+  known incident window rather than a rolling window ending at
+  the present moment.
+  The `/api/v1/metrics/query` endpoint now accepts
+  `time_range=custom` together with RFC 3339 `time_start` and
+  `time_end` parameters. The server rejects a span longer than
+  366 days and a start at or after the present moment, and it
+  clamps an end in the future to the present moment, since a
+  picker set to the current day routinely overshoots by a few
+  minutes. The `/api/v1/timeline/events` endpoint applies the
+  same rules to its `start_time` and `end_time` parameters, and
+  the picker applies them too, keeping Apply disabled and naming
+  the rule that failed.
+  Auto-refresh is suspended whilst a custom window is active,
+  because re-fetching a fixed historical window returns identical
+  data on every poll; the selector shows a pause indicator, and
+  refreshes resume as soon as the user returns to a preset. The
+  window is held in memory only, so it is neither persisted nor
+  reflected in the page URL, and a reload returns to the last
+  preset.
+  The time-series charts honour the dashboard window, including
+  the charts on the query detail overlay, whilst the event
+  timeline honours the independent window set on its own control.
+  The query leaderboards and the performance and database summary
+  tiles do not yet follow the dashboard selector. (#345)
+
+- Add a Connections section to the server dashboard, which groups
+  the server's client connections by database user, client address,
+  or database, and breaks each group down into total, active, idle,
+  idle in transaction, and other backend states. The counts come
+  from the most recent `pg_stat_activity` snapshot within the
+  selected time range, and the By Client tab also shows the
+  reverse-resolved client hostname where the server recorded one.
+  A new `GET /api/v1/metrics/connection-groups` endpoint serves the
+  section, returning at most 200 groups alongside a `total_groups`
+  count so that a truncated response can be recognised, and it
+  honours a custom time range through the same `time_start` and
+  `time_end` parameters as the metrics query endpoint. (#346)
+
 ### Changed
+
+- Extend the `-show-group-privileges` CLI command to also display a
+  group's admin permissions, alongside the MCP and connection
+  privileges it already reports. (#303)
 
 - Drop the runtime dependency on a knowledgebase package from the
   `pgedge-ai-dba-server` package in both the Debian and RPM
@@ -20,6 +96,437 @@ project adheres to
   default. Operators who want the knowledgebase install the
   package matching their chosen embedding provider and model, and
   set `database_path` themselves. (#316)
+
+- Update the knowledgebase `database_path` documentation and the
+  example server configuration for the renamed `pgedge-ai-kb`
+  package. The packages install one database per embedding
+  provider and model under `/usr/share/pgedge/pgedge-ai-kb/`,
+  named `kb-<provider>-<model>.db`, and the built-in default
+  still points at the legacy `postgres-mcp-kb` path. (#293)
+
+- Relabel the token scope options in the API token create and edit
+  screens so they now read "All the owner's MCP privileges" and
+  "All the owner's admin permissions" rather than "All MCP
+  Privileges" and "All Admin Permissions"; the new wording clarifies
+  that a token grants the owner's privileges rather than all system
+  privileges. (#323)
+
+- Ellie now gives correct, deployment-aware guidance for restarting
+  the Workbench's own components (server, collector, alerter, and
+  web client), and no longer suggests commands for unrelated
+  third-party tooling.
+  The web client sends its own copy of Ellie's system prompt on
+  every request, which always takes precedence over the server's
+  default; both copies now carry the same guidance, since fixing
+  only the server default left the client-facing bug unchanged for
+  real users. (#329)
+
+- Run the tests for the shared `pkg` module from the root `make test`
+  and `make test-all` targets, which previously skipped that module
+  entirely. This change affects test infrastructure only and does not
+  alter application behavior. (#364)
+
+### Fixed
+
+- Stop the `test` and `coverage` targets in the server, collector and
+  alerter Makefiles running `pkill -9` against every matching process
+  on the host, which killed any developer-started dev server or
+  service whenever a test suite ran. The standalone `killall` target
+  remains as an explicit, developer-invoked action and now sends
+  SIGTERM rather than SIGKILL. (#445)
+
+- Fix the `metric_staleness` alert rule firing and clearing in a
+  loop, which sent a notification pair every cycle for as long as a
+  probe remained stale. The alert cleaner resolved the rule's metric
+  through the metric registry, where the bespoke staleness metric
+  has no entry, and treated the resulting lookup error as proof that
+  the condition had gone away. The cleaner now distinguishes a
+  metric it cannot evaluate, or a query that failed, from a metric
+  that ran and reported nothing; only the latter clears an alert.
+  Staleness alerts resolve through their own check against probe
+  availability, the staleness evaluator applies the same cooldown
+  guard as every other rule, and each stale probe on a connection
+  now raises its own alert rather than overwriting a shared one.
+  (#405)
+- Fix five built-in alert rules that could never fire. The
+  `wal_archive_failed` rule queried `metrics.pg_stat_archiver`, a
+  table the collector never creates, and now reads the archiver
+  columns of `metrics.pg_stat_wal`. The `transaction_wraparound`
+  rule evaluated a hardcoded 50.0 and now reports the transaction
+  ID age of the oldest database as a percentage of the
+  wraparound limit, template databases included; `template0`
+  does not allow connections, so autovacuum only reaches it on
+  the anti-wraparound path, which makes it the database most
+  likely to age while every user database stays fresh, and
+  excluding templates left the rule silent in exactly that
+  case. The dashboard's XID Age tile now counts templates for
+  the same reason. The `high_max_connections` and
+  `connection_utilization` rules required a `pg_settings` snapshot
+  from the last hour, which a change-tracked probe stops
+  producing on a stable server, and now read the newest stored
+  snapshot. The `cpu_usage_high` rule keyed on a Windows-only
+  column that is NULL on Linux and now derives the busy
+  percentage on both platforms. The `checkpoint_warning` rule
+  compared a per-probe-interval delta against an unreachable
+  threshold and now counts requested checkpoints per hour, with a
+  default threshold of 12. Tuned autovacuum settings are also
+  honoured again by `autovacuum_not_running`, which previously
+  always assumed the shipped defaults. (#406)
+
+- Split the server dashboard "Connections Over Time" chart into a
+  Connections chart and a Sessions Established chart. The old chart
+  plotted `numbackends`, a gauge bounded by `max_connections`,
+  alongside `sessions`, a counter that climbs until the statistics
+  are reset, so the counter set the scale and flattened the backend
+  count into a featureless line. The Connections chart now shows
+  backends against a `max_connections` reference line, and both
+  titles state that the figures cover the monitored database, since
+  the `pg_stat_database` probe reports on `current_database()` only.
+  (#403)
+
+- Stop the login rate limiter that `AuthHandler` creates for itself
+  when the server shuts down. `NewAuthHandler` starts a background
+  cleanup goroutine for an internal rate limiter covering total login
+  attempts per IP, and only its `Close` method stops that goroutine.
+  Nothing called `Close`, because `SetupHandlers` built the handler
+  inside a closure and discarded the reference, so the goroutine and
+  its map of recorded attempts survived for the remaining life of the
+  process. `HandlerDependencies` now carries a `RegisterCloser`
+  callback, which the server uses to collect cleanup functions from the
+  handlers it wires and to run them from `Close`, alongside the
+  overview generator, the shared rate limiter, the auth store, and the
+  datastore it already stopped.
+
+- Fix the collector's partition dropper never enforcing
+  `retention_days`, which could fill the metrics datastore's disk
+  and take the Workbench down with it. Garbage collection was
+  scheduled five minutes after process start and every 24 hours
+  thereafter, with no record of when it last ran, so retention was
+  coupled to unbroken process uptime; a collector that restarted
+  more often than the startup delay never collected garbage even
+  once, and each restart returned it to the beginning of the five
+  minutes. A reporter saw partitions persist nine days past a
+  seven-day window across more than a hundred restarts, with no
+  dropper activity in the logs at all. The collector now records
+  each completed pass in a new `maintenance_runs` table and times
+  the next pass from that record rather than from process start, so
+  an overdue collection runs shortly after startup however many
+  times the process has restarted. This also closes the same gap
+  for rolling deployments and node drains, which failed
+  identically. A failed pass now backs off rather than retrying
+  immediately. (#437)
+
+- Fix the Query Plan panel in the Query Detail view of the web
+  client showing a raw database error, such as `syntax error at or
+  near "VACUUM"`, for statements that PostgreSQL cannot explain.
+  Because `pg_stat_statements` records utility and maintenance
+  statements alongside `SELECT` and DML, a Top Queries row can hold
+  text such as a bare `VACUUM`, `ANALYZE`, or `REINDEX`. The panel
+  now reports that query plans are not available for that type of
+  statement, and no longer attempts a request that cannot succeed.
+  Statements that PostgreSQL can plan, including a bare `TABLE`, are
+  unaffected and still show their plans. Where PostgreSQL accepts a
+  statement but returns no plan, as with
+  `REFRESH MATERIALIZED VIEW`, the panel now says so plainly instead
+  of showing the database's internal notice. (#368)
+
+- Fix the "Connection Count" bar chart in the cluster dashboard's
+  comparative section, which plotted a hardcoded value of one for
+  every server rather than a real measurement. The performance
+  summary endpoint (`GET /api/v1/metrics/performance-summary`) now
+  reports an `active_connections` count per connection, taken from
+  the sum of `numbackends` across the databases in the server's
+  most recent `pg_stat_database` snapshot, and the chart plots that
+  value. (#404)
+
+- Fix both charts on the query drill-down page, "Execution Time
+  Over Time" and "Calls Over Time", aggregating across every
+  statement in the database instead of the query the user selected.
+  The metrics time-series API (`GET /api/v1/metrics/query`) now
+  accepts a `queryid` filter, and the query detail page passes the
+  identifier of the selected query so that both series describe
+  that query alone. (#404)
+
+- Fix every chat request that included a tool list failing with
+  `anthropic (400): tools.0.custom.input_schema: Input does not
+  match the expected shape`, which broke Ask Ellie and the Server,
+  Query, and Alert analysis panels for any interaction requiring a
+  tool call. The client built each tool with a camelCase
+  `inputSchema` field, but `POST /api/v1/llm/chat` decodes its
+  request body via the vendored `pgedge-go-llm-lib` package, whose
+  wire contract expects snake_case `input_schema`; the mismatched
+  key silently unmarshalled to an empty schema for every tool,
+  which Anthropic then rejected outright. The client now normalises
+  tool definitions to the library's wire shape before sending them,
+  mirroring the existing message normalisation added in the same
+  migration. (#370)
+
+- Connection-privilege chips in the Admin Groups and Users panels
+  now show the connection name instead of the internal numeric
+  connection id. (#309)
+
+- Fix the metrics time-series API (`GET /api/v1/metrics/query`)
+  silently returning an empty HTTP 200 response, which the web UI
+  rendered as a generic "No data available" message, whenever a
+  monitored server's metric sample contained a NaN or Infinity value.
+  Go's JSON encoder cannot serialize non-finite floats, so the encode
+  failed silently after the response status had already been sent. The
+  query path now treats a non-finite sample the same way it already
+  treats a missing value from an underlying LEFT JOIN gap; the code
+  carries the last known good value forward when one exists and skips
+  the sample when none does, so a single bad reading degrades
+  gracefully instead of blanking the whole chart. A JSON-encoding
+  failure on this path is now logged loudly rather than silently
+  swallowed, so any future occurrence surfaces in the server logs.
+
+- Fix blank overview tiles and a Maintenance Info panel stuck on
+  "Never" in the Table and Index object-detail dashboards of the
+  web client. These panels requested the single most recent row of
+  stats through the `limit`, `order_by`, and `order` query
+  parameters, but the metrics API ignored those parameters and
+  returned time-bucketed chart data instead. The API now honors
+  these parameters and returns the most recent raw stat rows as
+  real column values, validating `order_by` against the table's
+  known columns before use.
+
+- Fix the end-to-end test suite intermittently failing at the "Start
+  stack" step. The server logged "collector schema is at v2, server
+  requires at least v4" and then timed out waiting for its health
+  endpoint. The harness script that applies the collector schema
+  stopped the collector as soon as it observed any recorded schema
+  version. A poll that landed between two migrations killed the
+  collector mid-migration, leaving the datastore below the version the
+  server requires. The collector now accepts a
+  `--print-latest-schema-version` flag that reports the newest known
+  schema version without touching any database. The harness asks for
+  that target up front and waits for the datastore to reach it. This
+  change affects test infrastructure only and does not alter
+  application behavior.
+
+- Fix the Table Size and Index Size fields rendering permanently as
+  "--" on the Table and Index object-detail dashboards of the web
+  client. No collector probe ever gathered relation size, so the value
+  genuinely never reached the datastore rather than failing at query
+  time as the two prior dashboard fixes did. The `pg_stat_all_tables`
+  probe now collects `table_size` via `pg_table_size`, which covers
+  heap, TOAST, free space map, and visibility map storage whilst
+  excluding indexes. The `pg_stat_all_indexes` probe now collects
+  `index_size` via `pg_relation_size` for each index. Both values are
+  stored as raw byte counts that the web client formats for display.
+  Collector schema migration Version 7 adds the two new columns to the
+  `metrics.pg_stat_all_tables` and `metrics.pg_stat_all_indexes`
+  partitioned parent tables, and PostgreSQL propagates them to every
+  existing and future partition automatically. The web client's
+  existing latest-row request reads the new columns with no further
+  server or client changes.
+
+- Fix the Activity Charts on the Table and Index object-detail
+  dashboards rendering permanently blank, with the messages "No tuple
+  operation data available", "No scan data available", and "No dead
+  tuple data available" appearing even when the monitored server had
+  completely normal, healthy activity. Those charts request computed
+  metrics, including per-second rates such as sequential scans, index
+  scans, and inserted, updated, or deleted rows, together with a
+  dead-tuple percentage. The metrics API understood only literal, raw
+  stored columns and could not compute a rate or a ratio, so it
+  rejected these requests with an error that the web client silently
+  rendered as missing data. The metrics API now computes a per-second
+  rate for any counter column a dashboard requests by name; a request
+  for `seq_scan_per_sec` computes the rate of change of the underlying
+  `seq_scan` counter between samples. The API also computes a
+  dead-tuple ratio metric for tables, reusing the rate and ratio
+  calculations already applied elsewhere in the product. (#342)
+
+- Fix embedding storage rejecting non-OpenAI providers with a
+  dimension-mismatch error. The chat memory and anomaly detection
+  embedding columns were hardcoded to `vector(1536)`, OpenAI's
+  dimension, which broke Gemini (3072), Voyage (1024 or 512), and
+  Ollama (384, 768, or 1024). The columns are now `halfvec(4000)`,
+  and the workbench zero-pads every embedding to 4000 dimensions, so
+  embeddings from any supported provider store and compare correctly.
+  This widening introduces a hard ceiling: an embedding model that
+  produces vectors with more than 4000 dimensions is not supported,
+  because 4000 is pgvector's HNSW index limit for the `halfvec` type.
+  The workbench rejects such a model with a clear error rather than
+  truncating the vector. (#294)
+
+- Fix the Estate Overview dashboard's KPI tiles (XID Age, Cache Hit
+  Ratio, Transactions, and Checkpoints) and Event Timeline getting
+  stuck on "No data" indefinitely after a brief backend restart or
+  any transient API failure. Recovering required the user to click the
+  sidebar's Refresh button or reload the page, because nothing retried
+  on its own. The client uses no React Query or SWR; every panel hook
+  refetched only when a single shared `lastRefresh` timestamp changed,
+  and that timestamp advanced only when the sidebar's
+  `GET /api/v1/clusters` call succeeded. A transient failure in an
+  individual panel's fetch, or in the shared refresh call itself, left
+  the affected panels blank with no automatic recovery. A shared
+  `useRetryingFetch` hook now provides capped exponential backoff (3s,
+  6s, 12s, 24s, capped at 45s) for the Event Timeline, the
+  performance-summary tiles, the Estate KPI tiles, and the alerts
+  panel. A manual refresh always pre-empts any pending retry, and the
+  Estate KPI tiles show a subtle "Reconnecting..." indicator while a
+  retry is pending, distinguishing that state from genuinely empty
+  data.
+
+- Granting "All Connections" access no longer deletes a group's
+  specific per-connection grants. Previously, adding an All
+  Connections READ grant destructively removed existing
+  per-connection grants, silently reducing a connection's
+  READ/WRITE access to READ; specific and wildcard grants now
+  coexist, and the effective access for each connection is the
+  higher of the two. (#302)
+
+- Fix the Table and Index object-detail dashboards showing stale,
+  pre-maintenance values in their overview tiles and Maintenance Info
+  panel indefinitely, even after the collector recorded fresh, correct
+  data. Running ANALYZE on a table corrected its live-tuple-count
+  estimate downward, yet the dashboard kept showing the old, larger
+  count and a stale or missing Last Analyze value. The latest-row mode
+  of the metrics API (`GET /api/v1/metrics/query` with `limit` and
+  `order_by`) ranked the table's entire history by the requested
+  `order_by` column and used `collected_at` only to break exact ties,
+  so it returned whichever historical sample had the highest column
+  value rather than the most recent sample. Any column that can
+  decrease over time, such as a tuple count after ANALYZE, VACUUM, or
+  DELETE, or a dead-tuple count after VACUUM, could therefore return a
+  permanently stale historical row. The query now reduces to each
+  monitored entity's newest sample by `collected_at` first, then ranks
+  those already-latest rows by the requested `order_by` column, so a
+  request filtered to one table or index always returns that entity's
+  true latest sample regardless of the sort column.
+
+- Fix the Index object-detail dashboard's Scan Activity chart always
+  showing "No index scan data available" for every index. The web
+  client sent the index's own name as the `table_name` query
+  parameter, but the metrics time-series query filtered on `relname`,
+  so no table ever matched an index name and the request returned no
+  rows. The time-series query path also had no way to filter by index
+  name, so a table with several indexes would have blended all of
+  their scan activity together. The metrics API
+  (`GET /api/v1/metrics/query`) now filters on `indexrelname`, the
+  client's metrics-fetching hook accepts a new `indexName` parameter,
+  and the Scan Activity chart sends it instead of misusing the
+  table-name parameter.
+
+- Fix several dashboard charts rendering blank whenever their time
+  series was perfectly flat, most visibly the Cache Hit Ratio Over
+  Time chart for a new, essentially read-only sample database whose
+  ratio held steady at 100% for its whole history. A flat series gave
+  the value axis a zero-height range, with `min` equal to `max`, so
+  the line or area had nothing to draw against and the chart appeared
+  empty. The value axis now pads a small visible range around a flat
+  value so the series renders, and it does so in a baseline-aware way
+  for zero-anchored charts, such as bars and stacked or area fills, so
+  their fill still renders from zero. (#336)
+
+- Fix the Cluster Group settings dialog so it shows and preserves a
+  group's description and its "Share with all users" setting, which
+  previously appeared empty or unchecked and were lost when editing;
+  the share flag is now persisted by the API. (#304)
+
+- Harden the collector against clean-exit restart loops that could
+  stop the Dashboard from showing Top Queries. The collector now
+  logs which signal triggered its shutdown, rather than exiting
+  silently, and the default monitored probe and pool wait timeout
+  (`monitored_max_wait_seconds`) was raised from 60 to 120 seconds
+  to give slow probes such as `pg_stat_statements` on large
+  monitored databases more headroom before timing out. (#308)
+
+- Harden the shipped Docker Compose collector service by running an
+  init process as PID 1, adding a stop grace period for graceful
+  shutdown, and raising the memory limit modestly from 256M to
+  512M; the collector connection-pool and timeout options are now
+  documented in the sample configuration. (#308)
+
+- Fix the "Hide monitoring queries" toggle on the Server dashboard's
+  Top Queries panel failing to hide the collector's and alerter's
+  datastore query overhead. Only the collector's probe queries against
+  monitored databases carried a marker, so its bulk `metrics.*`
+  inserts, partition maintenance, and change-detection reads, together
+  with the alerter's metric-evaluation queries, stayed in the panel
+  whenever the metadata datastore shared a PostgreSQL instance with
+  the monitored databases, which is the usual deployment. The toggle
+  now hides those statements as well. Each statement is tagged
+  individually rather than excluding the metadata database wholesale,
+  so queries that other tools run against that same database remain
+  visible. Two classes stay untagged by design and still appear in the
+  panel: the server's own datastore traffic for sessions, RBAC,
+  conversations, and the timeline; and the collector's `probe_configs`
+  resolution path, along with the alerter's remaining direct datastore
+  queries in `alert_queries.go`, `anomaly_queries.go`,
+  `notification_queries.go` and `queries.go`.
+
+  On an existing installation the toggle only hides statements that
+  PostgreSQL first recorded after the upgrade. `pg_stat_statements`
+  identifies a statement by its parse tree, which ignores comments, so
+  an entry already present keeps the untagged text it was first seen
+  with and the filter never matches it; those entries run every
+  collection cycle, so they are never evicted either. Run `SELECT
+  pg_stat_statements_reset();` once on each monitored instance after
+  upgrading for the toggle to take effect on statements already in the
+  view. (#364)
+
+### Removed
+
+- Remove 48 unused functions from the collector, server, and alerter,
+  along with the tests that existed only to exercise them. A
+  reachability analysis with `govulncheck`'s sibling tool `deadcode`
+  found 94 functions that no service entry point can reach; comparing
+  the result against the v1.0.0 tag confirmed that every one had
+  already been unreachable at that release, so none was recent work
+  awaiting a caller. This change takes the safe subset: 698 lines of
+  production code and 2,110 lines of dedicated tests.
+
+- Delete the alerter's unused `secretManager` implementation and the
+  `SecretManager` interface it satisfied, neither of which had any
+  caller, and delete the unused resource `Registry` type along with
+  its constructor and methods. The `Resource` and `Handler` types
+  declared alongside `Registry` remain, since the MCP resource
+  definitions still use them.
+
+- Remove the unused `HeaderStatusIndicator` component from the web
+  client, together with the `@dnd-kit/sortable` and `@dnd-kit/utilities`
+  dependencies; the client imports only `@dnd-kit/core`, which stays.
+
+- Remove a further 18 unused functions across the collector, server, and
+  alerter, together with the tests that existed only to exercise them.
+  The largest group is the alerter's notification-channel write API,
+  where ten methods covering channel creation, updates, deletion, email
+  recipients, connection links, notification history, and reminder state
+  had no caller; the alerter reads notification channels, whilst the
+  server owns every write. The rest are two pool accessors, two
+  compaction analytics reporters, a probe-availability lookup, and three
+  session tracing helpers.
+
+- Remove the chat compactor's analytics entirely, rather than leaving a
+  type that only ever writes. With its reporters gone, nothing could
+  read what `RecordCompaction` accumulated, so the `Analytics` type,
+  the `CompactionMetrics` and `EfficiencyReport` structures, the
+  `analytics` field, the `EnableAnalytics` option and the two recording
+  call sites all go together. `EnableAnalytics` defaulted to false, so
+  no deployment was collecting these figures in any case.
+
+### Removed
+
+- Remove the superseded `NewConnectionHandler` and
+  `NewNotificationChannelHandler` constructors, along with the
+  `DefaultHostValidator` helper that only they used. The server has
+  wired both handlers through the `NewConnectionHandlerWithSecurity` and
+  `NewNotificationChannelHandlerWithSecurity` variants for some time, so
+  the shorter forms were unreachable in production whilst 49 test call
+  sites still used them. Those call sites now use the `WithSecurity`
+  constructors directly, passing the same host-validation settings the
+  removed helper supplied, so test behaviour is unchanged.
+
+### Security
+
+- Ignore a blank password when updating a database connection, so an
+  empty or whitespace-only password can no longer overwrite the stored
+  credential. The datastore now enforces the "leave blank to keep
+  unchanged" rule server-side as defence-in-depth, rather than relying
+  on the web client alone. The create path, which still requires a
+  non-empty password, is unaffected. (#332)
 
 ## [1.0.0] - 2026-06-08
 

@@ -71,6 +71,7 @@ const ClusterCombinedProvider = ({ children }: ClusterProviderProps): React.Reac
 
         // From ClusterActionsContext
         updateGroupName: actionsContext.updateGroupName,
+        updateGroup: actionsContext.updateGroup,
         updateClusterName: actionsContext.updateClusterName,
         updateServerName: actionsContext.updateServerName,
         getServer: actionsContext.getServer,

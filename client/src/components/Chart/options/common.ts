@@ -163,13 +163,140 @@ export function buildXAxis(categories?: string[]): object {
     };
 }
 
-export function buildYAxis(): object {
-    return {
+/**
+ * Builds the numeric value axis. When `seriesData` is supplied the
+ * range of the data is inspected; if every finite point shares the
+ * same value the axis would otherwise collapse to a zero-height range
+ * (`min === max`), leaving ECharts nothing to interpolate against so
+ * the line/area renders as blank. In that degenerate case a synthetic
+ * range is padded around the flat value so the series stays visible.
+ * For any non-degenerate range no `min`/`max` is emitted, so ECharts
+ * auto-scaling is preserved exactly as before.
+ *
+ * The shape of that synthetic degenerate range depends on whether the
+ * chart is `zeroAnchored`. A chart is zero-anchored when its marks fill
+ * from the `y = 0` baseline: bars always grow from zero, and lines do so
+ * when they are stacked or carry an area fill. ECharts clips series to
+ * the axis extent, so for a zero-anchored chart the padded range must
+ * still include zero (a flat +100 pads to `[0, 110]`, a flat -100 to
+ * `[-110, 0]`, and a flat 0 to `[-1, 1]`); otherwise the fill or bar
+ * would be lopped off at the baseline. For a plain line (no fill, no
+ * stack) the range stays a tight window centred on the flat value
+ * (a flat 100 pads to `[90, 110]`), which keeps a bare line visible
+ * without wasting vertical space down to an irrelevant zero baseline.
+ *
+ * When `stacked` is true the series are drawn on top of one another,
+ * so the rendered height at each x-index is the cumulative total across
+ * all series at that index rather than any single raw value. ECharts
+ * stacks positive values upward from the zero baseline and negative
+ * values downward from that same baseline, so the two signs do not net
+ * against one another. The per-index positive and negative totals are
+ * therefore accumulated separately: the positive total is the top of
+ * the rendered stack and the negative total is the bottom. A sign that
+ * never appears anywhere in the data is not folded into the observed
+ * range, so a single-sign stacked chart (e.g. one series flat at 100)
+ * still pads tightly around its real total rather than being anchored
+ * to a spurious zero baseline. A mixed-sign stacked chart (e.g. one
+ * series flat at +100 and another at -100) is bounded by both the
+ * positive and negative totals, preserving its true ~200-unit span
+ * instead of collapsing to a tiny window around a netted zero.
+ */
+export function buildYAxis(
+    seriesData?: number[][],
+    stacked?: boolean,
+    zeroAnchored?: boolean,
+): object {
+    const axis: {
+        type: string;
+        axisLabel: { formatter: (value: number) => string };
+        min?: number;
+        max?: number;
+    } = {
         type: 'value',
         axisLabel: {
             formatter: formatNumericValue,
         },
     };
+
+    let min = Infinity;
+    let max = -Infinity;
+    let hasValue = false;
+    const observe = (value: number) => {
+        hasValue = true;
+        if (value < min) {min = value;}
+        if (value > max) {max = value;}
+    };
+
+    const series = seriesData ?? [];
+    if (stacked) {
+        // Stacked series render as a cumulative total at each x-index.
+        // ECharts stacks positive values upward and negative values
+        // downward from a shared zero baseline, so the two signs are
+        // accumulated separately: the positive total is the top of the
+        // stack and the negative total is the bottom. A first pass
+        // records the longest series and whether either sign occurs
+        // anywhere; a sign that never appears is not folded into the
+        // observed range, keeping single-sign stacks padded tightly
+        // around their real total rather than anchored to a spurious
+        // zero baseline.
+        let maxLen = 0;
+        let hasPositive = false;
+        let hasNegative = false;
+        for (const s of series) {
+            if (s.length > maxLen) {maxLen = s.length;}
+            for (const value of s) {
+                if (!Number.isFinite(value)) {continue;}
+                if (value > 0) {hasPositive = true;}
+                else if (value < 0) {hasNegative = true;}
+            }
+        }
+        for (let i = 0; i < maxLen; i++) {
+            let posSum = 0;
+            let negSum = 0;
+            let finiteAtIndex = false;
+            for (const s of series) {
+                const value = s[i];
+                if (!Number.isFinite(value)) {continue;}
+                finiteAtIndex = true;
+                if (value > 0) {posSum += value;}
+                else if (value < 0) {negSum += value;}
+            }
+            if (!finiteAtIndex) {continue;}
+            // Observe each sign's total only when that sign is present
+            // somewhere in the data. When neither sign occurs the index
+            // holds only finite zeros, so observe the flat zero baseline
+            // so an all-zero stacked series still pads to a visible range.
+            if (hasPositive) {observe(posSum);}
+            if (hasNegative) {observe(negSum);}
+            if (!hasPositive && !hasNegative) {observe(0);}
+        }
+    } else {
+        for (const s of series) {
+            for (const value of s) {
+                if (!Number.isFinite(value)) {continue;}
+                observe(value);
+            }
+        }
+    }
+
+    if (hasValue && min === max) {
+        const flat = min;
+        const padding = flat === 0 ? 1 : Math.abs(flat) * 0.1;
+        if (zeroAnchored) {
+            // The chart's marks fill from the zero baseline, so the
+            // padded range must span zero to avoid clipping the fill or
+            // bar at that baseline.
+            axis.min = Math.min(0, flat - padding);
+            axis.max = Math.max(0, flat + padding);
+        } else {
+            // A plain line has no baseline fill, so a tight window
+            // centred on the flat value keeps it visible.
+            axis.min = flat - padding;
+            axis.max = flat + padding;
+        }
+    }
+
+    return axis;
 }
 
 export function buildDataZoom(enabled: boolean): object[] {

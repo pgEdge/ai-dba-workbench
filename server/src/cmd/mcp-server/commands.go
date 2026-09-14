@@ -121,7 +121,7 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 	// Handle group management commands
 	if f.HasGroupCommand() {
 		if f.AddGroupCmd {
-			if err := addGroupCommand(dataDir, f.GroupName, ""); err != nil {
+			if err := addGroupCommand(dataDir, f.GroupName, f.GroupDescription); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}
@@ -154,6 +154,14 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 
 		if f.RemoveMemberCmd {
 			if err := removeMemberCommand(dataDir, f.GroupName, f.Username, f.MemberGroup); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
+
+		if f.ListMembersCmd {
+			if err := listGroupMembersCommand(dataDir, f.GroupName); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}

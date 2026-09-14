@@ -483,50 +483,6 @@ func TestHasWriteAccess(t *testing.T) {
 // DatabaseAccessChecker Tests
 // =============================================================================
 
-func TestNewDatabaseAccessChecker(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-
-	if checker == nil {
-		t.Fatal("Expected non-nil checker")
-	}
-}
-
-func TestDatabaseAccessChecker_APIToken(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-
-	ctx := context.WithValue(context.Background(), IsAPITokenContextKey, true)
-
-	if !checker.CanAccessDatabase(ctx) {
-		t.Error("Expected database access with API token")
-	}
-}
-
-func TestDatabaseAccessChecker_SessionUser(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-
-	// With username in context
-	ctx := context.WithValue(context.Background(), UsernameContextKey, "testuser")
-	if !checker.CanAccessDatabase(ctx) {
-		t.Error("Expected database access with session user")
-	}
-
-	// Without username in context
-	ctx = context.Background()
-	if checker.CanAccessDatabase(ctx) {
-		t.Error("Expected no database access without authentication")
-	}
-}
-
-func TestDatabaseAccessChecker_GetBoundDatabase(t *testing.T) {
-	checker := NewDatabaseAccessChecker()
-	ctx := context.Background()
-
-	// Should always return empty string (single database mode)
-	if db := checker.GetBoundDatabase(ctx); db != "" {
-		t.Errorf("Expected empty string, got %q", db)
-	}
-}
-
 // =============================================================================
 // RBACChecker Nil Store Tests
 // =============================================================================
@@ -615,6 +571,55 @@ func TestRBACCheckerAllConnectionsHigherLevel(t *testing.T) {
 	canAccess, level = checker.CanAccessConnection(ctx, 2)
 	if !canAccess || level != AccessLevelRead {
 		t.Errorf("Expected read for connection 2, got canAccess=%v level=%q", canAccess, level)
+	}
+}
+
+// TestRBACCheckerSpecificThenAllConnections covers issue #302 at the
+// resolver level: when specific grants are made FIRST and the wildcard is
+// granted afterwards, the specific access levels must still apply. This is
+// the reverse grant order of TestRBACCheckerAllConnectionsHigherLevel and is
+// the sequence that previously wiped the specific grants.
+func TestRBACCheckerSpecificThenAllConnections(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAccess(t)
+	defer cleanup()
+
+	checker := NewRBACChecker(store)
+
+	store.CreateUser("testuser", "Password1234", "Test user", "", "")
+	userID, _ := store.GetUserID("testuser")
+	groupID, _ := store.CreateGroup("test-group", "Test")
+	store.AddUserToGroup(groupID, userID)
+
+	const (
+		connA = 1
+		connB = 2
+		connC = 3
+	)
+
+	// Specific grants first, wildcard last (reverse of the sibling test).
+	store.GrantConnectionPrivilege(groupID, connA, AccessLevelRead)
+	store.GrantConnectionPrivilege(groupID, connB, AccessLevelReadWrite)
+	store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead)
+
+	ctx := context.WithValue(context.Background(), IsSuperuserContextKey, false)
+	ctx = context.WithValue(ctx, UserIDContextKey, userID)
+
+	// Connection B keeps read_write (specific grant survives the wildcard).
+	canAccess, level := checker.CanAccessConnection(ctx, connB)
+	if !canAccess || level != AccessLevelReadWrite {
+		t.Errorf("Expected read_write for connection B, got canAccess=%v level=%q", canAccess, level)
+	}
+
+	// Connection A keeps read (specific grant survives the wildcard).
+	canAccess, level = checker.CanAccessConnection(ctx, connA)
+	if !canAccess || level != AccessLevelRead {
+		t.Errorf("Expected read for connection A, got canAccess=%v level=%q", canAccess, level)
+	}
+
+	// Connection C has no specific grant and falls back to the wildcard read.
+	canAccess, level = checker.CanAccessConnection(ctx, connC)
+	if !canAccess || level != AccessLevelRead {
+		t.Errorf("Expected read for connection C via wildcard, got canAccess=%v level=%q", canAccess, level)
 	}
 }
 

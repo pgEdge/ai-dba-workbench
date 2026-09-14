@@ -114,6 +114,27 @@ func NewSchemaManager() *SchemaManager {
 	return sm
 }
 
+// LatestVersion returns the highest migration version registered with
+// the schema manager. It reflects the newest schema the collector will
+// converge to once NewDatastore() has applied every pending migration,
+// so callers that need "the version the collector will end up at" can
+// read it without a live database connection or a running migration.
+//
+// The value is derived from the registered migrations, so it stays
+// correct automatically as new migrations are added; nothing needs to
+// track the count separately. It returns 0 when no migrations are
+// registered, which never happens for a SchemaManager built by
+// NewSchemaManager but keeps the helper safe for a zero-value receiver.
+func (sm *SchemaManager) LatestVersion() int {
+	latest := 0
+	for _, m := range sm.migrations {
+		if m.Version > latest {
+			latest = m.Version
+		}
+	}
+	return latest
+}
+
 // registerMigrations registers all available migrations
 func (sm *SchemaManager) registerMigrations() {
 	// Consolidated Migration #1
@@ -2688,15 +2709,15 @@ func (sm *SchemaManager) registerMigrations() {
 					-- Transaction alerts
 					('long_running_transaction', 'Transaction running too long', 'transactions', 'pg_stat_activity.max_xact_duration_seconds', 'seconds', '>', 3600, 'warning', TRUE, NULL, TRUE),
 					('idle_in_transaction', 'Connection idle in transaction too long', 'transactions', 'pg_stat_activity.idle_in_transaction_seconds', 'seconds', '>', 300, 'warning', TRUE, NULL, TRUE),
-					('transaction_wraparound', 'Transaction ID wraparound approaching', 'transactions', 'age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
+					('transaction_wraparound', 'Transaction ID wraparound approaching; the oldest database transaction ID age exceeds this percentage of the wraparound limit', 'transactions', 'age_percent', 'percent', '>', 75, 'critical', TRUE, NULL, TRUE),
 
 					-- Lock alerts
 					('deadlocks_detected', 'Deadlocks detected', 'locks', 'pg_stat_database.deadlocks_delta', 'deadlocks', '>', 0, 'warning', TRUE, NULL, TRUE),
 					('lock_wait_time', 'Lock wait time exceeds threshold', 'locks', 'pg_stat_activity.max_lock_wait_seconds', 'seconds', '>', 30, 'warning', TRUE, NULL, TRUE),
 
 					-- WAL and Checkpoint alerts
-					('checkpoint_warning', 'Checkpoints requested too frequently', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints', '>', 50, 'warning', TRUE, NULL, TRUE),
-					('wal_archive_failed', 'WAL archiving failures detected', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures', '>', 0, 'critical', TRUE, NULL, TRUE),
+					('checkpoint_warning', 'Requested checkpoints in the last hour exceed the threshold; frequent requested checkpoints usually mean max_wal_size is too small', 'wal', 'pg_stat_checkpointer.checkpoints_req_delta', 'checkpoints/hour', '>', 12, 'warning', TRUE, NULL, TRUE),
+					('wal_archive_failed', 'WAL archiving failures detected in the last hour', 'wal', 'pg_stat_archiver.failed_count_delta', 'failures/hour', '>', 0, 'critical', TRUE, NULL, TRUE),
 
 					-- Vacuum alerts
 					('autovacuum_not_running', 'Table has dead tuples exceeding the autovacuum threshold but has not been vacuumed; indicates autovacuum may be blocked or unable to keep up', 'maintenance', 'table_last_autovacuum_hours', 'hours', '>', 1, 'warning', TRUE, NULL, TRUE),
@@ -3014,6 +3035,158 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #6 widens the two embedding columns from the original
+	// vector(1536) declaration to halfvec(4000), so non-OpenAI providers
+	// (Gemini 3072, Voyage, Ollama) can store embeddings of any size up
+	// to 4000 dimensions. The application zero-pads every vector to 4000
+	// before storage and searching, which leaves cosine distance
+	// unchanged. See GitHub issue #294.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     6,
+		Description: "Widen embedding columns to halfvec(4000) for multi-provider support",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			if err := upgradeEmbeddingColumnToHalfvec(ctx, tx,
+				"chat_memories", "embedding",
+				"idx_chat_memories_embedding",
+				"CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding "+
+					"ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops)",
+			); err != nil {
+				return fmt.Errorf(
+					"failed to widen chat_memories.embedding: %w", err)
+			}
+
+			if err := upgradeEmbeddingColumnToHalfvec(ctx, tx,
+				"anomaly_embeddings", "embedding",
+				"idx_anomaly_embeddings_vector",
+				"CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector "+
+					"ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops)",
+			); err != nil {
+				return fmt.Errorf(
+					"failed to widen anomaly_embeddings.embedding: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #7: Add relation-size columns to the table and index
+	// metrics tables so the object-detail dashboards can report storage
+	// footprint alongside the access statistics already collected for the
+	// same relations. The columns land on the partitioned parent tables;
+	// PostgreSQL 14-18 propagate ADD COLUMN to existing and future
+	// partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     7,
+		Description: "Add table_size and index_size columns to table and index metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_stat_all_tables
+					ADD COLUMN IF NOT EXISTS table_size BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_stat_all_tables.table_size IS
+					'On-disk size of the table in bytes as reported by pg_table_size: heap plus TOAST plus free-space and visibility maps. Indexes are excluded because they are reported per index in metrics.pg_stat_all_indexes; TOAST is included so tables with large or toasted columns are not undercounted.';
+
+				ALTER TABLE metrics.pg_stat_all_indexes
+					ADD COLUMN IF NOT EXISTS index_size BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_stat_all_indexes.index_size IS
+					'On-disk size of the index in bytes as reported by pg_relation_size, the standard index size figure covering the index relation''s main fork.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add relation-size columns to metrics tables: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #8 realigns three built-in alert rules with the metric
+	// semantics the alerter actually implements. See GitHub issue #406.
+	//
+	// checkpoint_warning previously read "more than 50 requested
+	// checkpoints", but the metric only ever reported the increase seen
+	// between two consecutive samples of a 600 second probe, so the rule
+	// could not fire. The metric now reports requested checkpoints per
+	// hour, and the shipped threshold drops to a level a real server can
+	// reach. The threshold update is deliberately conditional on the row
+	// still carrying the old shipped default, so an operator who has
+	// tuned the value keeps it.
+	//
+	// wal_archive_failed and transaction_wraparound keep their thresholds
+	// and only gain descriptions and units that state the window and the
+	// denominator, because both were previously silent about them.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     8,
+		Description: "Realign checkpoint, WAL archiving and wraparound alert rule semantics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET default_threshold = 12
+				WHERE name = 'checkpoint_warning'
+				  AND is_built_in
+				  AND default_threshold = 50;
+
+				UPDATE alert_rules
+				SET description = 'Requested checkpoints in the last hour exceed the threshold; frequent requested checkpoints usually mean max_wal_size is too small',
+				    metric_unit = 'checkpoints/hour'
+				WHERE name = 'checkpoint_warning'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'WAL archiving failures detected in the last hour',
+				    metric_unit = 'failures/hour'
+				WHERE name = 'wal_archive_failed'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Transaction ID wraparound approaching; the oldest database transaction ID age exceeds this percentage of the wraparound limit'
+				WHERE name = 'transaction_wraparound'
+				  AND is_built_in;
+
+				COMMENT ON COLUMN alert_rules.metric_unit IS
+					'Unit the metric is reported in. Rate-style units name their window explicitly (for example ''checkpoints/hour''), because the alerter evaluates those metrics over a fixed one hour window rather than reporting an absolute counter.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to realign built-in alert rule semantics: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     9,
+		Description: "Add maintenance_runs table to persist background task completions",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				CREATE TABLE IF NOT EXISTS maintenance_runs (
+					task TEXT PRIMARY KEY,
+					last_run_at TIMESTAMPTZ NOT NULL
+				);
+
+				COMMENT ON TABLE maintenance_runs IS
+					'Records when each periodic background maintenance task last completed, so the schedule survives a collector restart. Without this the partition dropper only ran after a fixed period of unbroken uptime, and a collector that restarted more often than that never enforced retention at all.';
+				COMMENT ON COLUMN maintenance_runs.task IS
+					'Stable identifier for the maintenance task, for example partition_retention for the metrics partition dropper.';
+				COMMENT ON COLUMN maintenance_runs.last_run_at IS
+					'Timestamp at which the task last completed successfully; the next run is scheduled relative to this rather than to process start.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to create maintenance_runs table: %w", err)
+			}
+
+			return nil
+		},
+	})
+
 }
 
 // Migrate applies all pending migrations
@@ -3123,61 +3296,6 @@ func isTableNotExistError(err error) bool {
 	return errors.Is(err, pgx.ErrNoRows)
 }
 
-// GetMigrationStatus returns information about migration status
-func (sm *SchemaManager) GetMigrationStatus(conn *pgxpool.Conn) ([]MigrationStatus, error) {
-	ctx := context.Background()
-	currentVersion, err := sm.getCurrentVersion(conn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current version: %w", err)
-	}
-
-	// Get applied migrations from database
-	appliedMigrations := make(map[int]MigrationRecord)
-	rows, err := conn.Query(ctx, `
-        SELECT version, description, applied_at
-        FROM schema_version
-        ORDER BY version
-    `)
-	tableNotExist := isTableNotExistError(err)
-	if err != nil && !tableNotExist {
-		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
-	}
-
-	if !tableNotExist {
-		defer rows.Close()
-
-		for rows.Next() {
-			var record MigrationRecord
-			if err := rows.Scan(&record.Version, &record.Description, &record.AppliedAt); err != nil {
-				return nil, fmt.Errorf("failed to scan migration record: %w", err)
-			}
-			appliedMigrations[record.Version] = record
-		}
-
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("error iterating migrations: %w", err)
-		}
-	}
-
-	// Build status for each migration
-	var statuses []MigrationStatus
-	for _, migration := range sm.migrations {
-		status := MigrationStatus{
-			Version:     migration.Version,
-			Description: migration.Description,
-			Applied:     migration.Version <= currentVersion,
-		}
-
-		if record, ok := appliedMigrations[migration.Version]; ok {
-			status.AppliedAt = &record.AppliedAt
-		}
-
-		statuses = append(statuses, status)
-	}
-
-	return statuses, nil
-}
-
 // MigrationRecord represents a migration record in the database
 type MigrationRecord struct {
 	Version     int
@@ -3282,22 +3400,22 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			CREATE EXTENSION IF NOT EXISTS vector;
 
-			CREATE TABLE IF NOT EXISTS anomaly_embeddings (
+			CREATE TABLE IF NOT EXISTS public.anomaly_embeddings (
 				id BIGSERIAL PRIMARY KEY,
 				candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-				embedding vector(1536),
+				embedding halfvec(4000),
 				model_name TEXT NOT NULL,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				UNIQUE(candidate_id)
 			);
 
-			COMMENT ON TABLE anomaly_embeddings IS
+			COMMENT ON TABLE public.anomaly_embeddings IS
 				'Embeddings for anomaly candidates used in Tier 2 similarity matching';
 
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_candidate
-				ON anomaly_embeddings(candidate_id);
+				ON public.anomaly_embeddings(candidate_id);
 			CREATE INDEX IF NOT EXISTS idx_anomaly_embeddings_vector
-				ON anomaly_embeddings USING hnsw (embedding vector_cosine_ops);
+				ON public.anomaly_embeddings USING hnsw (embedding halfvec_cosine_ops);
 		`); err != nil {
 			return fmt.Errorf("pgvector schema setup: %w", err)
 		}
@@ -3324,19 +3442,159 @@ func runPgVectorSetup(ctx context.Context, tx pgx.Tx) error {
 func runChatMemoryEmbeddingSetup(ctx context.Context, tx pgx.Tx) error {
 	return runSavepointed(ctx, tx, "chat_memories_embedding_setup", func() error {
 		_, err := tx.Exec(ctx, `
-			ALTER TABLE chat_memories
-				ADD COLUMN IF NOT EXISTS embedding vector(1536);
+			ALTER TABLE public.chat_memories
+				ADD COLUMN IF NOT EXISTS embedding halfvec(4000);
 
-			COMMENT ON COLUMN chat_memories.embedding IS
-				'Vector embedding (1536 dimensions) for similarity search';
+			COMMENT ON COLUMN public.chat_memories.embedding IS
+				'Vector embedding for similarity search, zero-padded to a fixed width';
 
 			CREATE INDEX IF NOT EXISTS idx_chat_memories_embedding
-				ON chat_memories USING hnsw (embedding vector_cosine_ops);
+				ON public.chat_memories USING hnsw (embedding halfvec_cosine_ops);
 		`)
 		if err != nil {
 			return fmt.Errorf(
 				"add chat_memories embedding column/index: %w", err)
 		}
+		return nil
+	})
+}
+
+// rowQuerier is the minimal QueryRow contract embeddingColumnTypeName
+// needs. Narrowing from pgx.Tx keeps the helper unit-testable with a
+// tiny fake; every production call site passes a real pgx.Tx.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// embeddingColumnTypeName returns the format_type() name of the named
+// column (for example "vector(1536)" or "halfvec(4000)"). It returns an
+// empty string when the table or column does not exist, which lets the
+// caller treat a missing column as "nothing to upgrade" rather than an
+// error. The lookup joins pg_attribute against pg_class/pg_namespace and
+// resolves the type modifier so the dimension is included.
+func embeddingColumnTypeName(
+	ctx context.Context,
+	q rowQuerier,
+	table, column string,
+) (string, error) {
+	var typeName string
+	err := q.QueryRow(ctx, `
+		SELECT format_type(a.atttypid, a.atttypmod)
+		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public'
+		  AND c.relname = $1
+		  AND a.attname = $2
+		  AND a.attnum > 0
+		  AND NOT a.attisdropped
+	`, table, column).Scan(&typeName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf(
+			"failed to read type of %s.%s: %w", table, column, err)
+	}
+	return typeName, nil
+}
+
+// upgradeEmbeddingColumnToHalfvec converts a vector(N) embedding column
+// to halfvec(4000) in place, zero-padding existing rows and rebuilding
+// the HNSW index, all inside a SAVEPOINT. The SAVEPOINT prevents a
+// failure here from poisoning the outer migration transaction (which
+// would otherwise surface as the opaque SQLSTATE 25P02 on the following
+// statement); it does not swallow the error. A database without pgvector
+// has no embedding column, so the type probe returns an empty string and
+// the upgrade is a clean no-op. A database whose pgvector is too old to
+// provide the halfvec type (halfvec requires pgvector 0.7.0 or newer) but
+// which already holds a vector(N) column is different: the ALTER to
+// halfvec(4000) fails and that error is propagated, aborting migration
+// #6. This is deliberate, because silently leaving the column as
+// vector(N) would only defer the breakage to runtime (the application
+// casts every embedding to ::halfvec on insert and search), so failing
+// the migration loudly is the safer outcome.
+//
+// The function is fully idempotent. It first reads the current column
+// type; it skips every table whose column is already the exact target
+// type halfvec(4000) (or whose table/column does not exist), so
+// re-running migration #6 is a no-op. A column already sitting at a
+// different halfvec width (for example a partially migrated or manually
+// created halfvec(1536)) is not treated as done: the application pads
+// and casts every embedding to halfvec(4000) on insert and search, so a
+// mismatched width would only break at runtime. The function therefore
+// fails loudly on any halfvec width other than 4000 rather than
+// silently skipping it.
+//
+// The padding expression mirrors the cast the application performs, so
+// stored vectors and freshly inserted vectors share an identical layout:
+// short vectors are right-padded with zeros to 4000 dimensions and NULLs
+// are preserved as NULL.
+func upgradeEmbeddingColumnToHalfvec(
+	ctx context.Context,
+	tx pgx.Tx,
+	table, column, indexName, createIndexSQL string,
+) error {
+	return runSavepointed(ctx, tx, "upgrade_"+table+"_"+column, func() error {
+		typeName, err := embeddingColumnTypeName(ctx, tx, table, column)
+		if err != nil {
+			return err
+		}
+
+		// Nothing to do when the table/column is absent (fresh installs
+		// already create halfvec) or the column is already the exact
+		// target type.
+		if typeName == "" {
+			return nil
+		}
+		if typeName == "halfvec(4000)" {
+			return nil
+		}
+		if strings.HasPrefix(typeName, "halfvec") {
+			// Some other halfvec width: a partial or manual migration
+			// left the column at the wrong dimension. The application
+			// casts every embedding to halfvec(4000), so a mismatched
+			// width would only break at runtime; fail loudly here.
+			return fmt.Errorf(
+				"unexpected halfvec width %q for %s.%s; expected halfvec(4000)",
+				typeName, table, column)
+		}
+		if !strings.HasPrefix(typeName, "vector") {
+			// An unexpected type: leave it untouched rather than risk a
+			// destructive cast. This should never happen in practice.
+			return fmt.Errorf(
+				"unexpected type %q for %s.%s; refusing to convert",
+				typeName, table, column)
+		}
+
+		// Drop the old vector_cosine_ops HNSW index before changing the
+		// column type; the operator class no longer matches afterwards.
+		if _, err := tx.Exec(ctx,
+			fmt.Sprintf("DROP INDEX IF EXISTS public.%s", indexName)); err != nil {
+			return fmt.Errorf("drop index %s: %w", indexName, err)
+		}
+
+		// Convert the column, zero-padding each non-NULL vector to 4000
+		// dimensions and preserving NULLs. The cast goes through the
+		// real[] representation so array_fill can append the padding.
+		alter := fmt.Sprintf(`
+			ALTER TABLE public.%s
+				ALTER COLUMN %s TYPE halfvec(4000)
+				USING CASE
+					WHEN %s IS NULL THEN NULL
+					ELSE (%s::real[] || array_fill(0::real,
+						ARRAY[4000 - vector_dims(%s)]))::halfvec(4000)
+				END
+		`, table, column, column, column, column)
+		if _, err := tx.Exec(ctx, alter); err != nil {
+			return fmt.Errorf("alter column %s.%s: %w", table, column, err)
+		}
+
+		// Recreate the HNSW index with the halfvec operator class.
+		if _, err := tx.Exec(ctx, createIndexSQL); err != nil {
+			return fmt.Errorf("recreate index %s: %w", indexName, err)
+		}
+
 		return nil
 	})
 }

@@ -105,350 +105,6 @@ func TestGetNotificationChannelsForConnection(t *testing.T) {
 	}
 }
 
-func TestCreateUpdateDeleteNotificationChannel(t *testing.T) {
-	ds, _, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	owner := "tester"
-	desc := "desc"
-	method := "POST"
-	now := time.Now()
-	ch := &NotificationChannel{
-		OwnerUsername:         &owner,
-		Enabled:               true,
-		ChannelType:           ChannelTypeWebhook,
-		Name:                  "create-test",
-		Description:           &desc,
-		HTTPMethod:            method,
-		Headers:               map[string]string{"X-Hdr": "v"},
-		SMTPPort:              587,
-		SMTPUseTLS:            true,
-		ReminderEnabled:       true,
-		ReminderIntervalHours: 4,
-		IsEstateDefault:       false,
-		CreatedAt:             now,
-		UpdatedAt:             now,
-	}
-	if err := ds.CreateNotificationChannel(ctx, ch); err != nil {
-		t.Fatalf("CreateNotificationChannel: %v", err)
-	}
-	if ch.ID == 0 {
-		t.Fatal("expected ID set")
-	}
-
-	ch.Name = "create-test-renamed"
-	ch.UpdatedAt = time.Now()
-	if err := ds.UpdateNotificationChannel(ctx, ch); err != nil {
-		t.Fatalf("UpdateNotificationChannel: %v", err)
-	}
-	got, err := ds.GetNotificationChannel(ctx, ch.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Name != "create-test-renamed" {
-		t.Errorf("got name=%q", got.Name)
-	}
-
-	if err := ds.DeleteNotificationChannel(ctx, ch.ID); err != nil {
-		t.Fatalf("DeleteNotificationChannel: %v", err)
-	}
-	if _, err := ds.GetNotificationChannel(ctx, ch.ID); err == nil {
-		t.Errorf("expected error after delete")
-	}
-
-	// Canceled context: errors propagate.
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if err := ds.UpdateNotificationChannel(canceled, ch); err == nil {
-		t.Errorf("update canceled: expected error")
-	}
-	if err := ds.DeleteNotificationChannel(canceled, 1); err == nil {
-		t.Errorf("delete canceled: expected error")
-	}
-}
-
-func TestEmailRecipients(t *testing.T) {
-	ds, pool, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	channelID := insertTestChannel(t, pool, "email-ch", "email", false)
-
-	// Empty.
-	got, err := ds.GetEmailRecipients(ctx, channelID)
-	if err != nil {
-		t.Fatalf("GetEmailRecipients: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("expected 0, got %d", len(got))
-	}
-
-	// Create.
-	r := &EmailRecipient{
-		ChannelID:    channelID,
-		EmailAddress: "a@example.com",
-		Enabled:      true,
-		CreatedAt:    time.Now(),
-	}
-	if err := ds.CreateEmailRecipient(ctx, r); err != nil {
-		t.Fatalf("CreateEmailRecipient: %v", err)
-	}
-	if r.ID == 0 {
-		t.Fatal("expected ID")
-	}
-
-	// Disabled recipients are excluded.
-	disabled := &EmailRecipient{ChannelID: channelID, EmailAddress: "b@example.com", Enabled: false, CreatedAt: time.Now()}
-	if err := ds.CreateEmailRecipient(ctx, disabled); err != nil {
-		t.Fatal(err)
-	}
-	got, err = ds.GetEmailRecipients(ctx, channelID)
-	if err != nil {
-		t.Fatalf("GetEmailRecipients (after disabled insert): %v", err)
-	}
-	if len(got) != 1 {
-		t.Errorf("expected 1 enabled recipient, got %d", len(got))
-	}
-
-	// Delete.
-	if err := ds.DeleteEmailRecipient(ctx, r.ID); err != nil {
-		t.Fatalf("DeleteEmailRecipient: %v", err)
-	}
-	got, err = ds.GetEmailRecipients(ctx, channelID)
-	if err != nil {
-		t.Fatalf("GetEmailRecipients (after delete): %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("expected 0 after delete, got %d", len(got))
-	}
-
-	// Canceled context paths.
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if _, err := ds.GetEmailRecipients(canceled, channelID); err == nil {
-		t.Errorf("expected cancel error")
-	}
-	if err := ds.DeleteEmailRecipient(canceled, 1); err == nil {
-		t.Errorf("expected delete cancel error")
-	}
-}
-
-func TestConnectionChannelLink(t *testing.T) {
-	ds, pool, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	connID := insertTestConnection(t, pool, "lk-conn")
-	channelID := insertTestChannel(t, pool, "lk-ch", "slack", false)
-
-	link := &ConnectionNotificationChannel{
-		ConnectionID: connID,
-		ChannelID:    channelID,
-		Enabled:      true,
-		CreatedAt:    time.Now(),
-	}
-	if err := ds.LinkConnectionToChannel(ctx, link); err != nil {
-		t.Fatalf("LinkConnectionToChannel: %v", err)
-	}
-	if link.ID == 0 {
-		t.Fatal("expected link ID")
-	}
-
-	links, err := ds.GetConnectionChannelLinks(ctx, connID)
-	if err != nil {
-		t.Fatalf("GetConnectionChannelLinks: %v", err)
-	}
-	if len(links) != 1 {
-		t.Fatalf("expected 1 link, got %d", len(links))
-	}
-
-	if err := ds.UnlinkConnectionFromChannel(ctx, connID, channelID); err != nil {
-		t.Fatalf("UnlinkConnectionFromChannel: %v", err)
-	}
-	links, err = ds.GetConnectionChannelLinks(ctx, connID)
-	if err != nil {
-		t.Fatalf("GetConnectionChannelLinks (after unlink): %v", err)
-	}
-	if len(links) != 0 {
-		t.Errorf("expected 0 links after unlink")
-	}
-
-	// Cancel paths.
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if err := ds.UnlinkConnectionFromChannel(canceled, connID, channelID); err == nil {
-		t.Errorf("expected unlink cancel")
-	}
-	if _, err := ds.GetConnectionChannelLinks(canceled, connID); err == nil {
-		t.Errorf("expected cancel error")
-	}
-}
-
-func TestNotificationHistoryLifecycle(t *testing.T) {
-	ds, pool, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	connID := insertTestConnection(t, pool, "nh-conn")
-	channelID := insertTestChannel(t, pool, "nh-ch", "webhook", false)
-
-	// Insert an alert to reference.
-	var alertID int64
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status)
-		VALUES ('threshold', $1, 'warning', 't', 'd', 'active') RETURNING id
-	`, connID).Scan(&alertID); err != nil {
-		t.Fatal(err)
-	}
-
-	hist := &NotificationHistory{
-		AlertID:          &alertID,
-		ChannelID:        &channelID,
-		ConnectionID:     &connID,
-		NotificationType: NotificationTypeAlertFire,
-		Status:           NotificationStatusPending,
-		PayloadJSON:      map[string]any{"a": 1},
-		AttemptCount:     0,
-		MaxAttempts:      3,
-		CreatedAt:        time.Now(),
-	}
-	if err := ds.CreateNotificationHistory(ctx, hist); err != nil {
-		t.Fatalf("CreateNotificationHistory: %v", err)
-	}
-	if hist.ID == 0 {
-		t.Fatal("expected ID")
-	}
-
-	hist.Status = NotificationStatusSent
-	now := time.Now()
-	hist.SentAt = &now
-	if err := ds.UpdateNotificationHistory(ctx, hist); err != nil {
-		t.Fatalf("UpdateNotificationHistory: %v", err)
-	}
-
-	// History for alert.
-	got, err := ds.GetNotificationHistoryForAlert(ctx, alertID)
-	if err != nil {
-		t.Fatalf("GetNotificationHistoryForAlert: %v", err)
-	}
-	if len(got) != 1 {
-		t.Errorf("expected 1, got %d", len(got))
-	}
-
-	// Pending notifications: insert another with status 'pending'.
-	pending := &NotificationHistory{
-		AlertID:          &alertID,
-		ChannelID:        &channelID,
-		ConnectionID:     &connID,
-		NotificationType: NotificationTypeReminder,
-		Status:           NotificationStatusPending,
-		AttemptCount:     0,
-		MaxAttempts:      3,
-		CreatedAt:        time.Now(),
-	}
-	if err := ds.CreateNotificationHistory(ctx, pending); err != nil {
-		t.Fatal(err)
-	}
-	pendList, err := ds.GetPendingNotifications(ctx)
-	if err != nil {
-		t.Fatalf("GetPendingNotifications: %v", err)
-	}
-	if len(pendList) != 1 {
-		t.Errorf("expected 1 pending, got %d", len(pendList))
-	}
-
-	// Canceled context.
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if err := ds.UpdateNotificationHistory(canceled, hist); err == nil {
-		t.Errorf("expected update cancel")
-	}
-	if _, err := ds.GetPendingNotifications(canceled); err == nil {
-		t.Errorf("expected pending cancel")
-	}
-	if _, err := ds.GetNotificationHistoryForAlert(canceled, alertID); err == nil {
-		t.Errorf("expected history cancel")
-	}
-}
-
-func TestReminderState(t *testing.T) {
-	ds, pool, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	connID := insertTestConnection(t, pool, "rs-conn")
-	channelID := insertTestChannel(t, pool, "rs-ch", "slack", false)
-	var alertID int64
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status)
-		VALUES ('threshold', $1, 'warning', 't', 'd', 'active') RETURNING id
-	`, connID).Scan(&alertID); err != nil {
-		t.Fatal(err)
-	}
-
-	// Initially nil.
-	got, err := ds.GetReminderState(ctx, alertID, channelID)
-	if err != nil {
-		t.Fatalf("GetReminderState: %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil, got %+v", got)
-	}
-
-	// Upsert (insert).
-	state := &NotificationReminderState{
-		AlertID:        alertID,
-		ChannelID:      channelID,
-		LastReminderAt: time.Now(),
-		ReminderCount:  1,
-	}
-	if err := ds.UpsertReminderState(ctx, state); err != nil {
-		t.Fatalf("UpsertReminderState insert: %v", err)
-	}
-	if state.ID == 0 {
-		t.Fatal("expected ID set")
-	}
-
-	// Upsert (update).
-	state.ReminderCount = 2
-	state.LastReminderAt = time.Now()
-	if err := ds.UpsertReminderState(ctx, state); err != nil {
-		t.Fatalf("UpsertReminderState update: %v", err)
-	}
-
-	// Get back.
-	got, err = ds.GetReminderState(ctx, alertID, channelID)
-	if err != nil {
-		t.Fatalf("GetReminderState: %v", err)
-	}
-	if got.ReminderCount != 2 {
-		t.Errorf("count = %d, want 2", got.ReminderCount)
-	}
-
-	// DeleteReminderStatesForAlert.
-	if err := ds.DeleteReminderStatesForAlert(ctx, alertID); err != nil {
-		t.Fatalf("DeleteReminderStatesForAlert: %v", err)
-	}
-	got, err = ds.GetReminderState(ctx, alertID, channelID)
-	if err != nil {
-		t.Fatalf("GetReminderState (after delete): %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil after delete")
-	}
-
-	// Canceled context paths.
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if err := ds.UpsertReminderState(canceled, state); err == nil {
-		t.Errorf("expected upsert cancel")
-	}
-	if err := ds.DeleteReminderStatesForAlert(canceled, alertID); err == nil {
-		t.Errorf("expected delete cancel")
-	}
-}
-
 func TestGetDueRemindersAndConnectionInfo(t *testing.T) {
 	ds, pool, cleanup := newFullTestDatastore(t)
 	defer cleanup()
@@ -521,5 +177,256 @@ func TestGetDueRemindersAndConnectionInfo(t *testing.T) {
 	}
 	if _, _, _, err := ds.GetConnectionInfo(canceled, connID); err == nil {
 		t.Errorf("expected info cancel")
+	}
+}
+
+// insertTestEmailRecipient seeds a recipient directly, standing in for
+// the CreateEmailRecipient helper this change removed as unreachable.
+func insertTestEmailRecipient(t *testing.T, pool *pgxpool.Pool, channelID int64, address string, enabled bool) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO email_recipients
+			(channel_id, email_address, enabled)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, channelID, address, enabled).Scan(&id)
+	if err != nil {
+		t.Fatalf("failed to insert email recipient: %v", err)
+	}
+	return id
+}
+
+// TestEmailRecipients covers GetEmailRecipients, which survives this
+// change. The original test drove it through CreateEmailRecipient and
+// DeleteEmailRecipient, both removed here as unreachable, so the rows
+// are seeded and removed with SQL instead; deleting the test outright
+// would have taken the reader's error and filter coverage with it.
+func TestEmailRecipients(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	channelID := insertTestChannel(t, pool, "email-ch", "email", false)
+
+	got, err := ds.GetEmailRecipients(ctx, channelID)
+	if err != nil {
+		t.Fatalf("GetEmailRecipients: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 recipients, got %d", len(got))
+	}
+
+	enabledID := insertTestEmailRecipient(t, pool, channelID, "a@example.com", true)
+	insertTestEmailRecipient(t, pool, channelID, "b@example.com", false)
+
+	// Disabled recipients must be excluded by the reader.
+	got, err = ds.GetEmailRecipients(ctx, channelID)
+	if err != nil {
+		t.Fatalf("GetEmailRecipients (with a disabled row): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 enabled recipient, got %d", len(got))
+	}
+	if got[0].EmailAddress != "a@example.com" {
+		t.Errorf("address = %q, want a@example.com", got[0].EmailAddress)
+	}
+
+	if _, err := pool.Exec(ctx,
+		"DELETE FROM email_recipients WHERE id = $1",
+		enabledID); err != nil {
+		t.Fatalf("deleting recipient: %v", err)
+	}
+	got, err = ds.GetEmailRecipients(ctx, channelID)
+	if err != nil {
+		t.Fatalf("GetEmailRecipients (after delete): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 after delete, got %d", len(got))
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := ds.GetEmailRecipients(canceled, channelID); err == nil {
+		t.Error("expected a cancel error from GetEmailRecipients")
+	}
+}
+
+// TestNotificationHistoryLifecycle covers CreateNotificationHistory,
+// UpdateNotificationHistory and GetPendingNotifications, all of which
+// survive this change. The original also asserted through
+// GetNotificationHistoryForAlert, removed here as unreachable, so that
+// leg is checked with SQL instead.
+func TestNotificationHistoryLifecycle(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "nh-conn")
+	channelID := insertTestChannel(t, pool, "nh-ch", "webhook", false)
+
+	var alertID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status)
+		VALUES ('threshold', $1, 'warning', 't', 'd', 'active') RETURNING id
+	`, connID).Scan(&alertID); err != nil {
+		t.Fatalf("seeding alert: %v", err)
+	}
+
+	hist := &NotificationHistory{
+		AlertID:          &alertID,
+		ChannelID:        &channelID,
+		ConnectionID:     &connID,
+		NotificationType: NotificationTypeAlertFire,
+		Status:           NotificationStatusPending,
+		PayloadJSON:      map[string]any{"a": 1},
+		AttemptCount:     0,
+		MaxAttempts:      3,
+		CreatedAt:        time.Now(),
+	}
+	if err := ds.CreateNotificationHistory(ctx, hist); err != nil {
+		t.Fatalf("CreateNotificationHistory: %v", err)
+	}
+	if hist.ID == 0 {
+		t.Fatal("expected an ID to be assigned")
+	}
+
+	hist.Status = NotificationStatusSent
+	now := time.Now()
+	hist.SentAt = &now
+	if err := ds.UpdateNotificationHistory(ctx, hist); err != nil {
+		t.Fatalf("UpdateNotificationHistory: %v", err)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx,
+		"SELECT status FROM notification_history WHERE id = $1",
+		hist.ID).Scan(&status); err != nil {
+		t.Fatalf("reading back status: %v", err)
+	}
+	if status != string(NotificationStatusSent) {
+		t.Errorf("status = %q, want %q", status, NotificationStatusSent)
+	}
+
+	pending := &NotificationHistory{
+		AlertID:          &alertID,
+		ChannelID:        &channelID,
+		ConnectionID:     &connID,
+		NotificationType: NotificationTypeReminder,
+		Status:           NotificationStatusPending,
+		AttemptCount:     0,
+		MaxAttempts:      3,
+		CreatedAt:        time.Now(),
+	}
+	if err := ds.CreateNotificationHistory(ctx, pending); err != nil {
+		t.Fatalf("CreateNotificationHistory (pending): %v", err)
+	}
+
+	pendList, err := ds.GetPendingNotifications(ctx)
+	if err != nil {
+		t.Fatalf("GetPendingNotifications: %v", err)
+	}
+	if len(pendList) != 1 {
+		t.Errorf("expected 1 pending notification, got %d", len(pendList))
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := ds.UpdateNotificationHistory(canceled, hist); err == nil {
+		t.Error("expected a cancel error from UpdateNotificationHistory")
+	}
+	if _, err := ds.GetPendingNotifications(canceled); err == nil {
+		t.Error("expected a cancel error from GetPendingNotifications")
+	}
+}
+
+// TestReminderState covers UpsertReminderState and
+// DeleteReminderStatesForAlert, both of which survive. GetReminderState
+// went with this change, so the stored row is read back with SQL.
+func TestReminderState(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "rs-conn")
+	channelID := insertTestChannel(t, pool, "rs-ch", "slack", false)
+
+	var alertID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO alerts (alert_type, connection_id, severity, title, description, status)
+		VALUES ('threshold', $1, 'warning', 't', 'd', 'active') RETURNING id
+	`, connID).Scan(&alertID); err != nil {
+		t.Fatalf("seeding alert: %v", err)
+	}
+
+	reminderCount := func() (int, bool) {
+		t.Helper()
+		var count int
+		err := pool.QueryRow(ctx, `
+			SELECT reminder_count FROM notification_reminder_state
+			WHERE alert_id = $1 AND channel_id = $2
+		`, alertID, channelID).Scan(&count)
+		if err != nil {
+			return 0, false
+		}
+		return count, true
+	}
+
+	if _, found := reminderCount(); found {
+		t.Fatal("expected no reminder state before the first upsert")
+	}
+
+	state := &NotificationReminderState{
+		AlertID:        alertID,
+		ChannelID:      channelID,
+		LastReminderAt: time.Now(),
+		ReminderCount:  1,
+	}
+	if err := ds.UpsertReminderState(ctx, state); err != nil {
+		t.Fatalf("UpsertReminderState (insert): %v", err)
+	}
+	if state.ID == 0 {
+		t.Fatal("expected an ID to be assigned")
+	}
+
+	// The second call must update in place rather than insert again.
+	state.ReminderCount = 2
+	state.LastReminderAt = time.Now()
+	if err := ds.UpsertReminderState(ctx, state); err != nil {
+		t.Fatalf("UpsertReminderState (update): %v", err)
+	}
+
+	count, found := reminderCount()
+	if !found {
+		t.Fatal("expected reminder state after upsert")
+	}
+	if count != 2 {
+		t.Errorf("reminder_count = %d, want 2", count)
+	}
+
+	var rows int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM notification_reminder_state WHERE alert_id = $1
+	`, alertID).Scan(&rows); err != nil {
+		t.Fatalf("counting reminder states: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("expected 1 reminder state row, got %d", rows)
+	}
+
+	if err := ds.DeleteReminderStatesForAlert(ctx, alertID); err != nil {
+		t.Fatalf("DeleteReminderStatesForAlert: %v", err)
+	}
+	if _, found := reminderCount(); found {
+		t.Error("expected no reminder state after delete")
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := ds.UpsertReminderState(canceled, state); err == nil {
+		t.Error("expected a cancel error from UpsertReminderState")
+	}
+	if err := ds.DeleteReminderStatesForAlert(canceled, alertID); err == nil {
+		t.Error("expected a cancel error from DeleteReminderStatesForAlert")
 	}
 }

@@ -202,7 +202,7 @@ func TestConnectionHandler_PerConnection_NonOwnerUnshared_403(t *testing.T) {
 			bobID := newTestUser(t, store, "bob")
 
 			checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-			handler := NewConnectionHandler(nil, store, checker)
+			handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 			url := fmtURL(tc.urlTemplate, rbacUnsharedConnID)
 			req := httptest.NewRequest(tc.method, url, bytes.NewReader(tc.body))
@@ -232,7 +232,7 @@ func TestConnectionHandler_PerConnection_Owner_NotDenied(t *testing.T) {
 			aliceID := newTestUser(t, store, "alice")
 
 			checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-			handler := NewConnectionHandler(nil, store, checker)
+			handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 			url := fmtURL(tc.urlTemplate, rbacUnsharedConnID)
 			req := httptest.NewRequest(tc.method, url, bytes.NewReader(tc.body))
@@ -262,7 +262,7 @@ func TestConnectionHandler_PerConnection_SharedNonOwner_NotDenied(t *testing.T) 
 			bobID := newTestUser(t, store, "bob")
 
 			checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", true)
-			handler := NewConnectionHandler(nil, store, checker)
+			handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 			url := fmtURL(tc.urlTemplate, rbacUnsharedConnID)
 			req := httptest.NewRequest(tc.method, url, bytes.NewReader(tc.body))
@@ -294,7 +294,7 @@ func TestConnectionHandler_PerConnection_GroupGranted_NotDenied(t *testing.T) {
 				rbacUnsharedConnID, auth.AccessLevelReadWrite)
 
 			checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-			handler := NewConnectionHandler(nil, store, checker)
+			handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 			url := fmtURL(tc.urlTemplate, rbacUnsharedConnID)
 			req := httptest.NewRequest(tc.method, url, bytes.NewReader(tc.body))
@@ -322,7 +322,7 @@ func TestConnectionHandler_PerConnection_Superuser_NotDenied(t *testing.T) {
 			defer cleanup()
 
 			checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-			handler := NewConnectionHandler(nil, store, checker)
+			handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 			url := fmtURL(tc.urlTemplate, rbacUnsharedConnID)
 			req := httptest.NewRequest(tc.method, url, bytes.NewReader(tc.body))
@@ -352,7 +352,7 @@ func TestConnectionHandler_UpdateConnectionCluster_NoDatastoreSideEffect(t *test
 	bobID := newTestUser(t, store, "bob")
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	body := []byte(`{"cluster_id": 7, "membership_source": "manual"}`)
 	req := httptest.NewRequest(http.MethodPut,
@@ -405,7 +405,7 @@ func TestConnectionHandler_SetCurrentConnection_NonOwnerUnshared_403(t *testing.
 	tokenHash := auth.GetTokenHashByRawToken(rawToken)
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	body, _ := json.Marshal(CurrentConnectionRequest{ConnectionID: rbacUnsharedConnID})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/current",
@@ -443,7 +443,7 @@ func TestConnectionHandler_SetCurrentConnection_Owner_NotDenied(t *testing.T) {
 	tokenHash := auth.GetTokenHashByRawToken(rawToken)
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	body, _ := json.Marshal(CurrentConnectionRequest{ConnectionID: rbacUnsharedConnID})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/current",
@@ -473,7 +473,7 @@ func TestConnectionHandler_SetCurrentConnection_SharedNonOwner_NotDenied(t *test
 	tokenHash := auth.GetTokenHashByRawToken(rawToken)
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", true)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	body, _ := json.Marshal(CurrentConnectionRequest{ConnectionID: rbacUnsharedConnID})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/current",
@@ -511,7 +511,7 @@ func TestConnectionHandler_GetCurrentConnection_NonOwnerUnshared_403(t *testing.
 	}
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/current", nil)
 	req = withUser(req, bobID)
@@ -540,7 +540,7 @@ func TestConnectionHandler_GetCurrentConnection_Owner_NotDenied(t *testing.T) {
 	}
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", false)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/current", nil)
 	req = withUser(req, aliceID)
@@ -571,7 +571,7 @@ func TestConnectionHandler_GetCurrentConnection_SharedNonOwner_NotDenied(t *test
 	}
 
 	checker := mockSharingChecker(t, store, rbacUnsharedConnID, "alice", true)
-	handler := NewConnectionHandler(nil, store, checker)
+	handler := NewConnectionHandlerWithSecurity(nil, store, checker, false, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/current", nil)
 	req = withUser(req, bobID)

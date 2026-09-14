@@ -28,7 +28,6 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
-    DarkMode as MoonIcon,
     PauseCircle as PauseIcon,
     Delete as DeleteIcon,
     Stop as StopIcon,
@@ -43,6 +42,7 @@ import {
     Add as AddIcon,
 } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/useBlackouts';
+import MoonIcon from './shared/BlackoutIcon';
 import type { Selection } from '../types/selection';
 import BlackoutDialog from './BlackoutDialog';
 import BlackoutScheduleDialog from './BlackoutScheduleDialog';

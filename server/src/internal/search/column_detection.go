@@ -178,20 +178,3 @@ func isTextColumn(dataType string) bool {
 	}
 	return false
 }
-
-// CalculateWeightedDistance combines distance scores using column weights
-func CalculateWeightedDistance(distances map[string]float64, weights []ColumnWeight) float64 {
-	if len(weights) == 0 {
-		return 0.0
-	}
-
-	totalScore := 0.0
-	for _, weight := range weights {
-		if dist, ok := distances[weight.VectorName]; ok {
-			// Weight the distance
-			totalScore += dist * weight.Weight
-		}
-	}
-
-	return totalScore
-}

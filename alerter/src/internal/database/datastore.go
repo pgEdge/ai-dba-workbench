@@ -70,8 +70,3 @@ func (d *Datastore) Close() {
 		d.pool.Close()
 	}
 }
-
-// Pool returns the underlying connection pool
-func (d *Datastore) Pool() *pgxpool.Pool {
-	return d.pool
-}

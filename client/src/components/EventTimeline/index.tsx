@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import { useTimelineEvents } from '../../hooks/useTimelineEvents';
 import { TIME_RANGE_STORAGE_KEY, getInitialTimeRange } from './config';
+import { isCustomTimeRange } from '../../utils/timelineRange';
 import { TimelineHeader, LoadingSkeleton, EmptyState } from './TimelineHeader';
 import TimelineCanvas from './TimelineCanvas';
 import EventDetailPanel from './EventDetailPanel';
@@ -35,8 +36,15 @@ const EventTimeline: React.FC<EventTimelineProps> = ({ selection }) => {
     const [expanded, setExpanded] = useState(true);
     const [selectedEvents, setSelectedEvents] = useState(null);
 
-    // Persist time range preference to localStorage
+    /*
+     * Persist the time range preference to localStorage, but only for the
+     * presets. A custom window is deliberately session-only, matching the
+     * dashboard selector, so a reload returns to the last preset rather
+     * than to a stale historical window.
+     */
     useEffect(() => {
+        if (isCustomTimeRange(timeRange)) { return; }
+
         try {
             localStorage.setItem(TIME_RANGE_STORAGE_KEY, timeRange);
         } catch {

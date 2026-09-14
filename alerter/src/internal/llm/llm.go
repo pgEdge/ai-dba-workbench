@@ -16,8 +16,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 
+	"github.com/pgEdge/pgedge-go-llm-lib/llm/vec"
 	"github.com/pgedge/ai-workbench/alerter/internal/config"
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 )
@@ -53,6 +53,22 @@ type ReasoningProvider interface {
 	ModelName() string
 }
 
+// classificationSystemPrompt is the system prompt for anomaly classification.
+const classificationSystemPrompt = `You are a database monitoring expert analyzing anomaly candidates.
+
+Your task is to determine whether a detected anomaly is a real issue that requires attention (alert) or a false positive that should be suppressed.
+
+Respond with a JSON object containing:
+1. "decision": either "alert" or "suppress"
+2. "confidence": a number from 0 to 1 indicating your confidence
+3. "reasoning": a brief explanation of your decision
+
+Consider:
+- Is the value significantly outside normal operating parameters?
+- Could this be expected behavior (e.g., maintenance windows, backups)?
+- Are there similar past anomalies that were false positives?
+- What is the potential impact if this is a real issue?`
+
 // embeddingAdapter wraps pkg/embedding.Provider to implement the alerter's
 // EmbeddingProvider interface. It converts between float64 (pkg/embedding)
 // and float32 (alerter) and handles dimension normalization.
@@ -64,27 +80,15 @@ type embeddingAdapter struct {
 // It converts the float64 embedding from pkg/embedding to float32 and
 // normalizes the dimensions to EmbeddingDimension if needed.
 func (a *embeddingAdapter) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	// Call the underlying provider
 	emb64, err := a.provider.Embed(ctx, text)
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert float64 to float32
-	emb32 := make([]float32, len(emb64))
-	for i, v := range emb64 {
-		emb32[i] = float32(v)
-	}
-
-	// Resize to standard dimension if needed
+	emb32 := vec.Float64ToFloat32(emb64)
 	if len(emb32) != EmbeddingDimension {
-		emb32 = resizeEmbedding(emb32, EmbeddingDimension)
+		emb32 = vec.Resize(emb32, EmbeddingDimension)
 	}
-
-	// Normalize the embedding
-	emb32 = normalizeEmbedding(emb32)
-
-	return emb32, nil
+	return vec.Normalize(emb32), nil
 }
 
 // ModelName returns the name of the embedding model being used.
@@ -170,32 +174,28 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 		if apiKey == "" && cfg.LLM.OpenAI.BaseURL == "" {
 			return nil, fmt.Errorf("openai: %w", ErrAPIKeyMissing)
 		}
-		return NewOpenAIReasoning(apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL), nil
+		return newLibReasoning("openai", apiKey, cfg.LLM.OpenAI.ReasoningModel, cfg.LLM.OpenAI.BaseURL)
 
 	case "anthropic":
 		apiKey := cfg.GetAnthropicAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("anthropic: %w", ErrAPIKeyMissing)
 		}
-		return NewAnthropicReasoning(apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL), nil
+		return newLibReasoning("anthropic", apiKey, cfg.LLM.Anthropic.ReasoningModel, cfg.LLM.Anthropic.BaseURL)
 
 	case "gemini":
 		apiKey := cfg.GetGeminiAPIKey()
 		if apiKey == "" {
 			return nil, fmt.Errorf("gemini: %w", ErrAPIKeyMissing)
 		}
-		return NewGeminiReasoning(apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL), nil
+		return newLibReasoning("gemini", apiKey, cfg.LLM.Gemini.ReasoningModel, cfg.LLM.Gemini.BaseURL)
 
 	case "ollama":
 		baseURL := cfg.LLM.Ollama.BaseURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434"
 		}
-		model := cfg.LLM.Ollama.ReasoningModel
-		if model == "" {
-			model = "llama3.2"
-		}
-		return NewOllamaReasoning(baseURL, model), nil
+		return newLibReasoning("ollama", "", cfg.LLM.Ollama.ReasoningModel, baseURL)
 
 	case "", "none", "disabled":
 		return nil, nil
@@ -203,42 +203,4 @@ func NewReasoningProvider(cfg *config.Config) (ReasoningProvider, error) {
 	default:
 		return nil, fmt.Errorf("unknown reasoning provider: %s", cfg.LLM.ReasoningProvider)
 	}
-}
-
-// resizeEmbedding resizes an embedding to the target dimension.
-// If the source embedding is larger, it truncates.
-// If smaller, it pads with zeros.
-func resizeEmbedding(embedding []float32, targetDim int) []float32 {
-	if len(embedding) == targetDim {
-		return embedding
-	}
-
-	result := make([]float32, targetDim)
-	if len(embedding) > targetDim {
-		// Truncate
-		copy(result, embedding[:targetDim])
-	} else {
-		// Pad with zeros
-		copy(result, embedding)
-	}
-	return result
-}
-
-// normalizeEmbedding normalizes a vector to unit length (L2 normalization).
-func normalizeEmbedding(embedding []float32) []float32 {
-	var sumSquares float64
-	for _, v := range embedding {
-		sumSquares += float64(v) * float64(v)
-	}
-
-	if sumSquares == 0 {
-		return embedding
-	}
-
-	magnitude := float32(1.0 / math.Sqrt(sumSquares))
-	result := make([]float32, len(embedding))
-	for i, v := range embedding {
-		result[i] = v * magnitude
-	}
-	return result
 }

@@ -188,3 +188,25 @@ export const TIME_RANGE_CONTAINER_SX: SxProps<Theme> = {
     alignItems: 'center',
     gap: 0.5,
 };
+
+/** Auto-refresh suspended indicator inside the time range selector */
+export const AUTO_REFRESH_SUSPENDED_ICON_SX: SxProps<Theme> = {
+    fontSize: 16,
+    color: 'text.disabled',
+};
+
+/** Body of the custom time range popover */
+export const CUSTOM_RANGE_POPOVER_SX: SxProps<Theme> = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 1.5,
+    p: 2,
+    minWidth: 280,
+};
+
+/** Action row of the custom time range popover */
+export const CUSTOM_RANGE_ACTIONS_SX: SxProps<Theme> = {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 1,
+};

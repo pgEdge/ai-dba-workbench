@@ -206,19 +206,6 @@ func TestDatastoreCloseNilPool(t *testing.T) {
 	ds.Close()
 }
 
-// TestDatastorePoolAccessor tests the Pool accessor method
-func TestDatastorePoolAccessor(t *testing.T) {
-	ds := &Datastore{
-		pool:   nil,
-		config: nil,
-	}
-
-	// Pool should return nil when no pool is set
-	if ds.Pool() != nil {
-		t.Errorf("Pool() should return nil for uninitialized datastore")
-	}
-}
-
 // TestNewDatastoreSuccess exercises the happy path through NewDatastore
 // against the integration test database. This is required to lift the
 // datastore.go line coverage above 90%; the closed-pool error path
@@ -251,9 +238,6 @@ func TestNewDatastoreSuccess(t *testing.T) {
 		t.Fatalf("NewDatastore: %v", err)
 	}
 	defer ds.Close()
-	if ds.Pool() == nil {
-		t.Errorf("expected non-nil pool from NewDatastore")
-	}
 }
 
 // TestNewDatastoreInvalidConfig exercises the parse-failure branch of

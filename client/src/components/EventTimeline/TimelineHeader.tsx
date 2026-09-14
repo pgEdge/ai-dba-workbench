@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo, memo } from 'react';
+import React, { useCallback, useMemo, memo, useState } from 'react';
 import {
     Box,
     Typography,
@@ -26,6 +26,8 @@ import {
 } from '@mui/icons-material';
 import { resolveColor } from './utils';
 import { ALL_EVENT_TYPES, FILTER_CHIPS, TIME_RANGE_OPTIONS } from './config';
+import { isCustomTimeRange } from '../../utils/timelineRange';
+import CustomTimeRangePopover from '../Dashboard/CustomTimeRangePopover';
 import {
     headerContainerSx,
     headerTitleGroupSx,
@@ -45,6 +47,16 @@ import {
     emptyStateSubtitleSx,
 } from './styles';
 
+/** Sentinel value the toggle group selects whilst a custom window is set. */
+const CUSTOM_RANGE_VALUE = 'custom';
+
+/**
+ * Describe an applied custom window for the toggle's title attribute, so
+ * that the selection stays legible without widening the compact toolbar.
+ */
+const describeWindow = (range) =>
+    `${new Date(range.start).toLocaleString()} - ${new Date(range.end).toLocaleString()}`;
+
 /**
  * TimelineHeader - Collapsible header with controls
  */
@@ -58,9 +70,33 @@ export const TimelineHeader = memo(({
     onEventTypesChange,
 }) => {
     const theme = useTheme();
+    const [anchorEl, setAnchorEl] = useState(null);
 
     const toggleGroupSx = useMemo(() => getToggleGroupSx(theme), [theme]);
     const countChipSx = useMemo(() => getEventCountChipSx(theme, eventCount), [theme, eventCount]);
+
+    const isCustom = isCustomTimeRange(timeRange);
+
+    const handleRangeChange = useCallback((event, value) => {
+        // The custom toggle opens the picker rather than selecting a
+        // range directly, so its own click handler deals with it.
+        if (value && value !== CUSTOM_RANGE_VALUE) {
+            onTimeRangeChange(value);
+        }
+    }, [onTimeRangeChange]);
+
+    const handleCustomClick = useCallback((event) => {
+        setAnchorEl(event.currentTarget);
+    }, []);
+
+    const handlePopoverClose = useCallback(() => {
+        setAnchorEl(null);
+    }, []);
+
+    const handleApply = useCallback((startISO, endISO) => {
+        onTimeRangeChange({ start: new Date(startISO), end: new Date(endISO) });
+        setAnchorEl(null);
+    }, [onTimeRangeChange]);
 
     return (
         <Box sx={headerContainerSx}>
@@ -125,9 +161,9 @@ export const TimelineHeader = memo(({
 
             {/* Time range selector */}
             <ToggleButtonGroup
-                value={timeRange}
+                value={isCustom ? CUSTOM_RANGE_VALUE : timeRange}
                 exclusive
-                onChange={(e, value) => value && onTimeRangeChange(value)}
+                onChange={handleRangeChange}
                 size="small"
                 sx={toggleGroupSx}
             >
@@ -136,7 +172,24 @@ export const TimelineHeader = memo(({
                         {option.label}
                     </ToggleButton>
                 ))}
+                <ToggleButton
+                    value={CUSTOM_RANGE_VALUE}
+                    aria-label="Select custom time range"
+                    title={isCustom ? describeWindow(timeRange) : undefined}
+                    onClick={handleCustomClick}
+                >
+                    Custom
+                </ToggleButton>
             </ToggleButtonGroup>
+
+            <CustomTimeRangePopover
+                open={anchorEl !== null}
+                anchorEl={anchorEl}
+                startISO={isCustom ? new Date(timeRange.start).toISOString() : undefined}
+                endISO={isCustom ? new Date(timeRange.end).toISOString() : undefined}
+                onApply={handleApply}
+                onClose={handlePopoverClose}
+            />
 
             {/* Expand/collapse toggle */}
             <IconButton

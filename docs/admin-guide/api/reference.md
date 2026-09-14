@@ -60,7 +60,7 @@ Tokens can be one of two types:
   line for programmatic access.
 
 For detailed authentication information, see
-[Authentication](../authentication.md).
+[Managing Users and Permissions](../managing-users-and-permissions/permission_model.md).
 
 ## Interactive API Browser
 
@@ -212,11 +212,12 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/metrics/query` | Query metric data points. |
+| GET | `/api/v1/metrics/query` | Query metrics for preset or custom windows. |
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
 | GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage. |
+| GET | `/api/v1/metrics/connection-groups` | Get connection counts grouped by user, client, or database. |
 | GET | `/api/v1/metrics/latest` | Get the latest probe snapshot per entity. |
 
 ### Timeline
@@ -224,6 +225,14 @@ The API provides endpoints in the following categories.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/timeline/events` | List timeline events. |
+
+The endpoint takes absolute `start_time` and `end_time`
+values as RFC 3339 timestamps, and validates them with the
+same rules as a custom window on `/api/v1/metrics/query`,
+described under Metric Time Windows below: the end must fall
+strictly after the start, the start must fall before the
+present moment, the span must not exceed 366 days, and an
+end in the future is clamped to the present moment.
 
 ### Overview
 
@@ -248,9 +257,14 @@ The API provides endpoints in the following categories.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/llm/providers` | List LLM providers. |
-| GET | `/api/v1/llm/models` | List available models. |
+| GET | `/api/v1/llm/providers` | List LLM providers (public). |
+| GET | `/api/v1/llm/models` | List available models (public). |
+| GET | `/api/v1/llm/health` | Check LLM proxy health (public). |
 | POST | `/api/v1/llm/chat` | Send a chat message to the LLM. |
+| POST | `/api/v1/llm/chat/stream` | Stream a chat response as SSE. |
+| POST | `/api/v1/llm/embed` | Generate embeddings for input text. |
+| POST | `/api/v1/llm/embed/multimodal` | Generate embeddings for multimodal (text and image) inputs. |
+| POST | `/api/v1/llm/rerank` | Rerank documents against a query. |
 
 ### Memory
 
@@ -304,6 +318,63 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | POST | `/api/v1/chat/compact` | Compact chat history. |
 | GET | `/health` | Check server health (no auth required). |
+
+## Metric Time Windows
+
+The `/api/v1/metrics/query` endpoint accepts either a
+rolling preset or an explicit window. The `time_range`
+parameter takes one of the `1h`, `6h`, `24h`, `7d`, and
+`30d` presets, or the value `custom`; the following
+parameters select the window:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `time_range` | No | The window selector; defaults to `1h`. |
+| `time_start` | For `custom` | The window start, as RFC 3339. |
+| `time_end` | For `custom` | The window end, as RFC 3339. |
+
+A preset selects a rolling window that ends at the
+present moment; the server ignores `time_start` and
+`time_end` for every preset. The `custom` value selects
+the window between the two supplied timestamps instead.
+
+The server validates a custom window against the
+following rules, and returns status 400 with an
+explanatory message when a request breaks one:
+
+- The request must supply both `time_start` and
+  `time_end`.
+- Both timestamps must parse as RFC 3339 values.
+- The end must fall strictly after the start.
+- The start must fall before the present moment.
+- The span must not exceed 366 days.
+
+The server clamps an end time in the future to the
+present moment rather than rejecting the request,
+because a picker set to the current day often overshoots
+by a few minutes. The span limit protects the server
+because the bucket width derives from the span; an
+unbounded window would let a single request scan an
+arbitrary amount of history.
+
+In the following example, the `curl` command queries CPU
+metrics for an eight-hour window in the past:
+
+```bash
+QUERY="probe_name=pg_sys_cpu_info&connection_id=1"
+WINDOW="time_range=custom&time_start=2026-07-01T09:00:00Z"
+WINDOW="$WINDOW&time_end=2026-07-01T17:00:00Z"
+
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+     "https://localhost:8080/api/v1/metrics/query?$QUERY&$WINDOW"
+```
+
+Only `/api/v1/metrics/query` supports a custom window.
+The `/api/v1/metrics/performance-summary` and
+`/api/v1/metrics/database-summaries` endpoints accept the
+presets alone, and `/api/v1/metrics/top-queries` has no
+time dimension; that endpoint always reports the latest
+collected sample.
 
 ## Error Responses
 

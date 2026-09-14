@@ -36,16 +36,6 @@ type ConnectionHandler struct {
 	visibilityListerFn func() auth.ConnectionVisibilityLister
 }
 
-// NewConnectionHandler creates a new connection handler
-func NewConnectionHandler(datastore *database.Datastore, authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *ConnectionHandler {
-	return &ConnectionHandler{
-		datastore:     datastore,
-		authStore:     authStore,
-		hostValidator: DefaultHostValidator(),
-		rbacChecker:   rbacChecker,
-	}
-}
-
 // NewConnectionHandlerWithSecurity creates a new connection handler with custom security settings
 func NewConnectionHandlerWithSecurity(datastore *database.Datastore, authStore *auth.AuthStore,
 	rbacChecker *auth.RBACChecker, allowInternal bool, allowedHosts, blockedHosts []string) *ConnectionHandler {

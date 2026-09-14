@@ -278,6 +278,27 @@ func acquireConn(t *testing.T, pool *pgxpool.Pool) *pgxpool.Conn {
 	return conn
 }
 
+// requirePgStatStatementsReadable skips the test unless the
+// pg_stat_statements view can actually be read on conn.
+//
+// The check has to be a real read rather than an inspection of
+// shared_preload_libraries or pg_extension, because CREATE EXTENSION
+// can succeed whilst every select on the view still raises SQLSTATE
+// 55000 ("must be loaded via shared_preload_libraries"). That is how
+// the CI PostgreSQL containers are configured, and probing the read
+// also covers the extension being absent, unprivileged, or otherwise
+// unusable for any other reason.
+func requirePgStatStatementsReadable(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+
+	if _, err := conn.Exec(context.Background(),
+		"SELECT count(*) FROM pg_stat_statements"); err != nil {
+		t.Skipf("skipping: the pg_stat_statements view is not readable "+
+			"on this server, most likely because the library is not "+
+			"listed in shared_preload_libraries: %v", err)
+	}
+}
+
 // applyMetricsSchema creates the minimal `metrics` schema and the
 // partitioned parent tables required by every probe Store path. The
 // schema deliberately mirrors the production DDL only for columns
@@ -458,7 +479,8 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			heap_blks_read BIGINT, heap_blks_hit BIGINT,
 			idx_blks_read BIGINT, idx_blks_hit BIGINT,
 			toast_blks_read BIGINT, toast_blks_hit BIGINT,
-			tidx_blks_read BIGINT, tidx_blks_hit BIGINT
+			tidx_blks_read BIGINT, tidx_blks_hit BIGINT,
+			table_size BIGINT
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_stat_all_indexes (
@@ -469,7 +491,8 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			schemaname TEXT, relname TEXT, indexrelname TEXT,
 			idx_scan BIGINT, last_idx_scan TIMESTAMPTZ,
 			idx_tup_read BIGINT, idx_tup_fetch BIGINT,
-			idx_blks_read BIGINT, idx_blks_hit BIGINT
+			idx_blks_read BIGINT, idx_blks_hit BIGINT,
+			index_size BIGINT
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_statio_all_sequences (

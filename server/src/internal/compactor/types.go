@@ -57,9 +57,6 @@ type CompactionOptions struct {
 
 	// CacheTTL specifies cache entry time-to-live (0 = no expiry)
 	CacheTTL time.Duration `json:"cache_ttl,omitempty"`
-
-	// EnableAnalytics enables compression metrics tracking
-	EnableAnalytics bool `json:"enable_analytics"`
 }
 
 // CompactResponse contains the compacted messages and statistics.
@@ -146,18 +143,6 @@ type ExtractedContext struct {
 	Topics map[string]bool
 	Tables map[string]bool
 	Tools  map[string]bool
-}
-
-// CompactionMetrics tracks analytics about compaction operations
-type CompactionMetrics struct {
-	TotalCompactions   int64         `json:"total_compactions"`
-	TotalMessagesIn    int64         `json:"total_messages_in"`
-	TotalMessagesOut   int64         `json:"total_messages_out"`
-	TotalTokensSaved   int64         `json:"total_tokens_saved"`
-	AverageCompression float64       `json:"average_compression"`
-	TotalDuration      time.Duration `json:"total_duration"`
-	AverageDuration    time.Duration `json:"average_duration"`
-	LastCompactionTime time.Time     `json:"last_compaction_time"`
 }
 
 // Default configuration values

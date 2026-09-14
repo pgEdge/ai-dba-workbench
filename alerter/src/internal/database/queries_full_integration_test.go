@@ -383,25 +383,27 @@ DROP TABLE IF EXISTS clusters CASCADE;
 DROP TABLE IF EXISTS cluster_groups CASCADE;
 `
 
-// pgvectorAvailable reports whether the pgvector extension is installed
-// in the current connection. The anomaly_embeddings table is created
-// only when pgvector is present.
+// pgvectorAvailable reports whether the pgvector extension can be used
+// on this connection, installing it if it is available but not yet
+// installed. The anomaly_embeddings table is created only when pgvector
+// is present.
+//
+// Checking pg_extension alone is not enough, and reading it was why
+// these tests skipped even on a pgvector-capable server: a freshly
+// created database has the extension available but not installed, so
+// the check returned false before anything had a chance to install it.
+// Attempting the install is both the real question and the same
+// operation createAnomalyEmbeddingsTable performs.
 func pgvectorAvailable(ctx context.Context, pool *pgxpool.Pool) bool {
-	var exists bool
-	err := pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM pg_extension WHERE extname = 'vector'
-		)
-	`).Scan(&exists)
-	if err != nil {
-		return false
-	}
-	return exists
+	_, err := pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS vector`)
+	return err == nil
 }
 
 // createAnomalyEmbeddingsTable creates anomaly_embeddings when pgvector
 // is available. The table is required by StoreAnomalyEmbedding and
-// FindSimilarAnomalies; the tests skip when it cannot be created.
+// FindSimilarAnomalies; the tests skip when it cannot be created. The
+// embedding column is halfvec(4000) to match the production schema;
+// StoreAnomalyEmbedding zero-pads short test vectors to that width.
 func createAnomalyEmbeddingsTable(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, `
 		DROP TABLE IF EXISTS anomaly_embeddings CASCADE;
@@ -409,7 +411,7 @@ func createAnomalyEmbeddingsTable(ctx context.Context, pool *pgxpool.Pool) error
 		CREATE TABLE anomaly_embeddings (
 			id BIGSERIAL PRIMARY KEY,
 			candidate_id BIGINT REFERENCES anomaly_candidates(id) ON DELETE CASCADE,
-			embedding vector(3),
+			embedding halfvec(4000),
 			model_name TEXT NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(candidate_id)
@@ -843,32 +845,6 @@ func TestDeleteOldAlertsAndCandidates(t *testing.T) {
 	}
 	if deleted != 1 {
 		t.Errorf("DeleteOldAnomalyCandidates = %d, want 1", deleted)
-	}
-}
-
-func TestGetProbeAvailability(t *testing.T) {
-	ds, pool, cleanup := newFullTestDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	connID := insertTestConnection(t, pool, "probe-conn")
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO probe_availability (connection_id, database_name, probe_name, is_available)
-		VALUES ($1, '', 'probe_x', TRUE)
-	`, connID); err != nil {
-		t.Fatal(err)
-	}
-	pa, err := ds.GetProbeAvailability(ctx, connID, "probe_x")
-	if err != nil {
-		t.Fatalf("GetProbeAvailability: %v", err)
-	}
-	if pa.ProbeName != "probe_x" || !pa.IsAvailable {
-		t.Errorf("got %+v", pa)
-	}
-
-	// Missing returns ErrNoRows.
-	if _, err := ds.GetProbeAvailability(ctx, connID, "missing_probe"); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("expected ErrNoRows, got %v", err)
 	}
 }
 

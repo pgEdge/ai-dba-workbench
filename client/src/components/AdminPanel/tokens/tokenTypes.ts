@@ -135,7 +135,7 @@ export const ALL_MCP_OPTION: McpPrivilegeOption = {
 /** Sentinel option for selecting all admin permissions. */
 export const ALL_ADMIN_OPTION: AdminPermissionOption = {
     id: '*',
-    label: 'All Admin Permissions',
+    label: "All the owner's admin permissions",
     _isAll: true,
 };
 

@@ -10,7 +10,6 @@
 package search
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -159,33 +158,4 @@ func SelectChunksWithinBudget(chunks []ScoredChunk, maxTokens int) []ScoredChunk
 	}
 
 	return selected
-}
-
-// FormatChunksForOutput formats chunks into a readable string for LLM consumption
-func FormatChunksForOutput(chunks []ScoredChunk, queryText string) string {
-	if len(chunks) == 0 {
-		return "No relevant chunks found."
-	}
-
-	var sb strings.Builder
-
-	fmt.Fprintf(&sb, "Search Results for: %q\n", queryText)
-	sb.WriteString(strings.Repeat("=", 80))
-	sb.WriteString("\n\n")
-
-	totalTokens := 0
-	for i, chunk := range chunks {
-		fmt.Fprintf(&sb, "--- Result %d ---\n", i+1)
-		fmt.Fprintf(&sb, "Source: %s (row rank: %d)\n", chunk.SourceColumn, chunk.OriginalRank+1)
-		fmt.Fprintf(&sb, "Relevance Score: %.3f\n\n", chunk.Score)
-		sb.WriteString(chunk.Text)
-		sb.WriteString("\n\n")
-
-		totalTokens += EstimateTokens(chunk.Text)
-	}
-
-	sb.WriteString(strings.Repeat("=", 80))
-	fmt.Fprintf(&sb, "\nTotal Results: %d chunks (~%d tokens)\n", len(chunks), totalTokens)
-
-	return sb.String()
 }

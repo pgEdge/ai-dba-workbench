@@ -36,7 +36,6 @@ export interface TableLeaderboardRow {
     n_tup_del: number;
     n_tup_hot_upd: number;
     table_size: number;
-    table_size_pretty?: string;
     last_vacuum?: string;
     last_autovacuum?: string;
     last_analyze?: string;
@@ -52,7 +51,6 @@ export interface IndexLeaderboardRow {
     idx_tup_read: number;
     idx_tup_fetch: number;
     index_size: number;
-    index_size_pretty?: string;
 }
 
 /** Leaderboard sort criteria for tables */

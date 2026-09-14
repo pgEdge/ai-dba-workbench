@@ -29,6 +29,7 @@ export interface GroupData {
 
 export interface ClusterActionsContextValue {
     updateGroupName: (groupId: string, newName: string) => Promise<void>;
+    updateGroup: (groupId: string, data: { name: string; description?: string; is_shared?: boolean }) => Promise<void>;
     updateClusterName: (clusterId: string, newName: string, groupId: string, autoClusterKey?: string) => Promise<void>;
     updateServerName: (serverId: number, newName: string) => Promise<void>;
     getServer: (serverId: number) => Promise<unknown>;
@@ -80,6 +81,36 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         }
 
         await apiPut(`/api/v1/cluster-groups/${groupId}`, { name: newName });
+
+        // Refresh cluster data to reflect the change
+        await fetchClusterData();
+    }, [user, fetchClusterData]);
+
+    /**
+     * Update a cluster group's full details (name, description, sharing).
+     *
+     * Mirrors the id handling of `updateGroupName`: database-backed groups
+     * are addressed by their bare numeric id, whilst auto-detected buckets
+     * are forwarded in their full "group-auto..." form. Every other shape is
+     * rejected so the server never receives an unknown id.
+     */
+    const updateGroup = useCallback(async (groupId: string, data: { name: string; description?: string; is_shared?: boolean }): Promise<void> => {
+        if (!user) {throw new Error('Not authenticated');}
+
+        // Database-backed id: address the server row by its numeric id.
+        const numericId = parseGroupNumericId(groupId);
+        if (numericId !== undefined) {
+            await apiPut(`/api/v1/cluster-groups/${numericId}`, data);
+            await fetchClusterData();
+            return;
+        }
+
+        // Auto-detected bucket: forward the full "group-auto..." token.
+        if (!isAutoGroupId(groupId)) {
+            throw new Error('Invalid group ID');
+        }
+
+        await apiPut(`/api/v1/cluster-groups/${groupId}`, data);
 
         // Refresh cluster data to reflect the change
         await fetchClusterData();
@@ -282,6 +313,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
     const value: ClusterActionsContextValue = useMemo(() => ({
         // Update functions
         updateGroupName,
+        updateGroup,
         updateClusterName,
         updateServerName,
         // CRUD functions
@@ -295,6 +327,7 @@ export const ClusterActionsProvider = ({ children }: ClusterActionsProviderProps
         moveClusterToGroup,
     }), [
         updateGroupName,
+        updateGroup,
         updateClusterName,
         updateServerName,
         getServer,

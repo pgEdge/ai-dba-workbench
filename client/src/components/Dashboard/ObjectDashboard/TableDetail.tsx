@@ -347,8 +347,7 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                     />
                     <KpiTile
                         label="Table Size"
-                        value={tableData?.table_size_pretty
-                            ?? formatBytes(tableSize)}
+                        value={formatBytes(tableSize)}
                     />
                     <KpiTile
                         label="Sequential Scans"

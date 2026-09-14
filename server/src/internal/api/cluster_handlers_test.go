@@ -316,27 +316,32 @@ func TestClusterHandler_HandleCreateCluster_NameTooLong(t *testing.T) {
 }
 
 // TestClusterHandler_CreateClusterGroup_NameAtLimit confirms the boundary:
-// a Name of exactly maxFieldLength bytes passes validation and reaches the
-// datastore (which panics on the nil datastore, proving the length check
-// did not short-circuit at the limit).
+// a Name of exactly maxFieldLength bytes passes validation and is created.
+// It is a DB-backed integration test because createClusterGroup now resolves
+// the creating user (issue #304), so a real auth token and datastore are
+// needed to reach the create call rather than a nil-datastore panic.
 func TestClusterHandler_CreateClusterGroup_NameAtLimit(t *testing.T) {
-	handler := permissionSatisfiedHandler()
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
 
 	atLimit := strings.Repeat("a", maxFieldLength)
 	body, _ := json.Marshal(ClusterGroupRequest{Name: atLimit})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
 	rec := httptest.NewRecorder()
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("Expected nil-datastore panic past validation, got none; status=%d body=%s",
-				rec.Code, rec.Body.String())
-		}
-	}()
-
 	handler.createClusterGroup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected status %d for name at limit, got %d. Body: %s",
+			http.StatusCreated, rec.Code, rec.Body.String())
+	}
 }
 
 // assertLengthRejected asserts that the recorded response is a 400 whose
@@ -1322,11 +1327,10 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
 			http.StatusOK, rec.Code, rec.Body.String())
 	}
 
-	// The UpdateClusterGroup SQL sets description to the value in the
-	// request. With description omitted from the JSON body, the request
-	// struct's Description pointer is nil, so the row's description
-	// becomes NULL. Capture the current contract so any future change
-	// is deliberate.
+	// Partial-update contract (issue #304): with description omitted from
+	// the JSON body, the request struct's Description pointer is nil, and
+	// UpdateClusterGroup's COALESCE leaves the existing description in
+	// place rather than nulling it. Confirm the original value survives.
 	var dbName string
 	var dbDesc *string
 	err = pool.QueryRow(ctx,
@@ -1338,9 +1342,9 @@ func TestClusterHandler_UpdateClusterGroup_Integration_NameOnly(t *testing.T) {
 	if dbName != "Name Only Renamed" {
 		t.Errorf("Persisted name = %q, want %q", dbName, "Name Only Renamed")
 	}
-	if dbDesc != nil {
-		t.Errorf("Persisted description = %v, want nil (omitted fields "+
-			"are cleared by current handler contract)", *dbDesc)
+	if dbDesc == nil || *dbDesc != origDesc {
+		t.Errorf("Persisted description = %v, want %q (omitted fields are "+
+			"preserved by the partial-update contract)", dbDesc, origDesc)
 	}
 }
 
@@ -2386,5 +2390,423 @@ func assertInvalidNameRejected(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 	if response.Error != issue269InvalidCharsMessage {
 		t.Errorf("Expected %q, got %q", issue269InvalidCharsMessage, response.Error)
+	}
+}
+
+// =============================================================================
+// Issue #304: "Share with all users" (is_shared) persistence and owner
+// recording on create / update. These are DB-backed integration tests; they
+// skip when TEST_AI_WORKBENCH_SERVER is unset.
+// =============================================================================
+
+// issue304Bool returns a pointer to b, for populating the optional
+// ClusterGroupRequest.IsShared field in table-driven tests.
+func issue304Bool(b bool) *bool { return &b }
+
+// TestClusterHandler_CreateClusterGroup_Issue304_RecordsOwnerAndShared
+// confirms that creating a group records the creating user as owner and
+// persists is_shared = true when the request asks for it.
+func TestClusterHandler_CreateClusterGroup_Issue304_RecordsOwnerAndShared(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	body, _ := json.Marshal(ClusterGroupRequest{
+		Name:     "Shared Group",
+		IsShared: issue304Bool(true),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.createClusterGroup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var resp database.ClusterGroup
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if !resp.IsShared {
+		t.Errorf("Response IsShared = false, want true")
+	}
+	if !resp.OwnerUsername.Valid || resp.OwnerUsername.String != "group_updater" {
+		t.Errorf("Response OwnerUsername = %v, want %q", resp.OwnerUsername, "group_updater")
+	}
+
+	// Verify persistence directly.
+	var dbShared bool
+	var dbOwner *string
+	err := pool.QueryRow(context.Background(),
+		"SELECT is_shared, owner_username FROM cluster_groups WHERE id = $1",
+		resp.ID).Scan(&dbShared, &dbOwner)
+	if err != nil {
+		t.Fatalf("Failed to read created row: %v", err)
+	}
+	if !dbShared {
+		t.Errorf("Persisted is_shared = false, want true")
+	}
+	if dbOwner == nil || *dbOwner != "group_updater" {
+		t.Errorf("Persisted owner_username = %v, want %q", dbOwner, "group_updater")
+	}
+}
+
+// TestClusterHandler_CreateClusterGroup_Issue304_DefaultsSharedFalse confirms
+// that an omitted is_shared defaults the new group to private (is_shared =
+// false) whilst still recording the owner.
+func TestClusterHandler_CreateClusterGroup_Issue304_DefaultsSharedFalse(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Private Group"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.createClusterGroup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var resp database.ClusterGroup
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.IsShared {
+		t.Errorf("Response IsShared = true, want false (default when omitted)")
+	}
+
+	var dbShared bool
+	var dbOwner *string
+	err := pool.QueryRow(context.Background(),
+		"SELECT is_shared, owner_username FROM cluster_groups WHERE id = $1",
+		resp.ID).Scan(&dbShared, &dbOwner)
+	if err != nil {
+		t.Fatalf("Failed to read created row: %v", err)
+	}
+	if dbShared {
+		t.Errorf("Persisted is_shared = true, want false")
+	}
+	if dbOwner == nil || *dbOwner != "group_updater" {
+		t.Errorf("Persisted owner_username = %v, want %q", dbOwner, "group_updater")
+	}
+}
+
+// TestClusterHandler_CreateClusterGroup_Issue304_NoAuth confirms the create
+// handler rejects a request with no bearer token now that it must resolve the
+// creating user. The permission gate is satisfied via a nil auth store (which
+// treats every caller as permitted), so the 401 comes from the owner lookup.
+func TestClusterHandler_CreateClusterGroup_Issue304_NoAuth(t *testing.T) {
+	handler := permissionSatisfiedHandler()
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "No Auth Group"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.createClusterGroup(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Issue304_ToggleShared drives is_shared
+// through both transitions (true->false and false->true) and confirms each is
+// persisted.
+func TestClusterHandler_UpdateClusterGroup_Issue304_ToggleShared(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	owner := "group_updater"
+	// Start shared = true.
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Toggle Group", nil, &owner, true)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	doUpdate := func(shared bool) database.ClusterGroup {
+		body, _ := json.Marshal(ClusterGroupRequest{
+			Name:     "Toggle Group",
+			IsShared: issue304Bool(shared),
+		})
+		req := httptest.NewRequest(http.MethodPut,
+			"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = withBearer(req, token)
+		req = withUser(req, userID)
+		rec := httptest.NewRecorder()
+
+		handler.handleClusterGroupSubpath(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Update to shared=%v: expected status %d, got %d. Body: %s",
+				shared, http.StatusOK, rec.Code, rec.Body.String())
+		}
+		var resp database.ClusterGroup
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+		return resp
+	}
+
+	// true -> false
+	resp := doUpdate(false)
+	if resp.IsShared {
+		t.Errorf("After update to false: response IsShared = true, want false")
+	}
+	var dbShared bool
+	if err := pool.QueryRow(ctx,
+		"SELECT is_shared FROM cluster_groups WHERE id = $1", created.ID).Scan(&dbShared); err != nil {
+		t.Fatalf("Failed to read row: %v", err)
+	}
+	if dbShared {
+		t.Errorf("After update to false: persisted is_shared = true, want false")
+	}
+
+	// false -> true
+	resp = doUpdate(true)
+	if !resp.IsShared {
+		t.Errorf("After update to true: response IsShared = false, want true")
+	}
+	if err := pool.QueryRow(ctx,
+		"SELECT is_shared FROM cluster_groups WHERE id = $1", created.ID).Scan(&dbShared); err != nil {
+		t.Fatalf("Failed to read row: %v", err)
+	}
+	if !dbShared {
+		t.Errorf("After update to true: persisted is_shared = false, want true")
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Issue304_PreservesSharedWhenOmitted
+// confirms the partial-update contract: omitting is_shared from the body
+// leaves the group's current visibility untouched (does not force it false).
+func TestClusterHandler_UpdateClusterGroup_Issue304_PreservesSharedWhenOmitted(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	owner := "group_updater"
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Preserve Shared", nil, &owner, true)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	// Rename only; is_shared omitted must not clear the true flag.
+	body := `{"name": "Preserve Shared Renamed"}`
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var dbShared bool
+	var dbName string
+	if err := pool.QueryRow(ctx,
+		"SELECT is_shared, name FROM cluster_groups WHERE id = $1",
+		created.ID).Scan(&dbShared, &dbName); err != nil {
+		t.Fatalf("Failed to read row: %v", err)
+	}
+	if !dbShared {
+		t.Errorf("Persisted is_shared = false, want true (omitted field must be preserved)")
+	}
+	if dbName != "Preserve Shared Renamed" {
+		t.Errorf("Persisted name = %q, want %q", dbName, "Preserve Shared Renamed")
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare
+// confirms that a non-owner without manage_connections is rejected with 403
+// and, crucially, that the is_shared flag is NOT changed as a side effect of
+// the denied request.
+func TestClusterHandler_UpdateClusterGroup_Issue304_ForbiddenDoesNotShare(t *testing.T) {
+	ds, pool, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	_, store, cleanupStore := createTestRBACHandler(t)
+	defer cleanupStore()
+
+	if err := store.CreateUser("outsider304", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+	userID, err := store.GetUserID("outsider304")
+	if err != nil {
+		t.Fatalf("Failed to get user id: %v", err)
+	}
+	token, _, err := store.AuthenticateUser("outsider304", "Password1234")
+	if err != nil {
+		t.Fatalf("Failed to authenticate: %v", err)
+	}
+
+	checker := auth.NewRBACChecker(store)
+	handler := NewClusterHandler(ds, store, checker)
+
+	ctx := context.Background()
+	// Owned by someone else, currently private.
+	other := "someone_else"
+	created, err := ds.CreateClusterGroupWithOwner(ctx, "Locked Group", nil, &other, false)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	// Attempt to flip it to shared as a non-owner without manage_connections.
+	body, _ := json.Marshal(ClusterGroupRequest{
+		Name:     "Locked Group",
+		IsShared: issue304Bool(true),
+	})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+
+	// The denied request must not have shared the group.
+	var dbShared bool
+	if err := pool.QueryRow(ctx,
+		"SELECT is_shared FROM cluster_groups WHERE id = $1", created.ID).Scan(&dbShared); err != nil {
+		t.Fatalf("Failed to read row: %v", err)
+	}
+	if dbShared {
+		t.Errorf("Persisted is_shared = true after a denied update; visibility must be unchanged")
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Issue304_InvalidName confirms the
+// update handler rejects a name with disallowed characters with 400, after
+// the ownership/permission check has passed. This covers the on-update
+// ValidateDisplayName branch.
+func TestClusterHandler_UpdateClusterGroup_Issue304_InvalidName(t *testing.T) {
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	created, err := ds.CreateClusterGroup(ctx, "Valid Original", nil)
+	if err != nil {
+		t.Fatalf("Failed to create cluster group: %v", err)
+	}
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: issue269InvalidName})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(created.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+// TestClusterHandler_CreateClusterGroup_Issue304_DuplicateNameError forces the
+// CreateClusterGroupWithOwner datastore call to fail via the unique-name
+// constraint, exercising the handler's 500 error branch.
+func TestClusterHandler_CreateClusterGroup_Issue304_DuplicateNameError(t *testing.T) {
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	if _, err := ds.CreateClusterGroup(ctx, "Dup Name", nil); err != nil {
+		t.Fatalf("Failed to seed cluster group: %v", err)
+	}
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Dup Name"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster-groups",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.createClusterGroup(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status %d for duplicate name, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+}
+
+// TestClusterHandler_UpdateClusterGroup_Issue304_DuplicateNameError forces the
+// UpdateClusterGroup datastore call to fail by renaming a group to a name
+// already taken by another group, exercising the handler's 500 error branch.
+func TestClusterHandler_UpdateClusterGroup_Issue304_DuplicateNameError(t *testing.T) {
+	ds, _, cleanupDS := newTestDatastore(t)
+	defer cleanupDS()
+
+	handler, _, userID, token, cleanupStore := setupGroupUpdateHandler(t, ds)
+	defer cleanupStore()
+
+	ctx := context.Background()
+	if _, err := ds.CreateClusterGroup(ctx, "Existing Name", nil); err != nil {
+		t.Fatalf("Failed to seed first group: %v", err)
+	}
+	target, err := ds.CreateClusterGroup(ctx, "Target Group", nil)
+	if err != nil {
+		t.Fatalf("Failed to seed target group: %v", err)
+	}
+
+	body, _ := json.Marshal(ClusterGroupRequest{Name: "Existing Name"})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/cluster-groups/"+strconv.Itoa(target.ID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withBearer(req, token)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+
+	handler.handleClusterGroupSubpath(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status %d for duplicate rename, got %d. Body: %s",
+			http.StatusInternalServerError, rec.Code, rec.Body.String())
 	}
 }

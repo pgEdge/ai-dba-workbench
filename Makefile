@@ -28,6 +28,8 @@ all:
 # Run tests for all sub-projects
 test:
 	@echo "Running tests for all sub-projects..."
+	@echo "Testing shared pkg module..."
+	@cd pkg && go test ./...
 	@echo "Testing collector..."
 	@cd collector && $(MAKE) test
 	@echo "Testing server..."
@@ -67,6 +69,8 @@ lint:
 # Run all tests (sub-project test-all)
 test-all:
 	@echo "Running all tests for sub-projects..."
+	@echo "Running all tests for shared pkg module..."
+	@cd pkg && go test ./...
 	@echo "Running all tests for collector..."
 	@cd collector && $(MAKE) test-all
 	@echo "Running all tests for server..."
@@ -120,7 +124,9 @@ help:
 	@echo "  test-all         - Run test-all for all sub-projects"
 	@echo "  test-e2e         - Run E2E smoke tests (requires Docker)"
 	@echo "  clean            - Clean all sub-projects"
-	@echo "  killall          - Kill all running processes"
+	@echo "  killall          - SIGTERM every collector, server and alerter process"
+	@echo "                     on the host, including any dev server started"
+	@echo "                     from bin/; use deliberately"
 	@echo "  help             - Show this help message"
 	@echo ""
 	@echo "Sub-projects:"

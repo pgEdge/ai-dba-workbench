@@ -231,7 +231,7 @@ describe('EditTokenDialog', () => {
         fireEvent.keyDown(mcpInput, { key: 'ArrowDown' });
 
         await waitFor(() => {
-            expect(screen.getByRole('option', { name: 'All MCP Privileges' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: "All the owner's MCP privileges" })).toBeInTheDocument();
             expect(screen.getByRole('option', { name: 'query_read' })).toBeInTheDocument();
             expect(screen.getByRole('option', { name: 'query_write' })).toBeInTheDocument();
         });
@@ -244,7 +244,7 @@ describe('EditTokenDialog', () => {
         fireEvent.keyDown(adminInput, { key: 'ArrowDown' });
 
         await waitFor(() => {
-            expect(screen.getByRole('option', { name: 'All Admin Permissions' })).toBeInTheDocument();
+            expect(screen.getByRole('option', { name: "All the owner's admin permissions" })).toBeInTheDocument();
             expect(screen.getByRole('option', { name: 'Manage Users' })).toBeInTheDocument();
             expect(screen.getByRole('option', { name: 'Manage Groups' })).toBeInTheDocument();
         });

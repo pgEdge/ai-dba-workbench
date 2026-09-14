@@ -57,6 +57,25 @@ export const MONO_CAPTION_SX = {
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
 };
 
+// ---- Dashboard control typography -----------------------------------------
+
+/**
+ * Body typography for inline dashboard controls: filter labels, pager
+ * status text, and toggle labels that sit alongside a panel's table.
+ */
+export const DASHBOARD_CONTROL_TEXT_SX = {
+    fontSize: '0.875rem',
+};
+
+/**
+ * Label typography for the tab-chip selectors used by dashboard
+ * panels (sort criteria, page size, and similar small option rows).
+ */
+export const DASHBOARD_TAB_CHIP_TEXT_SX = {
+    fontSize: '0.75rem',
+    fontWeight: 600,
+};
+
 // ---- Metric label/value typography ----------------------------------------
 
 /**

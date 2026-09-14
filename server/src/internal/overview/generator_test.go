@@ -13,12 +13,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/pgedge/ai-workbench/server/internal/chat"
+	pgllm "github.com/pgEdge/pgedge-go-llm-lib/llm"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
@@ -222,7 +224,7 @@ func TestHasSignificantChange(t *testing.T) {
 func TestExtractTextFromResponse(t *testing.T) {
 	tests := []struct {
 		name    string
-		content []any
+		content []pgllm.ContentBlock
 		want    string
 	}{
 		{
@@ -231,62 +233,53 @@ func TestExtractTextFromResponse(t *testing.T) {
 			want:    "",
 		},
 		{
-			name: "single TextContent",
-			content: []any{
-				chat.TextContent{Type: "text", Text: "Hello"},
+			name: "single text block",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockText, Text: "Hello"},
 			},
 			want: "Hello",
 		},
 		{
-			name: "multiple TextContent blocks",
-			content: []any{
-				chat.TextContent{Type: "text", Text: "Hello "},
-				chat.TextContent{Type: "text", Text: "World"},
+			name: "multiple text blocks",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockText, Text: "Hello "},
+				{Type: pgllm.BlockText, Text: "World"},
 			},
 			want: "Hello World",
 		},
 		{
-			name: "map-based text content",
-			content: []any{
-				map[string]any{
-					"type": "text",
-					"text": "From map",
-				},
-			},
-			want: "From map",
-		},
-		{
-			name: "mixed content types",
-			content: []any{
-				chat.TextContent{Type: "text", Text: "Part1"},
-				map[string]any{
-					"type": "text",
-					"text": "Part2",
-				},
-			},
-			want: "Part1Part2",
-		},
-		{
-			name: "non-text map ignored",
-			content: []any{
-				map[string]any{
-					"type": "tool_use",
-					"name": "some_tool",
-				},
+			name: "non-text block ignored",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockToolUse, Text: "ignored"},
 			},
 			want: "",
+		},
+		{
+			name: "mixed blocks concatenate only text",
+			content: []pgllm.ContentBlock{
+				{Type: pgllm.BlockText, Text: "Part1"},
+				{Type: pgllm.BlockToolUse, Text: "skip"},
+				{Type: pgllm.BlockText, Text: "Part2"},
+			},
+			want: "Part1Part2",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := chat.LLMResponse{Content: tc.content}
+			resp := &pgllm.ChatResponse{Content: tc.content}
 			got := extractTextFromResponse(resp)
 			if got != tc.want {
 				t.Errorf("expected %q, got %q", tc.want, got)
 			}
 		})
 	}
+
+	t.Run("nil response", func(t *testing.T) {
+		if got := extractTextFromResponse(nil); got != "" {
+			t.Errorf("expected empty string for nil response, got %q", got)
+		}
+	})
 }
 
 // --- evictScopedCacheLocked tests ------------------------------------------
@@ -809,49 +802,264 @@ func TestCreateLLMClient_Success(t *testing.T) {
 		OllamaURL: "http://localhost:11434",
 	})
 
-	client := g.createLLMClient()
+	client, err := g.createLLMClient()
+	if err != nil {
+		t.Fatalf("expected no error when provider is configured, got %v", err)
+	}
 	if client == nil {
 		t.Fatal("expected non-nil client when provider is configured")
+	}
+	if client.Provider() != "ollama" {
+		t.Errorf("expected ollama provider, got %q", client.Provider())
 	}
 }
 
 func TestCreateLLMClient_AnthropicWithKey(t *testing.T) {
 	// Confirm the field projection wires the API key through to the
-	// chat factory; missing key would yield a nil client.
+	// library client.
 	g := NewGenerator(nil, &llmproxy.Config{
 		Provider:        "anthropic",
 		Model:           "claude-3",
 		AnthropicAPIKey: "test-key",
 	})
 
-	client := g.createLLMClient()
+	client, err := g.createLLMClient()
+	if err != nil {
+		t.Fatalf("expected no error when API key is supplied, got %v", err)
+	}
 	if client == nil {
 		t.Fatal("expected non-nil client when API key is supplied")
 	}
+	if client.Model() != "claude-3" {
+		t.Errorf("expected model claude-3, got %q", client.Model())
+	}
 }
 
-func TestCreateLLMClient_MissingProviderReturnsNil(t *testing.T) {
-	// An empty provider must not panic and must return nil so callers
-	// can disable LLM features gracefully.
+func TestCreateLLMClient_ProviderFieldProjection(t *testing.T) {
+	// Each provider branch must wire its own API key and base URL into
+	// the library options and yield a client reporting that provider.
+	tests := []struct {
+		name   string
+		config *llmproxy.Config
+	}{
+		{
+			name: "openai",
+			config: &llmproxy.Config{
+				Provider:      "openai",
+				Model:         "gpt-4o",
+				OpenAIAPIKey:  "test-key",
+				OpenAIBaseURL: "https://api.openai.com/v1",
+			},
+		},
+		{
+			name: "gemini",
+			config: &llmproxy.Config{
+				Provider:     "gemini",
+				Model:        "gemini-2.5-flash",
+				GeminiAPIKey: "test-key",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewGenerator(nil, tc.config)
+			client, err := g.createLLMClient()
+			if err != nil {
+				t.Fatalf("expected no error for %s, got %v", tc.name, err)
+			}
+			if client == nil {
+				t.Fatalf("expected non-nil client for %s", tc.name)
+			}
+			if client.Provider() != tc.name {
+				t.Errorf("expected provider %q, got %q", tc.name, client.Provider())
+			}
+		})
+	}
+}
+
+func TestGenerateSummaryFromPrompt_Success(t *testing.T) {
+	// Drive the full happy path through the library client by pointing
+	// an OpenAI-compatible provider at a stub server that returns a
+	// chat completion. This exercises the Chat call and text extraction.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "All servers healthy."}, "finish_reason": "stop"}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+		}`))
+	}))
+	defer srv.Close()
+
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider:      "openai",
+		Model:         "gpt-4o",
+		OpenAIAPIKey:  "test-key",
+		OpenAIBaseURL: srv.URL,
+	})
+
+	summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if summary != "All servers healthy." {
+		t.Errorf("expected summary text from stub, got %q", summary)
+	}
+}
+
+func TestGenerateSummaryFromPrompt_ChatError(t *testing.T) {
+	// A provider whose endpoint returns a non-retryable 4xx status makes
+	// Chat fail immediately; the wrapped 'LLM chat failed' error must
+	// surface to the caller. A 400 avoids the retry backoff that 5xx and
+	// 429 would trigger, keeping the test fast.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider:      "openai",
+		Model:         "gpt-4o",
+		OpenAIAPIKey:  "test-key",
+		OpenAIBaseURL: srv.URL,
+	})
+
+	summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+	if err == nil {
+		t.Fatal("expected an error when the LLM endpoint fails")
+	}
+	if summary != "" {
+		t.Errorf("expected empty summary on error, got %q", summary)
+	}
+	if !strings.Contains(err.Error(), "LLM chat failed") {
+		t.Errorf("expected 'LLM chat failed' in error, got %v", err)
+	}
+}
+
+func TestGenerateSummaryFromPrompt_NoProviderError(t *testing.T) {
+	// With no provider configured, createLLMClient fails and the wrapped
+	// error must surface to the caller rather than panicking.
 	g := NewGenerator(nil, &llmproxy.Config{})
 
-	client := g.createLLMClient()
+	summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+	if err == nil {
+		t.Fatal("expected an error when no provider is configured")
+	}
+	if summary != "" {
+		t.Errorf("expected empty summary on error, got %q", summary)
+	}
+	if !strings.Contains(err.Error(), "no LLM provider configured") {
+		t.Errorf("expected 'no LLM provider configured' in error, got %v", err)
+	}
+}
+
+func TestCreateLLMClient_MissingProviderReturnsError(t *testing.T) {
+	// An empty provider must not panic and must return an error so
+	// callers can disable LLM features gracefully.
+	g := NewGenerator(nil, &llmproxy.Config{})
+
+	client, err := g.createLLMClient()
+	if err == nil {
+		t.Fatal("expected an error when provider is empty")
+	}
 	if client != nil {
 		t.Errorf("expected nil client when provider is empty, got %T", client)
 	}
 }
 
-func TestCreateLLMClient_AnthropicMissingKeyReturnsNil(t *testing.T) {
-	// Missing credentials surface as a factory error and createLLMClient
-	// should swallow that and return nil rather than propagate the error.
+func TestCreateLLMClient_UnknownProviderReturnsError(t *testing.T) {
+	// A non-empty but unregistered provider passes the empty-provider
+	// guard yet fails pgllm.NewClient; the construction error must surface
+	// to the caller rather than yielding a client.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider: "does-not-exist",
+		Model:    "m",
+	})
+
+	client, err := g.createLLMClient()
+	if err == nil {
+		t.Fatal("expected an error for an unregistered provider")
+	}
+	if client != nil {
+		t.Errorf("expected nil client for an unregistered provider, got %T", client)
+	}
+}
+
+func TestCreateLLMClient_NilConfigReturnsError(t *testing.T) {
+	// NewGenerator accepts a nil *llmproxy.Config when AI is disabled or the
+	// LLM config is omitted. createLLMClient must not panic dereferencing the
+	// nil config; it returns an error so the caller paths degrade gracefully.
+	g := NewGenerator(nil, nil)
+
+	client, err := g.createLLMClient()
+	if err == nil {
+		t.Fatal("expected an error when llmConfig is nil")
+	}
+	if client != nil {
+		t.Errorf("expected nil client when llmConfig is nil, got %T", client)
+	}
+	if !strings.Contains(err.Error(), "no LLM provider configured") {
+		t.Errorf("expected 'no LLM provider configured' error, got %v", err)
+	}
+}
+
+func TestGenerateSummaryFromPrompt_NilConfigNoPanic(t *testing.T) {
+	// The whole summary path must remain a graceful no-op when AI is
+	// disabled (nil config): createLLMClient returns an error which the
+	// caller wraps, and no panic occurs.
+	g := NewGenerator(nil, nil)
+
+	summary, err := g.generateSummaryFromPrompt(context.Background(), "system", "data")
+	if err == nil {
+		t.Fatal("expected an error when llmConfig is nil")
+	}
+	if summary != "" {
+		t.Errorf("expected empty summary on nil config, got %q", summary)
+	}
+}
+
+func TestCreateLLMClient_TimeoutSecondsHonoured(t *testing.T) {
+	// A positive TimeoutSeconds on the underlying config must produce a
+	// usable client; the timeout is applied to the library Options. The
+	// library defers credential validation, so a valid provider with a
+	// positive timeout yields a non-nil client without error.
+	g := NewGenerator(nil, &llmproxy.Config{
+		Provider: "ollama",
+		Model:    "llama3",
+		LLMConfig: &config.LLMConfig{
+			TimeoutSeconds: 45,
+		},
+	})
+
+	client, err := g.createLLMClient()
+	if err != nil {
+		t.Fatalf("expected no error with positive timeout, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client when timeout is configured")
+	}
+}
+
+func TestCreateLLMClient_AnthropicMissingKeyConstructs(t *testing.T) {
+	// The library defers credential validation to request time, so a
+	// missing API key still yields a usable client object; the failure
+	// only surfaces when Chat is called. This differs from the old chat
+	// factory, which validated credentials at construction.
 	g := NewGenerator(nil, &llmproxy.Config{
 		Provider: "anthropic",
 		Model:    "claude-3",
 	})
 
-	client := g.createLLMClient()
-	if client != nil {
-		t.Errorf("expected nil client when credentials missing, got %T", client)
+	client, err := g.createLLMClient()
+	if err != nil {
+		t.Fatalf("expected no construction error, got %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client; credential validation is deferred")
 	}
 }
 
@@ -892,7 +1100,7 @@ func TestCreateLLMClient_HeaderLoadErrorIsLogged(t *testing.T) {
 		done <- readResult{data: data, err: readErr}
 	}()
 
-	client := g.createLLMClient()
+	client, _ := g.createLLMClient()
 
 	// Restore stderr before any further test output and close the
 	// writer so io.ReadAll returns.
@@ -921,7 +1129,7 @@ func TestCreateLLMClient_HeaderLoadErrorIsLogged(t *testing.T) {
 
 func TestCreateLLMClient_HeadersWiredFromConfig(t *testing.T) {
 	// A populated config-level LLMConfig with custom headers should
-	// flow through getProviderHeaders into the chat client without
+	// flow through getProviderHeaders into the library client without
 	// returning an error. This exercises the non-nil branch of
 	// getProviderHeaders.
 	g := NewGenerator(nil, &llmproxy.Config{
@@ -933,7 +1141,10 @@ func TestCreateLLMClient_HeadersWiredFromConfig(t *testing.T) {
 		},
 	})
 
-	client := g.createLLMClient()
+	client, err := g.createLLMClient()
+	if err != nil {
+		t.Fatalf("expected no error when headers are configured, got %v", err)
+	}
 	if client == nil {
 		t.Fatal("expected non-nil client when headers are configured")
 	}

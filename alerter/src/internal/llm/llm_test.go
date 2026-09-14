@@ -45,69 +45,6 @@ func (f *fakeEmbedding) ProviderName() string {
 	return f.provider
 }
 
-func TestResizeEmbedding_Same(t *testing.T) {
-	in := []float32{1, 2, 3}
-	got := resizeEmbedding(in, 3)
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
-	}
-	// Should return the same slice (same pointer) because dims match.
-	if &got[0] != &in[0] {
-		t.Error("resizeEmbedding with equal dim should return the input slice")
-	}
-}
-
-func TestResizeEmbedding_Truncate(t *testing.T) {
-	in := []float32{1, 2, 3, 4, 5}
-	got := resizeEmbedding(in, 3)
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
-	}
-	if got[0] != 1 || got[1] != 2 || got[2] != 3 {
-		t.Errorf("got = %v, want [1 2 3]", got)
-	}
-}
-
-func TestResizeEmbedding_Pad(t *testing.T) {
-	in := []float32{1, 2}
-	got := resizeEmbedding(in, 5)
-	if len(got) != 5 {
-		t.Fatalf("len = %d, want 5", len(got))
-	}
-	want := []float32{1, 2, 0, 0, 0}
-	for i, v := range want {
-		if got[i] != v {
-			t.Errorf("got[%d] = %v, want %v", i, got[i], v)
-		}
-	}
-}
-
-func TestNormalizeEmbedding_UnitLength(t *testing.T) {
-	in := []float32{3, 4}
-	got := normalizeEmbedding(in)
-	var sumSq float64
-	for _, v := range got {
-		sumSq += float64(v) * float64(v)
-	}
-	if math.Abs(math.Sqrt(sumSq)-1.0) > 1e-6 {
-		t.Errorf("magnitude = %v, want 1.0", math.Sqrt(sumSq))
-	}
-}
-
-func TestNormalizeEmbedding_ZeroVector(t *testing.T) {
-	in := []float32{0, 0, 0}
-	got := normalizeEmbedding(in)
-	// Per implementation, zero vector is returned unchanged.
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
-	}
-	for _, v := range got {
-		if v != 0 {
-			t.Errorf("got = %v, want all zeros", got)
-		}
-	}
-}
-
 func TestEmbeddingAdapter_GenerateEmbedding_RightDimension(t *testing.T) {
 	// Construct a 1536-dim vector that's already correct size.
 	vec := make([]float64, EmbeddingDimension)
@@ -286,6 +223,11 @@ func TestNewEmbeddingProvider_GeminiSuccess(t *testing.T) {
 }
 
 func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
+	// The library-backed Gemini provider enforces a construction-time
+	// allow-list of known-good embedding models. This guards knowledge-base
+	// vector compatibility by rejecting unknown models that might emit
+	// vectors of an unexpected dimension. An unsupported model such as
+	// "text-embedding-004" must therefore fail at construction.
 	tmpDir := t.TempDir()
 	keyFile := tmpDir + "/gemini.key"
 	if err := os.WriteFile(keyFile, []byte("AIza-test-key-12345678\n"), 0600); err != nil {
@@ -302,10 +244,10 @@ func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
 
 	_, err := NewEmbeddingProvider(cfg)
 	if err == nil {
-		t.Fatal("expected error for unsupported gemini embedding model")
+		t.Fatal("expected error for unsupported Gemini embedding model")
 	}
-	if !strings.Contains(err.Error(), "gemini:") {
-		t.Errorf("err = %v, want gemini-prefixed error", err)
+	if !strings.Contains(err.Error(), "unsupported Gemini model") {
+		t.Errorf("err = %v, want it to contain \"unsupported Gemini model\"", err)
 	}
 }
 

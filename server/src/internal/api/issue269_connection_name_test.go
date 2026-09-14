@@ -216,7 +216,7 @@ func TestConnectionHandler_UpdateConnection_Issue269_InvalidChars(t *testing.T) 
 	seedIssue269Connection(t, pool, connID, owner, "valid-name")
 
 	checker := auth.NewRBACChecker(store)
-	handler := NewConnectionHandler(ds, store, checker)
+	handler := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
 
 	invalid := issue269InvalidName
 	body, _ := json.Marshal(ConnectionFullUpdateRequest{Name: &invalid})
@@ -254,7 +254,7 @@ func TestConnectionHandler_UpdateConnection_Issue269_ValidNameSucceeds(t *testin
 	seedIssue269Connection(t, pool, connID, owner, "old-name")
 
 	checker := auth.NewRBACChecker(store)
-	handler := NewConnectionHandler(ds, store, checker)
+	handler := NewConnectionHandlerWithSecurity(ds, store, checker, false, nil, nil)
 
 	valid := "New Cluster (primary) - east_1.db"
 	body, _ := json.Marshal(ConnectionFullUpdateRequest{Name: &valid})

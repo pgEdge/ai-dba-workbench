@@ -146,7 +146,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
                     )}
                 </CategoryCard>
 
-                {isSuperuser && (
+                {(isSuperuser || (adminPermissions && adminPermissions.length > 0)) && (
                     <CategoryCard icon={AdminIcon} label="Admin" testId="admin-permissions-section">
                         {adminPermissions && adminPermissions.length > 0 ? (
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>

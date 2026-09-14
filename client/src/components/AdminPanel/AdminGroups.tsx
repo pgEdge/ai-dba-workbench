@@ -118,10 +118,10 @@ const AdminGroups: React.FC = () => {
     const fetchGroupsAndConnections = useCallback(async (): Promise<RbacGroup[]> => {
         const [groupsData, connResult] = await Promise.all([
             apiGet<{ groups: RbacGroup[] }>('/api/v1/rbac/groups'),
-            apiGet<{ connections?: { id: number; name: string }[] }>('/api/v1/connections').catch(() => null),
+            apiGet<{ id: number; name: string }[]>('/api/v1/connections').catch(() => null),
         ]);
         if (connResult) {
-            setConnections(connResult.connections ?? []);
+            setConnections(connResult ?? []);
         }
         return groupsData.groups || [];
     }, []);

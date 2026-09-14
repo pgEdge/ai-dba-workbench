@@ -67,7 +67,10 @@ function makeToolUseResponse(toolName = 'list_connections', toolId = 'tool_1') {
         text: vi.fn().mockResolvedValue(''),
         json: vi.fn().mockResolvedValue({
             content: [
-                { type: 'tool_use', id: toolId, name: toolName, input: {} },
+                {
+                    type: 'tool_use',
+                    tool_use: { id: toolId, name: toolName, input: {} },
+                },
             ],
             stop_reason: 'tool_use',
         }),

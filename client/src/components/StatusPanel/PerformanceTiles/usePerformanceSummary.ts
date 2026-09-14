@@ -15,12 +15,15 @@ import { useClusterData } from '../../../contexts/useClusterData';
 import type { PerformanceSummaryData } from './types';
 import { extractEstateServerIds } from '../../../utils/clusterHelpers';
 import { logger } from '../../../utils/logger';
+import { useRetryingFetch } from '../../../hooks/useRetryingFetch';
 import type { Selection } from '../../../types/selection';
 
 interface UsePerformanceSummaryReturn {
     data: PerformanceSummaryData | null;
     loading: boolean;
     error: string | null;
+    /** True while an automatic retry is pending after a failed fetch. */
+    retrying: boolean;
 }
 
 /**
@@ -38,6 +41,10 @@ export const usePerformanceSummary = (
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+    const { run, retrying } = useRetryingFetch({
+        resetKey: lastRefresh,
+        enabled: !!user && !!selection,
+    });
 
     const buildUrl = useCallback((): string | null => {
         if (!selection) {return null;}
@@ -63,13 +70,13 @@ export const usePerformanceSummary = (
         return null;
     }, [selection]);
 
-    const fetchData = useCallback(async (): Promise<void> => {
-        if (!user) {return;}
+    const fetchData = useCallback(async (): Promise<boolean> => {
+        if (!user) {return true;}
 
         const url = buildUrl();
         if (!url) {
             setData(null);
-            return;
+            return true;
         }
 
         if (!initialLoadDoneRef.current) {
@@ -85,17 +92,21 @@ export const usePerformanceSummary = (
                 throw new Error(errorData.error || `Failed to fetch performance data: ${response.status}`);
             }
 
+            const result: PerformanceSummaryData = await response.json();
+            // Re-check mount state after the final await so a late
+            // resolution cannot call setState on an unmounted component.
             if (isMountedRef.current) {
-                const result: PerformanceSummaryData = await response.json();
                 setData(result);
                 initialLoadDoneRef.current = true;
             }
+            return true;
         } catch (err) {
             logger.error('Error fetching performance summary:', err);
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch performance data');
                 setData(null);
             }
+            return false;
         } finally {
             if (isMountedRef.current) {
                 setLoading(false);
@@ -114,15 +125,15 @@ export const usePerformanceSummary = (
         isMountedRef.current = true;
 
         if (user && selection) {
-            void fetchData();
+            void run(fetchData);
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [user, selection, fetchData, lastRefresh]);
+    }, [user, selection, run, fetchData, lastRefresh]);
 
-    return { data, loading, error };
+    return { data, loading, error, retrying };
 };
 
 export default usePerformanceSummary;

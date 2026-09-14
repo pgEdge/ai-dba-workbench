@@ -235,6 +235,60 @@ func removeMemberCommand(dataDir, groupName, memberUsername, memberGroupName str
 	return nil
 }
 
+// listGroupMembersCommand lists the direct members of a group
+func listGroupMembersCommand(dataDir, groupName string) error {
+	if groupName == "" {
+		return fmt.Errorf("group name is required")
+	}
+
+	// Open auth store
+	store, err := openAuthStoreCLI(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to open auth store: %w", err)
+	}
+	defer store.Close()
+
+	// Get group
+	group, err := store.GetGroupByName(groupName)
+	if err != nil {
+		return fmt.Errorf("failed to find group: %w", err)
+	}
+	if group == nil {
+		return fmt.Errorf("group '%s' not found", groupName)
+	}
+
+	// Get members
+	members, err := store.GetGroupMembers(group.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get group members: %w", err)
+	}
+
+	fmt.Printf("\nMembers of group '%s':\n", groupName)
+	fmt.Println(strings.Repeat("=", 70))
+
+	if len(members.UserMembers) == 0 {
+		fmt.Println("Users: None")
+	} else {
+		fmt.Println("\nUsers:")
+		for _, username := range members.UserMembers {
+			fmt.Printf("  - %s\n", username)
+		}
+	}
+
+	if len(members.GroupMembers) == 0 {
+		fmt.Println("\nGroups: None")
+	} else {
+		fmt.Println("\nGroups:")
+		for _, childGroup := range members.GroupMembers {
+			fmt.Printf("  - %s\n", childGroup)
+		}
+	}
+
+	fmt.Println(strings.Repeat("=", 70) + "\n")
+
+	return nil
+}
+
 // setSuperuserCommand handles the set-superuser command for users
 func setSuperuserCommand(dataDir, username string, isSuperuser bool) error {
 	if username == "" {

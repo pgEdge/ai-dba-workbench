@@ -440,6 +440,88 @@ func TestGrantConnectionPrivilegeUpgrade(t *testing.T) {
 	}
 }
 
+// TestGrantConnectionPrivilegeAllConnectionsPreservesSpecific reproduces
+// issue #302: granting "All Connections" must not delete pre-existing
+// per-connection grants. The specific grants (read on A, read_write on B)
+// must survive a subsequent wildcard read grant.
+func TestGrantConnectionPrivilegeAllConnectionsPreservesSpecific(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	const (
+		connA = 1
+		connB = 2
+	)
+
+	// Specific grants first: read on A, read_write on B.
+	if err := store.GrantConnectionPrivilege(groupID, connA, AccessLevelRead); err != nil {
+		t.Fatalf("Failed to grant read on connection A: %v", err)
+	}
+	if err := store.GrantConnectionPrivilege(groupID, connB, AccessLevelReadWrite); err != nil {
+		t.Fatalf("Failed to grant read_write on connection B: %v", err)
+	}
+
+	// Then grant "All Connections / READ".
+	if err := store.GrantConnectionPrivilege(groupID, ConnectionIDAll, AccessLevelRead); err != nil {
+		t.Fatalf("Failed to grant All Connections read: %v", err)
+	}
+
+	// All three rows must still exist with their original access levels.
+	privA, err := store.GetConnectionPrivilege(groupID, connA)
+	if err != nil {
+		t.Fatalf("Failed to get connection A privilege: %v", err)
+	}
+	if privA == nil || privA.AccessLevel != AccessLevelRead {
+		t.Errorf("Expected connection A = read, got %+v", privA)
+	}
+
+	privB, err := store.GetConnectionPrivilege(groupID, connB)
+	if err != nil {
+		t.Fatalf("Failed to get connection B privilege: %v", err)
+	}
+	if privB == nil || privB.AccessLevel != AccessLevelReadWrite {
+		t.Errorf("Expected connection B = read_write, got %+v", privB)
+	}
+
+	privAll, err := store.GetConnectionPrivilege(groupID, ConnectionIDAll)
+	if err != nil {
+		t.Fatalf("Failed to get All Connections privilege: %v", err)
+	}
+	if privAll == nil || privAll.AccessLevel != AccessLevelRead {
+		t.Errorf("Expected All Connections = read, got %+v", privAll)
+	}
+
+	// The full listing should contain exactly the three grants.
+	privileges, err := store.ListGroupConnectionPrivileges(groupID)
+	if err != nil {
+		t.Fatalf("Failed to list connection privileges: %v", err)
+	}
+	if len(privileges) != 3 {
+		t.Errorf("Expected 3 connection privileges after wildcard grant, got %d", len(privileges))
+	}
+}
+
+// TestGrantConnectionPrivilegeExecError exercises the error path when the
+// underlying upsert fails. Closing the database makes Exec return an error.
+func TestGrantConnectionPrivilegeExecError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForPrivileges(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateGroup("test-group", "Test group")
+
+	// Close the underlying DB so the upsert Exec fails.
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("Failed to close store db: %v", err)
+	}
+
+	err := store.GrantConnectionPrivilege(groupID, 1, AccessLevelRead)
+	if err == nil {
+		t.Error("Expected error when granting against a closed database")
+	}
+}
+
 func TestGrantConnectionPrivilegeInvalidLevel(t *testing.T) {
 	store, cleanup := createTestAuthStoreForPrivileges(t)
 	defer cleanup()

@@ -14,12 +14,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
-	"github.com/pgedge/ai-workbench/server/internal/chat"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/conversations"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -55,6 +55,58 @@ type Server struct {
 	dataDir       string
 	debug         bool
 	aiEnabled     bool
+
+	// handlerClosers holds cleanup functions for background resources
+	// created while wiring HTTP handlers. SetupHandlers runs on the
+	// HTTP server's goroutine, whereas Close may run from the signal
+	// handler, so access is guarded by closersMu.
+	closersMu      sync.Mutex
+	handlerClosers []func()
+	closersDrained bool
+}
+
+// registerHandlerCloser records a cleanup function to be run by Close.
+// It is passed to SetupHandlers so that handlers owning background
+// goroutines can hand that ownership back to the server, which is the
+// only component that knows when the process is shutting down.
+// A closer registered after Close has already drained the list runs
+// immediately, because nothing else will ever run it; that ordering is
+// possible because SetupHandlers runs lazily on the HTTP server's
+// goroutine and can therefore still be wiring handlers when the signal
+// handler calls Close.
+func (s *Server) registerHandlerCloser(closer func()) {
+	if closer == nil {
+		return
+	}
+
+	s.closersMu.Lock()
+	drained := s.closersDrained
+	if !drained {
+		s.handlerClosers = append(s.handlerClosers, closer)
+	}
+	s.closersMu.Unlock()
+
+	// Run outside the lock, so a closer that itself registers another
+	// closer cannot deadlock against closersMu.
+	if drained {
+		closer()
+	}
+}
+
+// runHandlerClosers invokes every registered handler cleanup function
+// and then clears the list, so a second Close is a no-op rather than a
+// double stop. It also marks the list drained, so a closer arriving
+// afterwards is run by registerHandlerCloser rather than dropped.
+func (s *Server) runHandlerClosers() {
+	s.closersMu.Lock()
+	closers := s.handlerClosers
+	s.handlerClosers = nil
+	s.closersDrained = true
+	s.closersMu.Unlock()
+
+	for _, closer := range closers {
+		closer()
+	}
 }
 
 // ServerConfig holds configuration for creating a new server
@@ -117,35 +169,10 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 		fmt.Fprintf(os.Stderr, "         Conversation history will not be available\n")
 	}
 
-	s.initLLMHTTPClient()
-
 	s.startTokenCleanup()
 	s.startOverviewGenerator()
 
 	return s, nil
-}
-
-// initLLMHTTPClient configures the shared HTTP client used by all LLM
-// providers, applying the configured timeout and any globally-defined
-// custom headers. Provider-specific headers are applied per-request by
-// the llmproxy layer, not here.
-func (s *Server) initLLMHTTPClient() {
-	timeout := time.Duration(s.cfg.LLM.TimeoutSeconds) * time.Second
-
-	// Load global custom headers (YAML, files, and env). Provider-specific
-	// headers are intentionally left out of the shared client; they are
-	// injected per-request by the providers themselves.
-	headers, err := s.cfg.LLM.LoadCustomHeaders()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: Failed to load global LLM custom headers: %v\n", err)
-		headers = nil
-	}
-
-	chat.InitHTTPClient(headers, timeout)
-
-	if timeout > 0 {
-		fmt.Fprintf(os.Stderr, "LLM HTTP client: timeout=%s\n", timeout)
-	}
 }
 
 // initTracing initializes tracing if configured
@@ -475,6 +502,8 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		OverviewHub:  s.overviewHub,
 		ToolProvider: s.toolProvider,
 		AIEnabled:    s.aiEnabled,
+
+		RegisterCloser: s.registerHandlerCloser,
 	}
 	httpConfig.SetupHandlers = SetupHandlers(deps)
 
@@ -607,6 +636,10 @@ func (s *Server) Close() {
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
 	}
+
+	// Stop background resources owned by the HTTP handlers, such as the
+	// AuthHandler's internal login rate limiter.
+	s.runHandlerClosers()
 
 	// Close auth store
 	if s.authStore != nil {

@@ -13,6 +13,11 @@ import { useAuth } from '../contexts/useAuth';
 import { useClusterData } from '../contexts/useClusterData';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
+import { useRetryingFetch } from './useRetryingFetch';
+import {
+    resolveTimeRangeBounds,
+    type TimelineTimeRange,
+} from '../utils/timelineRange';
 
 export interface TimelineEvent {
     id: number;
@@ -25,13 +30,13 @@ export interface TimelineEvent {
     [key: string]: unknown;
 }
 
-interface CustomTimeRange {
-    start: Date;
-    end: Date;
-}
-
-export type TimeRangePreset = '1h' | '6h' | '24h' | '7d' | '30d';
-export type TimeRange = TimeRangePreset | CustomTimeRange;
+/*
+ * The range types live in utils/timelineRange.ts alongside the bounds
+ * calculation; they are re-exported here because existing callers import
+ * them from this hook.
+ */
+export type { CustomTimeRange, TimeRangePreset } from '../utils/timelineRange';
+export type TimeRange = TimelineTimeRange;
 
 export interface UseTimelineEventsOptions {
     connectionId?: number | null;
@@ -47,6 +52,8 @@ export interface UseTimelineEventsReturn {
     error: string | null;
     refetch: () => Promise<void>;
     totalCount: number;
+    /** True while an automatic retry is pending after a failed fetch. */
+    retrying: boolean;
 }
 
 interface TimelineApiResponse {
@@ -55,44 +62,15 @@ interface TimelineApiResponse {
 }
 
 /**
- * Calculate start and end times based on the time range parameter
+ * Calculate start and end times based on the time range parameter,
+ * expressed as the ISO strings the timeline API expects.
  */
 const calculateTimeRange = (timeRange: TimeRange): { startTime: string; endTime: string } => {
-    const now = new Date();
-    let startTime: Date | string;
-    let endTime: Date | string = now;
-
-    if (typeof timeRange === 'object' && 'start' in timeRange && 'end' in timeRange) {
-        // Custom range with start and end dates
-        startTime = timeRange.start;
-        endTime = timeRange.end;
-    } else {
-        // Predefined ranges
-        switch (timeRange) {
-            case '1h':
-                startTime = new Date(now.getTime() - 60 * 60 * 1000);
-                break;
-            case '6h':
-                startTime = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-                break;
-            case '24h':
-                startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-                break;
-            case '7d':
-                startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                break;
-            case '30d':
-                startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                break;
-            default:
-                // Default to last 24 hours
-                startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        }
-    }
+    const { startTime, endTime } = resolveTimeRangeBounds(timeRange);
 
     return {
-        startTime: startTime instanceof Date ? startTime.toISOString() : startTime,
-        endTime: endTime instanceof Date ? endTime.toISOString() : endTime,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
     };
 };
 
@@ -114,11 +92,20 @@ export const useTimelineEvents = ({
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
     const initialLoadDoneRef = useRef<boolean>(false);
+    const { run, retrying } = useRetryingFetch({
+        resetKey: lastRefresh,
+        enabled: enabled && !!user,
+    });
 
     // Create a stable string representation of eventTypes for dependency comparison
     // This ensures the callback is recreated when event types change, regardless of
     // array reference equality issues
     const eventTypesKey = eventTypes ? eventTypes.slice().sort().join(',') : '';
+
+    // Stable string representation of connectionIds for the same reason: a
+    // parent passing a new-but-equal array each render must not force a
+    // redundant refetch through buildQueryString's identity changing.
+    const connectionIdsKey = connectionIds ? connectionIds.slice().sort().join(',') : '';
 
     /**
      * Build the query string for the API request
@@ -146,13 +133,13 @@ export const useTimelineEvents = ({
 
         return params.toString();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [connectionId, connectionIds, timeRange, eventTypesKey]);
+    }, [connectionId, connectionIdsKey, timeRange, eventTypesKey]);
 
     /**
      * Fetch timeline events from the API
      */
-    const fetchEvents = useCallback(async (): Promise<void> => {
-        if (!user || !enabled) {return;}
+    const fetchEvents = useCallback(async (): Promise<boolean> => {
+        if (!user || !enabled) {return true;}
 
         // Only show loading state on the very first fetch ever (use ref to avoid re-renders)
         if (!initialLoadDoneRef.current) {
@@ -169,6 +156,7 @@ export const useTimelineEvents = ({
                 setTotalCount(data.total_count ?? 0);
                 initialLoadDoneRef.current = true;
             }
+            return true;
         } catch (err) {
             logger.error('Error fetching timeline events:', err);
             if (isMountedRef.current) {
@@ -176,6 +164,7 @@ export const useTimelineEvents = ({
                 setEvents([]);
                 setTotalCount(0);
             }
+            return false;
         } finally {
             if (isMountedRef.current) {
                 setLoading(false);
@@ -184,16 +173,17 @@ export const useTimelineEvents = ({
     }, [user, enabled, buildQueryString]);
 
     /**
-     * Manual refetch function
+     * Manual refetch function. Routes through the retry controller so a
+     * manual refresh resets any pending backoff schedule.
      */
-    const refetch = useCallback((): Promise<void> => {
-        return fetchEvents();
-    }, [fetchEvents]);
+    const refetch = useCallback(async (): Promise<void> => {
+        await run(fetchEvents);
+    }, [run, fetchEvents]);
 
     // Reset initial load state when connection changes
     useEffect(() => {
         initialLoadDoneRef.current = false;
-    }, [connectionId, connectionIds]);
+    }, [connectionId, connectionIdsKey]);
 
     // Fetch when dependencies change
     // Note: fetchEvents already captures connectionId, connectionIds, timeRange, eventTypes via buildQueryString
@@ -202,13 +192,13 @@ export const useTimelineEvents = ({
         isMountedRef.current = true;
 
         if (enabled && user) {
-            void fetchEvents();
+            void run(fetchEvents);
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [enabled, user, fetchEvents, lastRefresh]);
+    }, [enabled, user, run, fetchEvents, lastRefresh]);
 
     return {
         events,
@@ -216,6 +206,7 @@ export const useTimelineEvents = ({
         error,
         refetch,
         totalCount,
+        retrying,
     };
 };
 

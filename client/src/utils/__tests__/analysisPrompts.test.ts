@@ -102,6 +102,38 @@ describe('SQL_CODE_BLOCK_RULES', () => {
         expect(pg17BgwriterLine).not.toContain('checkpoints_timed');
         expect(pg17BgwriterLine).not.toContain('buffers_checkpoint');
     });
+
+    // -----------------------------------------------------------------------
+    // buffers_backend removal in PG17+ (issue #292)
+    // -----------------------------------------------------------------------
+
+    it('explains buffers_backend was removed from pg_stat_bgwriter in PG17+', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain(
+            'buffers_backend and buffers_backend_fsync were REMOVED from pg_stat_bgwriter',
+        );
+    });
+
+    it('directs backend-written-buffer stats to pg_stat_io on PG17+', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain('pg_stat_io');
+    });
+
+    it('forbids referencing buffers_backend on pg_stat_bgwriter for PG17+', () => {
+        expect(SQL_CODE_BLOCK_RULES).toContain(
+            'MUST NOT reference buffers_backend or buffers_backend_fsync against pg_stat_bgwriter on PostgreSQL 17+',
+        );
+    });
+
+    it('still lists buffers_backend as valid for PostgreSQL 16 and earlier', () => {
+        const lines = SQL_CODE_BLOCK_RULES.split('\n');
+        const pg16BgwriterLine = lines.find((line) =>
+            line.includes(
+                'pg_stat_bgwriter (PostgreSQL 16 and earlier, combined view)',
+            ),
+        );
+        expect(pg16BgwriterLine).toBeDefined();
+        expect(pg16BgwriterLine).toContain('buffers_backend');
+        expect(pg16BgwriterLine).toContain('buffers_backend_fsync');
+    });
 });
 
 // ---------------------------------------------------------------------------

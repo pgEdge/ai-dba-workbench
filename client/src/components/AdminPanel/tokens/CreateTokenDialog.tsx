@@ -287,7 +287,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     onChange={onMcpPrivilegesChange}
                     getOptionLabel={(option) =>
                         option._isAll
-                            ? 'All MCP Privileges'
+                            ? "All the owner's MCP privileges"
                             : option.identifier || ''
                     }
                     allOption={ALL_MCP_OPTION}
@@ -301,7 +301,7 @@ const CreateTokenDialog: React.FC<CreateTokenDialogProps> = ({
                     onChange={onAdminPermissionsChange}
                     getOptionLabel={(option) =>
                         option._isAll
-                            ? 'All Admin Permissions'
+                            ? "All the owner's admin permissions"
                             : option.label || option.id || ''
                     }
                     allOption={ALL_ADMIN_OPTION}

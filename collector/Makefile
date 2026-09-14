@@ -15,6 +15,14 @@ BIN_DIR ?= .
 # Binary name
 BINARY := ai-dba-collector
 
+# Minimum acceptable total statement coverage, in percent; the coverage
+# target fails below it. The project floor is 90% (see CLAUDE.md, Tests);
+# this default is pinned just below the total measured on 11 September
+# 2026 so the gate holds the line today, and it should be raised towards
+# 90 as coverage grows. Override for local experiments with
+# `make coverage COVERAGE_MIN=80`.
+COVERAGE_MIN ?= 86
+
 # Get absolute path to output directory
 ABS_BIN_DIR := $(abspath $(BIN_DIR))
 
@@ -29,10 +37,9 @@ build:
 
 # Run tests
 # -race enables the data-race detector; CI runs the same target.
-test: killall
+test:
 	@echo "Running tests..."
 	cd src && go test -race -v ./...
-	@$(MAKE) --no-print-directory killall
 
 # Run linting
 lint:
@@ -58,15 +65,15 @@ fmt-check:
 # -race enables the data-race detector; CI runs the same target.
 # -v emits per-test output so this single invocation can replace the
 # separate `test` target inside `test-all` and halve total test time.
-# killall brackets the run because the test suite may leave stray
-# processes that interfere with subsequent test binaries (same
-# rationale as the `test` target).
-coverage: killall
+coverage:
 	@echo "Running tests with coverage..."
 	cd src && go test -race -v -coverprofile=coverage.out ./...
-	@$(MAKE) --no-print-directory killall
 	cd src && go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: src/coverage.html"
+	@cd src && total=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, "", $$3); print $$3}'); \
+	echo "Total coverage: $${total}% (minimum $(COVERAGE_MIN)%)"; \
+	awk -v t="$$total" -v m="$(COVERAGE_MIN)" 'BEGIN { exit (t + 0 < m + 0) ? 1 : 0 }' \
+	|| { echo "ERROR: total coverage $${total}% is below the $(COVERAGE_MIN)% floor"; exit 1; }
 
 # Clean build artifacts
 clean:
@@ -101,17 +108,20 @@ help:
 	@echo "  vet       - Run go vet"
 	@echo "  fmt       - Format code with gofmt"
 	@echo "  fmt-check - Check code formatting (fails if not formatted)"
-	@echo "  coverage  - Generate test coverage report"
+	@echo "  coverage  - Generate test coverage report and enforce COVERAGE_MIN"
 	@echo "  test-all  - Run fmt-check, coverage, and lint (verbose, single pass)"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  deps      - Install/update dependencies"
 	@echo "  check     - Run all checks (fmt, vet, test, lint)"
-	@echo "  killall   - Kill any running collector processes"
+	@echo "  killall   - SIGTERM every matching process on the host, including"
+	@echo "              any dev server started from bin/; use deliberately"
 	@echo "  help      - Show this help message"
 	@echo ""
 	@echo "Binary is built to: $(ABS_BIN_DIR)/$(BINARY)"
 
-# Kill all running collector processes
+# Kill every running collector process on the host, including any started
+# from bin/ by a developer. Never wired into test targets; invoke
+# deliberately.
 killall:
-	@pkill -9 ai-dba-collector 2>/dev/null || true
-	@pkill -9 -f "[g]o run.*collector" 2>/dev/null || true
+	@pkill -f "[a]i-dba-collector" 2>/dev/null || true
+	@pkill -f "[g]o run.*collector" 2>/dev/null || true

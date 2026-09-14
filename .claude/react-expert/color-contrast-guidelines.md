@@ -10,100 +10,46 @@
  */
 -->
 
-# Color Contrast Guidelines
+# Colour Contrast Guidelines
 
-These guidelines supplement the existing typography guidelines.
-They ensure all UI elements meet WCAG AA contrast requirements
-for typical vision.
+The light and dark palettes are defined in
+`client/src/theme/pgedgeTheme.ts`; read the values there rather than
+from this file. These rules exist so that new UI meets WCAG AA
+contrast (4.5:1 for normal text, 3:1 for large text and for UI
+components against adjacent colours) using that palette.
 
-## Current Palette Reference
+## Palette Is Mode-Dependent
 
-The project theme defines these base values.
+Every `grey.*` key, `divider`, `text.*` and `action.hover` differs
+between the light and dark palettes, so never reason about a palette
+key as a single hex value and never hard-code a hex that happens to be
+right in one mode. Reference palette keys through the theme and check
+both modes in the browser.
 
-**Light mode:**
+## Persistent Fills
 
-- `background.default`: #F9FAFB
-- `background.paper`: #FFFFFF
-- `text.primary`: #1F2937
-- `text.secondary`: #6B7280
-- `divider`: #D1D5DB (grey.300)
-
-**Dark mode:**
-
-- `background.default`: #0F172A
-- `background.paper`: #1E293B
-- `text.primary`: #F1F5F9
-- `text.secondary`: #CBD5E1
-- `divider`: #334155
-
-## Minimum Contrast Ratios (WCAG AA)
-
-- Normal text (under 18px): 4.5:1 against its background.
-- Large text (18px+ bold or 24px+): 3:1 against its background.
-- UI components and graphical objects: 3:1 against adjacent
-  colors.
-
-## Light Mode Panel and Card Backgrounds
-
-Panels placed on white (#FFFFFF) must be clearly distinguishable
-from the page surface.
-
-- Grey fills should target a minimum alpha of 0.12 for strong
-  visibility. Values between 0.05 and 0.08 produce very faint
-  panels and should be avoided for standalone panel backgrounds.
-  Note: the theme uses `alpha('#15AABF', 0.06)` for
-  `action.hover`, which is acceptable for transient hover
-  states but not for persistent panel fills.
-- Colored fills (info, warning, success, error) should target a
-  minimum alpha of 0.10 for persistent backgrounds.
-- Border colors must achieve at least 3:1 contrast against the
-  panel background.
-
-## Dark Mode Text
-
-- `text.secondary` must achieve a minimum 4.5:1 contrast ratio
-  against `background.paper` (#1E293B).
-- `text.disabled` must achieve a minimum 3:1 contrast ratio
-  against `background.paper`.
-- Avoid `grey.500` (#64748B) or darker values for text on dark
-  backgrounds; these fail contrast requirements.
-
-## Alpha Value Minimums for Backgrounds
-
-| Context                         | Target Alpha  | Notes                          |
-|---------------------------------|---------------|--------------------------------|
-| Grey panel fills in light mode  | 0.12          | Persistent backgrounds         |
-| Colored status fills in light   | 0.10          | Persistent backgrounds         |
-| Hover/transient states          | 0.06          | Theme uses 0.06 for action.hover|
-| Grey panel fills in dark mode   | 0.30          |                                |
-| Any visible background element  | 0.05          | Absolute floor                 |
+- Grey panel fills in light mode need an alpha of at least 0.12 to
+  read as a panel on white; 0.05 to 0.08 is near-invisible and is
+  reserved for transient hover states, which is what the theme's
+  `action.hover` uses.
+- Coloured status fills (info, warning, success, error) need at least
+  0.10 in light mode as persistent backgrounds.
+- Grey panel fills in dark mode need around 0.30.
+- 0.05 is the absolute floor for any visible background; `alpha(x,
+  0.04)` is never acceptable, even for hover.
 
 ## Borders
 
-**Light mode:**
+- Light mode: use `grey.300` or darker; `grey.200` against white
+  fails the 3:1 component requirement.
+- Dark mode: use `grey.600` or lighter.
+- Dashed borders need a little more contrast than solid ones because
+  less ink covers the edge.
 
-- Use `grey.300` (#D1D5DB) or darker for visible borders.
-- Do not use `grey.200` (#E5E7EB) as a border color; the
-  contrast against white is insufficient.
+## Text
 
-**Dark mode:**
-
-- Use `grey.600` (#475569) as the minimum for visible borders.
-
-**Dashed borders:**
-
-- Dashed borders need slightly more contrast than solid borders
-  because less ink covers the edge.
-
-## Prohibited Patterns
-
-The following patterns produce invisible or unreadable results.
-
-- `alpha(grey, 0.05)` or `alpha(grey, 0.06)` for persistent
-  visible panels. These are nearly invisible on white
-  backgrounds. Note: the theme uses `alpha(color, 0.06)` for
-  transient hover states (`action.hover`), which is acceptable.
-- `alpha(color, 0.04)` for any background. This is below the
-  absolute floor even for hover states.
-- `text.disabled` for content that users need to read. Reserve
-  `text.disabled` exclusively for truly disabled elements.
+- In dark mode `text.secondary` must hold 4.5:1 against
+  `background.paper`, and `text.disabled` 3:1. Anything at `grey.500`
+  or darker fails for text on dark backgrounds.
+- Reserve `text.disabled` for genuinely disabled controls; never use
+  it for content the user needs to read.

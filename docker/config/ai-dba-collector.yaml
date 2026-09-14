@@ -9,5 +9,15 @@ datastore:
 pool:
   datastore_max_connections: 25
   max_connections_per_server: 3
+  # Seconds an idle datastore connection is kept before being closed.
+  datastore_max_idle_seconds: 300
+  # Max seconds to wait to acquire a datastore connection.
+  datastore_max_wait_seconds: 60
+  # Seconds an idle monitored-server connection is kept before closing.
+  monitored_max_idle_seconds: 300
+  # Per-probe execution timeout (seconds) for monitored servers; raise
+  # this for large or slow monitored databases where probes such as
+  # pg_stat_statements can take longer to complete.
+  monitored_max_wait_seconds: 120
 
 secret_file: /etc/pgedge/ai-dba.secret

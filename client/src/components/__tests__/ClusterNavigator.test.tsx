@@ -22,6 +22,7 @@ const darkTheme = createPgedgeTheme('dark');
 // inside the component.
 const {
     mockUpdateGroupName,
+    mockUpdateGroup,
     mockUpdateClusterName,
     mockUpdateServerName,
     mockDeleteCluster,
@@ -29,9 +30,12 @@ const {
     mockDeleteGroup,
     mockMoveClusterToGroup,
     mockFetchClusterData,
+    mockApiGet,
+    mockApiFetch,
     mockUseAuth,
 } = vi.hoisted(() => ({
     mockUpdateGroupName: vi.fn(),
+    mockUpdateGroup: vi.fn(),
     mockUpdateClusterName: vi.fn(),
     mockUpdateServerName: vi.fn(),
     mockDeleteCluster: vi.fn(),
@@ -39,6 +43,8 @@ const {
     mockDeleteGroup: vi.fn(),
     mockMoveClusterToGroup: vi.fn(),
     mockFetchClusterData: vi.fn(),
+    mockApiGet: vi.fn(),
+    mockApiFetch: vi.fn(),
     mockUseAuth: vi.fn((): {
         user: { isSuperuser: boolean };
         hasPermission: (perm: string) => boolean;
@@ -46,6 +52,13 @@ const {
         user: { isSuperuser: false },
         hasPermission: () => false,
     })),
+}));
+
+// Mock the API client. handleConfigureGroup fetches the full group detail
+// via apiGet; other handlers (add server/cluster) use apiFetch.
+vi.mock('../../utils/apiClient', () => ({
+    apiGet: (...args: unknown[]) => mockApiGet(...args),
+    apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
 // Mock the AuthContext
@@ -57,6 +70,7 @@ vi.mock('../../contexts/useAuth', () => ({
 vi.mock('../../contexts/useCluster', () => ({
     useCluster: () => ({
         updateGroupName: mockUpdateGroupName,
+        updateGroup: mockUpdateGroup,
         updateClusterName: mockUpdateClusterName,
         updateServerName: mockUpdateServerName,
         deleteCluster: mockDeleteCluster,
@@ -178,6 +192,7 @@ describe('ClusterNavigator', () => {
         onSelectServer = vi.fn();
         onRefresh = vi.fn();
         mockUpdateGroupName.mockReset().mockResolvedValue(undefined);
+        mockUpdateGroup.mockReset().mockResolvedValue(undefined);
         mockUpdateClusterName.mockReset().mockResolvedValue(undefined);
         mockUpdateServerName.mockReset().mockResolvedValue(undefined);
         mockDeleteCluster.mockReset().mockResolvedValue(undefined);
@@ -185,6 +200,11 @@ describe('ClusterNavigator', () => {
         mockDeleteGroup.mockReset().mockResolvedValue(undefined);
         mockMoveClusterToGroup.mockReset().mockResolvedValue(undefined);
         mockFetchClusterData.mockReset().mockResolvedValue(undefined);
+        mockApiGet.mockReset().mockResolvedValue({});
+        mockApiFetch.mockReset().mockResolvedValue({
+            ok: true,
+            json: async () => ({}),
+        });
         mockUseAuth.mockReset().mockReturnValue({
             user: { isSuperuser: false },
             hasPermission: () => false,
@@ -502,11 +522,20 @@ describe('ClusterNavigator', () => {
 
         const WAIT_TIMEOUT = 15000;
 
-        it('passes the unchanged "group-{id}" string from configure to updateGroupName', async () => {
+        it('fetches full detail, populates the dialog, and saves all fields via updateGroup', async () => {
             // Superuser is required to see the settings (configure) button
+            // and the "Share with all users" checkbox.
             mockUseAuth.mockReturnValue({
                 user: { isSuperuser: true },
                 hasPermission: () => true,
+            });
+
+            // The topology tree omits description/is_shared; the single-group
+            // detail endpoint supplies them. Verify they flow into the dialog.
+            mockApiGet.mockResolvedValue({
+                name: 'Production',
+                description: 'The production estate',
+                is_shared: true,
             });
 
             renderWithTheme(
@@ -536,9 +565,22 @@ describe('ClusterNavigator', () => {
                 { timeout: WAIT_TIMEOUT }
             );
 
-            // Name field should be pre-populated from the group data
+            // The detail endpoint must have been queried by numeric id.
+            expect(mockApiGet).toHaveBeenCalledWith('/api/v1/cluster-groups/1');
+
+            // Name field should be pre-populated from the group data.
             const nameField = screen.getByRole('textbox', { name: /^name/i });
             expect(nameField).toHaveValue('Production');
+
+            // Description and the share checkbox come from the fetched detail.
+            const descriptionField = screen.getByRole('textbox', {
+                name: /description/i,
+            });
+            expect(descriptionField).toHaveValue('The production estate');
+            const shareCheckbox = screen.getByRole('checkbox', {
+                name: /share with all users/i,
+            });
+            expect(shareCheckbox).toBeChecked();
 
             // Change the name and submit. fireEvent.change is a single
             // synchronous update that bypasses per-keystroke instrumentation
@@ -551,21 +593,85 @@ describe('ClusterNavigator', () => {
             const saveButton = screen.getByRole('button', { name: /^save$/i });
             fireEvent.click(saveButton);
 
-            // Root-cause check: updateGroupName must receive the original
-            // "group-1" string, not "1" and not the number 1.
+            // Root-cause check: updateGroup receives the original "group-1"
+            // string plus all three fields, so nothing is discarded on save.
             await waitFor(
                 () => {
-                    expect(mockUpdateGroupName).toHaveBeenCalledWith(
-                        'group-1',
-                        'Production Renamed'
-                    );
+                    expect(mockUpdateGroup).toHaveBeenCalledWith('group-1', {
+                        name: 'Production Renamed',
+                        description: 'The production estate',
+                        is_shared: true,
+                    });
                 },
                 { timeout: WAIT_TIMEOUT }
             );
-            // Type-level sanity: the first argument must be a string.
-            const [firstArg] = mockUpdateGroupName.mock.calls[0];
+            // The old name-only path must not be used on the edit branch.
+            expect(mockUpdateGroupName).not.toHaveBeenCalled();
+            const [firstArg] = mockUpdateGroup.mock.calls[0];
             expect(typeof firstArg).toBe('string');
             expect(firstArg).toBe('group-1');
+        }, 20000);
+
+        it('falls back to the passed group when the detail fetch fails', async () => {
+            mockUseAuth.mockReturnValue({
+                user: { isSuperuser: true },
+                hasPermission: () => true,
+            });
+
+            // Simulate a failing detail endpoint; the dialog must still open.
+            mockApiGet.mockRejectedValue(new Error('boom'));
+
+            renderWithTheme(
+                <ClusterNavigator
+                    data={mockClusterData}
+                    onSelectServer={onSelectServer}
+                    onRefresh={onRefresh}
+                />
+            );
+
+            const settingsButtons = document.querySelectorAll(
+                '.action-buttons button'
+            );
+            fireEvent.click(settingsButtons[0]);
+
+            // The dialog opens on the fallback path using the topology data.
+            await waitFor(
+                () => {
+                    expect(
+                        screen.getByText(/Group Settings: Production/)
+                    ).toBeInTheDocument();
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
+
+            const nameField = screen.getByRole('textbox', { name: /^name/i });
+            expect(nameField).toHaveValue('Production');
+
+            // No detail was available, so description stays empty and the
+            // share checkbox unchecked; the fetch was still attempted.
+            expect(mockApiGet).toHaveBeenCalledWith('/api/v1/cluster-groups/1');
+            const descriptionField = screen.getByRole('textbox', {
+                name: /description/i,
+            });
+            expect(descriptionField).toHaveValue('');
+            const shareCheckbox = screen.getByRole('checkbox', {
+                name: /share with all users/i,
+            });
+            expect(shareCheckbox).not.toBeChecked();
+
+            const saveButton = screen.getByRole('button', { name: /^save$/i });
+            fireEvent.click(saveButton);
+
+            await waitFor(
+                () => {
+                    expect(mockUpdateGroup).toHaveBeenCalledWith('group-1', {
+                        name: 'Production',
+                        description: '',
+                        is_shared: false,
+                    });
+                },
+                { timeout: WAIT_TIMEOUT }
+            );
         }, 20000);
 
         it('calls createGroup (not updateGroupName) when saving from the Add Group flow', async () => {

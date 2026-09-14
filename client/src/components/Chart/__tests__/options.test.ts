@@ -120,6 +120,43 @@ describe('buildLineOptions', () => {
         const result = buildLineOptions(sampleData, {}) as any;
         expect(result.xAxis.data).toEqual(['Jan', 'Feb', 'Mar']);
     });
+
+    it('keeps a flat plain line in a tight degenerate window', () => {
+        // A plain line (no stack, no area fill) is not zero-anchored,
+        // so a flat 100 keeps the tight [90, 110] window. This mirrors
+        // the CacheHitTile use case from issue #336.
+        const flat: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'Cache Hit %', data: [100, 100, 100] }],
+        };
+        const result = buildLineOptions(flat, {}) as any;
+        expect(result.yAxis.min).toBeCloseTo(90);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
+
+    it('anchors a flat area-fill line to the zero baseline', () => {
+        // An area fill makes the line zero-anchored even when it is not
+        // stacked, so a flat 100 pads to a baseline-inclusive [0, 110].
+        const flat: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [100, 100, 100] }],
+        };
+        const result = buildLineOptions(flat, { areaFill: true }) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
+
+    it('anchors a flat stacked line to the zero baseline', () => {
+        // A stacked line fills from the baseline, so its flat total is
+        // padded to include zero.
+        const flat: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [100, 100, 100] }],
+        };
+        const result = buildLineOptions(flat, { stacked: true }) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBeCloseTo(110);
+    });
 });
 
 describe('buildBarOptions', () => {
@@ -174,6 +211,19 @@ describe('buildBarOptions', () => {
         result.series.forEach((s: any) => {
             expect(s.barMaxWidth).toBe(50);
         });
+    });
+
+    it('anchors a flat unstacked bar chart to the zero baseline', () => {
+        // Bars always grow from zero, so a flat 100 pads to a
+        // baseline-inclusive [0, 110] even when the bars are not
+        // stacked.
+        const flat: ChartData = {
+            categories: ['a', 'b', 'c'],
+            series: [{ name: 'v', data: [100, 100, 100] }],
+        };
+        const result = buildBarOptions(flat, {}) as any;
+        expect(result.yAxis.min).toBe(0);
+        expect(result.yAxis.max).toBeCloseTo(110);
     });
 });
 

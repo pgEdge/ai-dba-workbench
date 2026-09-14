@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useMetrics, useBaselines } from '../useMetrics';
+import type { MetricQueryParams } from '../../components/Dashboard/types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -24,14 +25,25 @@ vi.mock('../../utils/apiClient', () => ({
 
 const mockUser = { id: 1, username: 'testuser' };
 let mockRefreshTrigger = 0;
+let mockTimeRange: {
+    range: string;
+    customStart?: string;
+    customEnd?: string;
+} = { range: '24h' };
 
 vi.mock('../../contexts/useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 
 vi.mock('../../contexts/useDashboard', () => ({
-    useDashboard: () => ({ refreshTrigger: mockRefreshTrigger }),
+    useDashboard: () => ({
+        refreshTrigger: mockRefreshTrigger,
+        timeRange: mockTimeRange,
+    }),
 }));
+
+const CUSTOM_START = '2026-05-01T00:00:00.000Z';
+const CUSTOM_END = '2026-05-01T06:00:00.000Z';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,6 +80,7 @@ describe('useMetrics', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockRefreshTrigger = 0;
+        mockTimeRange = { range: '24h' };
     });
 
     afterEach(() => {
@@ -86,7 +99,7 @@ describe('useMetrics', () => {
     it('fetches data when params are provided', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
             connectionId: 1,
@@ -108,7 +121,7 @@ describe('useMetrics', () => {
     it('builds URL with all parameters', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_user_tables',
             timeRange: '7d',
             connectionId: 5,
@@ -141,7 +154,7 @@ describe('useMetrics', () => {
     it('builds URL with connection_ids array', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
             connectionIds: [1, 2, 3],
@@ -157,6 +170,93 @@ describe('useMetrics', () => {
         expect(url).toContain('connection_ids=1%2C2%2C3');
     });
 
+    it('builds URL with index_name when indexName is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_all_indexes',
+            timeRange: '24h',
+            connectionId: 5,
+            databaseName: 'mydb',
+            schemaName: 'public',
+            indexName: 'pk_orders',
+            metrics: ['idx_scan_per_sec'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('index_name=pk_orders');
+        // The index name must not leak into table_name.
+        expect(url).not.toContain('table_name');
+    });
+
+    it('omits index_name when indexName is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_user_tables',
+            timeRange: '24h',
+            connectionId: 5,
+            tableName: 'orders',
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('index_name');
+        expect(url).toContain('table_name=orders');
+    });
+
+    it('builds URL with queryid when queryId is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_statements',
+            timeRange: '24h',
+            connectionId: 5,
+            databaseName: 'mydb',
+            queryId: '-1234567890123456789',
+            metrics: ['calls'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('queryid=-1234567890123456789');
+    });
+
+    it('omits queryid when queryId is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_stat_statements',
+            timeRange: '24h',
+            connectionId: 5,
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('queryid');
+    });
+
     it('sets loading to true during initial fetch', async () => {
         let resolvePromise: (value: unknown) => void;
         mockApiGet.mockImplementationOnce(() =>
@@ -165,7 +265,7 @@ describe('useMetrics', () => {
             }),
         );
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -186,7 +286,7 @@ describe('useMetrics', () => {
     it('sets error on API failure', async () => {
         mockApiGet.mockRejectedValueOnce(new Error('Network error'));
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -204,7 +304,7 @@ describe('useMetrics', () => {
     it('refetch triggers a new API call', async () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -228,7 +328,7 @@ describe('useMetrics', () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 
         const { rerender } = renderHook(
-            ({ params }) => useMetrics(params),
+            ({ params }: { params: MetricQueryParams }) => useMetrics(params),
             {
                 initialProps: {
                     params: {
@@ -255,10 +355,68 @@ describe('useMetrics', () => {
         });
     });
 
+    it('resets initial load state when indexName changes so loading flashes again', async () => {
+        // Initial index resolves immediately.
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const { result, rerender } = renderHook(
+            ({ params }: { params: MetricQueryParams }) => useMetrics(params),
+            {
+                initialProps: {
+                    params: {
+                        probeName: 'pg_stat_all_indexes',
+                        timeRange: '24h',
+                        connectionId: 5,
+                        indexName: 'pk_orders',
+                    },
+                },
+            },
+        );
+
+        // Wait for initial load to complete.
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+        expect(result.current.loading).toBe(false);
+
+        // Switching to a different index should reset initialLoadDoneRef,
+        // so the next fetch flashes loading to true (no stale data shown).
+        let resolvePromise: (value: unknown) => void;
+        mockApiGet.mockImplementationOnce(() =>
+            new Promise(resolve => {
+                resolvePromise = resolve;
+            }),
+        );
+
+        rerender({
+            params: {
+                probeName: 'pg_stat_all_indexes',
+                timeRange: '24h',
+                connectionId: 5,
+                indexName: 'idx_customers_email',
+            },
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(true);
+        });
+
+        await act(async () => {
+            resolvePromise!(makeMetricSeries());
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        const url = mockApiGet.mock.calls[1][0];
+        expect(url).toContain('index_name=idx_customers_email');
+    });
+
     it('does not flash loading on auto-refresh after initial load', async () => {
         mockApiGet.mockResolvedValue(makeMetricSeries());
 
-        const params = {
+        const params: MetricQueryParams = {
             probeName: 'pg_stat_activity',
             timeRange: '24h',
         };
@@ -281,6 +439,208 @@ describe('useMetrics', () => {
         // (due to initialLoadDoneRef pattern)
         rerender();
         expect(result.current.loading).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Tests - useMetrics with a custom time range
+// ---------------------------------------------------------------------------
+
+describe('useMetrics with a custom time range', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockRefreshTrigger = 0;
+        mockTimeRange = { range: '24h' };
+    });
+
+    afterEach(() => {
+        vi.resetAllMocks();
+    });
+
+    /** Decode a captured request URL so ISO timestamps read plainly. */
+    const decodedUrl = (index: number): string =>
+        decodeURIComponent(mockApiGet.mock.calls[index][0] as string);
+
+    it('emits the window bounds when the range is custom', async () => {
+        mockApiGet.mockResolvedValue(makeMetricSeries());
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+
+        renderHook(() =>
+            useMetrics({ probeName: 'pg_stat_activity', timeRange: 'custom' }),
+        );
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = decodedUrl(0);
+        expect(url).toContain('time_range=custom');
+        expect(url).toContain(`time_start=${CUSTOM_START}`);
+        expect(url).toContain(`time_end=${CUSTOM_END}`);
+    });
+
+    it('omits the bounds for a preset range even when a window is held', async () => {
+        mockApiGet.mockResolvedValue(makeMetricSeries());
+        mockTimeRange = {
+            range: '24h',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+
+        renderHook(() =>
+            useMetrics({ probeName: 'pg_stat_activity', timeRange: '24h' }),
+        );
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = decodedUrl(0);
+        expect(url).toContain('time_range=24h');
+        expect(url).not.toContain('time_start');
+        expect(url).not.toContain('time_end');
+    });
+
+    it('refetches when the custom window changes', async () => {
+        mockApiGet.mockResolvedValue(makeMetricSeries());
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+        const params = {
+            probeName: 'pg_stat_activity',
+            timeRange: 'custom' as const,
+        };
+
+        const { rerender } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        });
+
+        const newEnd = '2026-05-01T12:00:00.000Z';
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: newEnd,
+        };
+        rerender();
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+        });
+
+        expect(decodedUrl(1)).toContain(`time_end=${newEnd}`);
+    });
+
+    it('flashes loading again when the custom window changes', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+        const params = {
+            probeName: 'pg_stat_activity',
+            timeRange: 'custom' as const,
+        };
+
+        const { result, rerender } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+        expect(result.current.loading).toBe(false);
+
+        // The next window's fetch is held open so the loading state that
+        // the initialLoadDoneRef reset produces is observable.
+        let resolvePromise: ((value: unknown) => void) | undefined;
+        mockApiGet.mockImplementationOnce(() =>
+            new Promise(resolve => {
+                resolvePromise = resolve;
+            }),
+        );
+
+        mockTimeRange = {
+            range: 'custom',
+            customStart: '2026-04-01T00:00:00.000Z',
+            customEnd: '2026-04-01T06:00:00.000Z',
+        };
+        rerender();
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(true);
+        });
+
+        await act(async () => {
+            resolvePromise?.(makeMetricSeries());
+        });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+    });
+
+    it('skips the request when a custom range has no bounds', async () => {
+        mockApiGet.mockResolvedValue(makeMetricSeries());
+        mockTimeRange = { range: 'custom' };
+
+        const { result } = renderHook(() =>
+            useMetrics({ probeName: 'pg_stat_activity', timeRange: 'custom' }),
+        );
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        // The server would answer 400, so no request is made at all.
+        expect(mockApiGet).not.toHaveBeenCalled();
+        expect(result.current.data).toBeNull();
+        expect(result.current.error).toBeNull();
+    });
+
+    it('skips the request when only one bound is present', async () => {
+        mockApiGet.mockResolvedValue(makeMetricSeries());
+        mockTimeRange = { range: 'custom', customStart: CUSTOM_START };
+
+        renderHook(() =>
+            useMetrics({ probeName: 'pg_stat_activity', timeRange: 'custom' }),
+        );
+
+        await waitFor(() => {
+            expect(mockApiGet).not.toHaveBeenCalled();
+        });
+    });
+
+    it('retains loaded data when the window is cleared mid-session', async () => {
+        mockApiGet.mockResolvedValue(makeMetricSeries());
+        mockTimeRange = {
+            range: 'custom',
+            customStart: CUSTOM_START,
+            customEnd: CUSTOM_END,
+        };
+        const params = {
+            probeName: 'pg_stat_activity',
+            timeRange: 'custom' as const,
+        };
+
+        const { result, rerender } = renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(result.current.data).not.toBeNull();
+        });
+
+        mockTimeRange = { range: 'custom' };
+        rerender();
+
+        expect(mockApiGet).toHaveBeenCalledTimes(1);
+        expect(result.current.data).toEqual(makeMetricSeries());
+        expect(result.current.error).toBeNull();
     });
 });
 

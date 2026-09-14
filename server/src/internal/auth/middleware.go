@@ -62,15 +62,6 @@ func GetTokenHashFromContext(ctx context.Context) string {
 	return ""
 }
 
-// GetIPAddressFromContext retrieves the client IP address from the request context
-// Returns empty string if no IP address is found
-func GetIPAddressFromContext(ctx context.Context) string {
-	if ip, ok := ctx.Value(IPAddressContextKey).(string); ok {
-		return ip
-	}
-	return ""
-}
-
 // GetUsernameFromContext retrieves the session username from the request context
 // Returns empty string if no username is found (e.g., API token or unauthenticated request)
 func GetUsernameFromContext(ctx context.Context) string {

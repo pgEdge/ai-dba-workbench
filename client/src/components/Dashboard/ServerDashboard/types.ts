@@ -52,6 +52,34 @@ export interface TopQueryRow {
     database_name: string;
 }
 
+/** The groupings supported by the connection-groups endpoint */
+export type ConnectionGroupBy = 'user' | 'client' | 'database';
+
+/**
+ * A single connection grouping from the latest collected snapshot.
+ * `client_hostname` is only ever populated for the client grouping,
+ * and is null when no reverse lookup was recorded.
+ */
+export interface ConnectionGroupRow {
+    group_label: string;
+    client_hostname: string | null;
+    total: number;
+    active: number;
+    idle: number;
+    idle_in_transaction: number;
+    other: number;
+}
+
+/**
+ * Connection groupings response. `collected_at` is null when no
+ * snapshot exists within the requested period, in which case
+ * `groups` is empty.
+ */
+export interface ConnectionGroupsResponse {
+    collected_at: string | null;
+    groups: ConnectionGroupRow[];
+}
+
 /**
  * Helper to extract sparkline-compatible data points from a
  * MetricSeries array returned by useMetrics.

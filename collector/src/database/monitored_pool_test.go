@@ -74,9 +74,6 @@ func TestNewMonitoredConnectionPoolManager(t *testing.T) {
 	if m == nil {
 		t.Fatal("got nil")
 	}
-	if m.GetMaxConnections() != 7 {
-		t.Errorf("GetMaxConnections = %d, want 7", m.GetMaxConnections())
-	}
 	if m.maxIdleSeconds != 30 {
 		t.Errorf("maxIdleSeconds = %d, want 30", m.maxIdleSeconds)
 	}
@@ -86,31 +83,32 @@ func TestNewMonitoredConnectionPoolManager(t *testing.T) {
 	}
 }
 
-func TestSetGetMaxConnections(t *testing.T) {
+func TestSetMaxConnections(t *testing.T) {
 	m := NewMonitoredConnectionPoolManager(3, 1)
 
-	// Setting same value: no-op path.
+	// The accessor this test used to read back through was removed as
+	// unreachable, so it checks the field directly; the manager is in
+	// this package, and an assertion beats exercising the setter for
+	// its side effects and checking nothing.
+	current := func() int {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return m.maxConnections
+	}
+
+	if got := current(); got != 3 {
+		t.Fatalf("maxConnections = %d after construction, want 3", got)
+	}
+
+	// Setting the same value takes the no-op path.
 	m.SetMaxConnections(3)
-	if got := m.GetMaxConnections(); got != 3 {
-		t.Errorf("after no-op set, got %d", got)
+	if got := current(); got != 3 {
+		t.Errorf("maxConnections = %d after a no-op set, want 3", got)
 	}
 
-	// Update.
 	m.SetMaxConnections(8)
-	if got := m.GetMaxConnections(); got != 8 {
-		t.Errorf("after set, got %d", got)
-	}
-}
-
-func TestVersionGetSet(t *testing.T) {
-	m := NewMonitoredConnectionPoolManager(1, 1)
-
-	if v := m.GetVersion(42); v != 0 {
-		t.Errorf("uninitialized GetVersion = %d, want 0", v)
-	}
-	m.SetVersion(42, 16)
-	if v := m.GetVersion(42); v != 16 {
-		t.Errorf("after SetVersion, got %d, want 16", v)
+	if got := current(); got != 8 {
+		t.Errorf("maxConnections = %d after update, want 8", got)
 	}
 }
 

@@ -119,12 +119,15 @@ interface UserInfo {
 interface GroupData {
     id: string;
     name: string;
+    description?: string;
+    is_shared?: boolean;
     auto_group_key?: string;
     is_default?: boolean;
     // The server may emit `clusters: null` for an empty group (Go
     // nil-slice JSON marshaling). All consumers must tolerate null;
     // see issue #242.
     clusters?: (Cluster & { cluster_type?: string; replication_type?: string | null })[] | null;
+    [key: string]: unknown;
 }
 
 interface GroupItemProps {
@@ -147,7 +150,7 @@ interface GroupItemProps {
     onEditServer?: (server: Server) => void;
     onDeleteServer?: (server: Server) => void;
     onDeleteGroup?: (group: GroupData) => void;
-    onConfigureGroup?: (group: GroupData) => void;
+    onConfigureGroup?: (group: GroupData) => void | Promise<void>;
     onConfigureCluster?: (cluster: Cluster) => void;
     onDeleteCluster?: (cluster: Cluster) => void;
     getServerAlertCount?: (serverId: number) => number;
@@ -249,7 +252,7 @@ const GroupItem = memo<GroupItemProps>(({
                             size="small"
                             onClick={(e) => {
                                 e.stopPropagation();
-                                onConfigureGroup?.(group);
+                                void onConfigureGroup?.(group);
                             }}
                             sx={settingsButtonSx}
                         >

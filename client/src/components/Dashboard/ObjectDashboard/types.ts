@@ -38,7 +38,6 @@ export interface TableDetailData {
     n_tup_del: number;
     n_tup_hot_upd: number;
     table_size: number;
-    table_size_pretty?: string;
     last_vacuum?: string;
     last_autovacuum?: string;
     last_analyze?: string;
@@ -54,7 +53,6 @@ export interface IndexDetailData {
     idx_tup_read: number;
     idx_tup_fetch: number;
     index_size: number;
-    index_size_pretty?: string;
 }
 
 /** Query detail data from pg_stat_statements */

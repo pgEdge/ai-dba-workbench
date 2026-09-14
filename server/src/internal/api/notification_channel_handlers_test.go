@@ -39,7 +39,7 @@ import (
 // the handler is constructed without a datastore, every route under
 // `/api/v1/notification-channels` returns 503.
 func TestNotificationChannelHandler_NotConfiguredRoutes(t *testing.T) {
-	handler := NewNotificationChannelHandler(nil, nil, nil)
+	handler := NewNotificationChannelHandlerWithSecurity(nil, nil, nil, false, nil, nil)
 	mux := http.NewServeMux()
 	noopWrapper := func(h http.HandlerFunc) http.HandlerFunc { return h }
 	handler.RegisterRoutes(mux, noopWrapper)
@@ -67,7 +67,7 @@ func TestNotificationChannelHandler_NotConfiguredRoutes(t *testing.T) {
 func TestNotificationChannelHandler_MethodNotAllowed(t *testing.T) {
 	authStore, cleanup := newAuthStoreForChannelTests(t)
 	defer cleanup()
-	handler := NewNotificationChannelHandler(nil, authStore, auth.NewRBACChecker(authStore))
+	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, auth.NewRBACChecker(authStore), false, nil, nil)
 
 	cases := []struct {
 		path        string
@@ -115,7 +115,7 @@ func TestNotificationChannelHandler_MethodNotAllowed(t *testing.T) {
 func TestNotificationChannelHandler_InvalidIDs(t *testing.T) {
 	authStore, cleanup := newAuthStoreForChannelTests(t)
 	defer cleanup()
-	handler := NewNotificationChannelHandler(nil, authStore, auth.NewRBACChecker(authStore))
+	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, auth.NewRBACChecker(authStore), false, nil, nil)
 
 	cases := []struct {
 		path string
@@ -147,7 +147,7 @@ func TestNotificationChannelHandler_InvalidIDs(t *testing.T) {
 func TestNotificationChannelHandler_PermissionRequired(t *testing.T) {
 	authStore, cleanup := newAuthStoreForChannelTests(t)
 	defer cleanup()
-	handler := NewNotificationChannelHandler(nil, authStore, auth.NewRBACChecker(authStore))
+	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, auth.NewRBACChecker(authStore), false, nil, nil)
 
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		req := httptest.NewRequest(method, "/api/v1/notification-channels", nil)
@@ -172,7 +172,7 @@ func TestNotificationChannelHandler_PermissionRequired(t *testing.T) {
 func TestNotificationChannelHandler_NotFoundPaths(t *testing.T) {
 	authStore, cleanup := newAuthStoreForChannelTests(t)
 	defer cleanup()
-	handler := NewNotificationChannelHandler(nil, authStore, auth.NewRBACChecker(authStore))
+	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, auth.NewRBACChecker(authStore), false, nil, nil)
 
 	paths := []string{
 		"/api/v1/notification-channels/",
@@ -303,7 +303,7 @@ func setupChannelHandler(t *testing.T, ds *database.Datastore) (*NotificationCha
 	userID := setupUserWithPermission(t, authStore, "channel_admin",
 		auth.PermManageNotificationChannels)
 	checker := auth.NewRBACChecker(authStore)
-	handler := NewNotificationChannelHandler(ds, authStore, checker)
+	handler := NewNotificationChannelHandlerWithSecurity(ds, authStore, checker, false, nil, nil)
 	return handler, userID, cleanup
 }
 
@@ -1178,7 +1178,7 @@ func TestCreateChannel_ValidationErrors(t *testing.T) {
 	userID := setupUserWithPermission(t, authStore, "ch_validator",
 		auth.PermManageNotificationChannels)
 	checker := auth.NewRBACChecker(authStore)
-	handler := NewNotificationChannelHandler(nil, authStore, checker)
+	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, checker, false, nil, nil)
 
 	cases := []struct {
 		name string

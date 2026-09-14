@@ -37,8 +37,8 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("Expected default Pool.DatastoreMaxWaitSeconds to be 60, got %d", config.Pool.DatastoreMaxWaitSeconds)
 	}
 
-	if config.Pool.MonitoredMaxWaitSeconds != 60 {
-		t.Errorf("Expected default Pool.MonitoredMaxWaitSeconds to be 60, got %d", config.Pool.MonitoredMaxWaitSeconds)
+	if config.Pool.MonitoredMaxWaitSeconds != 120 {
+		t.Errorf("Expected default Pool.MonitoredMaxWaitSeconds to be 120, got %d", config.Pool.MonitoredMaxWaitSeconds)
 	}
 
 	if config.Pool.MaxConnectionsPerServer != 3 {

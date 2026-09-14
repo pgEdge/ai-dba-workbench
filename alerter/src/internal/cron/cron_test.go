@@ -300,31 +300,6 @@ func TestMatches_Steps(t *testing.T) {
 	}
 }
 
-func TestValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		expr    string
-		wantErr bool
-	}{
-		{"valid every minute", "* * * * *", false},
-		{"valid daily", "0 0 * * *", false},
-		{"valid complex", "*/15 9-17 * * 1-5", false},
-		{"invalid empty", "", true},
-		{"invalid format", "not a cron", true},
-		{"invalid minute", "99 * * * *", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := Validate(tt.expr)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate(%q) error = %v, wantErr %v",
-					tt.expr, err, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestSchedule_Next(t *testing.T) {
 	parser := NewParser()
 
@@ -355,20 +330,68 @@ func TestSchedule_Next(t *testing.T) {
 	}
 }
 
-func TestDefaultParser(t *testing.T) {
-	// Test package-level functions use the default parser
-	_, err := Parse("* * * * *")
-	if err != nil {
-		t.Errorf("Parse with default parser failed: %v", err)
+// TestPackageMatches covers the package-level Matches wrapper and the
+// DefaultParser behind it. The alerter reaches cron only through this
+// function, via Engine.cronMatches in the blackout evaluator, so it is
+// the entry point that actually decides whether a blackout window is
+// in effect.
+func TestPackageMatches(t *testing.T) {
+	// 2024-06-15 14:30:00 UTC, a Saturday.
+	testTime := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		expr     string
+		timezone string
+		want     bool
+		wantErr  bool
+	}{
+		{"every minute matches", "* * * * *", "UTC", true, false},
+		{"exact minute and hour", "30 14 * * *", "UTC", true, false},
+		{"wrong hour does not match", "30 15 * * *", "UTC", false, false},
+		{"weekday range excludes Saturday", "30 14 * * 1-5", "UTC", false, false},
+		{"weekend day matches", "30 14 * * 6", "UTC", true, false},
+		{"timezone shifts the hour", "30 10 * * *", "America/New_York", true, false},
+		{"empty timezone defaults to UTC", "30 14 * * *", "", true, false},
+		{"invalid expression errors", "not a cron expression", "UTC", false, true},
+		{"too few fields errors", "* * *", "UTC", false, true},
+		// An unknown timezone falls back to UTC rather than erroring,
+		// so a blackout schedule with a mistyped timezone evaluates in
+		// UTC instead of failing loudly. Pinned here because that is a
+		// silent behavior with real consequences for when a window
+		// takes effect.
+		{"unknown timezone falls back to UTC", "30 14 * * *", "Mars/Olympus_Mons", true, false},
 	}
 
-	_, err = Matches("* * * * *", time.Now(), "UTC")
-	if err != nil {
-		t.Errorf("Matches with default parser failed: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Matches(tt.expr, testTime, tt.timezone)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Matches(%q, %q) returned no error",
+						tt.expr, tt.timezone)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Matches(%q, %q): %v", tt.expr, tt.timezone, err)
+			}
+			if got != tt.want {
+				t.Errorf("Matches(%q, %q) = %v, want %v",
+					tt.expr, tt.timezone, got, tt.want)
+			}
+		})
 	}
+}
 
-	err = Validate("* * * * *")
-	if err != nil {
-		t.Errorf("Validate with default parser failed: %v", err)
+// TestDefaultParserIsUsable guards the package-level parser the wrapper
+// depends on, since a nil or unusable DefaultParser would make every
+// blackout schedule silently fail to match.
+func TestDefaultParserIsUsable(t *testing.T) {
+	if DefaultParser == nil {
+		t.Fatal("DefaultParser is nil")
+	}
+	if _, err := DefaultParser.Parse("*/15 9-17 * * 1-5"); err != nil {
+		t.Errorf("DefaultParser.Parse: %v", err)
 	}
 }

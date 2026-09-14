@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -235,9 +236,14 @@ func TestHandlePerfSummary_ReturnsMetricsAndReleasesTransaction(t *testing.T) {
 	}
 
 	first := resp.Connections[0]
-	// 900 hits against 100 reads is 90%.
-	if first.CacheHitRatio.Current != 90 {
-		t.Errorf("cache hit ratio = %v, want 90", first.CacheHitRatio.Current)
+	// The ratio is computed from the change between the two samples:
+	// 500 more hits against 40 more reads is 92.6%.
+	const wantRatio = 500.0 / 540.0 * 100
+	if first.CacheHitRatio.Current == nil {
+		t.Errorf("cache hit ratio = nil, want %.1f", wantRatio)
+	} else if math.Abs(*first.CacheHitRatio.Current-wantRatio) > 0.1 {
+		t.Errorf("cache hit ratio = %v, want %.1f",
+			*first.CacheHitRatio.Current, wantRatio)
 	}
 	if len(first.XIDAgeEntries) != 1 {
 		t.Errorf("XID age entries = %d, want 1", len(first.XIDAgeEntries))
@@ -329,7 +335,7 @@ func TestHandlePerfSummary_RejectsInvalidRequests(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 		}
-		want := "Invalid time_range: must be one of 1h, 6h, 24h, 7d, 30d"
+		want := `invalid time range "99z": must be one of 1h, 6h, 24h, 7d, 30d, custom`
 		if got := decodeError(t, rec).Error; got != want {
 			t.Errorf("error = %q, want %q", got, want)
 		}

@@ -32,13 +32,13 @@ export default defineConfig({
             // Coverage gate: the run fails when any total drops below
             // these floors. The project floor is 90% (CLAUDE.md,
             // Tests); the values below are pinned at the totals
-            // measured on 11 September 2026 so the gate holds the
+            // measured on 14 September 2026 so the gate holds the
             // line today and is raised towards 90 as coverage grows.
             thresholds: {
-                lines: 90.4,
-                statements: 89.2,
-                functions: 86.3,
-                branches: 77.6,
+                lines: 90.6,
+                statements: 89.4,
+                functions: 86.5,
+                branches: 78.0,
             },
         },
     },

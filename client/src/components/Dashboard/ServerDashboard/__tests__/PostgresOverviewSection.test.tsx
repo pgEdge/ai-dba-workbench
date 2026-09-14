@@ -128,7 +128,10 @@ const cacheReady = (values: (number | null)[]): UseServerCacheHitResult => ({
 });
 
 /** Build a MetricSeries for the given metric and values. */
-const series = (metric: string, values: number[]): MetricSeries => ({
+const series = (
+    metric: string,
+    values: (number | null)[],
+): MetricSeries => ({
     name: metric,
     metric,
     data: values.map((value, idx) => ({
@@ -696,6 +699,58 @@ describe('PostgresOverviewSection', () => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
             expect(screen.getByLabelText('Cache Hit Ratio: --')).toBeInTheDocument();
+        });
+    });
+
+    describe('null buckets', () => {
+        it('sums only the temp byte buckets that carry a reading', async () => {
+            routeMetrics({
+                'temp_bytes_delta': ready([
+                    series('temp_bytes_delta', [1024, null, 2048]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getByText('3.0 KB')).toBeInTheDocument();
+        });
+
+        it('shows a placeholder when every temp byte bucket is null', async () => {
+            routeMetrics({
+                'temp_bytes_delta': ready([
+                    series('temp_bytes_delta', [null, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(1);
+        });
+
+        it('leaves a cache ratio gap where either block count is null', async () => {
+            routeMetrics({
+                'blks_hit,blks_read': ready([
+                    series('blks_hit', [90, null, 99]),
+                    series('blks_read', [10, 5, 1]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
+            });
+            // 99 hits against 1 read on the tile; the sparkline carries
+            // a gap in the middle bucket rather than a spurious 0.
+            expect(screen.getByText('99.0')).toBeInTheDocument();
+            const sparkline = screen.getAllByTestId('chart-series')
+                .filter(el => el.getAttribute('data-series') === 'value')
+                .map(el => el.getAttribute('data-values') ?? '');
+            expect(sparkline).toContain('90,,99');
         });
     });
 });

@@ -74,7 +74,36 @@ const getDeadTupleStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Percentage that `part` makes of `part + rest`. A null on either side
+ * means the bucket has no reading, so the ratio is null too rather
+ * than a misleading 0 or 100; a zero total is reported as 0.
+ */
+const ratioPercent = (
+    part: number | null,
+    rest: number | null,
+): number | null => {
+    if (part === null || rest === null) { return null; }
+    const total = part + rest;
+    return total > 0 ? (part / total) * 100 : 0;
+};
+
+/**
+ * Sum two optional readings, ignoring nulls; null when neither has a
+ * value, so a gap stays a gap instead of collapsing to 0.
+ */
+const sumNullable = (
+    a: number | null | undefined,
+    b: number | null | undefined,
+): number | null => {
+    if (a == null && b == null) { return null; }
+    return (a ?? 0) + (b ?? 0);
+};
+
+/**
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 const buildChartData = (
     series: MetricSeries[] | null,
@@ -243,7 +272,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
             const rollback = i < rollbackData.length ? rollbackData[i] : null;
             points.push({
                 time: (commit ?? rollback as MetricDataPoint).time,
-                value: (commit?.value ?? 0) + (rollback?.value ?? 0),
+                value: sumNullable(commit?.value, rollback?.value),
             });
         }
         return points;
@@ -281,12 +310,11 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         );
         const points: MetricDataPoint[] = [];
         for (let i = 0; i < len; i++) {
-            const d = deadSeries.data[i].value;
-            const l = liveSeries.data[i].value;
-            const total = d + l;
             points.push({
                 time: deadSeries.data[i].time,
-                value: total > 0 ? (d / total) * 100 : 0,
+                value: ratioPercent(
+                    deadSeries.data[i].value, liveSeries.data[i].value,
+                ),
             });
         }
         return points;

@@ -49,7 +49,10 @@ const getLagStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 const buildChartData = (
     series: MetricSeries[] | null,
@@ -227,8 +230,9 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
         [checkpointKpi.data]
     );
     const requestedShare = useMemo(() => {
+        // Null buckets carry no reading and contribute nothing.
         const sum = (points: MetricDataPoint[]) =>
-            points.reduce((total, point) => total + point.value, 0);
+            points.reduce((total, point) => total + (point.value ?? 0), 0);
         const total = sum(timedPoints) + sum(requestedPoints);
         if (total <= 0) { return null; }
         return (sum(requestedPoints) / total) * 100;
@@ -241,7 +245,8 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
      * bucket divided by all checkpoints seen so far, as a percentage,
      * which makes the final point equal the displayed value. Buckets
      * before the first checkpoint have nothing to divide by and carry
-     * 0, which the Sparkline draws as a flat lead-in.
+     * 0, which the Sparkline draws as a flat lead-in. A null bucket
+     * has no reading and adds nothing to either running total.
      */
     const checkpointSparkline = useMemo((): MetricDataPoint[] => {
         const len = Math.max(timedPoints.length, requestedPoints.length);

@@ -54,7 +54,10 @@ const CACHE_HIT_DESCRIPTION =
     + `access). ${CACHE_HIT_CAVEAT}`;
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 const buildChartData = (
     series: MetricSeries[] | null,
@@ -266,12 +269,15 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     /*
      * temp_bytes_delta reports the bytes spilled to temporary files in
      * each bucket, so the figure for the selected window is the sum of
-     * the buckets rather than the latest one.
+     * the buckets rather than the latest one. Null buckets carry no
+     * reading and contribute nothing; a window with no readings at all
+     * has no total.
      */
     const tempBytesTotal = useMemo(() => {
         const points = extractSparklineData(tempKpi.data, 'temp_bytes_delta');
-        if (points.length === 0) { return null; }
-        return points.reduce((total, point) => total + point.value, 0);
+        const known = points.filter(point => point.value !== null);
+        if (known.length === 0) { return null; }
+        return known.reduce((total, point) => total + (point.value ?? 0), 0);
     }, [tempKpi.data]);
 
     // Build chart datasets. Backends and sessions are deliberately kept

@@ -37,7 +37,9 @@ const Sparkline: React.FC<SparklineProps> = ({
         yAxis: { show: false },
     }), []);
 
-    if (!data || data.length === 0) {
+    // Nothing to draw when there are no points, or when every bucket
+    // is a null gap the server could not fill.
+    if (!data || !data.some(d => d.value !== null)) {
         return null;
     }
 

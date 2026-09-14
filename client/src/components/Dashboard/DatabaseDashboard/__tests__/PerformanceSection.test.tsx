@@ -98,7 +98,10 @@ const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
 const DEAD_TUPLE_KEY = 'n_dead_tup,n_live_tup';
 
 /** Build a MetricSeries for the given metric and values. */
-const series = (metric: string, values: number[]): MetricSeries => ({
+const series = (
+    metric: string,
+    values: (number | null)[],
+): MetricSeries => ({
     name: metric,
     metric,
     data: values.map((value, idx) => ({
@@ -531,6 +534,78 @@ describe('PerformanceSection', () => {
             });
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
                 .toBe('[]');
+        });
+    });
+
+    describe('null buckets', () => {
+        it('leaves a cache ratio gap where either block count is null', async () => {
+            routeMetrics({
+                'blks_hit,blks_read': ready([
+                    series('blks_hit', [90, null, 99]),
+                    series('blks_read', [10, 5, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Cache Hit Ratio'))
+                    .toBeInTheDocument();
+            });
+            // The tile reads the latest non-null pair (99 hits, 10 reads
+            // via extractLatestValue), and the sparkline and chart both
+            // carry a gap for each bucket with a missing side.
+            expect(sparklineValues()).toContain('90,,');
+            expect(seriesValuesFor(CACHE_TITLE, 'Cache Hit Ratio %'))
+                .toBe('90,,');
+        });
+
+        it('sums the transaction sparkline around null buckets', async () => {
+            routeMetrics({
+                [TXN_KEY]: ready([
+                    series('xact_commit_per_sec', [null, 12, null]),
+                    series('xact_rollback_per_sec', [null, null, 2]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Transactions')).toBeInTheDocument();
+            });
+            // Both null: gap; one side null: the other stands alone.
+            expect(sparklineValues()).toContain(',12,2');
+            expect(seriesValuesFor(TXN_TITLE, 'Commits/s')).toBe(',12,');
+        });
+
+        it('shows a placeholder when the rate series is all null', async () => {
+            routeMetrics({
+                [TXN_KEY]: ready([
+                    series('xact_commit_per_sec', [null, null]),
+                    series('xact_rollback_per_sec', [null, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Transactions')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(1);
+        });
+
+        it('leaves a dead tuple ratio gap where a count is null', async () => {
+            routeMetrics({
+                'n_dead_tup,n_live_tup': ready([
+                    series('n_dead_tup', [5, null]),
+                    series('n_live_tup', [95, 95]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Dead Tuple Ratio'))
+                    .toBeInTheDocument();
+            });
+            expect(sparklineValues()).toContain('5,');
         });
     });
 });

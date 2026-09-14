@@ -86,7 +86,10 @@ const BUFFERS_TITLE = 'Checkpoint Buffers Written';
 const WAL_TITLE = 'WAL Activity Over Time';
 
 /** Build a MetricSeries for the given metric and values. */
-const series = (metric: string, values: number[]): MetricSeries => ({
+const series = (
+    metric: string,
+    values: (number | null)[],
+): MetricSeries => ({
     name: metric,
     metric,
     data: values.map((value, idx) => ({
@@ -479,6 +482,41 @@ describe('WalReplicationSection', () => {
                     .toBeInTheDocument();
             });
             expect(screen.getByText('10.0 s')).toBeInTheDocument();
+        });
+    });
+
+    describe('null buckets', () => {
+        it('ignores null checkpoint buckets in the requested share', async () => {
+            routeMetrics({
+                [CHECKPOINT_KPI_KEY]: ready([
+                    series('num_timed_delta', [2, null, 2]),
+                    series('num_requested_delta', [null, 1, 1]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Requested Checkpoints'))
+                    .toBeInTheDocument();
+            });
+            // Two requested out of six known checkpoints.
+            expect(screen.getByText('33.3')).toBeInTheDocument();
+        });
+
+        it('reports the last non-null WAL rate', async () => {
+            routeMetrics({
+                [WAL_KEY]: ready([
+                    series('wal_bytes_per_sec', [1048576, null]),
+                    series('wal_records_per_sec', [20, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('WAL Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getByText('1.0 MB')).toBeInTheDocument();
+            expect(screen.getByText('20.0')).toBeInTheDocument();
         });
     });
 });

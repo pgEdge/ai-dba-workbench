@@ -194,16 +194,67 @@ order, into three results: raw column names, a `[]DerivedMetric`, and the
 combined output order. The routing rules are deliberate and order-sensitive:
 
 - A name matching a real numeric column is always a raw metric; a real
-  column wins even when it ends in `_per_sec` or `_delta`.
-- A name ending in `_per_sec` whose prefix is a real numeric column becomes
-  a `DerivedPerSec` rate (delta of the counter over elapsed seconds).
-- A name ending in `_delta` whose prefix is a real numeric column becomes a
-  `DerivedDelta`: the per-bucket increase of a cumulative counter, which is
-  what a dashboard bar chart wants in place of the ever-growing raw total.
+  column wins even when it ends in a derived suffix.
+- A name ending in one of the `derivedSuffixRules` suffixes is a derived
+  metric whose prefix must be a real numeric column of a kind the rule
+  accepts (see the column kind registry below): `_per_sec` is a
+  `DerivedPerSec` rate and needs a `KindCounter`; `_delta` is a
+  `DerivedDelta`, the per-bucket increase, and accepts a counter or either
+  time kind; `_pct` is a `DerivedTimeShare`, the share of wall-clock time a
+  millisecond counter advanced by (`100 * delta_ms / (elapsed_sec *
+  1000)`), and needs a `KindTimeCounter`; `_sessions` is a
+  `DerivedSessionAverage`, the average number of sessions in a state
+  (`delta_ms / (elapsed_sec * 1000)`), and needs a
+  `KindSessionTimeCounter`. A kind mismatch is a client error that names
+  the column's kind (`"n_dead_tup" is a gauge, not a cumulative counter`),
+  and a `_per_sec` request on a time kind points at the `_pct` or
+  `_sessions` name that does make sense; a millisecond counter divided by
+  seconds is a dimensionless number that only looks like a rate.
 - The literal `dead_tuple_ratio` is accepted only when the probe exposes
   both `n_live_tup` and `n_dead_tup`; it is a 0-100 percentage.
 - A repeated name is silently de-duplicated; anything else is a client
   error.
+
+Each `DerivedMetric` carries a `Unit` (`"/s"`, `"%"`, `"sessions"`, and
+`""` or `"ms"` for a delta depending on whether the base column counts
+events or milliseconds) which `QueryTimeSeries` copies onto
+`MetricSeries.Unit`; raw columns report `""`, because the client knows its
+own columns.
+
+### The column kind registry
+
+`server/src/internal/metrics/column_kinds.go` holds `probeRegistry`, a
+static map from probe name to `probeRegistryEntry`: the `kinds` of its
+counter-like columns (`ColumnKind`: `KindCounter`, `KindTimeCounter`,
+`KindSessionTimeCounter`, `KindWatermark`, `KindRatio`; anything unlisted,
+and any column of an unlisted probe, is `KindGauge`), a `resetColumn` func
+naming the `stats_reset` marker that guards a given column (`""` when the
+probe has none; `pg_stat_wal` and `pg_stat_checkpointer` split between two
+markers because each was consolidated from two PostgreSQL views), and an
+`excludeEntities` WHERE fragment (`pg_sys_network_info` drops the loopback
+interface). The exported readers are `ColumnKindFor`, `ResetColumnFor` and
+`ProbeEntityExclusion`. Watermarks and ratios are listed even though they
+are never differenced, purely so the error message can say why.
+
+The registry names columns by string, so a typo would silently make a
+counter a gauge. `TestProbeRegistryMatchesCollectorDDL` reads the
+collector's `schema.go` (relative to the package, skipping if absent) and
+fails on any registered column, reset column or exclusion column that the
+`CREATE TABLE` or a later `ADD COLUMN` does not declare, and on any probe
+without a `CREATE TABLE`. `pendingDDLColumns` in that test lists reset
+columns registered ahead of the collector migration that adds them
+(`pg_stat_statements.stats_reset`, migration 10); remove the entry once the
+migration is in `schema.go`. When a probe gains a counter column, add it to
+the registry in the same change or `_per_sec` on it is refused.
+
+Integration fixtures create tables under their own names
+(`pg_stat_all_tables_ts_test` and so on), which are not registered probes,
+so each `setup*Fixture` calls `registerProbeKindsForTest(t, probe, entry)`
+from `column_kinds_test.go`. The hook installs the entry under a
+`sync.RWMutex` and restores or removes it in `t.Cleanup`;
+`countersForTest(cols...)` builds the common all-counters entry. Without
+the registration every fixture column is a gauge and the fixture's
+`_per_sec` requests fail.
 
 `BuildDerivedMetricsQuery` builds the derived SQL. It shares the bucketing,
 gap-filling (`generate_series`), filtering, and `$N` argument layout of
@@ -215,12 +266,15 @@ caller-supplied metric name that has not passed `classifyMetrics`. Negative
 counter deltas (resets/restarts) and non-positive elapsed times are dropped
 to NULL so they never yield a bogus rate.
 
-`DerivedPerSec` and `DerivedDelta` share one `rate_samples`/`rate_buckets`
-CTE pair, since both derive from the same `LAG` over consecutive samples, so
-a request may mix them freely for the same or different base columns: each
-counter gets a `total_i`/`prev_i` pair, then either a `rate_i` or a
-`delta_i` sample column. Two rules are specific to deltas and must not be
-"tidied away":
+`DerivedPerSec`, `DerivedTimeShare`, `DerivedSessionAverage` and
+`DerivedDelta` share one `rate_samples`/`rate_buckets` CTE pair, since all
+derive from the same `LAG` over consecutive samples, so a request may mix
+them freely for the same or different base columns: each counter gets a
+`total_i`/`prev_i` pair, then either a `rate_i` or a `delta_i` sample
+column. The time share and session average are the per-second rate with a
+scale factor (`rateSampleExpr` picks the numerator), so they share its
+guards, its `rateAggExpr` bucket aggregation and its NULL behaviour. Two
+rules are specific to deltas and must not be "tidied away":
 
 - The bucket aggregate is always `SUM(delta_i)`; the `aggregation` request
   parameter is deliberately ignored, because averaging or taking the last of
@@ -365,7 +419,8 @@ remain.
 
 The derived path and `scanSeriesRows` are covered by
 `server/src/internal/metrics/query_timeseries_db_test.go` (same gating
-convention as `query_db_test.go`). Its fixture inserts minute-spaced
+convention as `query_db_test.go`; every fixture registers its counter kinds
+through `registerProbeKindsForTest`). Its fixture inserts minute-spaced
 samples with counters rising 60 per minute (a clean 1.0/sec rate) and
 constant live/dead tuple counts (a steady 10% ratio), then exercises raw,
 `_per_sec`, `dead_tuple_ratio`, and mixed requests end-to-end. Both
@@ -390,8 +445,13 @@ that a single in-window sample still zero-fills. A fourth,
 `setupLookbackFixture`, holds one scenario per connection for the
 lookback bound: a reset straddling the window boundary, a predecessor
 beyond and one inside the 30-minute floor, and a predecessor beyond and
-one inside three 1-hour buckets. Asserting exact values at exact bucket
-times needs the window anchored on the minute (`windowSince`), not on
+one inside three 1-hour buckets. A fifth, `setupTimeShareFixture`, is
+shaped like `pg_stat_database`'s time columns with `blk_read_time`
+registered as a time counter and `active_time` as a session time counter,
+each rising 30000 ms per minute, so `blk_read_time_pct` is exactly 50 and
+`active_time_sessions` exactly 0.5; it also asserts the `Unit` on each
+series and the kind-mismatch errors end to end. Asserting exact values at
+exact bucket times needs the window anchored on the minute (`windowSince`), not on
 `time.Now()`, or the bucket boundaries drift off the samples.
 Minute-spaced samples always land in distinct 60-second buckets whatever
 the window origin is, which is what makes those exact assertions safe. The
@@ -755,6 +815,10 @@ run.
   probe-scoped alert lookups.
 - #406: Five built-in alert rules that could never fire; fixed in the
   alerter metric registry plus collector migration 8.
+- #402: Column kind registry (`column_kinds.go`) gating `_per_sec` and
+  `_delta` by kind; `_pct` (`DerivedTimeShare`) and `_sessions`
+  (`DerivedSessionAverage`) added; `DerivedMetric.Unit` reported on each
+  series.
 - #400: `_delta` (`DerivedDelta`) added alongside `_per_sec` so dashboard
   charts plot per-bucket counter increases instead of cumulative totals.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to

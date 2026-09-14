@@ -370,7 +370,10 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
      "https://localhost:8080/api/v1/metrics/query?$QUERY&$WINDOW"
 ```
 
-Only `/api/v1/metrics/query` supports a custom window.
+The `/api/v1/metrics/query`,
+`/api/v1/metrics/connection-groups` and
+`/api/v1/metrics/query-stats` endpoints support a custom
+window with the same three parameters and the same rules.
 The `/api/v1/metrics/performance-summary` and
 `/api/v1/metrics/database-summaries` endpoints accept the
 presets alone, and `/api/v1/metrics/top-queries` has no

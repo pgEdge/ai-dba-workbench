@@ -41,6 +41,7 @@ CREATE TABLE metrics.pg_stat_statements (
     queryid           bigint      NOT NULL,
     userid            bigint,
     dbid              bigint,
+    toplevel          boolean     NOT NULL DEFAULT TRUE,
     database_name     text,
     query             text        NOT NULL,
     calls             bigint      NOT NULL DEFAULT 0,
@@ -309,6 +310,67 @@ func TestTopQueries_UsernameResolution(t *testing.T) {
 					tc.wantDatabase)
 			}
 		})
+	}
+}
+
+// TestTopQueries_NameLookupWindow confirms that the db_names and user_names
+// CTEs only consult pg_stat_activity samples taken in the hour before the
+// latest pg_stat_statements snapshot. A name observed only outside that
+// window is not used: the database falls back to the name recorded by the
+// probe and the role resolves to an empty string. The bound is what keeps
+// the DISTINCT ON sort from covering every activity row in retention.
+func TestTopQueries_NameLookupWindow(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	latest := time.Now().UTC().Add(-1 * time.Minute)
+	insideWindow := latest.Add(-30 * time.Minute)
+	outsideWindow := latest.Add(-90 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	// OID 100 / role 10 were observed inside the window; OID 200 / role 20
+	// only before it.
+	exec(`INSERT INTO metrics.pg_stat_activity
+        (connection_id, collected_at, datid, datname, usesysid, usename)
+        VALUES ($1, $2, 100, 'alpha', 10, 'alice'),
+               ($1, $3, 200, 'beta', 20, 'bob')`,
+		topQueriesConnID, insideWindow, outsideWindow)
+
+	exec(`INSERT INTO metrics.pg_stat_statements
+        (connection_id, collected_at, queryid, userid, dbid, database_name,
+         query, calls, total_exec_time, mean_exec_time, rows,
+         shared_blks_hit, shared_blks_read)
+        VALUES ($1, $2, 1001, 10, 100, 'alpha-probe', 'SELECT 1', 10, 600,
+                60, 10, 100, 1),
+               ($1, $2, 1002, 20, 200, 'beta-probe', 'SELECT 2', 20, 500,
+                25, 20, 200, 2)`,
+		topQueriesConnID, latest)
+
+	rows, _ := decodeTopQueries(t, callTopQueries(t, h, "connection_id=4242"))
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2: %#v", len(rows), rows)
+	}
+	byQueryID := make(map[string]TopQueryRow, len(rows))
+	for _, row := range rows {
+		byQueryID[row.QueryID] = row
+	}
+
+	if got := byQueryID["1001"]; got.Username != "alice" ||
+		got.DatabaseName != "alpha" {
+		t.Errorf("inside window: username = %q, database = %q, "+
+			"want alice / alpha", got.Username, got.DatabaseName)
+	}
+	if got := byQueryID["1002"]; got.Username != "" ||
+		got.DatabaseName != "beta-probe" {
+		t.Errorf("outside window: username = %q, database = %q, "+
+			"want \"\" / beta-probe", got.Username, got.DatabaseName)
 	}
 }
 

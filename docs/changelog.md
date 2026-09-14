@@ -114,7 +114,9 @@ project adheres to
   text, and displays "Unknown" when the role cannot be resolved.
   The API gained a `GET /api/v1/metrics/query-stats` endpoint
   that returns the period-scoped average execution time for a
-  single query, and the `username`, `min_exec_time`, and
+  single query, for a preset or a custom time window and
+  optionally restricted to one database, and the `username`,
+  `min_exec_time`, and
   `max_exec_time` fields on `GET /api/v1/metrics/top-queries`
   rows. The `queryid` parameter of that endpoint and of the new
   one must now be a 64-bit integer; any other value is rejected

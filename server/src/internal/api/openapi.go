@@ -1377,7 +1377,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 		"TopQueryRow": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"queryid":          {Type: "integer", Format: "int64", Description: "Query ID"},
+				"queryid":          {Type: "string", Description: "Query ID as a decimal string, since the 64-bit value cannot be represented exactly in JavaScript"},
 				"database_name":    {Type: "string", Description: "Database name where the query was executed"},
 				"username":         {Type: "string", Description: "Database role that ran the query; empty when the role could not be resolved"},
 				"query":            {Type: "string", Description: "Query text"},
@@ -3541,7 +3541,14 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Parameters: []OpenAPIParameter{
 					queryParamIntRequired("connection_id", "Connection ID"),
 					queryParamStringRequired("queryid", "Query ID to report on"),
-					queryParamString("time_range", "Time range (1h, 6h, 24h, 7d, 30d)"),
+					queryParamString("database_name",
+						"Restrict the statistics to rows recorded against this database"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("QueryStatsResponse", "Period-scoped query statistics"),

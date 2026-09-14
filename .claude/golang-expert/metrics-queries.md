@@ -474,19 +474,62 @@ checks inline in a handler; the `api` package already depends on
 
 `GET /api/v1/metrics/query` and `GET /api/v1/metrics/connection-groups`
 accept `time_range=custom` alongside `time_start` and `time_end`, and
-map any resolution error to `400`. The performance-summary,
-database-summary and query-stats handlers in `perf_summary_handlers.go`
-still use the inline `validTimeRanges` map and accept presets only;
-consolidating those is deliberately deferred.
+map any resolution error to `400`. The performance-summary and
+database-summary handlers in `perf_summary_handlers.go` still use the
+inline `validTimeRanges` map and accept presets only; consolidating
+those is deliberately deferred. `handleQueryStats` resolves its window
+through `ResolveTimeWindow` and so accepts `custom` with `time_start`
+and `time_end`.
 
 Every handler that accepts a `queryid` parameter (`/metrics/query`,
 `/metrics/latest`, `/metrics/top-queries` and `/metrics/query-stats`)
 parses it with `parseQueryIDFilter` in `metrics_handlers.go`, which
 returns a `*int64` and answers `400` to anything that is not a 64-bit
 integer. The value is bound uncast as `queryid = $N`, never through a
-`queryid::text` cast, so the `(connection_id, database_name, queryid,
-collected_at)` index stays usable. Responses still carry the identifier
-as a decimal string, because JavaScript cannot represent it exactly.
+`queryid::text` cast. Responses still carry the identifier as a decimal
+string, because JavaScript cannot represent it exactly.
+
+Whether the `(connection_id, database_name, queryid, collected_at)`
+object index actually serves a queryid lookup depends on the predicate
+also naming `database_name`, the index's second column. Before
+PostgreSQL 18, which added B-tree skip scans, a predicate on
+`connection_id` and `queryid` alone falls back to a bitmap scan of
+`idx_pg_stat_statements_conn_time` over every row of the connection in
+the window. `/metrics/query` and `/metrics/latest` always carry the
+database name; `/metrics/top-queries` reads one snapshot by
+`collected_at` and does not need the object index; `/metrics/query-stats`
+takes an optional `database_name` parameter, which the drill-down always
+sends, and `buildQueryStatsSQL` binds it as an extra predicate so that
+the object index applies.
+
+## Cumulative Counter Deltas per Identity (server)
+
+`pg_stat_statements` keeps one row per `(database_name, userid, dbid,
+toplevel)` for a queryid, and each row is an independent cumulative
+counter that `pg_stat_reset()` or a restart can zero on its own. Any
+query that turns those counters into per-period deltas must `LAG` within
+each identity, drop the negative deltas, and only then sum across
+identities. Summing first hides a reset in one identity behind growth in
+its siblings, so the guard never fires and the pre-reset total is
+subtracted from the post-reset one. `queryStatsSQLTemplate` in
+`perf_summary_handlers.go` is the reference implementation, and
+`TestQueryStats_PerIdentityReset` is the regression test; any new
+counter-delta query over `metrics.pg_stat_statements` should follow the
+same shape.
+
+## Bounded Name Lookups (server)
+
+`buildTopQueriesSQL` resolves `dbid` and `userid` OIDs to names through
+`DISTINCT ON (...) ... ORDER BY oid, collected_at DESC` over
+`metrics.pg_stat_activity`, which has no index on `datid` or
+`usesysid`. Without a `collected_at` bound that sort covers every
+activity row in retention for the connection, and it runs twice per
+page (count and page statements). Both CTEs are therefore anchored to
+the latest `pg_stat_statements` snapshot and read only the preceding
+`nameLookupWindowSQL` (one hour) of activity samples; on a fixture of
+500,000 activity rows that took the page from 1.6 s and a 29 MB
+external sort to 8 ms in memory. Any new OID-to-name lookup over
+`pg_stat_activity` needs the same bound.
 
 ## Latest-Snapshot Aggregations (server)
 

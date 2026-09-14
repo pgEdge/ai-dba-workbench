@@ -186,6 +186,20 @@ project adheres to
 
 ### Fixed
 
+- Fix Ask Ellie failing with `Function call is missing a
+  thought_signature in functionCall parts` on every question that
+  needs a tool call when the LLM provider is Gemini. Google's current
+  Gemini models attach an opaque `thoughtSignature` to each function
+  call and reject the next request with a 400 error unless it is
+  echoed back unchanged, and the pinned `pgedge-go-llm-lib` neither
+  captured nor replayed it. The server now uses library release
+  v0.3.1, which carries the signature on the `tool_use` block through
+  the chat endpoint and back to Gemini, so the existing client loop
+  needs no change. The same release reports tool failures to Gemini
+  instead of letting the model retry the identical call, and hides
+  Gemini models that cannot hold a text conversation from the model
+  list. (#425)
+
 - Fix every cache hit ratio in the web client (the Cache Hit
   performance tile, the server dashboard's KPI sparkline and
   per-database cards, the database dashboard's KPI tile and Cache

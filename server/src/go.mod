@@ -4,7 +4,7 @@ go 1.26.8
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/pgEdge/pgedge-go-llm-lib v0.1.1
+	github.com/pgEdge/pgedge-go-llm-lib v0.3.1
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/sync v0.22.0

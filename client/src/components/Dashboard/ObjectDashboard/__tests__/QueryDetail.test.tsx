@@ -14,8 +14,12 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import QueryDetail from '../QueryDetail';
 import type { QueryDetailData } from '../types';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../../types';
+import type { MetricQueryParams, MetricSeries, TimeRange } from '../../types';
 import type { ChartData } from '../../../Chart/types';
+import type {
+    QueryStatsParams,
+    UseQueryStatsReturn,
+} from '../../../../hooks/useQueryStats';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -34,9 +38,10 @@ vi.mock('../../../../contexts/useAuth', () => ({
     useAuth: () => ({ user: mockUser }),
 }));
 
+let mockTimeRange: TimeRange = '1h';
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
-        timeRange: { range: '1h' },
+        timeRange: { range: mockTimeRange },
         refreshTrigger: 0,
         setTimeRange: vi.fn(),
         currentOverlay: { connectionName: 'Test Server' },
@@ -72,6 +77,20 @@ type UseMetricsFn = (params: MetricQueryParams | null) => UseMetricsReturn;
 const mockUseMetrics = vi.fn<UseMetricsFn>();
 vi.mock('../../../../hooks/useMetrics', () => ({
     useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
+}));
+
+let mockQueryStatsReturn: UseQueryStatsReturn = {
+    stats: null,
+    loading: false,
+    error: null,
+    refetch: vi.fn(),
+};
+const mockUseQueryStats = vi.fn();
+vi.mock('../../../../hooks/useQueryStats', () => ({
+    useQueryStats: (params: QueryStatsParams | null) => {
+        mockUseQueryStats(params);
+        return mockQueryStatsReturn;
+    },
 }));
 
 vi.mock('../QueryPlanPanel', () => ({
@@ -154,9 +173,12 @@ const makeQueryRow = (
     calls: 500,
     total_exec_time: 1000,
     mean_exec_time: 2,
+    min_exec_time: 2.5,
+    max_exec_time: 512,
     rows: 1000,
     shared_blks_hit: 900,
     shared_blks_read: 100,
+    username: 'app_user',
     ...overrides,
 });
 
@@ -269,7 +291,19 @@ describe('QueryDetail', () => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         mockUser = { id: 1, username: 'testuser' };
+        mockTimeRange = '1h';
         mockAiEnabled = false;
+        mockQueryStatsReturn = {
+            stats: {
+                queryid: QUERY_ID,
+                avg_exec_time: 12.5,
+                calls: 100,
+                total_exec_time: 1250,
+            },
+            loading: false,
+            error: null,
+            refetch: vi.fn(),
+        };
         mockOverview = {
             summary: null,
             loading: false,
@@ -500,6 +534,262 @@ describe('QueryDetail', () => {
             });
             expect(mockApiFetch).not.toHaveBeenCalled();
         });
+    });
+
+    describe('period statistics', () => {
+        it('renders the min and max execution time tiles', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Min Time (All Time)'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByText('Max Time (All Time)'))
+                .toBeInTheDocument();
+            expect(screen.getByText('2.5 ms')).toBeInTheDocument();
+            expect(screen.getByText('512.0 ms')).toBeInTheDocument();
+        });
+
+        it('labels the lifetime and period averages distinctly', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByText('Mean Time (All Time)'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByText('Avg Time (Last 1h)'))
+                .toBeInTheDocument();
+            expect(screen.getByText('2.0 ms')).toBeInTheDocument();
+            expect(screen.getByText('12.5 ms')).toBeInTheDocument();
+        });
+
+        it('exposes an accessible label for the period average tile',
+            async () => {
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText('Avg Time (Last 1h): 12.5 ms'),
+                    ).toBeInTheDocument();
+                });
+            });
+
+        it('renders a dash when the period average is null', async () => {
+            mockQueryStatsReturn = {
+                stats: {
+                    queryid: QUERY_ID,
+                    avg_exec_time: null,
+                    calls: 0,
+                    total_exec_time: 0,
+                },
+                loading: false,
+                error: null,
+                refetch: vi.fn(),
+            };
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText('Avg Time (Last 1h): --'),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.queryByLabelText(/Avg Time \(Last 1h\): (0|NaN)/),
+            ).not.toBeInTheDocument();
+        });
+
+        it('renders a dash when the stats request returned nothing',
+            async () => {
+                mockQueryStatsReturn = {
+                    stats: null,
+                    loading: false,
+                    error: null,
+                    refetch: vi.fn(),
+                };
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText('Avg Time (Last 1h): --'),
+                    ).toBeInTheDocument();
+                });
+            });
+
+        it('marks the period average unavailable when the request failed',
+            async () => {
+                mockQueryStatsReturn = {
+                    stats: null,
+                    loading: false,
+                    error: 'stats unavailable',
+                    refetch: vi.fn(),
+                };
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText(
+                            'Avg Time (Last 1h): Unavailable',
+                        ),
+                    ).toBeInTheDocument();
+                });
+                expect(
+                    screen.queryByLabelText('Avg Time (Last 1h): --'),
+                ).not.toBeInTheDocument();
+            });
+
+        it('prefers the error state over a pending refetch', async () => {
+            mockQueryStatsReturn = {
+                stats: null,
+                loading: true,
+                error: 'stats unavailable',
+                refetch: vi.fn(),
+            };
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText('Avg Time (Last 1h): Unavailable'),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.queryByLabelText('Avg Time (Last 1h): Loading...'),
+            ).not.toBeInTheDocument();
+        });
+
+        it('shows a loading placeholder before the first stats arrive',
+            async () => {
+                mockQueryStatsReturn = {
+                    stats: null,
+                    loading: true,
+                    error: null,
+                    refetch: vi.fn(),
+                };
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByLabelText(
+                            'Avg Time (Last 1h): Loading...',
+                        ),
+                    ).toBeInTheDocument();
+                });
+                expect(
+                    screen.queryByLabelText('Avg Time (Last 1h): --'),
+                ).not.toBeInTheDocument();
+            });
+
+        it('keeps the previous average visible during a refetch', async () => {
+            mockQueryStatsReturn = {
+                ...mockQueryStatsReturn,
+                loading: true,
+            };
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText('Avg Time (Last 1h): 12.5 ms'),
+                ).toBeInTheDocument();
+            });
+        });
+
+        it('labels the period average for a custom range', async () => {
+            mockTimeRange = 'custom';
+            renderDetail();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByLabelText(
+                        'Avg Time (Custom Range): 12.5 ms',
+                    ),
+                ).toBeInTheDocument();
+            });
+            expect(
+                screen.queryByText(/Avg Time \(Last custom\)/),
+            ).not.toBeInTheDocument();
+        });
+
+        it('shows the database user that ran the statement', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-username'))
+                    .toHaveTextContent('app_user');
+            });
+            expect(screen.getByText('Database User')).toBeInTheDocument();
+        });
+
+        it('shows Unknown when the role could not be resolved', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({ username: '' })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-username'))
+                    .toHaveTextContent('Unknown');
+            });
+        });
+
+        it('scopes the period stats to the selected query id', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(mockUseQueryStats).toHaveBeenCalledWith({
+                    connectionId: 4,
+                    queryId: QUERY_ID,
+                    databaseName: 'testdb',
+                    timeRange: '1h',
+                });
+            });
+        });
+
+        it('does not request period stats before the query row arrives',
+            () => {
+                mockApiFetch.mockReturnValue(new Promise(() => {}));
+                renderDetail();
+
+                expect(
+                    mockUseQueryStats.mock.calls.every(
+                        call => call[0] === null,
+                    ),
+                ).toBe(true);
+            });
+
+        it('refetches the period stats when the time range changes',
+            async () => {
+                const { rerender } = renderDetail();
+
+                await waitFor(() => {
+                    expect(mockUseQueryStats).toHaveBeenCalledWith({
+                        connectionId: 4,
+                        queryId: QUERY_ID,
+                        databaseName: 'testdb',
+                        timeRange: '1h',
+                    });
+                });
+
+                mockTimeRange = '24h';
+                rerender(
+                    <ThemeProvider theme={theme}>
+                        <QueryDetail
+                            connectionId={4}
+                            databaseName="testdb"
+                            objectName={QUERY_ID}
+                        />
+                    </ThemeProvider>,
+                );
+
+                await waitFor(() => {
+                    expect(mockUseQueryStats).toHaveBeenCalledWith({
+                        connectionId: 4,
+                        queryId: QUERY_ID,
+                        databaseName: 'testdb',
+                        timeRange: '24h',
+                    });
+                });
+                expect(screen.getByText('Avg Time (Last 24h)'))
+                    .toBeInTheDocument();
+            });
     });
 
     describe('query text', () => {

@@ -218,6 +218,7 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
 | GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage. |
 | GET | `/api/v1/metrics/connection-groups` | Get connection counts grouped by user, client, or database. |
+| GET | `/api/v1/metrics/query-stats` | Get period-scoped statistics for a query. |
 | GET | `/api/v1/metrics/latest` | Get the latest probe snapshot per entity. |
 
 ### Timeline
@@ -369,7 +370,10 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
      "https://localhost:8080/api/v1/metrics/query?$QUERY&$WINDOW"
 ```
 
-Only `/api/v1/metrics/query` supports a custom window.
+The `/api/v1/metrics/query`,
+`/api/v1/metrics/connection-groups` and
+`/api/v1/metrics/query-stats` endpoints support a custom
+window with the same three parameters and the same rules.
 The `/api/v1/metrics/performance-summary` and
 `/api/v1/metrics/database-summaries` endpoints accept the
 presets alone, and `/api/v1/metrics/top-queries` has no

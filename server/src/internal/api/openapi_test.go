@@ -256,7 +256,7 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 	// the preset list, since they do not accept a custom window.
 	spec := BuildOpenAPISpec()
 
-	for _, path := range []string{"/metrics/query", "/metrics/connection-groups"} {
+	for _, path := range []string{"/metrics/query", "/metrics/connection-groups", "/metrics/query-stats"} {
 		op := spec.Paths[path].Get
 		if op == nil {
 			t.Fatalf("Expected GET operation on %s", path)

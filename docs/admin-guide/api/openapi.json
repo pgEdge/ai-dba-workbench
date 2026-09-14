@@ -6088,6 +6088,115 @@
         ]
       }
     },
+    "/metrics/query-stats": {
+      "get": {
+        "summary": "Get period-scoped query statistics",
+        "description": "Returns the average execution time, call count, and total execution time of a single query over the requested time range, computed from the deltas between consecutive pg_stat_statements samples",
+        "operationId": "getQueryStats",
+        "tags": [
+          "Metrics"
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "query",
+            "description": "Connection ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "queryid",
+            "in": "query",
+            "description": "Query ID to report on",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "description": "Restrict the statistics to rows recorded against this database",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_range",
+            "in": "query",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_start",
+            "in": "query",
+            "description": "Window start as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "time_end",
+            "in": "query",
+            "description": "Window end as an RFC 3339 timestamp; required when time_range is custom",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Period-scoped query statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/metrics/top-queries": {
       "get": {
         "summary": "Get top queries",
@@ -12333,6 +12442,35 @@
           }
         }
       },
+      "QueryStatsResponse": {
+        "type": "object",
+        "properties": {
+          "avg_exec_time": {
+            "type": "number",
+            "description": "Average execution time in ms over the requested period, or null when there is no usable data",
+            "nullable": true
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Calls made during the requested period"
+          },
+          "queryid": {
+            "type": "string",
+            "description": "Query ID the statistics apply to"
+          },
+          "total_exec_time": {
+            "type": "number",
+            "description": "Execution time in ms accumulated during the requested period"
+          }
+        },
+        "required": [
+          "queryid",
+          "avg_exec_time",
+          "calls",
+          "total_exec_time"
+        ]
+      },
       "RBACGroup": {
         "type": "object",
         "properties": {
@@ -12916,18 +13054,25 @@
             "type": "string",
             "description": "Database name where the query was executed"
           },
+          "max_exec_time": {
+            "type": "number",
+            "description": "Maximum execution time in ms"
+          },
           "mean_exec_time": {
             "type": "number",
             "description": "Mean execution time in ms"
+          },
+          "min_exec_time": {
+            "type": "number",
+            "description": "Minimum execution time in ms"
           },
           "query": {
             "type": "string",
             "description": "Query text"
           },
           "queryid": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Query ID"
+            "type": "string",
+            "description": "Query ID as a decimal string, since the 64-bit value cannot be represented exactly in JavaScript"
           },
           "rows": {
             "type": "integer",
@@ -12947,6 +13092,10 @@
           "total_exec_time": {
             "type": "number",
             "description": "Total execution time in ms"
+          },
+          "username": {
+            "type": "string",
+            "description": "Database role that ran the query; empty when the role could not be resolved"
           }
         }
       },

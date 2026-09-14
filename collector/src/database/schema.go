@@ -3188,6 +3188,32 @@ func (sm *SchemaManager) registerMigrations() {
 		},
 	})
 
+	// Migration #10: Record pg_stat_statements_info.stats_reset alongside
+	// each pg_stat_statements sample so the server's rate derivation can
+	// tell a genuine counter reset from ordinary growth. See GitHub issue
+	// #402. As with migration 7, the column lands on the partitioned
+	// parent and PostgreSQL 14-18 propagate ADD COLUMN to existing and
+	// future partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     10,
+		Description: "Add stats_reset column to pg_stat_statements metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_stat_statements
+					ADD COLUMN IF NOT EXISTS stats_reset TIMESTAMPTZ;
+
+				COMMENT ON COLUMN metrics.pg_stat_statements.stats_reset IS
+					'Value of pg_stat_statements_info.stats_reset on the monitored server at collection time: when the extension''s statistics were last reset with pg_stat_statements_reset(). NULL where the pg_stat_statements_info view is unavailable (pg_stat_statements before 1.9, shipped with PostgreSQL 14). A change in this value between two consecutive samples tells the server''s rate derivation that the cumulative counters were reset, so the pair must not be treated as a delta.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add stats_reset column to pg_stat_statements metrics: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -11,9 +11,13 @@ package probes
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func newPgStatStatementsProbeForTest() *PgStatStatementsProbe {
@@ -266,12 +270,107 @@ func TestPgStatStatementsProbe_CheckColumnHelpers(t *testing.T) {
 	p := newPgStatStatementsProbeForTest()
 	ctx := context.Background()
 
-	// The helpers query information_schema and tolerate the case where
-	// the view does not exist (returns false).
-	if _, err := p.checkHasSharedBlkTime(ctx, conn); err != nil {
-		t.Errorf("checkHasSharedBlkTime: %v", err)
+	expectChecks := func(label string, wantShared, wantBlk bool) {
+		t.Helper()
+		gotShared, err := p.checkHasSharedBlkTime(ctx, conn)
+		if err != nil {
+			t.Fatalf("%s: checkHasSharedBlkTime: %v", label, err)
+		}
+		gotBlk, err := p.checkHasBlkReadTime(ctx, conn)
+		if err != nil {
+			t.Fatalf("%s: checkHasBlkReadTime: %v", label, err)
+		}
+		if gotShared != wantShared || gotBlk != wantBlk {
+			t.Errorf("%s: shared=%t blk=%t, want shared=%t blk=%t",
+				label, gotShared, gotBlk, wantShared, wantBlk)
+		}
 	}
-	if _, err := p.checkHasBlkReadTime(ctx, conn); err != nil {
-		t.Errorf("checkHasBlkReadTime: %v", err)
+
+	// Move the extension into a schema that is not on the default search
+	// path, as a relocated install or a managed service does, restoring
+	// its original schema afterwards. The checks must find the view
+	// exactly when the probe's own unqualified query would, and never by
+	// assuming pg_catalog (#439).
+	var originalSchema string
+	err := conn.QueryRow(ctx, `
+        SELECT n.nspname
+        FROM pg_catalog.pg_extension e
+        JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+        WHERE e.extname = 'pg_stat_statements'
+    `).Scan(&originalSchema)
+	installed := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("look up extension schema: %v", err)
 	}
+
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA pgss_relocated"); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() {
+		restore := []string{"RESET search_path"}
+		if installed {
+			restore = append(restore, fmt.Sprintf(
+				"ALTER EXTENSION pg_stat_statements SET SCHEMA %s",
+				pgx.Identifier{originalSchema}.Sanitize()))
+		} else {
+			restore = append(restore,
+				"DROP EXTENSION IF EXISTS pg_stat_statements")
+		}
+		restore = append(restore,
+			"DROP SCHEMA IF EXISTS pgss_relocated CASCADE")
+		for _, stmt := range restore {
+			//nosemgrep: go_sql_rule-concat-sqli -- fixed cleanup DDL; the only interpolated value is the extension's original schema name from pg_namespace, sanitized by pgx.Identifier
+			if _, err := conn.Exec(ctx, stmt); err != nil {
+				t.Logf("cleanup %q: %v", stmt, err)
+			}
+		}
+	})
+	relocate := "CREATE EXTENSION pg_stat_statements SCHEMA pgss_relocated"
+	if installed {
+		relocate = "ALTER EXTENSION pg_stat_statements SET SCHEMA pgss_relocated"
+	}
+	if _, err := conn.Exec(ctx, relocate); err != nil {
+		t.Skipf("skipping: pg_stat_statements cannot be relocated here: %v", err)
+	}
+
+	// Off the search path the view is invisible to the probe's query, so
+	// both checks are false and neither errors.
+	if _, err := conn.Exec(ctx, "SET search_path TO public"); err != nil {
+		t.Fatalf("set search_path: %v", err)
+	}
+	expectChecks("extension off the search path", false, false)
+
+	if _, err := conn.Exec(ctx,
+		"SET search_path TO pgss_relocated, public"); err != nil {
+		t.Fatalf("set search_path: %v", err)
+	}
+	// The column set follows the installed extension version, not the
+	// server's: 1.11 (PostgreSQL 17) renamed blk_read_time to
+	// shared_blk_read_time, and 1.8 (PostgreSQL 13) introduced toplevel
+	// alongside the blk_read_time column the probe looks for.
+	var extVersion string
+	if err := conn.QueryRow(ctx, `
+        SELECT extversion FROM pg_catalog.pg_extension
+        WHERE extname = 'pg_stat_statements'
+    `).Scan(&extVersion); err != nil {
+		t.Fatalf("read extension version: %v", err)
+	}
+	switch {
+	case extensionVersionAtLeast(extVersion, 1, 11):
+		expectChecks("relocated view, extension "+extVersion, true, false)
+	case extensionVersionAtLeast(extVersion, 1, 8):
+		expectChecks("relocated view, extension "+extVersion, false, true)
+	default:
+		expectChecks("relocated view, extension "+extVersion, false, false)
+	}
+}
+
+// extensionVersionAtLeast reports whether a pg_extension.extversion string
+// such as "1.11" is at least major.minor.
+func extensionVersionAtLeast(version string, major, minor int) bool {
+	var gotMajor, gotMinor int
+	if _, err := fmt.Sscanf(version, "%d.%d", &gotMajor, &gotMinor); err != nil {
+		return false
+	}
+	return gotMajor > major || (gotMajor == major && gotMinor >= minor)
 }

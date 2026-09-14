@@ -186,6 +186,20 @@ project adheres to
 
 ### Fixed
 
+- Fix the `pg_stat_statements` collector probe discarding the block
+  timing columns on every modern server. The probe chose its query
+  shape by looking for the version-specific columns in
+  `information_schema.columns` with `table_schema = 'pg_catalog'`, but
+  `CREATE EXTENSION` installs the view into the current schema, normally
+  `public`, so both checks failed and the probe fell back to the
+  PostgreSQL 12 query. Rows arrived with `shared_blk_read_time`,
+  `shared_blk_write_time`, `local_blk_read_time` and
+  `local_blk_write_time` stored as NULL and `toplevel` fixed at `TRUE`.
+  The checks now resolve the view through the search path, exactly as
+  the probe's own query does, so a relocated extension is detected in
+  whichever schema it was installed, provided that schema is on the
+  collector role's search path. (#439)
+
 - Fix every cache hit ratio in the web client (the Cache Hit
   performance tile, the server dashboard's KPI sparkline and
   per-database cards, the database dashboard's KPI tile and Cache

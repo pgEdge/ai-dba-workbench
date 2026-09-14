@@ -1362,16 +1362,80 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
 				"time_range":  {Type: "string", Description: "Time range used"},
-				"connections": {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Per-connection performance data"},
-				"aggregate":   {Type: "object", Description: "Aggregate performance metrics", Nullable: true},
+				"connections": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/PerfConnectionResponse"}, Description: "Per-connection performance data"},
+				"aggregate":   {Ref: "#/components/schemas/PerfAggregate"},
 			},
+		},
+		"PerfConnectionResponse": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"connection_id":      {Type: "integer", Description: "Connection ID"},
+				"connection_name":    {Type: "string", Description: "Connection name"},
+				"xid_age":            {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Transaction ID age per database"},
+				"cache_hit_ratio":    {Ref: "#/components/schemas/CacheHitRatioData"},
+				"transactions":       {Type: "object", Description: "Transaction throughput: commits_per_sec, rollback_percent and a time_series"},
+				"checkpoints":        {Type: "object", Description: "Checkpoint activity time series"},
+				"active_connections": {Type: "integer", Description: "Backends connected at the most recent collection, summed across databases"},
+			},
+		},
+		"PerfAggregate": {
+			Type:        "object",
+			Description: "Aggregate metrics across the requested connections; only present when more than one connection was requested",
+			Properties: map[string]*OpenAPISchema{
+				"cache_hit_ratio": {
+					Type:        "number",
+					Nullable:    true,
+					Description: "Cache hit ratio percentage weighted by each connection's latest-bucket block deltas, or null when every connection was idle in its latest bucket",
+				},
+				"commits_per_sec":  {Type: "number", Description: "Commits per second summed across connections"},
+				"rollback_percent": {Type: "number", Description: "Rollbacks as a percentage of all transactions across connections"},
+			},
+		},
+		"CacheHitRatioData": {
+			Type:        "object",
+			Description: "Buffer cache hit ratio computed from per-interval deltas of the pg_stat_database block counters, never from the lifetime totals. The bucket width is the requested time range divided by 60, with a 10 second floor.",
+			Properties: map[string]*OpenAPISchema{
+				"current": {
+					Type:        "number",
+					Nullable:    true,
+					Description: "Ratio percentage for the latest bucket in the range, or null when there is no data or that bucket saw no block access",
+				},
+				"time_series": {
+					Type:        "array",
+					Items:       &OpenAPISchema{Ref: "#/components/schemas/CacheHitRatioPoint"},
+					Description: "Per-bucket ratios in chronological order",
+				},
+			},
+			Required: []string{"current", "time_series"},
+		},
+		"CacheHitRatioPoint": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"time": {Type: "string", Format: "date-time", Description: "Bucket start time"},
+				"value": {
+					Type:        "number",
+					Nullable:    true,
+					Description: "Ratio percentage for the bucket, or null when no blocks were hit or read in it",
+				},
+			},
+			Required: []string{"time", "value"},
 		},
 		"DatabaseSummaryResponse": {
 			Type: "object",
 			Properties: map[string]*OpenAPISchema{
-				"connection_id": {Type: "integer", Description: "Connection ID"},
-				"time_range":    {Type: "string", Description: "Time range used"},
-				"databases":     {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Per-database summary data"},
+				"databases": {Type: "array", Items: &OpenAPISchema{Ref: "#/components/schemas/DatabaseSummary"}, Description: "Per-database summary data"},
+			},
+		},
+		"DatabaseSummary": {
+			Type: "object",
+			Properties: map[string]*OpenAPISchema{
+				"database_name":      {Type: "string", Description: "Database name"},
+				"size_bytes":         {Type: "integer", Format: "int64", Description: "Database size in bytes"},
+				"size_pretty":        {Type: "string", Description: "Human-readable database size"},
+				"cache_hit_ratio":    {Ref: "#/components/schemas/CacheHitRatioData"},
+				"transaction_rate":   {Type: "number", Description: "Transactions per second"},
+				"dead_tuple_ratio":   {Type: "number", Description: "Dead tuples as a percentage of live plus dead tuples"},
+				"active_connections": {Type: "integer", Description: "Backends connected to the database at the most recent collection"},
 			},
 		},
 		"TopQueryRow": {

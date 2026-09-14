@@ -125,7 +125,10 @@ type XIDAgeEntry struct {
 // CacheHitRatioData holds cache hit ratio current value and time series.
 // Current is the ratio for the latest bucket in the requested range, and
 // is nil (JSON null) when there is no data or when that bucket saw no
-// block access at all.
+// block access at all. The bucket width is derived from the range
+// (duration / 60, with a 10 second floor), so Current describes the
+// last minute of a 1h range but the last 12 hours of a 30d range; the
+// same instant can therefore read differently under different ranges.
 type CacheHitRatioData struct {
 	Current    *float64             `json:"current"`
 	TimeSeries []CacheHitRatioPoint `json:"time_series"`

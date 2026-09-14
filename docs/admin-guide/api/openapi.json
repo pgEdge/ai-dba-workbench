@@ -10269,6 +10269,47 @@
           }
         }
       },
+      "CacheHitRatioData": {
+        "type": "object",
+        "description": "Buffer cache hit ratio computed from per-interval deltas of the pg_stat_database block counters, never from the lifetime totals. The bucket width is the requested time range divided by 60, with a 10 second floor.",
+        "properties": {
+          "current": {
+            "type": "number",
+            "description": "Ratio percentage for the latest bucket in the range, or null when there is no data or that bucket saw no block access",
+            "nullable": true
+          },
+          "time_series": {
+            "type": "array",
+            "description": "Per-bucket ratios in chronological order",
+            "items": {
+              "$ref": "#/components/schemas/CacheHitRatioPoint"
+            }
+          }
+        },
+        "required": [
+          "current",
+          "time_series"
+        ]
+      },
+      "CacheHitRatioPoint": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Bucket start time"
+          },
+          "value": {
+            "type": "number",
+            "description": "Ratio percentage for the bucket, or null when no blocks were hit or read in it",
+            "nullable": true
+          }
+        },
+        "required": [
+          "time",
+          "value"
+        ]
+      },
       "CapabilitiesResponse": {
         "type": "object",
         "properties": {
@@ -11177,23 +11218,48 @@
           }
         }
       },
+      "DatabaseSummary": {
+        "type": "object",
+        "properties": {
+          "active_connections": {
+            "type": "integer",
+            "description": "Backends connected to the database at the most recent collection"
+          },
+          "cache_hit_ratio": {
+            "$ref": "#/components/schemas/CacheHitRatioData"
+          },
+          "database_name": {
+            "type": "string",
+            "description": "Database name"
+          },
+          "dead_tuple_ratio": {
+            "type": "number",
+            "description": "Dead tuples as a percentage of live plus dead tuples"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Database size in bytes"
+          },
+          "size_pretty": {
+            "type": "string",
+            "description": "Human-readable database size"
+          },
+          "transaction_rate": {
+            "type": "number",
+            "description": "Transactions per second"
+          }
+        }
+      },
       "DatabaseSummaryResponse": {
         "type": "object",
         "properties": {
-          "connection_id": {
-            "type": "integer",
-            "description": "Connection ID"
-          },
           "databases": {
             "type": "array",
             "description": "Per-database summary data",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/DatabaseSummary"
             }
-          },
-          "time_range": {
-            "type": "string",
-            "description": "Time range used"
           }
         }
       },
@@ -12257,19 +12323,71 @@
           }
         }
       },
+      "PerfAggregate": {
+        "type": "object",
+        "description": "Aggregate metrics across the requested connections; only present when more than one connection was requested",
+        "properties": {
+          "cache_hit_ratio": {
+            "type": "number",
+            "description": "Cache hit ratio percentage weighted by each connection's latest-bucket block deltas, or null when every connection was idle in its latest bucket",
+            "nullable": true
+          },
+          "commits_per_sec": {
+            "type": "number",
+            "description": "Commits per second summed across connections"
+          },
+          "rollback_percent": {
+            "type": "number",
+            "description": "Rollbacks as a percentage of all transactions across connections"
+          }
+        }
+      },
+      "PerfConnectionResponse": {
+        "type": "object",
+        "properties": {
+          "active_connections": {
+            "type": "integer",
+            "description": "Backends connected at the most recent collection, summed across databases"
+          },
+          "cache_hit_ratio": {
+            "$ref": "#/components/schemas/CacheHitRatioData"
+          },
+          "checkpoints": {
+            "type": "object",
+            "description": "Checkpoint activity time series"
+          },
+          "connection_id": {
+            "type": "integer",
+            "description": "Connection ID"
+          },
+          "connection_name": {
+            "type": "string",
+            "description": "Connection name"
+          },
+          "transactions": {
+            "type": "object",
+            "description": "Transaction throughput: commits_per_sec, rollback_percent and a time_series"
+          },
+          "xid_age": {
+            "type": "array",
+            "description": "Transaction ID age per database",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
       "PerfSummaryResponse": {
         "type": "object",
         "properties": {
           "aggregate": {
-            "type": "object",
-            "description": "Aggregate performance metrics",
-            "nullable": true
+            "$ref": "#/components/schemas/PerfAggregate"
           },
           "connections": {
             "type": "array",
             "description": "Per-connection performance data",
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/PerfConnectionResponse"
             }
           },
           "time_range": {

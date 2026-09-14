@@ -12,7 +12,6 @@ package engine
 import (
 	"context"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -448,20 +447,7 @@ const (
 func newDetectAnomaliesEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping detection integration test")
-	}
-
-	// Safety guard: refuse to run destructive DDL on anything other
-	// than the local test database. The integration schema below
-	// drops several tables and the metrics schema; pointing
-	// TEST_AI_WORKBENCH_SERVER at a shared instance must be a hard
-	// fail rather than a silent wipe.
-	assertLocalTestDSN(t, connStr)
+	connStr := requireLocalTestDSN(t, "the detection integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)

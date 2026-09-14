@@ -11,7 +11,6 @@ package engine
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -244,13 +243,7 @@ DROP TABLE IF EXISTS cluster_groups CASCADE;
 func newEngineSpockTestEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping engine spock integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the engine spock integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)

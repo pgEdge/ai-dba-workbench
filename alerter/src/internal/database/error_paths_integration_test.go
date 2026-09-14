@@ -11,7 +11,6 @@ package database
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -26,13 +25,7 @@ import (
 // without standing up a mock of the pgxpool interface.
 func newClosedPoolDatastore(t *testing.T) (*Datastore, func()) {
 	t.Helper()
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping closed-pool error test")
-	}
+	connStr := requireLocalTestDSN(t, "the closed-pool error test")
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {

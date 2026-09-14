@@ -347,7 +347,7 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			query_start TIMESTAMPTZ, state_change TIMESTAMPTZ,
 			wait_event_type TEXT, wait_event TEXT, state TEXT,
 			backend_xid TEXT, backend_xmin TEXT, query TEXT,
-			backend_type TEXT
+			query_id BIGINT, backend_type TEXT
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_database (

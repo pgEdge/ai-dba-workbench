@@ -122,6 +122,33 @@ project adheres to
   one must now be a 64-bit integer; any other value is rejected
   with a `400` instead of matching nothing. (#350)
 
+- Add client attribution to the query drill-down on the object
+  dashboard, which now shows a Last Observed Client value beside
+  the Database User value. The value names the client last seen
+  running the statement, as "hostname (address)" where the
+  monitored server resolved a hostname, and as "local" where
+  that client connected over a Unix-domain socket on the
+  database host. The client is attributed per database and role
+  as well as per query identifier, so a query in one database is
+  never credited to a client that only ever connected to
+  another. The collector's `pg_stat_activity` probe collects the
+  `query_id` column to support this, added to
+  `metrics.pg_stat_activity` by schema migration 10, and the rows
+  returned by
+  `GET /api/v1/metrics/top-queries` gained the nullable
+  `client_addr`, `client_hostname`, and `client_observed_at`
+  fields. The attribution is best effort, because
+  `pg_stat_activity` is sampled periodically: a client is captured
+  only for statements that were in flight when a sample was taken,
+  and the value names the client seen most recently rather than
+  the only one that ran the query; `client_observed_at` is null
+  exactly when no sample ever caught the query in flight, which
+  is the field to test for that case. Nothing is attributed on
+  PostgreSQL releases before 14 or on servers that run with
+  `compute_query_id` off, where the drill-down reads "Not
+  observed", so operators who want the attribution should enable
+  `compute_query_id` on each monitored server. (#384)
+
 ### Changed
 
 - Extend the `-show-group-privileges` CLI command to also display a

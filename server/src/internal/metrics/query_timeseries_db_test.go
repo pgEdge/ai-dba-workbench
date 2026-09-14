@@ -11,6 +11,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -64,6 +65,7 @@ func setupTimeSeriesFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()
 	// counters itself or every _per_sec request is refused as a gauge.
 	registerProbeKindsForTest(t, timeSeriesTestProbe,
 		countersForTest("seq_scan", "idx_scan", "n_tup_ins"))
+	setProbeIntervalForTest(t, pool, timeSeriesTestProbe, 0, 60)
 
 	// indexrelname carries the index dimension so the IndexName filter can be
 	// exercised end-to-end, mirroring the pg_stat_all_indexes probe shape.
@@ -137,15 +139,17 @@ func TestScanSeriesRows_Integration(t *testing.T) {
 	pool, closePool := newLatestRowsTestPool(t)
 	defer closePool()
 
+	gauge := []fillPolicy{fillGauge}
+	none := []fillPolicy{fillNone}
+
 	t.Run("query error surfaces", func(t *testing.T) {
 		// A canceled context fails when the pool tries to acquire a
 		// connection, so pool.Query returns an error before any rows scan.
 		cctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		dataMap := map[seriesKey][]MetricDataPoint{}
-		lastKnown := map[string]float64{}
 		err := scanSeriesRows(cctx, pool, "SELECT now(), 1", nil,
-			[]string{"m"}, 1, dataMap, lastKnown)
+			[]string{"m"}, gauge, time.Minute, 1, dataMap)
 		if err == nil {
 			t.Fatal("expected error from canceled context")
 		}
@@ -155,62 +159,194 @@ func TestScanSeriesRows_Integration(t *testing.T) {
 		// Three result columns but only two scan destinations (bucket time
 		// plus one metric) forces a scan destination mismatch.
 		dataMap := map[seriesKey][]MetricDataPoint{}
-		lastKnown := map[string]float64{}
 		err := scanSeriesRows(context.Background(), pool, "SELECT now(), 1, 2",
-			nil, []string{"only_one"}, 1, dataMap, lastKnown)
+			nil, []string{"only_one"}, gauge, time.Minute, 1, dataMap)
 		if err == nil {
 			t.Fatal("expected scan error for mismatched destination count")
 		}
 	})
 
-	t.Run("LOCF carries prior value across a NULL gap", func(t *testing.T) {
-		// The query yields a real value, then a NULL, then a real value;
-		// scanSeriesRows must carry the prior value forward across the gap
-		// rather than dropping the bucket.
-		dataMap := map[seriesKey][]MetricDataPoint{}
-		lastKnown := map[string]float64{}
-		query := `SELECT b, v FROM (VALUES
-            (now() - interval '2 min', 5::float8),
+	// Seven minute-spaced buckets: a value, then five NULLs, then a value.
+	// With a one-minute interval a gauge may be carried for three buckets.
+	const sevenBuckets = `SELECT b, v FROM (VALUES
+            (now() - interval '6 min', 5::float8),
+            (now() - interval '5 min', NULL::float8),
+            (now() - interval '4 min', NULL::float8),
+            (now() - interval '3 min', NULL::float8),
+            (now() - interval '2 min', NULL::float8),
             (now() - interval '1 min', NULL::float8),
             (now(),                    9::float8)
         ) AS t(b, v) ORDER BY b`
-		err := scanSeriesRows(context.Background(), pool, query, nil,
-			[]string{"m"}, 1, dataMap, lastKnown)
+
+	t.Run("gauge carries for three intervals then goes null", func(t *testing.T) {
+		dataMap := map[seriesKey][]MetricDataPoint{}
+		err := scanSeriesRows(context.Background(), pool, sevenBuckets, nil,
+			[]string{"m"}, gauge, time.Minute, 1, dataMap)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		data := dataMap[seriesKey{metric: "m", connectionID: 1}]
-		if len(data) != 3 {
-			t.Fatalf("expected 3 points (with LOCF fill), got %d", len(data))
-		}
-		if data[0].Value != 5 || data[1].Value != 5 || data[2].Value != 9 {
-			t.Errorf("unexpected LOCF sequence: %v %v %v",
-				data[0].Value, data[1].Value, data[2].Value)
-		}
+		got := valuesOf(dataMap[seriesKey{metric: "m", connectionID: 1}])
+		want := []*float64{f(5), f(5), f(5), f(5), nil, nil, f(9)}
+		assertValues(t, got, want)
 	})
 
-	t.Run("leading NULL with no prior value is skipped", func(t *testing.T) {
-		// A NULL in the very first bucket has no prior value to carry, so it
-		// is dropped; the following real value is retained.
+	t.Run("rate never carries", func(t *testing.T) {
 		dataMap := map[seriesKey][]MetricDataPoint{}
-		lastKnown := map[string]float64{}
+		err := scanSeriesRows(context.Background(), pool, sevenBuckets, nil,
+			[]string{"m"}, none, time.Minute, 1, dataMap)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		got := valuesOf(dataMap[seriesKey{metric: "m", connectionID: 1}])
+		want := []*float64{f(5), nil, nil, nil, nil, nil, f(9)}
+		assertValues(t, got, want)
+	})
+
+	t.Run("leading NULL with no prior value is emitted as null", func(t *testing.T) {
+		// A NULL in the very first bucket has no prior value to carry, so it
+		// is emitted as a null point rather than dropped: every series in a
+		// response holds one point per bucket.
+		dataMap := map[seriesKey][]MetricDataPoint{}
 		query := `SELECT b, v FROM (VALUES
             (now() - interval '1 min', NULL::float8),
             (now(),                    7::float8)
         ) AS t(b, v) ORDER BY b`
 		err := scanSeriesRows(context.Background(), pool, query, nil,
-			[]string{"m"}, 1, dataMap, lastKnown)
+			[]string{"m"}, gauge, time.Minute, 1, dataMap)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		data := dataMap[seriesKey{metric: "m", connectionID: 1}]
-		if len(data) != 1 {
-			t.Fatalf("expected 1 point (leading NULL skipped), got %d", len(data))
-		}
-		if data[0].Value != 7 {
-			t.Errorf("retained point = %v, want 7", data[0].Value)
-		}
+		got := valuesOf(dataMap[seriesKey{metric: "m", connectionID: 1}])
+		assertValues(t, got, []*float64{nil, f(7)})
 	})
+
+	t.Run("non-finite sample is a gap", func(t *testing.T) {
+		// NaN cannot be marshaled to JSON; it is treated exactly like a
+		// NULL bucket, so a gauge carries across it and a rate shows a gap.
+		dataMap := map[seriesKey][]MetricDataPoint{}
+		query := `SELECT b, v FROM (VALUES
+            (now() - interval '1 min', 4::float8),
+            (now(),                    'NaN'::float8)
+        ) AS t(b, v) ORDER BY b`
+		err := scanSeriesRows(context.Background(), pool, query, nil,
+			[]string{"g", "r"}, []fillPolicy{fillGauge, fillNone},
+			time.Minute, 1, dataMap)
+		if err == nil {
+			// Two names but one value column: the scan must fail. Guard
+			// against a silent pass below by asserting the error here.
+			t.Fatal("expected a scan error for the mismatched column count")
+		}
+		dataMap = map[seriesKey][]MetricDataPoint{}
+		query = `SELECT b, v, v FROM (VALUES
+            (now() - interval '1 min', 4::float8),
+            (now(),                    'NaN'::float8)
+        ) AS t(b, v) ORDER BY b`
+		err = scanSeriesRows(context.Background(), pool, query, nil,
+			[]string{"g", "r"}, []fillPolicy{fillGauge, fillNone},
+			time.Minute, 1, dataMap)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		assertValues(t, valuesOf(dataMap[seriesKey{metric: "g", connectionID: 1}]),
+			[]*float64{f(4), f(4)})
+		assertValues(t, valuesOf(dataMap[seriesKey{metric: "r", connectionID: 1}]),
+			[]*float64{f(4), nil})
+	})
+}
+
+// f returns a pointer to v, for building expected point values.
+func f(v float64) *float64 { return &v }
+
+// valuesOf returns the point values of data in order.
+func valuesOf(data []MetricDataPoint) []*float64 {
+	out := make([]*float64, len(data))
+	for i, p := range data {
+		out[i] = p.Value
+	}
+	return out
+}
+
+// assertValues fails the test unless got and want hold the same values,
+// nil for nil, at every position.
+func assertValues(t *testing.T, got, want []*float64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d points, want %d: %s", len(got), len(want), fmtValues(got))
+	}
+	for i := range want {
+		switch {
+		case got[i] == nil && want[i] == nil:
+		case got[i] == nil || want[i] == nil || *got[i] != *want[i]:
+			t.Errorf("point[%d] = %s, want %s (all: %s)",
+				i, fmtValue(got[i]), fmtValue(want[i]), fmtValues(got))
+		}
+	}
+}
+
+func fmtValue(v *float64) string {
+	if v == nil {
+		return "null"
+	}
+	return fmt.Sprintf("%v", *v)
+}
+
+func fmtValues(vs []*float64) string {
+	parts := make([]string, len(vs))
+	for i, v := range vs {
+		parts[i] = fmtValue(v)
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
+// val returns the value of p, failing the test when the point is null.
+func val(t *testing.T, s MetricSeries, p MetricDataPoint) float64 {
+	t.Helper()
+	if p.Value == nil {
+		t.Fatalf("series %q point at %s is null, want a value", s.Metric, p.Time)
+	}
+	return *p.Value
+}
+
+// nonNull returns the non-null points of s in order.
+func nonNull(s MetricSeries) []MetricDataPoint {
+	var out []MetricDataPoint
+	for _, p := range s.Data {
+		if p.Value != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// assertAllNull fails the test unless s holds at least one point and every
+// point is null: the shape of a series whose query matched no rows.
+func assertAllNull(t *testing.T, s MetricSeries) {
+	t.Helper()
+	if len(s.Data) == 0 {
+		t.Fatalf("series %q has no points; every bucket should be emitted", s.Metric)
+	}
+	if got := nonNull(s); len(got) != 0 {
+		t.Errorf("series %q has %d non-null points, want none: %s",
+			s.Metric, len(got), fmtValues(valuesOf(got)))
+	}
+}
+
+// sumValues returns the sum of the non-null point values of s, failing the
+// test on a negative value, along with the non-zero values in order.
+func sumValues(t *testing.T, s MetricSeries) (float64, []float64) {
+	t.Helper()
+	var total float64
+	var nonZero []float64
+	for _, p := range nonNull(s) {
+		if *p.Value < 0 {
+			t.Errorf("%s point at %s = %v, want non-negative", s.Metric, p.Time, *p.Value)
+		}
+		total += *p.Value
+		if *p.Value != 0 {
+			nonZero = append(nonZero, *p.Value)
+		}
+	}
+	return total, nonZero
 }
 
 // seriesByMetric returns the first series whose Metric matches name, failing
@@ -252,10 +388,15 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 			t.Fatal("expected at least one data point for the raw column")
 		}
 		// n_live_tup is a constant 90 across all samples; averaging or
-		// carrying forward must preserve that value.
-		for _, p := range s.Data {
-			if p.Value != 90 {
-				t.Errorf("raw n_live_tup point = %v, want 90", p.Value)
+		// carrying forward must preserve that value. The buckets before
+		// the first sample and beyond the carry bound are null.
+		points := nonNull(s)
+		if len(points) == 0 {
+			t.Fatal("expected at least one non-null raw point")
+		}
+		for _, p := range points {
+			if *p.Value != 90 {
+				t.Errorf("raw n_live_tup point = %v, want 90", *p.Value)
 			}
 		}
 	})
@@ -281,11 +422,11 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// Rates must never be negative and at least one must reflect the
 		// observed 1.0-per-second delta.
 		sawExpected := false
-		for _, p := range s.Data {
-			if p.Value < 0 {
-				t.Errorf("rate point = %v, want non-negative", p.Value)
+		for _, p := range nonNull(s) {
+			if *p.Value < 0 {
+				t.Errorf("rate point = %v, want non-negative", *p.Value)
 			}
-			if p.Value >= 0.9 && p.Value <= 1.1 {
+			if *p.Value >= 0.9 && *p.Value <= 1.1 {
 				sawExpected = true
 			}
 		}
@@ -306,11 +447,11 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 			t.Fatal("expected at least one rate data point")
 		}
 		sawExpected := false
-		for _, p := range s.Data {
-			if p.Value < 0 {
-				t.Errorf("rate point = %v, want non-negative", p.Value)
+		for _, p := range nonNull(s) {
+			if *p.Value < 0 {
+				t.Errorf("rate point = %v, want non-negative", *p.Value)
 			}
-			if p.Value >= 0.9 && p.Value <= 1.1 {
+			if *p.Value >= 0.9 && *p.Value <= 1.1 {
 				sawExpected = true
 			}
 		}
@@ -338,11 +479,11 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		}
 		// 10 dead / (90 live + 10 dead) * 100 = 10 percent, on a 0-100 scale.
 		sawExpected := false
-		for _, p := range s.Data {
-			if p.Value < 0 || p.Value > 100 {
-				t.Errorf("ratio point = %v, want within [0,100]", p.Value)
+		for _, p := range nonNull(s) {
+			if *p.Value < 0 || *p.Value > 100 {
+				t.Errorf("ratio point = %v, want within [0,100]", *p.Value)
 			}
-			if p.Value >= 9.0 && p.Value <= 11.0 {
+			if *p.Value >= 9.0 && *p.Value <= 11.0 {
 				sawExpected = true
 			}
 		}
@@ -517,11 +658,11 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 			t.Fatal("expected rate data for the matching index name")
 		}
 		sawExpected := false
-		for _, p := range s.Data {
-			if p.Value < 0 {
-				t.Errorf("rate point = %v, want non-negative", p.Value)
+		for _, p := range nonNull(s) {
+			if *p.Value < 0 {
+				t.Errorf("rate point = %v, want non-negative", *p.Value)
 			}
-			if p.Value >= 0.9 && p.Value <= 1.1 {
+			if *p.Value >= 0.9 && *p.Value <= 1.1 {
 				sawExpected = true
 			}
 		}
@@ -531,9 +672,10 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("index_name filter narrows out non-matching indexes", func(t *testing.T) {
-		// A different index name matches no rows, so the series is present but
-		// empty; this is what previously happened for every index because the
-		// filter was silently dropped and the wrong dimension was queried.
+		// A different index name matches no rows, so the series is present
+		// with every bucket null; this is what previously happened for
+		// every index because the filter was silently dropped and the
+		// wrong dimension was queried.
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(),
 			MetricFilters{IndexName: "some_other_index"},
@@ -541,11 +683,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		s := seriesByMetric(t, series, "idx_scan_per_sec")
-		if len(s.Data) != 0 {
-			t.Errorf("expected no data for a non-matching index, got %d points",
-				len(s.Data))
-		}
+		assertAllNull(t, seriesByMetric(t, series, "idx_scan_per_sec"))
 	})
 
 	t.Run("first rate bucket includes the rise from before the window", func(t *testing.T) {
@@ -570,15 +708,15 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 			t.Errorf("first point at %s, want the window start %s",
 				first.Time, window.Start)
 		}
-		if first.Value < 0.9 || first.Value > 1.1 {
-			t.Errorf("first rate = %v, want near 1.0/sec", first.Value)
+		if v := val(t, s, first); v < 0.9 || v > 1.1 {
+			t.Errorf("first rate = %v, want near 1.0/sec", v)
 		}
 	})
 
-	t.Run("no sample before the window leaves the first bucket empty", func(t *testing.T) {
+	t.Run("no sample before the window leaves the first bucket null", func(t *testing.T) {
 		// With the window opening on the earliest sample there is nothing
 		// earlier to borrow, so that sample still has no LAG and its bucket
-		// is dropped by LOCF: the behavior is unchanged from before the fix.
+		// is a null point; the second bucket carries the first real rate.
 		window := windowSince(base, 5)
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
@@ -587,17 +725,20 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		s := seriesByMetric(t, series, "seq_scan_per_sec")
-		if len(s.Data) == 0 {
+		if len(s.Data) < 2 {
 			t.Fatal("expected rate data points")
 		}
-		first := s.Data[0]
-		wantFirst := window.Start.Add(time.Minute)
-		if !first.Time.Equal(wantFirst) {
-			t.Errorf("first point at %s, want %s (the second sample)",
-				first.Time, wantFirst)
+		if !s.Data[0].Time.Equal(window.Start) || s.Data[0].Value != nil {
+			t.Errorf("first point = %s %s, want a null at the window start",
+				s.Data[0].Time, fmtValue(s.Data[0].Value))
 		}
-		if first.Value < 0.9 || first.Value > 1.1 {
-			t.Errorf("first rate = %v, want near 1.0/sec", first.Value)
+		second := s.Data[1]
+		if !second.Time.Equal(window.Start.Add(time.Minute)) {
+			t.Errorf("second point at %s, want the second sample's minute",
+				second.Time)
+		}
+		if v := val(t, s, second); v < 0.9 || v > 1.1 {
+			t.Errorf("second rate = %v, want near 1.0/sec", v)
 		}
 	})
 
@@ -611,16 +752,12 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		s := seriesByMetric(t, series, "idx_scan_per_sec")
-		if len(s.Data) != 0 {
-			t.Errorf("expected no data for a non-matching index, got %d points",
-				len(s.Data))
-		}
+		assertAllNull(t, seriesByMetric(t, series, "idx_scan_per_sec"))
 	})
 
 	t.Run("raw column request honors index_name filter", func(t *testing.T) {
 		// The raw-column path shares metricQueryBase, so IndexName must scope
-		// it too; a non-matching index yields an empty raw series.
+		// it too; a non-matching index yields an all-null raw series.
 		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(),
 			MetricFilters{IndexName: "no_such_index"},
@@ -628,11 +765,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		s := seriesByMetric(t, series, "idx_scan")
-		if len(s.Data) != 0 {
-			t.Errorf("expected no raw data for a non-matching index, got %d points",
-				len(s.Data))
-		}
+		assertAllNull(t, seriesByMetric(t, series, "idx_scan"))
 	})
 }
 
@@ -665,7 +798,15 @@ func setupDeltaFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, deltaTestProbe)
-	registerProbeKindsForTest(t, deltaTestProbe, countersForTest("seq_scan"))
+	// The registry names a reset marker the fixture table does not carry,
+	// as a server sees against a collector schema predating the column:
+	// the builder must drop it silently and fall back to the negative
+	// delta guard, which the reset below then exercises.
+	registerProbeKindsForTest(t, deltaTestProbe, probeRegistryEntry{
+		kinds:       columnKinds(counters("seq_scan")),
+		resetColumn: fixedReset("stats_reset"),
+	})
+	setProbeIntervalForTest(t, pool, deltaTestProbe, 0, 60)
 
 	ddl := `CREATE TABLE metrics."` + deltaTestProbe + `" (
         connection_id integer NOT NULL,
@@ -730,17 +871,7 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 				len(s.Data))
 		}
 
-		var total float64
-		var nonZero []float64
-		for _, p := range s.Data {
-			if p.Value < 0 {
-				t.Errorf("delta point = %v, want non-negative", p.Value)
-			}
-			total += p.Value
-			if p.Value != 0 {
-				nonZero = append(nonZero, p.Value)
-			}
-		}
+		total, nonZero := sumValues(t, s)
 
 		// 10 + 20 + 70 + 20; the first sample and the reset add nothing.
 		if total != 120 {
@@ -759,10 +890,15 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 		}
 
 		// The sample-less minute sits between the 20 and the 70, so at least
-		// one zero-valued bucket must separate them.
-		zeros := len(s.Data) - len(nonZero)
+		// one zero-valued bucket must separate them, and no bucket is null:
+		// the two-minute spacing across that minute is within the gap bound.
+		zeros := len(nonNull(s)) - len(nonZero)
 		if zeros == 0 {
 			t.Error("expected zero-filled buckets between the samples")
+		}
+		if len(nonNull(s)) != len(s.Data) {
+			t.Errorf("expected no null delta buckets, got %d",
+				len(s.Data)-len(nonNull(s)))
 		}
 	})
 
@@ -783,16 +919,16 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 			}
 		}
 		d := seriesByMetric(t, series, "seq_scan_delta")
-		var total float64
-		for _, p := range d.Data {
-			total += p.Value
-		}
-		if total != 120 {
+		if total, _ := sumValues(t, d); total != 120 {
 			t.Errorf("summed deltas alongside per_sec = %v, want 120", total)
 		}
 		r := seriesByMetric(t, series, "seq_scan_per_sec")
-		if len(r.Data) == 0 {
+		if len(nonNull(r)) == 0 {
 			t.Error("expected per-second rate data alongside the delta")
+		}
+		if len(r.Data) != len(d.Data) {
+			t.Errorf("rate has %d points, delta %d; want one point per bucket each",
+				len(r.Data), len(d.Data))
 		}
 	})
 
@@ -817,22 +953,12 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 			t.Errorf("first point at %s, want the window start %s",
 				s.Data[0].Time, window.Start)
 		}
-		if s.Data[0].Value != 20 {
+		if v := val(t, s, s.Data[0]); v != 20 {
 			t.Errorf("first bucket delta = %v, want 20 (the rise since the "+
-				"sample before the window)", s.Data[0].Value)
+				"sample before the window)", v)
 		}
 
-		var total float64
-		var nonZero []float64
-		for _, p := range s.Data {
-			if p.Value < 0 {
-				t.Errorf("delta point = %v, want non-negative", p.Value)
-			}
-			total += p.Value
-			if p.Value != 0 {
-				nonZero = append(nonZero, p.Value)
-			}
-		}
+		total, nonZero := sumValues(t, s)
 		if total != 110 {
 			t.Errorf("summed deltas = %v, want 110 (%v)", total, nonZero)
 		}
@@ -864,18 +990,10 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 		if len(s.Data) == 0 {
 			t.Fatal("expected delta data points")
 		}
-		if s.Data[0].Value != 0 {
-			t.Errorf("first bucket delta = %v, want 0 (no earlier sample)",
-				s.Data[0].Value)
+		if v := val(t, s, s.Data[0]); v != 0 {
+			t.Errorf("first bucket delta = %v, want 0 (no earlier sample)", v)
 		}
-		var total float64
-		var nonZero []float64
-		for _, p := range s.Data {
-			total += p.Value
-			if p.Value != 0 {
-				nonZero = append(nonZero, p.Value)
-			}
-		}
+		total, nonZero := sumValues(t, s)
 		if total != 120 {
 			t.Errorf("summed deltas = %v, want 120 (%v)", total, nonZero)
 		}
@@ -934,7 +1052,14 @@ func setupNetworkFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 	}
 
 	dropTable(ctx, pool, networkTestProbe)
-	registerProbeKindsForTest(t, networkTestProbe, countersForTest("tx_bytes"))
+	// The real probe excludes the loopback interface; the fixture carries
+	// the same exclusion and a lo row on every sample so both the raw and
+	// the derived path can be shown to ignore it.
+	registerProbeKindsForTest(t, networkTestProbe, probeRegistryEntry{
+		kinds:           columnKinds(counters("tx_bytes")),
+		excludeEntities: ProbeEntityExclusion("pg_sys_network_info"),
+	})
+	setProbeIntervalForTest(t, pool, networkTestProbe, 0, 60)
 
 	ddl := `CREATE TABLE metrics."` + networkTestProbe + `" (
         connection_id  integer NOT NULL,
@@ -969,6 +1094,15 @@ func setupNetworkFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 		{0, "eth0", 9600},
 		{0, "eth2", 500060},
 	}
+	// Loopback traffic on every sample, far larger than the real
+	// interfaces so that any leak into a total is unmistakable.
+	for i := 0; i <= 6; i++ {
+		samples = append(samples, struct {
+			offset  time.Duration
+			iface   string
+			txBytes int64
+		}{-time.Duration(6-i) * time.Minute, "lo", int64(1000000 * (i + 1))})
+	}
 
 	insert := `INSERT INTO metrics."` + networkTestProbe + `"
         (connection_id, collected_at, interface_name, ip_address, tx_bytes)
@@ -986,16 +1120,33 @@ func setupNetworkFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) {
 }
 
 // pointAt returns the value of the point at exactly ts, failing the test
-// when the series has no such point.
+// when the series has no such point or the point is null.
 func pointAt(t *testing.T, s MetricSeries, ts time.Time) float64 {
+	t.Helper()
+	p := rawPointAt(t, s, ts)
+	return val(t, s, p)
+}
+
+// rawPointAt returns the point at exactly ts, null or not, failing the test
+// when the series has no such point.
+func rawPointAt(t *testing.T, s MetricSeries, ts time.Time) MetricDataPoint {
 	t.Helper()
 	for _, p := range s.Data {
 		if p.Time.Equal(ts) {
-			return p.Value
+			return p
 		}
 	}
 	t.Fatalf("series %q has no point at %s (%d points)", s.Metric, ts, len(s.Data))
-	return 0
+	return MetricDataPoint{}
+}
+
+// assertNullAt fails the test unless the point of s at ts exists and is
+// null.
+func assertNullAt(t *testing.T, s MetricSeries, ts time.Time) {
+	t.Helper()
+	if p := rawPointAt(t, s, ts); p.Value != nil {
+		t.Errorf("%s at %s = %v, want null", s.Metric, ts, *p.Value)
+	}
 }
 
 func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
@@ -1042,16 +1193,12 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 				t.Errorf("delta at %v = %v, want %v", offset, got, v)
 			}
 		}
-		var total float64
-		for _, p := range s.Data {
-			if p.Value < 0 {
-				t.Errorf("delta point = %v, want non-negative", p.Value)
-			}
-			if p.Value > 1000 {
+		total, nonZero := sumValues(t, s)
+		for _, v := range nonZero {
+			if v > 1000 {
 				t.Errorf("delta point = %v: a new interface's lifetime "+
-					"counter folded into one interval", p.Value)
+					"counter folded into one interval, or loopback leaked", v)
 			}
-			total += p.Value
 		}
 		if total != 4260 {
 			t.Errorf("summed deltas = %v, want 4260", total)
@@ -1084,14 +1231,34 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 				t.Errorf("rate at %v = %v, want %v", offset, got, v)
 			}
 		}
-		for _, p := range s.Data {
-			if p.Value < 0 || p.Value > 20 {
-				t.Errorf("rate point = %v, want within [0, 20]", p.Value)
+		for _, p := range nonNull(s) {
+			if *p.Value < 0 || *p.Value > 20 {
+				t.Errorf("rate point = %v, want within [0, 20]", *p.Value)
 			}
 		}
 	})
 
-	t.Run("connection with no samples yields no points", func(t *testing.T) {
+	t.Run("loopback rows are ignored by the raw path", func(t *testing.T) {
+		// Summing tx_bytes across interfaces at -2 min, when only eth0 and
+		// lo have rows, must give eth0's 8400 alone.
+		series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+			[]int{1}, windowSince(base, 60), MetricFilters{}, 60, "sum",
+			[]string{"tx_bytes"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := seriesByMetric(t, series, "tx_bytes")
+		if got := pointAt(t, s, base.Add(-2*time.Minute)); got != 8400 {
+			t.Errorf("raw tx_bytes sum at -2 min = %v, want 8400 (eth0 only)", got)
+		}
+		for _, p := range nonNull(s) {
+			if *p.Value >= 1000000 {
+				t.Errorf("raw point at %s = %v: loopback leaked in", p.Time, *p.Value)
+			}
+		}
+	})
+
+	t.Run("connection with no samples yields only null points", func(t *testing.T) {
 		// A disabled, never-run or failing probe must render as no data,
 		// not as a confident flat zero: the delta's zero fill is gated on
 		// the window holding at least one sample.
@@ -1102,15 +1269,11 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: unexpected error: %v", metric, err)
 			}
-			s := seriesByMetric(t, series, metric)
-			if len(s.Data) != 0 {
-				t.Errorf("%s: got %d points for a connection with no rows, want 0",
-					metric, len(s.Data))
-			}
+			assertAllNull(t, seriesByMetric(t, series, metric))
 		}
 	})
 
-	t.Run("window with no samples yields no points", func(t *testing.T) {
+	t.Run("window with no samples yields only null points", func(t *testing.T) {
 		// The same connection, but a window that closes before its first
 		// sample: no in-window sample, so no zero fill either.
 		window := TimeWindow{
@@ -1123,9 +1286,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if s := seriesByMetric(t, series, "tx_bytes_delta"); len(s.Data) != 0 {
-			t.Errorf("got %d points for a sample-less window, want 0", len(s.Data))
-		}
+		assertAllNull(t, seriesByMetric(t, series, "tx_bytes_delta"))
 	})
 
 	t.Run("a single in-window sample still zero-fills the window", func(t *testing.T) {
@@ -1141,13 +1302,15 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		// The one-minute window clamps to a single 60-second bucket, so
+		// generate_series yields the bucket at the start and one at the end.
 		s := seriesByMetric(t, series, "tx_bytes_delta")
-		if len(s.Data) < 50 {
+		if len(s.Data) < 2 {
 			t.Errorf("got %d points, want the whole window zero-filled", len(s.Data))
 		}
 		for _, p := range s.Data {
-			if p.Value != 0 {
-				t.Errorf("point at %s = %v, want 0", p.Time, p.Value)
+			if v := val(t, s, p); v != 0 {
+				t.Errorf("point at %s = %v, want 0", p.Time, v)
 			}
 		}
 	})
@@ -1180,6 +1343,12 @@ func setupLookbackFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) 
 
 	dropTable(ctx, pool, lookbackTestProbe)
 	registerProbeKindsForTest(t, lookbackTestProbe, countersForTest("wal_records"))
+	// Connections 1 to 3 run the probe every minute; 4 and 5 are hourly,
+	// so their 2-hour windows keep two buckets and a predecessor up to
+	// three hours back is within the gap bound.
+	setProbeIntervalForTest(t, pool, lookbackTestProbe, 0, 60)
+	setProbeIntervalForTest(t, pool, lookbackTestProbe, 4, 3600)
+	setProbeIntervalForTest(t, pool, lookbackTestProbe, 5, 3600)
 
 	ddl := `CREATE TABLE metrics."` + lookbackTestProbe + `" (
         connection_id integer NOT NULL,
@@ -1242,16 +1411,8 @@ func setupLookbackFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func()) 
 // the test on any negative value.
 func nonZeroValues(t *testing.T, s MetricSeries) []float64 {
 	t.Helper()
-	var out []float64
-	for _, p := range s.Data {
-		if p.Value < 0 {
-			t.Errorf("%s point at %s = %v, want non-negative", s.Metric, p.Time, p.Value)
-		}
-		if p.Value != 0 {
-			out = append(out, p.Value)
-		}
-	}
-	return out
+	_, nonZero := sumValues(t, s)
+	return nonZero
 }
 
 func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
@@ -1289,14 +1450,13 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		if got := nonZeroValues(t, d); len(got) != 2 || got[0] != 20 || got[1] != 20 {
 			t.Errorf("non-zero deltas = %v, want [20 20]", got)
 		}
-		// The rate has no valid value in the first bucket, so its first
-		// point is the -3 min bucket rather than a carried-forward reset.
+		// The rate has no valid value in the first bucket, so that point is
+		// null rather than a carried-forward reset; the -3 min bucket
+		// carries the first real rate.
 		r := seriesByMetric(t, series, "wal_records_per_sec")
-		if len(r.Data) == 0 || !r.Data[0].Time.Equal(base.Add(-3*time.Minute)) {
-			t.Fatalf("first rate point = %+v, want the -3 min bucket", r.Data)
-		}
-		if r.Data[0].Value != 20.0/60.0 {
-			t.Errorf("first rate = %v, want %v", r.Data[0].Value, 20.0/60.0)
+		assertNullAt(t, r, base.Add(-4*time.Minute))
+		if got := pointAt(t, r, base.Add(-3*time.Minute)); got != 20.0/60.0 {
+			t.Errorf("first rate = %v, want %v", got, 20.0/60.0)
 		}
 	})
 
@@ -1319,22 +1479,24 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 			t.Errorf("non-zero deltas = %v, want [60 60 60]", got)
 		}
 		r := seriesByMetric(t, series, "wal_records_per_sec")
-		if len(r.Data) == 0 || !r.Data[0].Time.Equal(base.Add(-2*time.Minute)) {
-			t.Fatalf("first rate point = %+v, want the -2 min bucket", r.Data)
-		}
-		for _, p := range r.Data {
-			if p.Value != 1 {
-				t.Errorf("rate at %s = %v, want 1", p.Time, p.Value)
+		assertNullAt(t, r, base.Add(-3*time.Minute))
+		for _, p := range nonNull(r) {
+			if *p.Value != 1 {
+				t.Errorf("rate at %s = %v, want 1", p.Time, *p.Value)
 			}
+		}
+		if len(nonNull(r)) != 3 {
+			t.Errorf("got %d rate values, want 3", len(nonNull(r)))
 		}
 	})
 
-	t.Run("predecessor inside the floor is borrowed", func(t *testing.T) {
+	t.Run("predecessor inside the floor but beyond the gap bound is a gap", func(t *testing.T) {
 		// Same window, but the predecessor is 17 minutes before the start:
-		// well past one probe interval yet inside the floor, so the first
-		// bucket carries the 100 rise and the rate divides it by the true
-		// 17-minute spacing rather than presenting it as a 60s bucket's
-		// worth.
+		// inside the 30-minute floor, so it is borrowed, yet 17 minutes is
+		// more than three one-minute probe intervals, so the interval is a
+		// collection gap. The first bucket is null for both the delta
+		// (a gap, not a zero) and the rate, rather than 100 spread over the
+		// outage; the "not borrowed" case above reads 0 instead.
 		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
 			[]int{3}, windowSince(base, 3), MetricFilters{}, 3, "avg",
 			[]string{"wal_records_delta", "wal_records_per_sec"})
@@ -1342,13 +1504,14 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		d := seriesByMetric(t, series, "wal_records_delta")
-		if got := pointAt(t, d, base.Add(-3*time.Minute)); got != 100 {
-			t.Errorf("first bucket delta = %v, want 100 (borrowed predecessor)", got)
+		assertNullAt(t, d, base.Add(-3*time.Minute))
+		if got := nonZeroValues(t, d); len(got) != 3 || got[0] != 60 || got[1] != 60 || got[2] != 60 {
+			t.Errorf("non-zero deltas = %v, want [60 60 60]", got)
 		}
 		r := seriesByMetric(t, series, "wal_records_per_sec")
-		want := 100.0 / (17 * 60)
-		if got := pointAt(t, r, base.Add(-3*time.Minute)); got != want {
-			t.Errorf("first bucket rate = %v, want %v", got, want)
+		assertNullAt(t, r, base.Add(-3*time.Minute))
+		if got := pointAt(t, r, base.Add(-2*time.Minute)); got != 1 {
+			t.Errorf("rate at -2 min = %v, want 1", got)
 		}
 	})
 
@@ -1374,6 +1537,9 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 	})
 
 	t.Run("predecessor inside three wide buckets is borrowed", func(t *testing.T) {
+		// Connection 5 runs the probe hourly, so a predecessor two and a
+		// half hours back is within the gap bound as well as the lookback
+		// bound, and the first bucket carries its 600 rise.
 		window := TimeWindow{Start: base.Add(-2 * time.Hour), End: base}
 		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
 			[]int{5}, window, MetricFilters{}, 2, "avg",
@@ -1436,6 +1602,7 @@ func setupTimeShareFixture(t *testing.T, pool *pgxpool.Pool) (time.Time, func())
 	}
 
 	dropTable(ctx, pool, timeShareTestProbe)
+	setProbeIntervalForTest(t, pool, timeShareTestProbe, 0, 60)
 	registerProbeKindsForTest(t, timeShareTestProbe, probeRegistryEntry{
 		kinds: columnKinds(
 			counters("xact_commit"),
@@ -1520,7 +1687,21 @@ func TestQueryTimeSeriesTimeShare_Integration(t *testing.T) {
 		}
 
 		// The window opens on the earliest sample, which then has no LAG
-		// and no derived value; the remaining four minutes each carry one.
+		// and no derived value (a null rate, a zero delta); the remaining
+		// four minutes each carry one, and every series has one point per
+		// bucket.
+		assertNullAt(t, pct, base.Add(-4*time.Minute))
+		assertNullAt(t, sess, base.Add(-4*time.Minute))
+		assertNullAt(t, rate, base.Add(-4*time.Minute))
+		if got := pointAt(t, delta, base.Add(-4*time.Minute)); got != 0 {
+			t.Errorf("blk_read_time_delta at the first sample = %v, want 0", got)
+		}
+		for _, s := range series {
+			if len(s.Data) != len(pct.Data) {
+				t.Errorf("%s has %d points, %s has %d; want identical lengths",
+					s.Metric, len(s.Data), pct.Metric, len(pct.Data))
+			}
+		}
 		for i := 1; i <= 4; i++ {
 			ts := base.Add(-time.Duration(4-i) * time.Minute)
 			if got := pointAt(t, pct, ts); math.Abs(got-50) > 1e-9 {

@@ -99,10 +99,42 @@ var latestRowInternalColumns = map[string]bool{
 }
 
 // MetricDataPoint represents a single time-value pair in a metric series.
+// Value is nil for a bucket with no value: a gap in the data, a rejected
+// counter interval, or a gauge whose last observation is too old to carry
+// forward. It marshals as JSON null so every series in a response can hold
+// one point per bucket and the client can render the gap as a break.
 type MetricDataPoint struct {
 	Time  time.Time `json:"time"`
-	Value float64   `json:"value"`
+	Value *float64  `json:"value"`
 }
+
+// MaxElapsedIntervals bounds the sample spacing a counter-derived metric
+// accepts, in probe collection intervals: an interval between consecutive
+// samples longer than MaxElapsedIntervals times the probe's interval is a
+// collection gap, and its rate or delta is NULL rather than an average
+// over the outage.
+const MaxElapsedIntervals = 3
+
+// MaxCarryIntervals bounds how long a gauge's last observation is carried
+// forward across sample-less buckets, in probe collection intervals. Beyond
+// it the buckets are NULL, so a probe that stopped reporting shows a break
+// rather than a flat line of its final reading.
+const MaxCarryIntervals = 3
+
+// fillPolicy selects how scanSeriesRows treats a bucket with no value.
+type fillPolicy int
+
+const (
+	// fillGauge carries the last observation forward whilst it is at most
+	// MaxCarryIntervals probe intervals old. Raw columns and the dead-tuple
+	// ratio read absolute values, so the last reading is still the best
+	// estimate for a short while.
+	fillGauge fillPolicy = iota
+	// fillNone never carries: a rate, delta, time share or session average
+	// describes one interval only, and repeating it would report events
+	// that did not happen.
+	fillNone
+)
 
 // MetricSeries represents a named series of metric data points.
 type MetricSeries struct {
@@ -554,7 +586,7 @@ func BuildMetricsQuery(
 	}
 
 	whereSQL, queryArgs := metricQueryBase(
-		connectionID, timeStart, timeEnd, bucketWidth, filters)
+		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
 
 	query := fmt.Sprintf(`
         WITH data_buckets AS (
@@ -689,19 +721,24 @@ func (p metricQueryParts) lookbackWhere(probeName string) string {
 // connection ID, the start time, the end time, and then any filter values.
 // The WHERE clause references $2, $3, $4 and any filter placeholders from $5.
 func metricQueryBase(
+	probeName string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	bucketWidth time.Duration,
 	filters MetricFilters,
 ) (string, []any) {
 	parts := metricQueryClauses(
-		connectionID, timeStart, timeEnd, bucketWidth, filters)
+		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
 	return parts.where(), parts.args
 }
 
 // metricQueryClauses builds the decomposed WHERE clause pieces and the
-// leading query arguments shared by every metrics query builder.
+// leading query arguments shared by every metrics query builder. The probe
+// name selects the registry's entity exclusion for the probe, if any, which
+// joins the filter clauses so that the raw, derived and lookback queries all
+// leave the excluded entities out.
 func metricQueryClauses(
+	probeName string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	bucketWidth time.Duration,
@@ -758,7 +795,16 @@ func metricQueryClauses(
 			fmt.Sprintf("queryid = $%d", argNum))
 		parts.args = append(parts.args, *filters.QueryID)
 		// No argNum++ here: QueryID is the last filter. A new filter
-		// added below must add argNum++ above first.
+		// added below must add argNum++ above first. Note that
+		// BuildDerivedMetricsQuery appends one more argument after the
+		// filter values, at position len(parts.args)+1.
+	}
+
+	// The registry's exclusion is a fixed fragment with no bound value
+	// (for example interface_name NOT IN ('lo', 'lo0')), so it adds no
+	// argument and leaves the $N layout untouched.
+	if excl := ProbeEntityExclusion(probeName); excl != "" {
+		parts.filterClauses = append(parts.filterClauses, excl)
 	}
 
 	return parts
@@ -859,17 +905,34 @@ func ratioTupleExpr(aggregation, column string) string {
 // bucket's value forward (which the caller's LOCF fill would do for a
 // NULL) would double count them. That zero fill is gated on the window
 // holding at least one sample at all, so a connection whose probe has
-// never run, is disabled or is failing yields no points and the dashboard
-// shows its no-data state instead of a confident flat zero.
+// never run, is disabled or is failing yields every bucket NULL and the
+// dashboard shows its no-data state instead of a confident flat zero.
+//
+// Two guards apply to every counter-derived sample (issue #402). A sample
+// whose spacing from its predecessor exceeds maxElapsed (the caller passes
+// MaxElapsedIntervals probe intervals) is a collection gap: its rate and
+// its delta are NULL, and a bucket holding only such samples reports NULL
+// rather than 0 through the gap_<i> flag, so the chart shows a break where
+// the collector was down instead of averaging the outage into one bar.
+// And when the registry names a stats_reset marker for the base column
+// (ResetColumnFor) and allCols shows the table has it, the marker is
+// carried alongside each counter and a change in it between consecutive
+// samples invalidates the interval: the rate, time share and session
+// average become NULL and the delta contributes 0, exactly as a negative
+// delta does. A marker absent from allCols (a collector schema predating
+// the column) is dropped silently, so the negative-delta guard alone
+// applies as before.
 func BuildDerivedMetricsQuery(
 	probeName string,
 	derived []DerivedMetric,
 	entityCols []string,
+	allCols []string,
 	connectionID int,
 	timeStart, timeEnd time.Time,
 	buckets int,
 	aggregation string,
 	filters MetricFilters,
+	maxElapsed time.Duration,
 ) (string, []any, error) {
 	if len(derived) == 0 {
 		return "", nil, fmt.Errorf("no derived metrics requested")
@@ -880,10 +943,6 @@ func BuildDerivedMetricsQuery(
 	if bucketWidth < time.Second {
 		bucketWidth = time.Second
 	}
-
-	parts := metricQueryClauses(
-		connectionID, timeStart, timeEnd, bucketWidth, filters)
-	whereSQL, queryArgs := parts.where(), parts.args
 
 	// counters holds every metric derived from the sample-to-sample change
 	// of a cumulative counter column, whichever kind it is; they share the
@@ -900,6 +959,24 @@ func BuildDerivedMetricsQuery(
 			return "", nil, fmt.Errorf(
 				"unknown derived metric kind for %q", d.OutputName)
 		}
+	}
+
+	parts := metricQueryClauses(
+		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
+	whereSQL := parts.where()
+	queryArgs := append([]any{}, parts.args...)
+	// The gap bound is the one argument after the filter values; the
+	// filter placeholders end at len(parts.args), so it takes the next. It
+	// is only bound when a counter-derived metric references it, since
+	// PostgreSQL rejects an argument no placeholder uses.
+	maxElapsedArg := fmt.Sprintf("$%d::float8", len(parts.args)+1)
+	if len(counters) > 0 {
+		queryArgs = append(queryArgs, maxElapsed.Seconds())
+	}
+
+	hasColumn := make(map[string]bool, len(allCols))
+	for _, c := range allCols {
+		hasColumn[c] = true
 	}
 
 	var ctes []string
@@ -934,34 +1011,67 @@ func BuildDerivedMetricsQuery(
 				fmt.Sprintf(
 					"LAG(SUM(%s)) OVER (%sORDER BY collected_at) AS prev_%d",
 					qb, partition, i))
+
+			// The reset guard: a stats_reset marker that differs between
+			// a sample and its predecessor means the counter was reset in
+			// between, even when it happens to read higher than before.
+			// IS NOT DISTINCT FROM keeps an interval whose marker is NULL
+			// on both sides (pg_stat_wal on PostgreSQL 13, say) valid.
+			// The marker is only referenced when the table has it, so a
+			// collector schema without the column still works.
+			resetGuard := ""
+			if resetCol := ResetColumnFor(probeName, d.BaseColumn); resetCol != "" &&
+				hasColumn[resetCol] {
+				qr := QuoteIdentifier(resetCol)
+				innerCols = append(innerCols,
+					fmt.Sprintf("MAX(%s) AS reset_%d", qr, i),
+					fmt.Sprintf(
+						"LAG(MAX(%s)) OVER (%sORDER BY collected_at) AS prev_reset_%d",
+						qr, partition, i))
+				resetGuard = fmt.Sprintf(
+					" AND reset_%d IS NOT DISTINCT FROM prev_reset_%d", i, i)
+			}
+
 			if d.Kind == DerivedDelta {
 				// A missing LAG (only the very first sample the probe ever
 				// recorded for this connection and filter set, since the
-				// window borrows one earlier sample) and a negative delta (a
-				// counter reset from pg_stat_reset() or a server restart)
-				// both contribute nothing, matching the rate guard below.
-				// Zero rather than NULL keeps the bucket SUM defined
-				// whenever the bucket holds any sample at all.
+				// window borrows one earlier sample) contributes zero, so
+				// the bucket SUM stays defined and the first bucket of a
+				// probe's history reads 0 rather than as a gap. An
+				// interval longer than the gap bound is NULL: the events
+				// in it are unknown and the bucket must not read 0. A
+				// negative delta or a reset-marker change (a counter reset
+				// from pg_stat_reset() or a server restart) contributes
+				// nothing, matching the rate guard below.
 				sampleCols = append(sampleCols, fmt.Sprintf(
-					"CASE WHEN prev_%d IS NOT NULL "+
-						"AND (total_%d - prev_%d) >= 0 "+
+					"CASE WHEN prev_%d IS NULL THEN 0 "+
+						"WHEN elapsed_sec > %s THEN NULL "+
+						"WHEN (total_%d - prev_%d) >= 0%s "+
 						"THEN (total_%d - prev_%d) ELSE 0 "+
-						"END AS delta_%d", i, i, i, i, i, i))
+						"END AS delta_%d",
+					i, maxElapsedArg, i, i, resetGuard, i, i, i))
 				entitySumCols = append(entitySumCols,
 					fmt.Sprintf("SUM(delta_%d) AS delta_%d", i, i))
-				bucketCols = append(bucketCols, deltaAggExpr(i, d.OutputName))
+				bucketCols = append(bucketCols,
+					deltaAggExpr(i, d.OutputName),
+					// True when the bucket holds samples but every one of
+					// them was rejected: the bucket is a gap, not a zero.
+					fmt.Sprintf("COUNT(delta_%d) = 0 AS gap_%d", i, i))
 				continue
 			}
-			// Discard negative deltas (a counter reset from pg_stat_reset()
-			// or a server restart) and non-positive elapsed times (duplicate
-			// or out-of-order samples) so neither yields a bogus rate; such
-			// rows become NULL and are dropped by the bucket aggregate. The
-			// time share and session average are the same rate with a
-			// scale factor, so they share the guard and the rate_i slot.
+			// Discard negative deltas and reset-marker changes (a counter
+			// reset from pg_stat_reset() or a server restart), non-positive
+			// elapsed times (duplicate or out-of-order samples) and
+			// intervals longer than the gap bound (a collection outage) so
+			// none yields a bogus rate; such rows become NULL and are
+			// dropped by the bucket aggregate. The time share and session
+			// average are the same rate with a scale factor, so they share
+			// the guard and the rate_i slot.
 			sampleCols = append(sampleCols, fmt.Sprintf(
 				"CASE WHEN (total_%d - prev_%d) >= 0 AND elapsed_sec > 0 "+
+					"AND elapsed_sec <= %s%s "+
 					"THEN %s END AS rate_%d",
-				i, i, rateSampleExpr(d.Kind, i), i))
+				i, i, maxElapsedArg, resetGuard, rateSampleExpr(d.Kind, i), i))
 			// SUM skips a NULL per-entity rate, so one entity's reset
 			// drops only its own share of that sample's total rate; the
 			// sample is NULL only when every entity was discarded.
@@ -1053,6 +1163,14 @@ func BuildDerivedMetricsQuery(
 			"LEFT JOIN ratio_buckets ON all_buckets.bucket_time = ratio_buckets.bucket_time")
 	}
 
+	// counterIndex maps a counter-derived output back to its slot in the
+	// rate_samples/rate_buckets CTEs, so the delta select can name its
+	// gap flag.
+	counterIndex := make(map[string]int, len(counters))
+	for i, d := range counters {
+		counterIndex[d.OutputName] = i
+	}
+
 	var selectCols []string
 	for _, d := range derived {
 		switch d.Kind {
@@ -1063,13 +1181,17 @@ func BuildDerivedMetricsQuery(
 			// 0, not NULL, for a bucket the LEFT JOIN did not match: see
 			// the double-counting note on this function. The zero fill
 			// applies only when the window holds a sample at all; with
-			// none, every bucket stays NULL, the caller has no last value
-			// to carry and the series comes back empty. The EXISTS is
-			// uncorrelated, so the planner evaluates it once per query.
+			// none, every bucket stays NULL and the series is all gaps.
+			// A bucket whose every sample was rejected by the gap bound
+			// (gap_<i>) is NULL too: its events are unknown, not zero.
+			// The EXISTS is uncorrelated, so the planner evaluates it once
+			// per query.
 			q := QuoteIdentifier(d.OutputName)
 			selectCols = append(selectCols, fmt.Sprintf(
 				"CASE WHEN EXISTS (SELECT 1 FROM rate_samples) "+
-					"THEN COALESCE(rate_buckets.%s, 0) END AS %s", q, q))
+					"AND NOT COALESCE(rate_buckets.gap_%d, false) "+
+					"THEN COALESCE(rate_buckets.%s, 0) END AS %s",
+				counterIndex[d.OutputName], q, q))
 		case DerivedDeadTupleRatio:
 			selectCols = append(selectCols, "ratio_buckets.dead_tuple_ratio")
 		}
@@ -1375,21 +1497,43 @@ func QueryTimeSeries(
 	}
 
 	// Counter-derived metrics difference each entity's readings separately,
-	// so they need the probe's entity-key columns; the ratio reads absolute
-	// values and does not.
-	var entityCols []string
+	// so they need the probe's entity-key columns; they also need the full
+	// column set so the builder can tell whether the table carries the
+	// stats_reset marker the registry names. The ratio reads absolute
+	// values and needs neither.
+	var entityCols, allCols []string
 	if needsEntityKeys(derived) {
 		entityCols, err = GetProbeEntityKeyColumns(ctx, pool, probeName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get probe entity keys: %w", err)
 		}
+		allCols, _, err = GetProbeAllColumns(ctx, pool, probeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get probe columns: %w", err)
+		}
 	}
+
+	// The probe's collection interval sets three things at once: the gap
+	// bound beyond which a counter interval is rejected, how long a gauge
+	// may be carried forward, and the finest bucket worth drawing. A bucket
+	// narrower than the interval cannot hold a sample of its own, so the
+	// requested count is clamped to one bucket per interval; raw and
+	// derived queries share the clamp so their series stay aligned.
+	interval, err := ResolveProbeInterval(ctx, pool, probeName, connectionIDs)
+	if err != nil {
+		return nil, err
+	}
+	maxBuckets := int(timeEnd.Sub(timeStart) / interval)
+	if maxBuckets < 1 {
+		maxBuckets = 1
+	}
+	if buckets > maxBuckets {
+		buckets = maxBuckets
+	}
+	maxElapsed := time.Duration(MaxElapsedIntervals) * interval
 
 	// Collect data across all connections
 	dataMap := make(map[seriesKey][]MetricDataPoint)
-
-	// Track last known value per metric column for LOCF
-	lastKnown := make(map[string]float64)
 
 	for _, connID := range connectionIDs {
 		if len(rawCols) > 0 {
@@ -1399,25 +1543,31 @@ func QueryTimeSeries(
 			if err != nil {
 				return nil, fmt.Errorf("failed to build query: %w", err)
 			}
+			fills := make([]fillPolicy, len(rawCols))
+			for i := range fills {
+				fills[i] = fillGauge
+			}
 			if err := scanSeriesRows(ctx, pool, query, queryArgs, rawCols,
-				connID, dataMap, lastKnown); err != nil {
+				fills, interval, connID, dataMap); err != nil {
 				return nil, err
 			}
 		}
 
 		if len(derived) > 0 {
 			query, queryArgs, err := BuildDerivedMetricsQuery(
-				probeName, derived, entityCols, connID, timeStart, timeEnd,
-				buckets, aggregation, filters)
+				probeName, derived, entityCols, allCols, connID, timeStart,
+				timeEnd, buckets, aggregation, filters, maxElapsed)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build derived query: %w", err)
 			}
 			names := make([]string, len(derived))
+			fills := make([]fillPolicy, len(derived))
 			for i, d := range derived {
 				names[i] = d.OutputName
+				fills[i] = derivedFillPolicy(d.Kind)
 			}
 			if err := scanSeriesRows(ctx, pool, query, queryArgs, names,
-				connID, dataMap, lastKnown); err != nil {
+				fills, interval, connID, dataMap); err != nil {
 				return nil, err
 			}
 		}
@@ -1463,26 +1613,51 @@ type seriesKey struct {
 	connectionID int
 }
 
+// derivedFillPolicy returns the fill policy for a derived metric kind: the
+// dead-tuple ratio is an absolute reading and carries like a gauge; every
+// counter-derived kind describes a single interval and never carries.
+func derivedFillPolicy(kind DerivedMetricKind) fillPolicy {
+	if kind == DerivedDeadTupleRatio {
+		return fillGauge
+	}
+	return fillNone
+}
+
+// lastObservation records the most recent real value of one series and
+// the bucket it was seen in, for the gauge carry-forward.
+type lastObservation struct {
+	value float64
+	at    time.Time
+}
+
 // scanSeriesRows executes a bucketed metrics query whose first selected
 // column is the bucket time followed by one column per name in names, then
-// accumulates the values into dataMap. NULL buckets (LEFT JOIN gaps or
-// discarded derived samples) are filled with Last Observation Carried
-// Forward using lastKnown, keyed per connection and metric name.
+// accumulates the values into dataMap. Every bucket the query returns is
+// emitted for every series, so all series in a response share one set of
+// bucket times. A NULL bucket, or one holding a non-finite sample, is
+// filled according to the series' fill policy in fills (parallel to
+// names): a fillGauge series repeats its last real value whilst that value
+// is at most MaxCarryIntervals probe intervals old, and a fillNone series,
+// or a gauge whose last value is older than that, emits a nil Value.
 func scanSeriesRows(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	query string,
 	queryArgs []any,
 	names []string,
+	fills []fillPolicy,
+	interval time.Duration,
 	connID int,
 	dataMap map[seriesKey][]MetricDataPoint,
-	lastKnown map[string]float64,
 ) error {
 	rows, err := pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return fmt.Errorf("failed to query metrics for connection %d: %w", connID, err)
 	}
 	defer rows.Close()
+
+	maxCarry := time.Duration(MaxCarryIntervals) * interval
+	last := make(map[string]lastObservation, len(names))
 
 	for rows.Next() {
 		values := make([]any, len(names)+1)
@@ -1500,22 +1675,17 @@ func scanSeriesRows(
 		}
 
 		for i, name := range names {
-			lkKey := fmt.Sprintf("%d:%s", connID, name)
-			val, ok := toFloat64(values[i+1])
-			if !ok {
-				if prev, exists := lastKnown[lkKey]; exists {
-					val = prev
-				} else {
-					continue
-				}
-			} else {
-				lastKnown[lkKey] = val
+			point := MetricDataPoint{Time: bucketTime}
+			if val, ok := toFloat64(values[i+1]); ok {
+				last[name] = lastObservation{value: val, at: bucketTime}
+				point.Value = &val
+			} else if prev, seen := last[name]; seen &&
+				fills[i] == fillGauge && bucketTime.Sub(prev.at) <= maxCarry {
+				carried := prev.value
+				point.Value = &carried
 			}
 			key := seriesKey{metric: name, connectionID: connID}
-			dataMap[key] = append(dataMap[key], MetricDataPoint{
-				Time:  bucketTime,
-				Value: val,
-			})
+			dataMap[key] = append(dataMap[key], point)
 		}
 	}
 

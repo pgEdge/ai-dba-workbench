@@ -13,6 +13,7 @@ import (
 	"context"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -751,15 +752,18 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 }
 
 // assertLocalTestDSN fails the test fast if the supplied DSN points
-// at anything other than a local loopback host and one of the known
-// safe test database names. CLAUDE.local.md is explicit that the
-// alerter integration tests must only target a local loopback
-// Postgres; the destructive DDL embedded in the integration schemas
-// would wipe any other instance the env var resolved to. The
-// loopback-only host check is the primary safety net. The database
-// allowlist is intentionally tiny: "ai_workbench" for local dev and
-// "postgres" for CI (the default database created by the postgres
-// Docker image). Shared across integration helpers in the engine
+// at anything other than a local loopback host and a known test
+// database name. CLAUDE.local.md is explicit that the alerter
+// integration tests must only target a local loopback Postgres; the
+// destructive DDL embedded in the integration schemas would wipe any
+// other instance the env var resolved to. The loopback-only host
+// check is the primary safety net. The database name check is a
+// secondary guard that catches an env var left pointing at an
+// unrelated local database: it accepts "postgres" (the default
+// database created by the postgres Docker image, which CI uses) and
+// anything beginning "ai_workbench", so that per-worktree databases
+// such as "ai_workbench_pr449" let several suites run concurrently on
+// the dev host. Shared across integration helpers in the engine
 // package.
 func assertLocalTestDSN(t *testing.T, dsn string) {
 	t.Helper()
@@ -767,10 +771,6 @@ func assertLocalTestDSN(t *testing.T, dsn string) {
 		"127.0.0.1": {},
 		"localhost": {},
 		"":          {}, // unix socket; only reachable on this host
-	}
-	allowedDBs := map[string]struct{}{
-		"ai_workbench": {},
-		"postgres":     {},
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -783,10 +783,43 @@ func assertLocalTestDSN(t *testing.T, dsn string) {
 			"TEST_AI_WORKBENCH_SERVER to a "+
 			"postgresql://...@127.0.0.1 DSN", host)
 	}
-	if _, ok := allowedDBs[cfg.ConnConfig.Database]; !ok {
+	if !isAllowedTestDB(cfg.ConnConfig.Database) {
 		t.Fatalf("refusing to run destructive integration tests "+
-			"against database %q; expected one of: "+
-			"ai_workbench, postgres",
+			"against database %q; expected \"postgres\" or a "+
+			"name beginning \"ai_workbench\"",
 			cfg.ConnConfig.Database)
+	}
+}
+
+// isAllowedTestDB reports whether the named database is one the
+// engine integration tests may create and drop schemas in. See
+// assertLocalTestDSN for the rationale behind the two forms.
+func isAllowedTestDB(name string) bool {
+	return name == "postgres" || strings.HasPrefix(name, "ai_workbench")
+}
+
+// TestIsAllowedTestDB checks the database-name guard accepts the CI
+// default and per-worktree development databases whilst still
+// rejecting an unrelated local database.
+func TestIsAllowedTestDB(t *testing.T) {
+	tests := []struct {
+		name  string
+		db    string
+		allow bool
+	}{
+		{"CI default", "postgres", true},
+		{"shared dev database", "ai_workbench", true},
+		{"per-worktree database", "ai_workbench_pr449", true},
+		{"unrelated local database", "production", false},
+		{"empty name", "", false},
+		{"template database", "template1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAllowedTestDB(tt.db); got != tt.allow {
+				t.Errorf("isAllowedTestDB(%q) = %v, want %v",
+					tt.db, got, tt.allow)
+			}
+		})
 	}
 }

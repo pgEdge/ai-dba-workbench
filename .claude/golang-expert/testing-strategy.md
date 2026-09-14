@@ -69,12 +69,21 @@ tests only.
 Both URL variables must point at `127.0.0.1`. The suites create, drop
 and recreate tables including `connections`, `cluster_groups`,
 `alerts`, `blackouts`, `metrics.*` and `schema_version` on whatever
-they are pointed at. The alerter engine tests enforce this with
-`assertLocalTestDSN` in `alerter/src/internal/engine/baselines_test.go`,
-which fails hard on a non-local host and on a database name outside
-`ai_workbench`, `ai_workbench_<suffix>` (the per-task databases that
+they are pointed at. The alerter enforces this in both its
+database-backed packages: `requireLocalTestDSN` in
+`alerter/src/internal/database/test_dsn_guard_test.go` and its twin in
+`alerter/src/internal/engine/test_dsn_guard_test.go` are the only places
+either package reads `TEST_AI_WORKBENCH_SERVER`. Each skips when
+`SKIP_DB_TESTS` is set or the URL is empty, and fails hard, before
+connecting, on a non-loopback host and on a database name outside
+`ai_workbench`, `ai_workbench_pr<number>` (the per-task databases that
 concurrent local sessions use so their schema resets do not collide) and
-`postgres` (the CI default); the other suites rely on the operator. Never derive a test URL from `bin/ai-dba-server.yaml`.
+`postgres` (the CI default); `TestAllowedTestDatabase` pins the pattern,
+including the plausible names such as `ai_workbench_prod` that it must
+refuse. Route any new alerter integration entry point through the
+helper rather than reading the variable again. The server and collector
+suites still rely on the operator. Never derive a test URL from
+`bin/ai-dba-server.yaml`.
 
 ## Getting a Database in a Test
 
@@ -97,10 +106,10 @@ are editing.
   `TestMain`), apply the real schema through `NewSchemaManager`, and
   drop the database at the end unless `TEST_AI_WORKBENCH_KEEP_DB` is
   set.
-- Alerter engine tests build their environment in helpers such as
-  `newDetectAnomaliesEnv`, which apply an integration schema with
-  `DROP`/`CREATE` statements and therefore guard with
-  `assertLocalTestDSN`.
+- Alerter tests build their environment in helpers such as
+  `newDetectAnomaliesEnv` and `newFullTestDatastore`, which apply an
+  integration schema with `DROP`/`CREATE` statements and therefore take
+  their URL from `requireLocalTestDSN`.
 
 `t.Parallel()` is not used in database-backed tests; the shared tables
 make it unsafe.

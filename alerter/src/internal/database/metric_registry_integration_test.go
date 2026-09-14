@@ -12,7 +12,6 @@ package database
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -92,13 +91,7 @@ DROP TABLE IF EXISTS connections CASCADE;
 func newMetricRegistryTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping metric registry integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the metric registry integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)

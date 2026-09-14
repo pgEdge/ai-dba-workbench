@@ -11,7 +11,6 @@ package database
 
 import (
 	"context"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -203,13 +202,7 @@ const (
 func newAuditDefectsDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping audit defect test")
-	}
+	connStr := requireLocalTestDSN(t, "the audit defect test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)

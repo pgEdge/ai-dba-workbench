@@ -15,9 +15,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // txRollbackTracer cancels the caller's context as soon as a chosen
@@ -34,6 +36,8 @@ type txRollbackTracer struct {
 	lastSQL             string
 	rollbacks           int
 	rollbackCtxCanceled bool
+	rollbackNoDeadline  bool
+	rollbackDeadline    time.Time
 }
 
 func (tr *txRollbackTracer) TraceQueryStart(
@@ -49,6 +53,12 @@ func (tr *txRollbackTracer) TraceQueryStart(
 		tr.rollbacks++
 		if ctx.Err() != nil {
 			tr.rollbackCtxCanceled = true
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			tr.rollbackNoDeadline = true
+		} else if tr.rollbackDeadline.IsZero() || deadline.After(tr.rollbackDeadline) {
+			tr.rollbackDeadline = deadline
 		}
 	}
 	return ctx
@@ -71,10 +81,13 @@ func (tr *txRollbackTracer) TraceQueryEnd(
 	}
 }
 
-func (tr *txRollbackTracer) snapshot() (rollbacks int, canceled bool) {
+// snapshot returns what the tracer saw: how many ROLLBACKs ran, whether
+// any ran on a canceled or deadline-free context, and the latest
+// deadline observed.
+func (tr *txRollbackTracer) snapshot() (rollbacks int, canceled, noDeadline bool, deadline time.Time) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
-	return tr.rollbacks, tr.rollbackCtxCanceled
+	return tr.rollbacks, tr.rollbackCtxCanceled, tr.rollbackNoDeadline, tr.rollbackDeadline
 }
 
 // newTracedToolsPool returns a single-connection pool with the tracer
@@ -125,23 +138,32 @@ func toolsBackendPID(t *testing.T, pool *pgxpool.Pool) int {
 }
 
 // assertCleanRollback checks the invariant issue #381 established: the
-// ROLLBACK ran, it did not run on a canceled context, and the pooled
-// connection was returned rather than destroyed.
+// ROLLBACK ran, it ran on a context that was neither canceled nor
+// deadline-free, its deadline fell within rollback.Timeout of start,
+// and the pooled connection was returned rather than destroyed.
 func assertCleanRollback(
 	t *testing.T,
 	tracer *txRollbackTracer,
 	pool *pgxpool.Pool,
 	pidBefore int,
+	start time.Time,
 ) {
 	t.Helper()
 
-	rollbacks, canceled := tracer.snapshot()
+	rollbacks, canceled, noDeadline, deadline := tracer.snapshot()
 	if rollbacks == 0 {
 		t.Fatal("no ROLLBACK was issued; the test did not exercise the rollback path")
 	}
 	if canceled {
 		t.Error("rollback ran on the canceled request context; it must use a " +
 			"non-cancelable context so pgx cannot discard the pooled connection")
+	}
+	if noDeadline {
+		t.Error("rollback ran on a context with no deadline; a peer that never " +
+			"answers would pin the pool slot indefinitely")
+	} else if d := deadline.Sub(start); d <= 0 || d > rollback.Timeout+time.Second {
+		t.Errorf("rollback deadline is %v after the call began, want within %v",
+			d, rollback.Timeout)
 	}
 	if pidAfter := toolsBackendPID(t, pool); pidAfter != pidBefore {
 		t.Errorf("backend pid changed from %d to %d: the pooled connection was "+
@@ -159,6 +181,7 @@ func TestBeginReadOnlyTxCleanupIgnoresCanceledContext(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -180,7 +203,7 @@ func TestBeginReadOnlyTxCleanupIgnoresCanceledContext(t *testing.T) {
 	// No Commit(), so cleanup must roll the transaction back.
 	cleanup()
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
 // TestBeginTxCleanupIgnoresCanceledContext mirrors the read-only case
@@ -191,6 +214,7 @@ func TestBeginTxCleanupIgnoresCanceledContext(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -208,7 +232,7 @@ func TestBeginTxCleanupIgnoresCanceledContext(t *testing.T) {
 
 	cleanup()
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
 // TestBeginReadOnlyTxSetupFailureRollsBackCleanly covers the
@@ -222,6 +246,7 @@ func TestBeginReadOnlyTxSetupFailureRollsBackCleanly(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -239,7 +264,7 @@ func TestBeginReadOnlyTxSetupFailureRollsBackCleanly(t *testing.T) {
 		t.Error("expected a nil ManagedTx when transaction setup fails")
 	}
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
 // TestBeginTxSetupFailureRollsBackCleanly covers the same setup-failure
@@ -251,6 +276,7 @@ func TestBeginTxSetupFailureRollsBackCleanly(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -268,7 +294,7 @@ func TestBeginTxSetupFailureRollsBackCleanly(t *testing.T) {
 		t.Error("expected a nil ManagedTx when transaction setup fails")
 	}
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
 // TestBeginReadOnlyTxTimeoutSetupFailureRollsBackCleanly covers the
@@ -281,6 +307,7 @@ func TestBeginReadOnlyTxTimeoutSetupFailureRollsBackCleanly(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -298,7 +325,7 @@ func TestBeginReadOnlyTxTimeoutSetupFailureRollsBackCleanly(t *testing.T) {
 		t.Error("expected a nil ManagedTx when transaction setup fails")
 	}
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
 // TestBeginTxConstructorsRejectClosedPool covers the begin-failure
@@ -329,7 +356,7 @@ func TestBeginTxConstructorsRejectClosedPool(t *testing.T) {
 	}
 	cleanup()
 
-	if rollbacks, _ := tracer.snapshot(); rollbacks != 0 {
+	if rollbacks, _, _, _ := tracer.snapshot(); rollbacks != 0 {
 		t.Errorf("rollbacks issued without a transaction = %d, want 0", rollbacks)
 	}
 }
@@ -344,6 +371,7 @@ func TestBeginReadOnlyTxCleanupRollsBackOnPanic(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -367,7 +395,7 @@ func TestBeginReadOnlyTxCleanupRollsBackOnPanic(t *testing.T) {
 		t.Fatalf("recovered value = %v, want the original panic to be re-raised", recovered)
 	}
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }
 
 // TestBeginTxCleanupRollsBackOnPanic mirrors the panic path for the
@@ -378,6 +406,7 @@ func TestBeginTxCleanupRollsBackOnPanic(t *testing.T) {
 	defer closePool()
 
 	pidBefore := toolsBackendPID(t, pool)
+	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -401,5 +430,5 @@ func TestBeginTxCleanupRollsBackOnPanic(t *testing.T) {
 		t.Fatalf("recovered value = %v, want the original panic to be re-raised", recovered)
 	}
 
-	assertCleanRollback(t, tracer, pool, pidBefore)
+	assertCleanRollback(t, tracer, pool, pidBefore, start)
 }

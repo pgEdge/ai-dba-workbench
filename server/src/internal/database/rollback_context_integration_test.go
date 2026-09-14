@@ -16,9 +16,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // rollbackCtxTracer is a pgx.QueryTracer that reproduces the race the
@@ -39,6 +41,8 @@ type rollbackCtxTracer struct {
 	lastSQL             string
 	rollbackSeen        bool
 	rollbackCtxCanceled bool
+	rollbackDeadline    time.Time
+	rollbackHasDeadline bool
 }
 
 func (tr *rollbackCtxTracer) TraceQueryStart(
@@ -53,6 +57,7 @@ func (tr *rollbackCtxTracer) TraceQueryStart(
 	if strings.EqualFold(strings.TrimSpace(data.SQL), "rollback") {
 		tr.rollbackSeen = true
 		tr.rollbackCtxCanceled = ctx.Err() != nil
+		tr.rollbackDeadline, tr.rollbackHasDeadline = ctx.Deadline()
 	}
 	return ctx
 }
@@ -144,8 +149,9 @@ func backendPID(t *testing.T, pool *pgxpool.Pool) int {
 // test for issue #381. A request context that is canceled while a
 // transaction is still open must not reach tx.Rollback: pgx v5 fails
 // the rollback outright on a canceled context and then calls
-// conn.die(), which leaks the pooled connection in an aborted
-// transaction state (see jackc/pgx#2470).
+// conn.die(), so the pooled connection is discarded and the pool has to
+// dial a replacement. The rollback must instead run on the bounded,
+// non-cancelable context that pkg/rollback derives from the request.
 //
 // The test drives UnacknowledgeAlert against an alert that is already
 // active, so the function takes its ErrAlertNotAcknowledged early
@@ -182,6 +188,7 @@ func TestDeferredRollbackIgnoresCanceledRequestContext(t *testing.T) {
 	tracer.cancel = cancel
 	tracer.mu.Unlock()
 
+	start := time.Now()
 	err := ds.UnacknowledgeAlert(ctx, alertID)
 
 	// Semantics are unchanged: the caller still sees the sentinel that
@@ -193,6 +200,7 @@ func TestDeferredRollbackIgnoresCanceledRequestContext(t *testing.T) {
 	tracer.mu.Lock()
 	rollbackSeen := tracer.rollbackSeen
 	rollbackCtxCanceled := tracer.rollbackCtxCanceled
+	deadline, hasDeadline := tracer.rollbackDeadline, tracer.rollbackHasDeadline
 	tracer.mu.Unlock()
 
 	if ctx.Err() == nil {
@@ -205,13 +213,20 @@ func TestDeferredRollbackIgnoresCanceledRequestContext(t *testing.T) {
 		t.Error("deferred rollback ran on the canceled request context; " +
 			"it must use a non-cancelable context so pgx cannot kill the pooled connection")
 	}
+	if !hasDeadline {
+		t.Error("deferred rollback ran on a context with no deadline; " +
+			"it must be bounded so a wedged peer cannot pin the pool slot")
+	} else if d := deadline.Sub(start); d <= 0 || d > rollback.Timeout+time.Second {
+		t.Errorf("deferred rollback deadline is %v after the call began, want within %v",
+			d, rollback.Timeout)
+	}
 
 	// The rollback must have succeeded, leaving the pooled connection
 	// reusable. A failed rollback calls conn.die(), so the pool would
 	// dial a fresh backend with a different PID.
 	if pidAfter := backendPID(t, pool); pidAfter != pidBefore {
 		t.Errorf("backend pid changed from %d to %d: the pooled connection was "+
-			"discarded, which is the leak issue #381 guards against",
+			"discarded, which is the connection churn issue #381 guards against",
 			pidBefore, pidAfter)
 	}
 

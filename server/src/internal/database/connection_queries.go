@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/crypto"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 )
 
@@ -435,7 +436,7 @@ func (d *Datastore) DeleteConnection(ctx context.Context, id int) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin delete connection transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	// Delete the connection row and capture its cluster_id in one
 	// statement. Doing both atomically avoids a TOCTOU window in

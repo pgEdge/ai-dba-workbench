@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/database"
@@ -376,7 +377,7 @@ func (h *PerfSummaryHandler) handlePerfSummary(
 			"Failed to query performance metrics")
 		return
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	response := PerfSummaryResponse{
 		TimeRange:   timeRange,
@@ -909,7 +910,7 @@ func (h *PerfSummaryHandler) handleDatabaseSummaries(
 			"Failed to query database summaries")
 		return
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	dbMap := make(map[string]*DatabaseSummary)
 
@@ -1550,7 +1551,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			"Failed to query top queries")
 		return
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
 		connID, queryID, databaseName, excludeCollector, orderCol, orderDir,

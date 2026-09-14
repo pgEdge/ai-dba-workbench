@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // Migration represents a database schema migration
@@ -3225,8 +3226,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
 
 		// Apply the migration
 		if err := migration.Up(tx); err != nil {
-			// Non-cancelable ctx (see contributing.md).
-			if rbErr := tx.Rollback(context.Background()); rbErr != nil {
+			if rbErr := rollback.Tx(ctx, tx); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to apply migration %d: %w", migration.Version, err)
@@ -3239,8 +3239,7 @@ func (sm *SchemaManager) Migrate(conn *pgxpool.Conn) error {
             ON CONFLICT (version) DO NOTHING
         `, migration.Version, migration.Description)
 		if err != nil {
-			// Non-cancelable ctx (see contributing.md).
-			if rbErr := tx.Rollback(context.Background()); rbErr != nil {
+			if rbErr := rollback.Tx(ctx, tx); rbErr != nil {
 				logger.Errorf("Failed to rollback transaction: %v", rbErr)
 			}
 			return fmt.Errorf("failed to record migration %d: %w", migration.Version, err)
@@ -3349,8 +3348,7 @@ func runSavepointed(
 	}
 
 	if bodyErr := body(); bodyErr != nil {
-		if _, rbErr := tx.Exec(ctx,
-			"ROLLBACK TO SAVEPOINT "+name); rbErr != nil {
+		if rbErr := rollback.ToSavepoint(ctx, tx, name); rbErr != nil {
 			return errors.Join(
 				fmt.Errorf("savepoint %s body failed: %w", name, bodyErr),
 				fmt.Errorf("rollback to %s failed: %w", name, rbErr),

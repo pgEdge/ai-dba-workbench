@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // scanAlert scans all 21 fields from a query row into an Alert struct.
@@ -318,7 +319,7 @@ func (d *Datastore) ReactivateAlert(ctx context.Context, alertID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	result, err := tx.Exec(ctx, `
 		UPDATE alerts

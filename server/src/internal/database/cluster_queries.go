@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // Sentinel errors for cluster operations
@@ -467,7 +468,7 @@ func (d *Datastore) DeleteAutoDetectedCluster(ctx context.Context, autoKey strin
 	if err != nil {
 		return fmt.Errorf("failed to begin cluster dismiss transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	var clusterID int
 	err = tx.QueryRow(ctx,
@@ -527,7 +528,7 @@ func (d *Datastore) DismissAutoDetectedClusterKeys(ctx context.Context, autoKeys
 	if err != nil {
 		return fmt.Errorf("failed to begin dismiss transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	for _, autoKey := range autoKeys {
 		var clusterID int

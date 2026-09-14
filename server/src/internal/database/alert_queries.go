@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 )
 
 // ErrAlertNotFound is returned when an alert is not found
@@ -379,7 +380,7 @@ func (d *Datastore) AcknowledgeAlert(ctx context.Context, req AcknowledgeAlertRe
 		logger.Errorf("AcknowledgeAlert: failed to begin transaction: %v", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	// Update alert status to acknowledged
 	result, err := tx.Exec(ctx, `
@@ -440,7 +441,7 @@ func (d *Datastore) UnacknowledgeAlert(ctx context.Context, alertID int64) error
 	if err != nil {
 		return fmt.Errorf("unacknowledge alert %d: begin transaction: %w", alertID, err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // no-op after commit; non-cancelable ctx (see contributing.md)
+	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	// Update alert status back to active.
 	result, err := tx.Exec(ctx, `

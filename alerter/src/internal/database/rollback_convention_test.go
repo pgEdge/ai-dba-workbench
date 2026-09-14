@@ -19,7 +19,7 @@ import (
 )
 
 // TestNoDirectRollbacksInModule enforces the issue #381 convention over
-// the server module: every pgx rollback goes through pkg/rollback, so
+// the alerter module: every pgx rollback goes through pkg/rollback, so
 // that it runs on a bounded, non-cancelable context. The module root
 // is found relative to this file so the check needs no repository
 // layout knowledge and runs in the module's own CI workflow.

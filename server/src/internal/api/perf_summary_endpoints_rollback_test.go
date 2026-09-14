@@ -192,8 +192,9 @@ func seedPerfEndpointMetrics(
 // TestHandlePerfSummary_ReturnsMetricsAndReleasesTransaction drives the
 // performance-summary endpoint end to end. Beyond the response contents,
 // it asserts that the handler leaves no transaction behind: the deferred
-// rollback converted for issue #381 sits on this path, and a leaked or
-// destroyed pooled connection would show up as a non-zero acquired count.
+// rollback converted for issue #381 sits on this path, and a pooled
+// connection still held or destroyed would show up as a non-zero
+// acquired count.
 func TestHandlePerfSummary_ReturnsMetricsAndReleasesTransaction(t *testing.T) {
 	h, pool, cleanup := newPerfEndpointTestHandler(t)
 	defer cleanup()

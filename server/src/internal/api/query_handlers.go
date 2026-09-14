@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/server/internal/tsv"
 )
 
@@ -392,7 +393,7 @@ func (h *ConnectionHandler) executeQuery(w http.ResponseWriter, r *http.Request,
 		committed := false
 		defer func() {
 			if !committed {
-				_ = tx.Rollback(context.Background()) //nolint:errcheck // non-cancelable ctx (see contributing.md)
+				_ = rollback.Tx(ctx, tx) //nolint:errcheck // see pkg/rollback
 			}
 		}()
 

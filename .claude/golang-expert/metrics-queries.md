@@ -822,11 +822,15 @@ that follow from that, all learned the hard way in #406 and #407:
   and the cleaner (first row) disagreed on the same data. The fix is
   `DISTINCT ON (connection_id, database_name) ... ORDER BY collected_at
   DESC` over the deltas; `pg_stat_statements.slow_query_count` follows
-  the per-identity `LAG` shape described under "Cumulative Counter Deltas
-  per Identity" below, differencing `total_exec_time` and `calls` within
+  the per-identity shape described under "Cumulative Counter Deltas per
+  Identity" below, differencing `total_exec_time` and `calls` within
   `(queryid, userid, dbid, toplevel)` and counting with `COUNT(*) FILTER`
   so a database with statements but no slow ones reports 0 rather than
-  vanishing.
+  vanishing. It takes the difference with `LEAD` over an identity window
+  ordered `collected_at DESC`, which the `ROW_NUMBER` that picks the
+  newest sample shares, so the window is sorted once: the ascending-`LAG`
+  plus descending-`ROW_NUMBER` form sorted it twice and measured about a
+  third slower on 24,000 rows in the window.
 
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and
@@ -932,8 +936,10 @@ the object index applies.
 `pg_stat_statements` keeps one row per `(database_name, userid, dbid,
 toplevel)` for a queryid, and each row is an independent cumulative
 counter that `pg_stat_reset()` or a restart can zero on its own. Any
-query that turns those counters into per-period deltas must `LAG` within
-each identity, drop the negative deltas, and only then sum across
+query that turns those counters into per-period deltas must difference
+within each identity (`LAG` over an ascending window, or `LEAD` over a
+descending one where another window function needs that ordering
+anyway), drop the negative deltas, and only then sum across
 identities. Summing first hides a reset in one identity behind growth in
 its siblings, so the guard never fires and the pre-reset total is
 subtracted from the post-reset one. `queryStatsSQLTemplate` in

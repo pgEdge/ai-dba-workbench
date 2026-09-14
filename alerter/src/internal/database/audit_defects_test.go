@@ -626,7 +626,10 @@ func TestAuditC9SlowQueryCountUsesIntervalMean(t *testing.T) {
 	if strings.Contains(cfg.latestSQL, "mean_exec_time") {
 		t.Error("slow_query_count still reads the lifetime mean_exec_time column")
 	}
-	for _, want := range []string{"total_exec_time", "LAG(calls)", "COUNT(*) FILTER"} {
+	// LEAD, not LAG: the identity window is ordered descending so the
+	// ROW_NUMBER that picks the newest sample can share it, which sorts
+	// the window once rather than twice.
+	for _, want := range []string{"total_exec_time", "LEAD(calls)", "COUNT(*) FILTER"} {
 		if !strings.Contains(cfg.latestSQL, want) {
 			t.Errorf("slow_query_count latestSQL lacks %q", want)
 		}

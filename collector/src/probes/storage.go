@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/pkg/logger"
+	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
 
@@ -83,7 +84,7 @@ func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, col
 	}
 	defer func() {
 		if err != nil {
-			if rerr := txn.Rollback(ctx); rerr != nil {
+			if rerr := rollback.Tx(ctx, txn); rerr != nil {
 				logger.Errorf("Error rolling back transaction: %v", rerr)
 			}
 		}

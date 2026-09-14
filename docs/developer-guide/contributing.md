@@ -171,6 +171,40 @@ Follow these Go-specific guidelines:
   `fmt.Errorf` with `%w`.
 - Run `gofmt` and `go vet` before committing.
 
+#### Transaction Rollbacks
+
+Roll every pgx transaction back through the shared
+`github.com/pgedge/ai-workbench/pkg/rollback` helper,
+never by calling `Rollback` on the transaction directly:
+
+```go
+tx, err := pool.Begin(ctx)
+if err != nil {
+    return fmt.Errorf("begin transaction: %w", err)
+}
+defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
+```
+
+Use `rollback.ToSavepoint(ctx, tx, name)` in place of a
+hand-written `ROLLBACK TO SAVEPOINT` statement. Both
+functions run the rollback on a context derived from
+`ctx` with `context.WithoutCancel` and a
+`rollback.Timeout` deadline of five seconds. When a
+rollback is given a request context that the client has
+already cancelled, the pgx v5 driver fails the rollback
+and closes the connection; the server then ends the
+transaction itself, so the cost is connection churn and
+a lost pool slot whilst the pool reconnects. A plain
+`context.Background()` avoids that but has no deadline,
+so a rollback to a hung server could pin a pool slot and
+the goroutine indefinitely; the helper bounds the wait
+and keeps the request's tracing values. The statements
+inside the transaction still use the request context;
+only the rollback differs. A convention test in each Go
+module rejects direct `Rollback` calls and hand-written
+`ROLLBACK` SQL outside the helper package; the package
+doc comment in `pkg/rollback` gives the full reasoning.
+
 ### Documentation
 
 Follow the documentation style guide in

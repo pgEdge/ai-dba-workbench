@@ -337,6 +337,19 @@ project adheres to
   so the documented precedence of defaults, then configuration file,
   then flags holds in every case. (#389)
 
+- Roll every database transaction back on a bounded, non-cancelable
+  context across the server, collector, and alerter, through the
+  shared `pkg/rollback` helper. When a rollback runs on a request
+  context that the client has already cancelled, the pgx v5 driver
+  fails the rollback and closes the connection, so each client that
+  disconnected mid-request cost the pool a connection whilst the pool
+  reconnected. The helper derives a five-second, non-cancelable
+  context from the request context instead, so a disconnect no longer
+  discards the pooled connection, and a rollback to a hung server
+  cannot pin a pool slot indefinitely. A convention test in every Go
+  module rejects direct `Rollback` calls and hand-written `ROLLBACK`
+  SQL. (#381)
+
 - Fix every chat request that included a tool list failing with
   `anthropic (400): tools.0.custom.input_schema: Input does not
   match the expected shape`, which broke Ask Ellie and the Server,

@@ -251,3 +251,23 @@ cfg.ApplyFlags(nil)
 Any new flag needs both cases covered: a configuration value that
 coincides with the flag's default must survive when the flag is not
 passed, and the flag passed with its default value must still win.
+
+Config-file loading has a second trap that shows up as dead test
+coverage. `(*Config).LoadFromFile` wraps the `os.ReadFile` error with
+`%w`, so `os.IsNotExist` never matches it; the missing-file branches
+in the collector's `loadConfiguration` use `errors.Is(err,
+fs.ErrNotExist)`, which unwraps. Prefer `errors.Is` over the
+`os.IsNotExist` and `os.IsExist` predicates anywhere the error may
+have passed through a `%w` wrap.
+
+The "auto-discovered file vanished between discovery and load" branch
+is only reachable deterministically through the package-level seam
+`discoverDefaultConfigPath` in `collector/src/main.go`, which defaults
+to `GetDefaultConfigPath`. A test replaces it with a function that
+discovers the real path, removes the file, and returns the path, so
+the load then fails with `fs.ErrNotExist` and the collector must fall
+back to compiled-in defaults without error (see
+`TestLoadConfiguration_AutoDiscoveredVanished`). Tests driving
+discovery also need `t.Setenv` for `XDG_CONFIG_HOME`, `HOME` and
+`AppData` plus `fileutil.SetSystemConfigDirForTest`, so no real
+`/etc/pgedge` content leaks in.

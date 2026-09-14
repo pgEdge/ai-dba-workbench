@@ -126,6 +126,41 @@ describe('useDatabaseCacheHit', () => {
         );
     });
 
+    it('passes null current and null buckets through untouched', async () => {
+        const mockResponse = {
+            databases: [
+                {
+                    database_name: 'idle',
+                    cache_hit_ratio: {
+                        current: null,
+                        time_series: [
+                            { time: '2024-01-01T10:00:00Z', value: 99.3 },
+                            { time: '2024-01-01T11:00:00Z', value: null },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        mockApiFetch.mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve(mockResponse),
+        } as Response);
+
+        const { result } = renderHook(() => useDatabaseCacheHit(123));
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        expect(result.current.databases).toHaveLength(1);
+        expect(result.current.databases[0].cache_hit_ratio.current).toBeNull();
+        expect(result.current.databases[0].cache_hit_ratio.time_series).toEqual([
+            { time: '2024-01-01T10:00:00Z', value: 99.3 },
+            { time: '2024-01-01T11:00:00Z', value: null },
+        ]);
+    });
+
     it('filters out databases with empty time series', async () => {
         const mockResponse = {
             databases: [

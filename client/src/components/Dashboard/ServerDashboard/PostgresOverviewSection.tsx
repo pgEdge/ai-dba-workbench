@@ -15,12 +15,14 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { Storage as StorageIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricDataPoint, MetricQueryParams, MetricSeries } from '../types';
+import { useServerCacheHit } from '../../../hooks/useServerCacheHit';
+import type { MetricQueryParams, MetricSeries } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
+import { CACHE_HIT_CAVEAT, latestCacheHitRatio } from '../cacheHitRatio';
 import { apiGet } from '../../../utils/apiClient';
 import { logger } from '../../../utils/logger';
 import { formatBytes, formatValue, formatNumber } from '../../../utils/formatters';
@@ -45,6 +47,11 @@ const CHART_HEIGHT = 250;
  */
 const CONNECTIONS_CHART_TITLE = 'Connections (Monitored Database)';
 const SESSIONS_CHART_TITLE = 'Sessions Established (Monitored Database)';
+
+/** Analysis description for the cache hit ratio KPI. */
+const CACHE_HIT_DESCRIPTION =
+    'Buffer cache hit ratio per interval (null buckets had no block '
+    + `access). ${CACHE_HIT_CAVEAT}`;
 
 /**
  * Build chart data from metric series for the Chart component.
@@ -150,7 +157,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     connectionId,
     connectionName,
 }) => {
-    const { timeRange } = useDashboard();
+    const { timeRange, refreshTrigger } = useDashboard();
 
     // KPI queries (30 buckets) - all from pg_stat_database
     const connectionsKpiParams = useMemo((): MetricQueryParams => ({
@@ -169,15 +176,6 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
         metrics: ['xact_commit_per_sec'],
-    }), [connectionId, timeRange.range]);
-
-    const cacheKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_stat_database',
-        connectionId,
-        timeRange: timeRange.range,
-        buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['blks_hit', 'blks_read'],
     }), [connectionId, timeRange.range]);
 
     const tempKpiParams = useMemo((): MetricQueryParams => ({
@@ -234,7 +232,14 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     // Fetch KPI data
     const connectionsKpi = useMetrics(connectionsKpiParams);
     const txnKpi = useMetrics(txnKpiParams);
-    const cacheKpi = useMetrics(cacheKpiParams);
+    // The server-wide cache hit ratio comes from the performance
+    // summary, where the server differences the block counters per
+    // database before summing them and computes the ratio from the
+    // summed deltas (issue #401). Building it client-side from two
+    // separate blks_*_per_sec series would divide one already-averaged
+    // rate by another, so the ratio is taken from the endpoint that
+    // computes it in one pass.
+    const cacheKpi = useServerCacheHit(connectionId, timeRange, refreshTrigger);
     const tempKpi = useMetrics(tempKpiParams);
 
     // Fetch chart data
@@ -251,37 +256,13 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
     const xactCommitRate = extractLatestRate(
         txnKpi.data, 'xact_commit_per_sec'
     );
-    const blksHit = extractLatestValue(
-        cacheKpi.data, 'blks_hit'
+    // Idle buckets are null (gaps) and the headline is the latest
+    // bucket that has a ratio.
+    const cacheHitRatioSparkline = cacheKpi.points;
+    const cacheHitRatio = useMemo(
+        () => latestCacheHitRatio(cacheHitRatioSparkline),
+        [cacheHitRatioSparkline]
     );
-    const blksRead = extractLatestValue(
-        cacheKpi.data, 'blks_read'
-    );
-    const cacheHitRatio = useMemo(() => {
-        if (blksHit !== null && blksRead !== null) {
-            const total = blksHit + blksRead;
-            if (total > 0) { return (blksHit / total) * 100; }
-        }
-        return null;
-    }, [blksHit, blksRead]);
-    const cacheHitRatioSparkline = useMemo(() => {
-        const hitData = extractSparklineData(cacheKpi.data, 'blks_hit');
-        const readData = extractSparklineData(cacheKpi.data, 'blks_read');
-        if (hitData.length === 0 && readData.length === 0) { return []; }
-        const len = Math.max(hitData.length, readData.length);
-        const result: MetricDataPoint[] = [];
-        for (let i = 0; i < len; i++) {
-            const hit = i < hitData.length ? hitData[i].value : 0;
-            const read = i < readData.length ? readData[i].value : 0;
-            const total = hit + read;
-            result.push({
-                time: (i < hitData.length
-                    ? hitData[i] : readData[i]).time,
-                value: total > 0 ? (hit / total) * 100 : 0,
-            });
-        }
-        return result;
-    }, [cacheKpi.data]);
     /*
      * temp_bytes_delta reports the bytes spilled to temporary files in
      * each bucket, so the figure for the selected window is the sum of
@@ -405,7 +386,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                     unit={cacheHitRatio !== null ? '%' : undefined}
                     sparklineData={cacheHitRatioSparkline}
                     analysisContext={{
-                        metricDescription: 'Buffer cache hit ratio over time',
+                        metricDescription: CACHE_HIT_DESCRIPTION,
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,

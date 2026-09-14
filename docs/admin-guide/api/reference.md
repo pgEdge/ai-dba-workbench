@@ -371,11 +371,14 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 ```
 
 The `/api/v1/metrics/query`,
-`/api/v1/metrics/connection-groups` and
+`/api/v1/metrics/connection-groups`,
+`/api/v1/metrics/performance-summary` and
 `/api/v1/metrics/query-stats` endpoints support a custom
-window with the same three parameters and the same rules.
-The `/api/v1/metrics/performance-summary` and
-`/api/v1/metrics/database-summaries` endpoints accept the
+window with the same three parameters and the same rules;
+`performance-summary` derives its bucket width from the
+resolved window, one sixtieth of the span with a ten second
+floor. The `/api/v1/metrics/database-summaries` endpoint
+accepts the
 presets alone, and `/api/v1/metrics/top-queries` has no
 time dimension; that endpoint always reports the latest
 collected sample.

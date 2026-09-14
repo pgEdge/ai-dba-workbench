@@ -23,7 +23,7 @@ import {
 import { type Theme, useTheme } from '@mui/material/styles';
 import type { ChartAnalysisContext, ChartData } from '../Chart/types';
 import { ChartAnalysisDialog } from '../ChartAnalysisDialog';
-import type { KpiTileData, MetricDataPoint } from './types';
+import type { KpiTileData, SparklinePoint } from './types';
 import Sparkline from './Sparkline';
 import { useAICapabilities } from '../../contexts/useAICapabilities';
 import { hasCachedAnalysis } from '../../hooks/useChartAnalysis';
@@ -41,11 +41,11 @@ interface KpiTileProps extends KpiTileData {
 }
 
 /**
- * Convert sparkline MetricDataPoint array into ChartData format
- * suitable for the analysis dialog.
+ * Convert sparkline points into ChartData format suitable for the
+ * analysis dialog. Null values are kept so they serialise as gaps.
  */
 const sparklineToChartData = (
-    sparklineData: MetricDataPoint[],
+    sparklineData: SparklinePoint[],
     seriesName: string
 ): ChartData => ({
     categories: sparklineData.map(d => d.time),

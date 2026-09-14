@@ -39,7 +39,7 @@ interface CapturedChart {
     title: string;
     data: {
         categories: string[];
-        series: { name: string; data: number[] }[];
+        series: { name: string; data: (number | null)[] }[];
     };
 }
 
@@ -68,7 +68,7 @@ const makeConnection = (
 ): Record<string, unknown> => ({
     connection_id: 1,
     connection_name: 'node-1',
-    cache_hit_ratio: { current: 0.9876 },
+    cache_hit_ratio: { current: 98.7654 },
     transactions: { commits_per_sec: 12.345, rollback_percent: 1.234 },
     active_connections: 17,
     ...overrides,
@@ -183,8 +183,10 @@ describe('ComparativeChartsSection', () => {
             expect(screen.getAllByTestId('chart').length).toBe(4);
         });
 
+        // The server sends a percentage, not a fraction, so it is only
+        // rounded, never rescaled.
         expect(chartByTitle('Cache Hit Ratio (%)').data.series[0].data)
-            .toEqual([98.76]);
+            .toEqual([98.77]);
         expect(
             chartByTitle('Transaction Rate (commits/sec)').data.series[0].data,
         ).toEqual([12.35]);
@@ -206,8 +208,35 @@ describe('ComparativeChartsSection', () => {
         const chart = chartByTitle('Connection Count');
         expect(chart.data.categories).toEqual(['Server 9']);
         expect(chart.data.series[0].data).toEqual([0]);
+        // A missing cache hit ratio is unknown, not 0%, so the bar is
+        // left empty.
         expect(chartByTitle('Cache Hit Ratio (%)').data.series[0].data)
-            .toEqual([0]);
+            .toEqual([null]);
+    });
+
+    it('keeps a null cache hit ratio null rather than drawing it at 0', async () => {
+        mockApiFetch.mockResolvedValue(okResponse({
+            connections: [
+                makeConnection({
+                    connection_id: 1,
+                    cache_hit_ratio: { current: null, time_series: [] },
+                }),
+                makeConnection({
+                    connection_id: 2,
+                    connection_name: 'node-2',
+                    cache_hit_ratio: { current: 95, time_series: [] },
+                }),
+            ],
+        }));
+
+        renderSection();
+
+        await waitFor(() => {
+            expect(screen.getAllByTestId('chart').length).toBe(4);
+        });
+
+        expect(chartByTitle('Cache Hit Ratio (%)').data.series[0].data)
+            .toEqual([null, 95]);
     });
 
     it('shows the empty state when no connections are returned', async () => {

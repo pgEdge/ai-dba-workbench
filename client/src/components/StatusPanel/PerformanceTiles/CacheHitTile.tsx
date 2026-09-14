@@ -31,23 +31,37 @@ interface CacheHitTileProps {
 }
 
 /**
+ * Description passed to the AI analysis dialog. The caveat matters
+ * because the ratio only sees shared_buffers: a block read may still
+ * be served from the OS page cache at memory speed.
+ */
+const CACHE_HIT_DESCRIPTION =
+    'Buffer cache hit ratio per interval showing shared_buffers '
+    + 'effectiveness (null buckets had no block access). blks_hit '
+    + 'counts shared_buffers hits only; a block read may still be '
+    + 'served from the OS page cache at memory speed, so a lower ratio '
+    + 'does not by itself mean slow I/O.';
+
+/**
+ * Narrow a `current` value to a number. The server sends null when the
+ * latest interval saw no block access, and older payloads may omit the
+ * field entirely; neither is a candidate for the headline.
+ */
+const hasCurrent = (value: number | null | undefined): value is number =>
+    typeof value === 'number';
+
+/**
  * Find the database with the worst (lowest) cache hit ratio.
- * Returns database name and value, or null if no data.
+ * Returns database name and value, or null if no database has one.
  */
 const findWorstDatabase = (
     databases: DatabaseCacheHitData[]
 ): { name: string; value: number } | null => {
-    if (!databases.length) {return null;}
-
     let worst: { name: string; value: number } | null = null;
     databases.forEach(db => {
-        if (db.cache_hit_ratio?.current !== undefined) {
-            if (worst === null || db.cache_hit_ratio.current < worst.value) {
-                worst = {
-                    name: db.database_name,
-                    value: db.cache_hit_ratio.current,
-                };
-            }
+        const current = db.cache_hit_ratio?.current;
+        if (hasCurrent(current) && (worst === null || current < worst.value)) {
+            worst = { name: db.database_name, value: current };
         }
     });
     return worst;
@@ -55,7 +69,10 @@ const findWorstDatabase = (
 
 /**
  * CacheHitTile shows a large cache hit ratio percentage with a
- * mini sparkline chart below it.
+ * mini sparkline chart below it. Ratios are per interval; a null
+ * `current` (no block access in the latest interval) is skipped when
+ * choosing the headline, and null buckets in the series are drawn as
+ * gaps rather than as 0%.
  *
  * For single-server view with database data:
  *   - Shows one series per database
@@ -98,11 +115,10 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
             let worstValue = Infinity;
             let worstName = '';
             connections.forEach(conn => {
-                if (conn.cache_hit_ratio?.current !== undefined) {
-                    if (conn.cache_hit_ratio.current < worstValue) {
-                        worstValue = conn.cache_hit_ratio.current;
-                        worstName = conn.connection_name || `Server ${conn.connection_id}`;
-                    }
+                const current = conn.cache_hit_ratio?.current;
+                if (hasCurrent(current) && current < worstValue) {
+                    worstValue = current;
+                    worstName = conn.connection_name || `Server ${conn.connection_id}`;
                 }
             });
             if (worstValue === Infinity) {return null;}
@@ -115,7 +131,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
 
         // Single server without database data - fallback to connection data
         const current = connections[0]?.cache_hit_ratio?.current;
-        if (current === undefined) {return null;}
+        if (!hasCurrent(current)) {return null;}
         return { value: current, label: null, showLabel: false };
     }, [connections, isMultiServer, usePerDatabaseView, databaseData]);
 
@@ -124,7 +140,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
         if (usePerDatabaseView && databaseData && databaseData.length > 0) {
             // Per-database series for single-server view
             let categories: string[] = [];
-            const series: { name: string; data: number[] }[] = [];
+            const series: { name: string; data: (number | null)[] }[] = [];
 
             databaseData.forEach(db => {
                 const ts = db.cache_hit_ratio?.time_series;
@@ -161,7 +177,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
 
         // For multi-server, create one series per connection
         let categories: string[] = [];
-        const series: { name: string; data: number[] }[] = [];
+        const series: { name: string; data: (number | null)[] }[] = [];
 
         connections.forEach(conn => {
             const ts = conn.cache_hit_ratio?.time_series;
@@ -195,7 +211,7 @@ const CacheHitTile: React.FC<CacheHitTileProps> = ({
     }, []);
 
     const analysisContext: ChartAnalysisContext | undefined = hasData ? {
-        metricDescription: 'Buffer cache hit ratio showing cache effectiveness',
+        metricDescription: CACHE_HIT_DESCRIPTION,
         connectionId: connections[0]?.connection_id,
         connectionName: connections[0]?.connection_name,
     } : undefined;

@@ -12,7 +12,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import PostgresOverviewSection from '../PostgresOverviewSection';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../../types';
+import type { UseServerCacheHitResult } from '../../../../hooks/useServerCacheHit';
+import type { MetricQueryParams, MetricSeries, SparklinePoint, TimeRangeState } from '../../types';
 import type { ChartData } from '../../../Chart/types';
 
 // ---------------------------------------------------------------------------
@@ -26,10 +27,28 @@ vi.mock('../../../../hooks/useMetrics', () => ({
     useMetrics: (params: MetricQueryParams | null) => mockUseMetrics(params),
 }));
 
+type UseServerCacheHitFn = (
+    connectionId: number,
+    timeRange: TimeRangeState,
+    refreshKey?: number,
+) => UseServerCacheHitResult;
+
+const mockUseServerCacheHit = vi.fn<UseServerCacheHitFn>();
+vi.mock('../../../../hooks/useServerCacheHit', () => ({
+    useServerCacheHit: (
+        connectionId: number,
+        timeRange: TimeRangeState,
+        refreshKey?: number,
+    ) => mockUseServerCacheHit(connectionId, timeRange, refreshKey),
+}));
+
+const DASHBOARD_TIME_RANGE: TimeRangeState = { range: '1h' };
+const DASHBOARD_REFRESH_TRIGGER = 3;
+
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
-        timeRange: { range: '1h' },
-        refreshTrigger: 0,
+        timeRange: DASHBOARD_TIME_RANGE,
+        refreshTrigger: DASHBOARD_REFRESH_TRIGGER,
     }),
 }));
 
@@ -75,6 +94,7 @@ vi.mock('../../../Chart', () => ({
                     data-chart={title}
                     data-series={s.name}
                     data-values={s.data.join(',')}
+                    data-json={JSON.stringify(s.data)}
                 >
                     {s.name}
                 </span>
@@ -87,8 +107,25 @@ vi.mock('../../../Chart', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Rates requested by the Block I/O chart (issue #400). */
+const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
+
 const CONNECTIONS_TITLE = 'Connections (Monitored Database)';
 const SESSIONS_TITLE = 'Sessions Established (Monitored Database)';
+
+/** Build the cache hit series the performance summary would return. */
+const cachePoints = (values: (number | null)[]): SparklinePoint[] =>
+    values.map((value, idx) => ({
+        time: `2024-01-01T00:0${idx}:00Z`,
+        value,
+    }));
+
+/** A resolved useServerCacheHit result for the given ratios. */
+const cacheReady = (values: (number | null)[]): UseServerCacheHitResult => ({
+    points: cachePoints(values),
+    loading: false,
+    error: null,
+});
 
 /** Build a MetricSeries for the given metric and values. */
 const series = (metric: string, values: number[]): MetricSeries => ({
@@ -151,12 +188,7 @@ const routeMetrics = (
                     series('xact_commit_per_sec', [100, 200]),
                     series('xact_rollback_per_sec', [1, 2]),
                 ]);
-            case 'blks_hit,blks_read':
-                return ready([
-                    series('blks_hit', [90, 95]),
-                    series('blks_read', [10, 5]),
-                ]);
-            case 'blks_hit_per_sec,blks_read_per_sec':
+            case CACHE_KEY:
                 return ready([
                     series('blks_hit_per_sec', [90, 95]),
                     series('blks_read_per_sec', [10, 5]),
@@ -238,6 +270,7 @@ describe('PostgresOverviewSection', () => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         routeMetrics();
+        mockUseServerCacheHit.mockReturnValue(cacheReady([90, 95]));
         mockApiGet.mockResolvedValue([{ max_connections: 100 }]);
     });
 
@@ -501,7 +534,7 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getAllByText('Commits').length)
                 .toBeGreaterThanOrEqual(1);
             expect(screen.getByText('12')).toBeInTheDocument();
-            // 95 hits against 5 reads gives a 95.0% ratio.
+            // The latest bucket of the performance summary series.
             expect(screen.getByText('95.0')).toBeInTheDocument();
             expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
         });
@@ -558,6 +591,7 @@ describe('PostgresOverviewSection', () => {
 
         it('renders placeholders when the KPI queries return nothing', async () => {
             mockUseMetrics.mockImplementation(() => ready([]));
+            mockUseServerCacheHit.mockReturnValue(cacheReady([]));
             renderSection();
 
             await waitFor(() => {
@@ -574,52 +608,94 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getByLabelText('Loading')).toBeInTheDocument();
         });
 
-        it('handles a cache hit ratio with no blocks accounted for', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_hit', [0, 0]),
-                    series('blks_read', [0, 0]),
-                ]),
+        it('shows the section spinner whilst only the cache summary is loading', () => {
+            mockUseServerCacheHit.mockReturnValue({
+                points: [],
+                loading: true,
+                error: null,
             });
+            // The spinner is gated on the connections KPI having no data
+            // yet, so hold that query in flight too.
+            routeMetrics({ numbackends: loading() });
             renderSection();
 
-            await waitFor(() => {
-                expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
-            });
-            expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(1);
+            expect(screen.getByLabelText('Loading')).toBeInTheDocument();
         });
 
-        it('pads the cache ratio sparkline when the series lengths differ', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_hit', [90, 95, 99]),
-                    series('blks_read', [10]),
-                ]),
-            });
+        it('reads the cache hit ratio from the performance summary', async () => {
             renderSection();
 
             await waitFor(() => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
-            // The sparkline pads the shorter read series with zeros; the
-            // tile itself still reports 99 hits against 10 reads.
-            expect(screen.getByText('90.8')).toBeInTheDocument();
+            // The hook follows the dashboard range and refresh cycle.
+            expect(mockUseServerCacheHit).toHaveBeenCalledWith(
+                7, DASHBOARD_TIME_RANGE, DASHBOARD_REFRESH_TRIGGER,
+            );
+            // The cache KPI no longer queries the metrics endpoint at
+            // all; the Block I/O chart still requests the per-second
+            // rates at chart resolution (issue #400).
+            const cacheCalls = mockUseMetrics.mock.calls
+                .map(([p]) => p)
+                .filter(p => (p?.metrics ?? []).join(',') === CACHE_KEY);
+            expect(cacheCalls.length).toBeGreaterThanOrEqual(1);
+            cacheCalls.forEach(p => expect(p?.buckets).toBe(150));
+            expect(seriesValuesFor('Block I/O', 'Blocks Hit/s')).toBe('90,95');
         });
 
-        it('pads the cache ratio sparkline when hits are missing entirely', async () => {
-            routeMetrics({
-                'blks_hit,blks_read': ready([
-                    series('blks_read', [10, 20]),
-                ]),
-            });
+        it('shows the placeholder when every cache bucket is idle', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([null, null]));
             renderSection();
 
             await waitFor(() => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
-            // With no hit series at all the ratio is unknown, so the
-            // tile falls back to the placeholder.
-            expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(1);
+            const tile = screen.getByLabelText('Cache Hit Ratio: --');
+            // An idle bucket is a gap, not 0% and not 100%, so every
+            // sparkline point is null.
+            const spark = tile.querySelector('[data-testid="chart-series"]');
+            expect(spark?.getAttribute('data-json')).toBe('[null,null]');
+        });
+
+        it('draws an idle bucket as a gap and headlines the latest ratio', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([90, null, 60]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('60.0')).toBeInTheDocument();
+            });
+            const tile = screen.getByLabelText('Cache Hit Ratio: 60.0 %');
+            const spark = tile.querySelector('[data-testid="chart-series"]');
+            expect(spark?.getAttribute('data-json')).toBe('[90,null,60]');
+        });
+
+        it('keeps the previous ratio when the newest bucket is idle', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([80, null]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('80.0')).toBeInTheDocument();
+            });
+        });
+
+        it('reports a genuine 0% rather than skipping it', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([80, 0]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Cache Hit Ratio: 0.0 %'))
+                    .toBeInTheDocument();
+            });
+        });
+
+        it('shows the placeholder when the summary has no series', async () => {
+            mockUseServerCacheHit.mockReturnValue(cacheReady([]));
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
+            });
+            expect(screen.getByLabelText('Cache Hit Ratio: --')).toBeInTheDocument();
         });
     });
 });

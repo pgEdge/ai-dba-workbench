@@ -178,6 +178,17 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	return results, nil
 }
 
+// MetricClearsWhenAbsent reports whether an active alert on metricName
+// should be cleared when the latest query returns no row for the alert's
+// connection and database (or no rows at all). It is false for metrics
+// whose query emits a row for every healthy connection, where a missing
+// row means the data has stopped arriving rather than that the condition
+// has resolved, and false for any metric the registry does not know. See
+// the clearWhenAbsent field on metricQueryConfig and GitHub issue #407.
+func (d *Datastore) MetricClearsWhenAbsent(metricName string) bool {
+	return metricRegistry[metricName].clearWhenAbsent
+}
+
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with
 // (connection_id, database_name, value, collected_at) where database_name is scanned as-is
 // (typically NULL for basic metrics).

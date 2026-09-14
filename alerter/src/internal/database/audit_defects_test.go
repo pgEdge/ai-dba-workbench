@@ -12,9 +12,11 @@ package database
 import (
 	"context"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -36,20 +38,10 @@ import (
 // dead_alert_rules_integration_test.go, which tests each rule directly
 // rather than pinning a defect.
 //
-// Tests whose name ends in "Demo" assert the CORRECT behavior instead
-// and therefore fail against the current code. They are skipped unless
-// ALERTER_DEFECT_DEMO=1 is set, so CI stays green while the defect can
-// still be demonstrated on demand.
-
-// defectDemoEnabled skips the calling test unless ALERTER_DEFECT_DEMO
-// is set. Demo tests assert the behavior the audit says the code
-// should have, so they fail while the defect is present.
-func defectDemoEnabled(t *testing.T) {
-	t.Helper()
-	if os.Getenv("ALERTER_DEFECT_DEMO") == "" {
-		t.Skip("set ALERTER_DEFECT_DEMO=1 to run the defect demonstration")
-	}
-}
+// Claims C8 (cache_hit_ratio returned every delta row) and C9
+// (slow_query_count used the lifetime mean) were fixed in #407. Their
+// tests now assert the corrected behavior directly and keep their
+// original names so the audit trail stays searchable.
 
 // auditDefectsSchema mirrors the production collector schema for the
 // columns the metric registry queries actually read. The table set is
@@ -130,8 +122,12 @@ CREATE TABLE metrics.pg_stat_database (
 CREATE TABLE metrics.pg_stat_statements (
     connection_id INTEGER NOT NULL,
     database_name TEXT NOT NULL,
+    userid OID NOT NULL DEFAULT 10,
+    dbid OID NOT NULL DEFAULT 16384,
     queryid BIGINT NOT NULL,
+    toplevel BOOLEAN NOT NULL DEFAULT TRUE,
     calls BIGINT,
+    total_exec_time DOUBLE PRECISION,
     mean_exec_time DOUBLE PRECISION,
     collected_at TIMESTAMPTZ NOT NULL
 );
@@ -180,8 +176,15 @@ const (
 	insertAuditStatStatementsSQL = `
         INSERT INTO metrics.pg_stat_statements
             (connection_id, database_name, queryid, calls, mean_exec_time,
-             collected_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+             total_exec_time, collected_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `
+
+	insertAuditStatStatementsIdentitySQL = `
+        INSERT INTO metrics.pg_stat_statements
+            (connection_id, database_name, queryid, userid, calls,
+             total_exec_time, collected_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
     `
 
 	insertAuditBaselineSQL = `
@@ -449,40 +452,27 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 	}
 }
 
-// TestAuditC8CacheHitRatioReturnsEveryDeltaRow verifies audit claim
-// C8: unlike its sibling delta metrics, pg_stat_database.cache_hit_ratio
-// performs no latest-sample reduction, so it returns one row per
-// sample interval in the 15-minute window.
+// TestAuditC8CacheHitRatioReducesToLatestDelta covers audit claim C8,
+// fixed in #407. pg_stat_database.cache_hit_ratio used to return every
+// delta row in the 15-minute window with no ORDER BY, so the evaluator
+// (which fires on any violating row) and the cleaner (which stops at the
+// first row) could disagree on identical data, flapping the alert when
+// the newest interval violated and latching it when the oldest did.
 //
-// The consequence depends on which row a caller looks at, because the
-// evaluator scans every row while the cleaner inspects only the first
-// one. The query carries no ORDER BY, so which row comes first is
-// whatever the chosen plan emits first:
-//
-//   - When the first row is the violating one, the cleaner never
-//     clears, because the row it stops at still breaches the
-//     threshold. The alert latches.
-//   - When the first row is a healthy one, the cleaner clears the
-//     alert the evaluator just raised on identical data, and the
-//     alert flaps.
-//
-// This test pins the structural defect - three unreduced rows for one
-// connection and one database, exactly one of them violating - and
-// sorts by collected_at before making any positional assertion. The
-// production cleaner's dependence on the unspecified wire order is
-// itself the defect on record here; it is deliberately not an
-// assumption this test relies on.
-//
-// The query SHOULD reduce to the most recent interval, as
-// deadlocks_delta and temp_files_delta do with SUM()/GROUP BY.
-func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
+// The query now reduces to the newest qualifying delta per connection
+// and database with DISTINCT ON ... ORDER BY collected_at DESC, so both
+// sides read the same, most recent value. Each case seeds four samples
+// (three delta intervals) with exactly one violating interval, and
+// asserts that a single row comes back carrying the newest interval's
+// value: healthy when the violation is in the oldest interval,
+// violating when it is in the newest.
+func TestAuditC8CacheHitRatioReducesToLatestDelta(t *testing.T) {
 	ds, pool, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	const seededThreshold = 80.0
 
-	// Each case seeds four samples, producing three delta intervals.
 	// Every interval moves at least 10000 blocks so it clears the
 	// query's minimum-activity filter.
 	//
@@ -496,23 +486,26 @@ func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 		// hits and reads are cumulative counters per sample.
 		hits  []int64
 		reads []int64
-		// violatingInterval is the index, in collected_at order, of
-		// the one delta interval that breaches the threshold.
-		violatingInterval int
+		// wantViolates says whether the newest interval breaches the
+		// threshold, and wantValue is its exact ratio.
+		wantViolates bool
+		wantValue    float64
 	}{
 		{
-			name:              "violation in oldest interval",
-			connName:          "audit-c8-oldest",
-			hits:              []int64{0, 10_000, 40_000, 70_000},
-			reads:             []int64{0, 10_000, 10_000, 10_000},
-			violatingInterval: 0,
+			name:         "violation in oldest interval reads healthy",
+			connName:     "audit-c8-oldest",
+			hits:         []int64{0, 10_000, 40_000, 70_000},
+			reads:        []int64{0, 10_000, 10_000, 10_000},
+			wantViolates: false,
+			wantValue:    100,
 		},
 		{
-			name:              "violation in newest interval",
-			connName:          "audit-c8-newest",
-			hits:              []int64{0, 30_000, 60_000, 60_000},
-			reads:             []int64{0, 0, 0, 30_000},
-			violatingInterval: 2,
+			name:         "violation in newest interval reads violating",
+			connName:     "audit-c8-newest",
+			hits:         []int64{0, 30_000, 60_000, 60_000},
+			reads:        []int64{0, 0, 0, 30_000},
+			wantViolates: true,
+			wantValue:    0,
 		},
 	}
 
@@ -542,79 +535,42 @@ func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetLatestMetricValues failed: %v", err)
 			}
-
-			// Current (defective) behavior, asserted on the rows exactly
-			// as the query returned them: four samples for ONE
-			// connection and ONE database produce three unreduced delta
-			// rows. A metric that reduced to the latest interval would
-			// return exactly one, so this count is the defect itself
-			// and does not depend on row order.
-			const wantRows = 3
-			if len(values) != wantRows {
-				t.Fatalf("expected %d unreduced delta rows for a single "+
-					"connection/database, got %d", wantRows, len(values))
+			if len(values) != 1 {
+				t.Fatalf("expected one reduced row for a single "+
+					"connection/database, got %d: %+v", len(values), values)
 			}
 
-			var violating int
-			for _, v := range values {
-				if v.ConnectionID != connID {
-					t.Errorf("row connection_id = %d, want %d",
-						v.ConnectionID, connID)
-				}
-				if v.DatabaseName == nil || *v.DatabaseName != "appdb" {
-					t.Errorf("row database_name = %v, want \"appdb\"",
-						v.DatabaseName)
-				}
-				if v.Value < seededThreshold {
-					violating++
-				}
+			got := values[0]
+			if got.ConnectionID != connID {
+				t.Errorf("row connection_id = %d, want %d", got.ConnectionID, connID)
 			}
-			// Exactly one of the unreduced rows breaches the threshold,
-			// so the fire/clear outcome turns entirely on which row a
-			// caller happens to read.
-			if violating != 1 {
-				t.Fatalf("expected exactly one violating row, got %d", violating)
+			if got.DatabaseName == nil || *got.DatabaseName != "appdb" {
+				t.Errorf("row database_name = %v, want \"appdb\"", got.DatabaseName)
+			}
+			if got.Value != tc.wantValue {
+				t.Errorf("value = %.2f, want %.2f (the newest interval)",
+					got.Value, tc.wantValue)
+			}
+			if violates := got.Value < seededThreshold; violates != tc.wantViolates {
+				t.Errorf("violates = %v, want %v", violates, tc.wantViolates)
 			}
 
-			// Sort a copy by collected_at before asserting on positions.
-			// The sort is defensive: the registry query has no ORDER BY,
-			// so the wire order is plan-dependent and asserting on it
-			// directly would let this test flake with no code change.
-			ordered := make([]MetricValue, len(values))
-			copy(ordered, values)
-			sort.Slice(ordered, func(i, j int) bool {
-				return ordered[i].CollectedAt.Before(ordered[j].CollectedAt)
-			})
-			for i, v := range ordered {
-				t.Logf("interval %d: value=%.2f collected_at=%s",
-					i, v.Value, v.CollectedAt)
+			// The row must carry the newest interval's timestamp, which
+			// is what makes the evaluator and the cleaner agree.
+			newest, ok := nowMinus(t, pool, "1 minute").(time.Time)
+			if !ok {
+				t.Fatalf("nowMinus returned %T, want time.Time", nowMinus(t, pool, "1 minute"))
 			}
-			for i, v := range ordered {
-				gotViolates := v.Value < seededThreshold
-				wantViolates := i == tc.violatingInterval
-				if gotViolates != wantViolates {
-					t.Errorf("interval %d (collected_at=%s, value=%.2f) "+
-						"violates = %v, want %v",
-						i, v.CollectedAt, v.Value, gotViolates, wantViolates)
-				}
+			if got.CollectedAt.Sub(newest).Abs() > 5*time.Second {
+				t.Errorf("collected_at = %s, want about %s",
+					got.CollectedAt, newest)
 			}
-
-			// Diagnostic only. The cleaner acts on whichever row the
-			// planner emitted first, so this line records what it would
-			// have done on this run. Asserting on it would make the
-			// test flaky, which is exactly the hazard the missing
-			// ORDER BY creates for the production cleaner.
-			cleanerAction := "clear the alert"
-			if values[0].Value < seededThreshold {
-				cleanerAction = "leave the alert active"
-			}
-			t.Logf("wire-order first row: value=%.2f collected_at=%s; "+
-				"the cleaner would %s", values[0].Value,
-				values[0].CollectedAt, cleanerAction)
 		})
 	}
 
-	// Contrast with the sibling delta metrics, which do reduce.
+	// The reduction is DISTINCT ON ordered newest first; the sibling
+	// delta metrics reduce with GROUP BY. Either shape is fine, what
+	// matters is that none of the three returns unreduced rows.
 	for _, name := range []string{
 		"pg_stat_database.deadlocks_delta",
 		"pg_stat_database.temp_files_delta",
@@ -624,103 +580,225 @@ func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 			t.Errorf("%s unexpectedly lacks a GROUP BY reduction", name)
 		}
 	}
-	if strings.Contains(metricRegistry["pg_stat_database.cache_hit_ratio"].latestSQL,
-		"GROUP BY") {
-		t.Error("cache_hit_ratio unexpectedly contains a GROUP BY reduction")
+	latest := metricRegistry["pg_stat_database.cache_hit_ratio"].latestSQL
+	if !strings.Contains(latest, "DISTINCT ON (connection_id, database_name)") ||
+		!strings.Contains(latest, "collected_at DESC") {
+		t.Error("cache_hit_ratio latestSQL lacks the DISTINCT ON newest-first reduction")
 	}
 }
 
-// TestAuditC9SlowQueryCountUsesLifetimeMean verifies audit claim C9:
-// slow_query_count counts distinct queryids whose mean_exec_time
-// exceeds 1000 ms. pg_stat_statements.mean_exec_time is a lifetime
-// average since the last stats reset, so a query that ran slowly once
-// keeps the count elevated forever, even when it never executes again.
-//
-// The metric SHOULD derive a windowed mean from the deltas of
-// total_exec_time and calls.
-func TestAuditC9SlowQueryCountUsesLifetimeMean(t *testing.T) {
-	cfg := metricRegistry["pg_stat_statements.slow_query_count"]
-	if !strings.Contains(cfg.latestSQL, "mean_exec_time > 1000") {
-		t.Error("expected slow_query_count to filter on mean_exec_time > 1000")
+// insertAuditStatement seeds one metrics.pg_stat_statements row for the
+// default statement identity (userid, dbid and toplevel take the
+// fixture's defaults).
+func insertAuditStatement(t *testing.T, pool *pgxpool.Pool, connID int,
+	queryID, calls int64, meanMs, totalMs float64, offset string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), insertAuditStatStatementsSQL,
+		connID, "appdb", queryID, calls, meanMs, totalMs,
+		nowMinus(t, pool, offset)); err != nil {
+		t.Fatalf("failed to seed pg_stat_statements: %v", err)
 	}
-	if strings.Contains(cfg.latestSQL, "total_exec_time") {
-		t.Error("slow_query_count unexpectedly references total_exec_time")
-	}
+}
 
-	ds, pool, cleanup := newAuditDefectsDatastore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	connID := insertAuditConnection(t, pool, "audit-c9")
-
-	// Twelve queryids whose lifetime mean is above 1000 ms and whose
-	// call counts never change across the window: they have not
-	// executed at all during the last 15 minutes.
-	for queryID := int64(1); queryID <= 12; queryID++ {
-		for _, offset := range []string{"12 minutes", "6 minutes", "1 minute"} {
-			if _, err := pool.Exec(ctx, insertAuditStatStatementsSQL,
-				connID, "appdb", queryID, int64(5), 4200.0,
-				nowMinus(t, pool, offset)); err != nil {
-				t.Fatalf("failed to seed pg_stat_statements: %v", err)
-			}
-		}
-	}
-
-	values, err := ds.GetLatestMetricValues(ctx,
+// slowQueryCount runs the slow_query_count metric and returns the value
+// for connID, failing if the connection is missing from the result.
+func slowQueryCount(t *testing.T, ds *Datastore, connID int) float64 {
+	t.Helper()
+	values, err := ds.GetLatestMetricValues(context.Background(),
 		"pg_stat_statements.slow_query_count")
 	if err != nil {
 		t.Fatalf("GetLatestMetricValues failed: %v", err)
 	}
-	if len(values) != 1 {
-		t.Fatalf("expected one row, got %d", len(values))
+	for _, v := range values {
+		if v.ConnectionID == connID {
+			if v.DatabaseName == nil || *v.DatabaseName != "appdb" {
+				t.Fatalf("row database_name = %v, want \"appdb\"", v.DatabaseName)
+			}
+			return v.Value
+		}
 	}
-
-	// Current (defective) behavior: all twelve idle queries are
-	// counted, so the seeded "> 10" rule fires. The count SHOULD be 0
-	// because nothing ran slowly in the window.
-	const seededThreshold = 10.0
-	if values[0].Value != 12 {
-		t.Errorf("slow_query_count = %v, want 12 (every idle queryid counted)",
-			values[0].Value)
-	}
-	if !(values[0].Value > seededThreshold) {
-		t.Errorf("expected the seeded rule to fire on idle queries; value=%v",
-			values[0].Value)
-	}
+	t.Fatalf("no slow_query_count row for connection %d: %+v", connID, values)
+	return 0
 }
 
-// TestAuditC9SlowQueryCountDemo asserts the behavior the metric
-// SHOULD have: a query that has not executed during the evaluation
-// window must not be counted as slow. It fails against the current
-// implementation, so it is skipped unless ALERTER_DEFECT_DEMO=1.
-func TestAuditC9SlowQueryCountDemo(t *testing.T) {
-	defectDemoEnabled(t)
+// TestAuditC9SlowQueryCountUsesIntervalMean covers audit claim C9, fixed
+// in #407. slow_query_count used to count queryids whose lifetime
+// mean_exec_time exceeded 1000 ms, so a query that ran slowly once kept
+// the count elevated for ever. It now derives the mean over the most
+// recent probe interval from delta(total_exec_time) / delta(calls), and
+// reports 0 (rather than no row) for a database whose statements are all
+// idle or fast.
+func TestAuditC9SlowQueryCountUsesIntervalMean(t *testing.T) {
+	cfg := metricRegistry["pg_stat_statements.slow_query_count"]
+	if strings.Contains(cfg.latestSQL, "mean_exec_time") {
+		t.Error("slow_query_count still reads the lifetime mean_exec_time column")
+	}
+	for _, want := range []string{"total_exec_time", "LAG(calls)", "COUNT(*) FILTER"} {
+		if !strings.Contains(cfg.latestSQL, want) {
+			t.Errorf("slow_query_count latestSQL lacks %q", want)
+		}
+	}
 
 	ds, pool, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()
 
-	ctx := context.Background()
-	connID := insertAuditConnection(t, pool, "audit-c9-demo")
+	offsets := []string{"12 minutes", "6 minutes", "1 minute"}
 
-	for _, offset := range []string{"12 minutes", "6 minutes", "1 minute"} {
-		if _, err := pool.Exec(ctx, insertAuditStatStatementsSQL,
-			connID, "appdb", int64(1), int64(5), 4200.0,
-			nowMinus(t, pool, offset)); err != nil {
-			t.Fatalf("failed to seed pg_stat_statements: %v", err)
+	t.Run("idle queries with a slow lifetime mean report 0", func(t *testing.T) {
+		connID := insertAuditConnection(t, pool, "audit-c9-idle")
+		// Twelve queryids whose lifetime mean is above 1000 ms and
+		// whose call counts never change: none ran in the window. The
+		// seeded "> 10" rule must not fire, and the database must
+		// still be present with a value of 0.
+		for queryID := int64(1); queryID <= 12; queryID++ {
+			for _, offset := range offsets {
+				insertAuditStatement(t, pool, connID, queryID, 5, 4200, 21000, offset)
+			}
+		}
+		if got := slowQueryCount(t, ds, connID); got != 0 {
+			t.Errorf("slow_query_count = %v, want 0 for idle queries", got)
+		}
+	})
+
+	t.Run("interval mean decides, not lifetime mean", func(t *testing.T) {
+		connID := insertAuditConnection(t, pool, "audit-c9-interval")
+		// queryid 1: lifetime mean 4200 ms, but the newest interval
+		// added 10 calls in 1000 ms (100 ms each): fast, not counted.
+		insertAuditStatement(t, pool, connID, 1, 5, 4200, 21000, "12 minutes")
+		insertAuditStatement(t, pool, connID, 1, 5, 4200, 21000, "6 minutes")
+		insertAuditStatement(t, pool, connID, 1, 15, 1466.7, 22000, "1 minute")
+		// queryid 2: lifetime mean 50 ms, but the newest interval added
+		// 2 calls in 5000 ms (2500 ms each): slow, counted.
+		insertAuditStatement(t, pool, connID, 2, 1000, 50, 50000, "12 minutes")
+		insertAuditStatement(t, pool, connID, 2, 1000, 50, 50000, "6 minutes")
+		insertAuditStatement(t, pool, connID, 2, 1002, 54.9, 55000, "1 minute")
+		// queryid 3: slow in the older interval (2 calls, 6000 ms) but
+		// idle in the newest one; only the newest interval counts.
+		insertAuditStatement(t, pool, connID, 3, 10, 100, 1000, "12 minutes")
+		insertAuditStatement(t, pool, connID, 3, 12, 583.3, 7000, "6 minutes")
+		insertAuditStatement(t, pool, connID, 3, 12, 583.3, 7000, "1 minute")
+		if got := slowQueryCount(t, ds, connID); got != 1 {
+			t.Errorf("slow_query_count = %v, want 1 (queryid 2 only)", got)
+		}
+	})
+
+	t.Run("a stats reset is not a slow query", func(t *testing.T) {
+		connID := insertAuditConnection(t, pool, "audit-c9-reset")
+		// calls fell from 1000 to 3 between the two newest samples, so
+		// the counters were reset; the 3 post-reset calls took 9000 ms
+		// but the delta is meaningless and must not be counted.
+		insertAuditStatement(t, pool, connID, 1, 1000, 50, 50000, "6 minutes")
+		insertAuditStatement(t, pool, connID, 1, 3, 3000, 9000, "1 minute")
+		if got := slowQueryCount(t, ds, connID); got != 0 {
+			t.Errorf("slow_query_count = %v, want 0 after a stats reset", got)
+		}
+	})
+
+	t.Run("a single sample in the window reports 0", func(t *testing.T) {
+		connID := insertAuditConnection(t, pool, "audit-c9-single")
+		insertAuditStatement(t, pool, connID, 1, 5, 4200, 21000, "1 minute")
+		if got := slowQueryCount(t, ds, connID); got != 0 {
+			t.Errorf("slow_query_count = %v, want 0 with no predecessor", got)
+		}
+	})
+
+	t.Run("deltas are taken within each statement identity", func(t *testing.T) {
+		connID := insertAuditConnection(t, pool, "audit-c9-identity")
+		// The same queryid under two userids: identity A is reset
+		// between samples (calls 1000 -> 2), identity B runs 4 slow
+		// calls in 20000 ms. Differenced per identity, only B counts
+		// and it counts once. Differenced across identities, the
+		// interleaved rows would produce nonsense.
+		for _, row := range []struct {
+			userid int64
+			calls  int64
+			total  float64
+			offset string
+		}{
+			{10, 1000, 50000, "6 minutes"},
+			{10, 2, 6000, "1 minute"},
+			{20, 100, 10000, "6 minutes"},
+			{20, 104, 30000, "1 minute"},
+		} {
+			if _, err := pool.Exec(context.Background(),
+				insertAuditStatStatementsIdentitySQL,
+				connID, "appdb", int64(1), row.userid, row.calls, row.total,
+				nowMinus(t, pool, row.offset)); err != nil {
+				t.Fatalf("failed to seed pg_stat_statements: %v", err)
+			}
+		}
+		if got := slowQueryCount(t, ds, connID); got != 1 {
+			t.Errorf("slow_query_count = %v, want 1 (one queryid, one slow identity)", got)
+		}
+	})
+}
+
+// TestMetricRegistryLatestSQLFreshnessCutoff walks the registry and
+// asserts that every latest query bounds collected_at with a NOW() -
+// INTERVAL cutoff, or is on the allowlist below with a reason. Without a
+// cutoff a metric keeps reporting the newest row the table still holds,
+// so an alert raised before the collector stopped, or before the
+// connection stopped being monitored, fires on days-old data until
+// retention purges the partition; #407 found two slot metrics doing
+// exactly that.
+func TestMetricRegistryLatestSQLFreshnessCutoff(t *testing.T) {
+	// Metrics whose latest query deliberately carries no cutoff.
+	allowlist := map[string]string{
+		// The pg_settings probe is change-tracked and writes nothing
+		// while the settings hash is unchanged, so any max-age
+		// predicate kills the metric within the hour (#406). Freshness
+		// is not meaningful for a value that only changes on a
+		// configuration reload.
+		"pg_settings.max_connections": "change-tracked probe with no heartbeat",
+	}
+	cutoff := regexp.MustCompile(
+		`collected_at > NOW\(\) - INTERVAL '\d+ (minute|minutes|hour|hours)'`)
+
+	names := make([]string, 0, len(metricRegistry))
+	for name := range metricRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		cfg := metricRegistry[name]
+		if reason, ok := allowlist[name]; ok {
+			if cutoff.MatchString(cfg.latestSQL) {
+				t.Errorf("%s is allowlisted (%s) but its latestSQL now has a cutoff; remove it from the allowlist",
+					name, reason)
+			}
+			continue
+		}
+		if !cutoff.MatchString(cfg.latestSQL) {
+			t.Errorf("%s latestSQL has no collected_at freshness cutoff; add one or allowlist it with a reason",
+				name)
 		}
 	}
+}
 
-	values, err := ds.GetLatestMetricValues(ctx,
-		"pg_stat_statements.slow_query_count")
-	if err != nil {
-		// A correct implementation reports no slow queries, which the
-		// registry surfaces as a "no data" error; that is acceptable.
-		return
+// TestMetricClearsWhenAbsent pins the clear-when-absent classification
+// for representative registry entries and for an unknown metric.
+func TestMetricClearsWhenAbsent(t *testing.T) {
+	ds := &Datastore{}
+	cases := map[string]bool{
+		// Emit a row only while the condition holds, or describe an
+		// object that can be dropped.
+		"pg_replication_slots.inactive":            true,
+		"pg_replication_slots.max_retained_bytes":  true,
+		"pg_stat_activity.blocked_count":           true,
+		"pg_stat_replication.standby_disconnected": true,
+		"spock_exception_log.recent_count":         true,
+		// Emit a row for every healthy connection.
+		"pg_sys_cpu_usage_info.processor_time_percent": false,
+		"pg_stat_checkpointer.checkpoints_req_delta":   false,
+		"pg_stat_database.cache_hit_ratio":             false,
+		"pg_stat_statements.slow_query_count":          false,
+		// Not in the registry at all.
+		"probe_staleness_ratio": false,
 	}
-	for _, v := range values {
-		if v.Value != 0 {
-			t.Fatalf("slow_query_count = %v for a query that did not run "+
-				"during the window, want 0", v.Value)
+	for name, want := range cases {
+		if got := ds.MetricClearsWhenAbsent(name); got != want {
+			t.Errorf("MetricClearsWhenAbsent(%q) = %v, want %v", name, got, want)
 		}
 	}
 }

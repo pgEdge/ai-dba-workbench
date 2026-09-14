@@ -410,6 +410,57 @@ project adheres to
   honoured again by `autovacuum_not_running`, which previously
   always assumed the shipped defaults. (#406)
 
+- Fix alerts flapping, latching, or clearing falsely when a metric
+  stops reporting. The alert cleaner treated a latest-metric query
+  that returned no row for an alert's connection and database, or no
+  rows at all, as proof that the condition had resolved, so any gap
+  in collection cleared the alert and the next sample raised it
+  again. The metric registry now records, for each metric, whether a
+  missing row means recovery. Metrics that emit a row for every
+  healthy connection leave their alert active until fresh data shows
+  the condition has ended, and the `metric_staleness` rule reports
+  the probe that stopped; metrics that report only whilst the
+  condition holds, or that describe an object an operator can
+  legitimately drop, such as a replication slot or a standby, still
+  clear on absence. (#407)
+
+- Fix the `slow_query_count` rule latching until a manual
+  `pg_stat_statements_reset()`. The rule counted the queries whose
+  `mean_exec_time` exceeded 1000 ms, a lifetime average since the
+  last statistics reset that never decays, so a query that ran
+  slowly once kept the count elevated whether or not it ran again.
+  The count now covers only the queries that ran during the most
+  recent probe interval, using an interval mean derived from the
+  change in total execution time divided by the change in call
+  count. (#407)
+
+- Fix the `cache_hit_ratio_low` rule firing and clearing on
+  identical data. The metric returned every delta row in its
+  fifteen minute window with no ordering, and the threshold
+  evaluator fired when any row violated the threshold whilst the
+  alert cleaner stopped at the first row it saw, so one set of
+  samples could produce a fire and a clear in the same cycle, or
+  latch the alert when the oldest interval was the violating one.
+  The metric now reduces to the newest qualifying delta for each
+  connection and database, so both sides read the same value.
+  (#407)
+
+- Add a fifteen minute freshness cutoff to the
+  `pg_replication_slots.inactive_count` and
+  `pg_replication_slots.max_retained_bytes` metrics, which
+  previously had none, so `replication_slot_retention_warn` and
+  `replication_slot_retention_high` no longer keep firing on
+  days-old samples after a collector stops or a connection stops
+  being monitored. The window on `pg_replication_slots.inactive`
+  widened from five to fifteen minutes, because five minutes
+  equalled the probe interval and a single late collection emptied
+  the window and cleared the critical `replication_slot_inactive`
+  alert. A unit test now requires every metric in the registry to
+  bound `collected_at`, or to be allowlisted with a reason;
+  `pg_settings.max_connections` is the one allowlisted exception,
+  since its change-tracked probe stores nothing whilst the
+  configuration is unchanged. (#407)
+
 - Split the server dashboard "Connections Over Time" chart into a
   Connections chart and a Sessions Established chart. The old chart
   plotted `numbackends`, a gauge bounded by `max_connections`,

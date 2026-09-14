@@ -63,6 +63,16 @@ When a metric value no longer violates the threshold, the
 system marks the alert as cleared and records the
 timestamp.
 
+A gap in the collected data does not clear an alert. When
+a metric that normally reports a value for every monitored
+connection stops returning one, the alerter treats the gap
+as missing data rather than recovery, so the alert stays
+active and the metric staleness rule reports the probe
+that stopped. Alerts on metrics that report only whilst
+the condition holds, such as an inactive replication slot
+or a blocked session, still clear as soon as the metric
+goes quiet.
+
 ### False Positive
 
 An operator can mark an alert as a false positive to

@@ -221,6 +221,73 @@ WHERE collected_at > NOW() - INTERVAL '5 minutes'
 GROUP BY connection_id;
 ```
 
+## Registry Requirements
+
+Every metric in the alerter's registry
+(`internal/database/metric_registry.go`) must satisfy two further
+requirements that govern how the alert cleaner reads its results.
+
+### Freshness Cutoffs
+
+Each `latestSQL` query must bound `collected_at` with a
+`NOW() - INTERVAL` cutoff of roughly three probe intervals. Three
+intervals leave room for two consecutive samples inside the window,
+so that a delta metric still has a predecessor, whilst one late
+collection cannot empty the window. A metric whose probe runs every
+300 seconds therefore uses a 15 minute cutoff.
+
+Without a cutoff, the query returns the newest row the table still
+holds, however old that row is. An alert then goes on firing on data
+that is days old after the collector stops, or after the connection
+stops being monitored, until retention purges the partition.
+
+In the following example, the cutoff restricts a latest query to the
+last three samples of a 300 second probe:
+
+```sql
+SELECT connection_id, your_value::float, collected_at
+FROM metrics.your_table
+WHERE collected_at > NOW() - INTERVAL '15 minutes';
+```
+
+A metric may omit the cutoff only where freshness is not meaningful.
+The `pg_settings.max_connections` metric is the one current
+exception, because the settings probe is change-tracked and stores
+nothing whilst the configuration is unchanged, so any maximum age
+predicate would silence the metric on a stable server. The
+`TestMetricRegistryLatestSQLFreshnessCutoff` test in
+`internal/database/audit_defects_test.go` enforces the requirement
+and holds the allowlist of exceptions, so a metric without a cutoff
+must be added to that allowlist with a reason.
+
+### Clearing on Missing Data
+
+The `clearWhenAbsent` field on `metricQueryConfig` tells the alert
+cleaner what a missing row means. The cleaner consults the field
+through `Datastore.MetricClearsWhenAbsent` whenever the latest query
+returns no row for an active alert's connection and database, or no
+rows at all.
+
+Choose the value from the shape of the query:
+
+- Leave the field at its default of `false` when the query emits a
+  row for every healthy connection, as a CPU percentage or a cache
+  hit ratio does. A connection that disappears from the result set
+  has stopped reporting rather than recovered, so the alert stays
+  active until fresh data shows the condition has ended, and the
+  `metric_staleness` rule reports the stalled probe.
+- Set the field to `true` when the query emits a row only whilst the
+  condition holds, as a blocked backend count does, or when the query
+  describes an object that an operator can legitimately drop, such as
+  a replication slot or a standby. A missing row is then the recovery
+  signal, so the cleaner clears the alert.
+
+Every entry that sets `clearWhenAbsent` to `true` carries a comment
+on the registry entry explaining why absence means recovery for that
+metric; add one alongside the field. A metric name that the registry
+does not know returns `false`, so a metric evaluated outside the
+registry never clears on absent data.
+
 ## Choosing Thresholds
 
 Select thresholds based on your operational requirements.

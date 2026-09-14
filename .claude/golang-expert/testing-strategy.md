@@ -71,8 +71,10 @@ and recreate tables including `connections`, `cluster_groups`,
 `alerts`, `blackouts`, `metrics.*` and `schema_version` on whatever
 they are pointed at. The alerter engine tests enforce this with
 `assertLocalTestDSN` in `alerter/src/internal/engine/baselines_test.go`,
-which fails hard on a non-local host; the other suites rely on the
-operator. Never derive a test URL from `bin/ai-dba-server.yaml`.
+which fails hard on a non-local host and on a database name outside
+`ai_workbench`, `ai_workbench_<suffix>` (the per-task databases that
+concurrent local sessions use so their schema resets do not collide) and
+`postgres` (the CI default); the other suites rely on the operator. Never derive a test URL from `bin/ai-dba-server.yaml`.
 
 ## Getting a Database in a Test
 

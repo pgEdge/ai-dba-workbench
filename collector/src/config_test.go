@@ -696,6 +696,36 @@ func TestConfigApplyFlags_ConfigMatchingFlagDefaultSurvives(t *testing.T) {
 	}
 }
 
+// TestConfigApplyFlags_ExplicitEmptyPasswordFile verifies that an
+// explicitly empty -pg-password-file clears the path the configuration
+// file named, rather than silently leaving the configured file in
+// place for LoadPassword to read later. This mirrors the alerter's
+// TestApplyFlagOverrides_ExplicitEmptyPasswordFile.
+func TestConfigApplyFlags_ExplicitEmptyPasswordFile(t *testing.T) {
+	origPasswordFile := *pgPasswordFile
+	t.Cleanup(func() { *pgPasswordFile = origPasswordFile })
+	*pgPasswordFile = ""
+
+	config := NewConfig()
+	config.Datastore.PasswordFile = "/from/config/password"
+
+	config.ApplyFlags(flagutil.Set{flagPGPasswordFile: true})
+
+	if config.Datastore.PasswordFile != "" {
+		t.Errorf("PasswordFile = %q, want it cleared by the explicit empty flag",
+			config.Datastore.PasswordFile)
+	}
+
+	// The configured file must not be read on a later LoadPassword
+	// either; it does not exist, so a read attempt would error.
+	if err := config.LoadPassword(); err != nil {
+		t.Errorf("LoadPassword after clearing the path: %v", err)
+	}
+	if config.Datastore.Password != "" {
+		t.Errorf("Password = %q, want it left empty", config.Datastore.Password)
+	}
+}
+
 // TestLoadConfigurationFlagPrecedence drives the whole load path: a
 // configuration file sets a non-default port, and an explicitly
 // passed -pg-port carrying the flag's own default value must still

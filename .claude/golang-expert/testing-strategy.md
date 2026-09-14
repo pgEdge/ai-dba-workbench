@@ -249,4 +249,5 @@ cfg.ApplyFlags(nil)
 ```
 
 Any new flag needs both cases covered: a configuration value that
-coincides with the flag's default must survive when the flag is
+coincides with the flag's default must survive when the flag is not
+passed, and the flag passed with its default value must still win.

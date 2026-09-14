@@ -18,13 +18,20 @@ import (
 )
 
 // allowedTestDatabase matches the database names the integration tests
-// may target. The list is deliberately tiny: "ai_workbench" for local
-// development, the per-task "ai_workbench_pr<number>" databases that
-// concurrent local sessions use so their schema resets do not collide,
-// and "postgres" for CI, which is the default database the postgres
-// Docker image creates. Anything that merely looks plausible, such as
-// "ai_workbench_prod" or "ai_workbench_live", is refused.
-var allowedTestDatabase = regexp.MustCompile(`^(ai_workbench(_pr[0-9]+)?|postgres)$`)
+// may target: "ai_workbench" for local development, the per-task
+// "ai_workbench_<tag>" databases that concurrent local sessions use so
+// their schema resets do not collide, and "postgres" for CI, which is
+// the default database the postgres Docker image creates.
+//
+// The tag must be lower-case alphanumeric and must contain at least one
+// digit, because every tag a session actually generates is derived from
+// an issue, pull request or session number ("pr407", "issue407",
+// "sess2"), whilst the production-shaped names this guard exists to
+// refuse are words: "ai_workbench_prod", "ai_workbench_live",
+// "ai_workbench_staging" and "ai_workbench_demo" all fail the digit
+// requirement.
+var allowedTestDatabase = regexp.MustCompile(
+	`^(ai_workbench(_[a-z0-9]*[0-9][a-z0-9]*)?|postgres)$`)
 
 // allowedTestHosts are the only hosts the integration tests may connect
 // to. The loopback-only check is the primary safety net.
@@ -71,7 +78,8 @@ func requireLocalTestDSN(t *testing.T, purpose string) string {
 	if !allowedTestDatabase.MatchString(cfg.ConnConfig.Database) {
 		t.Fatalf("refusing to run destructive integration tests "+
 			"against database %q; expected ai_workbench, "+
-			"ai_workbench_pr<number> or postgres",
+			"ai_workbench_<tag> where the tag is lower-case "+
+			"alphanumeric and holds at least one digit, or postgres",
 			cfg.ConnConfig.Database)
 	}
 	return dsn
@@ -82,11 +90,14 @@ func requireLocalTestDSN(t *testing.T, purpose string) string {
 // would happily let a test wipe a production schema reached over an SSH
 // tunnel or a local port forward.
 func TestAllowedTestDatabase(t *testing.T) {
-	allowed := []string{"ai_workbench", "ai_workbench_pr407", "postgres"}
+	allowed := []string{
+		"ai_workbench", "ai_workbench_pr407", "ai_workbench_issue407",
+		"ai_workbench_sess2", "postgres",
+	}
 	refused := []string{
-		"ai_workbench_prod", "ai_workbench_live", "ai_workbench_pr",
-		"ai_workbench_staging", "workbench", "ai_workbench_pr407x",
-		"postgres_prod", "", "ai_workbench_PR407",
+		"ai_workbench_prod", "ai_workbench_live", "ai_workbench_staging",
+		"ai_workbench_demo", "ai_workbench_", "ai_workbench_PR407",
+		"workbench", "postgres_prod", "",
 	}
 	for _, name := range allowed {
 		if !allowedTestDatabase.MatchString(name) {

@@ -339,6 +339,8 @@ describe('PerformanceSection', () => {
             });
             expect(kpi('Cache Hit Ratio').getAttribute('data-value'))
                 .toBe('--');
+            // No unit beside the placeholder, matching the server dashboard.
+            expect(kpi('Cache Hit Ratio').getAttribute('data-unit')).toBe('');
             expect(kpi('Cache Hit Ratio').getAttribute('data-sparkline'))
                 .toBe('[null,null]');
         });

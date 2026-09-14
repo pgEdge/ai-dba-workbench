@@ -347,7 +347,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                 <KpiTile
                     label="Cache Hit Ratio"
                     value={formatValue(cacheHitRatio)}
-                    unit="%"
+                    unit={cacheHitRatio !== null ? '%' : undefined}
                     status={getCacheHitStatus(cacheHitRatio)}
                     sparklineData={cacheHitSparkline}
                     analysisContext={{

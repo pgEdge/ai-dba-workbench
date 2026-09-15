@@ -86,15 +86,20 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.Config != nil && deps.Config.LLM.MaxIterations > 0 {
 			maxIterations = deps.Config.LLM.MaxIterations
 		}
+		// The login page state is derived once here and shared with the
+		// login handler, so that what the capabilities endpoint reports
+		// and what the login endpoint enforces cannot drift apart.
+		authInfo := authCapabilities(deps)
 		mux.HandleFunc("/api/v1/capabilities",
-			handleCapabilities(deps.AIEnabled, maxIterations, authCapabilities(deps)))
+			handleCapabilities(deps.AIEnabled, maxIterations, authInfo))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
 		// from configured trusted proxies, preventing rate limit bypass via IP spoofing
 		// The TLS enabled flag ensures cookies are marked Secure when using HTTPS
 		tlsEnabled := deps.Config != nil && deps.Config.HTTP.TLS.Enabled
-		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor, tlsEnabled)
+		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor,
+			tlsEnabled, authInfo.LocalEnabled)
 
 		// NewAuthHandler starts a cleanup goroutine for its internal
 		// login rate limiter, which only Close stops. Hand that back

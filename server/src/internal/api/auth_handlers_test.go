@@ -48,7 +48,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 	defer rateLimiter.Stop()
 
 	// Create handler (tlsEnabled=false for tests)
-	handler := NewAuthHandler(authStore, rateLimiter, nil, false)
+	handler := NewAuthHandler(authStore, rateLimiter, nil, false, true)
 	defer handler.Close()
 
 	tests := []struct {
@@ -213,7 +213,7 @@ func TestAuthHandler_HandleLogin(t *testing.T) {
 
 func TestAuthHandler_NilAuthStore(t *testing.T) {
 	// Create handler with nil auth store (tlsEnabled=false for tests)
-	handler := NewAuthHandler(nil, nil, nil, false)
+	handler := NewAuthHandler(nil, nil, nil, false, true)
 	defer handler.Close()
 
 	body, _ := json.Marshal(LoginRequest{Username: "test", Password: "test"})
@@ -237,7 +237,7 @@ func TestAuthHandler_NilAuthStore(t *testing.T) {
 }
 
 func TestAuthHandler_RegisterRoutes(t *testing.T) {
-	handler := NewAuthHandler(nil, nil, nil, false)
+	handler := NewAuthHandler(nil, nil, nil, false, true)
 	defer handler.Close()
 	mux := http.NewServeMux()
 
@@ -261,7 +261,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 	// - With an IPExtractor that has trusted proxies, it should extract from headers when appropriate
 
 	t.Run("without IPExtractor - uses RemoteAddr directly", func(t *testing.T) {
-		handler := NewAuthHandler(nil, nil, nil, false)
+		handler := NewAuthHandler(nil, nil, nil, false, true)
 		defer handler.Close()
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -278,7 +278,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 	t.Run("with IPExtractor and trusted proxy", func(t *testing.T) {
 		// Create IPExtractor that trusts 10.0.0.0/8 range
 		extractor := auth.NewIPExtractor([]string{"10.0.0.0/8"})
-		handler := NewAuthHandler(nil, nil, extractor, false)
+		handler := NewAuthHandler(nil, nil, extractor, false, true)
 		defer handler.Close()
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -295,7 +295,7 @@ func TestAuthHandler_ExtractIPFromRequest(t *testing.T) {
 	t.Run("with IPExtractor but untrusted proxy", func(t *testing.T) {
 		// Create IPExtractor that trusts a different range
 		extractor := auth.NewIPExtractor([]string{"172.16.0.0/12"})
-		handler := NewAuthHandler(nil, nil, extractor, false)
+		handler := NewAuthHandler(nil, nil, extractor, false, true)
 		defer handler.Close()
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -335,7 +335,7 @@ func TestAuthHandler_RateLimiting(t *testing.T) {
 	rateLimiter := auth.NewRateLimiter(15, 2) // 2 max attempts
 	defer rateLimiter.Stop()
 
-	handler := NewAuthHandler(authStore, rateLimiter, nil, false)
+	handler := NewAuthHandler(authStore, rateLimiter, nil, false, true)
 	defer handler.Close()
 
 	// Make failed attempts to trigger rate limit
@@ -417,7 +417,7 @@ func TestAuthHandler_SecureCookieFlag(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewAuthHandler(authStore, nil, nil, tt.tlsEnabled)
+			handler := NewAuthHandler(authStore, nil, nil, tt.tlsEnabled, true)
 			defer handler.Close()
 
 			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass1234"})
@@ -559,7 +559,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 				ipExtractor = auth.NewIPExtractor([]string{trustedProxyCIDR})
 			}
 
-			handler := NewAuthHandler(authStore, nil, ipExtractor, tt.tlsEnabled)
+			handler := NewAuthHandler(authStore, nil, ipExtractor, tt.tlsEnabled, true)
 			defer handler.Close()
 
 			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass1234"})
@@ -603,7 +603,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 // matters because a logout reachable by GET is a cross-site request
 // forgery that logs people out of someone else's page.
 func TestAuthHandler_LogoutRejectsNonPOST(t *testing.T) {
-	handler := NewAuthHandler(nil, nil, nil, false)
+	handler := NewAuthHandler(nil, nil, nil, false, true)
 	defer handler.Close()
 
 	rec := httptest.NewRecorder()
@@ -636,7 +636,7 @@ func TestAuthHandler_LogoutInvalidatesTheServerSideSession(t *testing.T) {
 		t.Fatalf("AuthenticateUser: %v", err)
 	}
 
-	handler := NewAuthHandler(authStore, nil, nil, false)
+	handler := NewAuthHandler(authStore, nil, nil, false, true)
 	defer handler.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
@@ -673,7 +673,7 @@ func TestAuthHandler_SecureCookieLogout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewAuthHandler(nil, nil, nil, tt.tlsEnabled)
+			handler := NewAuthHandler(nil, nil, nil, tt.tlsEnabled, true)
 			defer handler.Close()
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)

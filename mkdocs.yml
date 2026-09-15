@@ -105,6 +105,7 @@ nav:
       - Account Management: admin-guide/managing-users-and-permissions/accounts.md
       - Group Management: admin-guide/managing-users-and-permissions/groups.md
       - Token Management: admin-guide/managing-users-and-permissions/tokens.md
+      - Single Sign-On: admin-guide/managing-users-and-permissions/sso.md
       - Permission Management: admin-guide/managing-users-and-permissions/permission_mgmt.md
     - Enforcing the Password Policy: admin-guide/password.md
     - Connection Management: admin-guide/connections.md

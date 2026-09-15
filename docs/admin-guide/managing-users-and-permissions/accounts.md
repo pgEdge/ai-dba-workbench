@@ -12,6 +12,15 @@ The Workbench and MCP server support built-in authentication via two methods:
   like a login user, but must use an API token for authentication. The server
   rejects password-based authentication for service accounts.
 
+An account may instead be owned by an OpenID Connect identity provider,
+in which case the provider authenticates the person and the Workbench
+issues the session. A federated account appears in the account listing
+and is administered in the same way as a local one, but it cannot be
+given a working password, because password authentication is refused for
+any account the provider owns. See
+[Single Sign-On](sso.md) for the configuration and its operational
+limits.
+
 Authentication data is stored in a SQLite database (`auth.db`) within the
 `data` directory. By default, the database resides at `./data/auth.db`
 relative to the server binary.
@@ -244,7 +253,6 @@ The configuration file manages the following authentication options:
 ```yaml
 http:
   auth:
-    enabled: true
     # Rate limiting settings
     rate_limit_window_minutes: 15
     rate_limit_max_attempts: 10

@@ -161,7 +161,7 @@ func (h *RBACHandler) createToken(w http.ResponseWriter, r *http.Request) {
 		expiry = &exp
 	}
 
-	rawToken, storedToken, err := h.authStore.CreateToken(
+	rawToken, storedToken, err := h.actorStore(r).CreateToken(
 		req.OwnerUsername, annotation, expiry)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create token for %s: %v",
@@ -278,7 +278,7 @@ func (h *RBACHandler) handleTokenSubpath(w http.ResponseWriter, r *http.Request)
 
 // deleteToken deletes a token by its ID.
 func (h *RBACHandler) deleteToken(w http.ResponseWriter, r *http.Request, tokenID int64) {
-	if err := h.authStore.DeleteToken(strconv.FormatInt(tokenID, 10)); err != nil {
+	if err := h.actorStore(r).DeleteToken(strconv.FormatInt(tokenID, 10)); err != nil {
 		log.Printf("[ERROR] Failed to delete token %d: %v", tokenID, err)
 		RespondError(w, http.StatusInternalServerError,
 			"Failed to delete token")
@@ -324,7 +324,7 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	if req.Connections != nil {
-		if err := h.authStore.SetTokenConnectionScope(tokenID, req.Connections); err != nil {
+		if err := h.actorStore(r).SetTokenConnectionScope(tokenID, req.Connections); err != nil {
 			log.Printf("[ERROR] Failed to set connection scope for token %d: %v", tokenID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set connection scope")
 			return
@@ -332,7 +332,7 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	if req.MCPPrivileges != nil {
-		if err := h.authStore.SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
+		if err := h.actorStore(r).SetTokenMCPScopeByNames(tokenID, req.MCPPrivileges); err != nil {
 			log.Printf("[ERROR] Failed to set MCP scope for token %d: %v", tokenID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set MCP scope")
 			return
@@ -340,7 +340,7 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 	}
 
 	if req.AdminPermissions != nil {
-		if err := h.authStore.SetTokenAdminScope(tokenID, req.AdminPermissions); err != nil {
+		if err := h.actorStore(r).SetTokenAdminScope(tokenID, req.AdminPermissions); err != nil {
 			log.Printf("[ERROR] Failed to set admin scope for token %d: %v", tokenID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set admin scope")
 			return
@@ -351,7 +351,7 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 }
 
 func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
-	if err := h.authStore.ClearTokenScope(tokenID); err != nil {
+	if err := h.actorStore(r).ClearTokenScope(tokenID); err != nil {
 		log.Printf("[ERROR] Failed to clear token scope for token %d: %v", tokenID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to clear token scope")
 		return

@@ -189,3 +189,7 @@ command and the token ID or hash prefix; in the following examples,
 # Remove by hash prefix (minimum 8 characters)
 ./bin/ai-dba-server -remove-token <hash-prefix>
 ```
+
+The server records every token creation, deletion and scope change in
+the audit log, naming the user, token or command-line operator that made
+it; for details, see [Audit Log](audit-log.md).

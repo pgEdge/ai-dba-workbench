@@ -20,54 +20,157 @@ import (
 
 // SetTokenConnectionScope sets the connection scope for a token.
 // If connections is empty, clears all connection scoping (token has no connection restrictions).
+// The change is attributed to the system actor.
 func (s *AuthStore) SetTokenConnectionScope(tokenID int64, connections []ScopedConnection) error {
+	return s.setTokenConnectionScope(systemActor, tokenID, connections)
+}
+
+func (s *AuthStore) setTokenConnectionScope(actor Actor, tokenID int64,
+	connections []ScopedConnection) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Clear existing scope
-	_, err := s.db.Exec("DELETE FROM token_connection_scope WHERE token_id = ?", tokenID)
+	tx, target, err := s.beginTokenScopeChange(actor, tokenID,
+		"token.scope.set_connections")
 	if err != nil {
-		return fmt.Errorf("failed to clear token connection scope: %w", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	before, err := tokenConnectionScopeTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	// Clear existing scope
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_connection_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear token connection scope: %w", execErr)
+		return err
 	}
 
 	// Add new scope entries
 	for _, conn := range connections {
-		_, err := s.db.Exec(
+		if _, execErr := tx.Exec(
 			"INSERT INTO token_connection_scope (token_id, connection_id, access_level) VALUES (?, ?, ?)",
 			tokenID, conn.ConnectionID, conn.AccessLevel,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to add connection to token scope: %w", err)
+		); execErr != nil {
+			err = fmt.Errorf("failed to add connection to token scope: %w", execErr)
+			return err
 		}
 	}
 
-	return nil
+	after, err := tokenConnectionScopeTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	return s.commitTokenScopeChange(tx, actor, target,
+		map[string]any{"before": before, "after": after})
+}
+
+// beginTokenScopeChange opens the transaction shared by every token
+// scope mutation and builds its audit target. The token's annotation
+// labels the event when the row can be read; a token that does not
+// exist is not an error, because these methods have never required one.
+// The caller must hold s.mu.
+func (s *AuthStore) beginTokenScopeChange(actor Actor, tokenID int64,
+	action string) (*sql.Tx, *auditTarget, error) {
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	id := tokenID
+	target := &auditTarget{
+		action:     action,
+		targetType: "token",
+		targetID:   &id,
+	}
+	if annotation, ok := tokenAnnotationTx(tx, tokenID); ok {
+		target.targetName = annotation
+	}
+
+	return tx, target, nil
+}
+
+// commitTokenScopeChange records the scope event and commits, so that
+// the change and the event that describes it land together. A commit
+// error is returned as the driver reports it, which is what
+// SetTokenAdminScope has always done.
+func (s *AuthStore) commitTokenScopeChange(tx *sql.Tx, actor Actor,
+	target *auditTarget, details map[string]any) error {
+
+	if err := s.recordAudit(tx, newEvent(actor, target.action, target.targetType,
+		target.targetID, target.targetName, details)); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // SetTokenMCPScope sets the MCP privilege scope for a token
 // If privilegeIDs is empty, clears all MCP scoping (token has no MCP restrictions)
+// The change is attributed to the system actor.
 func (s *AuthStore) SetTokenMCPScope(tokenID int64, privilegeIDs []int64) error {
+	return s.setTokenMCPScope(systemActor, tokenID, privilegeIDs)
+}
+
+func (s *AuthStore) setTokenMCPScope(actor Actor, tokenID int64,
+	privilegeIDs []int64) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Clear existing scope
-	_, err := s.db.Exec("DELETE FROM token_mcp_scope WHERE token_id = ?", tokenID)
+	tx, target, err := s.beginTokenScopeChange(actor, tokenID,
+		"token.scope.set_tools")
 	if err != nil {
-		return fmt.Errorf("failed to clear token MCP scope: %w", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	before, err := tokenMCPScopeIDsTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	// Clear existing scope
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_mcp_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear token MCP scope: %w", execErr)
+		return err
 	}
 
 	// Add new scope entries
 	for _, privID := range privilegeIDs {
-		_, err := s.db.Exec(
+		if _, execErr := tx.Exec(
 			"INSERT INTO token_mcp_scope (token_id, privilege_identifier_id) VALUES (?, ?)",
 			tokenID, privID,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to add privilege to token scope: %w", err)
+		); execErr != nil {
+			err = fmt.Errorf("failed to add privilege to token scope: %w", execErr)
+			return err
 		}
 	}
 
-	return nil
+	after, err := tokenMCPScopeIDsTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	return s.commitTokenScopeChange(tx, actor, target,
+		map[string]any{"before": before, "after": after})
 }
 
 // MCPPrivilegeIDWildcard is the sentinel privilege_identifier_id stored in
@@ -76,43 +179,74 @@ const MCPPrivilegeIDWildcard int64 = 0
 
 // SetTokenMCPScopeByNames sets the MCP privilege scope for a token using privilege identifiers.
 // If identifiers contains "*", a single wildcard entry is stored instead of
-// looking up individual privilege IDs.
+// looking up individual privilege IDs. The change is attributed to the
+// system actor.
 func (s *AuthStore) SetTokenMCPScopeByNames(tokenID int64, identifiers []string) error {
+	return s.setTokenMCPScopeByNames(systemActor, tokenID, identifiers)
+}
+
+func (s *AuthStore) setTokenMCPScopeByNames(actor Actor, tokenID int64,
+	identifiers []string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Clear existing scope
-	_, err := s.db.Exec("DELETE FROM token_mcp_scope WHERE token_id = ?", tokenID)
+	tx, target, err := s.beginTokenScopeChange(actor, tokenID,
+		"token.scope.set_tools")
 	if err != nil {
-		return fmt.Errorf("failed to clear token MCP scope: %w", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	before, err := tokenMCPScopeNamesTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	// Clear existing scope
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_mcp_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear token MCP scope: %w", execErr)
+		return err
 	}
 
 	// Add new scope entries
 	for _, identifier := range identifiers {
-		if identifier == "*" {
+		if identifier == mcpWildcardIdentifier {
 			// Store wildcard sentinel (privilege_identifier_id = 0)
-			_, err := s.db.Exec(
+			if _, execErr := tx.Exec(
 				"INSERT INTO token_mcp_scope (token_id, privilege_identifier_id) VALUES (?, ?)",
 				tokenID, MCPPrivilegeIDWildcard,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to add wildcard privilege to token scope: %w", err)
+			); execErr != nil {
+				err = fmt.Errorf("failed to add wildcard privilege to token scope: %w", execErr)
+				return err
 			}
 			// Wildcard covers everything; skip remaining identifiers
-			return nil
+			break
 		}
 
-		_, err := s.db.Exec(
+		if _, execErr := tx.Exec(
 			`INSERT INTO token_mcp_scope (token_id, privilege_identifier_id)
              SELECT ?, id FROM mcp_privilege_identifiers WHERE identifier = ?`,
 			tokenID, identifier,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to add privilege to token scope: %w", err)
+		); execErr != nil {
+			err = fmt.Errorf("failed to add privilege to token scope: %w", execErr)
+			return err
 		}
 	}
 
-	return nil
+	after, err := tokenMCPScopeNamesTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	return s.commitTokenScopeChange(tx, actor, target,
+		map[string]any{"before": before, "after": after})
 }
 
 // GetTokenScope retrieves the complete scope configuration for a token
@@ -200,27 +334,55 @@ func (s *AuthStore) GetTokenScope(tokenID int64) (*TokenScope, error) {
 	return scope, nil
 }
 
-// ClearTokenScope removes all scope restrictions from a token
+// ClearTokenScope removes all scope restrictions from a token,
+// attributing the change to the system actor.
 func (s *AuthStore) ClearTokenScope(tokenID int64) error {
+	return s.clearTokenScope(systemActor, tokenID)
+}
+
+func (s *AuthStore) clearTokenScope(actor Actor, tokenID int64) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec("DELETE FROM token_connection_scope WHERE token_id = ?", tokenID)
+	tx, target, err := s.beginTokenScopeChange(actor, tokenID,
+		"token.scope.clear")
 	if err != nil {
-		return fmt.Errorf("failed to clear token connection scope: %w", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	before, err := tokenScopesTx(tx, tokenID)
+	if err != nil {
+		return err
 	}
 
-	_, err = s.db.Exec("DELETE FROM token_mcp_scope WHERE token_id = ?", tokenID)
-	if err != nil {
-		return fmt.Errorf("failed to clear token MCP scope: %w", err)
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_connection_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear token connection scope: %w", execErr)
+		return err
 	}
 
-	_, err = s.db.Exec("DELETE FROM token_admin_scope WHERE token_id = ?", tokenID)
-	if err != nil {
-		return fmt.Errorf("failed to clear token admin scope: %w", err)
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_mcp_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear token MCP scope: %w", execErr)
+		return err
 	}
 
-	return nil
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_admin_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear token admin scope: %w", execErr)
+		return err
+	}
+
+	return s.commitTokenScopeChange(tx, actor, target,
+		map[string]any{"before": before})
 }
 
 // IsConnectionInTokenScope checks if a connection is within a token's scope.
@@ -445,47 +607,72 @@ const AdminPermissionWildcard = "*"
 // SetTokenAdminScope sets the admin permission scope for a token.
 // This restricts which admin permissions the token can use.
 // If permissions contains "*", a single wildcard entry is stored instead of
-// individual permission strings.
+// individual permission strings. The change is attributed to the system
+// actor.
 func (s *AuthStore) SetTokenAdminScope(tokenID int64, permissions []string) error {
+	return s.setTokenAdminScope(systemActor, tokenID, permissions)
+}
+
+func (s *AuthStore) setTokenAdminScope(actor Actor, tokenID int64,
+	permissions []string) (err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tx, err := s.db.Begin()
+	tx, target, err := s.beginTokenScopeChange(actor, tokenID,
+		"token.scope.set_admin")
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return err
 	}
-	defer tx.Rollback() //nolint:errcheck // Rollback after commit is a no-op
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
+
+	before, err := tokenAdminScopeTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
 
 	// Clear existing admin scope
-	_, err = tx.Exec("DELETE FROM token_admin_scope WHERE token_id = ?", tokenID)
-	if err != nil {
-		return fmt.Errorf("failed to clear admin scope: %w", err)
+	if _, execErr := tx.Exec(
+		"DELETE FROM token_admin_scope WHERE token_id = ?", tokenID,
+	); execErr != nil {
+		err = fmt.Errorf("failed to clear admin scope: %w", execErr)
+		return err
 	}
 
 	// Insert new admin permissions
 	for _, perm := range permissions {
 		if perm == AdminPermissionWildcard {
 			// Store only the wildcard; skip remaining permissions
-			_, err = tx.Exec(
+			if _, execErr := tx.Exec(
 				"INSERT INTO token_admin_scope (token_id, permission) VALUES (?, ?)",
 				tokenID, AdminPermissionWildcard,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to add wildcard admin permission to token scope: %w", err)
+			); execErr != nil {
+				err = fmt.Errorf("failed to add wildcard admin permission to token scope: %w", execErr)
+				return err
 			}
-			return tx.Commit()
+			break
 		}
 
-		_, err = tx.Exec(
+		if _, execErr := tx.Exec(
 			"INSERT INTO token_admin_scope (token_id, permission) VALUES (?, ?)",
 			tokenID, perm,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to add admin permission %s to token scope: %w", perm, err)
+		); execErr != nil {
+			err = fmt.Errorf("failed to add admin permission %s to token scope: %w", perm, execErr)
+			return err
 		}
 	}
 
-	return tx.Commit()
+	after, err := tokenAdminScopeTx(tx, tokenID)
+	if err != nil {
+		return err
+	}
+
+	return s.commitTokenScopeChange(tx, actor, target,
+		map[string]any{"before": before, "after": after})
 }
 
 // GetTokenAdminScope returns the admin permissions in a token's scope.

@@ -10,8 +10,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 
@@ -66,7 +68,7 @@ type HandlerDependencies struct {
 func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	return func(mux *http.ServeMux) error {
 		// Helper to wrap handlers with authentication
-		authWrapper := createAuthWrapper(deps.AuthStore)
+		authWrapper := createAuthWrapper(deps.AuthStore, deps.IPExtractor)
 
 		// NOTE: These endpoints are intentionally unauthenticated to allow
 		// API tooling (e.g. RESTish) to discover the API schema without
@@ -263,12 +265,31 @@ func extractToken(r *http.Request) (string, bool, string) {
 	return token, true, ""
 }
 
+// clientIP returns the address to attribute a request to. It prefers
+// the trusted-proxy aware extractor, which only trusts forwarding
+// headers from configured proxies, and falls back to the host part of
+// RemoteAddr when no extractor is configured.
+func clientIP(r *http.Request, ipExtractor *auth.IPExtractor) string {
+	if ipExtractor != nil {
+		return ipExtractor.ExtractIP(r)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // createAuthWrapper creates a handler wrapper that enforces authentication
 // Supports both Authorization header (for API tokens) and session cookies (for browser sessions).
 // The actual token/session validation is delegated to auth.AuthenticateRequest,
 // the single shared implementation used by both this middleware and the
 // LLM proxy's Authorize hook.
-func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.HandlerFunc {
+//
+// On success the client IP is added to the context under
+// auth.IPAddressContextKey, so that auth.ActorFromContext can attribute
+// audited changes to the address the request came from.
+func createAuthWrapper(authStore *auth.AuthStore, ipExtractor *auth.IPExtractor) func(http.HandlerFunc) http.HandlerFunc {
 	return func(handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			ctx, err := auth.AuthenticateRequest(r, authStore)
@@ -283,6 +304,8 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 				return
 			}
 
+			ctx = context.WithValue(ctx, auth.IPAddressContextKey,
+				clientIP(r, ipExtractor))
 			r = r.WithContext(ctx)
 
 			// Proceed with handler

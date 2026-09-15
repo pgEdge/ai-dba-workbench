@@ -301,3 +301,46 @@ above. When you add a gate, add at minimum:
 
 The denial test plus the gate body (5 statements) covers the new
 lines; the admin-allowed test covers the not-taken branch.
+
+## Denial Auditing in the RBAC Management Handlers
+
+The `/api/v1/rbac/*` handlers do not inline the gate. They call the
+shared helpers `requirePermission` and `requireSuperuser` in
+`server/src/internal/api/rbac_handlers.go`. Since GitHub issue `#65`
+these helpers also write a `denied` row to the audit log before
+responding 403.
+The action name comes from `deniedAction(r)`, which maps the request
+method and path to the same dotted action the change would have
+recorded had it been allowed (`group.delete`, `token.scope.set`,
+`permission.admin.grant` and so on), falling back to
+`rbac.<lowercase method>` for an unrecognised route shape. A recording
+failure is logged with `[ERROR]` and never changes the response.
+
+Denials are coalesced before they reach the store. `recordDenial`
+consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
+keyed by `denialKey` (actor type, actor id, actor name, client IP,
+action and reason) under `denialMu`, so that two tokens of one user,
+or one token used from two addresses, never suppress each other's
+denials. The first denial for a key is written at once, identical
+denials within `denialCoalesceWindow` (60s) are counted instead of
+written, and the first denial after the window closes is written
+through `auth.RecordDeniedWithDetails` carrying
+`details.repeat_count`. The map evicts expired entries on every call
+and is capped at `maxDenialKeys` (10 000); an evicted entry that still
+held suppressed repeats is returned from `evictDenials` as a
+`denialSummary` and written by `recordDenialSummaries` once `denialMu`
+is released, as a row carrying `repeat_count` and `window_closed`, so
+a burst that stops before its window closes is still counted. Any new
+denial path must go through `recordDenial` rather than calling
+`RecordDenied` directly, or it loses the bound on how many rows one
+client can append.
+
+Mutations in these handlers go through `h.actorStore(r)` rather than
+`h.authStore`, so the audit row names the acting user or token:
+`actorStore` wraps `auth.ActorFromContext(r.Context())`, which reads
+the username, user or token id and client IP that
+`auth.AuthenticateRequest` and `createAuthWrapper` place in the
+request context. Read-only calls stay on `h.authStore`. When adding a
+new mutating RBAC endpoint, use `h.actorStore(r)` and extend the
+`deniedAction` mapping in the same change; the wiring is locked in by
+`server/src/internal/api/rbac_audit_wiring_test.go`.

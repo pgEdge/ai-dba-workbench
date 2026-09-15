@@ -39,6 +39,22 @@ const (
 	// TokenIDContextKey is the context key for storing the token ID (for scoping)
 	TokenIDContextKey contextKey = "token_id"
 
+	// AuditTokenIDContextKey is the context key for storing the acting
+	// token ID for audit attribution only.
+	//
+	// It exists separately from TokenIDContextKey because that key is
+	// load-bearing for authorisation: RBACChecker treats a non-zero
+	// TokenIDContextKey as "this request is token-scoped" and then
+	// intersects the user's privileges with the token's scope (see
+	// CanAccessConnection, CanUseMCPTool, HasAdminPermission in
+	// access.go). The REST middleware has historically never set it, so
+	// REST requests are not scope-limited; setting it there to name the
+	// actor in the audit log would silently change authorisation on
+	// every REST endpoint. AuditTokenIDContextKey carries the same value
+	// with no authorisation meaning, so ActorFromContext can attribute
+	// the change without altering who may make it.
+	AuditTokenIDContextKey contextKey = "audit_token_id"
+
 	// IsSuperuserContextKey is the context key for storing superuser status
 	IsSuperuserContextKey contextKey = "is_superuser"
 
@@ -93,6 +109,17 @@ func GetUserIDFromContext(ctx context.Context) int64 {
 // Returns 0 if no token ID is found (e.g., session-based auth)
 func GetTokenIDFromContext(ctx context.Context) int64 {
 	if tokenID, ok := ctx.Value(TokenIDContextKey).(int64); ok {
+		return tokenID
+	}
+	return 0
+}
+
+// GetAuditTokenIDFromContext retrieves the acting token ID recorded for
+// audit attribution. It returns 0 when the request did not authenticate
+// with an API token. Unlike GetTokenIDFromContext this value carries no
+// authorisation meaning and must never be used for a scope check.
+func GetAuditTokenIDFromContext(ctx context.Context) int64 {
+	if tokenID, ok := ctx.Value(AuditTokenIDContextKey).(int64); ok {
 		return tokenID
 	}
 	return 0
@@ -204,9 +231,15 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	// Format: X-Forwarded-For: client, proxy1, proxy2
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff == "" {
-		// No X-Forwarded-For header, try X-Real-IP
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
+		// No X-Forwarded-For header, try X-Real-IP. The value is only
+		// used when it parses as an IP address: it reaches the audit
+		// log and the session records, so a proxy sending a hostname,
+		// an empty value or arbitrary text must not be stored as
+		// though it were a client address.
+		if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+			if net.ParseIP(xri) != nil {
+				return xri
+			}
 		}
 		return directIP
 	}

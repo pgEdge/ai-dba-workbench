@@ -53,7 +53,7 @@ func grantMCPPrivilegeCommand(dataDir, groupName, identifier string) error {
 	}
 
 	// Grant privilege
-	if err := store.GrantMCPPrivilege(group.ID, priv.ID); err != nil {
+	if err := cliStore(store).GrantMCPPrivilege(group.ID, priv.ID); err != nil {
 		return fmt.Errorf("failed to grant privilege: %w", err)
 	}
 
@@ -96,7 +96,7 @@ func revokeMCPPrivilegeCommand(dataDir, groupName, identifier string) error {
 	}
 
 	// Revoke privilege
-	if err := store.RevokeMCPPrivilege(group.ID, priv.ID); err != nil {
+	if err := cliStore(store).RevokeMCPPrivilege(group.ID, priv.ID); err != nil {
 		return fmt.Errorf("failed to revoke privilege: %w", err)
 	}
 
@@ -136,7 +136,7 @@ func grantConnectionPrivilegeCommand(dataDir, groupName string, connectionID int
 	}
 
 	// Grant connection privilege
-	if err := store.GrantConnectionPrivilege(group.ID, connectionID, accessLevel); err != nil {
+	if err := cliStore(store).GrantConnectionPrivilege(group.ID, connectionID, accessLevel); err != nil {
 		return fmt.Errorf("failed to grant connection privilege: %w", err)
 	}
 
@@ -170,7 +170,7 @@ func revokeConnectionPrivilegeCommand(dataDir, groupName string, connectionID in
 	}
 
 	// Revoke connection privilege
-	if err := store.RevokeConnectionPrivilege(group.ID, connectionID); err != nil {
+	if err := cliStore(store).RevokeConnectionPrivilege(group.ID, connectionID); err != nil {
 		return fmt.Errorf("failed to revoke connection privilege: %w", err)
 	}
 

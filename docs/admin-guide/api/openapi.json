@@ -7645,6 +7645,156 @@
         ]
       }
     },
+    "/rbac/audit": {
+      "get": {
+        "summary": "List RBAC audit events",
+        "description": "Returns audit-log events, newest first. Requires superuser privileges. A request authenticated with an API token whose admin scope has been narrowed is refused, because no admin permission grants audit access; a token with no admin scope, or one holding the * wildcard, is accepted.",
+        "operationId": "listAuditEvents",
+        "tags": [
+          "RBAC Audit"
+        ],
+        "parameters": [
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Filter by actor name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor_type",
+            "in": "query",
+            "description": "Filter by actor type: user, token, cli or system",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Filter by action, such as user.create",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target_type",
+            "in": "query",
+            "description": "Filter by target type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "query",
+            "description": "Filter by target ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "description": "Filter by outcome: success, failure or denied",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only events at or after this RFC 3339 timestamp",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Only events at or before this RFC 3339 timestamp",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events to return (default 50, capped at 500)",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of events to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit events, newest first",
+            "headers": {
+              "X-Total-Count": {
+                "description": "Total events matching the filters, ignoring limit and offset",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEvent"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires superuser privileges, and an unrestricted admin scope when authenticated by API token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/rbac/groups": {
       "get": {
         "summary": "List all groups",
@@ -10013,6 +10163,89 @@
           "default_threshold": {
             "type": "number",
             "description": "Default threshold value"
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "description": "One row of the RBAC audit log",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Audited action, such as user.create"
+          },
+          "actor_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Actor ID, null for cli and system actors",
+            "nullable": true
+          },
+          "actor_ip": {
+            "type": "string",
+            "description": "Client address of the actor, when known"
+          },
+          "actor_name": {
+            "type": "string",
+            "description": "Name of the actor"
+          },
+          "actor_type": {
+            "type": "string",
+            "description": "Kind of principal responsible",
+            "enum": [
+              "user",
+              "token",
+              "cli",
+              "system"
+            ]
+          },
+          "details": {
+            "type": "object",
+            "description": "Action-specific details"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message for a failed or denied operation"
+          },
+          "hash": {
+            "type": "string",
+            "description": "Hash chaining this event to its predecessor"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event ID"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the event was recorded"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Result of the audited operation",
+            "enum": [
+              "success",
+              "failure",
+              "denied"
+            ]
+          },
+          "prev_hash": {
+            "type": "string",
+            "description": "Hash of the preceding event"
+          },
+          "target_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Target ID, null when the target has none",
+            "nullable": true
+          },
+          "target_name": {
+            "type": "string",
+            "description": "Name of the object acted upon"
+          },
+          "target_type": {
+            "type": "string",
+            "description": "Kind of object acted upon"
           }
         }
       },

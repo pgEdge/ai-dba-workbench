@@ -48,6 +48,9 @@ vi.mock('../AdminWebhookChannels', () => ({
 vi.mock('../AdminMemories', () => ({
     default: () => <div data-testid="admin-memories">Admin Memories Component</div>,
 }));
+vi.mock('../AdminAuditLog', () => ({
+    default: () => <div data-testid="admin-audit-log">Admin Audit Log Component</div>,
+}));
 
 // Mock context hooks
 const mockUser = {
@@ -129,6 +132,12 @@ describe('AdminPanel', () => {
         expect(screen.getByText('Tokens')).toBeInTheDocument();
     });
 
+    it('renders the Audit Log item for a superuser', () => {
+        renderAdminPanel();
+
+        expect(screen.getByText('Audit Log')).toBeInTheDocument();
+    });
+
     it('renders Monitoring section with navigation items', () => {
         renderAdminPanel();
 
@@ -206,10 +215,12 @@ describe('AdminPanel - Permission filtering', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockUser.isSuperuser = true;
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
+        mockUser.isSuperuser = true;
     });
 
     it('filters navigation items based on permissions', () => {
@@ -225,5 +236,21 @@ describe('AdminPanel - Permission filtering', () => {
         expect(screen.getByText('Users')).toBeInTheDocument();
         // Groups requires manage_groups permission which is not granted
         expect(screen.queryByText('Groups')).not.toBeInTheDocument();
+    });
+
+    it('hides the Audit Log item from a non-superuser with manage_users', () => {
+        mockUser.isSuperuser = false;
+        // The cast keeps the one-argument implementation assignable to
+        // the zero-argument signature vi.fn() infers for the stub.
+        mockHasPermission.mockImplementation(
+            ((perm: string): boolean => perm === 'manage_users') as () => boolean,
+        );
+
+        renderWithTheme(
+            <AdminPanel open={true} onClose={mockOnClose} />
+        );
+
+        expect(screen.getByText('Users')).toBeInTheDocument();
+        expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
     });
 });

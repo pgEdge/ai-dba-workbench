@@ -35,10 +35,10 @@ export default defineConfig({
             // measured on 14 September 2026 so the gate holds the
             // line today and is raised towards 90 as coverage grows.
             thresholds: {
-                lines: 91.0,
-                statements: 89.8,
-                functions: 87.0,
-                branches: 78.71,
+                lines: 91.1,
+                statements: 89.9,
+                functions: 87.1,
+                branches: 78.8,
             },
         },
     },

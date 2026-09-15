@@ -135,6 +135,23 @@ project adheres to
   extension is version 1.9 or later, as shipped with PostgreSQL 14;
   the column is added by collector schema migration 10. (#402)
 
+- Add an audit log for RBAC changes. Every create, update, delete,
+  enable, disable, grant, revoke and scope change on users, tokens,
+  groups and permissions is recorded in the auth store with the
+  acting user, token or CLI user, the client address, before and
+  after state and a tamper-evident hash chain, and authorisation
+  denials on RBAC endpoints are recorded too. Superusers can read
+  the log from the new Audit Log tab in the admin panel, from
+  `GET /api/v1/rbac/audit`, or with the `-list-audit` server flag;
+  `-verify-audit-log` checks the chain and also reports events
+  deleted from the newest end of the log. Repeated denials are
+  coalesced into one event per minute carrying a
+  `details.repeat_count`, so a client retrying a refused request
+  cannot flood the log. Retention is controlled by the new
+  `http.auth.audit_retention_days` setting, which defaults to 90
+  days, and each purge records an `audit.purge` event naming the
+  cutoff it applied and the number of events it removed. (#65)
+
 ### Changed
 
 - Count deadlocks and temporary files per hour in the alerter. The

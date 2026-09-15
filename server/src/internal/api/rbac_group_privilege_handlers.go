@@ -59,7 +59,7 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 				return
 			}
 
-			if err := h.authStore.GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
+			if err := h.actorStore(r).GrantMCPPrivilegeByName(groupID, req.Privilege); err != nil {
 				log.Printf("[ERROR] Failed to grant MCP privilege %s to group %d: %v", logging.SanitizeForLog(req.Privilege), groupID, err) //nolint:gosec // G706: privilege passed through logging.SanitizeForLog
 				RespondError(w, http.StatusInternalServerError, "Failed to grant MCP privilege")
 				return
@@ -73,7 +73,7 @@ func (h *RBACHandler) handleGroupMCPPrivileges(w http.ResponseWriter, r *http.Re
 				return
 			}
 
-			if err := h.authStore.RevokeMCPPrivilegeByName(groupID, privilege); err != nil {
+			if err := h.actorStore(r).RevokeMCPPrivilegeByName(groupID, privilege); err != nil {
 				log.Printf("[ERROR] Failed to revoke MCP privilege %s from group %d: %v", logging.SanitizeForLog(privilege), groupID, err) //nolint:gosec // G706: privilege passed through logging.SanitizeForLog
 				RespondError(w, http.StatusInternalServerError, "Failed to revoke MCP privilege")
 				return
@@ -116,7 +116,7 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
-		if err := h.authStore.GrantConnectionPrivilege(groupID, req.ConnectionID, req.AccessLevel); err != nil {
+		if err := h.actorStore(r).GrantConnectionPrivilege(groupID, req.ConnectionID, req.AccessLevel); err != nil {
 			log.Printf("[ERROR] Failed to grant connection privilege for conn %d to group %d: %v", req.ConnectionID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to grant connection privilege")
 			return
@@ -139,7 +139,7 @@ func (h *RBACHandler) handleGroupConnectionPrivileges(w http.ResponseWriter, r *
 			return
 		}
 
-		if err := h.authStore.RevokeConnectionPrivilege(groupID, connID); err != nil {
+		if err := h.actorStore(r).RevokeConnectionPrivilege(groupID, connID); err != nil {
 			log.Printf("[ERROR] Failed to revoke connection privilege for conn %d from group %d: %v", connID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to revoke connection privilege")
 			return
@@ -217,7 +217,7 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.authStore.GrantAdminPermission(groupID, req.Permission); err != nil {
+	if err := h.actorStore(r).GrantAdminPermission(groupID, req.Permission); err != nil {
 		log.Printf("[ERROR] Failed to grant permission %s to group %d: %v", logging.SanitizeForLog(req.Permission), groupID, err) //nolint:gosec // G706: permission passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError, "Failed to grant permission")
 		return
@@ -227,7 +227,7 @@ func (h *RBACHandler) grantGroupPermission(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *RBACHandler) revokeGroupPermission(w http.ResponseWriter, r *http.Request, groupID int64, permission string) {
-	if err := h.authStore.RevokeAdminPermission(groupID, permission); err != nil {
+	if err := h.actorStore(r).RevokeAdminPermission(groupID, permission); err != nil {
 		log.Printf("[ERROR] Failed to revoke permission %s from group %d: %v", logging.SanitizeForLog(permission), groupID, err) //nolint:gosec // G706: permission passed through logging.SanitizeForLog
 		RespondError(w, http.StatusInternalServerError, "Failed to revoke permission")
 		return

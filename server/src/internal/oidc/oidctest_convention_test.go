@@ -41,7 +41,13 @@ func TestOIDCTestPackageIsNotImportedByProductionCode(t *testing.T) {
 		t.Fatalf("resolving the module root: %v", err)
 	}
 
+	// anchorFile must be seen by the walk. Without it, a test that fails
+	// only on a non-empty offender list would stay green whilst
+	// enforcing nothing, should the module root ever stop resolving.
+	const anchorFile = "internal/oidc/provider.go"
+
 	var offenders []string
+	sawAnchor := false
 	fset := token.NewFileSet()
 
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -67,6 +73,9 @@ func TestOIDCTestPackageIsNotImportedByProductionCode(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		if filepath.ToSlash(relative) == anchorFile {
+			sawAnchor = true
+		}
 		for _, imported := range file.Imports {
 			value, err := strconv.Unquote(imported.Path.Value)
 			if err != nil {
@@ -81,6 +90,11 @@ func TestOIDCTestPackageIsNotImportedByProductionCode(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("scanning the module: %v", err)
+	}
+
+	if !sawAnchor {
+		t.Fatalf("the walk never reached %s, so this test enforced nothing; "+
+			"check that the module root still resolves from this file", anchorFile)
 	}
 
 	if len(offenders) > 0 {

@@ -39,8 +39,25 @@ type Identity struct {
 	// nothing to key a Workbench user on.
 	Username string
 
+	// DisplayName is the configured display name claim, or empty when
+	// the claim is absent, unconfigured or was dropped. It is cosmetic:
+	// nothing may key an authorization decision on it.
 	DisplayName string
-	Email       string
+
+	// Email is the standard "email" claim. An empty value means the
+	// address is unknown, either because the provider sent none or
+	// because the one it sent was unusable (EmailRejected then says
+	// which). A consumer that gates on the address, such as the
+	// allowed_email_domains check, must treat empty as "no permitted
+	// domain" and refuse, never as "no restriction applies": a user who
+	// controls their own profile on a shared provider could otherwise
+	// empty the field deliberately to slip past the check.
+	Email string
+
+	// EmailRejected is true when the provider sent an email claim that
+	// this package refused (too long, or carrying a forbidden
+	// character), as opposed to sending none at all.
+	EmailRejected bool
 
 	// Groups holds the configured groups claim, normalized to a slice of
 	// strings. It is nil when the claim is absent or not configured.
@@ -59,6 +76,13 @@ type Identity struct {
 	// shape was one this package understands. Like SkippedGroups it is
 	// diagnostic: the login proceeds with no groups.
 	UnexpectedGroupsClaimShape string
+
+	// DroppedClaims lists, by NAME, the string claims the provider sent
+	// that had to be dropped. It never holds the values themselves,
+	// which are the untrusted part; the caller logs the names so that an
+	// operator can see which claim its provider is sending in a form the
+	// Workbench cannot use.
+	DroppedClaims []string
 }
 
 // Provider wraps the OpenID Connect protocol for one configured identity
@@ -180,10 +204,19 @@ func (p *Provider) AuthCodeURL(state *LoginState) string {
 // context carrying an explicit timeout; otherwise a slow or hostile
 // provider holds the callback goroutine open for as long as it likes.
 //
-// The returned error must never be shown to a browser. A token endpoint
-// failure wraps an *oauth2.RetrieveError, which embeds the provider's
-// raw response body; that belongs in the server log, whilst the user
-// belongs on a generic login-failed page.
+// No error returned by Exchange may reach a browser. Every one of them
+// can carry provider-supplied text: a token endpoint failure wraps an
+// *oauth2.RetrieveError embedding the raw response body, the
+// verification failures quote claim values back (the audience and issuer
+// this token actually carried), and the username failure describes the
+// offending value. The handler must render a fixed, generic
+// login-failed message and log the detail.
+//
+// That the log is where these errors end up is also why the
+// control-character rejection in safeClaimValue is load bearing rather
+// than cosmetic: an error message carrying provider-influenced text goes
+// into the server log, and a value with an interior newline in it would
+// write what looks like a second log record.
 func (p *Provider) Exchange(ctx context.Context, code string, state *LoginState) (*Identity, error) {
 	token, err := p.oauth2Config.Exchange(ctx, code,
 		oauth2.SetAuthURLParam("code_verifier", state.CodeVerifier))

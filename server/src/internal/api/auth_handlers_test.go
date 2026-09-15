@@ -568,6 +568,59 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 	}
 }
 
+// TestAuthHandler_LogoutRejectsNonPOST covers the method guard, which
+// matters because a logout reachable by GET is a cross-site request
+// forgery that logs people out of someone else's page.
+func TestAuthHandler_LogoutRejectsNonPOST(t *testing.T) {
+	handler := NewAuthHandler(nil, nil, nil, false)
+	defer handler.Close()
+
+	rec := httptest.NewRecorder()
+	handler.handleLogout(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/logout", nil))
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != http.MethodPost {
+		t.Errorf("Allow = %q, want POST", got)
+	}
+}
+
+// TestAuthHandler_LogoutInvalidatesTheServerSideSession covers the path
+// that actually ends the session: clearing the cookie alone would leave
+// a stolen token valid until it expired.
+func TestAuthHandler_LogoutInvalidatesTheServerSideSession(t *testing.T) {
+	authStore, err := auth.NewAuthStore(t.TempDir(), 30, 5)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer authStore.Close()
+	authStore.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	if err := authStore.CreateUser("logoutuser", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	token, _, err := authStore.AuthenticateUser("logoutuser", "Testpass1234")
+	if err != nil {
+		t.Fatalf("AuthenticateUser: %v", err)
+	}
+
+	handler := NewAuthHandler(authStore, nil, nil, false)
+	defer handler.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	handler.handleLogout(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if _, err := authStore.ValidateSessionToken(token); err == nil {
+		t.Error("the session token still validates after logout")
+	}
+}
+
 func TestAuthHandler_SecureCookieLogout(t *testing.T) {
 	// Test that logout also respects the secure cookie flag
 	tests := []struct {

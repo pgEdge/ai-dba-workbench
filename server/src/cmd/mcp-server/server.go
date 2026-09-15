@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 	"github.com/pgedge/ai-workbench/server/internal/prompts"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
@@ -55,6 +57,12 @@ type Server struct {
 	dataDir       string
 	debug         bool
 	aiEnabled     bool
+
+	// oidcProvider is nil whenever federated login is switched off. When
+	// it is non-nil, oidcStateKey holds the 32-byte key the login state
+	// cookie is sealed with.
+	oidcProvider *oidc.Provider
+	oidcStateKey []byte
 
 	// handlerClosers holds cleanup functions for background resources
 	// created while wiring HTTP handlers. SetupHandlers runs on the
@@ -148,6 +156,10 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 
 	serverSecret, err := s.loadServerSecret(sc.ExecPath)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.initOIDC(serverSecret); err != nil {
 		return nil, err
 	}
 
@@ -288,6 +300,57 @@ func (s *Server) loadServerSecret(execPath string) (string, error) {
 
 	fmt.Fprintf(os.Stderr, "Server secret: loaded from %s\n", secretPath)
 	return serverSecret, nil
+}
+
+// oidcStateKeySalt is the fixed PBKDF2 salt separating the OIDC login
+// state key from every other key derived from the same server secret,
+// most importantly the one that encrypts stored database passwords. It
+// is a constant rather than a random value because the key has to be
+// reproducible across restarts and across two servers sharing one
+// secret; the salt is not a secret, the server secret is. Never reuse a
+// salt from another subsystem here, and never change this string: doing
+// so invalidates every login in flight at that moment.
+const oidcStateKeySalt = "pgedge-ai-workbench/oidc-login-state/v1"
+
+// oidcDiscoveryTimeout bounds OpenID Connect discovery at start-up.
+// go-oidc issues that request through http.DefaultClient, which has no
+// timeout, so without this an identity provider that accepts the
+// connection and then says nothing would hang start-up forever, which
+// looks exactly like a hung server rather than a misconfigured provider.
+const oidcDiscoveryTimeout = 15 * time.Second
+
+// initOIDC performs OpenID Connect discovery and derives the login state
+// key, when federated login is enabled. It does nothing at all when it
+// is not, leaving s.oidcProvider nil, which is what makes the endpoints
+// answer 404.
+//
+// A discovery failure is fatal, deliberately and in the same spirit as
+// an unusable TLS certificate: if the provider cannot be reached at
+// start-up then nobody can log in through it, and a server that starts
+// anyway serves a login page whose button silently does not work.
+func (s *Server) initOIDC(serverSecret string) error {
+	if s.cfg == nil || !s.cfg.HTTP.Auth.OIDC.Enabled {
+		return nil
+	}
+
+	stateKey := crypto.DeriveKey(serverSecret, []byte(oidcStateKeySalt))
+	if len(stateKey) == 0 {
+		return fmt.Errorf("cannot derive the OIDC login state key: the server secret is empty")
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, oidcDiscoveryTimeout)
+	defer cancel()
+
+	provider, err := oidc.NewProvider(ctx, s.cfg.HTTP.Auth.OIDC)
+	if err != nil {
+		return fmt.Errorf("failed to initialize OIDC login: %w", err)
+	}
+
+	s.oidcProvider = provider
+	s.oidcStateKey = stateKey
+
+	fmt.Fprintf(os.Stderr, "OIDC login: ENABLED (issuer: %s)\n", s.cfg.HTTP.Auth.OIDC.Issuer)
+	return nil
 }
 
 // initDatastore initializes the datastore connection
@@ -502,6 +565,9 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		OverviewHub:  s.overviewHub,
 		ToolProvider: s.toolProvider,
 		AIEnabled:    s.aiEnabled,
+
+		OIDCProvider: s.oidcProvider,
+		OIDCStateKey: s.oidcStateKey,
 
 		RegisterCloser: s.registerHandlerCloser,
 	}

@@ -62,32 +62,13 @@ func (h *AuthHandler) Close() {
 	}
 }
 
-// isSecureRequest determines if a request came over a secure (HTTPS) connection.
-// It checks multiple indicators:
-// 1. If the server has TLS enabled directly
-// 2. If the request URL scheme is HTTPS
-// 3. If trusted proxy headers indicate HTTPS (X-Forwarded-Proto)
-// This ensures cookies are marked Secure when appropriate, even behind reverse proxies.
+// isSecureRequest determines if a request came over a secure (HTTPS)
+// connection, so that cookies are marked Secure when appropriate, even
+// behind a reverse proxy. The rule itself lives in requestIsSecure,
+// which the OIDC handler shares: the X-Forwarded-Proto trust decision
+// must exist in exactly one place.
 func (h *AuthHandler) isSecureRequest(r *http.Request) bool {
-	// Server has TLS enabled directly
-	if h.tlsEnabled {
-		return true
-	}
-
-	// Check the request TLS state (set by Go's http server when TLS is used)
-	if r.TLS != nil {
-		return true
-	}
-
-	// Check X-Forwarded-Proto header if we trust proxy headers
-	if h.trustProxyHeaders {
-		proto := r.Header.Get("X-Forwarded-Proto")
-		if proto == "https" {
-			return true
-		}
-	}
-
-	return false
+	return requestIsSecure(r, h.tlsEnabled, h.trustProxyHeaders)
 }
 
 // LoginRequest is the request body for the login endpoint

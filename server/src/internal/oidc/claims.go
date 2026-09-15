@@ -26,6 +26,13 @@ import (
 // whatever the username happens to be.
 const emailClaim = "email"
 
+// emailVerifiedClaim is the standard OpenID Connect claim saying whether
+// the provider itself has verified the end user's email address. It is
+// read alongside emailClaim because an address the provider has not
+// verified is a claim the user made about themselves, and the
+// allowed_email_domains check would otherwise accept it.
+const emailVerifiedClaim = "email_verified"
+
 // maxClaimValueLength bounds, in runes, a value extracted from an ID
 // token. Where an operator points the Workbench at a provider on which
 // users edit their own profile, a display name or a group name is
@@ -118,6 +125,7 @@ func (p *Provider) identityFromClaims(issuer, subject string, claims map[string]
 		DisplayName:                displayName,
 		Email:                      email,
 		EmailRejected:              emailRejected,
+		EmailVerified:              boolClaim(claims, emailVerifiedClaim),
 		Groups:                     groups,
 		SkippedGroups:              skipped,
 		UnexpectedGroupsClaimShape: unexpectedShape,
@@ -147,6 +155,31 @@ func takeStringClaim(claims map[string]any, name string, maxRunes int) (value st
 
 	safe := safeClaimValue(raw, maxRunes)
 	return safe, safe == ""
+}
+
+// boolClaim returns the named claim as a boolean, defaulting to false
+// whenever the claim is absent or carries something this function will
+// not read as a boolean. Defaulting to false is the safe direction for
+// every consumer: the only claim read this way is "email_verified", and
+// a provider that says nothing about verification has not verified
+// anything.
+//
+// A JSON boolean is the correct encoding and the only one OpenID Connect
+// sanctions, but several widely deployed providers send the string
+// "true" instead, so that spelling is accepted too. No other value is:
+// in particular a numeric 1 is not read as true, since a provider
+// sending a number here is misconfigured rather than affirming anything,
+// and inventing a "verified" out of it is exactly the wrong way to be
+// wrong.
+func boolClaim(claims map[string]any, name string) bool {
+	switch typed := claims[name].(type) {
+	case bool:
+		return typed
+	case string:
+		return typed == "true"
+	default:
+		return false
+	}
 }
 
 // stringClaim is takeStringClaim without the rejection flag, for callers

@@ -23,6 +23,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/memory"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
 
@@ -55,6 +56,13 @@ type HandlerDependencies struct {
 	ToolProvider api.ContextAwareToolProvider
 	AIEnabled    bool
 
+	// OIDCProvider is the discovered identity provider, or nil when
+	// federated login is switched off. OIDCStateKey is the 32-byte key
+	// the login state cookie is sealed with, and is meaningful only
+	// alongside a non-nil provider.
+	OIDCProvider *oidc.Provider
+	OIDCStateKey []byte
+
 	// RegisterCloser records a cleanup function to be run when the
 	// server shuts down. Handlers that own background goroutines use
 	// it to hand that ownership back to the server. It may be nil in
@@ -78,7 +86,8 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.Config != nil && deps.Config.LLM.MaxIterations > 0 {
 			maxIterations = deps.Config.LLM.MaxIterations
 		}
-		mux.HandleFunc("/api/v1/capabilities", handleCapabilities(deps.AIEnabled, maxIterations))
+		mux.HandleFunc("/api/v1/capabilities",
+			handleCapabilities(deps.AIEnabled, maxIterations, authCapabilities(deps)))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
@@ -95,6 +104,24 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			deps.RegisterCloser(authHandler.Close)
 		}
 		authHandler.RegisterRoutes(mux)
+
+		// Federated login endpoints, registered alongside the local ones
+		// and equally unauthenticated: a user starting a login has no
+		// session, and the callback is how they get one. They are
+		// registered only when a provider was discovered at start-up, so
+		// that a Workbench with OIDC switched off answers 404 from the
+		// mux itself.
+		if deps.OIDCProvider != nil && deps.Config != nil {
+			oidcHandler := api.NewOIDCHandler(deps.AuthStore, deps.OIDCProvider,
+				deps.Config.HTTP.Auth.OIDC, deps.OIDCStateKey, tlsEnabled, deps.IPExtractor)
+			// NewOIDCHandler owns a rate limiter whose cleanup goroutine
+			// only Close stops; hand that back to the server.
+			if deps.RegisterCloser != nil {
+				deps.RegisterCloser(oidcHandler.Close)
+			}
+			oidcHandler.RegisterRoutes(mux)
+			fmt.Fprintf(os.Stderr, "OIDC login endpoints: ENABLED\n")
+		}
 
 		// Chat history compaction endpoint
 		mux.HandleFunc("/api/v1/chat/compact",
@@ -334,8 +361,52 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	api.RespondJSON(w, http.StatusOK, spec)
 }
 
+// authCapabilitiesInfo is what the login page needs in order to render
+// itself: whether to show the username and password form, whether to
+// show the federated login button, and what to write on it.
+//
+// It holds these three values and nothing else. The OIDC configuration
+// also carries the client secret, the issuer and the claim mapping, none
+// of which an unauthenticated caller has any business seeing, so this
+// endpoint reports a hand-built struct rather than serializing the
+// configuration.
+type authCapabilitiesInfo struct {
+	LocalEnabled bool   `json:"local_enabled"`
+	OIDCEnabled  bool   `json:"oidc_enabled"`
+	OIDCLabel    string `json:"oidc_label"`
+}
+
+// defaultOIDCButtonLabel is what the federated login button says when
+// the operator did not name their identity provider.
+const defaultOIDCButtonLabel = "Sign in with SSO"
+
+// authCapabilities derives the login page state from the dependencies,
+// so that the handler itself never reaches into the configuration.
+//
+// OIDC counts as enabled only when a provider was actually discovered at
+// start-up as well as switched on in the configuration, since a button
+// pointing at an endpoint that answers 404 is worse than no button.
+func authCapabilities(deps *HandlerDependencies) authCapabilitiesInfo {
+	info := authCapabilitiesInfo{LocalEnabled: true}
+	if deps == nil || deps.Config == nil {
+		return info
+	}
+
+	info.LocalEnabled = deps.Config.HTTP.Auth.LocalEnabled()
+	info.OIDCEnabled = deps.Config.HTTP.Auth.OIDC.Enabled && deps.OIDCProvider != nil
+	if info.OIDCEnabled {
+		info.OIDCLabel = deps.Config.HTTP.Auth.OIDC.ButtonLabel
+		if info.OIDCLabel == "" {
+			info.OIDCLabel = defaultOIDCButtonLabel
+		}
+	}
+	return info
+}
+
 // handleCapabilities returns server capability flags for the client
-func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
+func handleCapabilities(aiEnabled bool, maxIterations int,
+	authInfo authCapabilitiesInfo) http.HandlerFunc {
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -344,6 +415,7 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"ai_enabled":     aiEnabled,
 			"max_iterations": maxIterations,
+			"auth":           authInfo,
 		})
 	}
 }

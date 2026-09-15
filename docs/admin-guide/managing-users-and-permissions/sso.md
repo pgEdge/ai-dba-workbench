@@ -305,14 +305,12 @@ login onward. An administrator who links the local `admin` account
 whilst `superuser_group` names a group the provider does not put them
 in loses superuser at their next sign-in.
 
-!!! warning
+This is the reason the break-glass administrator account must stay
+unlinked, as described in Keeping a Local Break-Glass Administrator
+below.
 
-    Do not link the local break-glass administrator account. Keep it
-    local, keep its password, and let the provider grant superuser to
-    separate federated accounts through `superuser_group`.
-
-Where an existing account must be linked, confirm before linking that
-the provider asserts every group the account needs, including the
+Where any other existing account must be linked, confirm before linking
+that the provider asserts every group the account needs, including the
 superuser group.
 
 ### Refusals and Relinking
@@ -483,8 +481,9 @@ privileges quietly reinstated underneath them.
 
 ## Keeping a Local Break-Glass Administrator
 
-Keep at least one local superuser account with a password, and keep
-`local.enabled` set to `true`.
+Keep at least one local superuser account with a password, keep
+`local.enabled` set to `true`, and never link that account to the
+identity provider.
 
 The identity provider is a dependency of every federated login, so an
 expired client secret, a rotated signing key, a failed discovery
@@ -494,6 +493,15 @@ during a provider outage does not come up at all with federated login
 enabled. A local administrator who can still sign in is the difference
 between editing the configuration calmly and rebuilding access under
 pressure.
+
+Linking that account would make it depend on the two things it exists
+to be independent of. A linked account can be reached only through the
+provider, so a provider outage takes it out with everything else, and
+its superuser flag is reconciled at each login from
+`superuser_group`, so it holds superuser only while the provider keeps
+asserting that group. Leave the account local, let the provider grant
+superuser to separate federated accounts, and the recovery path
+survives whatever has happened to the provider.
 
 Test the local account periodically, and store its password where it
 can be reached without the Workbench. Switching `local.enabled` to

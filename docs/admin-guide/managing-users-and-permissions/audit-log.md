@@ -98,7 +98,10 @@ the log and bury the events that matter. The first denial for a given
 combination of actor, action and reason is recorded at once; identical
 denials in the next sixty seconds are counted instead of recorded; and
 the first denial after that window is recorded with a
-`details.repeat_count` giving the number of attempts it stands for.
+`details.repeat_count` giving the number of attempts it stands for. If
+no further denial arrives after the window closes, the suppressed
+attempts are not written, so the log records that a burst happened but
+not always how long it was.
 
 ## Actor Types
 

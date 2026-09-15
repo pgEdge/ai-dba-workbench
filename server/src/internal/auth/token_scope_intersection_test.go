@@ -371,6 +371,10 @@ func TestTokenScopeLookupErrorDeniesAccess(t *testing.T) {
 		t.Fatalf("failed to open auth database: %v", err)
 	}
 	defer db.Close()
+	// Couples to the token_connection_scope table name. RBACChecker holds
+	// a concrete *AuthStore with no seam to stub, so this is the only way
+	// in; if the schema moves, give the checker a narrow scope-lookup
+	// interface and stub it here rather than deleting the test.
 	if _, err := db.Exec("DROP TABLE token_connection_scope"); err != nil {
 		t.Fatalf("failed to drop the scope table: %v", err)
 	}

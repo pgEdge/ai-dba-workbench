@@ -62,6 +62,16 @@ moved.
   reserved for resources that genuinely do not exist. Judge any
   enumeration concern against that convention rather than assuming a
   404-for-everything model.
+- An API token's connection scope is a third constraint, intersected
+  with both of the above. `CanAccessConnection` and
+  `VisibleConnectionIDs` in `server/src/internal/auth/access.go` apply
+  it on every path, ownership and sharing included, and it can only
+  lower an access level, never raise one.
+- `IsConnectionInTokenScope` treats a token with no scope rows as
+  unrestricted, so an unscoped token inherits its owner's access in
+  full.
+- Token scope does not constrain a superuser: the superuser bypass
+  returns before any scope check. That is deliberate, not an oversight.
 
 ## Reporting
 

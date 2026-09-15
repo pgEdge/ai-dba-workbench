@@ -35,9 +35,8 @@ var ErrInvalidToken = errors.New("invalid or expired token")
 //   - IsAPITokenContextKey   (always; true for API tokens, false for
 //     session tokens)
 //   - TokenIDContextKey      (API tokens only; drives token scoping)
-//   - UserIDContextKey       (always for API tokens; for session tokens
-//     when the owning user is resolved)
-//   - IsSuperuserContextKey  (same)
+//   - UserIDContextKey       (always)
+//   - IsSuperuserContextKey  (always)
 //   - UsernameContextKey     (always, and never empty: a credential
 //     whose identity does not resolve to a username is rejected as
 //     ErrInvalidToken rather than returned as an anonymous context)
@@ -84,11 +83,19 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 	}
 	ctx = context.WithValue(ctx, UsernameContextKey, username)
 	ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
-	// Get user ID and superuser status for RBAC.
+
+	// Get user ID and superuser status for RBAC. A session whose user
+	// does not load is rejected rather than returned as a partial
+	// context: a username with no user ID still satisfies the ownership
+	// comparison in CanAccessConnection, so degrading here would
+	// authenticate a caller whose privileges were never verified. The
+	// cost of that choice is that a database failure logs sessions out
+	// instead of quietly narrowing what they can do.
 	user, userErr := store.GetUser(username)
-	if userErr == nil && user != nil {
-		ctx = context.WithValue(ctx, UserIDContextKey, user.ID)
-		ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
+	if userErr != nil || user == nil {
+		return nil, ErrInvalidToken
 	}
+	ctx = context.WithValue(ctx, UserIDContextKey, user.ID)
+	ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
 	return ctx, nil
 }

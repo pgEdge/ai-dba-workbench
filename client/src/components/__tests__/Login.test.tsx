@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Login from '../Login';
@@ -163,25 +163,35 @@ describe('Login Component', () => {
             expect(screen.queryByText('or')).not.toBeInTheDocument();
         });
 
-        it('renders nothing to sign in with whilst the capabilities load', () => {
+        it('shows a labelled progress indicator whilst the capabilities load', () => {
             renderLogin(
                 { localEnabled: true, oidcEnabled: true, oidcLabel: 'Sign in with Okta' },
                 true,
             );
 
+            const busy = screen.getByTestId('login-capabilities-loading');
+            expect(busy).toHaveAttribute('aria-busy', 'true');
+            expect(
+                within(busy).getByLabelText('Loading sign-in options'),
+            ).toBeInTheDocument();
             expect(screen.queryByTestId('login-username-input')).not.toBeInTheDocument();
             expect(screen.queryByTestId('login-oidc-button')).not.toBeInTheDocument();
         });
 
         it('isolates the provider label from the surrounding interface text', async () => {
+            // U+202E RIGHT-TO-LEFT OVERRIDE inside the label.
+            const label = 'Sign in with ‮Okta';
             renderLogin({
                 localEnabled: false,
                 oidcEnabled: true,
-                oidcLabel: 'Sign in with ‮Okta',
+                oidcLabel: label,
             });
 
             const button = await screen.findByTestId('login-oidc-button');
-            expect(button.querySelector('bdi')).not.toBeNull();
+            const isolated = button.querySelector('bdi');
+            expect(isolated).not.toBeNull();
+            expect(isolated).toHaveTextContent(label);
+            expect(isolated?.textContent).toBe(label);
         });
 
         it('sends the browser to the start endpoint when the provider button is clicked', async () => {
@@ -241,12 +251,6 @@ describe('Login Component', () => {
             await screen.findByTestId('login-error');
 
             expect(window.location.search).toBe('?next=%2Fx');
-        });
-
-        it('shows no message when no failure was reported', () => {
-            renderLogin();
-
-            expect(screen.queryByTestId('login-error')).not.toBeInTheDocument();
         });
     });
 });

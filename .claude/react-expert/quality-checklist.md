@@ -408,9 +408,13 @@ characters are ordinary text being rendered as instructed. The sites
 that do this today are the display name and email columns in
 `components/AdminPanel/AdminUsers.tsx`, and the federated sign-in
 button label in `components/Login.tsx`. The authenticated `User`
-object carries only `username`, which the server constrains, so the
-header needs no isolation; add `<bdi>` at any new site that renders a
-provider-supplied string.
+object carries only `username`, and `ValidateUsername` rules out an
+override character there, but it does permit any Unicode letter, so a
+Hebrew or Arabic username is strong right-to-left and will still
+reorder the neutral characters next to it: punctuation, digits, or a
+surrounding label. `<bdi>` is therefore the right treatment for any
+name-shaped value, whatever the server validates, and it should be
+added at every new site that renders one.
 
 ## LLM Chat Requests
 

@@ -36,6 +36,15 @@ const DEFAULT_AUTH_CAPABILITIES: AuthCapabilities = {
     oidcLabel: '',
 };
 
+/*
+ * How long to wait for the capabilities before giving up and applying
+ * the defaults. `apiGet` sets no timeout of its own, so without this a
+ * request that never settles (a proxy holding the connection open, a
+ * half-open socket) would leave the login screen with nothing to sign
+ * in with at all.
+ */
+const CAPABILITIES_TIMEOUT_MS = 5000;
+
 const AuthCapabilitiesContext = createContext<AuthCapabilitiesValue | null>(null);
 
 interface AuthCapabilitiesResponse {
@@ -77,21 +86,40 @@ export const AuthCapabilitiesProvider = ({
 
     useEffect(() => {
         let cancelled = false;
+        let settled = false;
+        const controller = new AbortController();
+
+        /*
+         * Apply the defaults if the request has not answered in time,
+         * and abort it so that a late answer cannot swap the form out
+         * from under whoever is already typing into it.
+         */
+        const timer = setTimeout(() => {
+            // Both the cleanup and the request's own completion clear
+            // this timer, so reaching here means neither has happened.
+            settled = true;
+            controller.abort();
+            setCapabilities(DEFAULT_AUTH_CAPABILITIES);
+            setLoading(false);
+        }, CAPABILITIES_TIMEOUT_MS);
 
         const fetchCapabilities = async () => {
             try {
                 const data = await apiGet<CapabilitiesResponse>(
                     '/api/v1/capabilities',
+                    { signal: controller.signal },
                 );
-                if (!cancelled) {
+                if (!cancelled && !settled) {
                     setCapabilities(mapAuthCapabilities(data.auth));
                 }
             } catch {
-                if (!cancelled) {
+                if (!cancelled && !settled) {
                     setCapabilities(DEFAULT_AUTH_CAPABILITIES);
                 }
             } finally {
-                if (!cancelled) {
+                if (!cancelled && !settled) {
+                    settled = true;
+                    clearTimeout(timer);
                     setLoading(false);
                 }
             }
@@ -101,6 +129,8 @@ export const AuthCapabilitiesProvider = ({
 
         return () => {
             cancelled = true;
+            clearTimeout(timer);
+            controller.abort();
         };
     }, []);
 

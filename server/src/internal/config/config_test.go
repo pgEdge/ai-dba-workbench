@@ -1525,6 +1525,23 @@ func TestAuditRetentionDaysEnvVarOverride(t *testing.T) {
 	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
 		t.Errorf("expected default audit retention when env var is invalid, got %d", got)
 	}
+
+	// A negative retention period is as invalid as a non-numeric one.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "-1")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention when env var is negative, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysNegativeDefaultsTo90(t *testing.T) {
+	a := AuthConfig{AuditRetentionDaysPtr: intPtr(-7)}
+	if got := a.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected 90 when AuditRetentionDaysPtr is negative, got %d", got)
+	}
 }
 
 func TestAuditRetentionDaysNilPointerDefaultsTo90(t *testing.T) {

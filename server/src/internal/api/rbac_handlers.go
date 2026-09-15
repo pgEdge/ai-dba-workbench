@@ -38,13 +38,51 @@ const denialCoalesceWindow = 60 * time.Second
 const maxDenialKeys = 10000
 
 // denialKey identifies a repeated denial. Two refusals coalesce only
-// when the same principal is refused the same action for the same
-// reason.
+// when the same principal, identified by actor id as well as by name
+// so that two tokens of one user stay apart, is refused the same action
+// for the same reason from the same client address.
 type denialKey struct {
 	actorType string
+	actorID   int64
 	actorName string
+	actorIP   string
 	action    string
 	reason    string
+}
+
+// denialKeyOf builds the coalescing key for one refusal. An actor with
+// no id, such as an unauthenticated caller, keys on zero.
+func denialKeyOf(actor auth.Actor, action, reason string) denialKey {
+	var actorID int64
+	if actor.ID != nil {
+		actorID = *actor.ID
+	}
+
+	return denialKey{
+		actorType: string(actor.Type),
+		actorID:   actorID,
+		actorName: actor.Name,
+		actorIP:   actor.IP,
+		action:    action,
+		reason:    reason,
+	}
+}
+
+// summaryActor rebuilds the acting principal from the key, which
+// carries every field a summary row needs to attribute the repeats it
+// reports.
+func (k denialKey) summaryActor() auth.Actor {
+	actor := auth.Actor{
+		Type: auth.ActorType(k.actorType),
+		Name: k.actorName,
+		IP:   k.actorIP,
+	}
+	if k.actorID != 0 {
+		id := k.actorID
+		actor.ID = &id
+	}
+
+	return actor
 }
 
 // denialState tracks one key's current window: when the window opened,
@@ -52,6 +90,14 @@ type denialKey struct {
 // identical denials have been suppressed since.
 type denialState struct {
 	firstSeen  time.Time
+	suppressed int
+}
+
+// denialSummary carries the repeats an evicted entry never got to
+// report, so that they are written as one summary row rather than
+// discarded with the entry.
+type denialSummary struct {
+	key        denialKey
 	suppressed int
 }
 
@@ -122,12 +168,14 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	actor := auth.ActorFromContext(r.Context())
 	action := deniedAction(r)
 
-	record, repeats := h.admitDenial(denialKey{
-		actorType: string(actor.Type),
-		actorName: actor.Name,
-		action:    action,
-		reason:    reason,
-	}, time.Now())
+	record, repeats, expired := h.admitDenial(denialKeyOf(actor, action, reason),
+		time.Now())
+
+	// Entries evicted by the call above may have carried suppressed
+	// repeats; they are written here, outside the lock the eviction
+	// ran under.
+	h.recordDenialSummaries(r, expired)
+
 	if !record {
 		return
 	}
@@ -153,7 +201,9 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 // window are counted instead of written; and the first denial after the
 // window closes is recorded, reporting the suppressed ones, and opens a
 // fresh window.
-func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int) {
+func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int,
+	[]denialSummary) {
+
 	h.denialMu.Lock()
 	defer h.denialMu.Unlock()
 
@@ -178,39 +228,82 @@ func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int) {
 		state.suppressed = 0
 	}
 
-	h.evictDenials(key, now)
+	return record, repeats, h.evictDenials(key, now)
+}
 
-	return record, repeats
+// recordDenialSummaries writes one summary row per evicted entry that
+// had suppressed repeats, so that a burst which stops before the window
+// closes still leaves its count in the log. Failures are logged and
+// otherwise ignored, as elsewhere on the denial path.
+func (h *RBACHandler) recordDenialSummaries(r *http.Request,
+	expired []denialSummary) {
+
+	for _, summary := range expired {
+		details := map[string]any{
+			"repeat_count":  summary.suppressed,
+			"window_closed": true,
+		}
+		if err := h.authStore.RecordDeniedWithDetails(summary.key.summaryActor(),
+			summary.key.action, summary.key.reason, details); err != nil {
+			log.Printf("[ERROR] Failed to record RBAC denial summary for %s %s: %v", r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
+		}
+	}
 }
 
 // evictDenials drops entries whose window has closed, and, if the map
 // is still at its cap, the oldest entry. The key just handled is kept
-// in both passes, because its window has only now been opened. The
+// in both passes, because its window has only now been opened. Every
+// dropped entry that still held suppressed repeats is returned as a
+// summary for the caller to record once the lock is released. The
 // caller must hold h.denialMu.
-func (h *RBACHandler) evictDenials(keep denialKey, now time.Time) {
+func (h *RBACHandler) evictDenials(keep denialKey, now time.Time) []denialSummary {
+	var expired []denialSummary
+
+	drop := func(key denialKey, state *denialState) {
+		if state.suppressed > 0 {
+			expired = append(expired, denialSummary{
+				key:        key,
+				suppressed: state.suppressed,
+			})
+		}
+		delete(h.denials, key)
+	}
+
 	for key, state := range h.denials {
 		if key != keep && now.Sub(state.firstSeen) >= denialCoalesceWindow {
-			delete(h.denials, key)
+			drop(key, state)
 		}
 	}
 
 	for len(h.denials) > maxDenialKeys {
-		var oldestKey denialKey
-		var oldest time.Time
-		found := false
-		for key, state := range h.denials {
-			if key == keep {
-				continue
-			}
-			if !found || state.firstSeen.Before(oldest) {
-				oldestKey, oldest, found = key, state.firstSeen, true
-			}
-		}
+		oldestKey, oldestState, found := h.oldestDenial(keep)
 		if !found {
-			return
+			break
 		}
-		delete(h.denials, oldestKey)
+		drop(oldestKey, oldestState)
 	}
+
+	return expired
+}
+
+// oldestDenial returns the tracked entry whose window opened earliest,
+// skipping the key just handled. The caller must hold h.denialMu.
+func (h *RBACHandler) oldestDenial(keep denialKey) (denialKey, *denialState, bool) {
+	var oldestKey denialKey
+	var oldestState *denialState
+	var oldest time.Time
+	found := false
+
+	for key, state := range h.denials {
+		if key == keep {
+			continue
+		}
+		if !found || state.firstSeen.Before(oldest) {
+			oldestKey, oldestState, oldest, found = key, state, state.firstSeen, true
+		}
+	}
+
+	return oldestKey, oldestState, found
 }
 
 // requirePermission checks that the caller has the specified admin permission.

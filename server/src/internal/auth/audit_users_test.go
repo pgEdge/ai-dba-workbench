@@ -11,8 +11,11 @@ package auth
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // testActor is the acting principal used by the audited-mutation tests.
@@ -1125,5 +1128,74 @@ func TestAuditUsersUpdateFieldRejectsUnknownColumn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported user column") {
 		t.Errorf("Expected an unsupported-column error, got %v", err)
+	}
+}
+
+// TestEnableUserResetsFailedAttempts checks the lockout-then-enable
+// path: enabling an account clears the failed-attempt counter in the
+// same transaction as the enable, and the audit event says so.
+func TestEnableUserResetsFailedAttempts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "auth-enable-reset-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Two failures lock the account, which is what leaves a non-zero
+	// counter behind for the enable to clear.
+	store, err := NewAuthStore(tmpDir, 0, 2)
+	if err != nil {
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	defer store.Close()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	as := store.AsActor(testActor())
+	if err := as.CreateUser("bob", "Str0ngPassphrase!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, _, err := store.AuthenticateUser("bob", "wrong-passphrase"); err == nil {
+			t.Fatal("Expected authentication with the wrong password to fail")
+		}
+	}
+
+	locked, err := store.GetUser("bob")
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if locked.Enabled {
+		t.Fatal("Expected the account to be locked out")
+	}
+	if locked.FailedAttempts == 0 {
+		t.Fatal("Expected a non-zero failed-attempt count after lockout")
+	}
+
+	if err := as.EnableUser("bob"); err != nil {
+		t.Fatalf("EnableUser failed: %v", err)
+	}
+
+	enabled, err := store.GetUser("bob")
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if !enabled.Enabled {
+		t.Error("Expected the account to be enabled")
+	}
+	if enabled.FailedAttempts != 0 {
+		t.Errorf("Expected the failed-attempt count to be reset, got %d",
+			enabled.FailedAttempts)
+	}
+
+	details := auditDetails(t, lastAuditEvent(t, store))
+	if details["failed_attempts_reset"] != true {
+		t.Errorf("Expected failed_attempts_reset true in the details, got %v",
+			details["failed_attempts_reset"])
+	}
+
+	// The account is usable again without any further reset.
+	if _, _, err := store.AuthenticateUser("bob", "Str0ngPassphrase!"); err != nil {
+		t.Errorf("Expected authentication to succeed after enable: %v", err)
 	}
 }

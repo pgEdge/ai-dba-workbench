@@ -367,14 +367,11 @@ func enableUserCommand(dataDir, username string) error {
 		}
 	}
 
-	// Enable user (also resets failed attempts)
+	// Enable the user. The store clears the failed-attempt counter in
+	// the same transaction, so a locked-out account is usable again as
+	// soon as this returns.
 	if err := cliStore(store).EnableUser(username); err != nil {
 		return fmt.Errorf("failed to enable user: %w", err)
-	}
-
-	// Reset failed attempts
-	if err := store.ResetFailedAttempts(username); err != nil {
-		return fmt.Errorf("failed to reset failed attempts: %w", err)
 	}
 
 	fmt.Printf("User '%s' enabled successfully (failed attempts reset)\n", username)

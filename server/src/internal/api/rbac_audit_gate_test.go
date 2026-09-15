@@ -181,19 +181,19 @@ func TestAdmitDenialCoalescesWithinWindow(t *testing.T) {
 	key := denialKeyFor("mallory", "user.create", "Permission denied")
 	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 
-	if record, repeats := handler.admitDenial(key, start); !record || repeats != 0 {
+	if record, repeats, _ := handler.admitDenial(key, start); !record || repeats != 0 {
 		t.Fatalf("First denial: expected (true, 0), got (%v, %d)", record, repeats)
 	}
 	for i := 1; i <= 4; i++ {
 		at := start.Add(time.Duration(i) * time.Second)
-		if record, repeats := handler.admitDenial(key, at); record || repeats != 0 {
+		if record, repeats, _ := handler.admitDenial(key, at); record || repeats != 0 {
 			t.Errorf("Repeat %d: expected (false, 0), got (%v, %d)", i, record,
 				repeats)
 		}
 	}
 
 	after := start.Add(denialCoalesceWindow + time.Second)
-	record, repeats := handler.admitDenial(key, after)
+	record, repeats, _ := handler.admitDenial(key, after)
 	if !record {
 		t.Fatal("Expected the denial after the window to be recorded")
 	}
@@ -204,7 +204,7 @@ func TestAdmitDenialCoalescesWithinWindow(t *testing.T) {
 
 	// The window has been reopened, so the next repeat is suppressed
 	// again and carries no stale count.
-	if record, repeats := handler.admitDenial(key,
+	if record, repeats, _ := handler.admitDenial(key,
 		after.Add(time.Second)); record || repeats != 0 {
 		t.Errorf("Expected the reopened window to suppress, got (%v, %d)",
 			record, repeats)
@@ -223,7 +223,7 @@ func TestAdmitDenialWithoutRepeatsCarriesNoCount(t *testing.T) {
 	handler.admitDenial(key, start)
 	// The entry is evicted as expired and then reinserted, so either
 	// path must report no repeats.
-	if record, repeats := handler.admitDenial(key,
+	if record, repeats, _ := handler.admitDenial(key,
 		start.Add(2*denialCoalesceWindow)); !record || repeats != 0 {
 		t.Errorf("Expected (true, 0), got (%v, %d)", record, repeats)
 	}
@@ -242,12 +242,12 @@ func TestAdmitDenialSeparatesActors(t *testing.T) {
 	otherReason := denialKeyFor("mallory", "user.create", "Something else")
 
 	for _, key := range []denialKey{mallory, trudy, otherAction, otherReason} {
-		if record, _ := handler.admitDenial(key, start); !record {
+		if record, _, _ := handler.admitDenial(key, start); !record {
 			t.Errorf("Expected the first denial for %+v to be recorded", key)
 		}
 	}
 	for _, key := range []denialKey{mallory, trudy, otherAction, otherReason} {
-		if record, _ := handler.admitDenial(key, start.Add(time.Second)); record {
+		if record, _, _ := handler.admitDenial(key, start.Add(time.Second)); record {
 			t.Errorf("Expected the repeat for %+v to be suppressed", key)
 		}
 	}
@@ -372,11 +372,134 @@ func TestRecordDenialToleratesNilStore(t *testing.T) {
 func TestAdmitDenialInitialisesMap(t *testing.T) {
 	handler := &RBACHandler{}
 
-	if record, _ := handler.admitDenial(
+	if record, _, _ := handler.admitDenial(
 		denialKeyFor("mallory", "user.create", "no"), time.Now()); !record {
 		t.Error("Expected the first denial to be recorded")
 	}
 	if len(handler.denials) != 1 {
 		t.Errorf("Expected 1 tracked key, got %d", len(handler.denials))
+	}
+}
+
+// withTokenFrom presents the request as an API token identified by
+// tokenID, arriving from the given client address.
+func withTokenFrom(req *http.Request, tokenID int64, ip string) *http.Request {
+	ctx := context.WithValue(req.Context(), auth.IsAPITokenContextKey, true)
+	ctx = context.WithValue(ctx, auth.AuditTokenIDContextKey, tokenID)
+	ctx = context.WithValue(ctx, auth.UsernameContextKey, "mallory")
+	ctx = context.WithValue(ctx, auth.IPAddressContextKey, ip)
+	return req.WithContext(ctx)
+}
+
+// TestRecordDenialSeparatesTokensAndAddresses checks that two tokens of
+// the same user, and one token used from two addresses, never suppress
+// each other's denials.
+func TestRecordDenialSeparatesTokensAndAddresses(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const reason = "Permission denied: requires superuser privileges"
+	newReq := func(tokenID int64, ip string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/audit", nil)
+		return withTokenFrom(req, tokenID, ip)
+	}
+
+	handler.recordDenial(newReq(1, "192.0.2.10"), reason)
+	// The identical repeat is suppressed, so it adds no row.
+	handler.recordDenial(newReq(1, "192.0.2.10"), reason)
+	// A second token of the same user, and the first token seen from a
+	// second address, are each distinct.
+	handler.recordDenial(newReq(2, "192.0.2.10"), reason)
+	handler.recordDenial(newReq(1, "192.0.2.11"), reason)
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action:  "audit.read",
+		Outcome: string(auth.OutcomeDenied),
+	})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("Expected 3 denial rows (one per token and address), got %d",
+			len(events))
+	}
+}
+
+// TestRecordDenialSummarisesEvictedRepeats checks that repeats which
+// were suppressed in a window nobody returned to are written as a
+// summary row when the entry is evicted, rather than discarded.
+func TestRecordDenialSummarisesEvictedRepeats(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	const reason = "Permission denied: requires superuser privileges"
+	burst := withTokenFrom(httptest.NewRequest(http.MethodGet,
+		"/api/v1/rbac/audit", nil), 11, "192.0.2.20")
+
+	// One recorded denial followed by two suppressed repeats.
+	for i := 0; i < 3; i++ {
+		handler.recordDenial(burst, reason)
+	}
+
+	// Age the window so the burst's entry is evicted by the next,
+	// unrelated denial rather than reported by a repeat of its own.
+	handler.denialMu.Lock()
+	for _, state := range handler.denials {
+		state.firstSeen = state.firstSeen.Add(-2 * denialCoalesceWindow)
+	}
+	handler.denialMu.Unlock()
+
+	other := withTokenFrom(httptest.NewRequest(http.MethodPost,
+		"/api/v1/rbac/users", nil), 11, "192.0.2.20")
+	handler.recordDenial(other, reason)
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action:  "audit.read",
+		Outcome: string(auth.OutcomeDenied),
+	})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected the first denial and its summary, got %d rows",
+			len(events))
+	}
+
+	var details struct {
+		RepeatCount  int  `json:"repeat_count"`
+		WindowClosed bool `json:"window_closed"`
+	}
+	if err := json.Unmarshal(events[0].Details, &details); err != nil {
+		t.Fatalf("Failed to decode details %s: %v", events[0].Details, err)
+	}
+	if details.RepeatCount != 2 || !details.WindowClosed {
+		t.Errorf("Expected {repeat_count: 2, window_closed: true}, got %s",
+			events[0].Details)
+	}
+}
+
+// TestRecordDenialSummariesToleratesStoreFailure checks that a summary
+// which cannot be written is logged and otherwise ignored, as every
+// other failure on the denial path is.
+func TestRecordDenialSummariesToleratesStoreFailure(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+
+	store.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/audit", nil)
+	handler.recordDenialSummaries(req, []denialSummary{{
+		key:        denialKeyFor("mallory", "audit.read", "Permission denied"),
+		suppressed: 3,
+	}})
+}
+
+// TestDeniedGroupActionUnknownSubresource checks that a group route
+// naming a sub-resource the handler does not serve falls through to the
+// caller's fallback rather than inventing an action.
+func TestDeniedGroupActionUnknownSubresource(t *testing.T) {
+	parts := []string{"groups", "4", "widgets"}
+	if got := deniedGroupAction(http.MethodPost, parts); got != "" {
+		t.Errorf("Expected no action for an unknown sub-resource, got %q", got)
 	}
 }

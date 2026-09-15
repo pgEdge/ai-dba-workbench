@@ -198,9 +198,10 @@ type AuthConfig struct {
 
 // AuditRetentionDays returns the effective number of days to keep
 // RBAC audit events, defaulting to 90 when the setting was not
-// configured. An explicit 0 means audit events are kept forever.
+// configured or was given a negative value, which no retention period
+// can mean. An explicit 0 means audit events are kept forever.
 func (a AuthConfig) AuditRetentionDays() int {
-	if a.AuditRetentionDaysPtr == nil {
+	if a.AuditRetentionDaysPtr == nil || *a.AuditRetentionDaysPtr < 0 {
 		return 90
 	}
 	return *a.AuditRetentionDaysPtr
@@ -1043,7 +1044,9 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 	if val := os.Getenv("PGEDGE_AUDIT_RETENTION_DAYS"); val != "" {
-		if n, err := strconv.Atoi(val); err == nil {
+		// A negative retention period is as meaningless as a
+		// non-numeric one, so both leave the configured value alone.
+		if n, err := strconv.Atoi(val); err == nil && n >= 0 {
 			cfg.HTTP.Auth.AuditRetentionDaysPtr = intPtr(n)
 		}
 	}

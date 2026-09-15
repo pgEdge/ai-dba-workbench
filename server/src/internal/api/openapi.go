@@ -1649,7 +1649,7 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"target_name": {Type: "string", Description: "Name of the object acted upon"},
 				"outcome": {Type: "string", Description: "Result of the audited operation",
 					Enum: []string{"success", "failure", "denied"}},
-				"error":     {Type: "string", Description: "Error message for a failed operation"},
+				"error":     {Type: "string", Description: "Error message for a failed or denied operation"},
 				"details":   {Type: "object", Description: "Action-specific details"},
 				"prev_hash": {Type: "string", Description: "Hash of the preceding event"},
 				"hash":      {Type: "string", Description: "Hash chaining this event to its predecessor"},

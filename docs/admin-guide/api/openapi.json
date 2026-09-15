@@ -10204,7 +10204,7 @@
           },
           "error": {
             "type": "string",
-            "description": "Error message for a failed operation"
+            "description": "Error message for a failed or denied operation"
           },
           "hash": {
             "type": "string",

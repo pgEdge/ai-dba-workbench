@@ -647,9 +647,15 @@ func (s *AuthStore) setUserEnabled(actor Actor, username string,
 	}
 	target.targetID = &before.ID
 
-	if _, execErr := tx.Exec(
-		"UPDATE users SET enabled = ? WHERE id = ?", enabled, before.ID,
-	); execErr != nil {
+	// Enabling an account also clears its failed-attempt counter, so
+	// that an account locked out by repeated failures is usable again
+	// as soon as it is enabled, and so that the reset commits with the
+	// enable and its audit event rather than in a statement of its own.
+	stmt := "UPDATE users SET enabled = ? WHERE id = ?"
+	if enabled {
+		stmt = "UPDATE users SET enabled = ?, failed_attempts = 0 WHERE id = ?"
+	}
+	if _, execErr := tx.Exec(stmt, enabled, before.ID); execErr != nil {
 		err = fmt.Errorf(failure, execErr)
 		return err
 	}
@@ -657,8 +663,13 @@ func (s *AuthStore) setUserEnabled(actor Actor, username string,
 	after := before
 	after.Enabled = enabled
 
+	details := map[string]any{"before": before, "after": after}
+	if enabled {
+		details["failed_attempts_reset"] = true
+	}
+
 	if auditErr := s.recordAudit(tx, newEvent(actor, action, "user", &before.ID,
-		username, map[string]any{"before": before, "after": after})); auditErr != nil {
+		username, details)); auditErr != nil {
 		err = auditErr
 		return err
 	}

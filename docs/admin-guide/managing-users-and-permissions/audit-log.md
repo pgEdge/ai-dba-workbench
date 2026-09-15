@@ -1,8 +1,11 @@
 # Audit Log
 
-The Workbench records every attempted change to users, tokens, groups,
-group memberships and privileges in an audit log, so that you can answer
-questions such as who revoked a colleague's access and when. Each event
+The Workbench records changes to users, tokens, groups, group
+memberships and privileges in an audit log, along with the requests
+that were refused for want of a permission, so that you can answer
+questions such as who revoked a colleague's access and when. Repeated
+denials are coalesced rather than recorded one by one, as described
+under [Recorded Actions](#recorded-actions). Each event
 names the principal that made the change, the address the request came
 from, the object that was targeted, the state the change replaced and
 whether the change succeeded. Events live in the `audit_events` table of
@@ -100,8 +103,9 @@ denials in the next sixty seconds are counted instead of recorded; and
 the first denial after that window is recorded with a
 `details.repeat_count` giving the number of attempts it stands for. If
 no further denial arrives after the window closes, the suppressed
-attempts are not written, so the log records that a burst happened but
-not always how long it was.
+attempts are written as a summary event of their own, carrying
+`details.repeat_count` alongside `details.window_closed`, so a burst
+that stops is still counted rather than lost.
 
 ## Actor Types
 

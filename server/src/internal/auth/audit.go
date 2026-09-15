@@ -339,10 +339,20 @@ func (s *AuthStore) recordFailure(actor Actor, action, targetType string,
 // target, because a request refused before the target is resolved has
 // none, and the reason is stored in the error column.
 func (s *AuthStore) RecordDenied(actor Actor, action, reason string) error {
+	return s.RecordDeniedWithDetails(actor, action, reason, nil)
+}
+
+// RecordDeniedWithDetails records an authorisation denial along with
+// structured details. Callers that coalesce repeated denials use it to
+// report how many identical refusals a single row stands for; details
+// of nil is identical to RecordDenied.
+func (s *AuthStore) RecordDeniedWithDetails(actor Actor, action,
+	reason string, details any) error {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ev := newEvent(actor, action, "", nil, "", nil)
+	ev := newEvent(actor, action, "", nil, "", details)
 	ev.Outcome = OutcomeDenied
 	ev.Error = reason
 
@@ -572,27 +582,114 @@ func (s *AuthStore) VerifyAuditChain() (int, int64, error) {
 		return count, 0, fmt.Errorf("failed to read audit events: %w", err)
 	}
 
+	if err := s.verifyAuditTail(); err != nil {
+		return count, 0, err
+	}
+
 	return count, 0, nil
 }
+
+// verifyAuditTail detects rows removed from the newest end of the log,
+// which the hash chain alone cannot see: truncating the tail leaves
+// every remaining row linked to its predecessor and so verifying
+// cleanly. Because audit_events.id is AUTOINCREMENT, SQLite keeps the
+// highest id ever issued in sqlite_sequence and never reuses it, so a
+// sequence value above the largest surviving id is evidence that rows
+// once existed beyond it.
+//
+// A missing sqlite_sequence row, or a missing table on a database that
+// predates the AUTOINCREMENT column, is not an error: there is simply
+// nothing to compare against.
+func (s *AuthStore) verifyAuditTail() error {
+	var seq, maxID sql.NullInt64
+
+	if err := s.db.QueryRow(
+		"SELECT seq FROM sqlite_sequence WHERE name = 'audit_events'").
+		Scan(&seq); err != nil {
+		// No sequence row, or no sqlite_sequence table at all: there is
+		// nothing to compare the newest id against.
+		return nil
+	}
+	if !seq.Valid {
+		return nil
+	}
+
+	if err := s.db.QueryRow("SELECT MAX(id) FROM audit_events").
+		Scan(&maxID); err != nil {
+		return fmt.Errorf("failed to read newest audit row: %w", err)
+	}
+
+	newest := int64(0)
+	if maxID.Valid {
+		newest = maxID.Int64
+	}
+
+	if seq.Int64 > newest {
+		return fmt.Errorf("audit chain tail missing: newest row %d, sequence %d",
+			newest, seq.Int64)
+	}
+
+	return nil
+}
+
+// auditActionPurge is the action recorded when the retention purge
+// removes events, so that a shrinking log is itself accounted for.
+const auditActionPurge = "audit.purge"
 
 // PurgeAuditEvents deletes events that occurred before the given time
 // and returns the number of rows removed. Because each retained row
 // still carries its own prev_hash, the chain stays verifiable from the
 // oldest retained row onwards.
-func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (int64, error) {
+//
+// A purge that removed anything records an audit.purge event of its
+// own, in the same transaction as the DELETE, so that the log always
+// explains its own missing prefix: an operator comparing the oldest
+// retained row against the retention window can tell a purge from a
+// deletion. The event is written by the system actor and carries no
+// target, because retention acts on the log as a whole.
+func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (removed int64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec("DELETE FROM audit_events WHERE occurred_at < ?",
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin purge transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			//nolint:errcheck // Rollback error is not critical; the
+			// outer error is already being returned.
+			tx.Rollback()
+		}
+	}()
+
+	result, err := tx.Exec("DELETE FROM audit_events WHERE occurred_at < ?",
 		olderThan.UTC().Format(auditTimeLayout))
 	if err != nil {
 		return 0, fmt.Errorf("failed to purge audit events: %w", err)
 	}
 
-	removed, err := result.RowsAffected()
+	removed, err = result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("failed to count purged audit events: %w", err)
 	}
+
+	if removed > 0 {
+		ev := newEvent(systemActor, auditActionPurge, "", nil, "",
+			map[string]any{
+				"older_than": olderThan.UTC().Format(time.RFC3339),
+				"removed":    removed,
+			})
+		if err = s.recordAudit(tx, ev); err != nil {
+			return 0, fmt.Errorf("failed to record audit purge event: %w", err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit audit purge: %w", err)
+	}
+	committed = true
 
 	return removed, nil
 }

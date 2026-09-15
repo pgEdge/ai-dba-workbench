@@ -158,7 +158,18 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	// driver applies each "_pragma=NAME(VALUE)" parameter as a PRAGMA
 	// statement on every new connection in the pool, so the setting is
 	// applied consistently regardless of connection churn.
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	//
+	// _txlock=immediate makes every transaction begin with BEGIN
+	// IMMEDIATE, taking the write lock up front rather than on the
+	// first write. The audit chain depends on it: recordAudit reads the
+	// newest row's hash and then inserts the row that links to it, and
+	// under the default deferred locking two processes sharing the data
+	// directory can both take that read before either writes, so the
+	// second insert links to a row that is no longer the newest and the
+	// chain forks. s.mu serializes writers within one process only, so
+	// the DSN option is what makes the chain safe across processes.
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(1)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auth database: %w", err)

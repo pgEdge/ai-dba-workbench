@@ -4407,7 +4407,11 @@ func buildPaths() map[string]OpenAPIPathItem {
 			Get: &OpenAPIOperation{
 				Summary: "List RBAC audit events",
 				Description: "Returns audit-log events, newest first. " +
-					"Requires superuser privileges.",
+					"Requires superuser privileges. A request authenticated " +
+					"with an API token whose admin scope has been narrowed " +
+					"is refused, because no admin permission grants audit " +
+					"access; a token with no admin scope, or one holding " +
+					"the * wildcard, is accepted.",
 				OperationID: "listAuditEvents",
 				Tags:        []string{"RBAC Audit"},
 				Security:    bearerAuth,
@@ -4435,7 +4439,9 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"ignoring limit and offset")),
 					"400": jsonResponse("ErrorResponse", "Invalid query parameter"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires superuser privileges"),
+					"403": jsonResponse("ErrorResponse",
+						"Requires superuser privileges, and an unrestricted "+
+							"admin scope when authenticated by API token"),
 				},
 			},
 		},

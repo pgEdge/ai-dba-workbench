@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -442,19 +443,180 @@ func TestPurgeAuditEventsKeepsChainVerifiable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyAuditChain failed after purge: %v", err)
 	}
-	if rows != 2 || firstBad != 0 {
-		t.Errorf("Expected 2 verified rows, got rows=%d firstBad=%d",
+	// Two retained rows plus the audit.purge event the purge itself
+	// records.
+	if rows != 3 || firstBad != 0 {
+		t.Errorf("Expected 3 verified rows, got rows=%d firstBad=%d",
 			rows, firstBad)
 	}
 }
 
-func TestPurgeAuditEventsError(t *testing.T) {
+// TestPurgeAuditEventsRecordsPurgeEvent checks that a purge which
+// removed rows leaves an audit.purge event behind, and that the event
+// names the cutoff and the number of rows removed.
+func TestPurgeAuditEventsRecordsPurgeEvent(t *testing.T) {
 	store, cleanup := createTestAuthStoreForAudit(t)
 	defer cleanup()
 
-	store.db.Close()
-	if _, err := store.PurgeAuditEvents(time.Now()); err == nil {
-		t.Error("Expected an error from a closed database")
+	now := time.Now().UTC()
+	cutoff := now.Add(-60 * 24 * time.Hour)
+	for i, age := range []time.Duration{100 * 24 * time.Hour, 24 * time.Hour} {
+		ev := newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil)
+		ev.OccurredAt = now.Add(-age)
+		mustRecord(t, store, ev)
+	}
+
+	removed, err := store.PurgeAuditEvents(cutoff)
+	if err != nil {
+		t.Fatalf("PurgeAuditEvents failed: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("Expected 1 row removed, got %d", removed)
+	}
+
+	events, _, err := store.ListAuditEvents(AuditFilter{Action: auditActionPurge})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Expected 1 audit.purge event, got %d", len(events))
+	}
+
+	ev := events[0]
+	if ev.ActorType != ActorSystem || ev.ActorName != "system" {
+		t.Errorf("Expected a system actor, got %q/%q", ev.ActorType, ev.ActorName)
+	}
+	if ev.TargetType != "" || ev.TargetID != nil {
+		t.Errorf("Expected no target, got %q/%v", ev.TargetType, ev.TargetID)
+	}
+	if ev.Outcome != OutcomeSuccess {
+		t.Errorf("Expected outcome success, got %q", ev.Outcome)
+	}
+
+	var details struct {
+		OlderThan string `json:"older_than"`
+		Removed   int64  `json:"removed"`
+	}
+	if err := json.Unmarshal(ev.Details, &details); err != nil {
+		t.Fatalf("Failed to decode details %s: %v", ev.Details, err)
+	}
+	if details.OlderThan != cutoff.UTC().Format(time.RFC3339) {
+		t.Errorf("Expected older_than %q, got %q",
+			cutoff.UTC().Format(time.RFC3339), details.OlderThan)
+	}
+	if details.Removed != 1 {
+		t.Errorf("Expected removed 1, got %d", details.Removed)
+	}
+
+	if _, firstBad, err := store.VerifyAuditChain(); err != nil || firstBad != 0 {
+		t.Errorf("Chain should verify after a purge: firstBad=%d err=%v",
+			firstBad, err)
+	}
+}
+
+// TestPurgeAuditEventsNoRowsRecordsNothing checks that a purge which
+// matched nothing stays silent rather than filling the log with empty
+// retention events.
+func TestPurgeAuditEventsNoRowsRecordsNothing(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+		int64Ptr(1), "alice", nil))
+
+	removed, err := store.PurgeAuditEvents(time.Now().UTC().Add(-365 * 24 * time.Hour))
+	if err != nil {
+		t.Fatalf("PurgeAuditEvents failed: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("Expected 0 rows removed, got %d", removed)
+	}
+
+	events, _, err := store.ListAuditEvents(AuditFilter{Action: auditActionPurge})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("Expected no audit.purge event, got %d", len(events))
+	}
+}
+
+// TestVerifyAuditChainDetectsMissingTail checks that deleting the
+// newest row, which leaves the surviving chain internally consistent,
+// is still caught by the sqlite_sequence comparison.
+func TestVerifyAuditChainDetectsMissingTail(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	for i := 0; i < 3; i++ {
+		mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil))
+	}
+
+	if _, firstBad, err := store.VerifyAuditChain(); err != nil || firstBad != 0 {
+		t.Fatalf("Chain should verify before tampering: firstBad=%d err=%v",
+			firstBad, err)
+	}
+
+	if _, err := store.db.Exec(
+		"DELETE FROM audit_events WHERE id = (SELECT MAX(id) FROM audit_events)",
+	); err != nil {
+		t.Fatalf("Failed to delete the newest row: %v", err)
+	}
+
+	_, firstBad, err := store.VerifyAuditChain()
+	if err == nil {
+		t.Fatal("Expected a tail-missing error")
+	}
+	if firstBad != 0 {
+		t.Errorf("Expected firstBad 0 for a missing tail, got %d", firstBad)
+	}
+	if !strings.Contains(err.Error(), "audit chain tail missing") {
+		t.Errorf("Expected a tail-missing error, got %v", err)
+	}
+}
+
+// TestVerifyAuditTailWithoutSequenceRow checks that a log with no
+// sqlite_sequence entry is accepted rather than reported as truncated.
+func TestVerifyAuditTailWithoutSequenceRow(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+		int64Ptr(1), "alice", nil))
+	if _, err := store.db.Exec(
+		"DELETE FROM sqlite_sequence WHERE name = 'audit_events'"); err != nil {
+		t.Fatalf("Failed to clear sqlite_sequence: %v", err)
+	}
+
+	if err := store.verifyAuditTail(); err != nil {
+		t.Errorf("Expected no error without a sequence row, got %v", err)
+	}
+}
+
+// TestVerifyAuditTailMaxQueryError covers the MAX(id) lookup failing
+// after the sequence row has been read.
+func TestVerifyAuditTailMaxQueryError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	mustRecord(t, store, newEvent(systemActor, "user.create", "user",
+		int64Ptr(1), "alice", nil))
+	if _, err := store.db.Exec("DROP TABLE audit_events"); err != nil {
+		t.Fatalf("Failed to drop audit_events: %v", err)
+	}
+	// Dropping the table also drops its sqlite_sequence row, so put one
+	// back to reach the branch that reads MAX(id) from the table that
+	// is now gone.
+	if _, err := store.db.Exec(
+		"INSERT INTO sqlite_sequence (name, seq) VALUES ('audit_events', 5)",
+	); err != nil {
+		t.Fatalf("Failed to restore the sequence row: %v", err)
+	}
+
+	if err := store.verifyAuditTail(); err == nil {
+		t.Error("Expected an error when the newest row cannot be read")
 	}
 }
 
@@ -1158,10 +1320,14 @@ func TestPurgeAuditEventsSubSecondCutoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAuditEvents failed: %v", err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("Expected 2 remaining events, got %d", len(events))
+	// Two retained rows plus the audit.purge event.
+	if len(events) != 3 {
+		t.Fatalf("Expected 3 remaining events, got %d", len(events))
 	}
 	for _, ev := range events {
+		if ev.Action == auditActionPurge {
+			continue
+		}
 		if ev.OccurredAt.Before(base) {
 			t.Errorf("Event at %v should have been purged", ev.OccurredAt)
 		}
@@ -1186,5 +1352,127 @@ func TestRecordAuditKeepsCallerActorName(t *testing.T) {
 	}
 	if events[0].ActorName != "bootstrap" {
 		t.Errorf("Expected the caller's actor name, got %q", events[0].ActorName)
+	}
+}
+
+// TestAuditChainSurvivesTwoStores exercises the cross-process case that
+// the _txlock=immediate DSN option exists for: two AuthStore instances
+// on the same data directory, each with its own s.mu, writing audit
+// events concurrently. Without the write lock taken at BEGIN, two
+// transactions can both read the same "previous" hash before either
+// inserts, and the chain forks; with it, one of them blocks until the
+// other commits.
+func TestAuditChainSurvivesTwoStores(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "auth-audit-concurrent-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	first, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create the first auth store: %v", err)
+	}
+	defer first.Close()
+
+	second, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		t.Fatalf("Failed to create the second auth store: %v", err)
+	}
+	defer second.Close()
+
+	const perStore = 25
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*perStore)
+
+	for _, s := range []*AuthStore{first, second} {
+		wg.Add(1)
+		go func(store *AuthStore) {
+			defer wg.Done()
+			for i := 0; i < perStore; i++ {
+				ev := newEvent(systemActor, "user.create", "user",
+					int64Ptr(int64(i+1)), "alice", nil)
+				store.mu.Lock()
+				err := store.recordAuditInOwnTx(ev)
+				store.mu.Unlock()
+				if err != nil {
+					errs <- err
+				}
+			}
+		}(s)
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("Concurrent audit write failed: %v", err)
+	}
+
+	rows, firstBad, err := first.VerifyAuditChain()
+	if err != nil {
+		t.Fatalf("VerifyAuditChain failed after concurrent writes: %v", err)
+	}
+	if firstBad != 0 {
+		t.Errorf("Expected an intact chain, first bad row %d", firstBad)
+	}
+
+	events, total, err := first.ListAuditEvents(AuditFilter{Limit: maxAuditLimit})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if total != 2*perStore {
+		t.Errorf("Expected %d events, got %d", 2*perStore, total)
+	}
+	if rows != total {
+		t.Errorf("Verified %d rows but the log holds %d", rows, total)
+	}
+	if len(events) != total {
+		t.Errorf("Expected %d events in the page, got %d", total, len(events))
+	}
+}
+
+// TestPurgeAuditEventsRecordFailureRollsBack checks that a purge whose
+// own audit event cannot be written abandons the DELETE as well, so
+// that rows are never removed without the event that accounts for them.
+func TestPurgeAuditEventsRecordFailureRollsBack(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	for i, age := range []time.Duration{100 * 24 * time.Hour, 24 * time.Hour} {
+		ev := newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil)
+		ev.OccurredAt = now.Add(-age)
+		mustRecord(t, store, ev)
+	}
+
+	if _, err := store.db.Exec(`
+        CREATE TRIGGER audit_events_block_insert
+        BEFORE INSERT ON audit_events
+        BEGIN
+            SELECT RAISE(ABORT, 'no inserts');
+        END`); err != nil {
+		t.Fatalf("Failed to create the blocking trigger: %v", err)
+	}
+
+	if _, err := store.PurgeAuditEvents(now.Add(-60 * 24 * time.Hour)); err == nil {
+		t.Fatal("Expected the purge to fail when its event cannot be written")
+	}
+
+	if _, err := store.db.Exec(
+		"DROP TRIGGER audit_events_block_insert"); err != nil {
+		t.Fatalf("Failed to drop the blocking trigger: %v", err)
+	}
+
+	events, total, err := store.ListAuditEvents(AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("Expected both rows to survive the rolled-back purge, got %d",
+			total)
+	}
+	if len(events) != 2 {
+		t.Errorf("Expected 2 events in the page, got %d", len(events))
 	}
 }

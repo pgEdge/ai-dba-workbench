@@ -39,6 +39,10 @@ func (h *RBACHandler) handleAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireUnscopedTokenForAudit(w, r) {
+		return
+	}
+
 	filter, err := parseAuditFilter(r.URL.Query())
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
@@ -63,6 +67,61 @@ func (h *RBACHandler) handleAudit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set(headerTotalCount, strconv.Itoa(total))
 	RespondJSON(w, http.StatusOK, events)
+}
+
+// auditScopeDenied is the message returned to a token whose admin
+// scope does not reach the audit log.
+const auditScopeDenied = "Permission denied: token admin scope does not " +
+	"include audit access"
+
+// requireUnscopedTokenForAudit refuses a request made with an API token
+// whose admin scope has been narrowed. A superuser's token inherits
+// superuser rights, so requireSuperuser alone would let a token created
+// for one narrow job read the whole installation's audit log; a scope
+// that names specific permissions is an explicit statement that the
+// token is not a general-purpose stand-in for its owner, and the audit
+// log is not one of the permissions it can name. A token with no admin
+// scope at all, or one holding the "*" wildcard, is unrestricted by
+// design and passes.
+//
+// A scope lookup that fails is treated as a refusal rather than a pass,
+// so that a database error cannot widen access.
+func (h *RBACHandler) requireUnscopedTokenForAudit(w http.ResponseWriter,
+	r *http.Request) bool {
+
+	if !auth.IsAPITokenFromContext(r.Context()) {
+		return true
+	}
+
+	tokenID := auth.GetAuditTokenIDFromContext(r.Context())
+	if tokenID == 0 {
+		return true
+	}
+
+	scope, err := h.authStore.GetTokenAdminScope(tokenID)
+	if err != nil {
+		// The underlying error can name internal SQL, so it is logged
+		// rather than returned to the caller.
+		log.Printf("[ERROR] Failed to read admin scope for token %d: %v",
+			tokenID, err)
+		h.recordDenial(r, auditScopeDenied)
+		RespondError(w, http.StatusForbidden, auditScopeDenied)
+		return false
+	}
+
+	if len(scope) == 0 {
+		return true
+	}
+	for _, permission := range scope {
+		if permission == auth.AdminPermissionWildcard {
+			return true
+		}
+	}
+
+	h.recordDenial(r, auditScopeDenied)
+	RespondError(w, http.StatusForbidden, auditScopeDenied)
+
+	return false
 }
 
 // parseAuditFilter converts the query string into an auth.AuditFilter.

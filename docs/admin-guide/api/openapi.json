@@ -7648,7 +7648,7 @@
     "/rbac/audit": {
       "get": {
         "summary": "List RBAC audit events",
-        "description": "Returns audit-log events, newest first. Requires superuser privileges.",
+        "description": "Returns audit-log events, newest first. Requires superuser privileges. A request authenticated with an API token whose admin scope has been narrowed is refused, because no admin permission grants audit access; a token with no admin scope, or one holding the * wildcard, is accepted.",
         "operationId": "listAuditEvents",
         "tags": [
           "RBAC Audit"
@@ -7778,7 +7778,7 @@
             }
           },
           "403": {
-            "description": "Requires superuser privileges",
+            "description": "Requires superuser privileges, and an unrestricted admin scope when authenticated by API token",
             "content": {
               "application/json": {
                 "schema": {

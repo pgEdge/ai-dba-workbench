@@ -315,6 +315,18 @@ recorded had it been allowed (`group.delete`, `token.scope.set`,
 `rbac.<lowercase method>` for an unrecognised route shape. A recording
 failure is logged with `[ERROR]` and never changes the response.
 
+Denials are coalesced before they reach the store. `recordDenial`
+consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
+keyed by (actor type, actor name, action, reason) under `denialMu`:
+the first denial for a key is written at once, identical denials
+within `denialCoalesceWindow` (60s) are counted instead of written,
+and the first denial after the window closes is written through
+`auth.RecordDeniedWithDetails` carrying
+`details.repeat_count`. The map evicts expired entries on every call
+and is capped at `maxDenialKeys` (10 000). Any new denial path must go
+through `recordDenial` rather than calling `RecordDenied` directly, or
+it loses the bound on how many rows one client can append.
+
 Mutations in these handlers go through `h.actorStore(r)` rather than
 `h.authStore`, so the audit row names the acting user or token:
 `actorStore` wraps `auth.ActorFromContext(r.Context())`, which reads

@@ -405,8 +405,9 @@ func TestPurgeAuditEventsRemovesOldEvents(t *testing.T) {
 
 	s.purgeAuditEvents()
 
-	if got := countAuditEvents(t, store); got != 1 {
-		t.Errorf("expected exactly one audit event to remain after purge, got %d", got)
+	// The retained event plus the audit.purge event the purge records.
+	if got := countAuditEvents(t, store); got != 2 {
+		t.Errorf("expected two audit events to remain after purge, got %d", got)
 	}
 }
 

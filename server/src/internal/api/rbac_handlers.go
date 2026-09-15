@@ -14,15 +14,56 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
+// denialCoalesceWindow is how long one recorded denial stands for the
+// identical denials that follow it. An unauthenticated or under-
+// privileged client can retry a refused request as fast as it likes,
+// and every attempt used to append a row, so a single loop could grow
+// the audit log without bound and bury the events that matter. Within
+// the window the repeats are counted rather than written, and the next
+// denial after it reports how many it stands for.
+const denialCoalesceWindow = 60 * time.Second
+
+// maxDenialKeys caps the coalescing map, so that a client varying the
+// actor name or the path cannot turn the memory saved on audit rows
+// into unbounded memory here instead. When the cap is reached the
+// oldest entry is dropped, which at worst records one extra row for
+// the denial whose entry was evicted.
+const maxDenialKeys = 10000
+
+// denialKey identifies a repeated denial. Two refusals coalesce only
+// when the same principal is refused the same action for the same
+// reason.
+type denialKey struct {
+	actorType string
+	actorName string
+	action    string
+	reason    string
+}
+
+// denialState tracks one key's current window: when the window opened,
+// which is when the denial that was recorded happened, and how many
+// identical denials have been suppressed since.
+type denialState struct {
+	firstSeen  time.Time
+	suppressed int
+}
+
 // RBACHandler handles REST API requests for RBAC management
 type RBACHandler struct {
 	authStore   *auth.AuthStore
 	rbacChecker *auth.RBACChecker
+
+	// denialMu guards denials, which is read and written from every
+	// request goroutine that is refused.
+	denialMu sync.Mutex
+	denials  map[denialKey]*denialState
 }
 
 // NewRBACHandler creates a new RBAC handler
@@ -30,6 +71,7 @@ func NewRBACHandler(authStore *auth.AuthStore, rbacChecker *auth.RBACChecker) *R
 	return &RBACHandler{
 		authStore:   authStore,
 		rbacChecker: rbacChecker,
+		denials:     make(map[denialKey]*denialState),
 	}
 }
 
@@ -54,9 +96,12 @@ func (h *RBACHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.H
 // audit log names the acting user or token rather than the server.
 //
 // Like recordDenial it tolerates a nil store, which only a partially
-// constructed handler has, returning nil so the caller fails on the
-// mutation it was about to attempt rather than inside the audit
-// plumbing.
+// constructed handler has. It returns nil in that case, and the
+// mutation the caller then attempts through the nil *auth.ActorStore
+// panics, which is what a handler built without an auth store did
+// before the audit work as well: the nil check exists to keep the
+// audit plumbing out of the failure, not to turn a misconfiguration
+// into a handled error.
 func (h *RBACHandler) actorStore(r *http.Request) *auth.ActorStore {
 	if h.authStore == nil {
 		return nil
@@ -73,10 +118,99 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	if h.authStore == nil {
 		return
 	}
-	if err := h.authStore.RecordDenied(auth.ActorFromContext(r.Context()),
-		deniedAction(r), reason); err != nil {
+
+	actor := auth.ActorFromContext(r.Context())
+	action := deniedAction(r)
+
+	record, repeats := h.admitDenial(denialKey{
+		actorType: string(actor.Type),
+		actorName: actor.Name,
+		action:    action,
+		reason:    reason,
+	}, time.Now())
+	if !record {
+		return
+	}
+
+	var details any
+	if repeats > 0 {
+		details = map[string]any{"repeat_count": repeats}
+	}
+
+	if err := h.authStore.RecordDeniedWithDetails(actor, action, reason,
+		details); err != nil {
 		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v",
 			r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
+	}
+}
+
+// admitDenial decides whether a denial is written or merely counted. It
+// returns true when the caller should record a row, together with the
+// number of identical denials that row stands for, which is zero unless
+// repeats were suppressed during the window that has just closed.
+//
+// The first denial for a key opens a window and is recorded at once, so
+// that a refusal is never invisible; identical denials inside the
+// window are counted instead of written; and the first denial after the
+// window closes is recorded, reporting the suppressed ones, and opens a
+// fresh window.
+func (h *RBACHandler) admitDenial(key denialKey, now time.Time) (bool, int) {
+	h.denialMu.Lock()
+	defer h.denialMu.Unlock()
+
+	if h.denials == nil {
+		h.denials = make(map[denialKey]*denialState)
+	}
+
+	record := true
+	repeats := 0
+
+	switch state, ok := h.denials[key]; {
+	case !ok:
+		h.denials[key] = &denialState{firstSeen: now}
+	case now.Sub(state.firstSeen) < denialCoalesceWindow:
+		state.suppressed++
+		record = false
+	default:
+		if state.suppressed > 0 {
+			repeats = state.suppressed + 1
+		}
+		state.firstSeen = now
+		state.suppressed = 0
+	}
+
+	h.evictDenials(key, now)
+
+	return record, repeats
+}
+
+// evictDenials drops entries whose window has closed, and, if the map
+// is still at its cap, the oldest entry. The key just handled is kept
+// in both passes, because its window has only now been opened. The
+// caller must hold h.denialMu.
+func (h *RBACHandler) evictDenials(keep denialKey, now time.Time) {
+	for key, state := range h.denials {
+		if key != keep && now.Sub(state.firstSeen) >= denialCoalesceWindow {
+			delete(h.denials, key)
+		}
+	}
+
+	for len(h.denials) > maxDenialKeys {
+		var oldestKey denialKey
+		var oldest time.Time
+		found := false
+		for key, state := range h.denials {
+			if key == keep {
+				continue
+			}
+			if !found || state.firstSeen.Before(oldest) {
+				oldestKey, oldest, found = key, state.firstSeen, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(h.denials, oldestKey)
 	}
 }
 

@@ -417,3 +417,62 @@ func tamperAuditRow(t *testing.T, dataDir string) int64 {
 
 	return id
 }
+
+// TestPrintAuditTableSanitisesControlCharacters checks that an actor
+// name, target name or error carrying control characters cannot inject
+// escape sequences or extra lines into an operator's console, whilst
+// the same values pass through -json untouched, where JSON encoding
+// escapes them anyway.
+func TestPrintAuditTableSanitisesControlCharacters(t *testing.T) {
+	events := []auth.AuditEvent{{
+		ID:         1,
+		OccurredAt: time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC),
+		ActorType:  auth.ActorUser,
+		ActorName:  "eve\r\n\x1b[31mADMIN",
+		Action:     "user.create",
+		TargetType: "user",
+		TargetName: "vic\ntim",
+		Outcome:    auth.OutcomeFailure,
+		Error:      "boom\x1b]0;owned\x07",
+	}}
+
+	out := captureStdout(t, func() { printAuditTable(events, 1) })
+
+	// SanitizeForLog escapes the escape character and the carriage
+	// return, which is what makes the cursor movement and the color
+	// change inert. It does not escape BEL, which is harmless on its
+	// own once the introducing ESC has been escaped.
+	for _, forbidden := range []string{"\x1b", "\r"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("table output still carries %q: %q", forbidden, out)
+		}
+	}
+	// The table is a leading blank line, a heading, two rules, one row,
+	// a closing rule, the count and a trailing blank: nine newlines. A
+	// newline smuggled through a field would add another.
+	if got := strings.Count(out, "\n"); got != 9 {
+		t.Errorf("expected 9 newlines in the table, got %d:\n%q", got, out)
+	}
+	if !strings.Contains(out, "\\r\\n") {
+		t.Errorf("expected the escaped newline to be visible, got:\n%q", out)
+	}
+}
+
+// TestListAuditCommandJSONEmptyPrintsNothing checks that -json with no
+// matching events writes an empty stream rather than a human sentence a
+// consumer would have to filter out.
+func TestListAuditCommandJSONEmptyPrintsNothing(t *testing.T) {
+	dataDir := t.TempDir()
+	seedAuditEvents(t, dataDir)
+
+	out := captureStdout(t, func() {
+		f := &Flags{AuditAction: "nothing.happens", JSONOutput: true}
+		if err := listAuditCommand(dataDir, f); err != nil {
+			t.Errorf("listAuditCommand failed: %v", err)
+		}
+	})
+
+	if out != "" {
+		t.Errorf("expected no output for an empty JSON result, got %q", out)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // auditDateLayout is the shorthand accepted by -audit-since and
@@ -146,6 +147,18 @@ func truncateField(value string, width int) string {
 
 // printAuditTable writes the events as a fixed-width table, newest
 // first.
+//
+// Every field the table prints that a caller could have influenced, the
+// actor name, the target and the error text, goes through
+// logging.SanitizeForLog first. An audit event can be written by an
+// unauthenticated principal (a denial names whatever the client claimed
+// to be), so without escaping a crafted name could carry terminal
+// escape sequences or newlines into an operator's console and rewrite
+// what the rest of the table appears to say. Sanitizing before
+// truncation also keeps the escaped text inside its column. The -json
+// output is left untouched: JSON encoding escapes control characters
+// itself, and altering the values would corrupt the machine-readable
+// form.
 func printAuditTable(events []auth.AuditEvent, total int) {
 	fmt.Println("\nAudit events:")
 	fmt.Println(strings.Repeat("=", auditRuleWidth))
@@ -155,15 +168,16 @@ func printAuditTable(events []auth.AuditEvent, total int) {
 
 	for i := range events {
 		ev := &events[i]
-		actor := fmt.Sprintf("%s (%s)", ev.ActorName, ev.ActorType)
+		actor := fmt.Sprintf("%s (%s)",
+			logging.SanitizeForLog(ev.ActorName), ev.ActorType)
 		fmt.Printf("%-8d %-20s %-20s %-24s %-24s %-8s %s\n",
 			ev.ID,
 			ev.OccurredAt.UTC().Format("2006-01-02 15:04:05"),
 			truncateField(actor, 20),
 			truncateField(ev.Action, 24),
-			truncateField(auditTarget(ev), 24),
+			truncateField(logging.SanitizeForLog(auditTarget(ev)), 24),
 			ev.Outcome,
-			truncateField(ev.Error, 24),
+			truncateField(logging.SanitizeForLog(ev.Error), 24),
 		)
 	}
 
@@ -207,13 +221,16 @@ func listAuditCommand(dataDir string, f *Flags) error {
 		return fmt.Errorf("failed to list audit events: %w", err)
 	}
 
+	// With -json the output is consumed by a machine, so an empty
+	// result set is an empty stream rather than a human sentence that
+	// would have to be filtered back out.
+	if f.JSONOutput {
+		return printAuditJSON(events)
+	}
+
 	if len(events) == 0 {
 		fmt.Println("No audit events found.")
 		return nil
-	}
-
-	if f.JSONOutput {
-		return printAuditJSON(events)
 	}
 
 	printAuditTable(events, total)

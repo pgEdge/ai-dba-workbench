@@ -1338,10 +1338,18 @@ func validateConfig(cfg *Config) error {
 //
 // The rules: an absolute URL with a host; https, unless the host is
 // loopback, which is how local development runs without a certificate;
-// a path equal to OIDCCallbackPath, since that is the only path this
-// server serves the callback on; and no query string or fragment, both
-// of which the provider is entitled to mangle when it appends its own
-// parameters.
+// a path ending in OIDCCallbackPath; and no query string or fragment,
+// both of which the provider is entitled to mangle when it appends its
+// own parameters.
+//
+// The path is checked as a suffix rather than for equality, because a
+// reverse proxy mounting the Workbench under a prefix is an ordinary
+// arrangement: the browser sees
+// https://example.com/workbench/api/v1/auth/oidc/callback whilst this
+// server routes /api/v1/auth/oidc/callback, and refusing to start on
+// that would be a bug rather than a safety measure. The suffix still
+// carries the property worth having, which is that the URL names our
+// callback and not some unrelated endpoint.
 func validateOIDCRedirectURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
@@ -1355,9 +1363,13 @@ func validateOIDCRedirectURL(raw string) error {
 			"http.auth.oidc.redirect_url must use https (http is permitted only for a loopback host)")
 	}
 
-	if parsed.Path != OIDCCallbackPath {
-		return fmt.Errorf("http.auth.oidc.redirect_url path must be %q, not %q",
-			OIDCCallbackPath, parsed.Path)
+	if !strings.HasSuffix(parsed.Path, OIDCCallbackPath) {
+		// The message names the expected suffix and quotes what was
+		// actually configured, so an operator can see the difference
+		// rather than guess at it.
+		return fmt.Errorf(
+			"http.auth.oidc.redirect_url path must end with %q (a reverse proxy prefix before "+
+				"it is fine), but it is %q", OIDCCallbackPath, parsed.Path)
 	}
 
 	if parsed.RawQuery != "" || parsed.Fragment != "" {

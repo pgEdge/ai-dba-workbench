@@ -44,6 +44,15 @@ func TestValidateOIDCRedirectURL(t *testing.T) {
 		"an upper-case scheme": {
 			url: "HTTPS://workbench.example.com" + OIDCCallbackPath,
 		},
+		"behind a path-rewriting reverse proxy": {
+			// The Workbench mounted under a prefix is an ordinary
+			// arrangement: the browser sees the prefixed path whilst
+			// this server routes the bare one.
+			url: "https://example.com/workbench" + OIDCCallbackPath,
+		},
+		"behind several path segments of prefix": {
+			url: "https://example.com/tools/db/workbench" + OIDCCallbackPath,
+		},
 		"plain http on a real host": {
 			url: "http://workbench.example.com" + OIDCCallbackPath, wantErr: true,
 			mentions: "must use https",
@@ -64,14 +73,21 @@ func TestValidateOIDCRedirectURL(t *testing.T) {
 		},
 		"some other path": {
 			url: "https://workbench.example.com/oauth2/callback", wantErr: true,
-			mentions: "path must be",
+			mentions: "must end with",
 		},
 		"the start endpoint": {
 			url: "https://workbench.example.com" + OIDCStartPath, wantErr: true,
-			mentions: "path must be",
+			mentions: "must end with",
 		},
 		"no path at all": {
-			url: "https://workbench.example.com", wantErr: true, mentions: "path must be",
+			url: "https://workbench.example.com", wantErr: true, mentions: "must end with",
+		},
+		"the callback path with something appended": {
+			// A suffix match, not a prefix one: anything after the
+			// callback path is a different endpoint.
+			url:      "https://workbench.example.com" + OIDCCallbackPath + "/elsewhere",
+			wantErr:  true,
+			mentions: "must end with",
 		},
 		"a query string": {
 			url:     "https://workbench.example.com" + OIDCCallbackPath + "?next=/admin",
@@ -119,6 +135,26 @@ http:
 
 	if _, err := LoadConfig(path, CLIFlags{}); err == nil {
 		t.Fatal("a redirect_url pointing somewhere else was accepted")
+	}
+}
+
+// TestValidateConfigAcceptsAProxyPrefixedRedirectURL is the other
+// direction: a Workbench mounted under a reverse proxy prefix must load,
+// since refusing that would be a bug rather than a safety measure.
+func TestValidateConfigAcceptsAProxyPrefixedRedirectURL(t *testing.T) {
+	path := writeTempConfig(t, `
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret: s3cret
+      redirect_url: https://example.com/workbench/api/v1/auth/oidc/callback
+`)
+
+	if _, err := LoadConfig(path, CLIFlags{}); err != nil {
+		t.Fatalf("a proxy-prefixed redirect_url was refused: %v", err)
 	}
 }
 

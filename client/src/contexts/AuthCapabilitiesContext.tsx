@@ -25,25 +25,53 @@ export interface AuthCapabilities {
 export type AuthCapabilitiesValue = AuthCapabilities & { loading: boolean };
 
 /*
- * The fallback used whenever the capabilities are not available: either
- * the fetch failed, or the server predates the `auth` block. A username
- * and password form that might be rejected is far better than a blank
- * card with nothing to click.
+ * What a server that answered, but sent no `auth` block, offers: it
+ * predates this feature, so local login is all it has. This is
+ * knowledge rather than a guess, which is why it differs from the
+ * fallback below.
  */
-const DEFAULT_AUTH_CAPABILITIES: AuthCapabilities = {
+const LEGACY_AUTH_CAPABILITIES: AuthCapabilities = {
     localEnabled: true,
     oidcEnabled: false,
     oidcLabel: '',
 };
 
 /*
- * How long to wait for the capabilities before giving up and applying
- * the defaults. `apiGet` sets no timeout of its own, so without this a
- * request that never settles (a proxy holding the connection open, a
- * half-open socket) would leave the login screen with nothing to sign
- * in with at all.
+ * What to assume when the server did not answer at all. Here we know
+ * nothing, so both affordances are offered and the operator's choice
+ * decides which one works: signing in by a method that turns out to be
+ * disabled costs an error message and a second try, whereas hiding the
+ * only method that would have worked is a dead end with nothing on
+ * screen to explain it. The label is left empty so that the button
+ * falls back to the same generic wording the server itself uses.
  */
-const CAPABILITIES_TIMEOUT_MS = 5000;
+const UNKNOWN_AUTH_CAPABILITIES: AuthCapabilities = {
+    localEnabled: true,
+    oidcEnabled: true,
+    oidcLabel: '',
+};
+
+/*
+ * How long to wait for one attempt at the capabilities. `apiGet` sets
+ * no timeout of its own, so without this a request that never settles
+ * (a proxy holding the connection open, a half-open socket) would
+ * leave the login screen waiting forever.
+ *
+ * A healthy server answers this endpoint, which serves three fields
+ * from memory, in tens of milliseconds, so four seconds is already
+ * two orders of magnitude of slack and a stall is the likelier
+ * explanation than slowness.
+ */
+const CAPABILITIES_TIMEOUT_MS = 4000;
+
+/*
+ * One retry, so that a single transient stall does not decide what the
+ * login screen offers. The worst case stays inside eight seconds,
+ * which is short enough that the spinner still reads as waiting rather
+ * than as broken; a longer single timeout would cover the same stall
+ * less well whilst making every failure slower.
+ */
+const CAPABILITIES_RETRIES = 1;
 
 const AuthCapabilitiesContext = createContext<AuthCapabilitiesValue | null>(null);
 
@@ -65,7 +93,7 @@ const mapAuthCapabilities = (
     auth: AuthCapabilitiesResponse | undefined,
 ): AuthCapabilities => {
     if (!auth) {
-        return DEFAULT_AUTH_CAPABILITIES;
+        return LEGACY_AUTH_CAPABILITIES;
     }
     return {
         localEnabled: auth.local_enabled !== false,
@@ -80,49 +108,68 @@ export const AuthCapabilitiesProvider = ({
     children: React.ReactNode;
 }): React.ReactElement => {
     const [capabilities, setCapabilities] = useState<AuthCapabilities>(
-        DEFAULT_AUTH_CAPABILITIES,
+        LEGACY_AUTH_CAPABILITIES,
     );
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         let cancelled = false;
-        let settled = false;
-        const controller = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let controller: AbortController | undefined;
+
+        const finish = (value: AuthCapabilities) => {
+            if (cancelled) {
+                return;
+            }
+            setCapabilities(value);
+            setLoading(false);
+        };
 
         /*
-         * Apply the defaults if the request has not answered in time,
-         * and abort it so that a late answer cannot swap the form out
-         * from under whoever is already typing into it.
+         * One attempt: race the request against a timer, so that the
+         * attempt ends on time whether or not the request honours the
+         * abort, and abort it either way so that a late answer cannot
+         * swap the form out from under whoever is already typing.
          */
-        const timer = setTimeout(() => {
-            // Both the cleanup and the request's own completion clear
-            // this timer, so reaching here means neither has happened.
-            settled = true;
-            controller.abort();
-            setCapabilities(DEFAULT_AUTH_CAPABILITIES);
-            setLoading(false);
-        }, CAPABILITIES_TIMEOUT_MS);
+        const attempt = async (): Promise<CapabilitiesResponse> => {
+            controller = new AbortController();
+            const aborter = controller;
+
+            const request = apiGet<CapabilitiesResponse>(
+                '/api/v1/capabilities',
+                { signal: aborter.signal },
+            );
+            // The race abandons the request on a timeout, so absorb a
+            // later rejection rather than leaving it unhandled.
+            request.catch(() => undefined);
+
+            const expiry = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                    aborter.abort();
+                    reject(new Error('capabilities request timed out'));
+                }, CAPABILITIES_TIMEOUT_MS);
+            });
+
+            try {
+                return await Promise.race([request, expiry]);
+            } finally {
+                clearTimeout(timer);
+            }
+        };
 
         const fetchCapabilities = async () => {
-            try {
-                const data = await apiGet<CapabilitiesResponse>(
-                    '/api/v1/capabilities',
-                    { signal: controller.signal },
-                );
-                if (!cancelled && !settled) {
-                    setCapabilities(mapAuthCapabilities(data.auth));
-                }
-            } catch {
-                if (!cancelled && !settled) {
-                    setCapabilities(DEFAULT_AUTH_CAPABILITIES);
-                }
-            } finally {
-                if (!cancelled && !settled) {
-                    settled = true;
-                    clearTimeout(timer);
-                    setLoading(false);
+            for (let left = CAPABILITIES_RETRIES; left >= 0; left -= 1) {
+                try {
+                    const data = await attempt();
+                    finish(mapAuthCapabilities(data.auth));
+                    return;
+                } catch {
+                    if (cancelled) {
+                        return;
+                    }
                 }
             }
+            finish(UNKNOWN_AUTH_CAPABILITIES);
         };
 
         void fetchCapabilities();
@@ -130,7 +177,7 @@ export const AuthCapabilitiesProvider = ({
         return () => {
             cancelled = true;
             clearTimeout(timer);
-            controller.abort();
+            controller?.abort();
         };
     }, []);
 

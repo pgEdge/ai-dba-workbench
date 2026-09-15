@@ -13,6 +13,10 @@ package oidc
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // emailClaim is the standard OpenID Connect claim carrying the end
@@ -22,33 +26,60 @@ import (
 // whatever the username happens to be.
 const emailClaim = "email"
 
+// maxClaimValueLength bounds, in runes, any single value extracted from
+// an ID token. Where an operator points the Workbench at a provider on
+// which users edit their own profile, a display name or a group name is
+// user-controlled text that ends up in the audit log, the user store and
+// the browser, so it needs a ceiling well below whatever the provider
+// happens to allow. 256 runes is longer than any real name, address or
+// group, and comfortably above the 128-rune limit
+// auth.ValidateUsername already imposes on a username.
+const maxClaimValueLength = 256
+
 // identityFromClaims turns the decoded claims of a verified ID token
 // into an Identity. issuer and subject come from the verified token
 // rather than from the claim map, so they cannot be influenced by a
 // claim of the same name appearing twice in a decoded payload.
 //
-// An absent or empty username claim is an error: there is nothing to key
-// a Workbench user on, and quietly provisioning a user with an empty
-// name would be worse than refusing the login.
+// An absent, empty or unusable username claim is an error: there is
+// nothing to key a Workbench user on, and quietly provisioning a user
+// with an empty or malformed name would be worse than refusing the
+// login. The username must satisfy exactly the rule the local user
+// store applies (auth.ValidateUsername), so that a federated login
+// cannot create a username that "-add-user" would have refused.
+//
+// The remaining values fail soft: a display name, email address or
+// group that is too long or carries control characters is dropped
+// rather than failing the login, because each of those is an input to a
+// later decision that is safe to make without it. Dropped groups are
+// counted on the Identity so that the caller can log the fact once.
 func (p *Provider) identityFromClaims(issuer, subject string, claims map[string]any) (*Identity, error) {
 	username := stringClaim(claims, p.usernameClaim)
 	if username == "" {
 		return nil, fmt.Errorf("ID token has no usable %q claim to use as a username", p.usernameClaim)
 	}
+	if err := auth.ValidateUsername(username); err != nil {
+		return nil, fmt.Errorf("ID token %q claim is not a usable username: %w", p.usernameClaim, err)
+	}
+
+	groups, skipped, unexpectedShape := stringsClaim(claims, p.groupsClaim)
 
 	return &Identity{
-		Issuer:      issuer,
-		Subject:     subject,
-		Username:    username,
-		DisplayName: stringClaim(claims, p.displayNameClaim),
-		Email:       stringClaim(claims, emailClaim),
-		Groups:      stringsClaim(claims, p.groupsClaim),
+		Issuer:                     issuer,
+		Subject:                    subject,
+		Username:                   username,
+		DisplayName:                stringClaim(claims, p.displayNameClaim),
+		Email:                      stringClaim(claims, emailClaim),
+		Groups:                     groups,
+		SkippedGroups:              skipped,
+		UnexpectedGroupsClaimShape: unexpectedShape,
 	}, nil
 }
 
-// stringClaim returns the named claim as a trimmed string. It returns an
-// empty string when name is empty (the claim is not configured), when
-// the claim is absent, or when it holds anything other than a string: a
+// stringClaim returns the named claim as a bounded, control-character
+// free string. It returns an empty string when name is empty (the claim
+// is not configured), when the claim is absent, when it holds anything
+// other than a string, or when safeClaimValue rejects its contents. A
 // provider sending a number or an object where a username belongs is a
 // misconfiguration, and coercing it to text would invent a username.
 func stringClaim(claims map[string]any, name string) string {
@@ -60,58 +91,104 @@ func stringClaim(claims map[string]any, name string) string {
 	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(value)
+	return safeClaimValue(value)
+}
+
+// safeClaimValue trims value and returns it only if it is safe to carry
+// around in an Identity: valid UTF-8, no longer than
+// maxClaimValueLength runes, and free of control and format characters.
+// Anything else yields an empty string, which every caller treats as
+// "this claim was not usable".
+//
+// Control characters (C0 and C1) are rejected because a newline or a
+// NUL in a display name is a log-injection and truncation hazard once
+// the value reaches the audit log or the user store. Format characters
+// (the Unicode Cf category) go with them: a zero-width joiner or a
+// right-to-left override renders as nothing, or as something other than
+// what it is, in a browser showing the name back to an administrator.
+func safeClaimValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || !utf8.ValidString(trimmed) {
+		return ""
+	}
+	if utf8.RuneCountInString(trimmed) > maxClaimValueLength {
+		return ""
+	}
+	for _, r := range trimmed {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return ""
+		}
+	}
+	return trimmed
 }
 
 // stringsClaim returns the named claim as a slice of strings, tolerating
 // the shapes identity providers actually send for a groups claim: an
 // array of strings, an array of any holding strings (what a JSON decode
 // into map[string]any always produces), or a single bare string for a
-// user in exactly one group. An absent claim, an unconfigured claim name
-// and a claim of any other shape all yield nil rather than an error,
-// because group membership is advisory: a user with no groups simply
-// gets no group-derived privileges.
+// user in exactly one group.
 //
-// Non-string elements of an array are skipped rather than stringified,
-// for the same reason stringClaim refuses to coerce: a group name that
-// the Workbench invented cannot match anything an operator configured.
-func stringsClaim(claims map[string]any, name string) []string {
+// It returns the usable groups, a count of the values it had to skip
+// (elements that were not strings, and strings safeClaimValue refused),
+// and, when the claim was neither an array nor a string, a description
+// of the shape it actually saw. Nothing here is an error: group
+// membership is an authorization input, so dropping what cannot be read
+// under-privileges the user, whereas failing the login would turn one
+// malformed element into an outage for every user of that provider.
+// Reporting the skipped count and the unexpected shape is what makes the
+// difference visible, and the caller logs it once per login.
+//
+// Non-string elements are skipped rather than stringified, for the same
+// reason stringClaim refuses to coerce: a group name the Workbench
+// invented cannot match anything an operator configured.
+func stringsClaim(claims map[string]any, name string) (groups []string, skipped int, unexpectedShape string) {
 	if name == "" {
-		return nil
+		return nil, 0, ""
 	}
 
-	switch value := claims[name].(type) {
+	value, present := claims[name]
+	if !present || value == nil {
+		return nil, 0, ""
+	}
+
+	switch typed := value.(type) {
 	case []string:
-		return collectStrings(value)
+		groups, skipped = collectStrings(typed)
+		return groups, skipped, ""
 	case []any:
-		return collectAnyStrings(value)
+		groups, skipped = collectAnyStrings(typed)
+		return groups, skipped, ""
 	case string:
-		return collectStrings([]string{value})
+		groups, skipped = collectStrings([]string{typed})
+		return groups, skipped, ""
 	default:
-		return nil
+		return nil, 0, fmt.Sprintf("%T", value)
 	}
 }
 
-func collectStrings(values []string) []string {
-	var result []string
+func collectStrings(values []string) (groups []string, skipped int) {
 	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			result = append(result, trimmed)
+		if safe := safeClaimValue(value); safe != "" {
+			groups = append(groups, safe)
+		} else {
+			skipped++
 		}
 	}
-	return result
+	return groups, skipped
 }
 
-func collectAnyStrings(values []any) []string {
-	var result []string
+func collectAnyStrings(values []any) (groups []string, skipped int) {
 	for _, value := range values {
 		text, ok := value.(string)
 		if !ok {
+			skipped++
 			continue
 		}
-		if trimmed := strings.TrimSpace(text); trimmed != "" {
-			result = append(result, trimmed)
+		if safe := safeClaimValue(text); safe != "" {
+			groups = append(groups, safe)
+		} else {
+			skipped++
 		}
 	}
-	return result
+	return groups, skipped
 }

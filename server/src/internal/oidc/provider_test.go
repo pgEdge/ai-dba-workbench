@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,21 @@ func newTestLoginState(t *testing.T) *LoginState {
 	return state
 }
 
+// exchangeMustFail runs an exchange that is expected to fail and asserts
+// on what the error says, so that a test named for one rejection cannot
+// quietly pass because a different thing broke.
+func exchangeMustFail(t *testing.T, provider *Provider, state *LoginState, want string) {
+	t.Helper()
+
+	identity, err := provider.Exchange(context.Background(), "code", state)
+	if err == nil {
+		t.Fatalf("expected an error mentioning %q, got identity %+v", want, identity)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want it to mention %q", err, want)
+	}
+}
+
 func TestExchangeReturnsIdentityFromClaims(t *testing.T) {
 	idp := oidctest.NewFakeIDP(t)
 	provider := newTestProvider(t, idp, config.OIDCConfig{
@@ -99,11 +115,17 @@ func TestExchangeReturnsIdentityFromClaims(t *testing.T) {
 	if !reflect.DeepEqual(identity.Groups, []string{"idp-database-admins"}) {
 		t.Errorf("groups = %v", identity.Groups)
 	}
+	if identity.SkippedGroups != 0 || identity.UnexpectedGroupsClaimShape != "" {
+		t.Errorf("unexpected groups diagnostics: %d skipped, shape %q",
+			identity.SkippedGroups, identity.UnexpectedGroupsClaimShape)
+	}
 }
 
 // TestExchangeSendsThePKCECodeVerifier proves the code exchange presents
 // the verifier held in the login state, without which the code
-// challenge sent at the start of the login proves nothing.
+// challenge sent at the start of the login proves nothing. The
+// authorization server is what actually enforces the pairing, so what
+// matters here is that we send the verifier we committed to.
 func TestExchangeSendsThePKCECodeVerifier(t *testing.T) {
 	idp := oidctest.NewFakeIDP(t)
 	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
@@ -136,9 +158,7 @@ func TestExchangeRejectsNonceMismatch(t *testing.T) {
 		"sub": "subject-1", "email": "jane.doe@example.com", "nonce": "not-the-nonce",
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a nonce mismatch to be refused")
-	}
+	exchangeMustFail(t, provider, state, "nonce does not match")
 }
 
 // TestExchangeRejectsMissingNonce covers the token that carries no nonce
@@ -152,9 +172,26 @@ func TestExchangeRejectsMissingNonce(t *testing.T) {
 		"email": "jane.doe@example.com",
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a token with no nonce to be refused")
-	}
+	exchangeMustFail(t, provider, state, "nonce does not match")
+}
+
+// TestExchangeRejectsAnEmptyStateNonce is the belt to OpenState's
+// braces. subtle.ConstantTimeCompare returns 1 for two zero-length
+// slices, so a login state whose nonce is empty would accept a token
+// with no nonce claim, which is precisely the replay the nonce exists to
+// stop. Exchange refuses the state outright rather than relying on a
+// length check enforced in another file for another reason.
+func TestExchangeRejectsAnEmptyStateNonce(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+
+	state := newTestLoginState(t)
+	state.Nonce = ""
+	idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+		"email": "jane.doe@example.com",
+	}))
+
+	exchangeMustFail(t, provider, state, "carries no nonce")
 }
 
 func TestExchangeRejectsWrongAudience(t *testing.T) {
@@ -166,9 +203,7 @@ func TestExchangeRejectsWrongAudience(t *testing.T) {
 		"aud": "some-other-client", "email": "jane.doe@example.com", "nonce": state.Nonce,
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a token addressed to another client to be refused")
-	}
+	exchangeMustFail(t, provider, state, "audience")
 }
 
 func TestExchangeRejectsExpiredToken(t *testing.T) {
@@ -182,9 +217,7 @@ func TestExchangeRejectsExpiredToken(t *testing.T) {
 		"nonce": state.Nonce,
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected an expired token to be refused")
-	}
+	exchangeMustFail(t, provider, state, "expired")
 }
 
 func TestExchangeRejectsTokenSignedByAnotherKey(t *testing.T) {
@@ -196,9 +229,7 @@ func TestExchangeRejectsTokenSignedByAnotherKey(t *testing.T) {
 		"email": "jane.doe@example.com", "nonce": state.Nonce,
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a token signed by an unpublished key to be refused")
-	}
+	exchangeMustFail(t, provider, state, "signature")
 }
 
 func TestExchangeRejectsWrongIssuer(t *testing.T) {
@@ -212,9 +243,7 @@ func TestExchangeRejectsWrongIssuer(t *testing.T) {
 		"nonce": state.Nonce,
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a token from another issuer to be refused")
-	}
+	exchangeMustFail(t, provider, state, "issue")
 }
 
 func TestExchangeRejectsMissingUsernameClaim(t *testing.T) {
@@ -226,9 +255,7 @@ func TestExchangeRejectsMissingUsernameClaim(t *testing.T) {
 		"sub": "subject-1", "nonce": state.Nonce,
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a token with no username claim to be refused")
-	}
+	exchangeMustFail(t, provider, state, `no usable "email" claim`)
 }
 
 // TestExchangeRejectsEmptyUsernameClaim covers the claim that is present
@@ -242,8 +269,80 @@ func TestExchangeRejectsEmptyUsernameClaim(t *testing.T) {
 		"email": "   ", "nonce": state.Nonce,
 	}))
 
-	if _, err := provider.Exchange(context.Background(), "code", state); err == nil {
-		t.Fatal("expected a whitespace-only username claim to be refused")
+	exchangeMustFail(t, provider, state, `no usable "email" claim`)
+}
+
+// TestExchangeRejectsAUsernameTheLocalStoreWouldRefuse proves a
+// federated login cannot mint a username that "-add-user" would have
+// turned away: the same validator governs both.
+func TestExchangeRejectsAUsernameTheLocalStoreWouldRefuse(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+
+	cases := map[string]string{
+		"leading punctuation": "-jane.doe@example.com",
+		"invalid character":   "jane doe@example.com",
+		"too long":            strings.Repeat("a", 129),
+	}
+
+	for name, username := range cases {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+
+			state := newTestLoginState(t)
+			idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+				"email": username, "nonce": state.Nonce,
+			}))
+
+			exchangeMustFail(t, provider, state, "not a usable username")
+		})
+	}
+
+	// A plain address remains acceptable, so the validator has not been
+	// tightened into rejecting the normal case.
+	state := newTestLoginState(t)
+	idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+		"email": "jane.doe@example.com", "nonce": state.Nonce,
+	}))
+	if _, err := provider.Exchange(context.Background(), "code", state); err != nil {
+		t.Fatalf("Exchange with an ordinary address: %v", err)
+	}
+}
+
+// TestExchangeDropsUnsafeDisplayNames proves a value that is too long or
+// carries control or format characters never reaches the Identity, and
+// that the login still succeeds: the display name is not load bearing.
+func TestExchangeDropsUnsafeDisplayNames(t *testing.T) {
+	cases := map[string]string{
+		"embedded newline":       "Jane\nDoe",
+		"NUL byte":               "Jane\x00Doe",
+		"right-to-left override": "Jane\u202eDoe",
+		"over the length cap":    strings.Repeat("x", maxClaimValueLength+1),
+	}
+
+	for name, displayName := range cases {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{
+				UsernameClaim: "email", DisplayNameClaim: "name",
+			})
+
+			state := newTestLoginState(t)
+			idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+				"email": "jane.doe@example.com",
+				"name":  displayName,
+				"nonce": state.Nonce,
+			}))
+
+			identity, err := provider.Exchange(context.Background(), "code", state)
+			if err != nil {
+				t.Fatalf("Exchange: %v", err)
+			}
+			if identity.DisplayName != "" {
+				t.Errorf("display name = %q, want it dropped", identity.DisplayName)
+			}
+		})
 	}
 }
 
@@ -254,30 +353,19 @@ func TestExchangeRejectsAFailedCodeRedemption(t *testing.T) {
 	idp := oidctest.NewFakeIDP(t)
 	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
 
-	if _, err := provider.Exchange(context.Background(), "code", newTestLoginState(t)); err == nil {
-		t.Fatal("expected a refused authorization code to be an error")
-	}
+	exchangeMustFail(t, provider, newTestLoginState(t), "failed to exchange authorization code")
 }
 
 // TestExchangeRejectsAResponseWithNoIDToken covers a token endpoint that
-// answers successfully but omits the ID token entirely, which an OAuth
-// 2.0 (rather than OpenID Connect) endpoint would do.
+// answers successfully but omits the ID token entirely, which a plain
+// OAuth 2.0 (rather than OpenID Connect) endpoint would do.
 func TestExchangeRejectsAResponseWithNoIDToken(t *testing.T) {
 	idp := oidctest.NewFakeIDP(t)
 	provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
 
-	// Point the provider's token endpoint at a server that answers
-	// without an id_token member.
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"a","token_type":"Bearer","expires_in":3600}`))
-	}))
-	defer tokenServer.Close()
-	provider.oauth2Config.Endpoint.TokenURL = tokenServer.URL
+	idp.SetNextResponseOmitsIDToken()
 
-	if _, err := provider.Exchange(context.Background(), "code", newTestLoginState(t)); err == nil {
-		t.Fatal("expected a response with no ID token to be an error")
-	}
+	exchangeMustFail(t, provider, newTestLoginState(t), "did not include an ID token")
 }
 
 func TestAuthCodeURLCarriesStateNonceAndPKCE(t *testing.T) {
@@ -315,25 +403,34 @@ func TestAuthCodeURLCarriesStateNonceAndPKCE(t *testing.T) {
 
 func TestGroupsClaimAcceptsTheShapesProvidersActuallySend(t *testing.T) {
 	cases := map[string]struct {
-		claim any
-		want  []string
+		claim         any
+		want          []string
+		wantSkipped   int
+		wantShapeHint string
 	}{
-		"array of strings": {[]string{"a", "b"}, []string{"a", "b"}},
-		"array of any":     {[]any{"a", "b"}, []string{"a", "b"}},
-		"single string":    {"a", []string{"a"}},
-		"absent":           {nil, nil},
-		"mixed array":      {[]any{"a", 42, "b"}, []string{"a", "b"}},
-		"wrong shape":      {map[string]any{"a": true}, nil},
-		"empty array":      {[]any{}, nil},
+		// Note that "array of strings" reaches the provider as an array
+		// of any: the claim goes through a JSON round trip. The native
+		// []string branch is covered directly by
+		// TestStringsClaimAcceptsANativeStringSlice.
+		"array of strings": {claim: []string{"a", "b"}, want: []string{"a", "b"}},
+		"array of any":     {claim: []any{"a", "b"}, want: []string{"a", "b"}},
+		"single string":    {claim: "a", want: []string{"a"}},
+		"absent":           {claim: nil},
+		"mixed array":      {claim: []any{"a", 42, "b"}, want: []string{"a", "b"}, wantSkipped: 1},
+		"unsafe member":    {claim: []any{"a", "b\nc"}, want: []string{"a"}, wantSkipped: 1},
+		"wrong shape":      {claim: map[string]any{"a": true}, wantShapeHint: "map["},
+		"empty array":      {claim: []any{}},
 	}
-
-	idp := oidctest.NewFakeIDP(t)
-	provider := newTestProvider(t, idp, config.OIDCConfig{
-		UsernameClaim: "email", GroupsClaim: "groups",
-	})
 
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
+			// A fresh fake per subtest, so that staging a token is never
+			// a race even if these subtests later run in parallel.
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{
+				UsernameClaim: "email", GroupsClaim: "groups",
+			})
+
 			state := newTestLoginState(t)
 			claims := map[string]any{
 				"email": "jane.doe@example.com",
@@ -350,6 +447,17 @@ func TestGroupsClaimAcceptsTheShapesProvidersActuallySend(t *testing.T) {
 			}
 			if !slices.Equal(identity.Groups, testCase.want) {
 				t.Errorf("groups = %#v, want %#v", identity.Groups, testCase.want)
+			}
+			if identity.SkippedGroups != testCase.wantSkipped {
+				t.Errorf("skipped = %d, want %d", identity.SkippedGroups, testCase.wantSkipped)
+			}
+			if testCase.wantShapeHint == "" {
+				if identity.UnexpectedGroupsClaimShape != "" {
+					t.Errorf("shape = %q, want none", identity.UnexpectedGroupsClaimShape)
+				}
+			} else if !strings.Contains(identity.UnexpectedGroupsClaimShape, testCase.wantShapeHint) {
+				t.Errorf("shape = %q, want it to mention %q",
+					identity.UnexpectedGroupsClaimShape, testCase.wantShapeHint)
 			}
 		})
 	}
@@ -376,6 +484,9 @@ func TestGroupsClaimNotConfigured(t *testing.T) {
 	if identity.Groups != nil {
 		t.Errorf("groups = %v, want none", identity.Groups)
 	}
+	if identity.SkippedGroups != 0 {
+		t.Errorf("skipped = %d, want 0", identity.SkippedGroups)
+	}
 }
 
 // TestStringsClaimAcceptsANativeStringSlice covers the []string branch
@@ -383,11 +494,23 @@ func TestGroupsClaimNotConfigured(t *testing.T) {
 // produces one, so only a caller holding claims built in Go can.
 func TestStringsClaimAcceptsANativeStringSlice(t *testing.T) {
 	claims := map[string]any{"groups": []string{"a", " ", "b"}}
-	if got := stringsClaim(claims, "groups"); !slices.Equal(got, []string{"a", "b"}) {
-		t.Errorf("stringsClaim = %#v, want [a b]", got)
+
+	groups, skipped, shape := stringsClaim(claims, "groups")
+	if !slices.Equal(groups, []string{"a", "b"}) {
+		t.Errorf("groups = %#v, want [a b]", groups)
 	}
-	if got := stringsClaim(claims, ""); got != nil {
-		t.Errorf("unconfigured claim name yielded %#v, want nil", got)
+	if skipped != 1 {
+		t.Errorf("skipped = %d, want 1", skipped)
+	}
+	if shape != "" {
+		t.Errorf("shape = %q, want none", shape)
+	}
+
+	if groups, _, _ := stringsClaim(claims, ""); groups != nil {
+		t.Errorf("unconfigured claim name yielded %#v, want nil", groups)
+	}
+	if groups, _, _ := stringsClaim(map[string]any{"groups": nil}, "groups"); groups != nil {
+		t.Errorf("null claim yielded %#v, want nil", groups)
 	}
 }
 
@@ -399,20 +522,38 @@ func TestStringClaimIgnoresNonStringValues(t *testing.T) {
 	if got := stringClaim(claims, "email"); got != "" {
 		t.Errorf("stringClaim = %q, want empty", got)
 	}
+	if got := stringClaim(claims, ""); got != "" {
+		t.Errorf("unconfigured claim name yielded %q, want empty", got)
+	}
+}
+
+// TestSafeClaimValueRejectsInvalidUTF8 covers the branch a JSON decode
+// cannot reach, since encoding/json replaces bad bytes on the way in.
+func TestSafeClaimValueRejectsInvalidUTF8(t *testing.T) {
+	if got := safeClaimValue("Jane\xffDoe"); got != "" {
+		t.Errorf("safeClaimValue = %q, want empty", got)
+	}
 }
 
 func TestNewProviderRejectsIncompleteConfiguration(t *testing.T) {
 	idp := oidctest.NewFakeIDP(t)
 
-	cases := map[string]config.OIDCConfig{
-		"no issuer":    {ClientID: "client"},
-		"no client ID": {Issuer: idp.Issuer()},
+	cases := map[string]struct {
+		cfg  config.OIDCConfig
+		want string
+	}{
+		"no issuer":    {config.OIDCConfig{ClientID: "client"}, "issuer is not configured"},
+		"no client ID": {config.OIDCConfig{Issuer: idp.Issuer()}, "client ID is not configured"},
 	}
 
-	for name, cfg := range cases {
+	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewProvider(context.Background(), cfg); err == nil {
+			_, err := NewProvider(context.Background(), testCase.cfg)
+			if err == nil {
 				t.Fatal("expected incomplete configuration to be refused")
+			}
+			if !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %q, want it to mention %q", err, testCase.want)
 			}
 		})
 	}
@@ -432,6 +573,9 @@ func TestNewProviderFailsWhenDiscoveryFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected discovery against a non-provider to fail")
+	}
+	if !strings.Contains(err.Error(), "discovery") {
+		t.Errorf("error = %q, want it to mention discovery", err)
 	}
 }
 

@@ -86,6 +86,7 @@ type FakeIDP struct {
 
 	mu          sync.Mutex
 	nextIDToken string
+	omitIDToken bool
 	lastForm    url.Values
 }
 
@@ -131,6 +132,17 @@ func (f *FakeIDP) SetNextIDToken(token string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextIDToken = token
+	f.omitIDToken = false
+}
+
+// SetNextResponseOmitsIDToken makes the next code exchange succeed but
+// answer without an id_token member, as a plain OAuth 2.0 token
+// endpoint (rather than an OpenID Connect one) would.
+func (f *FakeIDP) SetNextResponseOmitsIDToken() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextIDToken = ""
+	f.omitIDToken = true
 }
 
 // LastTokenRequestForm returns the form values of the most recent request
@@ -231,7 +243,17 @@ func (f *FakeIDP) handleToken(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.lastForm = r.PostForm
 	idToken := f.nextIDToken
+	omitIDToken := f.omitIDToken
 	f.mu.Unlock()
+
+	if omitIDToken {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"access_token": "fake-access-token",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+		return
+	}
 
 	if idToken == "" {
 		// No token was staged: report the OAuth 2.0 error the real thing

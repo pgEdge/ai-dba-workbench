@@ -269,13 +269,8 @@ func SanitiseReturnPath(raw string) string {
 	if !strings.HasPrefix(raw, "/") {
 		return fallback
 	}
-	if strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, "/\\") {
+	if isUnsafeRedirectPath(raw) {
 		return fallback
-	}
-	for _, r := range raw {
-		if r < 0x20 || r == 0x7f {
-			return fallback
-		}
 	}
 
 	parsed, err := url.Parse(raw)
@@ -292,14 +287,37 @@ func SanitiseReturnPath(raw string) string {
 	// a scheme-relative or backslash-prefixed path that a browser could
 	// treat as pointing at another host. Re-run the same checks against
 	// the decoded form.
-	if strings.HasPrefix(parsed.Path, "//") || strings.HasPrefix(parsed.Path, "/\\") {
+	if isUnsafeRedirectPath(parsed.Path) {
 		return fallback
-	}
-	for _, r := range parsed.Path {
-		if r < 0x20 || r == 0x7f {
-			return fallback
-		}
 	}
 
 	return raw
+}
+
+// isUnsafeRedirectPath reports whether s carries either of the properties
+// that disqualify a redirect target on its own: a prefix some browsers read
+// as pointing at another host, or a control character. It is applied both to
+// the raw query parameter and to the percent-decoded path url.Parse produces,
+// because a value can acquire either property only once decoded.
+func isUnsafeRedirectPath(s string) bool {
+	return hasForeignHostPrefix(s) || hasControlCharacter(s)
+}
+
+// hasForeignHostPrefix reports whether s begins with "//" or "/\", both of
+// which some browsers treat as a scheme-relative or absolute URL to another
+// host rather than as a path on this origin.
+func hasForeignHostPrefix(s string) bool {
+	return strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/\\")
+}
+
+// hasControlCharacter reports whether s contains any C0 control character or
+// DEL, either of which could be used to smuggle extra header lines or be
+// misinterpreted before the browser gets to the value.
+func hasControlCharacter(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }

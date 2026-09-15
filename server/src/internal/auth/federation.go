@@ -261,18 +261,7 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 		return nil, fmt.Errorf("federated username is not usable: %w", err)
 	}
 
-	// A malformed email claim is dropped rather than failing the login: the
-	// address is profile decoration here, nothing authenticates or grants
-	// access on it, and a sloppy identity provider should not lock people out.
-	email := identity.Email
-	if email != "" {
-		if err := ValidateEmail(email); err != nil {
-			//nolint:gosec // G706: key passed through logging.SanitizeForLog
-			log.Printf("[AUTH] Ignoring malformed email claim for federated subject %s: %v",
-				logging.SanitizeForLog(key), err)
-			email = ""
-		}
-	}
+	email := usableFederatedEmail(identity.Email, key)
 
 	existing, err := s.usernameTakenLocked(identity.Username)
 	if err != nil {
@@ -294,27 +283,7 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 		identity.Username, hash, identity.DisplayName, email, AuthSourceOIDC, key,
 	)
 	if err != nil {
-		// s.mu makes provisioning sequential within one process, but two servers
-		// can share an auth.db, and the unique index on external_subject is
-		// what actually decides the race. The loser adopts the winner's row
-		// rather than failing a legitimate login.
-		if isUniqueViolation(err, "users.external_subject") {
-			user, lookupErr := s.lookupFederatedUserLocked(key)
-			if lookupErr != nil {
-				return nil, lookupErr
-			}
-			if user != nil {
-				return user, nil
-			}
-		}
-		// A username collision that slipped past the check above means the
-		// same race created a different account under this name; refuse it
-		// for the same reason the check exists.
-		if isUniqueViolation(err, "users.username") {
-			return nil, fmt.Errorf("refusing to provision federated identity %s: username %q was taken concurrently",
-				key, identity.Username)
-		}
-		return nil, fmt.Errorf("failed to provision federated user: %w", err)
+		return s.resolveProvisionInsertFailureLocked(err, identity, key)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
@@ -333,6 +302,51 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 	log.Printf("[AUTH] Provisioned federated user %s for subject %s",
 		logging.SanitizeForLog(user.Username), logging.SanitizeForLog(key))
 	return user, nil
+}
+
+// usableFederatedEmail returns email when the identity provider sent one this
+// application can store, and "" otherwise. A malformed email claim is dropped
+// rather than failing the login: the address is profile decoration here,
+// nothing authenticates or grants access on it, and a sloppy identity provider
+// should not lock people out. key names the subject in the log line only.
+func usableFederatedEmail(email, key string) string {
+	if email == "" {
+		return ""
+	}
+	if err := ValidateEmail(email); err != nil {
+		//nolint:gosec // G706: key passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Ignoring malformed email claim for federated subject %s: %v",
+			logging.SanitizeForLog(key), err)
+		return ""
+	}
+	return email
+}
+
+// resolveProvisionInsertFailureLocked decides what a failed provisioning
+// INSERT means. s.mu makes provisioning sequential within one process, but two
+// servers can share an auth.db, and the unique index on external_subject is
+// what actually decides the race: the loser adopts the winner's row rather
+// than failing a legitimate login. A username collision that slipped past the
+// check the caller made first means the same race created a different account
+// under this name, which is refused for the reason that check exists. s.mu
+// must be held.
+func (s *AuthStore) resolveProvisionInsertFailureLocked(
+	insertErr error, identity FederatedIdentity, key string) (*StoredUser, error) {
+
+	if isUniqueViolation(insertErr, "users.external_subject") {
+		user, lookupErr := s.lookupFederatedUserLocked(key)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if user != nil {
+			return user, nil
+		}
+	}
+	if isUniqueViolation(insertErr, "users.username") {
+		return nil, fmt.Errorf("refusing to provision federated identity %s: username %q was taken concurrently",
+			key, identity.Username)
+	}
+	return nil, fmt.Errorf("failed to provision federated user: %w", insertErr)
 }
 
 // usernameTakenLocked reports the stored spelling of any existing account
@@ -864,55 +878,13 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var id int64
-	var authSource string
-	var existing sql.NullString
-	err := s.db.QueryRow(
-		"SELECT id, auth_source, external_subject FROM users WHERE username = ?",
-		username).Scan(&id, &authSource, &existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, fmt.Errorf("user not found: %s", username)
-	}
+	id, key, existing, err := s.federatedAccountForUnlinkLocked(username)
 	if err != nil {
-		return "", 0, fmt.Errorf("looking up user: %w", err)
+		return "", 0, err
 	}
 
-	key := ""
-	if existing.Valid {
-		key = existing.String
-	}
-	if key == "" && authSource != AuthSourceOIDC {
-		return "", 0, fmt.Errorf("account %s is not linked to an identity provider", username)
-	}
-
-	// The UPDATE is pinned to the subject that was just read, with IS
-	// rather than = so a NULL matches, which is what makes the key reported
-	// to the operator and written to the log the key that was actually
-	// cleared: if a link commits in between, this matches no row and says
-	// so rather than naming a subject it did not clear.
-	query := "UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ? AND external_subject IS ?"
-	args := []any{AuthSourceLocal, id, existing}
-	if !restorePassword {
-		hash, hashErr := s.unusablePasswordHashLocked()
-		if hashErr != nil {
-			return "", 0, hashErr
-		}
-		query = "UPDATE users SET auth_source = ?, external_subject = NULL, password_hash = ? " +
-			"WHERE id = ? AND external_subject IS ?"
-		args = []any{AuthSourceLocal, hash, id, existing}
-	}
-	result, err := s.db.Exec(query, args...)
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to unlink %s from the identity provider: %w", username, err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to confirm the unlink for %s: %w", username, err)
-	}
-	if affected == 0 {
-		// Which of the two conditions failed decides the message only,
-		// never the write, exactly as on the link side.
-		return "", 0, s.explainUnlinkRefusalLocked(username)
+	if err := s.applyUnlinkLocked(username, id, existing, restorePassword); err != nil {
+		return "", 0, err
 	}
 
 	// Before the token revocation, because it cannot fail and the failure
@@ -947,6 +919,78 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 	log.Printf("[AUTH] Unlinked account %s from federated subject %s; %s",
 		logging.SanitizeForLog(username), logging.SanitizeForLog(key), reachable)
 	return key, revoked, nil
+}
+
+// federatedAccountForUnlinkLocked reads the account an unlink is about and
+// refuses the ones that have no federated identity to clear. It returns the
+// row's id, the external subject key as a plain string for reporting, and the
+// same value as it was read, which the UPDATE pins itself to. s.mu must be
+// held.
+func (s *AuthStore) federatedAccountForUnlinkLocked(
+	username string) (int64, string, sql.NullString, error) {
+
+	var id int64
+	var authSource string
+	var existing sql.NullString
+	err := s.db.QueryRow(
+		"SELECT id, auth_source, external_subject FROM users WHERE username = ?",
+		username).Scan(&id, &authSource, &existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", existing, fmt.Errorf("user not found: %s", username)
+	}
+	if err != nil {
+		return 0, "", existing, fmt.Errorf("looking up user: %w", err)
+	}
+
+	key := ""
+	if existing.Valid {
+		key = existing.String
+	}
+	if key == "" && authSource != AuthSourceOIDC {
+		return 0, "", existing, fmt.Errorf(
+			"account %s is not linked to an identity provider", username)
+	}
+	return id, key, existing, nil
+}
+
+// applyUnlinkLocked writes the unlink itself: auth_source back to local,
+// external_subject cleared, and unless restorePassword is set, an unusable
+// password hash written at the same time so the account's pre-federation
+// password cannot come back to life.
+//
+// The UPDATE is pinned to the subject that was just read, with IS rather than
+// = so a NULL matches, which is what makes the key reported to the operator
+// and written to the log the key that was actually cleared: if a link commits
+// in between, this matches no row and says so rather than naming a subject it
+// did not clear. s.mu must be held.
+func (s *AuthStore) applyUnlinkLocked(
+	username string, id int64, existing sql.NullString, restorePassword bool) error {
+
+	query := "UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ? AND external_subject IS ?"
+	args := []any{AuthSourceLocal, id, existing}
+	if !restorePassword {
+		hash, hashErr := s.unusablePasswordHashLocked()
+		if hashErr != nil {
+			return hashErr
+		}
+		query = "UPDATE users SET auth_source = ?, external_subject = NULL, password_hash = ? " +
+			"WHERE id = ? AND external_subject IS ?"
+		args = []any{AuthSourceLocal, hash, id, existing}
+	}
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to unlink %s from the identity provider: %w", username, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm the unlink for %s: %w", username, err)
+	}
+	if affected == 0 {
+		// Which of the two conditions failed decides the message only,
+		// never the write, exactly as on the link side.
+		return s.explainUnlinkRefusalLocked(username)
+	}
+	return nil
 }
 
 // explainUnlinkRefusalLocked says why an unlink UPDATE matched no row: either

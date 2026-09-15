@@ -59,6 +59,15 @@ type Identity struct {
 	// character), as opposed to sending none at all.
 	EmailRejected bool
 
+	// EmailVerified is the standard "email_verified" claim, and is false
+	// whenever the provider did not send it. A consumer that gates on
+	// the address, such as the allowed_email_domains check, must require
+	// it: on a provider where users type their own address, an
+	// unverified "someone@yourcompany.example" is an assertion by the
+	// attacker, not by the identity provider, so honoring it would turn
+	// the domain allowlist into a formality.
+	EmailVerified bool
+
 	// Groups holds the configured groups claim, normalized to a slice of
 	// strings. It is nil when the claim is absent or not configured.
 	Groups []string

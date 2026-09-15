@@ -875,3 +875,48 @@ func TestDescribeUsernameProblemFallsBack(t *testing.T) {
 		t.Errorf("runeClass = %q, want the generic phrase", got)
 	}
 }
+
+// TestIdentityReportsWhetherTheEmailAddressWasVerified covers the
+// "email_verified" claim, which the allowed_email_domains check gates
+// on: an address the provider has not verified is the user's own
+// assertion about themselves, so anything short of a clear affirmative
+// must read as false.
+func TestIdentityReportsWhetherTheEmailAddressWasVerified(t *testing.T) {
+	cases := map[string]struct {
+		claim any
+		want  bool
+	}{
+		"JSON true":       {claim: true, want: true},
+		"the string true": {claim: "true", want: true},
+		"JSON false":      {claim: false},
+		"the string yes":  {claim: "yes"},
+		"a number":        {claim: float64(1)},
+		"absent":          {claim: nil},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "email"})
+			state := newTestLoginState(t)
+
+			claims := map[string]any{
+				"sub":   "subject-1",
+				"email": "jane.doe@example.com",
+				"nonce": state.Nonce,
+			}
+			if testCase.claim != nil {
+				claims["email_verified"] = testCase.claim
+			}
+			idp.SetNextIDToken(idp.MintIDToken(t, claims))
+
+			identity, err := provider.Exchange(context.Background(), "code", state)
+			if err != nil {
+				t.Fatalf("Exchange: %v", err)
+			}
+			if identity.EmailVerified != testCase.want {
+				t.Errorf("EmailVerified = %v, want %v", identity.EmailVerified, testCase.want)
+			}
+		})
+	}
+}

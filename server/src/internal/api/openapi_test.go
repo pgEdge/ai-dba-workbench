@@ -11,6 +11,8 @@ package api
 
 import (
 	"encoding/json"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -300,6 +302,70 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 			t.Errorf("Unexpected %s parameter on /metrics/database-summaries",
 				p.Name)
 		}
+	}
+}
+
+func TestOIDCPathOperationsMatchHandlers(t *testing.T) {
+	spec := BuildOpenAPISpec()
+
+	tests := []struct {
+		path            string
+		wantStatuses    []string
+		wantQueryParams []string
+	}{
+		{
+			path:            "/auth/oidc/start",
+			wantStatuses:    []string{"302", "404", "500"},
+			wantQueryParams: []string{"return"},
+		},
+		{
+			path:            "/auth/oidc/callback",
+			wantStatuses:    []string{"302", "400", "404", "429"},
+			wantQueryParams: []string{"code", "state", "error"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			item, ok := spec.Paths[tt.path]
+			if !ok {
+				t.Fatalf("path %s is missing", tt.path)
+			}
+			op := item.Get
+			if op == nil {
+				t.Fatalf("path %s has no GET operation", tt.path)
+			}
+
+			if op.Security != nil {
+				t.Errorf("path %s has a Security entry %v, want nil: these are how an "+
+					"unauthenticated browser obtains a session in the first place",
+					tt.path, op.Security)
+			}
+
+			gotStatuses := make([]string, 0, len(op.Responses))
+			for status := range op.Responses {
+				gotStatuses = append(gotStatuses, status)
+			}
+			sort.Strings(gotStatuses)
+			wantStatuses := append([]string(nil), tt.wantStatuses...)
+			sort.Strings(wantStatuses)
+			if !reflect.DeepEqual(gotStatuses, wantStatuses) {
+				t.Errorf("path %s response statuses = %v, want %v",
+					tt.path, gotStatuses, wantStatuses)
+			}
+
+			gotParams := make([]string, 0, len(op.Parameters))
+			for _, p := range op.Parameters {
+				gotParams = append(gotParams, p.Name)
+			}
+			sort.Strings(gotParams)
+			wantParams := append([]string(nil), tt.wantQueryParams...)
+			sort.Strings(wantParams)
+			if !reflect.DeepEqual(gotParams, wantParams) {
+				t.Errorf("path %s query parameters = %v, want %v",
+					tt.path, gotParams, wantParams)
+			}
+		})
 	}
 }
 

@@ -8,20 +8,44 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Login from '../Login';
 import { AuthProvider } from '../../contexts/AuthContext';
+import AuthCapabilitiesContext from '../../contexts/AuthCapabilitiesContext';
+import type { AuthCapabilities } from '../../contexts/AuthCapabilitiesContext';
 
 // Mock fetch for API calls
 global.fetch = vi.fn() as unknown as typeof fetch;
 
-const renderLogin = () => {
+/*
+ * jsdom makes `window.location.assign` read-only, so the navigation
+ * helper is mocked rather than the location itself.
+ */
+vi.mock('../../utils/navigation', () => ({
+    navigateTo: vi.fn(),
+}));
+
+import { navigateTo } from '../../utils/navigation';
+const mockNavigateTo = navigateTo as unknown as ReturnType<typeof vi.fn>;
+
+const LOCAL_ONLY: AuthCapabilities = {
+    localEnabled: true,
+    oidcEnabled: false,
+    oidcLabel: '',
+};
+
+const renderLogin = (
+    capabilities: AuthCapabilities = LOCAL_ONLY,
+    loading = false,
+) => {
     return render(
-        <AuthProvider>
-            <Login />
-        </AuthProvider>
+        <AuthCapabilitiesContext.Provider value={{ ...capabilities, loading }}>
+            <AuthProvider>
+                <Login />
+            </AuthProvider>
+        </AuthCapabilitiesContext.Provider>
     );
 };
 
@@ -29,6 +53,13 @@ describe('Login Component', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         (window.localStorage.getItem as ReturnType<typeof vi.fn>).mockReturnValue(null);
+        (window.sessionStorage.getItem as ReturnType<typeof vi.fn>).mockReturnValue(null);
+        window.history.replaceState({}, '', '/');
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        window.history.replaceState({}, '', '/');
     });
 
     it('renders login form with correct title', () => {
@@ -84,5 +115,138 @@ describe('Login Component', () => {
     it('displays copyright footer', () => {
         renderLogin();
         expect(screen.getByText(/2025 - 2026, pgEdge, Inc/i)).toBeInTheDocument();
+    });
+
+    describe('authentication capabilities', () => {
+        it('renders the password form when local authentication is enabled', async () => {
+            renderLogin({ localEnabled: true, oidcEnabled: false, oidcLabel: '' });
+
+            expect(await screen.findByTestId('login-username-input')).toBeInTheDocument();
+            expect(screen.queryByTestId('login-oidc-button')).not.toBeInTheDocument();
+        });
+
+        it('renders the provider button alongside the password form', async () => {
+            renderLogin({
+                localEnabled: true,
+                oidcEnabled: true,
+                oidcLabel: 'Sign in with Okta',
+            });
+
+            expect(await screen.findByTestId('login-username-input')).toBeInTheDocument();
+            expect(screen.getByTestId('login-oidc-button')).toHaveTextContent(
+                'Sign in with Okta',
+            );
+            expect(screen.getByText('or')).toBeInTheDocument();
+        });
+
+        it('falls back to a generic label when the operator configured none', async () => {
+            renderLogin({ localEnabled: true, oidcEnabled: true, oidcLabel: '' });
+
+            expect(await screen.findByTestId('login-oidc-button')).toHaveTextContent(
+                'Sign in with SSO',
+            );
+        });
+
+        it('hides the password form when local authentication is disabled', async () => {
+            renderLogin({
+                localEnabled: false,
+                oidcEnabled: true,
+                oidcLabel: 'Sign in with Okta',
+            });
+
+            expect(await screen.findByTestId('login-oidc-button')).toBeInTheDocument();
+            expect(screen.queryByTestId('login-username-input')).not.toBeInTheDocument();
+            expect(screen.queryByTestId('login-submit')).not.toBeInTheDocument();
+            expect(
+                screen.queryByText(/contact your administrator to create an account/i),
+            ).not.toBeInTheDocument();
+            expect(screen.queryByText('or')).not.toBeInTheDocument();
+        });
+
+        it('renders nothing to sign in with whilst the capabilities load', () => {
+            renderLogin(
+                { localEnabled: true, oidcEnabled: true, oidcLabel: 'Sign in with Okta' },
+                true,
+            );
+
+            expect(screen.queryByTestId('login-username-input')).not.toBeInTheDocument();
+            expect(screen.queryByTestId('login-oidc-button')).not.toBeInTheDocument();
+        });
+
+        it('isolates the provider label from the surrounding interface text', async () => {
+            renderLogin({
+                localEnabled: false,
+                oidcEnabled: true,
+                oidcLabel: 'Sign in with ‮Okta',
+            });
+
+            const button = await screen.findByTestId('login-oidc-button');
+            expect(button.querySelector('bdi')).not.toBeNull();
+        });
+
+        it('sends the browser to the start endpoint when the provider button is clicked', async () => {
+            renderLogin({
+                localEnabled: false,
+                oidcEnabled: true,
+                oidcLabel: 'Sign in with Okta',
+            });
+
+            await userEvent.click(await screen.findByTestId('login-oidc-button'));
+
+            expect(mockNavigateTo).toHaveBeenCalledWith('/api/v1/auth/oidc/start');
+        });
+    });
+
+    describe('disconnect warning', () => {
+        it('shows and clears a stored disconnect message', async () => {
+            const getItem = window.sessionStorage.getItem as ReturnType<typeof vi.fn>;
+            getItem.mockReturnValue('Your session was disconnected');
+
+            renderLogin();
+
+            const warning = await screen.findByText('Your session was disconnected');
+            expect(warning).toBeInTheDocument();
+            expect(window.sessionStorage.removeItem).toHaveBeenCalledWith(
+                'disconnectMessage',
+            );
+
+            await userEvent.click(screen.getByRole('button', { name: /close/i }));
+
+            expect(
+                screen.queryByText('Your session was disconnected'),
+            ).not.toBeInTheDocument();
+        });
+    });
+
+    describe('federated sign-in failures', () => {
+        it('shows a message when the provider redirect reports a failure', async () => {
+            window.history.replaceState({}, '', '/?login_error=provider');
+
+            renderLogin({
+                localEnabled: true,
+                oidcEnabled: true,
+                oidcLabel: 'Sign in with Okta',
+            });
+
+            expect(await screen.findByTestId('login-error')).toHaveTextContent(
+                /could not be completed/i,
+            );
+        });
+
+        it('removes the parameter once the message has been shown', async () => {
+            window.history.replaceState({}, '', '/?login_error=provider&next=%2Fx');
+
+            renderLogin();
+
+            await screen.findByTestId('login-error');
+
+            expect(window.location.search).toBe('?next=%2Fx');
+        });
+
+        it('shows no message when no failure was reported', () => {
+            renderLogin();
+
+            expect(screen.queryByTestId('login-error')).not.toBeInTheDocument();
+        });
     });
 });

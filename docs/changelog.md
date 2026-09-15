@@ -51,10 +51,12 @@ project adheres to
   a password is set with `-update-user`; `-restore-password`
   converts the account back to local login instead, keeping
   both the password it held before it was linked and its
-  tokens. Both commands invalidate the account's live
-  sessions, so a relink cuts off the previous identity at
-  once, whilst relinking an account to the identity it
-  already holds changes nothing and logs nobody out. Note
+  tokens. Neither command ends a browser session the running
+  server has already issued, because sessions live in that
+  server's memory and the command runs in its own process, so
+  offboarding means unlinking and then disabling the account
+  with `-disable-user`, which the server honours from the next
+  request onward. Note
   that linking an existing account hands its mapped group
   membership, and its superuser flag wherever
   `superuser_group` is configured, to the identity provider

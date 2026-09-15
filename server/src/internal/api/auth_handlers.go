@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -27,6 +28,13 @@ type AuthHandler struct {
 	totalRateLimiter *auth.RateLimiter // Tracks total login requests per IP (20/min)
 	ipExtractor      *auth.IPExtractor
 	tlsEnabled       bool // Whether the server itself has TLS enabled
+	// localEnabled is the effective value of http.auth.local.enabled.
+	// When false the operator has switched username and password login
+	// off, and handleLogin refuses every request regardless of whether
+	// the credentials would otherwise verify. The check lives here
+	// rather than in AuthStore.AuthenticateUser so that the store keeps
+	// its single meaning of "does this password verify".
+	localEnabled bool
 }
 
 // NewAuthHandler creates a new authentication handler.
@@ -36,13 +44,16 @@ type AuthHandler struct {
 // the proxy passes X-Forwarded-Proto header, which will be used to auto-detect HTTPS;
 // that header is honored only on a request the ipExtractor's trusted proxy list
 // actually covers, which is decided per request rather than once here.
-func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor, tlsEnabled bool) *AuthHandler {
+// The localEnabled parameter carries the effective value of
+// http.auth.local.enabled; pass false to refuse password login outright.
+func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor, tlsEnabled, localEnabled bool) *AuthHandler {
 	return &AuthHandler{
 		authStore:        authStore,
 		rateLimiter:      rateLimiter,
 		totalRateLimiter: auth.NewRateLimiter(1, 20), // 20 total login requests per minute per IP
 		ipExtractor:      ipExtractor,
 		tlsEnabled:       tlsEnabled,
+		localEnabled:     localEnabled,
 	}
 }
 
@@ -89,6 +100,44 @@ func (h *AuthHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/logout", h.handleLogout)
 }
 
+// respondLoginFailed writes the single opaque login failure response.
+// Every path that declines a login - a bad password, a disabled account,
+// a federated account, or local login being switched off entirely - must
+// answer with exactly these bytes, so that a caller cannot tell the
+// cases apart.
+func respondLoginFailed(w http.ResponseWriter) {
+	RespondError(w, http.StatusUnauthorized,
+		"Authentication failed: invalid username or password")
+}
+
+// applyLoginRateLimits consults both login rate limiters and charges the
+// total-request limiter for this attempt. It reports whether the request
+// may proceed; when it returns false it has already written the
+// too-many-requests response.
+func (h *AuthHandler) applyLoginRateLimits(w http.ResponseWriter, ipAddress string) bool {
+	// Check total request rate limit before checking failed-attempt limiter.
+	// This prevents enumeration attacks that succeed on every attempt.
+	if h.totalRateLimiter != nil && ipAddress != "" {
+		if !h.totalRateLimiter.IsAllowed(ipAddress) {
+			RespondError(w, http.StatusTooManyRequests,
+				"Too many login requests, please try again later")
+			return false
+		}
+		h.totalRateLimiter.RecordFailedAttempt(ipAddress)
+	}
+
+	// Check rate limit if rate limiter is configured
+	if h.rateLimiter != nil && ipAddress != "" {
+		if !h.rateLimiter.IsAllowed(ipAddress) {
+			RespondError(w, http.StatusTooManyRequests,
+				"Too many failed authentication attempts, please try again later")
+			return false
+		}
+	}
+
+	return true
+}
+
 // handleLogin handles POST /api/v1/auth/login
 func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -100,6 +149,26 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Check if auth store is available
 	if h.authStore == nil {
 		RespondError(w, http.StatusServiceUnavailable, "User authentication is not configured")
+		return
+	}
+
+	// Local login disabled: refuse before the body is read, so that a
+	// probe learns nothing from the shape of the request it sent. The
+	// rate limiters are still consulted and still charged exactly as
+	// they are on the wrong-password path below, and the response is
+	// byte for byte the wrong-password response, so that the switch
+	// being off is indistinguishable from bad credentials. The real
+	// reason goes to the server log only.
+	if !h.localEnabled {
+		ipAddress := h.extractIPFromRequest(r)
+		if !h.applyLoginRateLimits(w, ipAddress) {
+			return
+		}
+		if h.rateLimiter != nil && ipAddress != "" {
+			h.rateLimiter.RecordFailedAttempt(ipAddress)
+		}
+		log.Printf("[AUTH] Login request refused: local password login is disabled (http.auth.local.enabled=false)")
+		respondLoginFailed(w)
 		return
 	}
 
@@ -124,24 +193,8 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Uses the IPExtractor which only trusts X-Forwarded-For from configured trusted proxies
 	ipAddress := h.extractIPFromRequest(r)
 
-	// Check total request rate limit before checking failed-attempt limiter.
-	// This prevents enumeration attacks that succeed on every attempt.
-	if h.totalRateLimiter != nil && ipAddress != "" {
-		if !h.totalRateLimiter.IsAllowed(ipAddress) {
-			RespondError(w, http.StatusTooManyRequests,
-				"Too many login requests, please try again later")
-			return
-		}
-		h.totalRateLimiter.RecordFailedAttempt(ipAddress)
-	}
-
-	// Check rate limit if rate limiter is configured
-	if h.rateLimiter != nil && ipAddress != "" {
-		if !h.rateLimiter.IsAllowed(ipAddress) {
-			RespondError(w, http.StatusTooManyRequests,
-				"Too many failed authentication attempts, please try again later")
-			return
-		}
+	if !h.applyLoginRateLimits(w, ipAddress) {
+		return
 	}
 
 	// Authenticate user
@@ -151,8 +204,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if h.rateLimiter != nil && ipAddress != "" {
 			h.rateLimiter.RecordFailedAttempt(ipAddress)
 		}
-		RespondError(w, http.StatusUnauthorized,
-			"Authentication failed: invalid username or password")
+		respondLoginFailed(w)
 		return
 	}
 

@@ -1092,8 +1092,9 @@ checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
 `GET /api/v1/metrics/query`, `GET /api/v1/metrics/connection-groups`,
-`GET /api/v1/metrics/performance-summary` and
-`GET /api/v1/metrics/query-stats` accept `time_range=custom` alongside
+`GET /api/v1/metrics/performance-summary`,
+`GET /api/v1/metrics/query-stats` and
+`GET /api/v1/metrics/top-queries` accept `time_range=custom` alongside
 `time_start` and `time_end`, resolve the window through
 `ResolveTimeWindow` and map any resolution error to `400`;
 `performance-summary` derives its bucket width from the resolved
@@ -1117,8 +1118,10 @@ PostgreSQL 18, which added B-tree skip scans, a predicate on
 `connection_id` and `queryid` alone falls back to a bitmap scan of
 `idx_pg_stat_statements_conn_time` over every row of the connection in
 the window. `/metrics/query` and `/metrics/latest` always carry the
-database name; `/metrics/top-queries` reads one snapshot by
-`collected_at` and does not need the object index; `/metrics/query-stats`
+database name; `/metrics/top-queries` aggregates every
+sample in the window for the connection, with `database_name` bound only
+when the caller filters on it, so it usually reads
+`idx_pg_stat_statements_conn_time`; `/metrics/query-stats`
 takes an optional `database_name` parameter, which the drill-down always
 sends, and `buildQueryStatsSQL` binds it as an extra predicate so that
 the object index applies.
@@ -1140,6 +1143,24 @@ subtracted from the post-reset one. `queryStatsSQLTemplate` in
 counter-delta query over `metrics.pg_stat_statements` should follow the
 same shape.
 
+Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
+`queryid` at once: its `samples` CTE `LAG`s over
+`(queryid, database_name, userid, dbid, toplevel)` inside the resolved
+window, `totals` drops the pairs whose call or time delta is negative,
+floors the row and block deltas at zero, sums per `queryid` and keeps
+only statements with calls in the window, and `latest_sample` supplies
+the query text, the OIDs and the two lifetime columns `min_exec_time`
+and `max_exec_time`, which cannot be differenced. `mean_exec_time` is
+derived as `SUM(delta_time) / SUM(delta_calls)`. A statement present in
+the snapshot but not executed in the window therefore does not appear at
+all, which is a deliberate behaviour change from the pre-#387 endpoint.
+
+`totals` and `latest_sample` must stay `MATERIALIZED`. The planner
+cannot see through the `samples` CTE, estimates both at one row, and
+otherwise joins them with a nested loop that re-runs the `DISTINCT ON`
+once per statement; on a 24-hour window of 57,000 samples that cost five
+seconds instead of a quarter of one.
+
 ## Bounded Activity Lookups (server)
 
 `buildTopQueriesSQL` resolves `dbid` and `userid` OIDs to names through
@@ -1147,8 +1168,10 @@ same shape.
 `metrics.pg_stat_activity`, which has no index on `datid` or
 `usesysid`. Without a `collected_at` bound that sort covers every
 activity row in retention for the connection, and it runs twice per
-page (count and page statements). Both CTEs are therefore anchored to
-the latest `pg_stat_statements` snapshot and read only the preceding
+page (count and page statements). Both CTEs stay anchored to
+the latest `pg_stat_statements` snapshot rather than to the requested
+window, because they are a name lookup and not a measurement, and read
+only the preceding
 `nameLookupWindowSQL` (one hour) of activity samples; on a fixture of
 500,000 activity rows that took the page from 1.6 s and a 29 MB
 external sort to 8 ms in memory. Any new lookup over

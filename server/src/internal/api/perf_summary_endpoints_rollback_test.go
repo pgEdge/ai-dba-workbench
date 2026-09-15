@@ -79,6 +79,7 @@ CREATE TABLE metrics.pg_stat_statements (
     queryid           bigint           NOT NULL,
     dbid              oid,
     userid            oid,
+    toplevel          boolean          NOT NULL DEFAULT TRUE,
     database_name     text,
     query             text             NOT NULL,
     calls             bigint           NOT NULL DEFAULT 0,
@@ -545,8 +546,11 @@ func TestPerfSummaryEndpoints_ClosedPoolReturnsError(t *testing.T) {
 }
 
 // seedTopQueries inserts two statements in the latest collection for the
-// connection, one of which looks like a collector probe, plus an older
-// collection that must be ignored. The activity sample resolves the
+// connection, one of which looks like a collector probe, each with a zeroed
+// predecessor sample so that the window aggregation has a pair to
+// difference and the reported figures equal the latest reading. A third
+// statement is seeded only in the older collection: with no successor it
+// yields no delta and must not appear. The activity sample resolves the
 // database OID and the first statement's role OID; the probe's role was
 // never sampled, so its username must resolve to an empty string.
 func seedTopQueries(t *testing.T, pool *pgxpool.Pool, connID int) {
@@ -556,6 +560,7 @@ func seedTopQueries(t *testing.T, pool *pgxpool.Pool, connID int) {
 	now := time.Now().UTC()
 	latest := now.Add(-1 * time.Minute)
 	prev := now.Add(-2 * time.Minute)
+	baseline := now.Add(-3 * time.Minute)
 
 	exec := func(sql string, args ...any) {
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {
@@ -575,8 +580,12 @@ func seedTopQueries(t *testing.T, pool *pgxpool.Pool, connID int) {
         ($1, $2, 111, 16384, 16500, NULL, 'SELECT * FROM orders',
          10, 500, 50, 5, 120, 100, 900, 100),
         ($1, $2, 222, 16384, 16501, NULL, 'SELECT ai_dba_wb_probe()',
-         5, 900, 180, 20, 400, 5, 10, 1)`,
-		connID, latest)
+         5, 900, 180, 20, 400, 5, 10, 1),
+        ($1, $3, 111, 16384, 16500, NULL, 'SELECT * FROM orders',
+         0, 0, 0, 0, 0, 0, 0, 0),
+        ($1, $3, 222, 16384, 16501, NULL, 'SELECT ai_dba_wb_probe()',
+         0, 0, 0, 0, 0, 0, 0, 0)`,
+		connID, latest, baseline)
 
 	exec(`INSERT INTO metrics.pg_stat_statements
         (connection_id, collected_at, queryid, dbid, database_name, query,
@@ -599,11 +608,13 @@ func decodeRollbackTopQueries(t *testing.T, rec *httptest.ResponseRecorder) []To
 	return rows
 }
 
-// TestHandleTopQueries_ReturnsLatestSnapshot drives the top-queries
+// TestHandleTopQueries_AggregatesWindowDeltas drives the top-queries
 // endpoint, the third converted rollback site in this file, and covers
 // the ordering, database-name join, limit clamping, and the optional
-// queryid and exclude_collector filters.
-func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
+// queryid and exclude_collector filters. Since issue #387 the endpoint
+// reports summed counter deltas over the requested window rather than the
+// latest snapshot, so a statement sampled only once contributes nothing.
+func TestHandleTopQueries_AggregatesWindowDeltas(t *testing.T) {
 	h, pool, cleanup := newPerfEndpointTestHandler(t)
 	defer cleanup()
 
@@ -623,7 +634,7 @@ func TestHandleTopQueries_ReturnsLatestSnapshot(t *testing.T) {
 		}
 		rows := decodeRollbackTopQueries(t, rec)
 		if len(rows) != 2 {
-			t.Fatalf("rows = %d, want 2 (the older collection must be ignored)",
+			t.Fatalf("rows = %d, want 2 (the unpaired older sample yields no delta)",
 				len(rows))
 		}
 		if rows[0].QueryID != "222" {

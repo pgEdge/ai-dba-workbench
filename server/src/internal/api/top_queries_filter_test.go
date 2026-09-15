@@ -131,7 +131,8 @@ func TestSafeTopQueryOrdering(t *testing.T) {
 			// The builder must apply the same fallback, so no
 			// unwhitelisted text can ever reach the ORDER BY clause.
 			_, pageSQL, _, _ := buildTopQueriesSQL(
-				1, nil, "", false, tt.orderCol, tt.orderDir, 10, 0)
+				1, testTopQueriesWindow(), nil, "", false, tt.orderCol,
+				tt.orderDir, 10, 0)
 			want := "ORDER BY " + tt.wantOrderCol + " " + tt.wantOrderDir
 			if !strings.Contains(pageSQL, want) {
 				t.Errorf("query is missing %q: %s", want, pageSQL)

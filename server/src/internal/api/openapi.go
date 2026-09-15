@@ -3649,7 +3649,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 		"/metrics/top-queries": {
 			Get: &OpenAPIOperation{
 				Summary:     "Get top queries",
-				Description: "Returns the top queries by execution time, calls, or other metrics",
+				Description: "Returns the top queries by execution time, calls, or other metrics over the requested time range. The counters are cumulative in pg_stat_statements, so calls, rows, total_exec_time and the shared block counts are the summed differences between consecutive samples in the window, and mean_exec_time is derived from those sums; min_exec_time and max_exec_time remain lifetime values taken from the latest sample in the window. A statement with no executions in the window is not reported",
 				OperationID: "getTopQueries",
 				Tags:        []string{"Metrics"},
 				Security:    bearerAuth,
@@ -3665,6 +3665,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 						"Exclude Workbench-internal queries, including "+
 							"collector probe queries and the collector's "+
 							"and alerter's own datastore queries"),
+					queryParamString("time_range",
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end"),
+					queryParamString("time_start",
+						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
+					queryParamString("time_end",
+						"Window end as an RFC 3339 timestamp; required when time_range is custom"),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonArrayResponseWithHeaders("TopQueryRow", "Top queries",

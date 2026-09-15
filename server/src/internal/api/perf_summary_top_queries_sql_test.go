@@ -13,14 +13,28 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
+
+// testTopQueriesWindow is the fixed window the builder tests pass in. The
+// bounds are bound as parameters, so their values never reach the SQL text;
+// they are constants here only so the expected argument slices can name
+// them.
+func testTopQueriesWindow() metrics.TimeWindow {
+	return metrics.TimeWindow{
+		Start: time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC),
+	}
+}
 
 // topQueriesCTEHead is the invariant leading part of the generated CTE, in
 // whitespace-normalised form: everything from the WITH keyword up to and
 // including last_client's query_id IS NOT NULL predicate. The optional
 // queryid predicate inside last_client follows it, then
-// topQueriesCTEBody, then the optional deduped filters and the trailing
-// ORDER BY.
+// topQueriesCTEBody, then the optional sample filters, and
+// topQueriesCTETail closes the statement.
 const topQueriesCTEHead = "WITH latest AS ( " +
 	"SELECT MAX(collected_at) AS collected_at " +
 	"FROM metrics.pg_stat_statements " +
@@ -55,27 +69,77 @@ const topQueriesCTEHead = "WITH latest AS ( " +
 	"AND query_id IS NOT NULL"
 
 // topQueriesCTEBody is the part of the CTE between last_client's optional
-// queryid predicate and deduped's own optional filters.
+// queryid predicate and the sample scan's own optional filters.
 const topQueriesCTEBody = "ORDER BY query_id, datid, usesysid, " +
 	"collected_at DESC " +
+	"), samples AS ( " +
+	"SELECT " +
+	"pss.queryid, pss.collected_at, pss.query, " +
+	"pss.database_name, pss.dbid, pss.userid, " +
+	"pss.min_exec_time, pss.max_exec_time, " +
+	"pss.calls - LAG(pss.calls) OVER identity AS delta_calls, " +
+	"pss.total_exec_time " +
+	"- LAG(pss.total_exec_time) OVER identity AS delta_time, " +
+	"pss.rows - LAG(pss.rows) OVER identity AS delta_rows, " +
+	"pss.shared_blks_hit " +
+	"- LAG(pss.shared_blks_hit) OVER identity AS delta_hit, " +
+	"pss.shared_blks_read " +
+	"- LAG(pss.shared_blks_read) OVER identity AS delta_read " +
+	"FROM metrics.pg_stat_statements pss " +
+	"WHERE pss.connection_id = $1 " +
+	"AND pss.collected_at >= $2 " +
+	"AND pss.collected_at <= $3"
+
+// topQueriesCTETail is the rest of the CTE: the identity window that the
+// LAG runs over, the per-queryid delta aggregation, the latest sample each
+// statement was seen in, and the joins that resolve the OIDs to names and
+// attach the last observed client. Splitting the golden copy lets the
+// optional filter clauses sit between the sample predicate and the window
+// definition, which is where the builder puts them.
+const topQueriesCTETail = "WINDOW identity AS ( " +
+	"PARTITION BY pss.queryid, pss.database_name, pss.userid, " +
+	"pss.dbid, pss.toplevel " +
+	"ORDER BY pss.collected_at " +
+	") " +
+	"), totals AS MATERIALIZED ( " +
+	"SELECT " +
+	"queryid, " +
+	"SUM(delta_calls)::bigint AS calls, " +
+	"SUM(delta_time) AS total_exec_time, " +
+	"SUM(GREATEST(delta_rows, 0))::bigint AS rows, " +
+	"SUM(GREATEST(delta_hit, 0))::bigint AS shared_blks_hit, " +
+	"SUM(GREATEST(delta_read, 0))::bigint AS shared_blks_read " +
+	"FROM samples " +
+	"WHERE delta_calls >= 0 " +
+	"AND delta_time >= 0 " +
+	"GROUP BY queryid " +
+	"HAVING SUM(delta_calls) > 0 " +
+	"), latest_sample AS MATERIALIZED ( " +
+	"SELECT DISTINCT ON (queryid) " +
+	"queryid, query, database_name, dbid, userid, " +
+	"min_exec_time, max_exec_time " +
+	"FROM samples " +
+	"ORDER BY queryid, collected_at DESC " +
 	"), deduped AS ( " +
-	"SELECT DISTINCT ON (pss.queryid) " +
-	"pss.queryid::text, " +
-	"COALESCE(dn.datname, pss.database_name) AS database_name, " +
+	"SELECT " +
+	"t.queryid::text, " +
+	"COALESCE(dn.datname, ls.database_name) AS database_name, " +
 	"COALESCE(un.usename, '') AS username, " +
-	"pss.query, pss.calls, pss.total_exec_time, " +
-	"pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time, " +
-	"pss.rows, " +
-	"pss.shared_blks_hit, pss.shared_blks_read, " +
+	"ls.query, t.calls, t.total_exec_time, " +
+	"CASE WHEN t.calls > 0 " +
+	"THEN t.total_exec_time / t.calls " +
+	"ELSE 0 END AS mean_exec_time, " +
+	"ls.min_exec_time, ls.max_exec_time, " +
+	"t.rows, " +
+	"t.shared_blks_hit, t.shared_blks_read, " +
 	"lc.client_addr, lc.client_hostname, " +
 	"lc.collected_at AS client_observed_at " +
-	"FROM metrics.pg_stat_statements pss " +
-	"LEFT JOIN db_names dn ON pss.dbid = dn.datid " +
-	"LEFT JOIN user_names un ON pss.userid = un.usesysid " +
-	"LEFT JOIN last_client lc ON pss.queryid = lc.query_id " +
-	"AND pss.dbid = lc.datid AND pss.userid = lc.usesysid " +
-	"WHERE pss.connection_id = $1 " +
-	"AND pss.collected_at = (SELECT collected_at FROM latest)"
+	"FROM totals t " +
+	"JOIN latest_sample ls ON ls.queryid = t.queryid " +
+	"LEFT JOIN db_names dn ON ls.dbid = dn.datid " +
+	"LEFT JOIN user_names un ON ls.userid = un.usesysid " +
+	"LEFT JOIN last_client lc ON ls.queryid = lc.query_id " +
+	"AND ls.dbid = lc.datid AND ls.userid = lc.usesysid )"
 
 // normaliseSQL collapses every run of whitespace to a single space and trims
 // the result, so that generated statements can be compared exactly without
@@ -117,6 +181,9 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 	// can be taken: the builder receives the parsed identifier as *int64.
 	var queryID int64 = 1234567890
 
+	window := testTopQueriesWindow()
+	start, end := window.Start, window.End
+
 	tests := []struct {
 		name             string
 		queryID          *int64
@@ -136,91 +203,95 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 	}{
 		{
 			name:           "no filters",
-			wantTail:       "LIMIT $2 OFFSET $3",
-			wantFilterArgs: []any{connID},
-			wantPageArgs:   []any{connID, limit, offset},
+			wantTail:       "LIMIT $4 OFFSET $5",
+			wantFilterArgs: []any{connID, start, end},
+			wantPageArgs:   []any{connID, start, end, limit, offset},
 		},
 		{
 			name:             "exclude collector only",
 			excludeCollector: true,
 			wantFilters:      excludeSQL,
-			wantTail:         "LIMIT $2 OFFSET $3",
-			wantFilterArgs:   []any{connID},
-			wantPageArgs:     []any{connID, limit, offset},
+			wantTail:         "LIMIT $4 OFFSET $5",
+			wantFilterArgs:   []any{connID, start, end},
+			wantPageArgs:     []any{connID, start, end, limit, offset},
 		},
 		{
 			name:           "database name only",
 			databaseName:   databaseName,
-			wantDBClause:   "WHERE database_name = $2",
-			wantTail:       "LIMIT $3 OFFSET $4",
-			wantFilterArgs: []any{connID, databaseName},
-			wantPageArgs:   []any{connID, databaseName, limit, offset},
+			wantDBClause:   "WHERE database_name = $4",
+			wantTail:       "LIMIT $5 OFFSET $6",
+			wantFilterArgs: []any{connID, start, end, databaseName},
+			wantPageArgs: []any{
+				connID, start, end, databaseName, limit, offset},
 		},
 		{
 			name:             "database name and exclude collector",
 			databaseName:     databaseName,
 			excludeCollector: true,
 			wantFilters:      excludeSQL,
-			wantDBClause:     "WHERE database_name = $2",
-			wantTail:         "LIMIT $3 OFFSET $4",
-			wantFilterArgs:   []any{connID, databaseName},
-			wantPageArgs:     []any{connID, databaseName, limit, offset},
+			wantDBClause:     "WHERE database_name = $4",
+			wantTail:         "LIMIT $5 OFFSET $6",
+			wantFilterArgs:   []any{connID, start, end, databaseName},
+			wantPageArgs: []any{
+				connID, start, end, databaseName, limit, offset},
 		},
 		{
 			name:           "queryid only",
 			queryID:        &queryID,
-			wantLastClient: "AND query_id = $2",
-			wantFilters:    "AND pss.queryid = $2",
-			wantTail:       "LIMIT $3 OFFSET $4",
-			wantFilterArgs: []any{connID, queryID},
-			wantPageArgs:   []any{connID, queryID, limit, offset},
+			wantLastClient: "AND query_id = $4",
+			wantFilters:    "AND pss.queryid = $4",
+			wantTail:       "LIMIT $5 OFFSET $6",
+			wantFilterArgs: []any{connID, start, end, queryID},
+			wantPageArgs: []any{
+				connID, start, end, queryID, limit, offset},
 		},
 		{
 			name:             "queryid and exclude collector",
 			queryID:          &queryID,
 			excludeCollector: true,
-			wantLastClient:   "AND query_id = $2",
-			wantFilters:      "AND pss.queryid = $2 " + excludeSQL,
-			wantTail:         "LIMIT $3 OFFSET $4",
-			wantFilterArgs:   []any{connID, queryID},
-			wantPageArgs:     []any{connID, queryID, limit, offset},
+			wantLastClient:   "AND query_id = $4",
+			wantFilters:      "AND pss.queryid = $4 " + excludeSQL,
+			wantTail:         "LIMIT $5 OFFSET $6",
+			wantFilterArgs:   []any{connID, start, end, queryID},
+			wantPageArgs: []any{
+				connID, start, end, queryID, limit, offset},
 		},
 		{
 			name:           "queryid and database name",
 			queryID:        &queryID,
 			databaseName:   databaseName,
-			wantLastClient: "AND query_id = $2",
-			wantFilters:    "AND pss.queryid = $2",
-			wantDBClause:   "WHERE database_name = $3",
-			wantTail:       "LIMIT $4 OFFSET $5",
-			wantFilterArgs: []any{connID, queryID, databaseName},
+			wantLastClient: "AND query_id = $4",
+			wantFilters:    "AND pss.queryid = $4",
+			wantDBClause:   "WHERE database_name = $5",
+			wantTail:       "LIMIT $6 OFFSET $7",
+			wantFilterArgs: []any{connID, start, end, queryID, databaseName},
 			wantPageArgs: []any{
-				connID, queryID, databaseName, limit, offset},
+				connID, start, end, queryID, databaseName, limit, offset},
 		},
 		{
 			name:             "queryid, database name and exclude collector",
 			queryID:          &queryID,
 			databaseName:     databaseName,
 			excludeCollector: true,
-			wantLastClient:   "AND query_id = $2",
-			wantFilters:      "AND pss.queryid = $2 " + excludeSQL,
-			wantDBClause:     "WHERE database_name = $3",
-			wantTail:         "LIMIT $4 OFFSET $5",
-			wantFilterArgs:   []any{connID, queryID, databaseName},
+			wantLastClient:   "AND query_id = $4",
+			wantFilters:      "AND pss.queryid = $4 " + excludeSQL,
+			wantDBClause:     "WHERE database_name = $5",
+			wantTail:         "LIMIT $6 OFFSET $7",
+			wantFilterArgs:   []any{connID, start, end, queryID, databaseName},
 			wantPageArgs: []any{
-				connID, queryID, databaseName, limit, offset},
+				connID, start, end, queryID, databaseName, limit, offset},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			countSQL, pageSQL, filterArgs, pageArgs := buildTopQueriesSQL(
-				connID, tc.queryID, tc.databaseName, tc.excludeCollector,
-				"total_exec_time", "DESC", limit, offset)
+				connID, window, tc.queryID, tc.databaseName,
+				tc.excludeCollector, "total_exec_time", "DESC", limit,
+				offset)
 
 			wantCTE := joinSQL(topQueriesCTEHead, tc.wantLastClient,
-				topQueriesCTEBody, tc.wantFilters,
-				"ORDER BY pss.queryid )")
+				topQueriesCTEBody, tc.wantFilters, topQueriesCTETail)
 			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped",
 				tc.wantDBClause)
 			wantPage := joinSQL(wantCTE, "SELECT * FROM deduped",
@@ -254,9 +325,10 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 		for dirToken, direction := range validTopQueryOrderDirections {
 			t.Run(token+"_"+dirToken, func(t *testing.T) {
 				_, pageSQL, _, _ := buildTopQueriesSQL(
-					1, nil, "", false, column, direction, 10, 0)
+					1, testTopQueriesWindow(), nil, "", false, column,
+					direction, 10, 0)
 				want := "ORDER BY " + column + " " + direction +
-					", queryid LIMIT $2 OFFSET $3"
+					", queryid LIMIT $4 OFFSET $5"
 				if got := normaliseSQL(pageSQL); !strings.HasSuffix(got,
 					want) {
 					t.Errorf("page SQL does not end with %q:\n%s", want, got)
@@ -272,10 +344,11 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 func TestBuildTopQueriesSQL_ArgumentsAreIndependent(t *testing.T) {
 	var queryID int64 = 99
 	_, _, filterArgs, pageArgs := buildTopQueriesSQL(
-		7, &queryID, "beta", true, "calls", "ASC", 5, 10)
+		7, testTopQueriesWindow(), &queryID, "beta", true, "calls", "ASC",
+		5, 10)
 
-	if len(filterArgs) != 3 {
-		t.Fatalf("filterArgs = %#v, want three entries", filterArgs)
+	if len(filterArgs) != 5 {
+		t.Fatalf("filterArgs = %#v, want five entries", filterArgs)
 	}
 	pageArgs[0] = "mutated"
 	if filterArgs[0] != 7 {
@@ -294,12 +367,17 @@ func TestBuildTopQueriesSQL_NoUserValuesInSQL(t *testing.T) {
 	const evilDBName = "alpha'; DROP TABLE metrics.pg_stat_statements; --"
 	var evilQueryID int64 = 8675309
 
+	window := metrics.TimeWindow{
+		Start: time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC),
+		End:   time.Date(2026, 2, 4, 4, 5, 6, 0, time.UTC),
+	}
+
 	countSQL, pageSQL, filterArgs, pageArgs := buildTopQueriesSQL(
-		31337, &evilQueryID, evilDBName, true, "rows", "ASC", 11, 22)
+		31337, window, &evilQueryID, evilDBName, true, "rows", "ASC", 11, 22)
 
 	for _, sql := range []string{countSQL, pageSQL} {
 		for _, value := range []string{"8675309", evilDBName, "31337",
-			"11", "22"} {
+			"11", "22", "2026-02-03", "2026-02-04"} {
 			if strings.Contains(sql, value) {
 				t.Errorf("generated SQL contains user value %q:\n%s", value,
 					sql)
@@ -307,11 +385,13 @@ func TestBuildTopQueriesSQL_NoUserValuesInSQL(t *testing.T) {
 		}
 	}
 
-	wantFilters := []any{31337, evilQueryID, evilDBName}
+	wantFilters := []any{31337, window.Start, window.End, evilQueryID,
+		evilDBName}
 	if !reflect.DeepEqual(filterArgs, wantFilters) {
 		t.Errorf("filterArgs = %#v, want %#v", filterArgs, wantFilters)
 	}
-	wantPage := []any{31337, evilQueryID, evilDBName, 11, 22}
+	wantPage := []any{31337, window.Start, window.End, evilQueryID,
+		evilDBName, 11, 22}
 	if !reflect.DeepEqual(pageArgs, wantPage) {
 		t.Errorf("pageArgs = %#v, want %#v", pageArgs, wantPage)
 	}

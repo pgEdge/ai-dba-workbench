@@ -665,30 +665,6 @@ func (s *AuthStore) GetGroupsForUser(userID int64) ([]*UserGroup, error) {
 	return groups, nil
 }
 
-// SetUserSuperuser sets or clears the superuser flag for a user
-func (s *AuthStore) SetUserSuperuser(username string, isSuperuser bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec(
-		"UPDATE users SET is_superuser = ? WHERE username = ?",
-		isSuperuser, username,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update superuser status: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("user not found: %s", username)
-	}
-
-	return nil
-}
-
 // GetTokenByID retrieves a token by ID
 func (s *AuthStore) GetTokenByID(tokenID int64) (*StoredToken, error) {
 	s.mu.RLock()

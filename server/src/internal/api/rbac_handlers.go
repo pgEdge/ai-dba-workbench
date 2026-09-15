@@ -250,39 +250,60 @@ const rbacPathPrefix = "/api/v1/rbac/"
 // was refused share a vocabulary. A request that matches no known route
 // shape records "rbac.<method>" in lower case, which keeps the event
 // rather than dropping it.
-func deniedAction(r *http.Request) string {
-	fallback := "rbac." + strings.ToLower(r.Method)
+// deniedResourceActions maps the first RBAC path segment to the helper
+// that maps that resource's routes onto an action name. Each helper
+// returns an empty string when the request matches no known route
+// shape, which leaves the caller's fallback in place.
+var deniedResourceActions = map[string]func(method string, parts []string) string{
+	"users":  deniedUserAction,
+	"groups": deniedGroupAction,
+	"tokens": deniedTokenAction,
+	"audit":  deniedAuditAction,
+}
 
-	if !strings.HasPrefix(r.URL.Path, rbacPathPrefix) {
-		return fallback
+// rbacPathSegments splits an RBAC route into the segments below the
+// common prefix, reporting false when the path is not an RBAC route or
+// carries no segment at all.
+func rbacPathSegments(path string) ([]string, bool) {
+	if !strings.HasPrefix(path, rbacPathPrefix) {
+		return nil, false
 	}
 
 	parts := strings.Split(strings.Trim(
-		strings.TrimPrefix(r.URL.Path, rbacPathPrefix), "/"), "/")
+		strings.TrimPrefix(path, rbacPathPrefix), "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
+		return nil, false
+	}
+
+	return parts, true
+}
+
+func deniedAction(r *http.Request) string {
+	fallback := "rbac." + strings.ToLower(r.Method)
+
+	parts, ok := rbacPathSegments(r.URL.Path)
+	if !ok {
 		return fallback
 	}
 
-	switch parts[0] {
-	case "users":
-		if action := deniedUserAction(r.Method, parts); action != "" {
-			return action
-		}
-	case "groups":
-		if action := deniedGroupAction(r.Method, parts); action != "" {
-			return action
-		}
-	case "tokens":
-		if action := deniedTokenAction(r.Method, parts); action != "" {
-			return action
-		}
-	case "audit":
-		if len(parts) == 1 && r.Method == http.MethodGet {
-			return "audit.read"
-		}
+	mapper, ok := deniedResourceActions[parts[0]]
+	if !ok {
+		return fallback
+	}
+
+	if action := mapper(r.Method, parts); action != "" {
+		return action
 	}
 
 	return fallback
+}
+
+// deniedAuditAction maps the /audit routes.
+func deniedAuditAction(method string, parts []string) string {
+	if len(parts) == 1 && method == http.MethodGet {
+		return "audit.read"
+	}
+	return ""
 }
 
 // deniedUserAction maps the /users routes; it returns an empty string
@@ -302,41 +323,54 @@ func deniedUserAction(method string, parts []string) string {
 // deniedGroupAction maps the /groups routes and their members,
 // privileges and permissions sub-resources.
 func deniedGroupAction(method string, parts []string) string {
-	if len(parts) == 1 && method == http.MethodPost {
-		return "group.create"
-	}
-	if len(parts) == 2 {
-		switch method {
-		case http.MethodPut:
-			return "group.update"
-		case http.MethodDelete:
-			return "group.delete"
-		}
-		return ""
-	}
 	if len(parts) < 3 {
-		return ""
+		return deniedGroupRootAction(method, parts)
 	}
 
 	switch parts[2] {
 	case "members":
-		switch {
-		case len(parts) == 3 && method == http.MethodPost:
-			return "group.member.add"
-		case len(parts) == 5 && method == http.MethodDelete:
-			return "group.member.remove"
-		}
+		return deniedGroupMemberAction(method, parts)
 	case "permissions":
-		switch {
-		case len(parts) == 3 && method == http.MethodPost:
-			return "permission.admin.grant"
-		case len(parts) == 4 && method == http.MethodDelete:
-			return "permission.admin.revoke"
-		}
+		return deniedGroupPermissionAction(method, parts)
 	case "privileges":
 		return deniedGroupPrivilegeAction(method, parts)
 	}
 
+	return ""
+}
+
+// deniedGroupRootAction maps the /groups and /groups/{id} routes.
+func deniedGroupRootAction(method string, parts []string) string {
+	switch {
+	case len(parts) == 1 && method == http.MethodPost:
+		return "group.create"
+	case len(parts) == 2 && method == http.MethodPut:
+		return "group.update"
+	case len(parts) == 2 && method == http.MethodDelete:
+		return "group.delete"
+	}
+	return ""
+}
+
+// deniedGroupMemberAction maps the /groups/{id}/members routes.
+func deniedGroupMemberAction(method string, parts []string) string {
+	switch {
+	case len(parts) == 3 && method == http.MethodPost:
+		return "group.member.add"
+	case len(parts) == 5 && method == http.MethodDelete:
+		return "group.member.remove"
+	}
+	return ""
+}
+
+// deniedGroupPermissionAction maps the /groups/{id}/permissions routes.
+func deniedGroupPermissionAction(method string, parts []string) string {
+	switch {
+	case len(parts) == 3 && method == http.MethodPost:
+		return "permission.admin.grant"
+	case len(parts) == 4 && method == http.MethodDelete:
+		return "permission.admin.revoke"
+	}
 	return ""
 }
 

@@ -367,67 +367,10 @@ func (s *AuthStore) updateUserAtomic(actor Actor, username string,
 	after := before
 
 	passwordChanged := update.Password != nil && *update.Password != ""
-	if passwordChanged {
-		if valErr := ValidatePassword(*update.Password); valErr != nil {
-			err = valErr
-			return err
-		}
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), s.bcryptCost)
-		if hashErr != nil {
-			err = fmt.Errorf("failed to hash password: %w", hashErr)
-			return err
-		}
-		if _, execErr := tx.Exec(
-			"UPDATE users SET password_hash = ? WHERE username = ?",
-			string(hash), username,
-		); execErr != nil {
-			err = fmt.Errorf("failed to update password: %w", execErr)
-			return err
-		}
-	}
-
-	// Update annotation, display name and email if any are provided,
-	// carrying the unchanged fields over from the before snapshot.
-	if update.Annotation != nil || update.DisplayName != nil || update.Email != nil {
-		if update.Annotation != nil {
-			after.Annotation = *update.Annotation
-		}
-		if update.DisplayName != nil {
-			after.DisplayName = *update.DisplayName
-		}
-		if update.Email != nil {
-			after.Email = *update.Email
-		}
-
-		if _, execErr := tx.Exec(
-			"UPDATE users SET annotation = ?, display_name = ?, email = ? WHERE username = ?",
-			after.Annotation, after.DisplayName, after.Email, username,
-		); execErr != nil {
-			err = fmt.Errorf("failed to update user fields: %w", execErr)
-			return err
-		}
-	}
-
-	if update.Enabled != nil {
-		if _, execErr := tx.Exec(
-			"UPDATE users SET enabled = ? WHERE username = ?",
-			*update.Enabled, username,
-		); execErr != nil {
-			err = fmt.Errorf("failed to update enabled status: %w", execErr)
-			return err
-		}
-		after.Enabled = *update.Enabled
-	}
-
-	if update.IsSuperuser != nil {
-		if _, execErr := tx.Exec(
-			"UPDATE users SET is_superuser = ? WHERE username = ?",
-			*update.IsSuperuser, username,
-		); execErr != nil {
-			err = fmt.Errorf("failed to update superuser status: %w", execErr)
-			return err
-		}
-		after.IsSuperuser = *update.IsSuperuser
+	if applyErr := s.applyUserUpdatesTx(tx, username, update,
+		&after); applyErr != nil {
+		err = applyErr
+		return err
 	}
 
 	if auditErr := s.recordUserUpdate(tx, actor, before, after,
@@ -444,6 +387,108 @@ func (s *AuthStore) updateUserAtomic(actor Actor, username string,
 	// Invalidate all active sessions when the password changes.
 	if passwordChanged {
 		s.InvalidateUserSessions(username)
+	}
+
+	return nil
+}
+
+// applyUserUpdatesTx applies each supplied field of the update to the
+// user row, in password, profile, then flags order, and mutates after
+// to match the state the row will hold once the transaction commits.
+func (s *AuthStore) applyUserUpdatesTx(tx *sql.Tx, username string,
+	update UserUpdate, after *userSnapshot) error {
+
+	if err := s.applyUserPasswordTx(tx, username, update); err != nil {
+		return err
+	}
+	if err := applyUserProfileTx(tx, username, update, after); err != nil {
+		return err
+	}
+
+	return applyUserFlagsTx(tx, username, update, after)
+}
+
+// applyUserPasswordTx validates and stores a new password hash when the
+// update carries a non-empty password, and does nothing otherwise. The
+// after snapshot is untouched, because it never carries the hash.
+func (s *AuthStore) applyUserPasswordTx(tx *sql.Tx, username string,
+	update UserUpdate) error {
+
+	if update.Password == nil || *update.Password == "" {
+		return nil
+	}
+
+	if valErr := ValidatePassword(*update.Password); valErr != nil {
+		return valErr
+	}
+	hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), s.bcryptCost)
+	if hashErr != nil {
+		return fmt.Errorf("failed to hash password: %w", hashErr)
+	}
+	if _, execErr := tx.Exec(
+		"UPDATE users SET password_hash = ? WHERE username = ?",
+		string(hash), username,
+	); execErr != nil {
+		return fmt.Errorf("failed to update password: %w", execErr)
+	}
+
+	return nil
+}
+
+// applyUserProfileTx updates annotation, display name and email if any
+// are provided, carrying the unchanged fields over from the before
+// snapshot held in after.
+func applyUserProfileTx(tx *sql.Tx, username string, update UserUpdate,
+	after *userSnapshot) error {
+
+	if update.Annotation == nil && update.DisplayName == nil &&
+		update.Email == nil {
+		return nil
+	}
+
+	if update.Annotation != nil {
+		after.Annotation = *update.Annotation
+	}
+	if update.DisplayName != nil {
+		after.DisplayName = *update.DisplayName
+	}
+	if update.Email != nil {
+		after.Email = *update.Email
+	}
+
+	if _, execErr := tx.Exec(
+		"UPDATE users SET annotation = ?, display_name = ?, email = ? WHERE username = ?",
+		after.Annotation, after.DisplayName, after.Email, username,
+	); execErr != nil {
+		return fmt.Errorf("failed to update user fields: %w", execErr)
+	}
+
+	return nil
+}
+
+// applyUserFlagsTx updates the enabled and superuser flags when the
+// update supplies them.
+func applyUserFlagsTx(tx *sql.Tx, username string, update UserUpdate,
+	after *userSnapshot) error {
+
+	if update.Enabled != nil {
+		if _, execErr := tx.Exec(
+			"UPDATE users SET enabled = ? WHERE username = ?",
+			*update.Enabled, username,
+		); execErr != nil {
+			return fmt.Errorf("failed to update enabled status: %w", execErr)
+		}
+		after.Enabled = *update.Enabled
+	}
+
+	if update.IsSuperuser != nil {
+		if _, execErr := tx.Exec(
+			"UPDATE users SET is_superuser = ? WHERE username = ?",
+			*update.IsSuperuser, username,
+		); execErr != nil {
+			return fmt.Errorf("failed to update superuser status: %w", execErr)
+		}
+		after.IsSuperuser = *update.IsSuperuser
 	}
 
 	return nil
@@ -808,86 +853,23 @@ func (s *AuthStore) deleteUser(actor Actor, username string) (err error) {
 
 	// Look up the user first so we can fail fast on "not found", drive
 	// the dependent deletes by id rather than by username, and capture
-	// the before snapshot for the audit event.
-	before, err := userSnapshotTx(tx, username)
-	if err != nil {
-		err = userNotFound(username, err)
+	// the before state for the audit event.
+	before, groups, beforeErr := deleteUserBeforeTx(tx, username)
+	if beforeErr != nil {
+		err = beforeErr
 		return err
 	}
 	userID := before.ID
 	target.targetID = &userID
 
-	// Record the groups the user is a direct member of before the
-	// memberships are deleted, so the event says what access was lost.
-	groups, err := userGroupNamesTx(tx, userID)
-	if err != nil {
+	tokensDeleted, depErr := deleteUserDependentsTx(tx, userID)
+	if depErr != nil {
+		err = depErr
 		return err
 	}
 
-	// Remove connection_sessions rows for every token owned by this
-	// user. connection_sessions references tokens.token_hash but has
-	// no declared FK, so SQLite will never cascade-delete these even
-	// with foreign_keys pragma on.
-	if _, err = tx.Exec(
-		`DELETE FROM connection_sessions
-         WHERE token_hash IN (SELECT token_hash FROM tokens WHERE owner_id = ?)`,
-		userID,
-	); err != nil {
-		return fmt.Errorf("failed to delete user's connection sessions: %w", err)
-	}
-
-	// Remove per-token scope rows for every token owned by this user.
-	// These would cascade via tokens' ON DELETE CASCADE, but we delete
-	// them explicitly so a pragma regression cannot leave them behind.
-	scopeTables := []string{
-		"token_connection_scope",
-		"token_mcp_scope",
-		"token_admin_scope",
-	}
-	for _, table := range scopeTables {
-		//nolint:gosec // table name is from a static allow-list above
-		stmt := "DELETE FROM " + table + " WHERE token_id IN (SELECT id FROM tokens WHERE owner_id = ?)"
-		if _, err = tx.Exec(stmt, userID); err != nil {
-			return fmt.Errorf("failed to delete %s rows: %w", table, err)
-		}
-	}
-
-	// Remove the user's tokens. tokens.owner_id has ON DELETE CASCADE
-	// so the user-row delete below would take these out anyway; we
-	// delete them first so the scope-row cleanup above has a stable
-	// set to operate on and so the behavior is obvious to readers.
-	tokenResult, err := tx.Exec("DELETE FROM tokens WHERE owner_id = ?", userID)
-	if err != nil {
-		return fmt.Errorf("failed to delete user's tokens: %w", err)
-	}
-	tokensDeleted, err := tokenResult.RowsAffected()
-	if err != nil {
-		err = fmt.Errorf("failed to count deleted tokens: %w", err)
-		return err
-	}
-
-	// Remove group memberships that reference this user directly.
-	if _, err = tx.Exec(
-		"DELETE FROM group_memberships WHERE member_user_id = ?", userID,
-	); err != nil {
-		return fmt.Errorf("failed to delete user's group memberships: %w", err)
-	}
-
-	// Finally, delete the user row itself.
-	result, execErr := tx.Exec("DELETE FROM users WHERE id = ?", userID)
-	if execErr != nil {
-		err = fmt.Errorf("failed to delete user: %w", execErr)
-		return err
-	}
-	rows, rowsErr := result.RowsAffected()
-	if rowsErr != nil {
-		err = fmt.Errorf("failed to get rows affected: %w", rowsErr)
-		return err
-	}
-	if rows == 0 {
-		// This should be unreachable because we already looked the
-		// user up above, but guard against races anyway.
-		err = fmt.Errorf("user '%s' not found", username)
+	if rowErr := deleteUserRowTx(tx, userID, username); rowErr != nil {
+		err = rowErr
 		return err
 	}
 
@@ -907,6 +889,102 @@ func (s *AuthStore) deleteUser(actor Actor, username string) (err error) {
 	}
 
 	s.InvalidateUserSessions(username)
+
+	return nil
+}
+
+// deleteUserBeforeTx captures the state a user delete is about to
+// destroy: the user's own snapshot, and the names of the groups the
+// user is a direct member of. Both are read before any dependent row
+// is removed, so the event says what access was lost.
+func deleteUserBeforeTx(tx *sql.Tx, username string) (userSnapshot, []string,
+	error) {
+
+	before, snapErr := userSnapshotTx(tx, username)
+	if snapErr != nil {
+		return before, nil, userNotFound(username, snapErr)
+	}
+
+	groups, groupsErr := userGroupNamesTx(tx, before.ID)
+	if groupsErr != nil {
+		return before, nil, groupsErr
+	}
+
+	return before, groups, nil
+}
+
+// deleteUserDependentsTx removes every row that references the user:
+// connection sessions for the user's tokens, the per-token scope rows,
+// the tokens themselves and the user's group memberships. It returns
+// the number of tokens deleted, for the audit event.
+func deleteUserDependentsTx(tx *sql.Tx, userID int64) (int64, error) {
+	// Remove connection_sessions rows for every token owned by this
+	// user. connection_sessions references tokens.token_hash but has
+	// no declared FK, so SQLite will never cascade-delete these even
+	// with foreign_keys pragma on.
+	if _, err := tx.Exec(
+		`DELETE FROM connection_sessions
+         WHERE token_hash IN (SELECT token_hash FROM tokens WHERE owner_id = ?)`,
+		userID,
+	); err != nil {
+		return 0, fmt.Errorf("failed to delete user's connection sessions: %w", err)
+	}
+
+	// Remove per-token scope rows for every token owned by this user.
+	// These would cascade via tokens' ON DELETE CASCADE, but we delete
+	// them explicitly so a pragma regression cannot leave them behind.
+	scopeTables := []string{
+		"token_connection_scope",
+		"token_mcp_scope",
+		"token_admin_scope",
+	}
+	for _, table := range scopeTables {
+		//nolint:gosec // table name is from a static allow-list above
+		stmt := "DELETE FROM " + table + " WHERE token_id IN (SELECT id FROM tokens WHERE owner_id = ?)"
+		if _, err := tx.Exec(stmt, userID); err != nil {
+			return 0, fmt.Errorf("failed to delete %s rows: %w", table, err)
+		}
+	}
+
+	// Remove the user's tokens. tokens.owner_id has ON DELETE CASCADE
+	// so the user-row delete would take these out anyway; we delete
+	// them first so the scope-row cleanup above has a stable set to
+	// operate on and so the behavior is obvious to readers.
+	tokenResult, err := tx.Exec("DELETE FROM tokens WHERE owner_id = ?", userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete user's tokens: %w", err)
+	}
+	tokensDeleted, countErr := tokenResult.RowsAffected()
+	if countErr != nil {
+		return 0, fmt.Errorf("failed to count deleted tokens: %w", countErr)
+	}
+
+	// Remove group memberships that reference this user directly.
+	if _, err := tx.Exec(
+		"DELETE FROM group_memberships WHERE member_user_id = ?", userID,
+	); err != nil {
+		return 0, fmt.Errorf("failed to delete user's group memberships: %w", err)
+	}
+
+	return tokensDeleted, nil
+}
+
+// deleteUserRowTx deletes the user row itself, once its dependent rows
+// have gone.
+func deleteUserRowTx(tx *sql.Tx, userID int64, username string) error {
+	result, execErr := tx.Exec("DELETE FROM users WHERE id = ?", userID)
+	if execErr != nil {
+		return fmt.Errorf("failed to delete user: %w", execErr)
+	}
+	rows, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("failed to get rows affected: %w", rowsErr)
+	}
+	if rows == 0 {
+		// This should be unreachable because the caller already looked
+		// the user up, but guard against races anyway.
+		return fmt.Errorf("user '%s' not found", username)
+	}
 
 	return nil
 }

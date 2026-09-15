@@ -1540,69 +1540,132 @@ func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
 		}
 	}()
 
-	// Collect the set of (id, token_hash) pairs that match. We need
-	// token_hash so we can clean up connection_sessions rows, which
-	// are keyed on the raw hash and have no declared FK.
-	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
-	selectStmt := "SELECT id, token_hash FROM tokens WHERE " + whereClause
-	rows, queryErr := tx.Query(selectStmt, args...)
-	if queryErr != nil {
-		return fmt.Errorf("failed to query tokens: %w", queryErr)
-	}
-	type tokenRef struct {
-		id   int64
-		hash string
-	}
-	var matches []tokenRef
-	for rows.Next() {
-		var ref tokenRef
-		if scanErr := rows.Scan(&ref.id, &ref.hash); scanErr != nil {
-			rows.Close()
-			err = fmt.Errorf("failed to scan token row: %w", scanErr)
-			return err
-		}
-		matches = append(matches, ref)
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		rows.Close()
-		err = fmt.Errorf("error iterating tokens: %w", rowsErr)
+	matches, matchErr := matchedTokenRefsTx(tx, whereClause, args)
+	if matchErr != nil {
+		err = matchErr
 		return err
 	}
-	rows.Close()
 
 	if len(matches) == 0 {
-		if notFoundMsg != "" {
-			err = fmt.Errorf("%s", notFoundMsg)
-		} else {
-			err = fmt.Errorf("token not found")
-		}
+		err = tokenFilterNotFound(notFoundMsg)
 		return err
 	}
 
 	// Attribute any failure from here on to the first matched token.
-	first := matches[0].id
-	target = &auditTarget{
-		action:     "token.delete",
-		targetType: "token",
-		targetID:   &first,
-	}
-	if annotation, ok := tokenAnnotationTx(tx, first); ok {
-		target.targetName = annotation
-	}
+	target = firstMatchTarget(tx, matches[0].id)
 
 	// Capture the before state of every matched token, scopes included,
 	// while the rows are still there to read.
+	snapshots, snapErr := tokenDeleteSnapshotsTx(tx, matches)
+	if snapErr != nil {
+		err = snapErr
+		return err
+	}
+
+	if depErr := deleteTokenDependentsTx(tx, matches); depErr != nil {
+		err = depErr
+		return err
+	}
+
+	// Delete the token rows themselves.
+	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
+	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
+	if _, execErr := tx.Exec(deleteStmt, args...); execErr != nil {
+		err = fmt.Errorf("failed to delete tokens: %w", execErr)
+		return err
+	}
+
+	if auditErr := s.recordTokenDeletions(tx, actor, snapshots); auditErr != nil {
+		err = auditErr
+		return err
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit token deletion: %w", commitErr)
+		return err
+	}
+
+	return nil
+}
+
+// tokenRef identifies one matched token by id and by the raw hash the
+// connection_sessions rows are keyed on.
+type tokenRef struct {
+	id   int64
+	hash string
+}
+
+// matchedTokenRefsTx collects the set of (id, token_hash) pairs matched
+// by the filter. We need token_hash so we can clean up
+// connection_sessions rows, which are keyed on the raw hash and have no
+// declared FK. The whereClause carries the same no-user-text contract
+// as deleteTokensByFilter's.
+func matchedTokenRefsTx(tx *sql.Tx, whereClause string, args []any) ([]tokenRef,
+	error) {
+
+	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
+	selectStmt := "SELECT id, token_hash FROM tokens WHERE " + whereClause
+	rows, queryErr := tx.Query(selectStmt, args...)
+	if queryErr != nil {
+		return nil, fmt.Errorf("failed to query tokens: %w", queryErr)
+	}
+	defer rows.Close()
+
+	var matches []tokenRef
+	for rows.Next() {
+		var ref tokenRef
+		if scanErr := rows.Scan(&ref.id, &ref.hash); scanErr != nil {
+			return nil, fmt.Errorf("failed to scan token row: %w", scanErr)
+		}
+		matches = append(matches, ref)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("error iterating tokens: %w", rowsErr)
+	}
+
+	return matches, nil
+}
+
+// tokenFilterNotFound builds the error returned when a filter matches
+// no rows: the caller's message when it supplied one, and a generic
+// "token not found" otherwise so callers can chain filters.
+func tokenFilterNotFound(notFoundMsg string) error {
+	if notFoundMsg != "" {
+		return fmt.Errorf("%s", notFoundMsg)
+	}
+
+	return fmt.Errorf("token not found")
+}
+
+// firstMatchTarget builds the audit target a failure is attributed to
+// once at least one token has matched the filter.
+func firstMatchTarget(tx *sql.Tx, id int64) *auditTarget {
+	target := &auditTarget{
+		action:     "token.delete",
+		targetType: "token",
+		targetID:   &id,
+	}
+	if annotation, ok := tokenAnnotationTx(tx, id); ok {
+		target.targetName = annotation
+	}
+
+	return target
+}
+
+// tokenDeleteSnapshotsTx captures the before state of every matched
+// token, scopes included, while the rows are still there to read.
+func tokenDeleteSnapshotsTx(tx *sql.Tx, matches []tokenRef) (
+	[]tokenDeleteSnapshot, error) {
+
 	snapshots := make([]tokenDeleteSnapshot, 0, len(matches))
 	for _, ref := range matches {
 		snap, snapErr := tokenSnapshotTx(tx, ref.id)
 		if snapErr != nil {
-			err = fmt.Errorf("failed to read token: %w", snapErr)
-			return err
+			return nil, fmt.Errorf("failed to read token: %w", snapErr)
 		}
 		scopes, scopeErr := tokenScopesTx(tx, ref.id)
 		if scopeErr != nil {
-			err = scopeErr
-			return err
+			return nil, scopeErr
 		}
 		snapshots = append(snapshots, tokenDeleteSnapshot{
 			tokenSnapshot: snap,
@@ -1610,8 +1673,13 @@ func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
 		})
 	}
 
-	// Delete the per-token scope rows explicitly (defense in depth;
-	// FK cascades would handle this when the pragma is on).
+	return snapshots, nil
+}
+
+// deleteTokenDependentsTx removes the per-token scope rows explicitly
+// (defense in depth; FK cascades would handle this when the pragma is
+// on) along with the connection_sessions row keyed on each token hash.
+func deleteTokenDependentsTx(tx *sql.Tx, matches []tokenRef) error {
 	scopeTables := []string{
 		"token_connection_scope",
 		"token_mcp_scope",
@@ -1621,40 +1689,34 @@ func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
 		for _, table := range scopeTables {
 			//nolint:gosec // table name is from a static allow-list above
 			stmt := "DELETE FROM " + table + " WHERE token_id = ?"
-			if _, err = tx.Exec(stmt, ref.id); err != nil {
+			if _, err := tx.Exec(stmt, ref.id); err != nil {
 				return fmt.Errorf("failed to delete %s rows: %w", table, err)
 			}
 		}
 		// Clear the connection_sessions row keyed on this hash.
-		if _, err = tx.Exec(
+		if _, err := tx.Exec(
 			"DELETE FROM connection_sessions WHERE token_hash = ?", ref.hash,
 		); err != nil {
 			return fmt.Errorf("failed to delete connection session: %w", err)
 		}
 	}
 
-	// Delete the token rows themselves.
-	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
-	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
-	if _, err = tx.Exec(deleteStmt, args...); err != nil {
-		return fmt.Errorf("failed to delete tokens: %w", err)
-	}
+	return nil
+}
 
-	// Record one event per deleted token, so that a hash-prefix filter
-	// matching several tokens leaves a row for each of them.
+// recordTokenDeletions records one event per deleted token, so that a
+// hash-prefix filter matching several tokens leaves a row for each of
+// them.
+func (s *AuthStore) recordTokenDeletions(tx *sql.Tx, actor Actor,
+	snapshots []tokenDeleteSnapshot) error {
+
 	for i := range snapshots {
 		snap := snapshots[i]
 		if auditErr := s.recordAudit(tx, newEvent(actor, "token.delete", "token",
 			&snap.ID, snap.Annotation,
 			map[string]any{"before": snap})); auditErr != nil {
-			err = auditErr
-			return err
+			return auditErr
 		}
-	}
-
-	if commitErr := tx.Commit(); commitErr != nil {
-		err = fmt.Errorf("failed to commit token deletion: %w", commitErr)
-		return err
 	}
 
 	return nil

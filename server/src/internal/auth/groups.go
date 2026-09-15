@@ -248,78 +248,22 @@ func (s *AuthStore) deleteGroup(actor Actor, id int64) (err error) {
 	}()
 
 	// Look up the group first so we can fail fast on "not found" and
-	// capture the before snapshot for the audit event.
-	before, snapErr := groupSnapshotTx(tx, id)
-	if snapErr != nil {
-		if errors.Is(snapErr, sql.ErrNoRows) {
-			err = fmt.Errorf("group not found: %d", id)
-		} else {
-			err = groupLookupFailed(snapErr)
-		}
+	// capture both the before snapshot and the audit details describing
+	// everything the delete is about to remove.
+	before, details, beforeErr := groupDeleteBeforeTx(tx, id)
+	if beforeErr != nil {
+		err = beforeErr
 		return err
 	}
 	target.targetName = before.Name
 
-	// Record everything the delete is about to remove, before the
-	// dependent rows go, so the event says what access was lost.
-	details, detailsErr := groupDeleteDetailsTx(tx, before)
-	if detailsErr != nil {
-		err = detailsErr
+	if depErr := deleteGroupDependentsTx(tx, id); depErr != nil {
+		err = depErr
 		return err
 	}
 
-	// Remove the group's membership rows. A group can appear either as the
-	// parent_group_id (its own direct members) or as a nested
-	// member_group_id inside another group; both sides must be cleared.
-	if _, execErr := tx.Exec(
-		"DELETE FROM group_memberships WHERE parent_group_id = ? OR member_group_id = ?",
-		id, id,
-	); execErr != nil {
-		err = fmt.Errorf("failed to delete group memberships: %w", execErr)
-		return err
-	}
-
-	// Remove MCP privilege grants held by this group.
-	if _, execErr := tx.Exec(
-		"DELETE FROM group_mcp_privileges WHERE group_id = ?", id,
-	); execErr != nil {
-		err = fmt.Errorf("failed to delete group MCP privileges: %w", execErr)
-		return err
-	}
-
-	// Remove connection privilege grants held by this group.
-	if _, execErr := tx.Exec(
-		"DELETE FROM connection_privileges WHERE group_id = ?", id,
-	); execErr != nil {
-		err = fmt.Errorf("failed to delete group connection privileges: %w", execErr)
-		return err
-	}
-
-	// Remove admin permission grants held by this group.
-	if _, execErr := tx.Exec(
-		"DELETE FROM group_admin_permissions WHERE group_id = ?", id,
-	); execErr != nil {
-		err = fmt.Errorf("failed to delete group admin permissions: %w", execErr)
-		return err
-	}
-
-	// Finally, delete the group itself. We use RowsAffected on this
-	// statement to report the "not found" case; the dependent deletes
-	// above are no-ops when the group never existed, so they cannot
-	// mask a missing-group error here.
-	result, execErr := tx.Exec("DELETE FROM user_groups WHERE id = ?", id)
-	if execErr != nil {
-		err = fmt.Errorf("failed to delete group: %w", execErr)
-		return err
-	}
-
-	rows, rowsErr := result.RowsAffected()
-	if rowsErr != nil {
-		err = fmt.Errorf("failed to get rows affected: %w", rowsErr)
-		return err
-	}
-	if rows == 0 {
-		err = fmt.Errorf("group not found: %d", id)
+	if rowErr := deleteGroupRowTx(tx, id); rowErr != nil {
+		err = rowErr
 		return err
 	}
 
@@ -332,6 +276,89 @@ func (s *AuthStore) deleteGroup(actor Actor, id int64) (err error) {
 	if commitErr := tx.Commit(); commitErr != nil {
 		err = fmt.Errorf("failed to commit group deletion: %w", commitErr)
 		return err
+	}
+
+	return nil
+}
+
+// groupDeleteBeforeTx captures the state a group delete is about to
+// destroy: the group's own snapshot, and the audit details listing the
+// memberships, privileges and permissions that go with it. It is read
+// before any dependent row is removed, so the event says what access
+// was lost.
+func groupDeleteBeforeTx(tx *sql.Tx, id int64) (groupSnapshot, map[string]any,
+	error) {
+
+	before, snapErr := groupSnapshotTx(tx, id)
+	if snapErr != nil {
+		if errors.Is(snapErr, sql.ErrNoRows) {
+			return before, nil, fmt.Errorf("group not found: %d", id)
+		}
+		return before, nil, groupLookupFailed(snapErr)
+	}
+
+	details, detailsErr := groupDeleteDetailsTx(tx, before)
+	if detailsErr != nil {
+		return before, nil, detailsErr
+	}
+
+	return before, details, nil
+}
+
+// deleteGroupDependentsTx removes every row that references the group:
+// its membership rows on both sides, its MCP and connection privilege
+// grants, and its admin permission grants.
+func deleteGroupDependentsTx(tx *sql.Tx, id int64) error {
+	// Remove the group's membership rows. A group can appear either as the
+	// parent_group_id (its own direct members) or as a nested
+	// member_group_id inside another group; both sides must be cleared.
+	if _, execErr := tx.Exec(
+		"DELETE FROM group_memberships WHERE parent_group_id = ? OR member_group_id = ?",
+		id, id,
+	); execErr != nil {
+		return fmt.Errorf("failed to delete group memberships: %w", execErr)
+	}
+
+	// Remove MCP privilege grants held by this group.
+	if _, execErr := tx.Exec(
+		"DELETE FROM group_mcp_privileges WHERE group_id = ?", id,
+	); execErr != nil {
+		return fmt.Errorf("failed to delete group MCP privileges: %w", execErr)
+	}
+
+	// Remove connection privilege grants held by this group.
+	if _, execErr := tx.Exec(
+		"DELETE FROM connection_privileges WHERE group_id = ?", id,
+	); execErr != nil {
+		return fmt.Errorf("failed to delete group connection privileges: %w", execErr)
+	}
+
+	// Remove admin permission grants held by this group.
+	if _, execErr := tx.Exec(
+		"DELETE FROM group_admin_permissions WHERE group_id = ?", id,
+	); execErr != nil {
+		return fmt.Errorf("failed to delete group admin permissions: %w", execErr)
+	}
+
+	return nil
+}
+
+// deleteGroupRowTx deletes the group row itself. We use RowsAffected on
+// this statement to report the "not found" case; the dependent deletes
+// are no-ops when the group never existed, so they cannot mask a
+// missing-group error here.
+func deleteGroupRowTx(tx *sql.Tx, id int64) error {
+	result, execErr := tx.Exec("DELETE FROM user_groups WHERE id = ?", id)
+	if execErr != nil {
+		return fmt.Errorf("failed to delete group: %w", execErr)
+	}
+
+	rows, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("failed to get rows affected: %w", rowsErr)
+	}
+	if rows == 0 {
+		return fmt.Errorf("group not found: %d", id)
 	}
 
 	return nil

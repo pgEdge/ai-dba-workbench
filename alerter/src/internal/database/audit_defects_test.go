@@ -404,7 +404,6 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 		"pg_stat_replication.replay_lag_seconds",
 		"pg_stat_replication.standby_disconnected",
 		"pg_stat_statements.slow_query_count",
-		"table_bloat_ratio",
 		"table_last_autovacuum_hours",
 	}
 	// Both slices are sorted, so a positional diff names the first
@@ -475,7 +474,7 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 // assumption this test relies on.
 //
 // The query SHOULD reduce to the most recent interval, as
-// deadlocks_delta and temp_files_delta do with MAX()/GROUP BY.
+// deadlocks_delta and temp_files_delta do with SUM()/GROUP BY.
 func TestAuditC8CacheHitRatioReturnsEveryDeltaRow(t *testing.T) {
 	ds, pool, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()

@@ -178,12 +178,23 @@ type AnomalyCandidate struct {
 	ProcessedAt   *time.Time `json:"processed_at,omitempty"`
 }
 
-// HistoricalMetricValue represents a metric value with timestamp for baseline calculation
+// HistoricalMetricValue represents a metric value with timestamp for
+// baseline calculation.
+//
+// SampleCount is the number of raw collector samples the row aggregates.
+// It is 1 for every query that returns one row per sample, and larger for
+// the hourly bucketed queries (the pg_stat_database deadlock and
+// temporary file counts) where one row covers a whole hour. Baseline
+// warmup is configured in samples, so calculateAllBaseline sums this
+// field rather than counting rows; a zero or negative value is read as 1
+// so a hand-built value without it still counts as one sample. See
+// GitHub issue #409.
 type HistoricalMetricValue struct {
 	ConnectionID int
 	DatabaseName *string
 	Value        float64
 	CollectedAt  time.Time
+	SampleCount  int64
 }
 
 // MetricValue represents a metric value for a specific connection

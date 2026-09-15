@@ -3214,6 +3214,60 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #11 finishes the fixed-window realignment that #8 began.
+	// See GitHub issue #409.
+	//
+	// deadlocks_detected and temp_files_created previously reported the
+	// increase seen between two consecutive samples, so their meaning
+	// changed with the probe interval. The alerter now sums positive
+	// per-sample deltas over a one hour window, and the descriptions and
+	// units state that. Thresholds are untouched: more than zero
+	// deadlocks and more than 100 temporary files per hour keep their
+	// meaning under the new window, and any operator tuning survives.
+	//
+	// table_bloat_ratio duplicated dead_tuple_ratio with a different
+	// denominator and its registry entry is removed. The rule row stays
+	// so historical alerts remain attributable, but it is disabled and
+	// its open alerts are cleared the same way the alerter resolves one.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     11,
+		Description: "Report deadlocks and temporary files per hour and retire table_bloat_ratio",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				UPDATE alert_rules
+				SET description = 'Deadlocks detected in the last hour',
+				    metric_unit = 'deadlocks/hour'
+				WHERE name = 'deadlocks_detected'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET description = 'Temporary files created in the last hour exceed the threshold; usually means work_mem is too small for sort and hash operations',
+				    metric_unit = 'files/hour'
+				WHERE name = 'temp_files_created'
+				  AND is_built_in;
+
+				UPDATE alert_rules
+				SET default_enabled = FALSE,
+				    description = 'Retired: duplicated dead_tuple_ratio with a different denominator. Kept so historical alerts remain attributable.'
+				WHERE name = 'table_bloat_ratio'
+				  AND is_built_in;
+
+				UPDATE alerts
+				SET status = 'cleared',
+				    cleared_at = NOW()
+				WHERE status IN ('active', 'acknowledged')
+				  AND rule_id = (SELECT id FROM alert_rules WHERE name = 'table_bloat_ratio');
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to realign deadlock and temporary file alert rules and retire table_bloat_ratio: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

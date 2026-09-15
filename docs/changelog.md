@@ -137,6 +137,28 @@ project adheres to
 
 ### Changed
 
+- Count deadlocks and temporary files per hour in the alerter. The
+  `deadlocks_detected` and `temp_files_created` rules compared the
+  change in `pg_stat_database` between two consecutive samples
+  against their thresholds, so the value they evaluated depended on
+  the probe interval, and a counter reset could produce a negative
+  delta. Both rules now sum the positive changes recorded in the
+  last hour for each database, in line with the checkpoint and
+  archive rules, and report their units as `deadlocks/hour` and
+  `files/hour`. The thresholds themselves are untouched, and so are
+  any operator overrides, but `temp_files_created` now compares its
+  threshold of 100 against a much larger number: at the shipped
+  `pg_stat_database` sampling interval of 300 seconds, twelve
+  samples fall inside the window, so a database that steadily
+  creates 300 temporary files an hour reported about 25 before this
+  release and reports 300 now. That rule will fire on databases
+  where it never fired before. To keep the previous sensitivity,
+  multiply the threshold by 3600 divided by the sampling interval
+  in seconds, which gives a threshold of 1200 at the default
+  interval. The `deadlocks_detected` rule is unaffected, because
+  its threshold of 0 fired on any positive change under the old
+  comparison as well. (#409)
+
 - Extend the `-show-group-privileges` CLI command to also display a
   group's admin permissions, alongside the MCP and connection
   privileges it already reports. (#303)
@@ -257,6 +279,15 @@ project adheres to
   with `time_start` and `time_end` resolves through the same rules as
   `/api/v1/metrics/query`, so the server dashboard's Cache Hit Ratio
   tile follows a custom range like every other panel. (#401)
+- Enforce the `required_extension` field on alert rules. The alerter
+  stored the field but never checked it, so rules that depend on
+  `pg_stat_statements`, `system_stats` or Spock were evaluated against
+  every connection. The alerter now reads the newest
+  `metrics.pg_extension` snapshot for each connection and skips
+  connections that lack the extension. An existing alert on a
+  connection that lacks the extension is left active rather than
+  resolved, so uninstalling an extension no longer reports the
+  underlying condition as cleared. (#409)
 
 - Stop the `test` and `coverage` targets in the server, collector and
   alerter Makefiles running `pkill -9` against every matching process
@@ -647,6 +678,15 @@ project adheres to
   instead of aborting startup. (#421)
 
 ### Removed
+
+- Retire the `table_bloat_ratio` alert rule, which duplicated the
+  `dead_tuple_ratio` rule with a different denominator and fired on
+  the same tables at a different threshold. The built-in rule is now
+  disabled by default and its metric is no longer collected by the
+  alerter; the rule definition remains so that historical alerts stay
+  attributable, and any of its alerts that were active at upgrade
+  time are cleared. Use `dead_tuple_ratio` to monitor table
+  maintenance. (#409)
 
 - Remove 48 unused functions from the collector, server, and alerter,
   along with the tests that existed only to exercise them. A

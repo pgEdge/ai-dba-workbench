@@ -28,19 +28,74 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 		return
 	}
 
+	// Rules with a required_extension are gated on the connections whose
+	// newest pg_extension snapshot lists it. Resolve that set once per
+	// rule for the whole pass, as the evaluator does, rather than once
+	// per alert.
+	gates := e.resolveExtensionGates(ctx, alerts)
+
 	for _, alert := range alerts {
 		if ctx.Err() != nil {
 			return
 		}
 
 		if alert.AlertType == "threshold" && alert.RuleID != nil {
-			e.checkAlertResolved(ctx, alert)
+			e.checkAlertResolved(ctx, alert, gates[*alert.RuleID])
 		}
 	}
 }
 
-// checkAlertResolved checks if a threshold alert's condition has resolved
-func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) {
+// resolveExtensionGates maps the rule id of each active threshold alert
+// to the set of connections on which that rule may be evaluated, or to
+// nil when the rule has no required_extension and no gate applies.
+//
+// Each rule is loaded once per cleanup pass and each extension resolved
+// once, so a pass costs one GetAlertRuleByID per distinct rule and one
+// GetConnectionsWithExtension per distinct extension however many alerts
+// are active. A rule that cannot be loaded, or an extension that cannot
+// be resolved, is logged and left ungated: a datastore fault must not
+// pin a whole class of alerts open. See GitHub issue #409.
+func (e *Engine) resolveExtensionGates(ctx context.Context, alerts []*database.Alert) map[int64]map[int]bool {
+	gates := make(map[int64]map[int]bool)
+	byExtension := make(map[string]map[int]bool)
+
+	for _, alert := range alerts {
+		if alert.AlertType != "threshold" || alert.RuleID == nil {
+			continue
+		}
+		if _, seen := gates[*alert.RuleID]; seen {
+			continue
+		}
+		gates[*alert.RuleID] = nil
+
+		rule, err := e.datastore.GetAlertRuleByID(ctx, *alert.RuleID)
+		if err != nil {
+			e.log("ERROR: Failed to load rule %d for alert %d, checking resolution without the extension gate: %v",
+				*alert.RuleID, alert.ID, err)
+			continue
+		}
+		if rule.RequiredExtension == nil || *rule.RequiredExtension == "" {
+			continue
+		}
+
+		ext := *rule.RequiredExtension
+		if set, resolved := byExtension[ext]; resolved {
+			gates[*alert.RuleID] = set
+			continue
+		}
+		set := e.connectionsWithRequiredExtension(ctx, rule)
+		byExtension[ext] = set
+		gates[*alert.RuleID] = set
+	}
+
+	return gates
+}
+
+// checkAlertResolved checks if a threshold alert's condition has
+// resolved. withExtension is the set of connections on which the alert's
+// rule may be evaluated, as resolved by resolveExtensionGates, or nil
+// when no extension gate applies.
+func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, withExtension map[int]bool) {
 	if alert.MetricName == nil || alert.ThresholdValue == nil || alert.Operator == nil {
 		return
 	}
@@ -50,6 +105,19 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert) 
 	// bespoke resolution check too.
 	if alert.ProbeName != nil {
 		e.checkStalenessAlertResolved(ctx, alert)
+		return
+	}
+
+	// An alert whose rule needs an extension the connection no longer
+	// reports is not resolved: the condition may well persist, the
+	// alerter simply cannot see it any more. Leave it active rather than
+	// clearing it. The trade-off is that an operator who uninstalls the
+	// extension keeps the alert until they acknowledge or clear it, which
+	// is preferable to silently reporting the condition resolved. See
+	// GitHub issue #409.
+	if withExtension != nil && !withExtension[alert.ConnectionID] {
+		e.debugLog("Leaving alert %d active: connection %d does not report the extension its rule requires",
+			alert.ID, alert.ConnectionID)
 		return
 	}
 

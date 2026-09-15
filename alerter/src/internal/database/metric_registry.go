@@ -24,6 +24,14 @@ type historicalScanType int
 const (
 	historicalScanBasic  historicalScanType = iota // (connection_id, database_name, value, collected_at) where database_name is NULL
 	historicalScanWithDB                           // (connection_id, database_name, value, collected_at) where database_name is a string
+
+	// historicalScanWithDBAndSamples is historicalScanWithDB plus a
+	// trailing sample_count column: (connection_id, database_name, value,
+	// collected_at, sample_count). It is for queries whose rows aggregate
+	// several raw samples into one bucket, so the count of underlying
+	// samples can no longer be inferred from the number of rows. See
+	// GitHub issue #409.
+	historicalScanWithDBAndSamples
 )
 
 // metricQueryConfig holds SQL and scan type for a metric
@@ -848,6 +856,26 @@ var metricRegistry = map[string]metricQueryConfig{
 		historicalScan: historicalScanWithDB,
 	},
 
+	// The value is the number of deadlocks detected in the last hour, per
+	// connection and database. The previous query took the largest
+	// increase between two consecutive samples inside a 15 minute window,
+	// so the figure depended on the probe interval and a connection with a
+	// single sample in the window returned no row at all.
+	//
+	// Summing positive per-sample deltas over an hour gives an absolute
+	// count that does not change when the probe interval does; negative
+	// deltas from a stats reset contribute zero, and a connection with a
+	// single sample reports 0 instead of vanishing from the result set.
+	// The historical query feeds baselines with the same per-hour figure,
+	// one row per connection, database and hour bucket. Both queries
+	// filter inside the aggregate rather than in a WHERE clause, so a
+	// bucket whose only sample has no predecessor reports 0 instead of
+	// disappearing, which matters for a newly onboarded connection. The
+	// buckets are cut with date_trunc on the UTC value of collected_at
+	// because the collector stores UTC and the alerter's session TimeZone
+	// is whatever the server GUC says. Each row also carries the number of
+	// raw samples it aggregates, so baseline warmup still counts samples
+	// rather than buckets. See GitHub issue #409.
 	"pg_stat_database.deadlocks_delta": {
 		latestSQL: `
 			WITH db_deadlocks AS (
@@ -860,16 +888,18 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY collected_at
 				       ) as prev_deadlocks
 				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 				  AND datname IS NOT NULL
 				  AND datname NOT LIKE 'template%'
 			)
 			SELECT connection_id,
 			       database_name,
-			       COALESCE(MAX(deadlocks - COALESCE(prev_deadlocks, deadlocks)), 0)::float as value,
+			       COALESCE(
+			           SUM(GREATEST(deadlocks - prev_deadlocks, 0))
+			               FILTER (WHERE prev_deadlocks IS NOT NULL),
+			           0)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM db_deadlocks
-			WHERE prev_deadlocks IS NOT NULL
 			GROUP BY connection_id, database_name
 		`,
 		historicalSQL: `
@@ -885,17 +915,30 @@ var metricRegistry = map[string]metricQueryConfig{
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
-			SELECT connection_id, database_name,
-			       (deadlocks - COALESCE(prev_deadlocks, deadlocks))::float as value,
-			       collected_at
+			SELECT connection_id,
+			       database_name,
+			       COALESCE(
+			           SUM(GREATEST(deadlocks - prev_deadlocks, 0))
+			               FILTER (WHERE prev_deadlocks IS NOT NULL),
+			           0)::float as value,
+			       date_trunc('hour', collected_at AT TIME ZONE 'UTC')
+			           AT TIME ZONE 'UTC' as collected_at,
+			       COUNT(*) as sample_count
 			FROM db_deadlocks
-			WHERE prev_deadlocks IS NOT NULL
+			GROUP BY connection_id, database_name,
+			         date_trunc('hour', collected_at AT TIME ZONE 'UTC')
 			ORDER BY connection_id, database_name, collected_at
 		`,
 		scan:           scanWithDB,
-		historicalScan: historicalScanWithDB,
+		historicalScan: historicalScanWithDBAndSamples,
 	},
 
+	// The value is the number of temporary files created in the last
+	// hour, per connection and database. Same shape and reasoning as the
+	// deadlocks entry above, including the hourly historical buckets, the
+	// UTC truncation and the per-bucket sample count: the per-sample MAX()
+	// over 15 minutes depended on the probe interval and dropped
+	// single-sample connections. See GitHub issue #409.
 	"pg_stat_database.temp_files_delta": {
 		latestSQL: `
 			WITH db_temp_files AS (
@@ -908,16 +951,18 @@ var metricRegistry = map[string]metricQueryConfig{
 				           ORDER BY collected_at
 				       ) as prev_temp_files
 				FROM metrics.pg_stat_database
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
+				WHERE collected_at > NOW() - INTERVAL '1 hour'
 				  AND datname IS NOT NULL
 				  AND datname NOT LIKE 'template%'
 			)
 			SELECT connection_id,
 			       database_name,
-			       COALESCE(MAX(temp_files - COALESCE(prev_temp_files, temp_files)), 0)::float as value,
+			       COALESCE(
+			           SUM(GREATEST(temp_files - prev_temp_files, 0))
+			               FILTER (WHERE prev_temp_files IS NOT NULL),
+			           0)::float as value,
 			       MAX(collected_at) as collected_at
 			FROM db_temp_files
-			WHERE prev_temp_files IS NOT NULL
 			GROUP BY connection_id, database_name
 		`,
 		historicalSQL: `
@@ -933,15 +978,22 @@ var metricRegistry = map[string]metricQueryConfig{
 				  AND m.datname IS NOT NULL
 				  AND m.datname NOT LIKE 'template%'
 			)
-			SELECT connection_id, database_name,
-			       (temp_files - COALESCE(prev_temp_files, temp_files))::float as value,
-			       collected_at
+			SELECT connection_id,
+			       database_name,
+			       COALESCE(
+			           SUM(GREATEST(temp_files - prev_temp_files, 0))
+			               FILTER (WHERE prev_temp_files IS NOT NULL),
+			           0)::float as value,
+			       date_trunc('hour', collected_at AT TIME ZONE 'UTC')
+			           AT TIME ZONE 'UTC' as collected_at,
+			       COUNT(*) as sample_count
 			FROM db_temp_files
-			WHERE prev_temp_files IS NOT NULL
+			GROUP BY connection_id, database_name,
+			         date_trunc('hour', collected_at AT TIME ZONE 'UTC')
 			ORDER BY connection_id, database_name, collected_at
 		`,
 		scan:           scanWithDB,
-		historicalScan: historicalScanWithDB,
+		historicalScan: historicalScanWithDBAndSamples,
 	},
 
 	"pg_stat_statements.slow_query_count": {
@@ -1148,56 +1200,6 @@ var metricRegistry = map[string]metricQueryConfig{
 		`,
 		historicalSQL:  "",
 		scan:           scanBasic,
-		historicalScan: historicalScanBasic,
-	},
-
-	"table_bloat_ratio": {
-		latestSQL: `
-			WITH recent_tables AS (
-				SELECT connection_id,
-				       database_name,
-				       schemaname,
-				       relname,
-				       n_live_tup,
-				       n_dead_tup,
-				       collected_at,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name, schemaname, relname
-				           ORDER BY collected_at DESC
-				       ) as rn
-				FROM metrics.pg_stat_all_tables
-				WHERE collected_at > NOW() - INTERVAL '15 minutes'
-				  AND n_live_tup >= 1000
-				  AND schemaname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
-			),
-			calculated AS (
-				SELECT connection_id,
-				       database_name,
-				       schemaname,
-				       relname,
-				       (n_dead_tup::float / NULLIF(n_live_tup, 0)) * 100 as bloat_ratio,
-				       collected_at
-				FROM recent_tables
-				WHERE rn = 1
-			),
-			ranked AS (
-				SELECT *,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY connection_id, database_name
-				           ORDER BY bloat_ratio DESC
-				       ) as rank
-				FROM calculated
-			)
-			SELECT connection_id,
-			       database_name,
-			       schemaname || '.' || relname as object_name,
-			       bloat_ratio::float as value,
-			       collected_at
-			FROM ranked
-			WHERE rank = 1
-		`,
-		historicalSQL:  "",
-		scan:           scanWithDBObject,
 		historicalScan: historicalScanBasic,
 	},
 

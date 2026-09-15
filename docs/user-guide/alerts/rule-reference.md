@@ -297,9 +297,11 @@ manual vacuum. The alerter excludes tables with fewer
 than 1,000 total tuples from evaluation to reduce noise
 from small catalog and system tables.
 
-### High Table Bloat
+### High Table Bloat (Retired)
 
-This rule alerts when table bloat exceeds the threshold.
+This rule is retired and disabled by default. The
+alerter no longer collects the `table_bloat_ratio`
+metric, so enabling the rule produces no alerts.
 
 | Property | Value |
 |----------|-------|
@@ -308,9 +310,13 @@ This rule alerts when table bloat exceeds the threshold.
 | Default Threshold | 50 |
 | Default Severity | warning |
 
-Table bloat reduces query performance and wastes
-storage. Consider running `VACUUM FULL` during a
-maintenance window.
+The rule duplicated the High Dead Tuple Percentage rule
+with a different denominator, so the two rules fired on
+the same tables at different thresholds. The rule
+definition remains in the datastore so that historical
+alerts stay attributable, and any alerts that were active
+at upgrade time are cleared. Use the High Dead Tuple
+Percentage rule to monitor table maintenance.
 
 ### Stale Autovacuum
 
@@ -382,7 +388,8 @@ interval to avoid noise from idle databases.
 
 ### Deadlocks Detected
 
-This rule alerts when deadlocks occur.
+This rule alerts when deadlocks have occurred in the
+last hour.
 
 | Property | Value |
 |----------|-------|
@@ -390,6 +397,15 @@ This rule alerts when deadlocks occur.
 | Operator | `>` |
 | Default Threshold | 0 |
 | Default Severity | warning |
+| Unit | deadlocks/hour |
+
+The value counts the deadlocks recorded for each database
+in the last hour, so the result does not depend on how
+often the collector samples `pg_stat_database`. A reset
+of the database statistics contributes no deadlocks. The
+hourly window does not change when this rule fires: with
+a threshold of 0, any deadlock at all raised an alert
+under the previous comparison too.
 
 Deadlocks indicate lock ordering problems in the
 application. Review the application logic to prevent
@@ -397,15 +413,34 @@ deadlocks.
 
 ### High Temporary File Usage
 
-This rule alerts when temporary file creation exceeds
-the threshold.
+This rule alerts when the number of temporary files
+created in the last hour exceeds the threshold.
 
 | Property | Value |
 |----------|-------|
 | Metric | `pg_stat_database.temp_files_delta` |
 | Operator | `>` |
-| Default Threshold | 10 |
+| Default Threshold | 100 |
 | Default Severity | warning |
+| Unit | files/hour |
+
+The value counts the temporary files created for each
+database in the last hour, so the result does not depend
+on how often the collector samples `pg_stat_database`. A
+reset of the database statistics contributes no files.
+
+The hourly window makes this rule considerably more
+sensitive than it was. The rule previously compared the
+threshold against the change between two consecutive
+samples, and at the default sampling interval of 300
+seconds twelve samples fall inside an hour. A database
+that steadily creates 300 temporary files an hour
+reported about 25 under the old comparison and reports
+300 now, so the rule fires on databases where it did not
+fire before. To keep the previous sensitivity, multiply
+the threshold by 3600 divided by the sampling interval
+in seconds; at the default interval, that gives a
+threshold of 1200.
 
 Temporary files are created when `work_mem` is
 insufficient for sort and hash operations. Consider

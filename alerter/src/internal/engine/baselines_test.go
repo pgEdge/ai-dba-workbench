@@ -13,6 +13,7 @@ import (
 	"context"
 	"math"
 	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -750,6 +751,52 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 	}
 }
 
+// allowedTestDatabase matches the database names the integration tests
+// may target: "ai_workbench" for local development, the per-task
+// "ai_workbench_<tag>" databases that concurrent local sessions use so
+// their schema resets do not collide, and "postgres" for CI, which is
+// the default database the postgres Docker image creates.
+//
+// The tag must be lower-case alphanumeric and must contain at least one
+// digit, because every tag a session actually generates is derived from
+// an issue, pull request or session number ("pr455", "issue409",
+// "sess2"), whilst the production-shaped names this guard exists to
+// refuse are words: "ai_workbench_prod", "ai_workbench_live",
+// "ai_workbench_staging" and "ai_workbench_demo" all fail the digit
+// requirement. The expression is copied verbatim from the shared
+// requireLocalTestDSN helper on the #407 branch so the two reconcile
+// when that lands.
+var allowedTestDatabase = regexp.MustCompile(
+	`^(ai_workbench(_[a-z0-9]*[0-9][a-z0-9]*)?|postgres)$`)
+
+// TestAllowedTestDatabase pins the allowlist. It matters that plausible
+// real database names are refused, because the loopback host check alone
+// would happily let a test wipe a production schema reached over an SSH
+// tunnel or a local port forward; "ai_workbench_prod" is the example
+// production name in the getting-started configuration pages and in
+// every file under examples/.
+func TestAllowedTestDatabase(t *testing.T) {
+	allowed := []string{
+		"ai_workbench", "ai_workbench_pr455", "ai_workbench_issue409",
+		"ai_workbench_sess2", "postgres",
+	}
+	refused := []string{
+		"ai_workbench_prod", "ai_workbench_live", "ai_workbench_staging",
+		"ai_workbench_demo", "ai_workbench_", "ai_workbench_PR455",
+		"workbench", "postgres_prod", "",
+	}
+	for _, name := range allowed {
+		if !allowedTestDatabase.MatchString(name) {
+			t.Errorf("database %q should be allowed", name)
+		}
+	}
+	for _, name := range refused {
+		if allowedTestDatabase.MatchString(name) {
+			t.Errorf("database %q should be refused", name)
+		}
+	}
+}
+
 // assertLocalTestDSN fails the test fast if the supplied DSN points
 // at anything other than a local loopback host and one of the known
 // safe test database names. CLAUDE.local.md is explicit that the
@@ -757,9 +804,10 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 // Postgres; the destructive DDL embedded in the integration schemas
 // would wipe any other instance the env var resolved to. The
 // loopback-only host check is the primary safety net. The database
-// allowlist is intentionally tiny: "ai_workbench" for local dev and
-// "postgres" for CI (the default database created by the postgres
-// Docker image). Shared across integration helpers in the engine
+// allowlist is intentionally narrow: allowedTestDatabase above, which
+// accepts "ai_workbench" and its numbered per-task variants for local
+// development and "postgres" for CI, and refuses the word-shaped
+// production names. Shared across integration helpers in the engine
 // package.
 func assertLocalTestDSN(t *testing.T, dsn string) {
 	t.Helper()
@@ -767,10 +815,6 @@ func assertLocalTestDSN(t *testing.T, dsn string) {
 		"127.0.0.1": {},
 		"localhost": {},
 		"":          {}, // unix socket; only reachable on this host
-	}
-	allowedDBs := map[string]struct{}{
-		"ai_workbench": {},
-		"postgres":     {},
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -783,10 +827,188 @@ func assertLocalTestDSN(t *testing.T, dsn string) {
 			"TEST_AI_WORKBENCH_SERVER to a "+
 			"postgresql://...@127.0.0.1 DSN", host)
 	}
-	if _, ok := allowedDBs[cfg.ConnConfig.Database]; !ok {
+	if !allowedTestDatabase.MatchString(cfg.ConnConfig.Database) {
 		t.Fatalf("refusing to run destructive integration tests "+
-			"against database %q; expected one of: "+
-			"ai_workbench, postgres",
+			"against database %q; expected ai_workbench, "+
+			"ai_workbench_<tag> where the tag is lower-case "+
+			"alphanumeric and holds at least one digit, or postgres",
 			cfg.ConnConfig.Database)
 	}
+}
+
+// TestTotalSamples verifies that the sample count behind a set of
+// historical rows counts raw collector samples rather than rows, and that
+// a row with an unset count is read as a single sample.
+func TestTotalSamples(t *testing.T) {
+	tests := []struct {
+		name    string
+		samples []database.HistoricalMetricValue
+		want    int64
+	}{
+		{name: "empty", samples: nil, want: 0},
+		{
+			name: "one row per sample",
+			samples: []database.HistoricalMetricValue{
+				{SampleCount: 1}, {SampleCount: 1}, {SampleCount: 1},
+			},
+			want: 3,
+		},
+		{
+			name: "hourly buckets carry their own counts",
+			samples: []database.HistoricalMetricValue{
+				{SampleCount: 12}, {SampleCount: 11}, {SampleCount: 12},
+			},
+			want: 35,
+		},
+		{
+			name: "unset and negative counts read as one sample",
+			samples: []database.HistoricalMetricValue{
+				{SampleCount: 0}, {SampleCount: -3}, {SampleCount: 12},
+			},
+			want: 14,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := totalSamples(tt.samples); got != tt.want {
+				t.Errorf("totalSamples = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMetricValues verifies the float extraction preserves order.
+func TestMetricValues(t *testing.T) {
+	got := metricValues([]database.HistoricalMetricValue{
+		{Value: 3.5}, {Value: 0}, {Value: -2},
+	})
+	want := []float64{3.5, 0, -2}
+	if len(got) != len(want) {
+		t.Fatalf("metricValues length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("metricValues[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestBaselineSampleCountFollowsRawSamples verifies that a bucketed
+// historical feed, where one row covers a whole hour, produces baselines
+// whose sample_count reflects the raw samples behind the buckets rather
+// than the number of buckets.
+//
+// Baseline warmup is configured in samples
+// (anomaly.tier1.warmup.all.min_samples defaults to 100), so counting
+// hourly rows would leave the pg_stat_database deadlock and temporary
+// file baselines permanently cold at the shipped lookback. See GitHub
+// issue #409.
+func TestBaselineSampleCountFollowsRawSamples(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertBaselinesTestConnection(t, pool, "baseline-sample-count-conn")
+
+	// Six hourly buckets of twelve samples each, spaced a week apart so
+	// they share an hour of day and a day of week and the hourly and
+	// daily branches run as well as the 'all' one.
+	base := time.Now().UTC().Truncate(time.Hour).Add(-42 * 24 * time.Hour)
+	var values []database.HistoricalMetricValue
+	for i := 0; i < 6; i++ {
+		values = append(values, database.HistoricalMetricValue{
+			ConnectionID: connID,
+			Value:        float64(i),
+			CollectedAt:  base.Add(time.Duration(i) * 7 * 24 * time.Hour),
+			SampleCount:  12,
+		})
+	}
+	earliest := earliestTimestamp(values)
+
+	engine.calculateAllBaseline(ctx, connID, nil, "bucketed_metric", values, earliest)
+	engine.calculateHourlyBaselines(ctx, connID, nil, "bucketed_metric", values, 3, earliest)
+	engine.calculateDailyBaselines(ctx, connID, nil, "bucketed_metric", values, 3, earliest)
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "bucketed_metric")
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+
+	seen := make(map[string]int64)
+	for _, b := range baselines {
+		seen[b.PeriodType] = b.SampleCount
+	}
+	if got := seen["all"]; got != 72 {
+		t.Errorf("'all' baseline sample_count = %d, want 72 (6 buckets of 12 samples)", got)
+	}
+	if got, ok := seen["hourly"]; !ok || got != 72 {
+		t.Errorf("hourly baseline sample_count = %d (present %v), want 72", got, ok)
+	}
+	if got, ok := seen["daily"]; !ok || got != 72 {
+		t.Errorf("daily baseline sample_count = %d (present %v), want 72", got, ok)
+	}
+}
+
+// TestBaselineSampleCountDefaultsToOnePerRow verifies the unbucketed
+// case is unchanged: a historical feed of one row per sample, with no
+// explicit count, still reports one sample per row.
+func TestBaselineSampleCountDefaultsToOnePerRow(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertBaselinesTestConnection(t, pool, "baseline-per-sample-conn")
+
+	base := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	var values []database.HistoricalMetricValue
+	for i := 0; i < 5; i++ {
+		values = append(values, database.HistoricalMetricValue{
+			ConnectionID: connID,
+			Value:        float64(i),
+			CollectedAt:  base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	engine.calculateAllBaseline(ctx, connID, nil, "per_sample_metric", values,
+		earliestTimestamp(values))
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "per_sample_metric")
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+	if len(baselines) != 1 {
+		t.Fatalf("expected one baseline row, got %d", len(baselines))
+	}
+	if baselines[0].SampleCount != 5 {
+		t.Errorf("sample_count = %d, want 5", baselines[0].SampleCount)
+	}
+}
+
+// TestCalculateAllBaselineEdgeCases covers the two non-happy paths of
+// calculateAllBaseline: an empty sample set writes nothing, and a failed
+// upsert is logged rather than propagated.
+func TestCalculateAllBaselineEdgeCases(t *testing.T) {
+	engine, _, pool, cleanup := newBaselinesIntegrationEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertBaselinesTestConnection(t, pool, "baseline-edge-cases-conn")
+
+	// No samples: the function returns before touching the datastore.
+	engine.calculateAllBaseline(ctx, connID, nil, "empty_metric", nil, time.Time{})
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "empty_metric")
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+	if len(baselines) != 0 {
+		t.Errorf("expected no baseline rows for an empty sample set, got %d", len(baselines))
+	}
+
+	// An unknown connection violates the metric_baselines foreign key, so
+	// the upsert fails; the error is logged and the caller carries on.
+	engine.calculateAllBaseline(ctx, -1, nil, "unknown_conn_metric",
+		[]database.HistoricalMetricValue{{Value: 1, CollectedAt: time.Now().UTC()}},
+		time.Now().UTC())
 }

@@ -656,6 +656,31 @@ was the root cause of issue #405, in which `metric_staleness` alerts were
 cleared by the cleaner and immediately re-raised by the evaluator, once
 per cycle, for as long as a probe stayed stale.
 
+Before the metric is queried, the cleaner applies the same
+`required_extension` gate the evaluator does. `cleanResolvedAlerts` calls
+`resolveExtensionGates` once per pass: it walks the active threshold
+alerts, loads each distinct rule with `GetAlertRuleByID` and, for each
+distinct `required_extension`, asks `GetConnectionsWithExtension`
+(`alerter/src/internal/database/queries.go`) which connections list that
+extension in their newest `metrics.pg_extension` snapshot. The resulting
+rule id to connection set map is passed into `checkAlertResolved`, where
+a nil set means the rule is ungated; a connection outside the set leaves
+the alert active and logs at debug level, because the alerter can no
+longer see the condition rather than knowing it has resolved, so an
+operator who uninstalls the extension keeps the alert until they
+acknowledge or clear it. A failed rule or extension lookup is logged and
+leaves the rule ungated. Resolving per rule rather than per alert keeps a
+pass at one rule lookup per distinct rule and one extension lookup per
+distinct extension however many alerts are open. The evaluator applies
+the same gate the other way round: `evaluateRuleForAllConnections`
+resolves the set once per rule through `connectionsWithRequiredExtension`
+and skips any connection not in it, and a lookup error evaluates without the gate so a datastore
+fault cannot silence every gated rule. The `pg_extension` probe is change
+tracked and stores one snapshot per connection, all databases sharing a
+`collected_at`, so the query keys on `MAX(collected_at)` per connection
+with no time window; a connection with no rows at all is treated as
+lacking the extension on both paths. See GitHub issue #409.
+
 Probe-scoped alerts (those with a non-NULL `probe_name`) never reach the
 registry path at all: `checkAlertResolved` routes them to
 `checkStalenessAlertResolved`, which re-reads
@@ -694,12 +719,41 @@ that follow from that, all learned the hard way in #406:
 
 - Counter deltas are windowed, and the window must comfortably exceed the
   probe interval. Summing positive per-sample deltas over an hour is the
-  pattern to copy (see the archiver and checkpointer entries): it survives
-  a stats reset, it reports 0 rather than dropping the connection when
-  only one sample lands in the window, and it gives the rule an absolute
-  per-hour count rather than a per-probe-interval figure. Rules whose
-  value is a rate should say so in `metric_unit`, for example
-  `checkpoints/hour`.
+  pattern to copy (see the archiver, checkpointer, `deadlocks_delta` and
+  `temp_files_delta` entries): it survives a stats reset, it reports 0
+  rather than dropping the connection when only one sample lands in the
+  window, and it gives the rule an absolute per-hour count rather than a
+  per-probe-interval figure. Rules whose value is a rate should say so in
+  `metric_unit`, for example `checkpoints/hour`. Where such an entry also
+  has a `historicalSQL`, compute the per-sample delta over the whole
+  lookback first and then group by the hour bucket, so baselines see the
+  same per-hour figure the latest query reports and the first sample of
+  an hour is paired with the last of the previous one;
+  `metric_registry_hourly_deltas_integration_test.go` pins the interval
+  independence, reset, single-sample, bucket, session timezone and
+  sample count behaviour. Three details of the historical query are easy
+  to get wrong. Filter inside the aggregate,
+  `SUM(GREATEST(x - prev_x, 0)) FILTER (WHERE prev_x IS NOT NULL)`, as
+  the latest query does: a `WHERE prev_x IS NOT NULL` ahead of the
+  `GROUP BY` drops the whole bucket, so a newly onboarded connection
+  with one sample contributes no baseline row at all instead of a zero.
+  Truncate on the UTC value,
+  `date_trunc('hour', collected_at AT TIME ZONE 'UTC') AT TIME ZONE
+  'UTC'`: nothing pins the alerter's pool to UTC, the collector writes
+  UTC, and a server whose `TimeZone` GUC carries a fractional offset
+  would otherwise cut buckets at half past. Report how many raw samples
+  each bucket covers, through the `historicalScanWithDBAndSamples` scan
+  type and `HistoricalMetricValue.SampleCount`, because
+  `calculateAllBaseline` persists the sum of that field as the
+  baseline's `sample_count` and `anomaly.tier1.warmup.*.min_samples` is
+  counted in samples: one row per hour would leave these baselines short
+  of the default `all` threshold of 100 at the shipped seven day
+  lookback, and unable to warm at all at a lookback of four days or
+  fewer. No
+  registry entry reports a per-probe-interval delta any more (#409), and
+  `table_bloat_ratio` was removed from the registry in the same change:
+  its rule row survives, disabled, so historical alerts stay
+  attributable, and re-enabling it logs "No data for metric" at debug.
 
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and
@@ -712,7 +766,14 @@ Changing a seeded rule's threshold or unit needs a collector migration as
 well as the registry edit, because migration 1 only seeds a fresh install.
 Migration 8 is the worked example: it rewrites descriptions and units
 unconditionally, but only rewrites a threshold that still carries the old
-shipped default, so operator tuning survives the upgrade.
+shipped default, so operator tuning survives the upgrade. Migration 11
+follows the same shape for `deadlocks_detected` and `temp_files_created`
+(hourly units, thresholds untouched) and shows how to retire a built-in
+rule: the row is kept with `default_enabled = FALSE` and a description
+starting `Retired:`, and its `active` and `acknowledged` alerts are set to
+`status = 'cleared', cleared_at = NOW()`, matching the alerter's
+`ClearAlert`. Each such migration has a `migration_vN_test.go` covering
+registration, the fresh-install seed values and the upgrade path.
 
 ## Time-Window Resolution (server)
 
@@ -994,6 +1055,9 @@ run.
   the loopback exclusion in `metricQueryClauses`, and the per-series fill
   policy with nullable points (`MetricDataPoint.Value *float64`,
   `MaxCarryIntervals`) replacing uniform LOCF.
+- #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
+  `required_extension` enforced in evaluation and resolution,
+  `table_bloat_ratio` retired from the registry; collector migration 11.
 - #400: `_delta` (`DerivedDelta`) added alongside `_per_sec` so dashboard
   charts plot per-bucket counter increases instead of cumulative totals.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to

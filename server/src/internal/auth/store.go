@@ -1383,18 +1383,24 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 		return "", time.Time{}, fmt.Errorf("authentication error: %w", err)
 	}
 
-	// Service accounts cannot authenticate with password
-	if user.IsServiceAccount {
-		log.Printf("[AUTH] Authentication failed for user %s: service account cannot use password login", username)
-		return "", time.Time{}, fmt.Errorf("invalid username or password")
-	}
-
-	// Federated accounts authenticate via their identity provider, not a
-	// password held in this store. Reject with the same opaque error the
-	// other failure paths use, so the endpoint does not disclose which
-	// accounts are federated.
-	if user.AuthSource != AuthSourceLocal {
-		log.Printf("[AUTH] Authentication failed for user %s: identity is managed by %s", username, user.AuthSource)
+	// Service accounts cannot authenticate with password, and federated
+	// accounts authenticate via their identity provider rather than a
+	// password held in this store. Both are rejected with the same
+	// opaque error the other failure paths use, so the endpoint does not
+	// disclose which accounts are service accounts or federated, and both
+	// burn a dummy bcrypt comparison before returning so that this path
+	// takes the same time as the real password check below and the
+	// ErrNoRows path above; without it, a federated or service-account
+	// username would return measurably faster and be enumerable via
+	// timing.
+	if user.IsServiceAccount || user.AuthSource != AuthSourceLocal {
+		if user.IsServiceAccount {
+			log.Printf("[AUTH] Authentication failed for user %s: service account cannot use password login", username)
+		} else {
+			log.Printf("[AUTH] Authentication failed for user %s: identity is managed by %s", username, user.AuthSource)
+		}
+		//nolint:errcheck // Result is intentionally ignored
+		bcrypt.CompareHashAndPassword(s.dummyHash, []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 

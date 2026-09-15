@@ -139,8 +139,7 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 
 	if err := h.authStore.RecordDeniedWithDetails(actor, action, reason,
 		details); err != nil {
-		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v",
-			r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
+		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v", r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
 	}
 }
 

@@ -292,6 +292,23 @@ The command reports the account, the issuer, the subject and the stored
 external subject key, and notes that password login is refused for the
 account from that moment.
 
+### Linking Leaves Existing Credentials Working
+
+Linking changes how the account is signed into. It does not revoke
+anything the account already holds, and two kinds of credential
+therefore survive it.
+
+Every API token the account owns keeps working afterwards, at the
+account's full privilege, and nothing about the link limits or expires
+it. An administrator linking an account in order to tighten its
+authentication has not tightened anything until those tokens are dealt
+with: list them with `-list-tokens`, and remove any that should not
+outlive the change with `-remove-token`. This is exactly why the
+default unlink revokes them.
+
+Any session the running server has already issued also keeps working,
+for the reason given in Sessions and the Command Line below.
+
 ### Linking Hands Group Membership to the Provider
 
 A linked account is deliberately indistinguishable from a provisioned
@@ -442,11 +459,12 @@ under the previous identity keeps a working session until it expires,
 so disable the account or restart the server if that person must be
 cut off at once.
 
-Linking never touches the account's API tokens. Unlinking revokes them
-unless `-restore-password` is passed, as described in Unlinking an
-Account above. Linking an account to the identity it already holds
-changes nothing at all, which keeps a configuration-management run that
-reasserts every link from disturbing anybody on each pass.
+Linking never touches the account's API tokens either, as described in
+Linking Leaves Existing Credentials Working above; unlinking revokes
+them unless `-restore-password` is passed. Linking an account to the
+identity it already holds changes nothing at all, which keeps a
+configuration-management run that reasserts every link from disturbing
+anybody on each pass.
 
 ## Mapping Provider Groups to Workbench Groups
 

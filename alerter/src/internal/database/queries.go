@@ -406,6 +406,75 @@ func (d *Datastore) GetAlertRuleByName(ctx context.Context, name string) (*Alert
 	return &rule, nil
 }
 
+// GetAlertRuleByID retrieves an alert rule by its primary key. It mirrors
+// GetAlertRuleByName and is used by the resolution check to find the rule's
+// required_extension for an active alert, which only carries the rule id.
+func (d *Datastore) GetAlertRuleByID(ctx context.Context, id int64) (*AlertRule, error) {
+	var rule AlertRule
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, name, description, category, metric_name, default_operator,
+		       default_threshold, default_severity, default_enabled, required_extension,
+		       is_built_in, created_at
+		FROM alert_rules
+		WHERE id = $1
+	`, id).Scan(&rule.ID, &rule.Name, &rule.Description, &rule.Category,
+		&rule.MetricName, &rule.DefaultOperator, &rule.DefaultThreshold,
+		&rule.DefaultSeverity, &rule.DefaultEnabled, &rule.RequiredExtension,
+		&rule.IsBuiltIn, &rule.CreatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+// GetConnectionsWithExtension returns the set of connection IDs whose
+// newest metrics.pg_extension snapshot contains extname in any database.
+//
+// The collector's pg_extension probe is change tracked: it writes a
+// snapshot only when the installed set differs from the last one stored,
+// so the newest snapshot for a connection may be hours or days old and no
+// time window can be applied. The newest snapshot is identified by
+// MAX(collected_at) per connection; a connection with no rows at all
+// (probe disabled, or not yet run) is absent from the result and is
+// therefore treated as lacking the extension. See GitHub issue #409.
+func (d *Datastore) GetConnectionsWithExtension(ctx context.Context, extname string) (map[int]bool, error) {
+	// Tagged internal: this reads metrics.pg_extension on the Workbench's
+	// own datastore once per rule with a required_extension on every
+	// evaluation cycle.
+	rows, err := d.queryInternal(ctx, `
+		WITH newest AS (
+			SELECT connection_id, MAX(collected_at) AS collected_at
+			FROM metrics.pg_extension
+			GROUP BY connection_id
+		)
+		SELECT DISTINCT e.connection_id
+		FROM metrics.pg_extension e
+		JOIN newest n
+		  ON n.connection_id = e.connection_id
+		 AND n.collected_at = e.collected_at
+		WHERE e.extname = $1
+	`, extname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connections with extension %s: %w", extname, err)
+	}
+	defer rows.Close()
+
+	result := make(map[int]bool)
+	for rows.Next() {
+		var connID int
+		if err := rows.Scan(&connID); err != nil {
+			return nil, fmt.Errorf("failed to scan connection with extension: %w", err)
+		}
+		result[connID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return result, nil
+}
+
 // GetClusterPeers returns information about other connections in the same
 // cluster as the given connection, including their latest node role.
 // Returns an empty slice if the connection has no cluster.

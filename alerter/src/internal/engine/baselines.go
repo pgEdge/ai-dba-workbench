@@ -148,7 +148,7 @@ func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *s
 		StdDev:           stddev,
 		Min:              minValue(floatValues),
 		Max:              maxValue(floatValues),
-		SampleCount:      int64(len(floatValues)),
+		SampleCount:      totalSamples(values),
 		LastCalculated:   time.Now(),
 		EarliestSampleAt: earliest,
 	}
@@ -166,18 +166,19 @@ func (e *Engine) calculateAllBaseline(ctx context.Context, connID int, dbName *s
 // same input data agree on baseline age.
 func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) {
 	// Group values by hour of day
-	hourlyValues := make(map[int][]float64)
+	hourlyValues := make(map[int][]database.HistoricalMetricValue)
 	for _, v := range values {
 		hour := v.CollectedAt.Hour()
-		hourlyValues[hour] = append(hourlyValues[hour], v.Value)
+		hourlyValues[hour] = append(hourlyValues[hour], v)
 	}
 
-	// Calculate baseline for each hour that has enough samples
-	for hour, vals := range hourlyValues {
-		if len(vals) < minSamples {
+	// Calculate baseline for each hour that has enough data points
+	for hour, hourValues := range hourlyValues {
+		if len(hourValues) < minSamples {
 			continue
 		}
 
+		vals := metricValues(hourValues)
 		mean, stddev := calculateStats(vals)
 		hourVal := hour
 
@@ -191,7 +192,7 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 			StdDev:           stddev,
 			Min:              minValue(vals),
 			Max:              maxValue(vals),
-			SampleCount:      int64(len(vals)),
+			SampleCount:      totalSamples(hourValues),
 			LastCalculated:   time.Now(),
 			EarliestSampleAt: earliest,
 		}
@@ -210,19 +211,20 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 // baselines for the same input data agree on baseline age.
 func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName *string, metricName string, values []database.HistoricalMetricValue, minSamples int, earliest time.Time) {
 	// Group values by day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
-	dailyValues := make(map[int][]float64)
+	dailyValues := make(map[int][]database.HistoricalMetricValue)
 	for _, v := range values {
 		// Go's time.Weekday() returns 0=Sunday, 1=Monday, etc.
 		dayOfWeek := int(v.CollectedAt.Weekday())
-		dailyValues[dayOfWeek] = append(dailyValues[dayOfWeek], v.Value)
+		dailyValues[dayOfWeek] = append(dailyValues[dayOfWeek], v)
 	}
 
-	// Calculate baseline for each day that has enough samples
-	for day, vals := range dailyValues {
-		if len(vals) < minSamples {
+	// Calculate baseline for each day that has enough data points
+	for day, dayValues := range dailyValues {
+		if len(dayValues) < minSamples {
 			continue
 		}
 
+		vals := metricValues(dayValues)
 		mean, stddev := calculateStats(vals)
 		dayVal := day
 
@@ -236,7 +238,7 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 			StdDev:           stddev,
 			Min:              minValue(vals),
 			Max:              maxValue(vals),
-			SampleCount:      int64(len(vals)),
+			SampleCount:      totalSamples(dayValues),
 			LastCalculated:   time.Now(),
 			EarliestSampleAt: earliest,
 		}
@@ -289,6 +291,41 @@ func (e *Engine) calculateGlobalBaselinesFallback(ctx context.Context, connectio
 				metricName, connID, err)
 		}
 	}
+}
+
+// metricValues extracts the plain float values from historical samples,
+// in order, for the statistics helpers.
+func metricValues(samples []database.HistoricalMetricValue) []float64 {
+	vals := make([]float64, len(samples))
+	for i, s := range samples {
+		vals[i] = s.Value
+	}
+	return vals
+}
+
+// totalSamples returns the number of raw collector samples behind the
+// given historical rows, which is not the same as the number of rows:
+// the hourly bucketed queries return one row per hour and report how many
+// samples that hour aggregated.
+//
+// Baseline warmup (anomaly.tier1.warmup.*.min_samples) is configured in
+// samples, so counting rows would make the bucketed metrics look far
+// colder than they are; at the default seven day lookback a bucketed
+// metric yields at most 168 rows against a min_samples of 100, and at a
+// lookback of four days or fewer it could never warm at all. A row with
+// an unset (zero or negative) count is read as a single sample, which is
+// what every non-bucketed query and every hand-built value is. See
+// GitHub issue #409.
+func totalSamples(samples []database.HistoricalMetricValue) int64 {
+	var total int64
+	for _, s := range samples {
+		if s.SampleCount > 0 {
+			total += s.SampleCount
+			continue
+		}
+		total++
+	}
+	return total
 }
 
 // earliestTimestamp returns the smallest CollectedAt across the given

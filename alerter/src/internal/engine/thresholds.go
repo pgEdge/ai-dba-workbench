@@ -50,13 +50,24 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 		return
 	}
 
+	// Rules with a required_extension only apply to connections whose
+	// newest pg_extension snapshot lists it. Resolve the set once per rule
+	// rather than once per value; a nil set means "no gate".
+	withExtension := e.connectionsWithRequiredExtension(ctx, rule)
+
 	for _, mv := range values {
 		if ctx.Err() != nil {
 			return
 		}
 
-		// Check if there's a blackout active for this connection
 		connID := mv.ConnectionID
+		if withExtension != nil && !withExtension[connID] {
+			e.debugLog("Skipping rule %s for connection %d: extension %s not installed",
+				rule.Name, connID, *rule.RequiredExtension)
+			continue
+		}
+
+		// Check if there's a blackout active for this connection
 		active, err := e.datastore.IsBlackoutActive(ctx, &connID, mv.DatabaseName)
 		if err != nil {
 			e.debugLog("Error checking blackout for connection %d: %v", connID, err)
@@ -82,6 +93,29 @@ func (e *Engine) evaluateRuleForAllConnections(ctx context.Context, rule *databa
 				severity, mv.ConnectionID, mv.DatabaseName, mv.ObjectName)
 		}
 	}
+}
+
+// connectionsWithRequiredExtension returns the connections on which rule
+// may be evaluated, or nil when the rule has no required_extension and
+// every connection qualifies.
+//
+// The set comes from the newest metrics.pg_extension snapshot per
+// connection, so a connection whose probe has never run is treated as
+// lacking the extension. If the lookup itself fails the error is logged
+// and nil is returned, so the rule is evaluated without the gate: a
+// transient datastore problem must not silence a whole class of rules.
+// See GitHub issue #409.
+func (e *Engine) connectionsWithRequiredExtension(ctx context.Context, rule *database.AlertRule) map[int]bool {
+	if rule.RequiredExtension == nil || *rule.RequiredExtension == "" {
+		return nil
+	}
+	withExtension, err := e.datastore.GetConnectionsWithExtension(ctx, *rule.RequiredExtension)
+	if err != nil {
+		e.log("ERROR: Failed to look up connections with extension %s for rule %s, evaluating without the gate: %v",
+			*rule.RequiredExtension, rule.Name, err)
+		return nil
+	}
+	return withExtension
 }
 
 // formatMetricValue renders an alert's metric_value safely for logging.

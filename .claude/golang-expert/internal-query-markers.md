@@ -111,11 +111,12 @@ tagging as complete:
   `collector/src/probes/config_loader.go`. Note that
   `lastCollectionTimeQuery`, in that same file, *is* tagged, so the
   file is a mixture.
-- Most of the alerter's datastore traffic. Only `GetClusterPeers` moved
-  onto `queryInternal`; the direct `pool.Query`, `QueryRow` and `Exec`
-  sites across `alert_queries.go`, `anomaly_queries.go`,
-  `notification_queries.go` and `queries.go` are untagged, and they run
-  on the 60-second evaluation cycle so they are prominent in the panel.
+- Most of the alerter's datastore traffic. Only `GetClusterPeers` and
+  `GetConnectionsWithExtension` (#409) run through `queryInternal`; the
+  direct `pool.Query`, `QueryRow` and `Exec` sites across
+  `alert_queries.go`, `anomaly_queries.go`, `notification_queries.go`
+  and `queries.go` are untagged, and they run on the 60-second
+  evaluation cycle so they are prominent in the panel.
   Tagging them needs `QueryRow` and `Exec` twins of `queryInternal`,
   since the existing helper only wraps `Query`.
 

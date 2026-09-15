@@ -36,7 +36,7 @@ INSERT INTO alert_rules (
     is_built_in
 ) VALUES (
     'High Temporary File Usage',
-    'Alerts when temporary files exceed 100 per interval',
+    'Alerts when temporary files exceed 100 per hour',
     'performance',
     'pg_stat_database.temp_files_delta',
     '>',
@@ -61,7 +61,25 @@ Each rule requires the following fields:
 | `default_threshold` | numeric | The threshold value |
 | `default_severity` | text | The alert severity level |
 | `default_enabled` | boolean | Whether the rule is enabled by default |
+| `required_extension` | text | An optional PostgreSQL extension the rule needs |
 | `is_built_in` | boolean | Set to `false` for custom rules |
+
+### Required Extensions
+
+When a rule sets `required_extension`, the alerter checks the
+newest `metrics.pg_extension` snapshot for each connection before
+evaluating the rule, and skips any connection whose snapshot does
+not list the extension in any database. The `pg_extension` probe
+only writes a new snapshot when the installed set changes, so the
+newest snapshot may be older than the metric values being
+evaluated; no time window is applied to it. A connection with no
+snapshot at all is treated as lacking the extension.
+
+The same check applies when the alerter decides whether an existing
+alert has resolved: an alert on a connection that lacks the
+extension is left active rather than resolved, so uninstalling an
+extension never reports a condition as cleared. Such an alert stays
+active until an operator acknowledges or clears it.
 
 ## Metric Names
 
@@ -93,16 +111,15 @@ The alerter supports the following metric name patterns.
 ### Database Metrics
 
 - `pg_stat_database.cache_hit_ratio` - Buffer cache hit ratio.
-- `pg_stat_database.deadlocks_delta` - New deadlocks per
-  interval.
-- `pg_stat_database.temp_files_delta` - New temporary files per
-  interval.
+- `pg_stat_database.deadlocks_delta` - Deadlocks in the last
+  hour.
+- `pg_stat_database.temp_files_delta` - Temporary files created
+  in the last hour.
 
 ### Table Metrics
 
 - `pg_stat_all_tables.dead_tuple_percent` - Dead tuple
   percentage.
-- `table_bloat_ratio` - Estimated table bloat.
 - `table_last_autovacuum_hours` - Hours since last autovacuum.
 - `age_percent` - Transaction ID age percentage.
 

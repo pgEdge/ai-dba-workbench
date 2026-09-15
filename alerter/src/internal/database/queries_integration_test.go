@@ -118,6 +118,15 @@ DROP TABLE IF EXISTS connections CASCADE;
 // the pool.
 func newHistoricalMetricsTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
+	return newHistoricalMetricsTestDatastoreInTimeZone(t, "")
+}
+
+// newHistoricalMetricsTestDatastoreInTimeZone is newHistoricalMetricsTestDatastore
+// with the session TimeZone pinned to the named zone, so a test can pin
+// behavior that must not depend on the server's timezone GUC. An empty
+// zone leaves the server default in place. See GitHub issue #409.
+func newHistoricalMetricsTestDatastoreInTimeZone(t *testing.T, timeZone string) (*Datastore, *pgxpool.Pool, func()) {
+	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
@@ -128,7 +137,14 @@ func newHistoricalMetricsTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool,
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connStr)
+	poolCfg, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		t.Skipf("Could not parse test database DSN: %v", err)
+	}
+	if timeZone != "" {
+		poolCfg.ConnConfig.RuntimeParams["timezone"] = timeZone
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		t.Skipf("Could not connect to test database: %v", err)
 	}

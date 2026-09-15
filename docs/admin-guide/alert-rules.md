@@ -20,7 +20,7 @@ Each alert rule contains the following fields:
 | `default_threshold` | The threshold value for comparison. |
 | `default_severity` | The alert severity (`critical`, `warning`, `info`). |
 | `default_enabled` | Whether the rule is enabled by default. |
-| `required_extension` | An optional PostgreSQL extension required. |
+| `required_extension` | An optional PostgreSQL extension the rule needs. The alerter reads the newest `pg_extension` snapshot for each connection, skips connections that lack the extension, and leaves any existing alert on such a connection active rather than resolving it. |
 | `is_built_in` | Indicates whether the rule is built-in. |
 
 ## Comparison Operators

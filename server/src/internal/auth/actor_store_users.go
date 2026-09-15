@@ -663,16 +663,18 @@ func (s *AuthStore) setUserEnabled(actor Actor, username string,
 // disableForLockout disables a user account after too many failed
 // authentication attempts and records the resulting user.disable event
 // in the same transaction, attributed to the system actor because no
-// principal asked for the change. The account lockout is best effort,
-// as it always has been: authentication has already failed by this
-// point, so every error here is logged and swallowed rather than
-// returned. The caller must hold s.mu, which AuthenticateUser does.
-func (s *AuthStore) disableForLockout(userID int64, username string) {
+// principal asked for the change. It reports whether the account was
+// actually disabled, so the caller does not log a lockout that was
+// rolled back. The account lockout is best effort, as it always has
+// been: authentication has already failed by this point, so every
+// error here is logged and swallowed rather than returned. The caller
+// must hold s.mu, which AuthenticateUser does.
+func (s *AuthStore) disableForLockout(userID int64, username string) bool {
 	tx, err := s.db.Begin()
 	if err != nil {
 		log.Printf("[AUTH] Failed to begin lockout transaction for user %s: %v",
 			username, err)
-		return
+		return false
 	}
 	committed := false
 	defer func() {
@@ -686,14 +688,14 @@ func (s *AuthStore) disableForLockout(userID int64, username string) {
 	before, err := userSnapshotTx(tx, username)
 	if err != nil {
 		log.Printf("[AUTH] Failed to read user %s for lockout: %v", username, err)
-		return
+		return false
 	}
 
 	if _, err := tx.Exec(
 		"UPDATE users SET enabled = FALSE WHERE id = ?", userID,
 	); err != nil {
 		log.Printf("[AUTH] Failed to lock account for user %s: %v", username, err)
-		return
+		return false
 	}
 
 	after := before
@@ -707,14 +709,16 @@ func (s *AuthStore) disableForLockout(userID int64, username string) {
 		})); err != nil {
 		log.Printf("[AUTH] Failed to record lockout audit event for user %s: %v",
 			username, err)
-		return
+		return false
 	}
 
 	if err := tx.Commit(); err != nil {
 		log.Printf("[AUTH] Failed to commit lockout for user %s: %v", username, err)
-		return
+		return false
 	}
 	committed = true
+
+	return true
 }
 
 // SetUserSuperuser sets or clears the superuser flag for a user,

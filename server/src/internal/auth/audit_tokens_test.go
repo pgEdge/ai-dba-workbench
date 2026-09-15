@@ -331,7 +331,6 @@ func TestAuditTokensDeleteUserTokenNotFound(t *testing.T) {
 	defer cleanup()
 
 	mustCreateTokenOwner(t, store, "bob")
-	countBefore := auditEventCount(t, store)
 
 	as := store.AsActor(testActor())
 	err := as.DeleteUserToken("bob", 9999)
@@ -342,9 +341,27 @@ func TestAuditTokensDeleteUserTokenNotFound(t *testing.T) {
 		t.Errorf("Expected the existing not-found message, got %q", err)
 	}
 
-	if got := auditEventCount(t, store); got != countBefore {
-		t.Errorf("Expected no new audit event for an unmatched filter, got %d new",
-			got-countBefore)
+	// The caller named a token, so the failed attempt is recorded
+	// against that id even though no row matched it.
+	ev := lastAuditEvent(t, store)
+	assertUserActor(t, ev)
+	if ev.Action != "token.delete" {
+		t.Errorf("Expected action token.delete, got %q", ev.Action)
+	}
+	if ev.Outcome != OutcomeFailure {
+		t.Errorf("Expected outcome failure, got %q", ev.Outcome)
+	}
+	if ev.TargetType != "token" {
+		t.Errorf("Expected target type token, got %q", ev.TargetType)
+	}
+	if ev.TargetID == nil || *ev.TargetID != 9999 {
+		t.Errorf("Expected target id 9999, got %v", ev.TargetID)
+	}
+	if ev.TargetName != "" {
+		t.Errorf("Expected an empty target name, got %q", ev.TargetName)
+	}
+	if ev.Error != err.Error() {
+		t.Errorf("Expected error text %q, got %q", err.Error(), ev.Error)
 	}
 }
 
@@ -997,22 +1014,32 @@ func TestAuditTokensDeleteFailurePaths(t *testing.T) {
 // scanned into their Go types, so that the scope readers fail on scan.
 func TestAuditTokensScopeScanFailures(t *testing.T) {
 	cases := []struct {
-		name   string
-		insert string
-		call   func(as *ActorStore, tokenID int64) error
+		name    string
+		insert  string
+		call    func(as *ActorStore, tokenID int64) error
+		wantErr string
 	}{
 		{"connections",
 			`INSERT INTO token_connection_scope (token_id, connection_id, access_level)
              VALUES (%d, 'not-a-number', 'read')`,
 			func(as *ActorStore, id int64) error {
 				return as.SetTokenConnectionScope(id, nil)
-			}},
+			},
+			"failed to scan connection scope"},
 		{"tools",
 			`INSERT INTO token_mcp_scope (token_id, privilege_identifier_id)
              VALUES (%d, 'not-a-number')`,
 			func(as *ActorStore, id int64) error {
 				return as.SetTokenMCPScope(id, nil)
-			}},
+			},
+			"failed to scan privilege ID"},
+		{"admin",
+			`INSERT INTO token_admin_scope (token_id, permission)
+             VALUES (%d, NULL)`,
+			func(as *ActorStore, id int64) error {
+				return as.SetTokenAdminScope(id, nil)
+			},
+			"failed to scan admin permission"},
 	}
 
 	for _, tc := range cases {
@@ -1022,10 +1049,26 @@ func TestAuditTokensScopeScanFailures(t *testing.T) {
 
 			mustCreateTokenOwner(t, store, "bob")
 			_, token := mustCreateToken(t, store, "bob", "junk")
+			if tc.name == "admin" {
+				// token_admin_scope.permission is NOT NULL, so relax it
+				// to reach the scan-failure branch of the reader.
+				mustExec(t, store, "DROP TABLE token_admin_scope")
+				mustExec(t, store, `CREATE TABLE token_admin_scope (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token_id INTEGER NOT NULL,
+                    permission TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(token_id, permission)
+                )`)
+			}
 			mustExec(t, store, fmt.Sprintf(tc.insert, token.ID))
 
-			if err := tc.call(store.AsActor(testActor()), token.ID); err == nil {
+			err := tc.call(store.AsActor(testActor()), token.ID)
+			if err == nil {
 				t.Fatal("Expected the scope read to fail on an unscannable row")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("Expected an error containing %q, got %q", tc.wantErr, err)
 			}
 
 			ev := lastAuditEvent(t, store)

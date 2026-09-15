@@ -1015,9 +1015,10 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 		// Lock account if threshold reached
 		if s.maxFailedAttempts > 0 && user.FailedAttempts >= s.maxFailedAttempts {
-			s.disableForLockout(user.ID, username)
-			log.Printf("[AUTH] Account locked for user %s after %d failed attempts; invalidating sessions", username, user.FailedAttempts)
-			s.InvalidateUserSessions(username)
+			if s.disableForLockout(user.ID, username) {
+				log.Printf("[AUTH] Account locked for user %s after %d failed attempts; invalidating sessions", username, user.FailedAttempts)
+				s.InvalidateUserSessions(username)
+			}
 		}
 
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
@@ -1353,12 +1354,21 @@ func (s *AuthStore) deleteUserToken(actor Actor, username string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// The caller named a token, so a failure is recorded against that
+	// id even when no row matches it.
+	id := tokenID
+
 	return s.deleteTokensByFilter(
 		actor,
 		// Filter to token IDs owned by the named user.
 		"id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)",
 		[]any{tokenID, username},
 		"token not found or not owned by user",
+		&auditTarget{
+			action:     "token.delete",
+			targetType: "token",
+			targetID:   &id,
+		},
 	)
 }
 
@@ -1459,7 +1469,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 	// safely. A non-numeric identifier matches nothing here and falls
 	// through to the hash-prefix branch below.
 	if err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
-		""); err == nil {
+		"", nil); err == nil {
 		return nil
 	}
 
@@ -1467,7 +1477,7 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
 		if err := s.deleteTokensByFilter(
-			actor, "token_hash LIKE ?", []any{identifier + "%"}, "",
+			actor, "token_hash LIKE ?", []any{identifier + "%"}, "", nil,
 		); err == nil {
 			return nil
 		}
@@ -1484,21 +1494,24 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 // all dynamic values belong in the args slice. notFoundMsg, when
 // non-empty, is returned (wrapped in an error) if the filter matches no
 // rows. When empty, a zero-rows-affected outcome returns a generic
-// "token not found" error so callers can chain filters. A filter that
-// matches nothing records no audit event at all, because there is no
-// target to attribute one to and DeleteToken chains two filters of
-// which the first routinely matches nothing.
+// "token not found" error so callers can chain filters. fallback, when
+// non-nil, is the target a failure is recorded against before any
+// token matches, so that a caller who knows which token it asked for
+// leaves a failure event behind; DeleteToken passes nil, because it
+// chains two filters of which the first routinely matches nothing and
+// a failure event for each probe would be noise.
 func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
-	args []any, notFoundMsg string) (err error) {
+	args []any, notFoundMsg string, fallback *auditTarget) (err error) {
 
 	tx, beginErr := s.db.Begin()
 	if beginErr != nil {
 		return fmt.Errorf("failed to begin transaction: %w", beginErr)
 	}
 
-	// target stays nil until a matching token is known, so that an
-	// unmatched filter records nothing.
-	var target *auditTarget
+	// Until a token matches, failures are attributed to the caller's
+	// fallback target, which is nil for a filter probe that is expected
+	// to match nothing.
+	target := fallback
 	defer func() {
 		if err != nil {
 			s.failAudit(tx, actor, target, err)

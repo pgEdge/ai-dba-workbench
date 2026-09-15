@@ -41,6 +41,7 @@ func (h *RBACHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.H
 	mux.HandleFunc("/api/v1/rbac/privileges/mcp", authWrapper(h.handleMCPPrivileges))
 	mux.HandleFunc("/api/v1/rbac/tokens", authWrapper(h.handleTokens))
 	mux.HandleFunc("/api/v1/rbac/tokens/", authWrapper(h.handleTokenSubpath))
+	mux.HandleFunc("/api/v1/rbac/audit", authWrapper(h.handleAudit))
 }
 
 // =============================================================================

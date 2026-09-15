@@ -1,0 +1,154 @@
+/*-------------------------------------------------------------------------
+ *
+ * pgEdge AI DBA Workbench
+ *
+ * Copyright (c) 2025 - 2026, pgEdge, Inc.
+ * This software is released under The PostgreSQL License
+ *
+ *-------------------------------------------------------------------------
+ */
+package api
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
+)
+
+// handleAudit serves GET /api/v1/rbac/audit, the read side of the RBAC
+// audit log. The log records who changed what across the whole
+// installation, so the endpoint is restricted to superusers rather than
+// to any of the finer-grained admin permissions.
+//
+// The body is a bare JSON array of auth.AuditEvent, newest first, and
+// X-Total-Count carries the number of rows matching the filters before
+// limit and offset are applied so that a client can size its pager.
+func (h *RBACHandler) handleAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !h.requireSuperuser(w, r) {
+		return
+	}
+
+	filter, err := parseAuditFilter(r.URL.Query())
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	events, total, err := h.authStore.ListAuditEvents(filter)
+	if err != nil {
+		// The underlying error can name internal SQL, so it is logged
+		// rather than returned to the caller.
+		log.Printf("[ERROR] Failed to list audit events: %v", err)
+		RespondError(w, http.StatusInternalServerError,
+			"Failed to list audit events")
+		return
+	}
+
+	// A nil slice would encode as null; the web client and the OpenAPI
+	// spec both expect an array.
+	if events == nil {
+		events = []auth.AuditEvent{}
+	}
+
+	w.Header().Set(headerTotalCount, strconv.Itoa(total))
+	RespondJSON(w, http.StatusOK, events)
+}
+
+// parseAuditFilter converts the query string into an auth.AuditFilter.
+// String filters are passed through untouched, because the store binds
+// every value as a parameter; the numeric and timestamp filters are
+// parsed here so that a malformed value is a 400 rather than a silently
+// ignored filter.
+func parseAuditFilter(q url.Values) (auth.AuditFilter, error) {
+	filter := auth.AuditFilter{
+		ActorName:  q.Get("actor"),
+		ActorType:  q.Get("actor_type"),
+		Action:     q.Get("action"),
+		TargetType: q.Get("target_type"),
+		Outcome:    q.Get("outcome"),
+	}
+
+	targetID, err := parseOptionalInt64(q, "target_id")
+	if err != nil {
+		return auth.AuditFilter{}, err
+	}
+	filter.TargetID = targetID
+
+	if filter.Since, err = parseOptionalTime(q, "since"); err != nil {
+		return auth.AuditFilter{}, err
+	}
+	if filter.Until, err = parseOptionalTime(q, "until"); err != nil {
+		return auth.AuditFilter{}, err
+	}
+
+	if filter.Limit, err = parseNonNegativeInt(q, "limit"); err != nil {
+		return auth.AuditFilter{}, err
+	}
+	if filter.Offset, err = parseNonNegativeInt(q, "offset"); err != nil {
+		return auth.AuditFilter{}, err
+	}
+
+	return filter, nil
+}
+
+// parseOptionalInt64 reads an optional integer parameter, returning nil
+// when it is absent or empty.
+func parseOptionalInt64(q url.Values, name string) (*int64, error) {
+	raw := q.Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an integer", name)
+	}
+	return &value, nil
+}
+
+// parseNonNegativeInt reads an optional count parameter, returning 0
+// when it is absent or empty. A negative value is rejected rather than
+// clamped, so that a client sending nonsense finds out about it.
+func parseNonNegativeInt(q url.Values, name string) (int, error) {
+	raw := q.Get(name)
+	if raw == "" {
+		return 0, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must not be negative", name)
+	}
+	return value, nil
+}
+
+// parseOptionalTime reads an optional RFC 3339 timestamp parameter,
+// returning nil when it is absent or empty. Only RFC 3339 is accepted,
+// so a bare date or a local-format timestamp is an error rather than a
+// filter that quietly matches the wrong rows.
+func parseOptionalTime(q url.Values, name string) (*time.Time, error) {
+	raw := q.Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+
+	value, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an RFC 3339 timestamp", name)
+	}
+	return &value, nil
+}

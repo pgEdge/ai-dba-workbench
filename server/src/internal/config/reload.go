@@ -128,6 +128,25 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 		fmt.Fprintf(os.Stderr, "  WARNING: http.tls.key_file changed - requires restart\n")
 	}
 
+	// OIDC changes require restart: the provider is constructed once at
+	// startup from these settings, so a running server and a reloaded
+	// configuration would otherwise silently disagree.
+	if old.HTTP.Auth.OIDC.Enabled != newConfig.HTTP.Auth.OIDC.Enabled {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.enabled changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.Issuer != newConfig.HTTP.Auth.OIDC.Issuer {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.issuer changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.ClientID != newConfig.HTTP.Auth.OIDC.ClientID {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.client_id changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.EffectiveClientSecret() != newConfig.HTTP.Auth.OIDC.EffectiveClientSecret() {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.client_secret changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.RedirectURL != newConfig.HTTP.Auth.OIDC.RedirectURL {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.redirect_url changed - requires restart\n")
+	}
+
 	// LLM/embedding provider changes are logged (may work but connections need reset)
 	if old.LLM.Provider != newConfig.LLM.Provider {
 		fmt.Fprintf(os.Stderr, "  NOTE: llm.provider changed to %s\n", newConfig.LLM.Provider)

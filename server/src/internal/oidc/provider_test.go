@@ -315,10 +315,12 @@ func TestExchangeRejectsAUsernameTheLocalStoreWouldRefuse(t *testing.T) {
 // that the login still succeeds: the display name is not load bearing.
 func TestExchangeDropsUnsafeDisplayNames(t *testing.T) {
 	cases := map[string]string{
-		"embedded newline":       "Jane\nDoe",
-		"NUL byte":               "Jane\x00Doe",
-		"right-to-left override": "Jane\u202eDoe",
-		"over the length cap":    strings.Repeat("x", maxClaimValueLength+1),
+		"embedded newline":    "Jane\nDoe",
+		"carriage return":     "Jane\rDoe",
+		"NUL byte":            "Jane\x00Doe",
+		"DEL":                 "Jane\x7fDoe",
+		"C1 control":          "Jane\u0085Doe",
+		"over the length cap": strings.Repeat("x", maxClaimValueLength+1),
 	}
 
 	for name, displayName := range cases {
@@ -341,6 +343,45 @@ func TestExchangeDropsUnsafeDisplayNames(t *testing.T) {
 			}
 			if identity.DisplayName != "" {
 				t.Errorf("display name = %q, want it dropped", identity.DisplayName)
+			}
+		})
+	}
+}
+
+// TestExchangeKeepsDisplayNamesWithFormatCharacters is the other half of
+// the rule: a zero-width joiner, and a bidirectional mark, appear in
+// names that are legitimately spelled that way, and a cosmetic field
+// must never be the reason a login fails. Format characters cannot
+// inject a log line, so they survive intact in a display name. The
+// username is the exception and is governed by auth.ValidateUsername.
+func TestExchangeKeepsDisplayNamesWithFormatCharacters(t *testing.T) {
+	cases := map[string]string{
+		"zero-width joiner":     "Jane\u200dDoe",
+		"zero-width non-joiner": "Jane\u200cDoe",
+		"left-to-right mark":    "Jane\u200eDoe",
+	}
+
+	for name, displayName := range cases {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{
+				UsernameClaim: "email", DisplayNameClaim: "name",
+			})
+
+			state := newTestLoginState(t)
+			idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+				"email": "jane.doe@example.com",
+				"name":  displayName,
+				"nonce": state.Nonce,
+			}))
+
+			identity, err := provider.Exchange(context.Background(), "code", state)
+			if err != nil {
+				t.Fatalf("Exchange: %v", err)
+			}
+			if identity.DisplayName != displayName {
+				t.Errorf("display name = %q, want it kept intact as %q",
+					identity.DisplayName, displayName)
 			}
 		})
 	}

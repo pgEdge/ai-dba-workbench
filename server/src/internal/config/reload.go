@@ -12,6 +12,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 )
 
@@ -156,6 +157,38 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 	}
 	if old.Embedding.Provider != newConfig.Embedding.Provider {
 		fmt.Fprintf(os.Stderr, "  NOTE: embedding.provider changed to %s\n", newConfig.Embedding.Provider)
+	}
+
+	// OIDC claim/authorization-mapping changes are logged but do not claim
+	// a restart is required: unlike issuer/client id/secret/redirect,
+	// which construct the OIDC provider once at startup, these settings
+	// decide how an already-constructed provider's response is
+	// interpreted (identity, display name, group membership, superuser
+	// grant). Without a NOTE here a change to any of them would take
+	// effect - or fail to - with no signal to the operator either way.
+	if old.HTTP.Auth.OIDC.UsernameClaim != newConfig.HTTP.Auth.OIDC.UsernameClaim {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.username_claim changed to %s\n", newConfig.HTTP.Auth.OIDC.UsernameClaim)
+	}
+	if old.HTTP.Auth.OIDC.DisplayNameClaim != newConfig.HTTP.Auth.OIDC.DisplayNameClaim {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.display_name_claim changed to %s\n", newConfig.HTTP.Auth.OIDC.DisplayNameClaim)
+	}
+	if old.HTTP.Auth.OIDC.GroupsClaim != newConfig.HTTP.Auth.OIDC.GroupsClaim {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.groups_claim changed to %s\n", newConfig.HTTP.Auth.OIDC.GroupsClaim)
+	}
+	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.Scopes, newConfig.HTTP.Auth.OIDC.Scopes) {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.scopes changed to %v\n", newConfig.HTTP.Auth.OIDC.Scopes)
+	}
+	if old.HTTP.Auth.OIDC.ProvisionUsers != newConfig.HTTP.Auth.OIDC.ProvisionUsers {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.provision_users changed to %v\n", newConfig.HTTP.Auth.OIDC.ProvisionUsers)
+	}
+	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.AllowedEmailDomains, newConfig.HTTP.Auth.OIDC.AllowedEmailDomains) {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.allowed_email_domains changed to %v\n", newConfig.HTTP.Auth.OIDC.AllowedEmailDomains)
+	}
+	if old.HTTP.Auth.OIDC.SuperuserGroup != newConfig.HTTP.Auth.OIDC.SuperuserGroup {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.superuser_group changed to %s\n", newConfig.HTTP.Auth.OIDC.SuperuserGroup)
+	}
+	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.GroupMap, newConfig.HTTP.Auth.OIDC.GroupMap) {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.group_map changed to %v\n", newConfig.HTTP.Auth.OIDC.GroupMap)
 	}
 }
 

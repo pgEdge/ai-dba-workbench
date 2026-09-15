@@ -202,23 +202,34 @@ type LocalAuthConfig struct {
 	// impossible to turn local login off. A nil pointer means "not set in
 	// this config source"; read the effective value via
 	// AuthConfig.LocalEnabled rather than this field directly.
-	Enabled *bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled" json:"enabled"`
 }
 
-// OIDCConfig holds settings for OpenID Connect federated login.
+// OIDCConfig holds settings for OpenID Connect federated login. Every
+// field except the two noted below is safe to hand to a handler that
+// reports login-page state (e.g. "is OIDC on, what does the button say")
+// via json.Marshal; the explicit json tags below are deliberate so that a
+// later task can serialize this struct (or an embedding AuthConfig)
+// directly instead of hand-building a DTO and forgetting a field.
 type OIDCConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Issuer   string `yaml:"issuer"`
-	ClientID string `yaml:"client_id"`
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	Issuer   string `yaml:"issuer" json:"issuer"`
+	ClientID string `yaml:"client_id" json:"client_id"`
 
 	// ClientSecret holds a client secret supplied inline in the
 	// configuration file. It may legitimately round-trip if the config is
 	// ever marshaled again, the same way DatabaseConfig.Password does: the
 	// operator already chose to put the plaintext value in a file on disk.
 	// A secret resolved from ClientSecretFile is NOT stored here; see
-	// resolvedClientSecret and EffectiveClientSecret.
-	ClientSecret     string `yaml:"client_secret"`
-	ClientSecretFile string `yaml:"client_secret_file"`
+	// resolvedClientSecret and EffectiveClientSecret. json:"-" on both
+	// fields below is required, not just yaml:"-" on the resolved one:
+	// without it, json.Marshal of this struct (or of the embedding
+	// AuthConfig) would emit an inline secret in plaintext to any
+	// consumer, such as a future handler that reports auth state to the
+	// login page. DatabaseConfig.Password has the same latent hole; that
+	// is pre-existing and out of scope here.
+	ClientSecret     string `yaml:"client_secret" json:"-"`
+	ClientSecretFile string `yaml:"client_secret_file" json:"-"`
 
 	// resolvedClientSecret holds a secret read from ClientSecretFile. It
 	// is deliberately unexported and tagged yaml:"-" / json:"-", mirroring
@@ -228,16 +239,16 @@ type OIDCConfig struct {
 	// EffectiveClientSecret.
 	resolvedClientSecret string `yaml:"-" json:"-"`
 
-	RedirectURL         string            `yaml:"redirect_url"`
-	Scopes              []string          `yaml:"scopes"`
-	UsernameClaim       string            `yaml:"username_claim"`
-	DisplayNameClaim    string            `yaml:"display_name_claim"`
-	GroupsClaim         string            `yaml:"groups_claim"`
-	ButtonLabel         string            `yaml:"button_label"`
-	ProvisionUsers      bool              `yaml:"provision_users"`
-	AllowedEmailDomains []string          `yaml:"allowed_email_domains"`
-	SuperuserGroup      string            `yaml:"superuser_group"`
-	GroupMap            map[string]string `yaml:"group_map"`
+	RedirectURL         string            `yaml:"redirect_url" json:"redirect_url"`
+	Scopes              []string          `yaml:"scopes" json:"scopes"`
+	UsernameClaim       string            `yaml:"username_claim" json:"username_claim"`
+	DisplayNameClaim    string            `yaml:"display_name_claim" json:"display_name_claim"`
+	GroupsClaim         string            `yaml:"groups_claim" json:"groups_claim"`
+	ButtonLabel         string            `yaml:"button_label" json:"button_label"`
+	ProvisionUsers      bool              `yaml:"provision_users" json:"provision_users"`
+	AllowedEmailDomains []string          `yaml:"allowed_email_domains" json:"allowed_email_domains"`
+	SuperuserGroup      string            `yaml:"superuser_group" json:"superuser_group"`
+	GroupMap            map[string]string `yaml:"group_map" json:"group_map"`
 }
 
 // EffectiveClientSecret returns the OIDC client secret to use. An inline
@@ -1259,7 +1270,7 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("http.auth.oidc.issuer is required when OIDC is enabled")
 		}
 		issuerURL, err := url.Parse(oidc.Issuer)
-		if err != nil || issuerURL.Scheme != "https" {
+		if err != nil || issuerURL.Scheme != "https" || issuerURL.Host == "" {
 			return fmt.Errorf("http.auth.oidc.issuer must be a valid https:// URL")
 		}
 		if oidc.ClientID == "" {

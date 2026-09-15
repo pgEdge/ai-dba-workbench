@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -657,6 +658,63 @@ func (s *AuthStore) setUserEnabled(actor Actor, username string,
 	}
 
 	return nil
+}
+
+// disableForLockout disables a user account after too many failed
+// authentication attempts and records the resulting user.disable event
+// in the same transaction, attributed to the system actor because no
+// principal asked for the change. The account lockout is best effort,
+// as it always has been: authentication has already failed by this
+// point, so every error here is logged and swallowed rather than
+// returned. The caller must hold s.mu, which AuthenticateUser does.
+func (s *AuthStore) disableForLockout(userID int64, username string) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		log.Printf("[AUTH] Failed to begin lockout transaction for user %s: %v",
+			username, err)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			//nolint:errcheck // Rollback error is not critical; the
+			// lockout is best effort and already logged.
+			tx.Rollback()
+		}
+	}()
+
+	before, err := userSnapshotTx(tx, username)
+	if err != nil {
+		log.Printf("[AUTH] Failed to read user %s for lockout: %v", username, err)
+		return
+	}
+
+	if _, err := tx.Exec(
+		"UPDATE users SET enabled = FALSE WHERE id = ?", userID,
+	); err != nil {
+		log.Printf("[AUTH] Failed to lock account for user %s: %v", username, err)
+		return
+	}
+
+	after := before
+	after.Enabled = false
+
+	if err := s.recordAudit(tx, newEvent(systemActor, "user.disable", "user",
+		&before.ID, username, map[string]any{
+			"reason": "lockout",
+			"before": before,
+			"after":  after,
+		})); err != nil {
+		log.Printf("[AUTH] Failed to record lockout audit event for user %s: %v",
+			username, err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("[AUTH] Failed to commit lockout for user %s: %v", username, err)
+		return
+	}
+	committed = true
 }
 
 // SetUserSuperuser sets or clears the superuser flag for a user,

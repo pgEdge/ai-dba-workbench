@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/mail"
@@ -1014,8 +1015,7 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 		// Lock account if threshold reached
 		if s.maxFailedAttempts > 0 && user.FailedAttempts >= s.maxFailedAttempts {
-			//nolint:errcheck // Best effort update, authentication already failed
-			s.db.Exec("UPDATE users SET enabled = FALSE WHERE id = ?", user.ID)
+			s.disableForLockout(user.ID, username)
 			log.Printf("[AUTH] Account locked for user %s after %d failed attempts; invalidating sessions", username, user.FailedAttempts)
 			s.InvalidateUserSessions(username)
 		}
@@ -1198,23 +1198,52 @@ func (s *AuthStore) StopSessionCleanup() {
 // CreateToken creates a new token owned by the specified user.
 // Returns the raw token (only shown once) and the stored token info.
 // If requestedExpiry is nil, superusers get no expiry while non-superusers
-// are subject to the configured maxUserTokenDays limit.
+// are subject to the configured maxUserTokenDays limit. The change is
+// attributed to the system actor.
 func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpiry *time.Time) (string, *StoredToken, error) {
+	return s.createToken(systemActor, ownerUsername, annotation, requestedExpiry)
+}
+
+// createToken creates a token and records the token.create event in the
+// same transaction. The event names the owner, the expiry and the
+// annotation; it never carries the raw token, its hash or any prefix of
+// either, because the audit log is readable by anyone who can read the
+// log and a token is a bearer credential.
+func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
+	requestedExpiry *time.Time) (raw string, stored *StoredToken, err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	target := &auditTarget{
+		action:     "token.create",
+		targetType: "token",
+		targetName: annotation,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
 
 	// Look up the user to get their ID and superuser status
 	var userID int64
 	var isSuperuser bool
-	err := s.db.QueryRow(
+	lookupErr := tx.QueryRow(
 		"SELECT id, is_superuser FROM users WHERE username = ?",
 		ownerUsername,
 	).Scan(&userID, &isSuperuser)
-	if err == sql.ErrNoRows {
-		return "", nil, fmt.Errorf("user '%s' not found", ownerUsername)
+	if errors.Is(lookupErr, sql.ErrNoRows) {
+		err = fmt.Errorf("user '%s' not found", ownerUsername)
+		return "", nil, err
 	}
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to get user: %w", err)
+	if lookupErr != nil {
+		err = fmt.Errorf("failed to get user: %w", lookupErr)
+		return "", nil, err
 	}
 
 	// Calculate expiry
@@ -1230,8 +1259,9 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 
 	// Generate random token
 	tokenBytes := make([]byte, sessionTokenBytes)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", nil, fmt.Errorf("failed to generate token: %w", err)
+	if _, randErr := rand.Read(tokenBytes); randErr != nil {
+		err = fmt.Errorf("failed to generate token: %w", randErr)
+		return "", nil, err
 	}
 	rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
 
@@ -1240,17 +1270,35 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 	tokenHash := hex.EncodeToString(hash[:])
 
 	// Insert into database
-	result, err := s.db.Exec(
+	result, execErr := tx.Exec(
 		`INSERT INTO tokens (token_hash, owner_id, expires_at, annotation)
          VALUES (?, ?, ?, ?)`,
 		tokenHash, userID, expiry, annotation,
 	)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create token: %w", err)
+	if execErr != nil {
+		err = fmt.Errorf("failed to create token: %w", execErr)
+		return "", nil, err
 	}
 
 	//nolint:errcheck // SQLite always supports LastInsertId
 	id, _ := result.LastInsertId()
+	target.targetID = &id
+
+	if auditErr := s.recordAudit(tx, newEvent(actor, "token.create", "token",
+		&id, annotation, map[string]any{
+			"owner":      ownerUsername,
+			"expires_at": expiry,
+			"annotation": annotation,
+		})); auditErr != nil {
+		err = auditErr
+		return "", nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		err = fmt.Errorf("failed to commit transaction: %w", err)
+		return "", nil, err
+	}
+
 	token := &StoredToken{
 		ID:         id,
 		TokenHash:  tokenHash,
@@ -1293,11 +1341,20 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 // would cascade via ON DELETE CASCADE. These explicit deletes are
 // intentionally kept as defense in depth and also clean up
 // connection_sessions, which references token_hash without an FK.
+//
+// The change is attributed to the system actor.
 func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
+	return s.deleteUserToken(systemActor, username, tokenID)
+}
+
+func (s *AuthStore) deleteUserToken(actor Actor, username string,
+	tokenID int64) error {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.deleteTokensByFilter(
+		actor,
 		// Filter to token IDs owned by the named user.
 		"id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)",
 		[]any{tokenID, username},
@@ -1387,7 +1444,13 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 // would cascade via ON DELETE CASCADE. These explicit deletes are
 // intentionally kept as defense in depth and also clean up
 // connection_sessions, which references token_hash without an FK.
+//
+// The change is attributed to the system actor.
 func (s *AuthStore) DeleteToken(identifier string) error {
+	return s.deleteToken(systemActor, identifier)
+}
+
+func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1395,7 +1458,8 @@ func (s *AuthStore) DeleteToken(identifier string) error {
 	// table id column is INTEGER, so SQLite will coerce the string
 	// safely. A non-numeric identifier matches nothing here and falls
 	// through to the hash-prefix branch below.
-	if err := s.deleteTokensByFilter("id = ?", []any{identifier}, ""); err == nil {
+	if err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
+		""); err == nil {
 		return nil
 	}
 
@@ -1403,7 +1467,7 @@ func (s *AuthStore) DeleteToken(identifier string) error {
 	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
 		if err := s.deleteTokensByFilter(
-			"token_hash LIKE ?", []any{identifier + "%"}, "",
+			actor, "token_hash LIKE ?", []any{identifier + "%"}, "",
 		); err == nil {
 			return nil
 		}
@@ -1414,22 +1478,30 @@ func (s *AuthStore) DeleteToken(identifier string) error {
 
 // deleteTokensByFilter deletes every token matched by the supplied
 // WHERE clause along with every row that references those tokens,
-// atomically. The whereClause is embedded in "SELECT id FROM tokens
-// WHERE <clause>", so it must not contain user-supplied text; all
-// dynamic values belong in the args slice. notFoundMsg, when non-empty,
-// is returned (wrapped in an error) if the filter matches no rows.
-// When empty, a zero-rows-affected outcome returns a generic
-// "token not found" error so callers can chain filters.
-func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoundMsg string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+// atomically, recording one token.delete event per matched token in the
+// same transaction. The whereClause is embedded in "SELECT id FROM
+// tokens WHERE <clause>", so it must not contain user-supplied text;
+// all dynamic values belong in the args slice. notFoundMsg, when
+// non-empty, is returned (wrapped in an error) if the filter matches no
+// rows. When empty, a zero-rows-affected outcome returns a generic
+// "token not found" error so callers can chain filters. A filter that
+// matches nothing records no audit event at all, because there is no
+// target to attribute one to and DeleteToken chains two filters of
+// which the first routinely matches nothing.
+func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
+	args []any, notFoundMsg string) (err error) {
+
+	tx, beginErr := s.db.Begin()
+	if beginErr != nil {
+		return fmt.Errorf("failed to begin transaction: %w", beginErr)
 	}
+
+	// target stays nil until a matching token is known, so that an
+	// unmatched filter records nothing.
+	var target *auditTarget
 	defer func() {
 		if err != nil {
-			//nolint:errcheck // Rollback error is not critical; the
-			// outer error is already being returned to the caller.
-			tx.Rollback()
+			s.failAudit(tx, actor, target, err)
 		}
 	}()
 
@@ -1438,9 +1510,9 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 	// are keyed on the raw hash and have no declared FK.
 	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
 	selectStmt := "SELECT id, token_hash FROM tokens WHERE " + whereClause
-	rows, err := tx.Query(selectStmt, args...)
-	if err != nil {
-		return fmt.Errorf("failed to query tokens: %w", err)
+	rows, queryErr := tx.Query(selectStmt, args...)
+	if queryErr != nil {
+		return fmt.Errorf("failed to query tokens: %w", queryErr)
 	}
 	type tokenRef struct {
 		id   int64
@@ -1472,6 +1544,37 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 		return err
 	}
 
+	// Attribute any failure from here on to the first matched token.
+	first := matches[0].id
+	target = &auditTarget{
+		action:     "token.delete",
+		targetType: "token",
+		targetID:   &first,
+	}
+	if annotation, ok := tokenAnnotationTx(tx, first); ok {
+		target.targetName = annotation
+	}
+
+	// Capture the before state of every matched token, scopes included,
+	// while the rows are still there to read.
+	snapshots := make([]tokenDeleteSnapshot, 0, len(matches))
+	for _, ref := range matches {
+		snap, snapErr := tokenSnapshotTx(tx, ref.id)
+		if snapErr != nil {
+			err = fmt.Errorf("failed to read token: %w", snapErr)
+			return err
+		}
+		scopes, scopeErr := tokenScopesTx(tx, ref.id)
+		if scopeErr != nil {
+			err = scopeErr
+			return err
+		}
+		snapshots = append(snapshots, tokenDeleteSnapshot{
+			tokenSnapshot: snap,
+			tokenScopes:   scopes,
+		})
+	}
+
 	// Delete the per-token scope rows explicitly (defense in depth;
 	// FK cascades would handle this when the pragma is on).
 	scopeTables := []string{
@@ -1500,6 +1603,18 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
 	if _, err = tx.Exec(deleteStmt, args...); err != nil {
 		return fmt.Errorf("failed to delete tokens: %w", err)
+	}
+
+	// Record one event per deleted token, so that a hash-prefix filter
+	// matching several tokens leaves a row for each of them.
+	for i := range snapshots {
+		snap := snapshots[i]
+		if auditErr := s.recordAudit(tx, newEvent(actor, "token.delete", "token",
+			&snap.ID, snap.Annotation,
+			map[string]any{"before": snap})); auditErr != nil {
+			err = auditErr
+			return err
+		}
 	}
 
 	if commitErr := tx.Commit(); commitErr != nil {

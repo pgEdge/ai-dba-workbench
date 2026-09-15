@@ -533,8 +533,31 @@ func ResolveDatabaseColumn(ctx context.Context, pool *pgxpool.Pool, probeName st
 	return col, nil
 }
 
+// validAggregations is the closed set of bucket aggregation functions the
+// query builders accept. Every one of them is interpolated into SQL as a
+// bare function name, so nothing outside this set may ever reach a
+// builder; IsValidAggregation is the single gate, and the builders apply
+// it themselves so they are safe whatever the caller validated.
+var validAggregations = map[string]bool{
+	"avg": true, "sum": true, "min": true, "max": true, "last": true,
+}
+
+// ValidAggregations returns the accepted aggregation names in the order
+// the API documents and reports them in.
+func ValidAggregations() []string {
+	return []string{"avg", "sum", "min", "max", "last"}
+}
+
+// IsValidAggregation reports whether agg names a bucket aggregation the
+// query builders accept. The comparison is exact: callers lower-case the
+// request parameter before validating it.
+func IsValidAggregation(agg string) bool {
+	return validAggregations[agg]
+}
+
 // GetAggSelectCols returns aggregated SELECT expressions with quoted
-// identifiers to prevent SQL injection.
+// identifiers to prevent SQL injection. The aggregation must already have
+// passed IsValidAggregation; the builders enforce that.
 func GetAggSelectCols(metricCols []string, aggregation string) []string {
 	var cols []string
 	for _, col := range metricCols {
@@ -578,6 +601,10 @@ func BuildMetricsQuery(
 	aggregation string,
 	filters MetricFilters,
 ) (string, []any, error) {
+	if !IsValidAggregation(aggregation) {
+		return "", nil, fmt.Errorf("invalid aggregation %q", aggregation)
+	}
+
 	// Calculate bucket width
 	duration := timeEnd.Sub(timeStart)
 	bucketWidth := duration / time.Duration(buckets)
@@ -899,14 +926,17 @@ func ratioTupleExpr(aggregation, column string) string {
 // increase between the last sample before the window and the first sample
 // inside it lands in the first bucket rather than being dropped; the
 // borrowed sample is excluded from rate_samples' output and never becomes
-// a bucket. Delta outputs are COALESCEd to 0 after the LEFT JOIN rather
-// than left NULL: a bucket with no sample saw no counter reading, and its
-// events are counted by the next sample's delta, so carrying the previous
-// bucket's value forward (which the caller's LOCF fill would do for a
-// NULL) would double count them. That zero fill is gated on the window
-// holding at least one sample at all, so a connection whose probe has
-// never run, is disabled or is failing yields every bucket NULL and the
-// dashboard shows its no-data state instead of a confident flat zero.
+// a bucket. A delta bucket with no sample of its own reads 0 rather than
+// NULL when an accepted sample interval spans it: it saw no counter
+// reading, and its events are counted by the next sample's delta, so
+// carrying the previous bucket's value forward (which the caller's LOCF
+// fill would do for a NULL) would double count them. Where no accepted
+// interval spans the bucket, nothing counts those events anywhere, so the
+// bucket is NULL: before the probe's first sample, after its last, and
+// through a collection outage, where the delta breaks exactly as the rate
+// does. A connection whose probe has never run, is disabled or is failing
+// therefore yields every bucket NULL and the dashboard shows its no-data
+// state instead of a confident flat zero.
 //
 // Two guards apply to every counter-derived sample (issue #402). A sample
 // whose spacing from its predecessor exceeds maxElapsed (the caller passes
@@ -937,6 +967,9 @@ func BuildDerivedMetricsQuery(
 	if len(derived) == 0 {
 		return "", nil, fmt.Errorf("no derived metrics requested")
 	}
+	if !IsValidAggregation(aggregation) {
+		return "", nil, fmt.Errorf("invalid aggregation %q", aggregation)
+	}
 
 	duration := timeEnd.Sub(timeStart)
 	bucketWidth := duration / time.Duration(buckets)
@@ -949,7 +982,11 @@ func BuildDerivedMetricsQuery(
 	// rate_samples and rate_buckets CTEs below.
 	var counters []DerivedMetric
 	hasRatio := false
+	hasDelta := false
 	for _, d := range derived {
+		if d.Kind == DerivedDelta {
+			hasDelta = true
+		}
 		switch d.Kind {
 		case DerivedPerSec, DerivedDelta, DerivedTimeShare, DerivedSessionAverage:
 			counters = append(counters, d)
@@ -1004,6 +1041,17 @@ func BuildDerivedMetricsQuery(
 		var sampleCols []string
 		var entitySumCols []string
 		var bucketCols []string
+		// A delta zero-fills a sample-less bucket only when an accepted
+		// interval spans it, which needs each sample's predecessor time
+		// carried up to rate_samples; nothing else reads it.
+		if hasDelta {
+			innerCols = append(innerCols, fmt.Sprintf(
+				"LAG(collected_at) OVER (%sORDER BY collected_at) "+
+					"AS prev_collected_at", partition))
+			sampleCols = append(sampleCols, "prev_collected_at")
+			entitySumCols = append(entitySumCols,
+				"MAX(prev_collected_at) AS prev_collected_at")
+		}
 		for i, d := range counters {
 			qb := QuoteIdentifier(d.BaseColumn)
 			innerCols = append(innerCols,
@@ -1178,20 +1226,40 @@ func BuildDerivedMetricsQuery(
 			selectCols = append(selectCols,
 				"rate_buckets."+QuoteIdentifier(d.OutputName))
 		case DerivedDelta:
-			// 0, not NULL, for a bucket the LEFT JOIN did not match: see
-			// the double-counting note on this function. The zero fill
-			// applies only when the window holds a sample at all; with
-			// none, every bucket stays NULL and the series is all gaps.
-			// A bucket whose every sample was rejected by the gap bound
-			// (gap_<i>) is NULL too: its events are unknown, not zero.
-			// The EXISTS is uncorrelated, so the planner evaluates it once
-			// per query.
+			// A bucket holding samples reports their summed increments,
+			// unless every one of them was rejected (gap_<i>), which is a
+			// gap rather than a zero.
+			//
+			// A bucket holding no sample reads 0 only when an accepted
+			// interval spans it: see the double-counting note on this
+			// function. Its events are counted by the delta of the next
+			// sample, so reporting them here as well (which the caller's
+			// LOCF fill would do for a NULL) would count them twice. That
+			// reasoning depends on the spanning interval being accepted:
+			// when it was rejected by the gap bound, or when there is no
+			// spanning sample at all (before the probe's first reading,
+			// after its last, or across a collection outage), nothing
+			// counts those events anywhere and the bucket is unknown, not
+			// zero. Such a bucket is NULL, exactly as the rate is, so a
+			// multi-bucket outage draws one break rather than a run of
+			// confident zero bars followed by a single null.
+			//
+			// The span test is the standard half-open overlap: the
+			// interval (prev_collected_at, collected_at] meets the bucket
+			// [bucket_time, bucket_time + width).
 			q := QuoteIdentifier(d.OutputName)
+			i := counterIndex[d.OutputName]
 			selectCols = append(selectCols, fmt.Sprintf(
-				"CASE WHEN EXISTS (SELECT 1 FROM rate_samples) "+
-					"AND NOT COALESCE(rate_buckets.gap_%d, false) "+
-					"THEN COALESCE(rate_buckets.%s, 0) END AS %s",
-				counterIndex[d.OutputName], q, q))
+				"CASE WHEN rate_buckets.bucket_time IS NOT NULL "+
+					"THEN CASE WHEN COALESCE(rate_buckets.gap_%[1]d, false) "+
+					"THEN NULL ELSE COALESCE(rate_buckets.%[2]s, 0) END "+
+					"WHEN EXISTS (SELECT 1 FROM rate_samples s "+
+					"WHERE s.delta_%[1]d IS NOT NULL "+
+					"AND s.prev_collected_at IS NOT NULL "+
+					"AND s.prev_collected_at < all_buckets.bucket_time + $1::interval "+
+					"AND s.collected_at >= all_buckets.bucket_time) "+
+					"THEN 0 END AS %[2]s",
+				i, q))
 		case DerivedDeadTupleRatio:
 			selectCols = append(selectCols, "ratio_buckets.dead_tuple_ratio")
 		}
@@ -1515,11 +1583,21 @@ func QueryTimeSeries(
 
 	// The probe's collection interval sets three things at once: the gap
 	// bound beyond which a counter interval is rejected, how long a gauge
-	// may be carried forward, and the finest bucket worth drawing. A bucket
-	// narrower than the interval cannot hold a sample of its own, so the
-	// requested count is clamped to one bucket per interval; raw and
-	// derived queries share the clamp so their series stay aligned.
-	interval, err := ResolveProbeInterval(ctx, pool, probeName, connectionIDs)
+	// may be carried forward, and the finest bucket worth drawing.
+	//
+	// The first two judge samples that were collected under whatever
+	// configuration was in force at the time, so they use the effective
+	// interval: the configured one widened to the spacing the samples in
+	// the window actually show. Tightening a probe's interval then cannot
+	// retroactively turn its older, wider-spaced history into gaps.
+	//
+	// The bucket clamp stays on the configured interval: a bucket narrower
+	// than the interval cannot hold a sample of its own, so the requested
+	// count is clamped to one bucket per interval (raw and derived queries
+	// share the clamp so their series stay aligned), and widening it on
+	// sparse history would coarsen the whole chart rather than fix a gap.
+	interval, effective, err := ResolveEffectiveInterval(
+		ctx, pool, probeName, connectionIDs, window)
 	if err != nil {
 		return nil, err
 	}
@@ -1530,7 +1608,7 @@ func QueryTimeSeries(
 	if buckets > maxBuckets {
 		buckets = maxBuckets
 	}
-	maxElapsed := time.Duration(MaxElapsedIntervals) * interval
+	maxElapsed := time.Duration(MaxElapsedIntervals) * effective
 
 	// Collect data across all connections
 	dataMap := make(map[seriesKey][]MetricDataPoint)
@@ -1548,7 +1626,7 @@ func QueryTimeSeries(
 				fills[i] = fillGauge
 			}
 			if err := scanSeriesRows(ctx, pool, query, queryArgs, rawCols,
-				fills, interval, connID, dataMap); err != nil {
+				fills, effective, connID, dataMap); err != nil {
 				return nil, err
 			}
 		}
@@ -1567,7 +1645,7 @@ func QueryTimeSeries(
 				fills[i] = derivedFillPolicy(d.Kind)
 			}
 			if err := scanSeriesRows(ctx, pool, query, queryArgs, names,
-				fills, interval, connID, dataMap); err != nil {
+				fills, effective, connID, dataMap); err != nil {
 				return nil, err
 			}
 		}

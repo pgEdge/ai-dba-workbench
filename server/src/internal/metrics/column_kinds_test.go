@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -276,10 +277,152 @@ func registryEntryProblems(ddl, probe string, entry probeRegistryEntry) []string
 	return problems
 }
 
+// ddlNumericColumns returns the columns of metrics.<probe> whose declared
+// type in the collector DDL can carry a counter: the integer, numeric and
+// floating-point types. Text, boolean, timestamp and OID columns are
+// dimensions or identifiers and can never be differenced, so they are left
+// out. ok is false when the DDL has no such table.
+func ddlNumericColumns(ddl, probe string) (map[string]bool, bool) {
+	numeric := map[string]bool{
+		"BIGINT": true, "INTEGER": true, "SMALLINT": true, "NUMERIC": true,
+		"REAL": true, "DOUBLE": true, "FLOAT8": true, "BIGSERIAL": true,
+	}
+
+	marker := "CREATE TABLE IF NOT EXISTS metrics." + probe + " ("
+	start := strings.Index(ddl, marker)
+	if start < 0 {
+		return nil, false
+	}
+	body := ddl[start+len(marker):]
+	end := strings.Index(body, "PARTITION BY RANGE")
+	if end < 0 {
+		return nil, false
+	}
+	body = body[:end]
+
+	cols := make(map[string]bool)
+	keep := func(name, dataType string) {
+		if numeric[strings.ToUpper(strings.Trim(dataType, ","))] {
+			cols[name] = true
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch strings.ToUpper(fields[0]) {
+		case "PRIMARY", "UNIQUE", "CONSTRAINT", "FOREIGN", "CHECK", ")":
+			continue
+		}
+		keep(fields[0], fields[1])
+	}
+
+	added := regexp.MustCompile(
+		`ALTER TABLE metrics\.` + regexp.QuoteMeta(probe) +
+			`\s+ADD COLUMN IF NOT EXISTS (\w+)\s+(\w+)`)
+	for _, m := range added.FindAllStringSubmatch(ddl, -1) {
+		keep(m[1], m[2])
+	}
+	return cols, true
+}
+
+// knownGaugeColumns pins the numeric columns of a registered probe that
+// are deliberately left out of the registry, and so are gauges. Every
+// numeric column of a registered probe must appear either in its registry
+// entry or here, which is what stops a counter column added to the
+// collector DDL from being silently classified as a gauge: the developer
+// adding it has to decide which list it belongs in, rather than leaving a
+// user to find the 400 that a _per_sec request on it returns.
+//
+// connection_id is the probe tables' own bookkeeping column and is
+// excluded everywhere rather than repeated per probe.
+var knownGaugeColumns = map[string][]string{
+	"pg_replication_slots":      {"retained_bytes", "safe_wal_size"},
+	"pg_stat_all_indexes":       {"index_size"},
+	"pg_stat_all_tables":        {"n_dead_tup", "n_live_tup", "n_mod_since_analyze", "table_size"},
+	"pg_stat_database":          {"numbackends"},
+	"pg_stat_io":                {"op_bytes"},
+	"pg_stat_recovery_prefetch": {"block_distance", "io_depth", "wal_distance"},
+	"pg_stat_statements":        {"queryid"},
+	"pg_stat_subscription":      {"leader_pid", "pid"},
+	"pg_sys_network_info":       {"link_speed_mbps"},
+}
+
+// unregisteredProbeTables pins the metrics tables the collector creates
+// that have no registry entry at all, and whose every column is therefore
+// a gauge. A new probe table has to be added here (or to the registry)
+// before this test passes, so a table arriving with counters in it cannot
+// go unnoticed either.
+var unregisteredProbeTables = []string{
+	"pg_connectivity",
+	"pg_database",
+	"pg_extension",
+	"pg_hba_file_rules",
+	"pg_ident_file_mappings",
+	"pg_node_role",
+	"pg_server_info",
+	"pg_settings",
+	"pg_stat_activity",
+	"pg_stat_connection_security",
+	"pg_stat_replication",
+	"pg_sys_cpu_info",
+	"pg_sys_cpu_memory_by_process",
+	"pg_sys_disk_info",
+	"pg_sys_load_avg_info",
+	"pg_sys_memory_info",
+	"pg_sys_os_info",
+	"pg_sys_process_info",
+	"spock_exception_log",
+	"spock_resolutions",
+}
+
+// unregisteredColumnProblems returns a description of every numeric column
+// of probe in the collector DDL that entry neither classifies nor lists as
+// a known gauge: the reverse of registryEntryProblems, which only checks
+// that what the registry names exists.
+func unregisteredColumnProblems(
+	ddl, probe string, entry probeRegistryEntry, knownGauges []string,
+) []string {
+	cols, ok := ddlNumericColumns(ddl, probe)
+	if !ok {
+		return []string{"probe " + probe + " has no CREATE TABLE in the collector DDL"}
+	}
+	known := map[string]bool{"connection_id": true}
+	for _, c := range knownGauges {
+		known[c] = true
+		if !cols[c] {
+			return []string{probe + "." + c +
+				" is listed as a known gauge but is not a numeric column of the collector DDL"}
+		}
+	}
+
+	var problems []string
+	var missing []string
+	for col := range cols {
+		if known[col] {
+			continue
+		}
+		if _, ok := entry.kinds[col]; !ok {
+			missing = append(missing, col)
+		}
+	}
+	sort.Strings(missing)
+	for _, col := range missing {
+		problems = append(problems, probe+"."+col+
+			" is a numeric collector column that is neither registered nor a known gauge;"+
+			" register its kind or add it to knownGaugeColumns")
+	}
+	return problems
+}
+
 // TestProbeRegistryMatchesCollectorDDL fails when the registry names a
 // probe or column the collector does not create, which is the failure
 // mode a mistyped entry would otherwise hide behind (an unknown column is
-// silently a gauge).
+// silently a gauge), and in the reverse direction when the collector DDL
+// carries a numeric column the registry neither classifies nor records as
+// a deliberate gauge, which would otherwise be found by a user hitting a
+// 400 on its _per_sec rather than by CI.
 func TestProbeRegistryMatchesCollectorDDL(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Clean(collectorSchemaPath))
 	if errors.Is(err, os.ErrNotExist) {
@@ -299,6 +442,143 @@ func TestProbeRegistryMatchesCollectorDDL(t *testing.T) {
 		for _, p := range registryEntryProblems(ddl, probe, entry) {
 			t.Error(p)
 		}
+		for _, p := range unregisteredColumnProblems(
+			ddl, probe, entry, knownGaugeColumns[probe]) {
+			t.Error(p)
+		}
+	}
+
+	// Every known-gauge list must belong to a registered probe, so a
+	// probe removed from the registry cannot leave a stale list behind.
+	for probe := range knownGaugeColumns {
+		if _, ok := probeRegistry[probe]; !ok {
+			t.Errorf("knownGaugeColumns names %s, which is not a registered probe", probe)
+		}
+	}
+
+	// And every metrics table the collector creates is either registered
+	// or pinned as gauge-only, so a new probe table forces the choice.
+	accounted := make(map[string]bool, len(probeRegistry)+len(unregisteredProbeTables))
+	for probe := range probeRegistry {
+		accounted[probe] = true
+	}
+	for _, probe := range unregisteredProbeTables {
+		if _, ok := probeRegistry[probe]; ok {
+			t.Errorf("%s is both registered and listed as gauge-only", probe)
+		}
+		accounted[probe] = true
+	}
+	tables := regexp.MustCompile(
+		`CREATE TABLE IF NOT EXISTS metrics\.(\w+)`).FindAllStringSubmatch(ddl, -1)
+	if len(tables) == 0 {
+		t.Fatal("no metrics tables found in the collector DDL")
+	}
+	for _, m := range tables {
+		if !accounted[m[1]] {
+			t.Errorf("collector table metrics.%s is neither in probeRegistry nor in"+
+				" unregisteredProbeTables; classify its counter columns or record"+
+				" that it has none", m[1])
+		}
+	}
+}
+
+func TestDDLNumericColumns(t *testing.T) {
+	const ddl = `
+        CREATE TABLE IF NOT EXISTS metrics.probe_n (
+            connection_id INTEGER NOT NULL,
+            iface TEXT NOT NULL,
+            hits BIGINT,
+            ratio DOUBLE PRECISION,
+            seen BOOLEAN,
+            relid OID,
+            stats_reset TIMESTAMPTZ,
+            PRIMARY KEY (connection_id)
+        ) PARTITION BY RANGE (collected_at);
+        ALTER TABLE metrics.probe_n
+            ADD COLUMN IF NOT EXISTS misses BIGINT;
+    `
+	cols, ok := ddlNumericColumns(ddl, "probe_n")
+	if !ok {
+		t.Fatal("probe_n not found")
+	}
+	want := map[string]bool{
+		"connection_id": true, "hits": true, "ratio": true, "misses": true,
+	}
+	if len(cols) != len(want) {
+		t.Fatalf("got %v, want %v", cols, want)
+	}
+	for c := range want {
+		if !cols[c] {
+			t.Errorf("%s missing from %v", c, cols)
+		}
+	}
+	if _, ok := ddlNumericColumns(ddl, "probe_absent"); ok {
+		t.Error("probe_absent reported as present")
+	}
+}
+
+func TestUnregisteredColumnProblems(t *testing.T) {
+	const ddl = `
+        CREATE TABLE IF NOT EXISTS metrics.probe_u (
+            connection_id INTEGER NOT NULL,
+            hits BIGINT,
+            depth BIGINT,
+            misses BIGINT,
+            name TEXT,
+            PRIMARY KEY (connection_id)
+        ) PARTITION BY RANGE (collected_at);
+    `
+	for _, tc := range []struct {
+		name        string
+		probe       string
+		entry       probeRegistryEntry
+		knownGauges []string
+		want        []string
+	}{
+		{
+			name:        "every numeric column accounted for",
+			probe:       "probe_u",
+			entry:       countersForTest("hits", "misses"),
+			knownGauges: []string{"depth"},
+		},
+		{
+			name:        "unaccounted counter column",
+			probe:       "probe_u",
+			entry:       countersForTest("hits"),
+			knownGauges: []string{"depth"},
+			want:        []string{"probe_u.misses is a numeric collector column"},
+		},
+		{
+			name:  "two unaccounted columns are reported in order",
+			probe: "probe_u",
+			entry: countersForTest("hits"),
+			want:  []string{"probe_u.depth is a", "probe_u.misses is a"},
+		},
+		{
+			name:        "known gauge that is not a numeric column",
+			probe:       "probe_u",
+			entry:       countersForTest("hits", "misses", "depth"),
+			knownGauges: []string{"name"},
+			want:        []string{"probe_u.name is listed as a known gauge"},
+		},
+		{
+			name:  "unknown probe",
+			probe: "probe_absent",
+			entry: countersForTest("hits"),
+			want:  []string{"no CREATE TABLE"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unregisteredColumnProblems(ddl, tc.probe, tc.entry, tc.knownGauges)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d problems %v, want %d", len(got), got, len(tc.want))
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(got[i], w) {
+					t.Errorf("problem %d = %q, want it to contain %q", i, got[i], w)
+				}
+			}
+		})
 	}
 }
 

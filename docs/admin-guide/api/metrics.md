@@ -287,14 +287,30 @@ spans several connections, the largest interval
 applies, because one bucket width serves every series
 in the response.
 
+The configured interval describes how the collector
+runs now, whilst the stored samples were collected
+under whatever interval was configured at the time, so
+the interval used to judge them is widened to the
+spacing the samples in the window actually show when
+that spacing is wider. Tightening a probe's interval
+therefore leaves the history collected at the old,
+wider one intact rather than reading all of it as
+gaps.
+
 An interval between two consecutive samples longer
-than three times the collection interval is a gap in
-collection rather than a measurement, and it reports
-`null` for every derived form, `_delta` included. A
-bucket whose only samples fall in such a gap is `null`
-rather than zero, whilst a bucket with no samples at
-all still reports zero for `_delta` when the window
-contains at least one sample.
+than three times that interval is a gap in collection
+rather than a measurement, and it reports `null` for
+every derived form, `_delta` included. A bucket whose
+only samples fall in such a gap is `null` rather than
+zero. A bucket with no samples of its own reports zero
+for `_delta` when an accepted sample interval spans
+it, because the events in it are counted by the next
+sample's delta; where no accepted interval spans the
+bucket, nothing counts them anywhere and the bucket is
+`null`, so a collection outage breaks a `_delta`
+series exactly as it breaks a `_per_sec` one. Buckets
+before a probe's first sample and after its last are
+`null` for the same reason.
 
 The first sample in the window is compared with the
 most recent sample before the window, provided that
@@ -323,7 +339,9 @@ kind of metric:
   intervals, after which the bucket is `null`.
 - `_per_sec`, `_delta`, `_pct` and `_sessions` never
   repeat a value; a bucket without a valid interval is
-  `null`, or zero for `_delta` as described above.
+  `null`, except that `_delta` reports zero for a
+  bucket an accepted interval spans, as described
+  above.
 
 The bucket value of a `_per_sec`, `_pct` or
 `_sessions` metric follows the `aggregation`

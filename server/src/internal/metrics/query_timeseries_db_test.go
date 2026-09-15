@@ -607,11 +607,18 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		}
 	})
 
+	// A pre-resolved database column the table does not have builds valid
+	// SQL that fails at execution, which is how both execution-error
+	// returns are exercised. An invalid aggregation no longer serves:
+	// the builders refuse one before any SQL is produced.
+	missingColumn := MetricFilters{
+		DatabaseName:   "northwind",
+		DatabaseColumn: "no_such_database_column",
+	}
+
 	t.Run("raw query execution error propagates", func(t *testing.T) {
-		// An aggregation that names no real SQL function makes the built raw
-		// query fail at execution, exercising the raw-path error return.
 		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "no_such_agg",
+			[]int{1}, lastHourWindow(), missingColumn, 60, "avg",
 			[]string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error from failing raw query")
@@ -619,13 +626,23 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("derived query execution error propagates", func(t *testing.T) {
-		// The same invalid aggregation makes the derived rate query fail at
-		// execution, exercising the derived-path error return.
 		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
-			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "no_such_agg",
+			[]int{1}, lastHourWindow(), missingColumn, 60, "avg",
 			[]string{"seq_scan_per_sec"})
 		if err == nil {
 			t.Fatal("expected error from failing derived query")
+		}
+	})
+
+	t.Run("an invalid aggregation is refused before any query runs", func(t *testing.T) {
+		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "no_such_agg",
+			[]string{"seq_scan"})
+		if err == nil {
+			t.Fatal("expected error for an invalid aggregation")
+		}
+		if !strings.Contains(err.Error(), "invalid aggregation") {
+			t.Errorf("error = %v, want it to mention an invalid aggregation", err)
 		}
 	})
 
@@ -864,8 +881,9 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 		s := seriesByMetric(t, series, "seq_scan_delta")
 
 		// Every bucket of the hour is emitted, not just the six carrying a
-		// sample: sample-less buckets are COALESCEd to 0 rather than left
-		// NULL for the caller's LOCF fill to duplicate.
+		// sample: a sample-less bucket an accepted interval spans reads 0
+		// rather than being left NULL for the caller's LOCF fill to
+		// duplicate.
 		if len(s.Data) < 50 {
 			t.Fatalf("expected the whole window to be filled, got %d points",
 				len(s.Data))
@@ -889,16 +907,49 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 			}
 		}
 
-		// The sample-less minute sits between the 20 and the 70, so at least
-		// one zero-valued bucket must separate them, and no bucket is null:
-		// the two-minute spacing across that minute is within the gap bound.
+		// The sample-less minute sits between the 20 and the 70, and the
+		// two-minute spacing across it is within the gap bound, so the
+		// interval spanning that bucket is accepted and it reads 0 rather
+		// than breaking the series.
 		zeros := len(nonNull(s)) - len(nonZero)
 		if zeros == 0 {
 			t.Error("expected zero-filled buckets between the samples")
 		}
-		if len(nonNull(s)) != len(s.Data) {
-			t.Errorf("expected no null delta buckets, got %d",
-				len(s.Data)-len(nonNull(s)))
+
+		// The samples only start six minutes before the window's end, so
+		// every bucket before the one holding the first sample is spanned
+		// by no interval at all: those events are unknown, not zero, and
+		// the buckets are null. From the first sample on, every bucket has
+		// a value.
+		first := -1
+		for i, p := range s.Data {
+			if p.Value != nil {
+				first = i
+				break
+			}
+		}
+		if first < 0 {
+			t.Fatal("every delta bucket is null")
+		}
+		if got := s.Data[first].Time; got.After(base.Add(-6 * time.Minute)) {
+			t.Errorf("first non-null bucket at %s, want one holding the sample at %s",
+				got, base.Add(-6*time.Minute))
+		}
+		if first < 50 {
+			t.Errorf("only %d leading buckets are null, want the hour before the"+
+				" first sample to be null", first)
+		}
+		last := len(s.Data) - 1
+		for _, p := range s.Data[first:last] {
+			if p.Value == nil {
+				t.Errorf("bucket at %s is null, want a value", p.Time)
+			}
+		}
+		// generate_series is inclusive of the window end, so the final
+		// point opens a bucket that starts after the last sample: nothing
+		// spans it, and it is null rather than a confident zero.
+		if v := s.Data[last].Value; v != nil {
+			t.Errorf("trailing bucket at %s = %v, want null", s.Data[last].Time, *v)
 		}
 	})
 
@@ -1289,9 +1340,11 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 		assertAllNull(t, seriesByMetric(t, series, "tx_bytes_delta"))
 	})
 
-	t.Run("a single in-window sample still zero-fills the window", func(t *testing.T) {
-		// One sample is enough to know the probe is running, so the
-		// sample-less buckets around it read 0 as before.
+	t.Run("a single in-window sample fills only its own bucket", func(t *testing.T) {
+		// The window opens on the probe's very first sample, so that
+		// sample has no predecessor to difference against: its bucket
+		// reads 0, and the bucket after it is spanned by no interval at
+		// all and stays null rather than asserting that nothing happened.
 		window := TimeWindow{
 			Start: base.Add(-6*time.Minute - 30*time.Second),
 			End:   base.Add(-5*time.Minute - 30*time.Second),
@@ -1305,13 +1358,14 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 		// The one-minute window clamps to a single 60-second bucket, so
 		// generate_series yields the bucket at the start and one at the end.
 		s := seriesByMetric(t, series, "tx_bytes_delta")
-		if len(s.Data) < 2 {
-			t.Errorf("got %d points, want the whole window zero-filled", len(s.Data))
+		if len(s.Data) != 2 {
+			t.Fatalf("got %d points, want 2 (one bucket plus the end)", len(s.Data))
 		}
-		for _, p := range s.Data {
-			if v := val(t, s, p); v != 0 {
-				t.Errorf("point at %s = %v, want 0", p.Time, v)
-			}
+		if got := val(t, s, s.Data[0]); got != 0 {
+			t.Errorf("point at %s = %v, want 0", s.Data[0].Time, got)
+		}
+		if s.Data[1].Value != nil {
+			t.Errorf("point at %s = %v, want null", s.Data[1].Time, *s.Data[1].Value)
 		}
 	})
 }

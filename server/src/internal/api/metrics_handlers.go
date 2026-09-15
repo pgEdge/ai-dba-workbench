@@ -198,15 +198,13 @@ func (h *MetricsHandler) handleMetricsQuery(
 	if aggregation == "" {
 		aggregation = "avg"
 	}
-	validAggs := map[string]bool{
-		"avg": true, "sum": true, "min": true, "max": true, "last": true,
-	}
-	if !validAggs[strings.ToLower(aggregation)] {
+	aggregation = strings.ToLower(aggregation)
+	if !metrics.IsValidAggregation(aggregation) {
 		RespondError(w, http.StatusBadRequest,
-			"Invalid aggregation: must be one of avg, sum, min, max, last")
+			"Invalid aggregation: must be one of "+
+				strings.Join(metrics.ValidAggregations(), ", "))
 		return
 	}
-	aggregation = strings.ToLower(aggregation)
 
 	// Parse optional metrics filter
 	var requestedMetrics []string

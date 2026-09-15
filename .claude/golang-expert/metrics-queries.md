@@ -239,10 +239,31 @@ are never differenced, purely so the error message can say why.
 The registry names columns by string, so a typo would silently make a
 counter a gauge. `TestProbeRegistryMatchesCollectorDDL` reads the
 collector's `schema.go` (relative to the package, skipping if absent) and
-fails on any registered column, reset column or exclusion column that the
-`CREATE TABLE` or a later `ADD COLUMN` does not declare, and on any probe
-without a `CREATE TABLE`. When a probe gains a counter column, add it to
-the registry in the same change or `_per_sec` on it is refused.
+checks both directions. Outwards, it fails on any registered column,
+reset column or exclusion column that the `CREATE TABLE` or a later `ADD
+COLUMN` does not declare, and on any probe without a `CREATE TABLE`.
+Inwards (`unregisteredColumnProblems`), every numeric column of a
+registered probe must be either classified in the entry or listed in the
+test's `knownGaugeColumns`, so a counter column added to the collector
+cannot quietly default to a gauge and be found by a user hitting the 400
+on its `_per_sec`; `connection_id` is excluded everywhere, and only the
+integer, numeric and floating-point types are considered, since a text,
+boolean, timestamp or OID column can never be a counter. The same test
+pins the metrics tables that have no registry entry at all in
+`unregisteredProbeTables`, so a new probe table forces the same decision.
+When a probe gains a counter column, add it to the registry in the same
+change or `_per_sec` on it is refused.
+
+The bucket aggregation is a closed set (`avg`, `sum`, `min`, `max`,
+`last`) held in `query.go` as `validAggregations`, read by
+`IsValidAggregation` and `ValidAggregations`. It is interpolated into SQL
+as a bare function name, so both `BuildMetricsQuery` and
+`BuildDerivedMetricsQuery` refuse anything outside the set themselves
+rather than trusting a caller to have validated first; the HTTP handler
+and the `query_metrics` MCP tool call the same validator, so there is one
+list. A test may no longer force a query to fail at execution by passing a
+nonsense aggregation, as it once did: use a pre-resolved
+`MetricFilters.DatabaseColumn` naming a column the table does not have.
 
 Integration fixtures create tables under their own names
 (`pg_stat_all_tables_ts_test` and so on), which are not registered probes,
@@ -284,22 +305,33 @@ rules are specific to deltas and must not be "tidied away":
   first sample of the window yields 0 rather than NULL, so the bucket SUM
   stays defined whenever the bucket holds any accepted sample; only an
   interval rejected by the gap bound is NULL (see below).
-- The final SELECT wraps each delta in `COALESCE(..., 0)` after the LEFT
-  JOIN, so a bucket with no sample reads 0: a sample-less bucket saw no
-  counter reading, and its events are counted by the next sample's delta,
-  so anything other than zero would double count them. The COALESCE is
-  gated twice. First on `EXISTS (SELECT 1 FROM rate_samples)`, i.e. on the
-  window holding at least one in-window sample (the borrowed pre-window
-  sample is already excluded from `rate_samples`): without the gate a
-  connection whose probe never ran, is disabled or is failing produced 151
-  zero points and a confident flat-zero chart or a "0 B" KPI where the raw
-  column and the `_per_sec` form produced none; with it every bucket is
-  NULL and the client shows its no-data state. A single in-window sample
-  is enough to re-enable the zero fill. Second on `NOT
-  COALESCE(rate_buckets.gap_i, false)`, where `rate_buckets` computes
-  `COUNT(delta_i) = 0 AS gap_i`: a bucket that holds samples but whose
-  every interval was rejected by the gap bound is a gap (NULL), not a
-  zero, because the events in a rejected interval are unknown.
+- The final SELECT decides a delta bucket in two branches. A bucket the
+  LEFT JOIN matched (`rate_buckets.bucket_time IS NOT NULL`) reports
+  `COALESCE(rate_buckets.<output>, 0)`, unless `rate_buckets.gap_i`
+  (computed as `COUNT(delta_i) = 0`) says every one of its samples was
+  rejected by the gap bound, which is a gap (NULL) rather than a zero
+  because the events in a rejected interval are unknown. A bucket holding
+  no sample reads 0 only when an accepted sample interval spans it,
+  tested as `EXISTS (SELECT 1 FROM rate_samples s WHERE s.delta_i IS NOT
+  NULL AND s.prev_collected_at IS NOT NULL AND s.prev_collected_at <
+  all_buckets.bucket_time + $1::interval AND s.collected_at >=
+  all_buckets.bucket_time)`, the standard half-open overlap between the
+  interval `(prev_collected_at, collected_at]` and the bucket. That is
+  what the double-counting argument actually licenses: a sample-less
+  bucket saw no counter reading, and its events are counted by the next
+  sample's delta, so reporting them here as well would count them twice.
+  Where no accepted interval spans the bucket the argument does not
+  apply, because nothing counts those events anywhere, and the bucket is
+  NULL: before the probe's first sample, after its last, and through a
+  collection outage, where `_delta` now breaks exactly as `_per_sec`
+  does instead of drawing a run of confident zero bars. It follows that a
+  connection whose probe never ran, is disabled or is failing yields all
+  NULLs and the client shows its no-data state.
+- `prev_collected_at` exists only to serve that span test, so it is added
+  to the three `rate_samples` levels (a partitioned `LAG(collected_at)`
+  innermost, passed through the middle query, `MAX(prev_collected_at)` in
+  the outer one) only when a `_delta` is requested; a rate-only query's
+  SQL is unchanged.
 
 ### The LAG is partitioned by the probe's entity keys
 
@@ -423,15 +455,41 @@ server-scope `probe_configs` rows for the requested connections, with the
 global row standing in for any connection without one, then
 `DefaultProbeInterval` (300 s, the collector's own fallback); the largest
 interval wins because one bucket width serves every series in the
-response. The table is the collector's, so the metrics package tests
-create a minimal `probe_configs` with `setProbeIntervalForTest`
+response.
+
+That row says how the collector runs now, whilst the stored samples were
+taken under whatever configuration was in force when they were collected,
+so `ResolveEffectiveInterval` pairs it with `ObserveSampleSpacing` and
+returns both the configured interval and an effective one, the larger of
+the two. `ObserveSampleSpacing` measures the samples in the window
+themselves: per connection the smallest positive gap between consecutive
+distinct `collected_at` values, and across connections the largest of
+those, or zero when no connection has two samples. The smallest gap is
+deliberate, because a genuine outage is one wide interval among tighter
+ones and leaves the minimum alone, so the effective interval only widens
+when every sample in the window is spaced more widely than the
+configuration claims. The guards that judge samples (the counter gap
+bound and the gauge carry) use the effective interval, so tightening a
+probe's interval cannot retroactively blank the history collected at the
+old, wider one; the bucket clamp keeps using the configured interval,
+since widening it on sparse history would coarsen the whole chart rather
+than fix a gap.
+
+The table is the collector's, so the metrics package tests create a
+minimal `probe_configs` with `setProbeIntervalForTest`
 (`probe_interval_db_test.go`) when the test database lacks the collector
 schema, and every fixture registers its probe at 60 s (or per connection
 for the lookback fixture) so minute-spaced samples keep their exact
 bucket assertions; without a row a fixture would resolve to 300 s and a
-1h window would clamp to twelve 300 s buckets.
+1h window would clamp to twelve 300 s buckets. A server-scope row needs
+its connection to exist, because another package's fixture creates
+`probe_configs` with a foreign key on `connection_id` and leaves the table
+behind, so `ensureConnectionForTest` adds the referenced row first. It
+never creates the `connections` table: other packages create their own
+with a plain `CREATE TABLE`, and with no such table there is no foreign
+key to satisfy either.
 
-- **Reset guard.** For each counter-derived metric whose
+- Reset guard: for each counter-derived metric whose
   `ResetColumnFor(probe, col)` is non-empty and whose marker column is in
   the `allCols` list, the innermost sample query adds `MAX(reset) AS
   reset_i` and `LAG(MAX(reset)) OVER (<partition> ORDER BY collected_at)
@@ -444,10 +502,10 @@ bucket assertions; without a row a fixture would resolve to 300 s and a
   marker column (a collector schema predating migration 10) is dropped
   silently and the negative-delta guard alone applies;
   `MinCollectorSchemaVersion` was deliberately not bumped.
-- **Gap rejection.** `MaxElapsedIntervals = 3`; `QueryTimeSeries` passes
-  `maxElapsed = 3 * interval` and the builder binds it as the trailing
-  argument. The rate CASE is `CASE WHEN (total_i - prev_i) >= 0 AND
-  elapsed_sec > 0 AND elapsed_sec <= $N::float8 [AND reset_i IS NOT
+- Gap rejection: `MaxElapsedIntervals = 3`; `QueryTimeSeries` passes
+  `maxElapsed = 3 * effective interval` and the builder binds it as the
+  trailing argument. The rate CASE is `CASE WHEN (total_i - prev_i) >= 0
+  AND elapsed_sec > 0 AND elapsed_sec <= $N::float8 [AND reset_i IS NOT
   DISTINCT FROM prev_reset_i] THEN <expr> END`; the delta CASE is `CASE
   WHEN prev_i IS NULL THEN 0 WHEN elapsed_sec > $N::float8 THEN NULL WHEN
   (total_i - prev_i) >= 0 [AND reset guard] THEN (total_i - prev_i) ELSE
@@ -455,27 +513,28 @@ bucket assertions; without a row a fixture would resolve to 300 s and a
   start of a probe's history reads as zero events, not as a gap; only a
   known-too-long interval is NULL. The bucket-level `gap_i` flag turns an
   all-rejected bucket into a NULL bucket (see the delta rules above).
-- **Loopback exclusion.** `metricQueryClauses` takes the probe name and
+- Loopback exclusion: `metricQueryClauses` takes the probe name and
   appends `ProbeEntityExclusion(probe)` (a fixed fragment with no bound
   value, so the `$N` layout is unchanged) to the filter clauses, which
   `where()` and `lookbackWhere()` both emit, so the raw query, the derived
   sample query and its lookback subquery all leave `lo`/`lo0` out of
   `pg_sys_network_info`.
-- **Bucket clamp.** After resolving the interval, `maxBuckets = max(1,
-  window / interval)` and `buckets = min(buckets, maxBuckets)`, applied to
-  raw and derived queries alike so series stay aligned. A bucket narrower
-  than the interval cannot hold a sample of its own and only produced the
-  "comb" of zero and carried buckets. `generate_series` is inclusive of
-  the window end, so a clamped 1h window on a 300 s probe returns 13
-  points (12 buckets plus the end), as before the clamp for any bucket
-  count.
-- **Fill policy and null points.** `MetricDataPoint.Value` is a
+- Bucket clamp: after resolving the interval, `maxBuckets = max(1,
+  window / configured interval)` and `buckets = min(buckets, maxBuckets)`,
+  applied to raw and derived queries alike so series stay aligned. A
+  bucket narrower than the interval cannot hold a sample of its own and
+  only produced the "comb" of zero and carried buckets. `generate_series`
+  is inclusive of the window end, so a clamped 1h window on a 300 s probe
+  returns 13 points (12 buckets plus the end), as before the clamp for any
+  bucket count.
+- Fill policy and null points: `MetricDataPoint.Value` is a
   `*float64` (JSON `"value": null`). `scanSeriesRows` takes a
   `[]fillPolicy` parallel to `names` plus the interval: `fillGauge` (raw
   columns and `dead_tuple_ratio`, via `derivedFillPolicy`) repeats the
   last real value whilst `bucketTime - lastSeenTime <= MaxCarryIntervals
-  * interval` (`MaxCarryIntervals = 3`) and emits nil beyond that;
-  `fillNone` (`_per_sec`, `_delta`, `_pct`, `_sessions`) never repeats.
+  * effective interval` (`MaxCarryIntervals = 3`) and emits nil beyond
+  that; `fillNone` (`_per_sec`, `_delta`, `_pct`, `_sessions`) never
+  repeats.
   Every bucket is emitted for every series, nulls included, so all series
   in a response have identical length and bucket times; a series whose
   query matched no rows is all nulls rather than empty, and the client
@@ -523,18 +582,22 @@ sample of all and so has a null first rate bucket. A second fixture in the
 same file covers `_delta` with a deliberately awkward progression: a first
 sample with no `LAG`, a minute carrying no sample at all (a two-interval
 spacing, inside the gap bound), and a counter reset, asserting the exact
-non-zero per-bucket deltas, the 0 fill, and that the reset contributes
-nothing; it registers a `stats_reset` marker its table does not have, to
-exercise the silent drop. A third, `setupNetworkFixture`, is shaped like
-`pg_sys_network_info` with its real primary key, the real probe's
+non-zero per-bucket deltas, the 0 fill inside the spanned bucket, the
+nulls over the hour before the first sample and after the last, and that
+the reset contributes nothing; it registers a `stats_reset` marker its
+table does not have, to exercise the silent drop. A third,
+`setupNetworkFixture`, is shaped like `pg_sys_network_info` with its real
+primary key, the real probe's
 loopback exclusion and a `lo` row on every sample, and an interface set
 that changes under the window (one interface resets and is then torn
 down, another appears carrying a large lifetime counter); it asserts the
 exact per-minute totals for both `_delta` and `_per_sec`, that the raw
 path ignores `lo` too, that a connection with no rows and a window with
-no samples each yield all-null series, and that a single in-window sample
-still zero-fills. A fourth, `setupLookbackFixture`, holds one scenario
-per connection for the lookback bound: a reset straddling the window
+no samples each yield all-null series, and that a window opening on the
+probe's very first sample fills that sample's bucket with 0 and leaves
+the bucket after it null, nothing having spanned it. A fourth,
+`setupLookbackFixture`, holds one scenario per connection for the
+lookback bound: a reset straddling the window
 boundary, a predecessor beyond the 30-minute floor (not borrowed, first
 delta 0) and one inside it but beyond three 60 s intervals (borrowed and
 rejected, first bucket a gap), and, on hourly connections, a predecessor
@@ -550,16 +613,22 @@ change with a rising counter (null rate, zero delta), a four-minute gap
 followed by a two-minute one (rejected, then accepted), a gauge that
 stops reporting (carried for three buckets, then null), and a connection
 with a 300 s server-scope interval for the bucket clamp (13 points on a
-1h window with 150 requested). The pointer-valued points have helpers:
-`pointAt` fails on a null, `assertNullAt` demands one, `nonNull`,
-`sumValues` and `assertAllNull` cover the rest. Asserting exact values at
-exact bucket times needs the window anchored on the minute (`windowSince`), not on
-`time.Now()`, or the bucket boundaries drift off the samples.
+1h window with 150 requested). Its last case is the regression for the
+effective interval: it reads the rate and delta of the minute-spaced
+connection, tightens the global `probe_configs` row to 10 s with the
+samples untouched, and asserts the same points come back, where before
+`ResolveEffectiveInterval` the series went blank. The pointer-valued
+points have helpers: `pointAt` fails on a null, `assertNullAt` demands
+one, `nonNull`, `sumValues` and `assertAllNull` cover the rest. Asserting
+exact values at exact bucket times needs the window anchored on the
+minute (`windowSince`), not on `time.Now()`, or the bucket boundaries
+drift off the samples.
 Minute-spaced samples always land in distinct 60-second buckets whatever
 the window origin is, which is what makes those exact assertions safe. The
 two `scanSeriesRows` error returns in `QueryTimeSeries` are driven
-deterministically by passing an aggregation that names no SQL function,
-which makes the built query fail at execution; `scanSeriesRows`'s own
+deterministically by a `MetricFilters.DatabaseColumn` naming a column the
+probe table does not have, which builds valid SQL that fails at
+execution; `scanSeriesRows`'s own
 `pool.Query` and `rows.Scan` error branches are driven by a cancelled
 context and a destination-count mismatch respectively.
 

@@ -134,12 +134,18 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 			t.Errorf("rate at -1 min = %v, want 1", got)
 		}
 
-		want := map[int]float64{4: 0, 3: 60, 2: 0, 1: 60, 0: 0}
+		// The -4 min sample has no predecessor inside the window, so its
+		// delta is 0; the reset interval contributes 0 rather than 60.
+		want := map[int]float64{4: 0, 3: 60, 2: 0, 1: 60}
 		for m, v := range want {
 			if got := pointAt(t, delta, minutes(m)); got != v {
 				t.Errorf("delta at -%d min = %v, want %v", m, got, v)
 			}
 		}
+		// Nothing has been collected since -1 min, so the bucket at the
+		// window's end is not spanned by any accepted interval and its
+		// events are unknown rather than zero.
+		assertNullAt(t, delta, minutes(0))
 	})
 
 	t.Run("gap wider than three intervals is rejected, two intervals accepted", func(t *testing.T) {
@@ -168,13 +174,25 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 			t.Errorf("delta at -3 min = %v, want 60", got)
 		}
 
-		// Sample-less buckets still zero-fill the delta, and the rate
-		// never carries: every bucket without an accepted interval is
-		// null for the rate.
-		for _, m := range []int{10, 9, 8, 7, 5, 2, 1, 0} {
+		// The first sample lands at -10 min with no predecessor, so its
+		// own bucket reads 0; -5 min holds no sample but lies inside the
+		// accepted interval from -6 to -4 min, whose events the -4 min
+		// delta already reports, so it reads 0 too.
+		for _, m := range []int{10, 5} {
 			if got := pointAt(t, delta, minutes(m)); got != 0 {
 				t.Errorf("delta at -%d min = %v, want 0", m, got)
 			}
+		}
+		// The sample-less buckets inside the four-minute outage, and those
+		// after the last sample, are spanned by no accepted interval:
+		// nothing counts their events anywhere, so they are null exactly
+		// as the rate is rather than three confident zero bars.
+		for _, m := range []int{9, 8, 7, 2, 1, 0} {
+			assertNullAt(t, delta, minutes(m))
+		}
+		// The rate never carries: every bucket without an accepted
+		// interval is null for it.
+		for _, m := range []int{10, 9, 8, 7, 5, 2, 1, 0} {
 			assertNullAt(t, rate, minutes(m))
 		}
 		if got := len(nonNull(rate)); got != 2 {
@@ -250,6 +268,81 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 			if !s.Data[0].Time.Equal(window.Start) {
 				t.Errorf("%s starts at %s, want %s", s.Metric, s.Data[0].Time, window.Start)
 			}
+		}
+	})
+
+	t.Run("tightening the interval does not blank older history", func(t *testing.T) {
+		// Issue #402 review: the gap bound came from the probe_configs
+		// row as it reads now, but the stored samples were taken at
+		// whatever interval was configured when they were collected. With
+		// the minute-spaced samples of connection 1 judged against a
+		// ten-second interval, every one of them looked like a four-fold
+		// collection gap and the whole series went blank.
+		window := windowSince(base, 4)
+		query := func(t *testing.T, metrics ...string) []MetricSeries {
+			t.Helper()
+			series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+				[]int{1}, window, MetricFilters{}, 4, "avg", metrics)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			return series
+		}
+
+		before := query(t, "xact_commit_per_sec", "xact_commit_delta")
+		rateBefore := nonNull(seriesByMetric(t, before, "xact_commit_per_sec"))
+		if len(rateBefore) != 2 {
+			t.Fatalf("rate has %d values at the configured minute, want 2",
+				len(rateBefore))
+		}
+
+		// Tighten the probe to ten seconds, leaving the samples untouched.
+		if _, err := pool.Exec(ctx,
+			`UPDATE probe_configs SET collection_interval_seconds = 10
+             WHERE name = $1 AND scope = 'global'`, guardTestProbe); err != nil {
+			t.Fatalf("failed to tighten the probe interval: %v", err)
+		}
+		defer func() {
+			if _, err := pool.Exec(context.Background(),
+				`UPDATE probe_configs SET collection_interval_seconds = 60
+                 WHERE name = $1 AND scope = 'global'`, guardTestProbe); err != nil {
+				t.Fatalf("failed to restore the probe interval: %v", err)
+			}
+		}()
+
+		after := query(t, "xact_commit_per_sec", "xact_commit_delta")
+		rateAfter := nonNull(seriesByMetric(t, after, "xact_commit_per_sec"))
+		if len(rateAfter) != len(rateBefore) {
+			t.Errorf("rate has %d values after tightening the interval, want %d",
+				len(rateAfter), len(rateBefore))
+		}
+		for i := range rateAfter {
+			if i >= len(rateBefore) {
+				break
+			}
+			if !rateAfter[i].Time.Equal(rateBefore[i].Time) ||
+				*rateAfter[i].Value != *rateBefore[i].Value {
+				t.Errorf("rate point %d = %v at %s, want %v at %s", i,
+					*rateAfter[i].Value, rateAfter[i].Time,
+					*rateBefore[i].Value, rateBefore[i].Time)
+			}
+		}
+
+		// The delta keeps its real increments rather than collapsing to
+		// the structural zeros a rejected interval leaves behind.
+		delta := seriesByMetric(t, after, "xact_commit_delta")
+		for _, m := range []int{3, 1} {
+			if got := pointAt(t, delta, minutes(m)); got != 60 {
+				t.Errorf("delta at -%d min = %v, want 60", m, got)
+			}
+		}
+
+		// The gauge carry has the same dependency: three ten-second
+		// intervals would drop numbackends one bucket after the last
+		// sample, whilst the samples themselves are a minute apart.
+		gauge := seriesByMetric(t, query(t, "numbackends"), "numbackends")
+		if got := pointAt(t, gauge, minutes(0)); got != 3 {
+			t.Errorf("numbackends at the window end = %v, want 3 (carried)", got)
 		}
 	})
 

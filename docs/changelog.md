@@ -212,7 +212,15 @@ project adheres to
   such as a gauge or `mean_exec_time`, is now rejected with HTTP 400
   and a message naming the column's kind, rather than returning a
   meaningless series. The dashboards draw a `null` bucket as a break
-  in a line or a missing bar. (#402)
+  in a line or a missing bar. The interval a sample is judged against
+  is the configured one widened to the spacing the samples in the
+  window actually show, so tightening a probe's collection interval
+  no longer reads its older, wider-spaced history as one long gap.
+  A `_delta` bucket with no sample of its own reports zero only where
+  an accepted sample interval spans it: through a collection outage,
+  and before a probe's first sample or after its last, it is `null`
+  like every other derived form, rather than a run of confident zero
+  bars. (#402)
 
 ### Fixed
 

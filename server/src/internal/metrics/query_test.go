@@ -2246,13 +2246,24 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 			`SUM(delta_0) AS delta_0`,
 			`SUM(delta_0) AS "seq_scan_delta"`,
 			`COUNT(delta_0) = 0 AS gap_0`,
-			// The zero fill is gated on the window holding a sample at all,
-			// so a connection with no rows yields NULL buckets rather than
-			// a full window of zeros, and on the bucket holding at least
-			// one accepted interval, so an all-rejected bucket is a gap.
-			`CASE WHEN EXISTS (SELECT 1 FROM rate_samples) ` +
-				`AND NOT COALESCE(rate_buckets.gap_0, false) ` +
-				`THEN COALESCE(rate_buckets."seq_scan_delta", 0) END AS "seq_scan_delta"`,
+			// A bucket holding samples is a gap when every one of them was
+			// rejected; a bucket holding none reads 0 only when an accepted
+			// sample interval spans it, so a connection with no rows, the
+			// span either side of the probe's history and a collection
+			// outage all yield NULL buckets rather than confident zeros.
+			`CASE WHEN rate_buckets.bucket_time IS NOT NULL ` +
+				`THEN CASE WHEN COALESCE(rate_buckets.gap_0, false) ` +
+				`THEN NULL ELSE COALESCE(rate_buckets."seq_scan_delta", 0) END ` +
+				`WHEN EXISTS (SELECT 1 FROM rate_samples s ` +
+				`WHERE s.delta_0 IS NOT NULL ` +
+				`AND s.prev_collected_at IS NOT NULL ` +
+				`AND s.prev_collected_at < all_buckets.bucket_time + $1::interval ` +
+				`AND s.collected_at >= all_buckets.bucket_time) ` +
+				`THEN 0 END AS "seq_scan_delta"`,
+			// The predecessor time a span test needs is carried up from
+			// the innermost sample query.
+			`LAG(collected_at) OVER (ORDER BY collected_at) AS prev_collected_at`,
+			`MAX(prev_collected_at) AS prev_collected_at`,
 			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
 		}
 		for _, c := range checks {
@@ -2739,8 +2750,11 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 				t.Errorf("query missing %q\n---\n%s", c, query)
 			}
 		}
-		if n := strings.Count(query, "PARTITION BY"); n != 3 {
-			t.Errorf("expected 3 partitioned window functions, got %d:\n%s", n, query)
+		// Three counter window functions (the SUM, its LAG and the
+		// elapsed-time LAG) plus the predecessor time the delta span test
+		// needs, all partitioned by the entity keys.
+		if n := strings.Count(query, "PARTITION BY"); n != 4 {
+			t.Errorf("expected 4 partitioned window functions, got %d:\n%s", n, query)
 		}
 		// Entity keys are identifiers, never bound values.
 		if len(args) != 5 {
@@ -2944,9 +2958,15 @@ func TestBuildDerivedMetricsQueryGuards(t *testing.T) {
 		}
 		for _, c := range []string{
 			`COUNT(delta_1) = 0 AS gap_1`,
-			`CASE WHEN EXISTS (SELECT 1 FROM rate_samples) ` +
-				`AND NOT COALESCE(rate_buckets.gap_1, false) ` +
-				`THEN COALESCE(rate_buckets."xact_commit_delta", 0) END AS "xact_commit_delta"`,
+			`CASE WHEN rate_buckets.bucket_time IS NOT NULL ` +
+				`THEN CASE WHEN COALESCE(rate_buckets.gap_1, false) ` +
+				`THEN NULL ELSE COALESCE(rate_buckets."xact_commit_delta", 0) END ` +
+				`WHEN EXISTS (SELECT 1 FROM rate_samples s ` +
+				`WHERE s.delta_1 IS NOT NULL ` +
+				`AND s.prev_collected_at IS NOT NULL ` +
+				`AND s.prev_collected_at < all_buckets.bucket_time + $1::interval ` +
+				`AND s.collected_at >= all_buckets.bucket_time) ` +
+				`THEN 0 END AS "xact_commit_delta"`,
 		} {
 			if !strings.Contains(query, c) {
 				t.Errorf("query missing %q\n---\n%s", c, query)
@@ -3015,4 +3035,56 @@ func TestMetricDataPointJSON(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("json = %s, want %s", got, want)
 	}
+}
+
+func TestAggregationGuard(t *testing.T) {
+	start := time.Now().Add(-time.Hour)
+	end := time.Now()
+
+	t.Run("the accepted set is closed", func(t *testing.T) {
+		for _, agg := range ValidAggregations() {
+			if !IsValidAggregation(agg) {
+				t.Errorf("%q is listed but not accepted", agg)
+			}
+		}
+		for _, agg := range []string{
+			"", "AVG", "median", "avg(x)", "avg; DROP TABLE metrics.t --",
+		} {
+			if IsValidAggregation(agg) {
+				t.Errorf("%q is accepted, want it refused", agg)
+			}
+		}
+	})
+
+	// The builders interpolate the aggregation into SQL as a bare function
+	// name, so each refuses anything outside that set itself rather than
+	// relying on its caller having validated first.
+	t.Run("BuildMetricsQuery refuses an unvalidated aggregation", func(t *testing.T) {
+		_, _, err := BuildMetricsQuery("pg_stat_all_tables",
+			[]string{"seq_scan"}, map[string]string{"seq_scan": "bigint"},
+			1, start, end, 60, "avg); DROP TABLE metrics.pg_stat_all_tables --",
+			MetricFilters{})
+		if err == nil {
+			t.Fatal("expected an error for an invalid aggregation")
+		}
+		if !strings.Contains(err.Error(), "invalid aggregation") {
+			t.Errorf("error = %v, want it to mention an invalid aggregation", err)
+		}
+	})
+
+	t.Run("BuildDerivedMetricsQuery refuses an unvalidated aggregation", func(t *testing.T) {
+		derived := []DerivedMetric{{
+			OutputName: "seq_scan_per_sec",
+			BaseColumn: "seq_scan",
+			Kind:       DerivedPerSec,
+		}}
+		_, _, err := BuildDerivedMetricsQuery("pg_stat_all_tables", derived,
+			nil, nil, 1, start, end, 60, "median", MetricFilters{}, testMaxElapsed)
+		if err == nil {
+			t.Fatal("expected an error for an invalid aggregation")
+		}
+		if !strings.Contains(err.Error(), "invalid aggregation") {
+			t.Errorf("error = %v, want it to mention an invalid aggregation", err)
+		}
+	})
 }

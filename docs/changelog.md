@@ -45,10 +45,14 @@ project adheres to
   spells out the command, and links the pre-created account.
   Moving an account that is already linked requires the
   `-relink` flag, and a service account cannot be linked at
-  all. Unlinking returns the account to local authentication,
-  replaces its password hash with an unusable one and revokes
-  its API tokens, so the account is reachable by nothing until
-  a password is set with `-update-user`; `-restore-password`
+  all. Linking leaves the account's existing API tokens
+  working at full privilege, so an operator tightening an
+  account's authentication has to remove them with
+  `-remove-token` themselves. Unlinking returns the account to
+  local authentication, replaces its password hash with an
+  unusable one and revokes its API tokens, so the account is
+  reachable by nothing until a password is set with
+  `-update-user`; `-restore-password`
   converts the account back to local login instead, keeping
   both the password it held before it was linked and its
   tokens. Neither command ends a browser session the running
@@ -56,9 +60,8 @@ project adheres to
   server's memory and the command runs in its own process, so
   offboarding means unlinking and then disabling the account
   with `-disable-user`, which the server honours from the next
-  request onward. Note
-  that linking an existing account hands its mapped group
-  membership, and its superuser flag wherever
+  request onward. Note that linking an existing account hands
+  its mapped group membership, and its superuser flag wherever
   `superuser_group` is configured, to the identity provider
   from the next federated login onward,
   which is why the local break-glass administrator should not

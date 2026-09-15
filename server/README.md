@@ -290,7 +290,6 @@ http:
   tls:
     enabled: false
   auth:
-    enabled: true
     max_failed_attempts_before_lockout: 5
     max_user_token_days: 90
     rate_limit_window_minutes: 15

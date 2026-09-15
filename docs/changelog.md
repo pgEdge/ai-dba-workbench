@@ -12,6 +12,61 @@ project adheres to
 
 ### Added
 
+- Add federated login through an OpenID Connect identity
+  provider, configured in the new `http.auth.oidc` section
+  and offered as a second button on the login page. The
+  Workbench discovers the provider at start-up, runs an
+  authorisation code flow with PKCE, matches the account on
+  the issuer and `sub` claim, and can provision an account on
+  first login. Provider groups map onto Workbench groups
+  through `group_map`, and `superuser_group` names one
+  provider group that confers superuser; both are reconciled
+  at each login, and a group the map does not name is left
+  alone. Access may be restricted with
+  `allowed_email_domains`, which matches exact domains and
+  requires the provider to have verified the address.
+  Authorisation is otherwise unchanged, and service-account
+  API tokens remain the mechanism for MCP clients. Local
+  username and password login is unaffected and stays on
+  unless `http.auth.local.enabled` is set to `false`. The new
+  Single Sign-On page in the Administrator's Guide covers the
+  configuration, provider registration and the operational
+  limits, including the need for `http.trusted_proxies`, the
+  username rule the chosen claim has to satisfy, and why a
+  local break-glass administrator should be kept. (#261)
+
+- Add `-link-oidc-user` and `-unlink-oidc-user` commands to
+  the server, which attach an existing account to an identity
+  provider subject and detach it again. Linking is how an
+  account is reached by a federated login where
+  `http.auth.oidc.provision_users` is left at its default of
+  `false`: the operator reads the issuer and subject from the
+  refused login's server log line, which now quotes both and
+  spells out the command, and links the pre-created account.
+  Moving an account that is already linked requires the
+  `-relink` flag, and a service account cannot be linked at
+  all. Linking leaves the account's existing API tokens
+  working at full privilege, so an operator tightening an
+  account's authentication has to remove them with
+  `-remove-token` themselves. Unlinking returns the account to
+  local authentication, replaces its password hash with an
+  unusable one and revokes its API tokens, so the account is
+  reachable by nothing until a password is set with
+  `-update-user`; `-restore-password`
+  converts the account back to local login instead, keeping
+  both the password it held before it was linked and its
+  tokens. Neither command ends a browser session the running
+  server has already issued, because sessions live in that
+  server's memory and the command runs in its own process, so
+  offboarding means unlinking and then disabling the account
+  with `-disable-user`, which the server honours from the next
+  request onward. Note that linking an existing account hands
+  its mapped group membership, and its superuser flag wherever
+  `superuser_group` is configured, to the identity provider
+  from the next federated login onward,
+  which is why the local break-glass administrator should not
+  be linked. (#261)
+
 - Add a `-group-description` CLI flag that sets a group's
   description when creating it with `-add-group`, matching the
   description support already available in the web console. (#301)
@@ -137,6 +192,31 @@ project adheres to
 
 ### Changed
 
+- Enforce an API token's connection scope on connections that
+  belong to no group. Both the access check and the visible
+  connection list previously admitted an ungrouped connection
+  on ownership or the shared flag alone, without consulting
+  the caller's token scope, so for those connections a
+  token's connection scope was dead configuration on every
+  surface. Both paths now intersect the scope, denying an
+  out-of-scope connection and applying the scope's access
+  ceiling otherwise. This is a real change for anyone handing
+  out narrowly scoped tokens: a token that has been reaching
+  an ungrouped connection outside its scope, or reaching one
+  at `read_write` whilst scoped to `read`, will now be
+  refused or capped. Review the scope of every token that
+  touches a connection with no group before upgrading.
+  (#261)
+
+- Log sessions out when the authentication database cannot be
+  read. A session whose user record failed to load previously
+  produced a context carrying the username with no user ID
+  and no superuser flag, which quietly narrowed what the
+  session could do whilst still authenticating it. Such a
+  session is now rejected outright, so a database blip ends
+  sessions rather than silently changing their privileges.
+  (#261)
+
 - Count deadlocks and temporary files per hour in the alerter. The
   `deadlocks_detected` and `temp_files_created` rules compared the
   change in `pg_stat_database` between two consecutive samples
@@ -245,6 +325,19 @@ project adheres to
   bars. (#402)
 
 ### Fixed
+
+- Correct the documented default for
+  `http.auth.max_failed_attempts_before_lockout`, which the
+  server configuration reference gave as `0`, meaning lockout
+  disabled, in both its option table and its example
+  configuration. The server has always defaulted the setting
+  to `10`, so an operator who configured around the documented
+  value was working from the wrong baseline. The same page
+  also showed an `http.auth.enabled` key that has never
+  existed on the configuration struct and that the loader
+  silently discards; it has been removed from the
+  documentation, from the server README and from the Docker
+  and walkthrough sample configurations. (#261)
 
 - Fix Ask Ellie failing with `Function call is missing a
   thought_signature in functionCall parts` on every question that

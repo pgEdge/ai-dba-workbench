@@ -3,7 +3,8 @@ http:
     tls:
         enabled: false
     auth:
-        enabled: true
+        local:
+            enabled: true
 
 connection_security:
     allow_internal_networks: true

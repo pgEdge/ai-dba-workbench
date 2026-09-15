@@ -46,6 +46,26 @@ both modes in the browser.
 - Dashed borders need a little more contrast than solid ones because
   less ink covers the edge.
 
+## Brand Cyan Is Not A Text Colour In Light Mode
+
+Measured against a white or near-white surface (the login card
+composites to #FAFAFB over its background gradient):
+
+- `primary.main` (#15AABF) is 2.67:1, which fails both the 4.5:1 that
+  normal text needs and the 3:1 that a component boundary needs. White
+  on #15AABF is 2.79:1, so a contained button in that colour fails
+  too.
+- `primary.dark` (#0C8599) is 4.17:1: enough for a border, a focus
+  ring or any other boundary, still short for a text label.
+
+So a coloured call to action in light mode needs either a much darker
+cyan than the palette carries or, as the federated sign-in button in
+`components/Login.tsx` does, a neutral treatment: `text.primary` for
+the label (14.07:1) and `grey.500` for the border (4.63:1), keeping
+the cyan for the hover tint and the focus ring where 3:1 applies.
+There are older uses of `primary.main` as a text colour in this
+client; they are a known debt, not a precedent to follow.
+
 ## Text
 
 - In dark mode `text.secondary` must hold 4.5:1 against

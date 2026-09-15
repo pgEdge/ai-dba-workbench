@@ -23,6 +23,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/memory"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 )
 
@@ -55,6 +56,13 @@ type HandlerDependencies struct {
 	ToolProvider api.ContextAwareToolProvider
 	AIEnabled    bool
 
+	// OIDCProvider is the discovered identity provider, or nil when
+	// federated login is switched off. OIDCStateKey is the 32-byte key
+	// the login state cookie is sealed with, and is meaningful only
+	// alongside a non-nil provider.
+	OIDCProvider *oidc.Provider
+	OIDCStateKey []byte
+
 	// RegisterCloser records a cleanup function to be run when the
 	// server shuts down. Handlers that own background goroutines use
 	// it to hand that ownership back to the server. It may be nil in
@@ -78,14 +86,20 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 		if deps.Config != nil && deps.Config.LLM.MaxIterations > 0 {
 			maxIterations = deps.Config.LLM.MaxIterations
 		}
-		mux.HandleFunc("/api/v1/capabilities", handleCapabilities(deps.AIEnabled, maxIterations))
+		// The login page state is derived once here and shared with the
+		// login handler, so that what the capabilities endpoint reports
+		// and what the login endpoint enforces cannot drift apart.
+		authInfo := authCapabilities(deps)
+		mux.HandleFunc("/api/v1/capabilities",
+			handleCapabilities(deps.AIEnabled, maxIterations, authInfo))
 
 		// Authentication endpoint (does NOT require auth - it IS the login endpoint)
 		// IPExtractor provides secure IP extraction that only trusts X-Forwarded-For
 		// from configured trusted proxies, preventing rate limit bypass via IP spoofing
 		// The TLS enabled flag ensures cookies are marked Secure when using HTTPS
 		tlsEnabled := deps.Config != nil && deps.Config.HTTP.TLS.Enabled
-		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor, tlsEnabled)
+		authHandler := api.NewAuthHandler(deps.AuthStore, deps.RateLimiter, deps.IPExtractor,
+			tlsEnabled, authInfo.LocalEnabled)
 
 		// NewAuthHandler starts a cleanup goroutine for its internal
 		// login rate limiter, which only Close stops. Hand that back
@@ -95,6 +109,32 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			deps.RegisterCloser(authHandler.Close)
 		}
 		authHandler.RegisterRoutes(mux)
+
+		// Federated login endpoints, registered alongside the local ones
+		// and equally unauthenticated: a user starting a login has no
+		// session, and the callback is how they get one.
+		//
+		// The start endpoint is registered either way. With no provider
+		// there is no login to start, but the login screen still offers
+		// the button whenever it cannot reach the capabilities endpoint,
+		// and following it is a full-page navigation: a 404 from the mux
+		// would leave the user on a browser error page with the login
+		// screen gone, so the disabled route redirects them back to it
+		// instead. The callback is registered only with a provider,
+		// since nothing sends a user there by hand.
+		if deps.OIDCProvider != nil && deps.Config != nil {
+			oidcHandler := api.NewOIDCHandler(deps.AuthStore, deps.OIDCProvider,
+				deps.Config.HTTP.Auth.OIDC, deps.OIDCStateKey, tlsEnabled, deps.IPExtractor)
+			// NewOIDCHandler owns a rate limiter whose cleanup goroutine
+			// only Close stops; hand that back to the server.
+			if deps.RegisterCloser != nil {
+				deps.RegisterCloser(oidcHandler.Close)
+			}
+			oidcHandler.RegisterRoutes(mux)
+			fmt.Fprintf(os.Stderr, "OIDC login endpoints: ENABLED\n")
+		} else {
+			api.RegisterDisabledStartRoute(mux)
+		}
 
 		// Chat history compaction endpoint
 		mux.HandleFunc("/api/v1/chat/compact",
@@ -251,18 +291,6 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	}
 }
 
-// extractToken extracts a bearer or session token from the request.
-// It delegates to auth.ExtractBearerToken and returns the raw token
-// string, a boolean indicating whether extraction succeeded, and an
-// error message suitable for the client when it fails.
-func extractToken(r *http.Request) (string, bool, string) {
-	token := auth.ExtractBearerToken(r)
-	if token == "" {
-		return "", false, "Missing or invalid authentication credentials"
-	}
-	return token, true, ""
-}
-
 // createAuthWrapper creates a handler wrapper that enforces authentication
 // Supports both Authorization header (for API tokens) and session cookies (for browser sessions).
 // The actual token/session validation is delegated to auth.AuthenticateRequest,
@@ -291,61 +319,33 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 	}
 }
 
-// createUserInfoHandler creates a handler for the user info endpoint
+// createUserInfoHandler creates a handler for the user info endpoint.
+//
+// The endpoint never answers 401: the web client calls it before it knows
+// whether it holds a session, and uses the "authenticated" flag to decide
+// whether to show the login screen. Credential validation is delegated to
+// auth.AuthenticateRequest so that a caller the rest of the server would
+// accept is a caller this endpoint reports as authenticated.
 func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok, errMsg := extractToken(r)
-		if !ok {
-			// For auth header format errors, report the issue;
-			// for missing credentials just report unauthenticated.
+		ctx, err := auth.AuthenticateRequest(r, authStore)
+		if err != nil {
 			resp := map[string]any{"authenticated": false}
-			if errMsg == "Invalid Authorization header format" {
-				resp["error"] = errMsg
+			if !errors.Is(err, auth.ErrMissingCredentials) {
+				resp["error"] = "Invalid or expired token"
 			}
 			api.RespondJSON(w, http.StatusOK, resp)
 			return
 		}
 
-		// Try API token first, then fall back to session token
-		var username string
-		var isSuperuser bool
-		var userID int64
-
-		storedToken, tokenErr := authStore.ValidateToken(token)
-		if tokenErr == nil && storedToken != nil {
-			// Valid API token - look up the owner user
-			owner, ownerErr := authStore.GetUserByID(storedToken.OwnerID)
-			if ownerErr != nil || owner == nil {
-				api.RespondJSON(w, http.StatusOK, map[string]any{
-					"authenticated": false,
-					"error":         "Invalid or expired token",
-				})
-				return
-			}
-			username = owner.Username
-			isSuperuser = owner.IsSuperuser
-			userID = owner.ID
-		} else {
-			// Try session token
-			sessionUsername, sessionErr := authStore.ValidateSessionToken(token)
-			if sessionErr != nil {
-				api.RespondJSON(w, http.StatusOK, map[string]any{
-					"authenticated": false,
-					"error":         "Invalid or expired session",
-				})
-				return
-			}
-			username = sessionUsername
-			user, userErr := authStore.GetUser(username)
-			if userErr == nil && user != nil {
-				isSuperuser = user.IsSuperuser
-				userID = user.ID
-			}
-		}
+		// AuthenticateRequest guarantees a non-empty username on success:
+		// a credential whose identity does not resolve is rejected as
+		// ErrInvalidToken and handled above.
+		username := auth.GetUsernameFromContext(ctx)
 
 		// Get admin permissions for the user
-		var adminPermissions []string
-		if userID > 0 {
+		adminPermissions := []string{}
+		if userID := auth.GetUserIDFromContext(ctx); userID > 0 {
 			perms, permErr := authStore.GetUserAdminPermissions(userID)
 			if permErr == nil {
 				for perm := range perms {
@@ -353,15 +353,12 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 				}
 			}
 		}
-		if adminPermissions == nil {
-			adminPermissions = []string{}
-		}
 
 		// Return user info as JSON
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"authenticated":     true,
 			"username":          username,
-			"is_superuser":      isSuperuser,
+			"is_superuser":      auth.IsSuperuserFromContext(ctx),
 			"admin_permissions": adminPermissions,
 		})
 	}
@@ -377,8 +374,52 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	api.RespondJSON(w, http.StatusOK, spec)
 }
 
+// authCapabilitiesInfo is what the login page needs in order to render
+// itself: whether to show the username and password form, whether to
+// show the federated login button, and what to write on it.
+//
+// It holds these three values and nothing else. The OIDC configuration
+// also carries the client secret, the issuer and the claim mapping, none
+// of which an unauthenticated caller has any business seeing, so this
+// endpoint reports a hand-built struct rather than serializing the
+// configuration.
+type authCapabilitiesInfo struct {
+	LocalEnabled bool   `json:"local_enabled"`
+	OIDCEnabled  bool   `json:"oidc_enabled"`
+	OIDCLabel    string `json:"oidc_label"`
+}
+
+// defaultOIDCButtonLabel is what the federated login button says when
+// the operator did not name their identity provider.
+const defaultOIDCButtonLabel = "Sign in with SSO"
+
+// authCapabilities derives the login page state from the dependencies,
+// so that the handler itself never reaches into the configuration.
+//
+// OIDC counts as enabled only when a provider was actually discovered at
+// start-up as well as switched on in the configuration, since a button
+// pointing at an endpoint that answers 404 is worse than no button.
+func authCapabilities(deps *HandlerDependencies) authCapabilitiesInfo {
+	info := authCapabilitiesInfo{LocalEnabled: true}
+	if deps == nil || deps.Config == nil {
+		return info
+	}
+
+	info.LocalEnabled = deps.Config.HTTP.Auth.LocalEnabled()
+	info.OIDCEnabled = deps.Config.HTTP.Auth.OIDC.Enabled && deps.OIDCProvider != nil
+	if info.OIDCEnabled {
+		info.OIDCLabel = deps.Config.HTTP.Auth.OIDC.ButtonLabel
+		if info.OIDCLabel == "" {
+			info.OIDCLabel = defaultOIDCButtonLabel
+		}
+	}
+	return info
+}
+
 // handleCapabilities returns server capability flags for the client
-func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
+func handleCapabilities(aiEnabled bool, maxIterations int,
+	authInfo authCapabilitiesInfo) http.HandlerFunc {
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -387,6 +428,7 @@ func handleCapabilities(aiEnabled bool, maxIterations int) http.HandlerFunc {
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"ai_enabled":     aiEnabled,
 			"max_iterations": maxIterations,
+			"auth":           authInfo,
 		})
 	}
 }

@@ -454,8 +454,27 @@ const AdminUsers: React.FC = () => {
                                             <Typography variant="body2">User</Typography>
                                         )}
                                     </TableCell>
-                                    <TableCell>{rowUser.display_name || '-'}</TableCell>
-                                    <TableCell>{rowUser.email || '-'}</TableCell>
+                                    {/*
+                                      * The display name and email may
+                                      * come from an identity provider,
+                                      * and the server is deliberately
+                                      * byte-transparent for them: the
+                                      * Unicode format category is
+                                      * permitted, because a zero-width
+                                      * joiner is part of legitimate
+                                      * names in several scripts. That
+                                      * admits a bidirectional
+                                      * override, so isolate the value
+                                      * with <bdi> to stop a crafted
+                                      * name reordering the row around
+                                      * it.
+                                      */}
+                                    <TableCell>
+                                        <bdi>{rowUser.display_name || '-'}</bdi>
+                                    </TableCell>
+                                    <TableCell>
+                                        <bdi>{rowUser.email || '-'}</bdi>
+                                    </TableCell>
                                     <TableCell>{rowUser.annotation || '-'}</TableCell>
                                     <TableCell align="center">
                                         <Switch

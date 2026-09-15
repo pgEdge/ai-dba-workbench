@@ -109,6 +109,51 @@ func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
 	return IsSuperuserFromContext(ctx)
 }
 
+// tokenContextIncomplete reports whether the context claims API-token
+// authentication but carries no token ID.
+//
+// Every scope check in this file treats a zero token ID as "not a token
+// call, so no scope to apply", which is a permissive default. That
+// default is only safe for session callers, who have no scope in the
+// first place. A context that says it is an API token but has lost its
+// ID cannot have its scope evaluated at all, so it fails closed rather
+// than falling through to unrestricted access.
+func tokenContextIncomplete(ctx context.Context) bool {
+	return IsAPITokenFromContext(ctx) && GetTokenIDFromContext(ctx) <= 0
+}
+
+// applyConnectionTokenScope intersects an already-granted access level
+// for one connection with the caller's token connection scope, and is
+// the single place that intersection happens.
+//
+// It returns the level unchanged for callers with no token ID (session
+// callers), because a session is bounded by its user's group grants
+// alone. For a token it denies outright when the connection falls
+// outside the scope, and otherwise lowers the level to the scope's
+// ceiling; a token with no connection scope at all reports every
+// connection in scope at AccessLevelNone, which applyTokenCeiling passes
+// through unchanged.
+func (rc *RBACChecker) applyConnectionTokenScope(
+	ctx context.Context, connectionID int, level string,
+) (bool, string) {
+	tokenID := GetTokenIDFromContext(ctx)
+	if tokenID <= 0 {
+		return true, level
+	}
+
+	inScope, scopeLevel, err := rc.authStore.IsConnectionInTokenScope(tokenID, connectionID)
+	if err != nil {
+		// On error, deny access for safety
+		return false, AccessLevelNone
+	}
+	if !inScope {
+		return false, AccessLevelNone
+	}
+
+	// Token scope can restrict but not elevate.
+	return true, applyTokenCeiling(scopeLevel, level)
+}
+
 // CanAccessMCPItem checks if the current context can access a specific MCP item
 // Returns true if:
 // - User/token is a superuser
@@ -123,6 +168,12 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 	// Nil store - full access
 	if rc.authStore == nil {
 		return true
+	}
+
+	// An API token whose ID did not survive into the context cannot have
+	// its scope checked, so deny rather than treat it as unscoped.
+	if tokenContextIncomplete(ctx) {
+		return false
 	}
 
 	// Superuser bypass
@@ -190,6 +241,12 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return true, AccessLevelReadWrite
 	}
 
+	// An API token whose ID did not survive into the context cannot have
+	// its scope checked, so deny rather than treat it as unscoped.
+	if tokenContextIncomplete(ctx) {
+		return false, AccessLevelNone
+	}
+
 	// Superuser bypass
 	if IsSuperuserFromContext(ctx) {
 		return true, AccessLevelReadWrite
@@ -219,7 +276,11 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 				}
 			}
 		}
-		return true, AccessLevelReadWrite
+		// The connection is unrestricted by group membership, but a
+		// scoped token is still confined to its scope: ownership and
+		// sharing decide who may reach a connection, not which subset of
+		// them a given token was issued for.
+		return rc.applyConnectionTokenScope(ctx, connectionID, AccessLevelReadWrite)
 	}
 
 	// Get user ID from context
@@ -244,21 +305,7 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 	}
 
 	// Check token scoping (if applicable)
-	tokenID := GetTokenIDFromContext(ctx)
-	if tokenID > 0 {
-		// Token-based access - check if token is scoped to this connection
-		inScope, scopeAccessLevel, err := rc.authStore.IsConnectionInTokenScope(tokenID, connectionID)
-		if err != nil {
-			return false, AccessLevelNone
-		}
-		if !inScope {
-			return false, AccessLevelNone
-		}
-		// Apply minimum access level: token scope can restrict but not elevate
-		accessLevel = applyTokenCeiling(scopeAccessLevel, accessLevel)
-	}
-
-	return true, accessLevel
+	return rc.applyConnectionTokenScope(ctx, connectionID, accessLevel)
 }
 
 // resolveConnectionAccess returns the user's effective access level for a
@@ -502,6 +549,12 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 		return nil, true, nil
 	}
 
+	// An API token whose ID did not survive into the context cannot have
+	// its scope checked, so show nothing rather than treat it as unscoped.
+	if tokenContextIncomplete(ctx) {
+		return nil, false, nil
+	}
+
 	// Superuser bypass.
 	if IsSuperuserFromContext(ctx) {
 		return nil, true, nil
@@ -555,6 +608,23 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 		}
 	}
 
+	// The owner and shared branches above admit connections on identity
+	// alone, so a scoped token has to be intersected against its scope
+	// after them; otherwise a token issued for one connection enumerates
+	// every connection its owner happens to have.
+	if tokenID := GetTokenIDFromContext(ctx); tokenID > 0 {
+		for connID := range seen {
+			inScope, _, scopeErr := rc.authStore.IsConnectionInTokenScope(tokenID, connID)
+			if scopeErr != nil {
+				// On error, deny visibility for safety.
+				return nil, false, scopeErr
+			}
+			if !inScope {
+				delete(seen, connID)
+			}
+		}
+	}
+
 	if len(seen) == 0 {
 		return nil, false, nil
 	}
@@ -570,6 +640,12 @@ func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string
 	// Nil store - full access
 	if rc.authStore == nil {
 		return true
+	}
+
+	// An API token whose ID did not survive into the context cannot have
+	// its scope checked, so deny rather than treat it as unscoped.
+	if tokenContextIncomplete(ctx) {
+		return false
 	}
 
 	// Superuser bypass

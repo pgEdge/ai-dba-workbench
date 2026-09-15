@@ -656,6 +656,103 @@ func TestRBACHandler_CreateServiceAccount_DuplicateUsername(t *testing.T) {
 // User Update Tests
 // =============================================================================
 
+// TestRBACHandler_UpdateUser_FederatedPasswordRejected covers the case
+// with a safety consequence rather than merely an ugly error. This
+// endpoint applies the password, enabled and superuser changes as one
+// transaction, so an administrator disabling a federated user whilst
+// also filling in the password field would have the whole update rolled
+// back by the store's password guard, and could reasonably read the
+// generic failure as the account having been disabled. The request is
+// refused up front instead, with an explanation and with nothing
+// written.
+func TestRBACHandler_UpdateUser_FederatedPasswordRejected(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	if err := store.CreateUser("federated", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("federated", "https://idp.example.com", "subject-1", false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	targetID, _ := store.GetUserID("federated")
+
+	stillEnabled := false
+	body, _ := json.Marshal(map[string]any{
+		"password": "An0ther-Str0ng-Pass!",
+		"enabled":  stillEnabled,
+	})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10),
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.updateUser(rec, req, targetID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if !strings.Contains(response.Error, "identity provider") {
+		t.Errorf("Expected the refusal to explain why, got %q", response.Error)
+	}
+
+	// The administrator must be able to see that nothing was applied,
+	// rather than being left to assume the account is now disabled.
+	user, err := store.GetUserByID(targetID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !user.Enabled {
+		t.Error("the refused request disabled the account anyway")
+	}
+}
+
+// TestRBACHandler_UpdateUser_FederatedWithoutPasswordSucceeds checks the
+// refusal is narrow: everything except the password may still be changed
+// on a federated account, which is the route the administrator above is
+// told to take.
+func TestRBACHandler_UpdateUser_FederatedWithoutPasswordSucceeds(t *testing.T) {
+	handler, store, adminID, cleanup := adminRBACHandler(t)
+	defer cleanup()
+
+	if err := store.CreateUser("federated-ok", "Password1234", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("federated-ok", "https://idp.example.com", "subject-2", false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	targetID, _ := store.GetUserID("federated-ok")
+
+	body, _ := json.Marshal(map[string]any{"enabled": false})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/rbac/users/"+strconv.FormatInt(targetID, 10),
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, adminID)
+	rec := httptest.NewRecorder()
+
+	handler.updateUser(rec, req, targetID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d. Body: %s",
+			http.StatusOK, rec.Code, rec.Body.String())
+	}
+	user, err := store.GetUserByID(targetID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if user.Enabled {
+		t.Error("expected the account to have been disabled")
+	}
+}
+
 func TestRBACHandler_UpdateUser_InvalidEmail(t *testing.T) {
 	handler, store, adminID, cleanup := adminRBACHandler(t)
 	defer cleanup()

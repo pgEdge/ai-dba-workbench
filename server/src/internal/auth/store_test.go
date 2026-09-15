@@ -11,6 +11,7 @@ package auth
 
 import (
 	"bytes"
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
@@ -2331,4 +2332,151 @@ func TestDeleteUserTokenCleansUpDependentRows(t *testing.T) {
 		"connection_sessions",
 		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?", target.TokenHash,
 	)
+}
+
+// =============================================================================
+// Schema v4 (federation columns) migration tests
+// =============================================================================
+
+// newTestStoreAtVersion returns an AuthStore whose on-disk users table has
+// been rebuilt to look like schema version 3: neither the auth_source nor
+// the external_subject column exists, and schema_version records 3. It
+// deliberately does not run the v4 migration itself so that callers can
+// invoke store.initSchema() and assert on the migration's effects. Only
+// version 3 is supported; other values fail the test immediately.
+func newTestStoreAtVersion(t *testing.T, version int) *AuthStore {
+	t.Helper()
+	if version != 3 {
+		t.Fatalf("newTestStoreAtVersion: unsupported version %d", version)
+	}
+
+	store, cleanup := createTestAuthStoreForStore(t)
+	t.Cleanup(cleanup)
+
+	// SQLite (as pinned in this project) cannot drop a column, so the
+	// pre-v4 users shape is recreated by building a replacement table
+	// without the two federation columns, copying the existing rows
+	// across, then dropping the original and renaming the replacement
+	// into place.
+	statements := []string{
+		`CREATE TABLE users_v3 (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_login TIMESTAMP,
+			enabled BOOLEAN DEFAULT TRUE,
+			annotation TEXT DEFAULT '',
+			failed_attempts INTEGER DEFAULT 0,
+			is_superuser BOOLEAN DEFAULT FALSE,
+			display_name TEXT DEFAULT '',
+			email TEXT DEFAULT '',
+			is_service_account BOOLEAN DEFAULT FALSE
+		)`,
+		`INSERT INTO users_v3 (id, username, password_hash, created_at, last_login,
+			enabled, annotation, failed_attempts, is_superuser, display_name, email,
+			is_service_account)
+		 SELECT id, username, password_hash, created_at, last_login, enabled,
+			annotation, failed_attempts, is_superuser, display_name, email,
+			is_service_account
+		 FROM users`,
+		`DROP TABLE users`,
+		`ALTER TABLE users_v3 RENAME TO users`,
+		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+	}
+	for _, stmt := range statements {
+		if _, err := store.db.Exec(stmt); err != nil {
+			t.Fatalf("rebuilding users table at v3: %v", err)
+		}
+	}
+
+	if _, err := store.db.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("clearing schema_version: %v", err)
+	}
+	if _, err := store.db.Exec(
+		"INSERT INTO schema_version (version) VALUES (?)", version); err != nil {
+		t.Fatalf("setting schema_version: %v", err)
+	}
+
+	if _, err := store.db.Exec(
+		"INSERT INTO users (username, password_hash, enabled) VALUES (?, '', TRUE)",
+		"legacy"); err != nil {
+		t.Fatalf("inserting legacy user: %v", err)
+	}
+
+	return store
+}
+
+func TestMigrateV3ToV4AddsFederationColumns(t *testing.T) {
+	store := newTestStoreAtVersion(t, 3)
+
+	if err := store.initSchema(); err != nil {
+		t.Fatalf("initSchema: %v", err)
+	}
+
+	var version int
+	if err := store.db.QueryRow(
+		"SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version); err != nil {
+		t.Fatalf("schema_version: %v", err)
+	}
+	if version != 4 {
+		t.Fatalf("schema version = %d, want 4", version)
+	}
+
+	var source string
+	var externalSubject sql.NullString
+	if err := store.db.QueryRow(
+		"SELECT auth_source, external_subject FROM users WHERE username = ?", "legacy",
+	).Scan(&source, &externalSubject); err != nil {
+		t.Fatalf("auth_source/external_subject: %v", err)
+	}
+	if source != AuthSourceLocal {
+		t.Fatalf("auth_source = %q, want %q", source, AuthSourceLocal)
+	}
+	if externalSubject.Valid {
+		t.Fatalf("external_subject = %q, want NULL", externalSubject.String)
+	}
+
+	var indexName string
+	if err := store.db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+		"idx_users_external_subject").Scan(&indexName); err != nil {
+		t.Fatalf("idx_users_external_subject: %v", err)
+	}
+
+	// A second initSchema() call must be a no-op: currentVersion is
+	// already 4, so migrateV3ToV4 is not invoked again by the
+	// dispatcher. Exercise migrateV3ToV4 directly a second time as well,
+	// to cover its duplicate-column tolerance branch (the crash-recovery
+	// path where a previous run added the columns but failed before
+	// recording the new schema version).
+	if err := store.initSchema(); err != nil {
+		t.Fatalf("second initSchema: %v", err)
+	}
+	if err := store.migrateV3ToV4(); err != nil {
+		t.Fatalf("second migrateV3ToV4: %v", err)
+	}
+}
+
+func TestAuthenticateUserRejectsFederatedAccount(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("federated", "Sup3r-Str0ng-Pass!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.db.Exec(
+		"UPDATE users SET auth_source = ? WHERE username = ?",
+		AuthSourceOIDC, "federated"); err != nil {
+		t.Fatalf("update auth_source: %v", err)
+	}
+
+	_, _, err := store.AuthenticateUser("federated", "Sup3r-Str0ng-Pass!")
+	if err == nil {
+		t.Fatal("expected password login to be refused for a federated account")
+	}
+	const wantErr = "invalid username or password"
+	if err.Error() != wantErr {
+		t.Fatalf("error = %q, want %q", err.Error(), wantErr)
+	}
 }

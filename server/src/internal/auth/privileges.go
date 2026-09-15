@@ -531,6 +531,34 @@ func (s *AuthStore) revokeMCPPrivilegeByName(actor Actor, groupID int64,
 	return nil
 }
 
+// connectionAccessLevelTx reads the access level currently granted to
+// a group for a connection, returning the empty string when no grant
+// exists. A lookup error is treated as "no grant" rather than failing
+// the mutation, because the value exists only to enrich the audit
+// details and must never be the reason a grant or revoke fails.
+func connectionAccessLevelTx(tx *sql.Tx, groupID int64, connectionID int) string {
+	var level string
+	if err := tx.QueryRow(
+		`SELECT access_level FROM connection_privileges
+         WHERE group_id = ? AND connection_id = ?`,
+		groupID, connectionID,
+	).Scan(&level); err != nil {
+		return ""
+	}
+
+	return level
+}
+
+// accessLevelDetail renders an access level as the "before" or "after"
+// side of a connection grant's audit details, or nil when there is no
+// grant on that side.
+func accessLevelDetail(level string) any {
+	if level == "" {
+		return nil
+	}
+	return map[string]any{"access_level": level}
+}
+
 // =============================================================================
 // Connection Privilege Grants
 // =============================================================================
@@ -568,6 +596,11 @@ func (s *AuthStore) grantConnectionPrivilege(actor Actor, groupID int64,
 
 	target.targetName = groupAuditName(tx, groupID)
 
+	// Read the existing grant before it is replaced, so that the audit
+	// event records what the access level changed from as well as what
+	// it changed to.
+	before := connectionAccessLevelTx(tx, groupID, connectionID)
+
 	// Validate access level
 	if accessLevel != AccessLevelRead && accessLevel != AccessLevelReadWrite {
 		err = fmt.Errorf("invalid access level: %s (must be 'read' or 'read_write')", accessLevel)
@@ -587,6 +620,8 @@ func (s *AuthStore) grantConnectionPrivilege(actor Actor, groupID int64,
 		auditActionPrivilegeConnectionGrant, auditTargetGroup, &groupID,
 		target.targetName, map[string]any{
 			"connection_id": connectionID,
+			"before":        accessLevelDetail(before),
+			"after":         map[string]any{"access_level": accessLevel},
 		})); err != nil {
 		return fmt.Errorf("failed to grant connection privilege: %w", err)
 	}
@@ -630,6 +665,10 @@ func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
 
 	target.targetName = groupAuditName(tx, groupID)
 
+	// Read the grant before it is deleted, so that the audit event
+	// records the access level that was withdrawn.
+	before := connectionAccessLevelTx(tx, groupID, connectionID)
+
 	result, err := tx.Exec(
 		"DELETE FROM connection_privileges WHERE group_id = ? AND connection_id = ?",
 		groupID, connectionID,
@@ -651,6 +690,7 @@ func (s *AuthStore) revokeConnectionPrivilege(actor Actor, groupID int64,
 		auditActionPrivilegeConnectionRevoke, auditTargetGroup, &groupID,
 		target.targetName, map[string]any{
 			"connection_id": connectionID,
+			"before":        accessLevelDetail(before),
 		})); err != nil {
 		return fmt.Errorf("failed to revoke connection privilege: %w", err)
 	}

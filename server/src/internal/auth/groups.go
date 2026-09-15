@@ -186,8 +186,7 @@ func (s *AuthStore) updateGroup(actor Actor, id int64, name,
 	if rows == 0 {
 		// Unreachable in practice, because the snapshot above proves
 		// the row exists and s.mu admits one writer at a time; kept as
-		// a guard
-		// against a concurrent deleter outside this store.
+		// a guard against a concurrent deleter outside this store.
 		err = fmt.Errorf("group not found: %d: %w", id, ErrGroupNotFound)
 		return err
 	}
@@ -217,13 +216,14 @@ func (s *AuthStore) updateGroup(actor Actor, id int64, name,
 
 // DeleteGroup deletes a group and all of its dependent rows in a single
 // atomic transaction, attributing the change to the system actor. This
-// removes the group's memberships (both as a
-// parent and as a nested child), its MCP and connection privilege grants,
-// and its admin permissions. The schema declares ON DELETE CASCADE on
-// these foreign keys, but SQLite does not enforce foreign keys by default
-// (and this codebase does not enable the pragma), so dependent rows must
-// be removed explicitly to avoid leaving orphaned privilege rows that
-// could be attached to a future group reusing the same id.
+// removes the group's memberships (both as a parent and as a nested
+// child), its MCP and connection privilege grants, and its admin
+// permissions. The schema declares ON DELETE CASCADE on these foreign
+// keys and NewAuthStore enables the foreign_keys pragma in the DSN, so
+// the cascades do fire; the explicit deletes are kept as defense in
+// depth, so that a database opened without the pragma cannot leave
+// orphaned privilege rows behind to be attached to a future group
+// reusing the same id.
 func (s *AuthStore) DeleteGroup(id int64) error {
 	return s.deleteGroup(systemActor, id)
 }

@@ -335,6 +335,36 @@ func (s *AuthStore) recordFailure(actor Actor, action, targetType string,
 	}
 }
 
+// auditTarget carries the action and target of an in-progress mutation
+// so that the deferred rollback path can record a failure event for it.
+// It is nil until the target is known; a mutation that fails before
+// then records nothing, because there would be nothing to attribute the
+// failure to.
+type auditTarget struct {
+	action     string
+	targetType string
+	targetID   *int64
+	targetName string
+}
+
+// failAudit rolls the mutation's transaction back and then records a
+// failure event for it. The order matters: recordFailure opens a
+// transaction of its own, and SQLite allows a single writer, so the
+// rollback must happen first or the failure event is lost to the busy
+// timeout. The caller must hold s.mu, which recordFailure expects.
+func (s *AuthStore) failAudit(tx *sql.Tx, actor Actor, target *auditTarget,
+	cause error) {
+
+	//nolint:errcheck // Rollback error is not critical; the outer error
+	// is already being returned to the caller.
+	tx.Rollback()
+
+	if target != nil {
+		s.recordFailure(actor, target.action, target.targetType,
+			target.targetID, target.targetName, cause)
+	}
+}
+
 // RecordDenied records an authorisation denial. The event carries no
 // target, because a request refused before the target is resolved has
 // none, and the reason is stored in the error column.

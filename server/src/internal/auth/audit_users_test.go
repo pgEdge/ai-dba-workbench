@@ -778,15 +778,58 @@ func TestAuditUsersHashFailureRecordsFailure(t *testing.T) {
 	store.bcryptCost = 99
 
 	as := store.AsActor(testActor())
-	if err := as.CreateUser("carol", "Str0ngPassphrase!", "", "", ""); err == nil {
-		t.Error("Expected CreateUser to fail with an invalid bcrypt cost")
-	}
-	if err := as.UpdateUser("bob", "An0therPassphrase!", "", "", ""); err == nil {
-		t.Error("Expected UpdateUser to fail with an invalid bcrypt cost")
-	}
 	password := "An0therPassphrase!"
-	if err := as.UpdateUserAtomic("bob", UserUpdate{Password: &password}); err == nil {
-		t.Error("Expected UpdateUserAtomic to fail with an invalid bcrypt cost")
+	cases := []struct {
+		name   string
+		call   func() error
+		action string
+	}{
+		{"CreateUser", func() error {
+			return as.CreateUser("carol", "Str0ngPassphrase!", "", "", "")
+		}, "user.create"},
+		{"UpdateUser", func() error {
+			return as.UpdateUser("bob", "An0therPassphrase!", "", "", "")
+		}, "user.update"},
+		{"UpdateUserAtomic", func() error {
+			return as.UpdateUserAtomic("bob", UserUpdate{Password: &password})
+		}, "user.update"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := auditEventCount(t, store)
+			if err := tc.call(); err == nil {
+				t.Fatalf("Expected %s to fail with an invalid bcrypt cost",
+					tc.name)
+			}
+
+			if got := auditEventCount(t, store); got != before+1 {
+				t.Fatalf("Expected exactly one new audit event, got %d",
+					got-before)
+			}
+
+			ev := lastAuditEvent(t, store)
+			assertUserActor(t, ev)
+			if ev.Action != tc.action {
+				t.Errorf("Expected action %q, got %q", tc.action, ev.Action)
+			}
+			if ev.Outcome != OutcomeFailure {
+				t.Errorf("Expected outcome failure, got %q", ev.Outcome)
+			}
+			if ev.TargetType != "user" {
+				t.Errorf("Expected target type user, got %q", ev.TargetType)
+			}
+			if ev.Error == "" {
+				t.Error("Expected the failure event to carry an error")
+			}
+			// A failed hash must never leave the password or a hash of
+			// it in the log.
+			if strings.Contains(string(ev.Details), "assphrase") ||
+				strings.Contains(ev.Error, "assphrase") {
+				t.Errorf("Audit event leaked the password: %s / %s",
+					ev.Details, ev.Error)
+			}
+		})
 	}
 }
 

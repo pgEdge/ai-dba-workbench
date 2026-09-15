@@ -620,6 +620,64 @@ func TestVerifyAuditTailMaxQueryError(t *testing.T) {
 	}
 }
 
+// TestAuditOccurredAtIsFixedWidth checks that every stored timestamp
+// uses the fixed-width layout, which is what makes the lexical string
+// comparisons in auditWhere and PurgeAuditEvents order correctly.
+func TestAuditOccurredAtIsFixedWidth(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	base := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	for i, at := range []time.Time{
+		base,
+		base.Add(400 * time.Millisecond),
+		base.Add(time.Second),
+		{},
+	} {
+		ev := newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil)
+		ev.OccurredAt = at
+		mustRecord(t, store, ev)
+	}
+
+	rows, err := store.db.Query(
+		"SELECT id, occurred_at FROM audit_events ORDER BY id")
+	if err != nil {
+		t.Fatalf("Failed to query audit rows: %v", err)
+	}
+	defer rows.Close()
+
+	seen := 0
+	for rows.Next() {
+		var id int64
+		var occurredAt string
+		if err := rows.Scan(&id, &occurredAt); err != nil {
+			t.Fatalf("Failed to scan audit row: %v", err)
+		}
+		if len(occurredAt) != 30 {
+			t.Errorf("Row %d: expected a 30-character occurred_at, got %q (%d)",
+				id, occurredAt, len(occurredAt))
+		}
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Failed to read audit rows: %v", err)
+	}
+	if seen < 4 {
+		t.Errorf("Expected at least 4 rows, got %d", seen)
+	}
+}
+
+func TestPurgeAuditEventsError(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	store.db.Close()
+	if _, err := store.PurgeAuditEvents(time.Now()); err == nil {
+		t.Error("Expected an error from a closed database")
+	}
+}
+
 // =============================================================================
 // Denials and failures
 // =============================================================================

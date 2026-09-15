@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1494,7 +1495,17 @@ func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 		}
 	}
 
-	return fmt.Errorf("token not found")
+	// Both probes missed. A numeric identifier names a token id the
+	// caller believed in, so the miss is recorded against that id; a
+	// hash-prefix identifier names no id to attribute the failure to
+	// and so leaves no event, exactly as deleteUserToken's fallback
+	// target does for the id it was given.
+	err := fmt.Errorf("token not found")
+	if id, parseErr := strconv.ParseInt(identifier, 10, 64); parseErr == nil {
+		s.recordFailure(actor, "token.delete", "token", &id, "", err)
+	}
+
+	return err
 }
 
 // deleteTokensByFilter deletes every token matched by the supplied

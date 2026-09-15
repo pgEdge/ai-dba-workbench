@@ -207,7 +207,7 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.VerifyAuditCmd, "verify-audit-log", false, "Verify the audit log hash chain")
 	flag.StringVar(&f.AuditActor, "audit-actor", "", "Filter audit events by actor name")
 	flag.StringVar(&f.AuditAction, "audit-action", "", "Filter audit events by action (e.g. group.create)")
-	flag.StringVar(&f.AuditTargetType, "audit-target-type", "", "Filter audit events by target type (user, group, token, privilege)")
+	flag.StringVar(&f.AuditTargetType, "audit-target-type", "", "Filter audit events by target type (user, group, token)")
 	flag.Int64Var(&f.AuditTargetID, "audit-target-id", 0, "Filter audit events by target ID")
 	flag.StringVar(&f.AuditOutcome, "audit-outcome", "", "Filter audit events by outcome (success, failure, denied)")
 	flag.StringVar(&f.AuditSince, "audit-since", "", "Only show audit events at or after this time (RFC 3339 or YYYY-MM-DD)")

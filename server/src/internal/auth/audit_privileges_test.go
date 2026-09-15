@@ -289,7 +289,11 @@ func privilegeAuditCases() []privilegeAuditCase {
 			},
 			action: "privilege.connection.grant",
 			details: func(connectionID int64) map[string]any {
-				return map[string]any{"connection_id": connectionID}
+				return map[string]any{
+					"connection_id": connectionID,
+					"before":        nil,
+					"after":         map[string]any{"access_level": AccessLevelRead},
+				}
 			},
 			brokenTable: "connection_privileges",
 		},
@@ -310,7 +314,10 @@ func privilegeAuditCases() []privilegeAuditCase {
 			},
 			action: "privilege.connection.revoke",
 			details: func(connectionID int64) map[string]any {
-				return map[string]any{"connection_id": connectionID}
+				return map[string]any{
+					"connection_id": connectionID,
+					"before":        map[string]any{"access_level": AccessLevelRead},
+				}
 			},
 			brokenTable: "connection_privileges",
 		},
@@ -762,5 +769,75 @@ func TestGrantAdminPermissionWildcardListFails(t *testing.T) {
 	ev := lastPrivilegeAuditEvent(t, store)
 	if ev.Outcome != OutcomeFailure || ev.Action != "permission.admin.grant" {
 		t.Errorf("Expected a failed grant event, got %q/%q", ev.Action, ev.Outcome)
+	}
+}
+
+// TestConnectionGrantRecordsAccessLevelChange checks that a grant
+// records the level it moved from as well as the level it moved to, so
+// that a silent upgrade from read to read_write is visible in the log.
+func TestConnectionGrantRecordsAccessLevelChange(t *testing.T) {
+	store, cleanup, groupID := newAuditedPrivilegeGroup(t)
+	defer cleanup()
+
+	if err := store.GrantConnectionPrivilege(groupID, 7, AccessLevelRead); err != nil {
+		t.Fatalf("First grant failed: %v", err)
+	}
+
+	first := lastPrivilegeAuditEvent(t, store)
+	details := privilegeAuditDetails(t, first)
+	if details["before"] != nil {
+		t.Errorf("Expected a nil before on a fresh grant, got %v", details["before"])
+	}
+	if !jsonEqual(details["after"],
+		map[string]any{"access_level": AccessLevelRead}) {
+		t.Errorf("Expected after read, got %v", details["after"])
+	}
+
+	if err := store.GrantConnectionPrivilege(groupID, 7,
+		AccessLevelReadWrite); err != nil {
+		t.Fatalf("Second grant failed: %v", err)
+	}
+
+	second := lastPrivilegeAuditEvent(t, store)
+	details = privilegeAuditDetails(t, second)
+	if !jsonEqual(details["before"],
+		map[string]any{"access_level": AccessLevelRead}) {
+		t.Errorf("Expected before read, got %v", details["before"])
+	}
+	if !jsonEqual(details["after"],
+		map[string]any{"access_level": AccessLevelReadWrite}) {
+		t.Errorf("Expected after read_write, got %v", details["after"])
+	}
+
+	if err := store.RevokeConnectionPrivilege(groupID, 7); err != nil {
+		t.Fatalf("Revoke failed: %v", err)
+	}
+
+	revoked := lastPrivilegeAuditEvent(t, store)
+	details = privilegeAuditDetails(t, revoked)
+	if !jsonEqual(details["before"],
+		map[string]any{"access_level": AccessLevelReadWrite}) {
+		t.Errorf("Expected revoke before read_write, got %v", details["before"])
+	}
+	if _, ok := details["after"]; ok {
+		t.Errorf("Expected no after on a revoke, got %v", details["after"])
+	}
+}
+
+// TestConnectionAccessLevelTxMissingTable checks that a failed lookup
+// degrades to "no grant" rather than failing the mutation, which is
+// what keeps the audit enrichment off the critical path.
+func TestConnectionAccessLevelTxMissingTable(t *testing.T) {
+	store, cleanup, groupID := newAuditedPrivilegeGroup(t)
+	defer cleanup()
+
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("Failed to begin transaction: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // test cleanup
+
+	if level := connectionAccessLevelTx(tx, groupID, 12345); level != "" {
+		t.Errorf("Expected an empty level for a missing grant, got %q", level)
 	}
 }

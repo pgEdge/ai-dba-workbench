@@ -423,6 +423,48 @@ func TestAuditTokensDeleteTokenNotFound(t *testing.T) {
 	}
 }
 
+// TestAuditTokensDeleteTokenByIDNotFound checks that a delete naming a
+// token id that does not exist leaves a failure event behind. A
+// hash-prefix identifier names no id and so stays silent, which
+// TestAuditTokensDeleteTokenNotFound covers.
+func TestAuditTokensDeleteTokenByIDNotFound(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	mustCreateTokenOwner(t, store, "bob")
+
+	as := store.AsActor(testActor())
+	err := as.DeleteToken("9999")
+	if err == nil {
+		t.Fatal("Expected DeleteToken on a missing token to fail")
+	}
+	if err.Error() != "token not found" {
+		t.Errorf("Expected the existing not-found message, got %q", err)
+	}
+
+	ev := lastAuditEvent(t, store)
+	assertUserActor(t, ev)
+	if ev.Action != "token.delete" {
+		t.Errorf("Expected action token.delete, got %q", ev.Action)
+	}
+	if ev.Outcome != OutcomeFailure {
+		t.Errorf("Expected outcome failure, got %q", ev.Outcome)
+	}
+	if ev.TargetType != "token" {
+		t.Errorf("Expected target type token, got %q", ev.TargetType)
+	}
+	if ev.TargetID == nil || *ev.TargetID != 9999 {
+		t.Errorf("Expected target id 9999, got %v", ev.TargetID)
+	}
+	if ev.Error != "token not found" {
+		t.Errorf("Expected error text %q, got %q", "token not found", ev.Error)
+	}
+
+	if _, firstBad, err := store.VerifyAuditChain(); err != nil || firstBad != 0 {
+		t.Errorf("Chain should verify: firstBad=%d err=%v", firstBad, err)
+	}
+}
+
 // =============================================================================
 // Scope changes
 // =============================================================================

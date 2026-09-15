@@ -44,6 +44,8 @@ func TestBuildOpenAPISpec(t *testing.T) {
 	// Verify key paths exist
 	keyPaths := []string{
 		"/auth/login",
+		"/auth/oidc/start",
+		"/auth/oidc/callback",
 		"/user/info",
 		"/connections",
 		"/connections/{id}",
@@ -297,6 +299,32 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 		if p.Name == "time_start" || p.Name == "time_end" {
 			t.Errorf("Unexpected %s parameter on /metrics/database-summaries",
 				p.Name)
+		}
+	}
+}
+
+func TestCapabilitiesResponseDescribesAuthMethods(t *testing.T) {
+	spec := BuildOpenAPISpec()
+
+	schema, ok := spec.Components.Schemas["CapabilitiesResponse"]
+	if !ok {
+		t.Fatal("CapabilitiesResponse schema is missing")
+	}
+	auth, ok := schema.Properties["auth"]
+	if !ok {
+		t.Fatal("CapabilitiesResponse has no auth block")
+	}
+	if auth.Ref != "#/components/schemas/AuthCapabilities" {
+		t.Fatalf("auth ref = %q", auth.Ref)
+	}
+
+	authSchema, ok := spec.Components.Schemas["AuthCapabilities"]
+	if !ok {
+		t.Fatal("AuthCapabilities schema is missing")
+	}
+	for _, property := range []string{"local_enabled", "oidc_enabled", "oidc_label"} {
+		if _, ok := authSchema.Properties[property]; !ok {
+			t.Errorf("AuthCapabilities has no %q property", property)
 		}
 	}
 }

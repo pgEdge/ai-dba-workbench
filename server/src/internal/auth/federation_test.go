@@ -13,6 +13,8 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // sessionFarFuture is used by malformed-session-entry tests so the entries
@@ -219,8 +221,19 @@ func TestExternalSubjectKeyCombinesIssuerAndSubject(t *testing.T) {
 	if first == second {
 		t.Fatalf("two issuers with the same subject collided on key %q", first)
 	}
-	if want := "https://idp-a.example.com|shared-subject"; first != want {
+	if want := "25|https://idp-a.example.com|shared-subject"; first != want {
 		t.Fatalf("key = %q, want %q", first, want)
+	}
+}
+
+// TestExternalSubjectKeyIsInjective pins the length prefix: without it, an
+// issuer ending in a separator plus a subject could be re-cut to produce
+// another provider's key.
+func TestExternalSubjectKeyIsInjective(t *testing.T) {
+	spoofed := ExternalSubjectKey("https://idp.example.com|evil", "x")
+	genuine := ExternalSubjectKey("https://idp.example.com", "evil|x")
+	if spoofed == genuine {
+		t.Fatalf("a re-cut issuer collided with a genuine key: %q", genuine)
 	}
 }
 
@@ -451,6 +464,13 @@ func TestProvisionedUserCannotLogInWithAPassword(t *testing.T) {
 	for _, password := range []string{"", " ", user.Username, user.ExternalSubject} {
 		if _, _, err := store.AuthenticateUser(user.Username, password); err == nil {
 			t.Fatalf("password %q authenticated a provisioned account", password)
+		}
+		// AuthenticateUser refuses on auth_source before it compares
+		// anything, so test the stored hash directly as well: the account
+		// must be unreachable even if that gate were ever removed.
+		if err := bcrypt.CompareHashAndPassword(
+			[]byte(user.PasswordHash), []byte(password)); err == nil {
+			t.Fatalf("password %q verified against the stored hash", password)
 		}
 	}
 }
@@ -829,6 +849,16 @@ func TestProvisioningSurfacesAnInsertFailure(t *testing.T) {
 		FederationOptions{ProvisionUsers: true}); err == nil {
 		t.Fatal("expected the insert failure to surface")
 	}
+
+	// The state after the failure matters as much as the error: a refused
+	// provisioning must leave no account behind.
+	users, err := store.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("user count after a failed provisioning = %d, want 0", len(users))
+	}
 }
 
 // TestProvisioningSurfacesAReadBackFailure covers the read-back of the row
@@ -901,7 +931,8 @@ func TestReconcileFederatedGroupsSurfacesMembershipWriteErrors(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if _, err := store.CreateGroup("workbench-admins", ""); err != nil {
+	groupID, err := store.CreateGroup("workbench-admins", "")
+	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	user := resolveForTest(t, store)
@@ -922,6 +953,9 @@ func TestReconcileFederatedGroupsSurfacesMembershipWriteErrors(t *testing.T) {
 	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{}, opts); err == nil {
 		t.Fatal("expected the membership delete failure to surface")
 	}
+	// A refused revocation leaves the membership exactly as it was rather
+	// than half-removing it.
+	assertInGroup(t, store, user.ID, groupID, true)
 
 	// Now the INSERT, with the seeded row cleared again so the write is a
 	// genuine insert rather than a no-op.
@@ -941,6 +975,46 @@ func TestReconcileFederatedGroupsSurfacesMembershipWriteErrors(t *testing.T) {
 		Groups: []string{"idp-admins"}}, opts); err == nil {
 		t.Fatal("expected the membership insert failure to surface")
 	}
+	// A refused grant leaves the user out of the group.
+	assertInGroup(t, store, user.ID, groupID, false)
+}
+
+// TestReconcileFederatedGroupsRevokesBeforeGrantsFail is the ordering test: a
+// user the provider has demoted must lose superuser even when a later grant
+// fails, because the flag is read live by every authorisation path and
+// bypasses token scope entirely. A partial application may under-privilege;
+// it must never over-privilege.
+func TestReconcileFederatedGroupsRevokesBeforeGrantsFail(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	groupID, err := store.CreateGroup("workbench-admins", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	user := resolveForTest(t, store)
+	if err := store.SetUserSuperuser(user.Username, true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+
+	if _, err := store.db.Exec(`CREATE TRIGGER refuse_membership_insert
+        BEFORE INSERT ON group_memberships
+        BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	// The provider asserts the mapped group but no longer asserts superuser.
+	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{
+		Groups: []string{"idp-admins"}},
+		FederationOptions{
+			GroupMap:       map[string]string{"idp-admins": "workbench-admins"},
+			SuperuserGroup: "idp-supers",
+		}); err == nil {
+		t.Fatal("expected the membership insert failure to surface")
+	}
+
+	assertSuperuser(t, store, user.Username, false)
+	assertInGroup(t, store, user.ID, groupID, false)
 }
 
 func TestReconcileFederatedGroupsSurfacesSuperuserWriteErrors(t *testing.T) {
@@ -953,10 +1027,146 @@ func TestReconcileFederatedGroupsSurfacesSuperuserWriteErrors(t *testing.T) {
 		t.Fatalf("create trigger: %v", err)
 	}
 
+	// The grant, and then the revocation: both write is_superuser, in
+	// different phases.
 	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{
 		Groups: []string{"idp-supers"}},
 		FederationOptions{SuperuserGroup: "idp-supers"}); err == nil {
-		t.Fatal("expected the superuser update failure to surface")
+		t.Fatal("expected the superuser grant failure to surface")
+	}
+	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{},
+		FederationOptions{SuperuserGroup: "idp-supers"}); err == nil {
+		t.Fatal("expected the superuser revocation failure to surface")
+	}
+	assertSuperuser(t, store, user.Username, false)
+}
+
+// TestReconcileFederatedGroupsCannotReEnableADisabledAccount guards the
+// account state reconciliation must never touch: an administrator who has
+// disabled a federated account keeps it disabled, however the provider
+// answers at the next login.
+func TestReconcileFederatedGroupsCannotReEnableADisabledAccount(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if _, err := store.CreateGroup("workbench-admins", ""); err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	user := resolveForTest(t, store)
+	if err := store.DisableUser(user.Username); err != nil {
+		t.Fatalf("DisableUser: %v", err)
+	}
+
+	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{
+		Groups: []string{"idp-admins", "idp-supers"}},
+		FederationOptions{
+			GroupMap:       map[string]string{"idp-admins": "workbench-admins"},
+			SuperuserGroup: "idp-supers",
+		}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	stored, err := store.GetUser(user.Username)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if stored.Enabled {
+		t.Fatal("reconciliation re-enabled a disabled account")
+	}
+}
+
+// TestReconcileFederatedGroupsLeavesInheritedMembershipInPlace documents the
+// accepted semantics around nested groups: reconciliation writes and removes
+// direct memberships only, whilst authorisation walks upwards from them, so a
+// mapped group held through a parent group survives the provider dropping it.
+// Making federation authoritative over inherited membership would make
+// federated groups behave differently from local ones; the gap is documented
+// for administrators instead. This test exists so the semantics change only
+// deliberately.
+func TestReconcileFederatedGroupsLeavesInheritedMembershipInPlace(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	mappedID, err := store.CreateGroup("workbench-admins", "")
+	if err != nil {
+		t.Fatalf("CreateGroup(mapped): %v", err)
+	}
+	parentID, err := store.CreateGroup("everyone", "")
+	if err != nil {
+		t.Fatalf("CreateGroup(parent): %v", err)
+	}
+	// The mapped group is a member of the parent group, so a member of the
+	// parent inherits the mapped group's privileges.
+	if err := store.AddGroupToGroup(mappedID, parentID); err != nil {
+		t.Fatalf("AddGroupToGroup: %v", err)
+	}
+
+	user := resolveForTest(t, store)
+	if err := store.AddUserToGroup(parentID, user.ID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+
+	opts := FederationOptions{GroupMap: map[string]string{"idp-admins": "workbench-admins"}}
+	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{}, opts); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	// The direct membership row is gone...
+	var direct int
+	if err := store.db.QueryRow(
+		"SELECT COUNT(*) FROM group_memberships WHERE parent_group_id = ? AND member_user_id = ?",
+		mappedID, user.ID).Scan(&direct); err != nil {
+		t.Fatalf("count direct memberships: %v", err)
+	}
+	if direct != 0 {
+		t.Fatalf("direct membership rows = %d, want 0", direct)
+	}
+	// ...but the inherited route through the locally managed parent stands.
+	assertInGroup(t, store, user.ID, mappedID, true)
+}
+
+func TestResolveFederatedUserDropsAMalformedEmailClaim(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	identity := testIdentity()
+	identity.Email = "not-an-email"
+
+	user, err := store.ResolveFederatedUser(identity, FederationOptions{ProvisionUsers: true})
+	if err != nil {
+		t.Fatalf("a malformed email claim must not fail the login: %v", err)
+	}
+	if user.Email != "" {
+		t.Fatalf("email = %q, want the malformed claim dropped", user.Email)
+	}
+}
+
+// TestProvisioningAdoptsAConcurrentlyCreatedAccount covers the race between
+// two servers sharing one auth.db: the unique index on external_subject
+// decides it, and the loser must adopt the winner's row rather than fail a
+// legitimate login. The helper is called directly because within one process
+// s.mu makes the race unreachable through ResolveFederatedUser.
+func TestProvisioningAdoptsAConcurrentlyCreatedAccount(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	identity := testIdentity()
+	key := ExternalSubjectKey(identity.Issuer, identity.Subject)
+	winner, err := store.ResolveFederatedUser(FederatedIdentity{
+		Issuer: identity.Issuer, Subject: identity.Subject,
+		Username: "winner@example.com"}, FederationOptions{ProvisionUsers: true})
+	if err != nil {
+		t.Fatalf("seed the winning account: %v", err)
+	}
+
+	store.mu.Lock()
+	adopted, err := store.provisionFederatedUserLocked(identity, key)
+	store.mu.Unlock()
+	if err != nil {
+		t.Fatalf("provisionFederatedUserLocked: %v", err)
+	}
+	if adopted.ID != winner.ID {
+		t.Fatalf("adopted user %d, want the concurrently created %d", adopted.ID, winner.ID)
 	}
 }
 

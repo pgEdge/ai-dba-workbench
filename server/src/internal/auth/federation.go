@@ -150,8 +150,16 @@ type FederationOptions struct {
 // ExternalSubjectKey builds the stable identifier a federated account is
 // matched on. Both halves matter: two providers can and do issue the same
 // "sub", so the issuer is part of the identity rather than context for it.
+//
+// The issuer is length-prefixed so the encoding is injective. A plain
+// issuer+"|"+subject is not: issuer "https://idp.example.com|evil" with
+// subject "x" would produce the same key as issuer "https://idp.example.com"
+// with subject "evil|x", so a hostile or mistyped issuer configured alongside
+// a legitimate one could be made to collide with an account belonging to the
+// legitimate one. With the length prefix, one key can be read back as exactly
+// one (issuer, subject) pair.
 func ExternalSubjectKey(issuer, subject string) string {
-	return issuer + "|" + subject
+	return fmt.Sprintf("%d|%s|%s", len(issuer), issuer, subject)
 }
 
 // federatedUserColumns is the column list every federated lookup scans, in
@@ -187,29 +195,12 @@ func (s *AuthStore) ResolveFederatedUser(identity FederatedIdentity, opts Federa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	user, err := scanUser(s.db.QueryRow(
-		"SELECT "+federatedUserColumns+" FROM users WHERE external_subject = ?", key))
-	switch {
-	case err == nil:
-		// A row carrying an external subject is federated by construction,
-		// but check anyway: if some future path ever stamped a subject onto
-		// a local or service account, a login must not adopt it.
-		if user.AuthSource != AuthSourceOIDC {
-			return nil, fmt.Errorf("account %s is not federated (auth_source=%s)",
-				user.Username, user.AuthSource)
-		}
-		if user.IsServiceAccount {
-			return nil, fmt.Errorf("service account cannot log in through an identity provider: %s",
-				user.Username)
-		}
-		if !user.Enabled {
-			return nil, fmt.Errorf("account is disabled: %s", user.Username)
-		}
+	user, err := s.lookupFederatedUserLocked(key)
+	if err != nil {
+		return nil, err
+	}
+	if user != nil {
 		return user, nil
-	case errors.Is(err, sql.ErrNoRows):
-		// Fall through to provisioning.
-	default:
-		return nil, fmt.Errorf("looking up federated user: %w", err)
 	}
 
 	if !opts.ProvisionUsers {
@@ -220,11 +211,53 @@ func (s *AuthStore) ResolveFederatedUser(identity FederatedIdentity, opts Federa
 	return s.provisionFederatedUserLocked(identity, key)
 }
 
+// lookupFederatedUserLocked returns the account holding key, or (nil, nil)
+// when no account holds it. It applies the account rules a federated login
+// must satisfy, so every caller that reaches an existing row goes through the
+// same checks. s.mu must be held.
+func (s *AuthStore) lookupFederatedUserLocked(key string) (*StoredUser, error) {
+	user, err := scanUser(s.db.QueryRow(
+		"SELECT "+federatedUserColumns+" FROM users WHERE external_subject = ?", key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up federated user: %w", err)
+	}
+
+	// A row carrying an external subject is federated by construction, but
+	// check anyway: if some future path ever stamped a subject onto a local
+	// or service account, a login must not adopt it.
+	if user.AuthSource != AuthSourceOIDC {
+		return nil, fmt.Errorf("account %s is not federated (auth_source=%s)",
+			user.Username, user.AuthSource)
+	}
+	if user.IsServiceAccount {
+		return nil, fmt.Errorf("service account cannot log in through an identity provider: %s",
+			user.Username)
+	}
+	if !user.Enabled {
+		return nil, fmt.Errorf("account is disabled: %s", user.Username)
+	}
+	return user, nil
+}
+
 // provisionFederatedUserLocked creates an account for a previously unseen
 // subject. s.mu must be held.
 func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key string) (*StoredUser, error) {
 	if err := ValidateUsername(identity.Username); err != nil {
 		return nil, fmt.Errorf("federated username is not usable: %w", err)
+	}
+
+	// A malformed email claim is dropped rather than failing the login: the
+	// address is profile decoration here, nothing authenticates or grants
+	// access on it, and a sloppy identity provider should not lock people out.
+	email := identity.Email
+	if email != "" {
+		if err := ValidateEmail(email); err != nil {
+			log.Printf("[AUTH] Ignoring malformed email claim for federated subject %s: %v", key, err)
+			email = ""
+		}
 	}
 
 	existing, err := s.usernameTakenLocked(identity.Username)
@@ -244,9 +277,29 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 	result, err := s.db.Exec(
 		`INSERT INTO users (username, password_hash, display_name, email, enabled, auth_source, external_subject)
          VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
-		identity.Username, hash, identity.DisplayName, identity.Email, AuthSourceOIDC, key,
+		identity.Username, hash, identity.DisplayName, email, AuthSourceOIDC, key,
 	)
 	if err != nil {
+		// s.mu makes provisioning sequential within one process, but two servers
+		// can share an auth.db, and the unique index on external_subject is
+		// what actually decides the race. The loser adopts the winner's row
+		// rather than failing a legitimate login.
+		if isUniqueViolation(err, "users.external_subject") {
+			user, lookupErr := s.lookupFederatedUserLocked(key)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if user != nil {
+				return user, nil
+			}
+		}
+		// A username collision that slipped past the check above means the
+		// same race created a different account under this name; refuse it
+		// for the same reason the check exists.
+		if isUniqueViolation(err, "users.username") {
+			return nil, fmt.Errorf("refusing to provision federated identity %s: username %q was taken concurrently",
+				key, identity.Username)
+		}
 		return nil, fmt.Errorf("failed to provision federated user: %w", err)
 	}
 	id, err := result.LastInsertId()
@@ -334,6 +387,15 @@ func (s *AuthStore) unusablePasswordHashLocked() (string, error) {
 // A mapped Workbench group that does not exist is logged and skipped rather
 // than failing the login, since a typo in the operator's map should not lock
 // everybody out.
+//
+// The work runs in two committed phases, revocations first and grants second,
+// each phase atomic in its own transaction. The ordering is what matters: a
+// failure anywhere can then only leave the user with fewer privileges than the
+// provider asserts, never more. A single transaction spanning both phases
+// would be worse rather than better, because rolling back a failed grant would
+// also roll back the revocation that preceded it, leaving a user the provider
+// has just demoted still holding is_superuser, which every authorisation path
+// reads live and which bypasses token scope entirely.
 func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIdentity, opts FederationOptions) error {
 	asserted := make(map[string]bool, len(identity.Groups))
 	for _, group := range identity.Groups {
@@ -343,23 +405,55 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	username, err := s.federatedAccountForReconcileLocked(userID)
+	if err != nil {
+		return err
+	}
+	targets, err := s.mappedGroupTargetsLocked(opts, asserted)
+	if err != nil {
+		return err
+	}
+	superuser := opts.SuperuserGroup != "" && asserted[opts.SuperuserGroup]
+
+	if err := s.revokeFederatedLocked(userID, username, targets, opts, superuser); err != nil {
+		return err
+	}
+	return s.grantFederatedLocked(userID, username, targets, opts, superuser)
+}
+
+// mappedGroupTarget is one Workbench group named by the operator's map,
+// resolved to its ID, with the decision the provider's assertion implies.
+type mappedGroupTarget struct {
+	name    string
+	id      int64
+	desired bool
+}
+
+// federatedAccountForReconcileLocked checks that userID names an account
+// reconciliation may act on, returning its username. s.mu must be held.
+func (s *AuthStore) federatedAccountForReconcileLocked(userID int64) (string, error) {
 	var username, authSource string
 	err := s.db.QueryRow("SELECT username, auth_source FROM users WHERE id = ?", userID).
 		Scan(&username, &authSource)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("user not found: %d", userID)
+		return "", fmt.Errorf("user not found: %d", userID)
 	}
 	if err != nil {
-		return fmt.Errorf("looking up user for reconciliation: %w", err)
+		return "", fmt.Errorf("looking up user for reconciliation: %w", err)
 	}
 	// Reconciliation is only ever correct for an account the provider owns;
 	// refusing anything else keeps this from becoming a way to rewrite a
 	// local administrator's groups or superuser flag.
 	if authSource != AuthSourceOIDC {
-		return fmt.Errorf("refusing to reconcile groups for non-federated account %s (auth_source=%s)",
+		return "", fmt.Errorf("refusing to reconcile groups for non-federated account %s (auth_source=%s)",
 			username, authSource)
 	}
+	return username, nil
+}
 
+// mappedGroupTargetsLocked resolves the operator's map to the Workbench groups
+// reconciliation will act on, in a stable order. s.mu must be held.
+func (s *AuthStore) mappedGroupTargetsLocked(opts FederationOptions, asserted map[string]bool) ([]mappedGroupTarget, error) {
 	// Collapse the map to one decision per Workbench group, so that two
 	// provider groups mapped onto the same Workbench group union rather than
 	// letting map iteration order decide the outcome.
@@ -371,13 +465,13 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 		desired[workbenchGroup] = desired[workbenchGroup] || asserted[providerGroup]
 	}
 
-	// Sorted for a stable, readable log order.
 	names := make([]string, 0, len(desired))
 	for name := range desired {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
+	targets := make([]mappedGroupTarget, 0, len(names))
 	for _, name := range names {
 		var groupID int64
 		err := s.db.QueryRow("SELECT id FROM user_groups WHERE name = ?", name).Scan(&groupID)
@@ -386,31 +480,95 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("looking up mapped group %q: %w", name, err)
+			return nil, fmt.Errorf("looking up mapped group %q: %w", name, err)
 		}
+		targets = append(targets, mappedGroupTarget{name: name, id: groupID, desired: desired[name]})
+	}
+	return targets, nil
+}
 
-		if desired[name] {
-			// UNIQUE(parent_group_id, member_user_id) makes this idempotent.
-			if _, err := s.db.Exec(
-				"INSERT OR IGNORE INTO group_memberships (parent_group_id, member_user_id) VALUES (?, ?)",
-				groupID, userID); err != nil {
-				return fmt.Errorf("adding %s to mapped group %q: %w", username, name, err)
-			}
+// revokeFederatedLocked applies everything that takes privilege away, as one
+// transaction, before any grant is attempted. Superuser goes first within the
+// phase, since it is the privilege that matters most. s.mu must be held.
+func (s *AuthStore) revokeFederatedLocked(userID int64, username string,
+	targets []mappedGroupTarget, opts FederationOptions, superuser bool) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin revocation transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			//nolint:errcheck // Rollback error is not critical; the outer
+			// error is already being returned to the caller.
+			tx.Rollback()
+		}
+	}()
+
+	if opts.SuperuserGroup != "" && !superuser {
+		if _, execErr := tx.Exec("UPDATE users SET is_superuser = FALSE WHERE id = ?", userID); execErr != nil {
+			err = fmt.Errorf("revoking superuser for %s: %w", username, execErr)
+			return err
+		}
+	}
+
+	for _, target := range targets {
+		if target.desired {
 			continue
 		}
-		if _, err := s.db.Exec(
+		if _, execErr := tx.Exec(
 			"DELETE FROM group_memberships WHERE parent_group_id = ? AND member_user_id = ?",
-			groupID, userID); err != nil {
-			return fmt.Errorf("removing %s from mapped group %q: %w", username, name, err)
+			target.id, userID); execErr != nil {
+			err = fmt.Errorf("removing %s from mapped group %q: %w", username, target.name, execErr)
+			return err
 		}
 	}
 
-	if opts.SuperuserGroup == "" {
-		return nil
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit federated revocations for %s: %w", username, commitErr)
+		return err
 	}
-	if _, err := s.db.Exec("UPDATE users SET is_superuser = ? WHERE id = ?",
-		asserted[opts.SuperuserGroup], userID); err != nil {
-		return fmt.Errorf("setting superuser for %s: %w", username, err)
+	return nil
+}
+
+// grantFederatedLocked applies everything that adds privilege, as one
+// transaction, once every revocation has been committed. s.mu must be held.
+func (s *AuthStore) grantFederatedLocked(userID int64, username string,
+	targets []mappedGroupTarget, opts FederationOptions, superuser bool) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin grant transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			//nolint:errcheck // Rollback error is not critical; the outer
+			// error is already being returned to the caller.
+			tx.Rollback()
+		}
+	}()
+
+	for _, target := range targets {
+		if !target.desired {
+			continue
+		}
+		// UNIQUE(parent_group_id, member_user_id) makes this idempotent.
+		if _, execErr := tx.Exec(
+			"INSERT OR IGNORE INTO group_memberships (parent_group_id, member_user_id) VALUES (?, ?)",
+			target.id, userID); execErr != nil {
+			err = fmt.Errorf("adding %s to mapped group %q: %w", username, target.name, execErr)
+			return err
+		}
+	}
+
+	if opts.SuperuserGroup != "" && superuser {
+		if _, execErr := tx.Exec("UPDATE users SET is_superuser = TRUE WHERE id = ?", userID); execErr != nil {
+			err = fmt.Errorf("granting superuser to %s: %w", username, execErr)
+			return err
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit federated grants for %s: %w", username, commitErr)
+		return err
 	}
 	return nil
 }

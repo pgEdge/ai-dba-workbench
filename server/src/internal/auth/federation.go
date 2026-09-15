@@ -619,6 +619,13 @@ func (s *AuthStore) grantFederatedLocked(userID int64, username string,
 // Operator-Driven Account Linking
 // =============================================================================
 
+// ErrPartialUnlink marks the one outcome of UnlinkFederatedIdentity in which
+// the account has been changed but not everything the command promises has
+// been applied: the account is local again with an unusable password, and its
+// tokens are still valid. A caller matches on it to tell the operator what is
+// still live, rather than matching on the error's text.
+var ErrPartialUnlink = errors.New("account was unlinked but not fully secured")
+
 // parseExternalSubjectKey reads an ExternalSubjectKey back into the issuer and
 // subject it was built from. The encoding is injective precisely so that this
 // is possible, and the round trip matters here because an operator reading a
@@ -920,10 +927,15 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 			// The account is already local and its password already
 			// unusable, so this is reported rather than rolled back:
 			// the operator has to know the tokens are still live.
+			// No claim about sessions here: from the CLI this
+			// process has none, and the caller's caveat is what
+			// tells the operator the truth about them. The error
+			// wraps ErrPartialUnlink so a caller can detect the
+			// half-applied case without reading its text.
 			return "", 0, fmt.Errorf(
-				"account %s was unlinked and its in-process sessions cleared, but its tokens "+
-					"could not be revoked, so they are still valid: %w",
-				username, err)
+				"%w: account %s was unlinked but its tokens could not be revoked, so they are "+
+					"still valid: %w",
+				ErrPartialUnlink, username, err)
 		}
 	}
 

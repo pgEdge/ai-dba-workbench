@@ -1798,6 +1798,8 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 	newCfg.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"example.com"}
 	newCfg.HTTP.Auth.OIDC.SuperuserGroup = "admins"
 	newCfg.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "admins"}
+	localDisabled := false
+	newCfg.HTTP.Auth.Local.Enabled = &localDisabled
 
 	rc := &ReloadableConfig{config: oldCfg}
 
@@ -1805,27 +1807,37 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 		rc.logRestartRequiredSettings(newCfg)
 	})
 
+	// Every http.auth setting requires a restart, including the claim and
+	// authorization mapping that a reload once reported as applied. The
+	// handler keeps the copy of the OIDC configuration it was built with
+	// and the capabilities payload is built once at startup, so a NOTE
+	// saying the value "changed" would tell an operator containing an
+	// incident that a narrowed allowed_email_domains or a pruned
+	// group_map had taken effect when it had not.
 	wantWarnings := []string{
 		"WARNING: http.auth.oidc.enabled changed - requires restart",
 		"WARNING: http.auth.oidc.issuer changed - requires restart",
 		"WARNING: http.auth.oidc.client_id changed - requires restart",
 		"WARNING: http.auth.oidc.client_secret changed - requires restart",
 		"WARNING: http.auth.oidc.redirect_url changed - requires restart",
+		"WARNING: http.auth.oidc.username_claim changed - requires restart",
+		"WARNING: http.auth.oidc.display_name_claim changed - requires restart",
+		"WARNING: http.auth.oidc.groups_claim changed - requires restart",
+		"WARNING: http.auth.oidc.scopes changed - requires restart",
+		"WARNING: http.auth.oidc.provision_users changed - requires restart",
+		"WARNING: http.auth.oidc.allowed_email_domains changed - requires restart",
+		"WARNING: http.auth.oidc.superuser_group changed - requires restart",
+		"WARNING: http.auth.oidc.group_map changed - requires restart",
+		"WARNING: http.auth.local.enabled changed - requires restart",
 	}
-	wantNotes := []string{
-		"NOTE: http.auth.oidc.username_claim changed to preferred_username",
-		"NOTE: http.auth.oidc.display_name_claim changed to display_name",
-		"NOTE: http.auth.oidc.groups_claim changed to roles",
-		"NOTE: http.auth.oidc.scopes changed to [openid]",
-		"NOTE: http.auth.oidc.provision_users changed to true",
-		"NOTE: http.auth.oidc.allowed_email_domains changed to [example.com]",
-		"NOTE: http.auth.oidc.superuser_group changed to admins",
-		"NOTE: http.auth.oidc.group_map changed to map[idp-admins:admins]",
-	}
-	for _, want := range append(wantWarnings, wantNotes...) {
+	for _, want := range wantWarnings {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "NOTE: http.auth") {
+		t.Errorf("no http.auth setting takes effect on reload, so none may be "+
+			"reported as merely changed, got:\n%s", out)
 	}
 }
 

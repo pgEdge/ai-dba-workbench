@@ -40,9 +40,15 @@ vi.mock('../../../../contexts/useAuth', () => ({
 }));
 
 let mockTimeRange: TimeRange = '1h';
+let mockCustomStart: string | undefined;
+let mockCustomEnd: string | undefined;
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
-        timeRange: { range: mockTimeRange },
+        timeRange: {
+            range: mockTimeRange,
+            customStart: mockCustomStart,
+            customEnd: mockCustomEnd,
+        },
         refreshTrigger: 0,
         setTimeRange: vi.fn(),
         currentOverlay: { connectionName: 'Test Server' },
@@ -279,6 +285,18 @@ const paramsFor = (key: string): MetricQueryParams | undefined => {
     return matches[matches.length - 1];
 };
 
+/** Every top-queries request URL seen so far, in call order. */
+const topQueryUrls = (): string[] => mockApiFetch.mock.calls
+    .map(call => call[0] as string)
+    .filter(url => url.includes('top-queries'));
+
+/** The query parameters of the most recent top-queries request. */
+const lastTopQueryParams = (): URLSearchParams => {
+    const urls = topQueryUrls();
+    const last = urls[urls.length - 1] ?? '';
+    return new URLSearchParams(last.split('?')[1] ?? '');
+};
+
 const renderDetail = () => render(
     <ThemeProvider theme={theme}>
         <QueryDetail
@@ -299,6 +317,8 @@ describe('QueryDetail', () => {
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         mockUser = { id: 1, username: 'testuser' };
         mockTimeRange = '1h';
+        mockCustomStart = undefined;
+        mockCustomEnd = undefined;
         mockAiEnabled = false;
         mockQueryStatsReturn = {
             stats: {
@@ -340,10 +360,79 @@ describe('QueryDetail', () => {
                 await waitFor(() => {
                     expect(mockApiFetch).toHaveBeenCalledWith(
                         '/api/v1/metrics/top-queries?connection_id=4'
-                        + `&queryid=${QUERY_ID}&limit=1`,
+                        + `&queryid=${QUERY_ID}&limit=1&time_range=1h`,
                     );
                 });
             });
+
+        it.each(['1h', '6h', '24h', '7d', '30d'] as TimeRange[])(
+            'scopes the header statistics to the %s range',
+            async (range) => {
+                mockTimeRange = range;
+
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(lastTopQueryParams().get('time_range'))
+                        .toBe(range);
+                });
+                expect(lastTopQueryParams().get('time_start')).toBeNull();
+                expect(lastTopQueryParams().get('time_end')).toBeNull();
+            });
+
+        it('sends both bounds for a custom range', async () => {
+            mockTimeRange = 'custom';
+            mockCustomStart = '2026-09-01T00:00:00Z';
+            mockCustomEnd = '2026-09-02T00:00:00Z';
+
+            renderDetail();
+
+            await waitFor(() => {
+                expect(lastTopQueryParams().get('time_range'))
+                    .toBe('custom');
+            });
+            expect(lastTopQueryParams().get('time_start'))
+                .toBe('2026-09-01T00:00:00Z');
+            expect(lastTopQueryParams().get('time_end'))
+                .toBe('2026-09-02T00:00:00Z');
+        });
+
+        it('makes no request whilst a custom range lacks a bound',
+            async () => {
+                mockTimeRange = 'custom';
+                mockCustomStart = '2026-09-01T00:00:00Z';
+
+                renderDetail();
+
+                await waitFor(() => {
+                    expect(mockUseQueryStats).toHaveBeenCalled();
+                });
+                expect(topQueryUrls()).toHaveLength(0);
+            });
+
+        it('refetches when the selected range changes', async () => {
+            const { rerender } = renderDetail();
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(1);
+            });
+
+            mockTimeRange = '24h';
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <QueryDetail
+                        connectionId={4}
+                        databaseName="testdb"
+                        objectName={QUERY_ID}
+                    />
+                </ThemeProvider>,
+            );
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(2);
+            });
+            expect(lastTopQueryParams().get('time_range')).toBe('24h');
+        });
 
         it('does not query metrics before the query row arrives', () => {
             mockApiFetch.mockReturnValue(new Promise(() => {}));
@@ -557,11 +646,11 @@ describe('QueryDetail', () => {
             expect(screen.getByText('512.0 ms')).toBeInTheDocument();
         });
 
-        it('labels the lifetime and period averages distinctly', async () => {
+        it('labels the windowed and period averages distinctly', async () => {
             renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Mean Time (All Time)'))
+                expect(screen.getByText('Mean Time'))
                     .toBeInTheDocument();
             });
             expect(screen.getByText('Avg Time (Last 1h)'))
@@ -701,6 +790,8 @@ describe('QueryDetail', () => {
 
         it('labels the period average for a custom range', async () => {
             mockTimeRange = 'custom';
+            mockCustomStart = '2026-09-01T00:00:00Z';
+            mockCustomEnd = '2026-09-02T00:00:00Z';
             renderDetail();
 
             await waitFor(() => {

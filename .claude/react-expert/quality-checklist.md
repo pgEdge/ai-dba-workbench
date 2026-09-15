@@ -339,6 +339,51 @@ LLM. The rules are as follows:
   and a read may still be served from the OS page cache, so a lower
   ratio does not by itself mean slow I/O.
 
+## Dashboard Time Window
+
+Every dashboard request that has a time dimension takes its window
+from `useDashboard().timeRange`, a `TimeRangeState` of `range` plus
+an optional `customStart` and `customEnd`. There is no shared helper
+yet, so each call site repeats the same two-part pattern that
+`useMetrics` (`client/src/hooks/useMetrics.ts`) establishes:
+
+- Always send `time_range`, and send `time_start` and `time_end`
+  only when the range is `custom` and both bounds are present; the
+  server accepts the bounds for no other range.
+
+- Skip the request entirely whilst a custom range has only one
+  bound, leaving the existing data and error state alone. A
+  half-specified custom window is a transient state the user passes
+  through in the picker, and sending it earns a 400 and a visible
+  error for no benefit. `useMetrics`, `useServerCacheHit`,
+  `useConnectionGroups`, `useQueryStats`, `TopQueriesSection` and
+  `QueryDetail` all do this.
+
+- Put `range`, `customStart` and `customEnd` in the fetch callback's
+  dependency list, so that moving the selector refetches.
+
+`/api/v1/metrics/top-queries` is windowed, and both of its callers
+pass the selected range: `TopQueriesSection` for the leaderboard and
+`QueryDetail` for the header statistics behind the overlay a row
+opens. The overlay takes the range from context rather than from the
+overlay payload, so nothing has to be threaded through `pushOverlay`.
+
+The windowed response aggregates `calls`, `rows`, `total_exec_time`
+and the block counters as sums of non-negative deltas, and derives
+`mean_exec_time` from those sums, but `min_exec_time` and
+`max_exec_time` cannot be delta-aggregated and remain lifetime
+`pg_stat_statements` values. The two `QueryDetail` tiles that show
+them are therefore labelled `Min Time (All Time)` and `Max Time
+(All Time)`, whilst the mean tile is plain `Mean Time` because it
+now follows the selector. Any new tile reading a windowed endpoint
+must say in its label which of the two it is.
+
+Five summary-tile call sites still hardcode `time_range=24h`
+(`usePerformanceSummary`, `useDatabaseCacheHit`,
+`DatabaseSummariesSection`, `KpiTilesSection` and
+`ComparativeChartsSection`); that is deliberate for now and is being
+reviewed separately, so do not sweep them into an unrelated change.
+
 ## TypeScript Standards
 
 `client/package.json` depends on `@mui/material` at `^5.14.20`. The

@@ -184,6 +184,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 }) => {
     const { user } = useAuth();
     const { timeRange, refreshTrigger, currentOverlay } = useDashboard();
+    const selectedRange = timeRange.range;
+    const customStart = timeRange.customStart;
+    const customEnd = timeRange.customEnd;
     const { aiEnabled } = useAICapabilities();
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
@@ -229,11 +232,25 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const fetchQueryData = useCallback(async (): Promise<void> => {
         if (!user) { return; }
 
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (selectedRange === 'custom' && (!customStart || !customEnd)) {
+            return;
+        }
+
         const params = new URLSearchParams({
             connection_id: connectionId.toString(),
             queryid: objectName,
             limit: '1',
+            time_range: selectedRange,
         });
+        if (selectedRange === 'custom' && customStart && customEnd) {
+            params.set('time_start', customStart);
+            params.set('time_end', customEnd);
+        }
 
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
@@ -277,7 +294,10 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 setLoading(false);
             }
         }
-    }, [user, connectionId, objectName]);
+    }, [
+        user, connectionId, objectName,
+        selectedRange, customStart, customEnd,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
@@ -771,6 +791,13 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 title="Query Statistics"
                 defaultExpanded
             >
+                {/*
+                  * Calls, total time and mean time are aggregated
+                  * over the selected range by the top-queries
+                  * endpoint. Min and max cannot be delta-aggregated,
+                  * so pg_stat_statements reports them for the life of
+                  * the statement and the tiles say so.
+                  */}
                 <Box sx={KPI_GRID_SX}>
                     <KpiTile
                         label="Total Calls"
@@ -787,7 +814,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label="Mean Time (All Time)"
+                        label="Mean Time"
                         value={queryData
                             ? formatTime(
                                 queryData.mean_exec_time

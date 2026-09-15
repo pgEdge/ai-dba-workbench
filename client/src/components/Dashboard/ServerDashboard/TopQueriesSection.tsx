@@ -235,7 +235,10 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     connectionName,
 }) => {
     const { user } = useAuth();
-    const { refreshTrigger, pushOverlay } = useDashboard();
+    const { refreshTrigger, pushOverlay, timeRange } = useDashboard();
+    const selectedRange = timeRange.range;
+    const customStart = timeRange.customStart;
+    const customEnd = timeRange.customEnd;
     const theme = useTheme();
 
     const [queries, setQueries] = useState<TopQueryRow[]>([]);
@@ -288,13 +291,27 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (selectedRange === 'custom' && (!customStart || !customEnd)) {
+            return;
+        }
+
         const params = new URLSearchParams({
             connection_id: connectionId.toString(),
             limit: pageSize.toString(),
             offset: (page * pageSize).toString(),
             order_by: 'total_exec_time',
             order: 'desc',
+            time_range: selectedRange,
         });
+        if (selectedRange === 'custom' && customStart && customEnd) {
+            params.set('time_start', customStart);
+            params.set('time_end', customEnd);
+        }
         if (hideCollectorQueries) {
             params.set('exclude_collector', 'true');
         }
@@ -362,7 +379,10 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                 setLoading(false);
             }
         }
-    }, [connectionId, hideCollectorQueries, page, pageSize, databaseFilter]);
+    }, [
+        connectionId, hideCollectorQueries, page, pageSize, databaseFilter,
+        selectedRange, customStart, customEnd,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

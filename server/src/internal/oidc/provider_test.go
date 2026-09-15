@@ -243,7 +243,7 @@ func TestExchangeRejectsWrongIssuer(t *testing.T) {
 		"nonce": state.Nonce,
 	}))
 
-	exchangeMustFail(t, provider, state, "issue")
+	exchangeMustFail(t, provider, state, "issued by a different provider")
 }
 
 func TestExchangeRejectsMissingUsernameClaim(t *testing.T) {
@@ -320,6 +320,8 @@ func TestExchangeDropsUnsafeDisplayNames(t *testing.T) {
 		"NUL byte":            "Jane\x00Doe",
 		"DEL":                 "Jane\x7fDoe",
 		"C1 control":          "Jane\u0085Doe",
+		"line separator":      "Jane\u2028Doe",
+		"paragraph separator": "Jane\u2029Doe",
 		"over the length cap": strings.Repeat("x", maxClaimValueLength+1),
 	}
 
@@ -343,6 +345,15 @@ func TestExchangeDropsUnsafeDisplayNames(t *testing.T) {
 			}
 			if identity.DisplayName != "" {
 				t.Errorf("display name = %q, want it dropped", identity.DisplayName)
+			}
+			if !slices.Contains(identity.DroppedClaims, "name") {
+				t.Errorf("DroppedClaims = %v, want it to name the display name claim",
+					identity.DroppedClaims)
+			}
+			for _, claimName := range identity.DroppedClaims {
+				if strings.Contains(claimName, "Jane") || strings.Contains(claimName, "x") {
+					t.Errorf("DroppedClaims leaked a value: %q", claimName)
+				}
 			}
 		})
 	}
@@ -560,18 +571,27 @@ func TestStringsClaimAcceptsANativeStringSlice(t *testing.T) {
 // Workbench invented.
 func TestStringClaimIgnoresNonStringValues(t *testing.T) {
 	claims := map[string]any{"email": 42}
-	if got := stringClaim(claims, "email"); got != "" {
+	if got := stringClaim(claims, "email", maxClaimValueLength); got != "" {
 		t.Errorf("stringClaim = %q, want empty", got)
 	}
-	if got := stringClaim(claims, ""); got != "" {
+	if got := stringClaim(claims, "", maxClaimValueLength); got != "" {
 		t.Errorf("unconfigured claim name yielded %q, want empty", got)
+	}
+
+	// A claim that is absent, or present but not a string, is not
+	// "rejected": only a string this package refused counts as that.
+	if _, rejected := takeStringClaim(claims, "email", maxClaimValueLength); rejected {
+		t.Error("a non-string claim must not be reported as rejected")
+	}
+	if _, rejected := takeStringClaim(claims, "absent", maxClaimValueLength); rejected {
+		t.Error("an absent claim must not be reported as rejected")
 	}
 }
 
 // TestSafeClaimValueRejectsInvalidUTF8 covers the branch a JSON decode
 // cannot reach, since encoding/json replaces bad bytes on the way in.
 func TestSafeClaimValueRejectsInvalidUTF8(t *testing.T) {
-	if got := safeClaimValue("Jane\xffDoe"); got != "" {
+	if got := safeClaimValue("Jane\xffDoe", maxClaimValueLength); got != "" {
 		t.Errorf("safeClaimValue = %q, want empty", got)
 	}
 }
@@ -702,5 +722,156 @@ func TestNewProviderUsesTheEffectiveClientSecret(t *testing.T) {
 	if provider.oauth2Config.ClientSecret != "secret-from-a-file" {
 		t.Errorf("client secret = %q, want the file's contents",
 			provider.oauth2Config.ClientSecret)
+	}
+}
+
+// TestExchangeDistinguishesARejectedEmailFromAnAbsentOne is the guard on
+// the allowed_email_domains gate: a user who controls their own profile
+// on a shared provider must not be able to empty Identity.Email by
+// sending something unusable and have that read as "no restriction".
+func TestExchangeDistinguishesARejectedEmailFromAnAbsentOne(t *testing.T) {
+	cases := map[string]struct {
+		claims        map[string]any
+		wantEmail     string
+		wantRejected  bool
+		wantInDropped bool
+	}{
+		"absent": {
+			claims: map[string]any{"user": "jane.doe"},
+		},
+		"over the ceiling": {
+			claims: map[string]any{
+				"user":  "jane.doe",
+				"email": strings.Repeat("a", maxEmailClaimLength) + "@example.com",
+			},
+			wantRejected:  true,
+			wantInDropped: true,
+		},
+		"embedded newline": {
+			claims: map[string]any{
+				"user":  "jane.doe",
+				"email": "jane.doe@example.com\nevil@example.net",
+			},
+			wantRejected:  true,
+			wantInDropped: true,
+		},
+		"long but legal": {
+			// RFC 5321 allows a 64-octet local part and a 255-octet
+			// domain, so an address longer than the general claim
+			// ceiling is still a real address.
+			claims: map[string]any{
+				"user": "jane.doe",
+				"email": strings.Repeat("a", 64) + "@" +
+					strings.Repeat("b", 60) + "." + strings.Repeat("c", 60) + ".example.com",
+			},
+			wantEmail: strings.Repeat("a", 64) + "@" +
+				strings.Repeat("b", 60) + "." + strings.Repeat("c", 60) + ".example.com",
+		},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "user"})
+
+			state := newTestLoginState(t)
+			claims := map[string]any{"nonce": state.Nonce}
+			for claimName, value := range testCase.claims {
+				claims[claimName] = value
+			}
+			idp.SetNextIDToken(idp.MintIDToken(t, claims))
+
+			identity, err := provider.Exchange(context.Background(), "code", state)
+			if err != nil {
+				t.Fatalf("Exchange: %v", err)
+			}
+			if identity.Email != testCase.wantEmail {
+				t.Errorf("email = %q, want %q", identity.Email, testCase.wantEmail)
+			}
+			if identity.EmailRejected != testCase.wantRejected {
+				t.Errorf("EmailRejected = %v, want %v",
+					identity.EmailRejected, testCase.wantRejected)
+			}
+			if got := slices.Contains(identity.DroppedClaims, "email"); got != testCase.wantInDropped {
+				t.Errorf("DroppedClaims = %v, want it to mention email: %v",
+					identity.DroppedClaims, testCase.wantInDropped)
+			}
+		})
+	}
+}
+
+// TestUsernameRejectionNamesTheClaimAndTheCharacterClass proves the
+// refusal is diagnostic enough for an operator to act on: it says which
+// claim was read, what was wrong with the value, and which setting to
+// change. It must not quote the offending character, since the message
+// goes into the server log.
+func TestUsernameRejectionNamesTheClaimAndTheCharacterClass(t *testing.T) {
+	cases := map[string]struct {
+		username string
+		want     string
+	}{
+		"plus sign":     {"jane+doe@example.com", "a symbol character"},
+		"space":         {"jane doe@example.com", "a whitespace character"},
+		"format char":   {"jane\u200ddoe@example.com", "a Unicode format character"},
+		"leading dash":  {"-jane.doe@example.com", "starts with a punctuation character"},
+		"over the cap":  {strings.Repeat("a", 129), "over the 128-character limit"},
+		"leading digit": {"1jane.doe@example.com", ""},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.NewFakeIDP(t)
+			provider := newTestProvider(t, idp, config.OIDCConfig{UsernameClaim: "preferred_username"})
+
+			state := newTestLoginState(t)
+			idp.SetNextIDToken(idp.MintIDToken(t, map[string]any{
+				"preferred_username": testCase.username,
+				"nonce":              state.Nonce,
+			}))
+
+			identity, err := provider.Exchange(context.Background(), "code", state)
+			if testCase.want == "" {
+				// A leading digit is permitted, so this one succeeds.
+				if err != nil {
+					t.Fatalf("Exchange: %v", err)
+				}
+				if identity.Username != testCase.username {
+					t.Errorf("username = %q, want %q", identity.Username, testCase.username)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected %q to be refused, got %+v", testCase.username, identity)
+			}
+			message := err.Error()
+			for _, want := range []string{
+				`"preferred_username"`,
+				testCase.want,
+				"http.auth.oidc.username_claim",
+			} {
+				if !strings.Contains(message, want) {
+					t.Errorf("error = %q, want it to mention %q", message, want)
+				}
+			}
+		})
+	}
+}
+
+// TestDescribeUsernameProblemFallsBack covers the phrase returned when
+// auth.ValidateUsername and this package's explanation ever disagree:
+// the explanation gives up rather than asserting something wrong.
+func TestDescribeUsernameProblemFallsBack(t *testing.T) {
+	if got := describeUsernameProblem("jane.doe"); got != "does not meet the username rules" {
+		t.Errorf("describeUsernameProblem = %q, want the fallback", got)
+	}
+	if got := runeClass('\u00a5'); got != "a symbol character" {
+		t.Errorf("runeClass = %q, want a symbol character", got)
+	}
+	if got := runeClass('\u0001'); got != "a control character" {
+		t.Errorf("runeClass = %q, want a control character", got)
+	}
+	if got := runeClass('\u4e00'); got != "a character" {
+		t.Errorf("runeClass = %q, want the generic phrase", got)
 	}
 }

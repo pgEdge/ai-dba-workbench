@@ -360,16 +360,16 @@ credentials an account can hold:
 | Credential | Default | With `-restore-password` |
 |------------|---------|--------------------------|
 | Password | Replaced with an unusable hash | The password held before linking works again |
-| Sessions | Invalidated | Invalidated |
 | API tokens | Revoked | Left in place |
+| Browser sessions | Left running, see below | Left running, see below |
 
-The default is the offboarding branch. It leaves the account reachable
-by nothing at all: no federated login, because the identity is
-detached; no password login, until an administrator sets one with
-`-update-user -username <name>`; and no API access, because every token
-the account held is revoked along with its scope rows. That is the same
-arrangement provisioning makes when it creates a federated account, and
-it means an unlink cannot quietly leave a credential behind.
+The default is the offboarding branch. It detaches the identity, so no
+federated login is possible; it replaces the password hash with an
+unusable one, so no password login is possible until an administrator
+sets a password with `-update-user -username <name>`; and it revokes
+every API token the account held, along with each token's scope rows.
+All three take effect immediately. A session the running server has
+already issued is a separate matter, covered below.
 
 Pass `-restore-password` to convert the account back to local login,
 for an administrator who means to hand it back to its holder:
@@ -390,31 +390,63 @@ longer wanted. An account the provider originally created holds a hash
 of discarded random bytes, so `-restore-password` on one of those
 restores nothing usable.
 
-For a person who has left, also disable the account with
-`-disable-user -username <name>`. Revoking tokens removes the
-credentials that exist today, whereas disabling the account stops new
-ones being minted and refuses everything the account tries.
+### Offboarding a Federated User
 
-The command reports which branch ran, including how many tokens it
-revoked, and the server log records the same.
+Removing a person's access takes two commands, in this order:
 
-### Linking, Unlinking and Live Sessions
+1. Unlink the account without `-restore-password`, which makes the
+   password unusable and revokes the account's API tokens:
 
-Both commands invalidate every session the account holds, so a change
-takes effect at once rather than at the end of a session's 24-hour
-life.
+   ```bash
+   ./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
+       -unlink-oidc-user -username alice
+   ```
 
-This matters most when relinking. Moving an account to a new subject
-without cutting the sessions would leave whoever signed in under the
-old identity holding the account's privileges, superuser included,
-until their session expired. Linking an account to the identity it
-already holds changes nothing and so invalidates nothing, which keeps a
-configuration-management run that reasserts every link from logging
-everybody out on each pass.
+2. Disable the account, which ends any session the running server
+   still holds and stops new credentials being minted:
+
+   ```bash
+   ./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
+       -disable-user -username alice
+   ```
+
+The unlink alone is not enough, for the reason given in Sessions and
+the Command Line below. Revoking tokens removes the credentials that
+exist today; disabling the account refuses everything the account
+tries, including a session that was issued before either command ran.
+
+The unlink command reports which branch ran, including how many tokens
+it revoked, and the server log records the same.
+
+### Sessions and the Command Line
+
+Neither `-link-oidc-user` nor `-unlink-oidc-user` ends a session the
+running server has already issued. Sessions live in the server
+process's own memory, and these commands run in a separate process
+against the account database, so a session that was minted before the
+command runs keeps working until it expires, which may be up to 24
+hours later. Both commands say so in their output.
+
+Two commands do cut such a session, because the server re-reads the
+account's enabled flag from the database on every request:
+
+- `-disable-user -username <name>` disables the account, which refuses
+  its sessions from the next request onward.
+- restarting the server discards every session it holds, for local and
+  federated users alike.
+
+This matters in two places. When offboarding, the unlink is not on its
+own a revocation; follow the sequence in Offboarding a Federated User
+above. When relinking an account to a new subject, whoever signed in
+under the previous identity keeps a working session until it expires,
+so disable the account or restart the server if that person must be
+cut off at once.
 
 Linking never touches the account's API tokens. Unlinking revokes them
 unless `-restore-password` is passed, as described in Unlinking an
-Account above.
+Account above. Linking an account to the identity it already holds
+changes nothing at all, which keeps a configuration-management run that
+reasserts every link from disturbing anybody on each pass.
 
 ## Mapping Provider Groups to Workbench Groups
 

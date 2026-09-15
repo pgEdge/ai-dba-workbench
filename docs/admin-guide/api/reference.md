@@ -216,7 +216,7 @@ The API provides endpoints in the following categories.
 | GET | `/api/v1/metrics/baselines` | Get metric baseline values. |
 | GET | `/api/v1/metrics/performance-summary` | Get a performance summary. |
 | GET | `/api/v1/metrics/database-summaries` | Get database-level summaries. |
-| GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage. |
+| GET | `/api/v1/metrics/top-queries` | Get the top queries by resource usage over a time window. |
 | GET | `/api/v1/metrics/connection-groups` | Get connection counts grouped by user, client, or database. |
 | GET | `/api/v1/metrics/query-stats` | Get period-scoped statistics for a query. |
 | GET | `/api/v1/metrics/latest` | Get the latest probe snapshot per entity. |
@@ -372,16 +372,39 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 The `/api/v1/metrics/query`,
 `/api/v1/metrics/connection-groups`,
-`/api/v1/metrics/performance-summary` and
-`/api/v1/metrics/query-stats` endpoints support a custom
+`/api/v1/metrics/performance-summary`,
+`/api/v1/metrics/query-stats` and
+`/api/v1/metrics/top-queries` endpoints support a custom
 window with the same three parameters and the same rules;
 `performance-summary` derives its bucket width from the
 resolved window, one sixtieth of the span with a ten second
 floor. The `/api/v1/metrics/database-summaries` endpoint
-accepts the
-presets alone, and `/api/v1/metrics/top-queries` has no
-time dimension; that endpoint always reports the latest
-collected sample.
+accepts the presets alone.
+
+The `/api/v1/metrics/top-queries` endpoint defaults to
+`time_range=1h` when the request names no window.
+PostgreSQL reports the `pg_stat_statements` counters
+cumulatively, so the endpoint sums the differences between
+consecutive samples in the window rather than reading one
+sample. The behaviour that follows from that is:
+
+- The `calls`, `total_exec_time`, `rows`,
+  `shared_blks_hit` and `shared_blks_read` fields report
+  the activity inside the window.
+- The `mean_exec_time` field divides the windowed total
+  execution time by the windowed call count.
+- The `min_exec_time` and `max_exec_time` fields remain
+  lifetime figures for the statement, because a window
+  extreme cannot be recovered by differencing two lifetime
+  extremes. Ordering on either field therefore sorts a
+  windowed list on a lifetime figure.
+- A pair of samples whose counters went backwards is
+  discarded as a `pg_stat_statements_reset()`, so a reset
+  inside the window loses the activity of that one
+  interval rather than producing a negative figure.
+- A statement that the collector sampled but that ran no
+  calls inside the window is left out of the response
+  altogether.
 
 ### Query Response Envelope
 

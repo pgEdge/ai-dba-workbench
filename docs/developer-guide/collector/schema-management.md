@@ -126,6 +126,27 @@ queries. The migration creates
 probes and `idx_probes_name` for fast lookups by
 probe name.
 
+### Migration 13: Add the top-queries covering index
+
+This migration adds
+`idx_pg_stat_statements_identity_time` to
+`metrics.pg_stat_statements` on an installation created
+before the index joined the consolidated schema. The
+index covers the windowed aggregation behind
+`/api/v1/metrics/top-queries`; the
+[Database Schema](schema.md) document describes the column
+order and the cost.
+
+The migration creates the index with `IF NOT EXISTS`,
+which makes it a no-op on a newer installation. A plain
+`CREATE INDEX` is used because `CREATE INDEX
+CONCURRENTLY` cannot run inside a transaction, and the
+migration framework wraps every migration in one.
+Creating the index on the partitioned parent builds one
+on every attached partition, so the migration blocks the
+collector's inserts whilst it runs; that took about 15
+seconds for 2.6 million rows on the test fixture.
+
 ### Migration 22: Add connection_id to probe_configs
 
 This migration adds per-server probe configuration

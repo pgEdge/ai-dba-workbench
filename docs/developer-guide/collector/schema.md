@@ -313,6 +313,63 @@ CREATE TABLE metrics.pg_stat_database (
 ) PARTITION BY RANGE (collected_at);
 ```
 
+### Example: pg_stat_statements Indexes
+
+Most metrics tables carry no indexes, but
+`metrics.pg_stat_statements` carries three, because the
+query leaderboards read it far more selectively than a
+chart reads a time series.
+
+The following example shows the index definitions:
+
+```sql
+CREATE INDEX idx_pg_stat_statements_conn_time
+    ON metrics.pg_stat_statements(connection_id, collected_at DESC);
+
+CREATE INDEX idx_pg_stat_statements_object
+    ON metrics.pg_stat_statements(connection_id, database_name,
+        queryid, collected_at DESC);
+
+CREATE INDEX idx_pg_stat_statements_identity_time
+    ON metrics.pg_stat_statements(connection_id, queryid,
+        database_name, userid, dbid, toplevel, collected_at)
+    INCLUDE (calls, total_exec_time, rows, shared_blks_hit,
+        shared_blks_read, min_exec_time, max_exec_time);
+```
+
+Each index serves a different access pattern:
+
+- `idx_pg_stat_statements_conn_time` serves a scan of one
+  connection over a time range.
+- `idx_pg_stat_statements_object` serves a lookup of one
+  statement in one database, including the query text that
+  the server resolves once per returned row.
+- `idx_pg_stat_statements_identity_time` serves the
+  windowed aggregation behind
+  `/api/v1/metrics/top-queries`, which was added by
+  migration 13.
+
+The third index repays a closer look, because the column
+order is not arbitrary. The `pg_stat_statements` counters
+are cumulative within a statement identity, so the
+aggregation subtracts consecutive samples with a window
+function partitioned by `(queryid, database_name, userid,
+dbid, toplevel)` and ordered by `collected_at`. Listing
+the identity columns first and `collected_at` last gives
+the planner that exact order, so the aggregation reads the
+rows already sorted rather than sorting a whole window of
+samples into temporary files. The `INCLUDE` list holds
+every counter the aggregation reads, which keeps the scan
+index-only; the query text is deliberately left out,
+because it is by far the widest column and carrying it
+would roughly triple the size of the index.
+
+The index is not free. On a test fixture it added about
+17% to the storage of the table and about 56% to the
+write-ahead log volume of a collector batch, in exchange
+for taking a 30-day page of the leaderboard from 11.5
+seconds to 5.5 seconds.
+
 ## Schema Design Principles
 
 The schema follows several design principles for
@@ -346,7 +403,8 @@ The system optimizes storage in several ways:
 - The system partitions by week to balance partition
   count and partition size.
 - Metrics tables have no indexes by default; the
-  system relies on partition pruning.
+  system relies on partition pruning. The exception is
+  `metrics.pg_stat_statements`, described above.
 - The system uses efficient data types such as
   INTEGER versus BIGINT and TEXT versus VARCHAR.
 

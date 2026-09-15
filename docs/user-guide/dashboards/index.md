@@ -82,17 +82,32 @@ so a browser reload returns to the last preset.
 
 The time-series charts follow the dashboard time range,
 including the two charts on the query detail overlay. The
-headline statistics on that overlay report the latest
-collected sample instead.
+statistics on that overlay follow the selector as well,
+except for the two lifetime tiles described in the Object
+Dashboard document.
+
+The Top Queries panel on the server dashboard follows the
+selector, and so does the query detail overlay that the
+panel opens. Both report the activity within the selected
+window rather than the lifetime totals of each statement,
+so a statement that ran no calls inside the window drops
+off the list entirely. Changing the range returns the
+panel to the first page, because a shorter window usually
+returns fewer rows.
 
 The event timeline follows its own independent range,
 which the dashboard selector never changes. The timeline
 supports a custom window through that separate control.
 
-The query leaderboards and the performance and database
-summary tiles do not follow the selector. The
-leaderboards report the latest collected sample, and the
-summary tiles always cover the last twenty-four hours.
+The table and index leaderboards on the database
+dashboard do not follow the selector; both report the
+latest collected sample.
+
+The performance and database summary tiles always cover
+the last twenty-four hours, whatever the selector reads.
+That fixed window is deliberate rather than an
+oversight, and moving those tiles onto the selector is
+tracked as separate work.
 
 ## Event Timeline
 

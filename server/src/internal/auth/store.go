@@ -975,6 +975,33 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	return user, nil
 }
 
+// assertPasswordWritableLocked refuses a password write to an account whose
+// identity is not managed by this store. Without it a chosen hash can be
+// written onto a federated account, where it lies dormant until
+// UnlinkFederatedIdentity with -restore-password puts auth_source back to
+// local and makes it live. The invariant that only a local account has a
+// usable password already governs AuthenticateUser, so it belongs at the
+// store boundary rather than in each caller.
+//
+// A missing user is not an error here: the update statements that follow
+// simply match no row, which is the behavior callers already rely on.
+//
+// s.mu must be held by the caller.
+func (s *AuthStore) assertPasswordWritableLocked(username string) error {
+	var authSource string
+	err := s.db.QueryRow("SELECT auth_source FROM users WHERE username = ?", username).Scan(&authSource)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check authentication source: %w", err)
+	}
+	if authSource != AuthSourceLocal {
+		return fmt.Errorf("cannot set a password for %s: identity is managed by %s", username, authSource)
+	}
+	return nil
+}
+
 // UpdateUser updates a user's password, annotation, display name, and/or email
 func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayName, newEmail string) error {
 	if newPassword != "" {
@@ -987,6 +1014,9 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayN
 	defer s.mu.Unlock()
 
 	if newPassword != "" {
+		if err := s.assertPasswordWritableLocked(username); err != nil {
+			return err
+		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.bcryptCost)
 		if err != nil {
 			return fmt.Errorf("failed to hash password: %w", err)
@@ -1046,6 +1076,10 @@ func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
 	if update.Password != nil && *update.Password != "" {
 		if valErr := ValidatePassword(*update.Password); valErr != nil {
 			err = valErr
+			return err
+		}
+		if srcErr := s.assertPasswordWritableLocked(username); srcErr != nil {
+			err = srcErr
 			return err
 		}
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), s.bcryptCost)

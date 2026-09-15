@@ -74,6 +74,33 @@ moved.
   full.
 - Token scope does not constrain a superuser: the superuser bypass
   returns before any scope check. That is deliberate, not an oversight.
+- `http.auth.local.enabled` is enforced in exactly one place:
+  `handleLogin` in `api/auth_handlers.go`, which refuses before the body
+  is parsed when the flag is false. `AuthStore.AuthenticateUser`
+  deliberately knows nothing about the flag, keeping its single meaning
+  of "does this password verify"; `handleLogin` is its only caller
+  outside the store, which is what makes one enforcement point
+  sufficient. The refusal answers with the same body, status and headers
+  as a wrong password, so it discloses nothing further about a
+  credential, but it is not indistinguishable from one and does not need
+  to be: the flag itself is public, reported as `local_enabled` by the
+  capabilities endpoint.
+- Only a local account may have a password written to it, enforced by
+  `assertPasswordWritableLocked` at the store boundary and called from
+  both `UpdateUser` and `UpdateUserAtomic`. Without it a hash written
+  onto a federated account lies dormant until
+  `UnlinkFederatedIdentity` with `-restore-password` returns
+  `auth_source` to local and makes it live. `updateUser` in
+  `api/rbac_user_handlers.go` checks the same condition first and
+  answers 400, because that endpoint applies the password, enabled and
+  superuser changes in one transaction and a late refusal would silently
+  roll back the others.
+- Every setting in the `http.auth` section is read once at start-up and
+  held for the life of the process. A reload changes none of them:
+  handlers keep by-value copies and `ReloadableConfig.Reload` only swaps
+  the pointer, so `logRestartRequiredSettings` reports each one as
+  requiring a restart. Advice that assumes an authentication setting can
+  be tightened by SIGHUP is wrong.
 - A federated account is matched on the pair `(issuer, subject)` and
   NEVER on username. `ExternalSubjectKey` in `auth/federation.go`
   builds the key and `ResolveFederatedUser` looks the account up by it

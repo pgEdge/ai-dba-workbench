@@ -102,9 +102,10 @@ func (h *AuthHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // respondLoginFailed writes the single opaque login failure response.
 // Every path that declines a login - a bad password, a disabled account,
-// a federated account, or local login being switched off entirely - must
-// answer with exactly these bytes, so that a caller cannot tell the
-// cases apart.
+// a federated account, or local login being switched off entirely -
+// answers with exactly these bytes, so that none of them says anything
+// about the credential that was presented or about whether the account
+// exists.
 func respondLoginFailed(w http.ResponseWriter) {
 	RespondError(w, http.StatusUnauthorized,
 		"Authentication failed: invalid username or password")
@@ -152,13 +153,22 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Local login disabled: refuse before the body is read, so that a
-	// probe learns nothing from the shape of the request it sent. The
-	// rate limiters are still consulted and still charged exactly as
-	// they are on the wrong-password path below, and the response is
-	// byte for byte the wrong-password response, so that the switch
-	// being off is indistinguishable from bad credentials. The real
-	// reason goes to the server log only.
+	// Local login disabled: refuse before the body is read. The body,
+	// status and headers are the wrong-password answer exactly, and the
+	// rate limiters are consulted and charged exactly as they are on
+	// that path below, so the refusal says no more about any particular
+	// credential, or about whether an account exists, than a failed
+	// password attempt does. The real reason goes to the server log.
+	//
+	// It is deliberately NOT a claim that the two are indistinguishable:
+	// this path never reaches AuthenticateUser, so it skips the bcrypt
+	// comparison and answers far faster, and a malformed or incomplete
+	// body is answered 401 here where it would be answered 400 below.
+	// Neither matters, because the flag is not a secret - the public
+	// capabilities endpoint publishes local_enabled so the login screen
+	// can decide whether to draw the password form - and the thing worth
+	// protecting is which credentials are valid, not whether the
+	// operator has switched local login off.
 	if !h.localEnabled {
 		ipAddress := h.extractIPFromRequest(r)
 		if !h.applyLoginRateLimits(w, ipAddress) {

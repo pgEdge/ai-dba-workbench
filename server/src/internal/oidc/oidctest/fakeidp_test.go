@@ -234,3 +234,31 @@ func TestTokenEndpointRejectsAnUnparsableForm(t *testing.T) {
 		t.Errorf("status = %d, want 400", response.StatusCode)
 	}
 }
+
+func TestTokenEndpointCanOmitTheIDToken(t *testing.T) {
+	idp := NewFakeIDP(t)
+
+	idp.SetNextIDToken("a-staged-token")
+	idp.SetNextResponseOmitsIDToken()
+
+	response, err := http.PostForm(idp.Issuer()+"/token", url.Values{"code": {"the-code"}})
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode token response: %v", err)
+	}
+	if _, present := body["id_token"]; present {
+		t.Errorf("id_token should be absent, got %v", body["id_token"])
+	}
+	if body["access_token"] != "fake-access-token" {
+		t.Errorf("access_token = %v", body["access_token"])
+	}
+}

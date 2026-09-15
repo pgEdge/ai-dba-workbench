@@ -317,7 +317,7 @@ func TestStartSanitisesAHostileReturnPath(t *testing.T) {
 	}
 }
 
-func TestStartIsRefusedWhenOIDCIsDisabled(t *testing.T) {
+func TestStartRedirectsToTheLoginScreenWhenOIDCIsDisabled(t *testing.T) {
 	env := newTestOIDCEnv(t, func(cfg *config.OIDCConfig) {
 		cfg.Enabled = false
 	})
@@ -325,9 +325,14 @@ func TestStartIsRefusedWhenOIDCIsDisabled(t *testing.T) {
 	rec := httptest.NewRecorder()
 	env.handler.handleStart(rec, httptest.NewRequest(http.MethodGet, OIDCStartPath, nil))
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d so a disabled feature looks absent",
-			rec.Code, http.StatusNotFound)
+	// A full-page navigation, so the browser must land somewhere it can
+	// be used: the login screen with a marker, not an error page.
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d so the browser lands on the login screen",
+			rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != providerFailedTarget {
+		t.Fatalf("Location = %q, want %q", got, providerFailedTarget)
 	}
 
 	rec = httptest.NewRecorder()
@@ -337,7 +342,7 @@ func TestStartIsRefusedWhenOIDCIsDisabled(t *testing.T) {
 	}
 }
 
-func TestStartIsRefusedWhenNoProviderWasDiscovered(t *testing.T) {
+func TestStartRedirectsWhenNoProviderWasDiscovered(t *testing.T) {
 	env := newTestOIDCEnv(t)
 	handler := NewOIDCHandler(env.store, nil, config.OIDCConfig{Enabled: true},
 		testStateKey, false, nil)
@@ -345,8 +350,11 @@ func TestStartIsRefusedWhenNoProviderWasDiscovered(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	handler.handleStart(rec, httptest.NewRequest(http.MethodGet, OIDCStartPath, nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != providerFailedTarget {
+		t.Fatalf("Location = %q, want %q", got, providerFailedTarget)
 	}
 }
 

@@ -9,7 +9,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiGet, apiPost, apiPut, apiDelete, ApiError } from '../apiClient';
+import {
+    apiGet,
+    apiPost,
+    apiPut,
+    apiDelete,
+    ApiError,
+    onDisconnect,
+    resetConnectionHealth,
+} from '../apiClient';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -251,6 +259,68 @@ describe('apiClient', () => {
             });
 
             expect(result).toBe('plain text output');
+        });
+    });
+
+    // ----- skipHealthTracking option ---------------------------------------
+
+    describe('skipHealthTracking option', () => {
+        beforeEach(() => {
+            resetConnectionHealth();
+        });
+
+        it('leaves the failure counter alone when set', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'));
+
+            // Six failures: twice the threshold, so a counted request
+            // would have latched the disconnect long ago.
+            for (let i = 0; i < 6; i += 1) {
+                await expect(
+                    apiGet('/api/v1/capabilities', { skipHealthTracking: true }),
+                ).rejects.toThrow();
+            }
+
+            expect(listener).not.toHaveBeenCalled();
+            unsubscribe();
+        });
+
+        it('still counts failures by default', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy.mockRejectedValue(new TypeError('Failed to fetch'));
+
+            for (let i = 0; i < 3; i += 1) {
+                await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
+            }
+
+            expect(listener).toHaveBeenCalledWith('network');
+            unsubscribe();
+            resetConnectionHealth();
+        });
+
+        it('does not reset the counter on a skipped success', async () => {
+            const listener = vi.fn();
+            const unsubscribe = onDisconnect(listener);
+            fetchSpy
+                .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+            await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
+            await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
+
+            fetchSpy.mockResolvedValueOnce(mockResponse({ ok: true }));
+            await apiGet('/api/v1/capabilities', { skipHealthTracking: true });
+
+            // The probe neither cleared the two real failures nor added
+            // to them, so the next real failure is still the third.
+            fetchSpy.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+            await expect(apiGet('/api/v1/alerts')).rejects.toThrow();
+
+            expect(listener).toHaveBeenCalledTimes(1);
+            unsubscribe();
+            resetConnectionHealth();
         });
     });
 });

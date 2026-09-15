@@ -314,8 +314,12 @@ func TestOpenAPIOIDCPathOperationsMatchHandlers(t *testing.T) {
 		wantQueryParams []string
 	}{
 		{
-			path:            "/auth/oidc/start",
-			wantStatuses:    []string{"302", "404", "500"},
+			path: "/auth/oidc/start",
+			// No 404: a disabled deployment redirects to the login
+			// screen with login_error set, since the public
+			// capabilities endpoint already reports oidc_enabled and
+			// the 404 only stranded the user on an error page.
+			wantStatuses:    []string{"302", "500"},
 			wantQueryParams: []string{"return"},
 		},
 		{

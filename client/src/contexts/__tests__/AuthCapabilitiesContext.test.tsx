@@ -14,11 +14,16 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AuthCapabilitiesProvider } from '../AuthCapabilitiesContext';
 import { useAuthCapabilities } from '../useAuthCapabilities';
 
-vi.mock('../../utils/apiClient', () => ({
-    apiGet: vi.fn(),
-}));
+// The real `ApiError` is kept, because the provider tells a 4xx from a
+// network failure with an `instanceof` check.
+vi.mock('../../utils/apiClient', async () => {
+    const actual = await vi.importActual<
+        typeof import('../../utils/apiClient')
+    >('../../utils/apiClient');
+    return { ...actual, apiGet: vi.fn() };
+});
 
-import { apiGet } from '../../utils/apiClient';
+import { apiGet, ApiError } from '../../utils/apiClient';
 const mockApiGet = apiGet as unknown as ReturnType<typeof vi.fn>;
 
 describe('AuthCapabilitiesContext', () => {
@@ -69,6 +74,23 @@ describe('AuthCapabilitiesContext', () => {
         expect(result.current.oidcLabel).toBe('Sign in with Okta');
     });
 
+    it('keeps the provider hidden when the block says oidc_enabled false', async () => {
+        // A present block saying "no" is an answer, and must never be
+        // routed into the unknown branch that offers both methods.
+        mockApiGet.mockResolvedValueOnce({
+            auth: { local_enabled: true, oidc_enabled: false, oidc_label: '' },
+        });
+
+        const { result } = renderHook(() => useAuthCapabilities(), { wrapper });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        expect(result.current.localEnabled).toBe(true);
+        expect(result.current.oidcEnabled).toBe(false);
+    });
+
     it('treats a non-boolean oidc_enabled as disabled', async () => {
         mockApiGet.mockResolvedValueOnce({
             auth: { local_enabled: true, oidc_enabled: 'yes', oidc_label: 42 },
@@ -114,6 +136,47 @@ describe('AuthCapabilitiesContext', () => {
         expect(result.current.oidcLabel).toBe('');
     });
 
+    it('treats a 4xx as a server that predates the endpoint', async () => {
+        mockApiGet.mockRejectedValue(new ApiError('Not Found', 404));
+
+        const { result } = renderHook(() => useAuthCapabilities(), { wrapper });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        // An answer, not a silence: local only, and no retry, because
+        // the same 404 would come back.
+        expect(result.current.localEnabled).toBe(true);
+        expect(result.current.oidcEnabled).toBe(false);
+        expect(mockApiGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a 5xx as no answer at all', async () => {
+        mockApiGet.mockRejectedValue(new ApiError('Server Error', 503));
+
+        const { result } = renderHook(() => useAuthCapabilities(), { wrapper });
+
+        await waitFor(() => {
+            expect(result.current.loading).toBe(false);
+        });
+
+        expect(result.current.oidcEnabled).toBe(true);
+        expect(mockApiGet).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the capabilities probe out of the health accounting', async () => {
+        mockApiGet.mockResolvedValueOnce({ auth: {} });
+
+        renderHook(() => useAuthCapabilities(), { wrapper });
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        expect(mockApiGet.mock.calls[0][1].skipHealthTracking).toBe(true);
+    });
+
     it('retries once before giving up', async () => {
         mockApiGet.mockRejectedValue(new Error('Network error'));
 
@@ -156,6 +219,7 @@ describe('AuthCapabilitiesContext', () => {
         await waitFor(() => {
             expect(mockApiGet).toHaveBeenCalledWith('/api/v1/capabilities', {
                 signal: expect.any(AbortSignal),
+                skipHealthTracking: true,
             });
         });
     });

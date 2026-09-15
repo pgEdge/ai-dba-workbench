@@ -58,6 +58,19 @@ export interface ApiRequestOptions {
     rawResponse?: boolean;
     /** AbortSignal for cancellable requests. */
     signal?: AbortSignal;
+    /**
+     * When true this request is left out of the connection-health
+     * accounting below: neither its failures nor its successes move
+     * the consecutive-failure counter.
+     *
+     * Reserved for requests that are not evidence about the session's
+     * connection, such as the login screen's capabilities probe, which
+     * runs before anyone has signed in and imposes its own timeout. A
+     * probe like that would otherwise spend most of the failure budget
+     * at page load and latch `disconnected`, after which the overlay
+     * can never fire again for the rest of the session.
+     */
+    skipHealthTracking?: boolean;
 }
 
 // ---------------------------------------------------------------
@@ -176,6 +189,7 @@ async function request<T>(
     options?: ApiRequestOptions,
 ): Promise<T> {
     const hasBody = body !== undefined;
+    const trackHealth = options?.skipHealthTracking !== true;
 
     const fetchOptions: RequestInit = {
         method,
@@ -197,15 +211,19 @@ async function request<T>(
     } catch (error) {
         // Network errors surface as TypeError when the server is
         // unreachable.
-        recordFailure('network');
+        if (trackHealth) {
+            recordFailure('network');
+        }
         throw error;
     }
 
     if (!response.ok) {
-        if (response.status === 401) {
-            recordFailure('auth');
-        } else if (response.status >= 500) {
-            recordFailure('server');
+        if (trackHealth) {
+            if (response.status === 401) {
+                recordFailure('auth');
+            } else if (response.status >= 500) {
+                recordFailure('server');
+            }
         }
 
         const { message, body: errorBody } = await extractErrorMessage(
@@ -215,7 +233,9 @@ async function request<T>(
         throw new ApiError(message, response.status, errorBody);
     }
 
-    recordSuccess();
+    if (trackHealth) {
+        recordSuccess();
+    }
 
     // 204 No Content -- nothing to parse.
     if (response.status === 204) {

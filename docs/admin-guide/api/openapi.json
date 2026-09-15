@@ -1158,7 +1158,7 @@
     "/auth/oidc/start": {
       "get": {
         "summary": "Start a federated login",
-        "description": "Redirects the browser to the identity provider to begin an OIDC login. Sets a short-lived, sealed state cookie before redirecting. Not registered at all, and so answers 404, on a deployment where OIDC is disabled or no provider was discovered at start-up.",
+        "description": "Redirects the browser to the identity provider to begin an OIDC login. Sets a short-lived, sealed state cookie before redirecting. On a deployment where OIDC is disabled or no provider was discovered at start-up, redirects to \"/\" with login_error set to \"provider\" instead, so that a browser following the link lands back on the login screen rather than on an error page.",
         "operationId": "startOIDCLogin",
         "tags": [
           "Authentication"
@@ -1175,10 +1175,7 @@
         ],
         "responses": {
           "302": {
-            "description": "Redirect to the identity provider"
-          },
-          "404": {
-            "description": "OIDC login is not enabled"
+            "description": "Redirect to the identity provider, or to \"/\" with login_error set when OIDC login is not enabled"
           },
           "500": {
             "description": "Failed to create or seal the login state",

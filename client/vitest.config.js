@@ -35,17 +35,21 @@ export default defineConfig({
             // measured on 15 September 2026 so the gate holds the
             // line today and is raised towards 90 as coverage grows.
             //
-            // Each figure is rounded down from the measured total
-            // rather than pinned at it, because none of them is
-            // reproducible to the second decimal place: consecutive
-            // runs of the same tree reported branch totals of 78.77
-            // and 78.79. A gate sitting exactly at the observed
-            // maximum fails at random on the next unrelated change.
+            // Each figure sits a little below the measured total
+            // rather than at it, because none of them is reproducible
+            // to the second decimal place: consecutive runs of the
+            // same tree reported branch totals of 78.77 and 78.79. A
+            // gate pinned exactly at the observed maximum fails at
+            // random on the next unrelated change, so leave roughly
+            // 0.05 of slack when raising these.
+            //
+            // Measured on 15 September 2026: 91.20 lines, 90.01
+            // statements, 87.30 functions, 78.86 branches.
             thresholds: {
-                lines: 91.1,
-                statements: 89.9,
-                functions: 87.1,
-                branches: 78.7,
+                lines: 91.15,
+                statements: 89.95,
+                functions: 87.25,
+                branches: 78.8,
             },
         },
     },

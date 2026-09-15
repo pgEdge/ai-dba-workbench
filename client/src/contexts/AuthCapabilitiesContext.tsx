@@ -10,7 +10,7 @@
 
 import type React from 'react';
 import { createContext, useState, useEffect, useMemo } from 'react';
-import { apiGet } from '../utils/apiClient';
+import { apiGet, ApiError } from '../utils/apiClient';
 
 /**
  * AuthCapabilities describes the sign-in methods the server offers, so
@@ -39,11 +39,19 @@ const LEGACY_AUTH_CAPABILITIES: AuthCapabilities = {
 /*
  * What to assume when the server did not answer at all. Here we know
  * nothing, so both affordances are offered and the operator's choice
- * decides which one works: signing in by a method that turns out to be
- * disabled costs an error message and a second try, whereas hiding the
- * only method that would have worked is a dead end with nothing on
- * screen to explain it. The label is left empty so that the button
- * falls back to the same generic wording the server itself uses.
+ * decides which one works.
+ *
+ * Guessing wrong is not free: the provider button is a full-page
+ * navigation, so following one on a deployment with OIDC switched off
+ * costs the login screen itself. The server answers that case with a
+ * redirect back to /?login_error=provider, so the user lands on the
+ * login screen with a message rather than on a browser error page,
+ * which is what makes this the recoverable side of the trade. Hiding
+ * the only method that would have worked is the unrecoverable side: a
+ * dead end with nothing on screen to explain it.
+ *
+ * The label is left empty so that the button falls back to the same
+ * generic wording the server itself uses.
  */
 const UNKNOWN_AUTH_CAPABILITIES: AuthCapabilities = {
     localEnabled: true,
@@ -84,6 +92,16 @@ interface AuthCapabilitiesResponse {
 interface CapabilitiesResponse {
     auth?: AuthCapabilitiesResponse;
 }
+
+/**
+ * Whether a rejection is the server refusing in the 4xx range, which
+ * is an answer about the deployment, as opposed to a network failure,
+ * a timeout or a 5xx, which say only that nothing got through.
+ */
+const isClientError = (error: unknown): boolean =>
+    error instanceof ApiError
+    && error.statusCode >= 400
+    && error.statusCode < 500;
 
 /**
  * Map the server's `auth` block onto the client shape, defaulting every
@@ -137,7 +155,19 @@ export const AuthCapabilitiesProvider = ({
 
             const request = apiGet<CapabilitiesResponse>(
                 '/api/v1/capabilities',
-                { signal: aborter.signal },
+                {
+                    signal: aborter.signal,
+                    /*
+                     * This probe is not evidence about the session's
+                     * connection: it runs before anyone has signed in
+                     * and it times out on its own. Counted, its two
+                     * attempts would spend most of the three-failure
+                     * budget at page load and could latch the
+                     * disconnected flag, after which the connection-lost
+                     * overlay would never fire again all session.
+                     */
+                    skipHealthTracking: true,
+                },
             );
             // The race abandons the request on a timeout, so absorb a
             // later rejection rather than leaving it unhandled.
@@ -163,8 +193,20 @@ export const AuthCapabilitiesProvider = ({
                     const data = await attempt();
                     finish(mapAuthCapabilities(data.auth));
                     return;
-                } catch {
+                } catch (error) {
                     if (cancelled) {
+                        return;
+                    }
+                    /*
+                     * A 4xx is an answer, not a silence: a server old
+                     * enough to lack this endpoint answers 404, which
+                     * says the same thing as a missing `auth` block.
+                     * Retrying it would only produce the same 404, and
+                     * treating it as unknown would offer a provider
+                     * button that goes nowhere.
+                     */
+                    if (isClientError(error)) {
+                        finish(LEGACY_AUTH_CAPABILITIES);
                         return;
                     }
                 }

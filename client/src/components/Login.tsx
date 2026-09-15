@@ -458,7 +458,17 @@ const Login = () => {
 
             <Container maxWidth="sm" sx={{ position: 'relative', zIndex: 3 }}>
                 <Card elevation={24} sx={cardSx}>
-                    <CardContent sx={cardContentSx}>
+                    {/*
+                      * aria-busy belongs on a node that outlives the
+                      * wait: on the spinner's own container it would
+                      * appear and vanish with the spinner, which reads
+                      * as an element coming and going rather than as a
+                      * busy state clearing.
+                      */}
+                    <CardContent
+                        sx={cardContentSx}
+                        aria-busy={capabilitiesLoading}
+                    >
                         <Box sx={logoContainerSx}>
                             <Box
                                 component="img"
@@ -501,7 +511,6 @@ const Login = () => {
                         {capabilitiesLoading && (
                             <Box
                                 sx={capabilitiesLoadingSx}
-                                aria-busy="true"
                                 data-testid="login-capabilities-loading"
                             >
                                 <CircularProgress

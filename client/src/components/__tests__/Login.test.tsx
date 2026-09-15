@@ -170,10 +170,17 @@ describe('Login Component', () => {
             );
 
             const busy = screen.getByTestId('login-capabilities-loading');
-            expect(busy).toHaveAttribute('aria-busy', 'true');
             expect(
                 within(busy).getByLabelText('Loading sign-in options'),
             ).toBeInTheDocument();
+
+            // The busy state sits on the card content, which is still
+            // there once the wait ends, rather than on the spinner's
+            // own container, which is not.
+            const content = busy.closest('[aria-busy]');
+            expect(content).not.toBeNull();
+            expect(content).toHaveAttribute('aria-busy', 'true');
+            expect(content).not.toBe(busy);
             expect(screen.queryByTestId('login-username-input')).not.toBeInTheDocument();
             expect(screen.queryByTestId('login-oidc-button')).not.toBeInTheDocument();
         });
@@ -190,7 +197,6 @@ describe('Login Component', () => {
             const button = await screen.findByTestId('login-oidc-button');
             const isolated = button.querySelector('bdi');
             expect(isolated).not.toBeNull();
-            expect(isolated).toHaveTextContent(label);
             expect(isolated?.textContent).toBe(label);
         });
 

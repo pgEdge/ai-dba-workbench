@@ -15,7 +15,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
+	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // CreateSessionForUser mints a session for an already-authenticated user. It is
@@ -113,4 +118,299 @@ func (s *AuthStore) createSessionForUserLocked(username string, userID int64) (s
 	s.db.Exec("UPDATE users SET last_login = ?, failed_attempts = 0 WHERE id = ?", now, userID)
 
 	return token, expiration, nil
+}
+
+// =============================================================================
+// Federated Identity Resolution
+// =============================================================================
+
+// FederatedIdentity is what an identity provider asserted about a user. It
+// deliberately mirrors oidc.Identity without importing it, so the auth store
+// does not depend on the protocol package.
+type FederatedIdentity struct {
+	Issuer      string
+	Subject     string
+	Username    string
+	DisplayName string
+	Email       string
+	Groups      []string
+}
+
+// FederationOptions carries the operator's federation policy: whether an
+// unknown subject may be provisioned an account, which provider groups map
+// onto which Workbench groups, and which provider group (if any) confers
+// superuser. Nothing outside GroupMap is ever consulted, so a provider can
+// only influence the Workbench groups an operator has explicitly listed.
+type FederationOptions struct {
+	ProvisionUsers bool
+	GroupMap       map[string]string
+	SuperuserGroup string
+}
+
+// ExternalSubjectKey builds the stable identifier a federated account is
+// matched on. Both halves matter: two providers can and do issue the same
+// "sub", so the issuer is part of the identity rather than context for it.
+func ExternalSubjectKey(issuer, subject string) string {
+	return issuer + "|" + subject
+}
+
+// federatedUserColumns is the column list every federated lookup scans, in
+// the order scanUser expects.
+const federatedUserColumns = `id, username, password_hash, created_at, last_login, enabled, annotation,
+    display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject`
+
+// ResolveFederatedUser turns a verified assertion from an identity provider
+// into a Workbench user.
+//
+// The account is matched on ExternalSubjectKey(issuer, subject) held in
+// users.external_subject, and never on the username: matching on the username
+// would let an identity whose username claim is "admin" take over the local
+// "admin" account, which is a complete authentication bypass.
+//
+// An unknown subject is provisioned only when opts.ProvisionUsers is true, and
+// then only when the asserted username is not already taken (compared without
+// regard to case, because the Workbench does not case-fold usernames and so
+// "Alice" and "alice" are two distinct local accounts). A provisioned account
+// is recorded with auth_source = AuthSourceOIDC and a password hash of
+// discarded random bytes, so it can never be reached through password login.
+//
+// Every error returned here names the real reason for the server log only.
+// Callers must map them to a single opaque response before anything reaches a
+// browser, since the text distinguishes an unknown subject from a disabled
+// account from a username collision.
+func (s *AuthStore) ResolveFederatedUser(identity FederatedIdentity, opts FederationOptions) (*StoredUser, error) {
+	if identity.Issuer == "" || identity.Subject == "" {
+		return nil, fmt.Errorf("federated identity is missing an issuer or subject")
+	}
+	key := ExternalSubjectKey(identity.Issuer, identity.Subject)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, err := scanUser(s.db.QueryRow(
+		"SELECT "+federatedUserColumns+" FROM users WHERE external_subject = ?", key))
+	switch {
+	case err == nil:
+		// A row carrying an external subject is federated by construction,
+		// but check anyway: if some future path ever stamped a subject onto
+		// a local or service account, a login must not adopt it.
+		if user.AuthSource != AuthSourceOIDC {
+			return nil, fmt.Errorf("account %s is not federated (auth_source=%s)",
+				user.Username, user.AuthSource)
+		}
+		if user.IsServiceAccount {
+			return nil, fmt.Errorf("service account cannot log in through an identity provider: %s",
+				user.Username)
+		}
+		if !user.Enabled {
+			return nil, fmt.Errorf("account is disabled: %s", user.Username)
+		}
+		return user, nil
+	case errors.Is(err, sql.ErrNoRows):
+		// Fall through to provisioning.
+	default:
+		return nil, fmt.Errorf("looking up federated user: %w", err)
+	}
+
+	if !opts.ProvisionUsers {
+		return nil, fmt.Errorf("no account for federated identity %s (username %q) and provisioning is disabled",
+			key, identity.Username)
+	}
+
+	return s.provisionFederatedUserLocked(identity, key)
+}
+
+// provisionFederatedUserLocked creates an account for a previously unseen
+// subject. s.mu must be held.
+func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key string) (*StoredUser, error) {
+	if err := ValidateUsername(identity.Username); err != nil {
+		return nil, fmt.Errorf("federated username is not usable: %w", err)
+	}
+
+	existing, err := s.usernameTakenLocked(identity.Username)
+	if err != nil {
+		return nil, err
+	}
+	if existing != "" {
+		return nil, fmt.Errorf("refusing to provision federated identity %s: username %q already exists as %q",
+			key, identity.Username, existing)
+	}
+
+	hash, err := s.unusablePasswordHashLocked()
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.db.Exec(
+		`INSERT INTO users (username, password_hash, display_name, email, enabled, auth_source, external_subject)
+         VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
+		identity.Username, hash, identity.DisplayName, identity.Email, AuthSourceOIDC, key,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to provision federated user: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read provisioned user ID: %w", err)
+	}
+
+	user, err := scanUser(s.db.QueryRow(
+		"SELECT "+federatedUserColumns+" FROM users WHERE id = ?", id))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read back provisioned user: %w", err)
+	}
+	log.Printf("[AUTH] Provisioned federated user %s for subject %s", user.Username, key)
+	return user, nil
+}
+
+// usernameTakenLocked reports the stored spelling of any existing account
+// whose username matches candidate without regard to case, or "" when the
+// name is free. The comparison is deliberately case-insensitive even though
+// the users table is not: "Alice" and "alice" are distinct accounts today, so
+// a case-sensitive check would let a federated identity claim "Alice" beside
+// a local "alice", and an administrator revoking one would not have revoked
+// the other. Folding happens in Go rather than SQL because SQLite's NOCASE
+// collation and lower() only fold ASCII. s.mu must be held.
+func (s *AuthStore) usernameTakenLocked(candidate string) (string, error) {
+	rows, err := s.db.Query("SELECT username FROM users")
+	if err != nil {
+		return "", fmt.Errorf("failed to check for an existing username: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var existing string
+		if err := rows.Scan(&existing); err != nil {
+			return "", fmt.Errorf("failed to scan an existing username: %w", err)
+		}
+		if strings.EqualFold(existing, candidate) {
+			return existing, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("failed to read existing usernames: %w", err)
+	}
+	return "", nil
+}
+
+// unusablePasswordHashLocked returns a bcrypt hash of discarded random bytes,
+// so no password a caller can supply will ever verify against it. An empty
+// hash is never stored, because the empty string is itself an input a caller
+// can supply. s.mu must be held, since it reads s.bcryptCost.
+func (s *AuthStore) unusablePasswordHashLocked() (string, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", fmt.Errorf("failed to generate an unusable password: %w", err)
+	}
+	// Base64 so the value bcrypt hashes cannot contain a NUL byte, which
+	// some bcrypt implementations treat as a terminator.
+	hash, err := bcrypt.GenerateFromPassword(
+		[]byte(base64.RawStdEncoding.EncodeToString(secret)), s.bcryptCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash an unusable password: %w", err)
+	}
+	if len(hash) == 0 {
+		return "", fmt.Errorf("refusing to store an empty password hash")
+	}
+	return string(hash), nil
+}
+
+// ReconcileFederatedGroups aligns a federated user's Workbench group
+// membership with what the provider asserted, working only through
+// opts.GroupMap.
+//
+// Group names are never matched by equality across the two systems, and a
+// group is never created because the provider mentioned one: if a provider
+// group could reach a Workbench group directly, anyone able to set their own
+// group at the provider would grant themselves whatever that group confers.
+// A Workbench group the map does not name is left exactly as it is in both
+// directions, so a locally managed group is neither emptied nor joined.
+//
+// Superuser comes from opts.SuperuserGroup alone, granted while the provider
+// asserts it and revoked as soon as it stops; it is never inferred from any
+// other claim. When opts.SuperuserGroup is empty the flag is left untouched,
+// which is how an operator keeps superuser under local control.
+//
+// A mapped Workbench group that does not exist is logged and skipped rather
+// than failing the login, since a typo in the operator's map should not lock
+// everybody out.
+func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIdentity, opts FederationOptions) error {
+	asserted := make(map[string]bool, len(identity.Groups))
+	for _, group := range identity.Groups {
+		asserted[group] = true
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var username, authSource string
+	err := s.db.QueryRow("SELECT username, auth_source FROM users WHERE id = ?", userID).
+		Scan(&username, &authSource)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("user not found: %d", userID)
+	}
+	if err != nil {
+		return fmt.Errorf("looking up user for reconciliation: %w", err)
+	}
+	// Reconciliation is only ever correct for an account the provider owns;
+	// refusing anything else keeps this from becoming a way to rewrite a
+	// local administrator's groups or superuser flag.
+	if authSource != AuthSourceOIDC {
+		return fmt.Errorf("refusing to reconcile groups for non-federated account %s (auth_source=%s)",
+			username, authSource)
+	}
+
+	// Collapse the map to one decision per Workbench group, so that two
+	// provider groups mapped onto the same Workbench group union rather than
+	// letting map iteration order decide the outcome.
+	desired := make(map[string]bool, len(opts.GroupMap))
+	for providerGroup, workbenchGroup := range opts.GroupMap {
+		if workbenchGroup == "" {
+			continue
+		}
+		desired[workbenchGroup] = desired[workbenchGroup] || asserted[providerGroup]
+	}
+
+	// Sorted for a stable, readable log order.
+	names := make([]string, 0, len(desired))
+	for name := range desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		var groupID int64
+		err := s.db.QueryRow("SELECT id FROM user_groups WHERE name = ?", name).Scan(&groupID)
+		if errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[AUTH] Federated group map names unknown Workbench group %q; skipping", name)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("looking up mapped group %q: %w", name, err)
+		}
+
+		if desired[name] {
+			// UNIQUE(parent_group_id, member_user_id) makes this idempotent.
+			if _, err := s.db.Exec(
+				"INSERT OR IGNORE INTO group_memberships (parent_group_id, member_user_id) VALUES (?, ?)",
+				groupID, userID); err != nil {
+				return fmt.Errorf("adding %s to mapped group %q: %w", username, name, err)
+			}
+			continue
+		}
+		if _, err := s.db.Exec(
+			"DELETE FROM group_memberships WHERE parent_group_id = ? AND member_user_id = ?",
+			groupID, userID); err != nil {
+			return fmt.Errorf("removing %s from mapped group %q: %w", username, name, err)
+		}
+	}
+
+	if opts.SuperuserGroup == "" {
+		return nil
+	}
+	if _, err := s.db.Exec("UPDATE users SET is_superuser = ? WHERE id = ?",
+		asserted[opts.SuperuserGroup], userID); err != nil {
+		return fmt.Errorf("setting superuser for %s: %w", username, err)
+	}
+	return nil
 }

@@ -59,6 +59,11 @@ type Flags struct {
 	EnableUserCmd        bool
 	DisableUserCmd       bool
 	AddServiceAccountCmd bool
+	LinkOIDCUserCmd      bool
+	UnlinkOIDCUserCmd    bool
+	OIDCIssuer           string
+	OIDCSubject          string
+	Relink               bool
 	Username             string
 	UserPassword         string
 	UserPasswordFile     string
@@ -145,6 +150,16 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.BoolVar(&f.EnableUserCmd, "enable-user", false, "Enable a user account")
 	flag.BoolVar(&f.DisableUserCmd, "disable-user", false, "Disable a user account")
 	flag.BoolVar(&f.AddServiceAccountCmd, "add-service-account", false, "Add a new service account")
+	flag.BoolVar(&f.LinkOIDCUserCmd, "link-oidc-user", false,
+		"Link an existing account to an OIDC identity (requires -username, -issuer, -subject)")
+	flag.BoolVar(&f.UnlinkOIDCUserCmd, "unlink-oidc-user", false,
+		"Unlink an account from its OIDC identity, returning it to local authentication")
+	flag.StringVar(&f.OIDCIssuer, "issuer", "",
+		"OIDC issuer URL, exactly as the server logged it (used with -link-oidc-user)")
+	flag.StringVar(&f.OIDCSubject, "subject", "",
+		"OIDC subject ('sub' claim), exactly as the server logged it (used with -link-oidc-user)")
+	flag.BoolVar(&f.Relink, "relink", false,
+		"Allow -link-oidc-user to move an account that is already linked to a different identity")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
 	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prefer -password-file for production use)")
 	flag.StringVar(&f.UserPasswordFile, "password-file", "", "Path to file containing the user password")
@@ -283,7 +298,7 @@ func (f *Flags) HasTokenCommand() bool {
 func (f *Flags) HasUserCommand() bool {
 	return f.AddUserCmd || f.UpdateUserCmd || f.DeleteUserCmd ||
 		f.ListUsersCmd || f.EnableUserCmd || f.DisableUserCmd ||
-		f.AddServiceAccountCmd
+		f.AddServiceAccountCmd || f.LinkOIDCUserCmd || f.UnlinkOIDCUserCmd
 }
 
 // HasGroupCommand returns true if any group management command was specified

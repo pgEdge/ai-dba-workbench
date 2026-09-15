@@ -71,6 +71,18 @@ permission changes, all of which target the group that holds the grant:
 | `permission.admin.grant` | An admin permission was granted to a group. |
 | `permission.admin.revoke` | An admin permission was revoked from a group. |
 
+The log also records one action of its own:
+
+| Action | Description |
+|--------|-------------|
+| `audit.purge` | The retention purge removed events from the log. |
+
+An `audit.purge` event is attributed to the `system` actor, carries no
+target, and records the cutoff it applied in `details.older_than` and
+the number of events it removed in `details.removed`. The event is
+written in the same transaction as the deletion, so a log that has
+shrunk always explains why.
+
 A request that an authorisation check refuses is recorded with the
 action the request would have used had it been allowed, so that a denial
 and the change it was refused share a vocabulary. Two action names
@@ -79,6 +91,14 @@ log itself, and `token.scope.set`, for a refused scope update, because a
 single endpoint covers all three scope types. A refused request that
 matches no known route records `rbac.` followed by the lower-case HTTP
 method, so that the denial is kept rather than dropped.
+
+Repeated denials are coalesced rather than recorded one by one, because
+a client that retries a refused request in a loop would otherwise fill
+the log and bury the events that matter. The first denial for a given
+combination of actor, action and reason is recorded at once; identical
+denials in the next sixty seconds are counted instead of recorded; and
+the first denial after that window is recorded with a
+`details.repeat_count` giving the number of attempts it stands for.
 
 ## Actor Types
 
@@ -128,10 +148,13 @@ read the log:
   the grant changed anything, because granting a privilege a group
   already holds succeeds without altering the stored grant.
 - A `privilege.connection.grant` event records the connection identifier
-  in `details.connection_id`, and records neither the access level nor
-  the level the grant replaced, so raising a group's access on a
-  connection from `read` to `read_write` appears as a grant rather than
-  as a change of level.
+  in `details.connection_id`, the access level the grant replaced in
+  `details.before.access_level` and the level it set in
+  `details.after.access_level`, so raising a group's access on a
+  connection from `read` to `read_write` is visible as a change of
+  level. A first grant carries a `details.before` of `null`. A
+  `privilege.connection.revoke` event records the connection identifier
+  and the level that was withdrawn in `details.before.access_level`.
 
 ## Reading the Audit Log in the Console
 
@@ -154,6 +177,13 @@ array, newest first. The endpoint is restricted to superusers and
 responds with `403 Forbidden` to everyone else. The `X-Total-Count`
 response header carries the number of events matching the filters before
 `limit` and `offset` are applied, so that a client can size its pager.
+
+A request made with an API token is refused as well, with the same
+status, when the token's admin scope has been narrowed to specific
+permissions: a scope is an explicit statement that the token is not a
+general-purpose stand-in for its owner, and no admin permission grants
+audit access. A token with no admin scope, or one holding the `*`
+wildcard, reads the log on the same terms as its owner.
 
 The following table describes the query parameters the endpoint accepts:
 
@@ -268,6 +298,13 @@ Audit log verified: 3 event(s), chain intact
 When the chain does not verify, the command names the first event whose
 hash does not match and exits with a non-zero status, so that the check
 can run unattended from a scheduled job.
+
+Verification also compares the newest event's identifier against the
+highest identifier the table has ever issued, which SQLite records
+separately, so that events deleted from the newest end of the log are
+reported rather than left invisible: removing the tail leaves every
+surviving event correctly linked to the one before it and so would
+otherwise verify cleanly.
 
 The chain shows that nobody altered or removed an event in place. It
 does not show that nobody rewrote the log, because a party who can write

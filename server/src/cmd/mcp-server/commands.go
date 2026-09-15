@@ -109,6 +109,22 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 			return true
 		}
 
+		if f.LinkOIDCUserCmd {
+			if err := linkOIDCUserCommand(dataDir, f.Username, f.OIDCIssuer, f.OIDCSubject, f.Relink); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
+
+		if f.UnlinkOIDCUserCmd {
+			if err := unlinkOIDCUserCommand(dataDir, f.Username); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
+
 		if f.AddServiceAccountCmd {
 			if err := addServiceAccountCommand(dataDir, f.Username, f.UserNote, f.FullName, f.Email); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

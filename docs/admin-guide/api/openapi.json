@@ -1091,6 +1091,108 @@
         }
       }
     },
+    "/auth/oidc/callback": {
+      "get": {
+        "summary": "Complete a federated login",
+        "description": "The identity provider returns the browser here after the consent screen. On success, sets the session cookie and redirects to the original return path; on failure, redirects to \"/\" with a login_error query parameter (\"provider\" when the identity provider itself declined, \"login\" for every failure on this side). Not registered at all, and so answers 404, on a deployment where OIDC is disabled or no provider was discovered at start-up.",
+        "operationId": "completeOIDCLogin",
+        "tags": [
+          "Authentication"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code issued by the identity provider",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Opaque value that must match the sealed state cookie",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Error code reported by the identity provider instead of a code",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the return path on success, or to \"/\" with login_error set on failure"
+          },
+          "400": {
+            "description": "Missing or invalid state cookie, state mismatch, or missing authorization code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "OIDC login is not enabled"
+          },
+          "429": {
+            "description": "Too many callback requests from this address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/oidc/start": {
+      "get": {
+        "summary": "Start a federated login",
+        "description": "Redirects the browser to the identity provider to begin an OIDC login. Sets a short-lived, sealed state cookie before redirecting. Not registered at all, and so answers 404, on a deployment where OIDC is disabled or no provider was discovered at start-up.",
+        "operationId": "startOIDCLogin",
+        "tags": [
+          "Authentication"
+        ],
+        "parameters": [
+          {
+            "name": "return",
+            "in": "query",
+            "description": "Path to return to after a successful login",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the identity provider"
+          },
+          "404": {
+            "description": "OIDC login is not enabled"
+          },
+          "500": {
+            "description": "Failed to create or seal the login state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/blackout-schedules": {
       "get": {
         "summary": "List blackout schedules",
@@ -10016,6 +10118,24 @@
           }
         }
       },
+      "AuthCapabilities": {
+        "type": "object",
+        "description": "What the login page needs in order to render itself",
+        "properties": {
+          "local_enabled": {
+            "type": "boolean",
+            "description": "Whether username and password login is enabled"
+          },
+          "oidc_enabled": {
+            "type": "boolean",
+            "description": "Whether federated (OIDC) login is enabled and a provider was discovered at start-up"
+          },
+          "oidc_label": {
+            "type": "string",
+            "description": "Label for the federated login button, empty when oidc_enabled is false"
+          }
+        }
+      },
       "BaselinesResult": {
         "type": "object",
         "properties": {
@@ -10339,6 +10459,9 @@
           "ai_enabled": {
             "type": "boolean",
             "description": "Whether AI features are enabled"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/AuthCapabilities"
           },
           "max_iterations": {
             "type": "integer",

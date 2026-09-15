@@ -1031,6 +1031,16 @@ func buildSchemas() map[string]*OpenAPISchema {
 			Properties: map[string]*OpenAPISchema{
 				"ai_enabled":     {Type: "boolean", Description: "Whether AI features are enabled"},
 				"max_iterations": {Type: "integer", Description: "Maximum LLM tool-use iterations"},
+				"auth":           {Ref: "#/components/schemas/AuthCapabilities"},
+			},
+		},
+		"AuthCapabilities": {
+			Type:        "object",
+			Description: "What the login page needs in order to render itself",
+			Properties: map[string]*OpenAPISchema{
+				"local_enabled": {Type: "boolean", Description: "Whether username and password login is enabled"},
+				"oidc_enabled":  {Type: "boolean", Description: "Whether federated (OIDC) login is enabled and a provider was discovered at start-up"},
+				"oidc_label":    {Type: "string", Description: "Label for the federated login button, empty when oidc_enabled is false"},
 			},
 		},
 		"AlertRuleUpdate": {
@@ -1802,6 +1812,52 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"401": jsonResponse("ErrorResponse", "Invalid credentials"),
 					"429": jsonResponse("ErrorResponse", "Too many failed attempts"),
 					"503": jsonResponse("ErrorResponse", "Authentication not configured"),
+				},
+			},
+		},
+		"/auth/oidc/start": {
+			Get: &OpenAPIOperation{
+				Summary: "Start a federated login",
+				Description: "Redirects the browser to the identity provider to begin an " +
+					"OIDC login. Sets a short-lived, sealed state cookie before " +
+					"redirecting. Not registered at all, and so answers 404, " +
+					"on a deployment where OIDC is disabled or no provider was " +
+					"discovered at start-up.",
+				OperationID: "startOIDCLogin",
+				Tags:        []string{"Authentication"},
+				Parameters: []OpenAPIParameter{
+					queryParamString("return", "Path to return to after a successful login"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"302": {Description: "Redirect to the identity provider"},
+					"404": {Description: "OIDC login is not enabled"},
+					"500": jsonResponse("ErrorResponse", "Failed to create or seal the login state"),
+				},
+			},
+		},
+		"/auth/oidc/callback": {
+			Get: &OpenAPIOperation{
+				Summary: "Complete a federated login",
+				Description: "The identity provider returns the browser here after the " +
+					"consent screen. On success, sets the session cookie and " +
+					"redirects to the original return path; on failure, redirects " +
+					"to \"/\" with a login_error query parameter (\"provider\" when " +
+					"the identity provider itself declined, \"login\" for every " +
+					"failure on this side). Not registered at all, and so answers " +
+					"404, on a deployment where OIDC is disabled or no provider was " +
+					"discovered at start-up.",
+				OperationID: "completeOIDCLogin",
+				Tags:        []string{"Authentication"},
+				Parameters: []OpenAPIParameter{
+					queryParamString("code", "Authorization code issued by the identity provider"),
+					queryParamString("state", "Opaque value that must match the sealed state cookie"),
+					queryParamString("error", "Error code reported by the identity provider instead of a code"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"302": {Description: "Redirect to the return path on success, or to \"/\" with login_error set on failure"},
+					"400": jsonResponse("ErrorResponse", "Missing or invalid state cookie, state mismatch, or missing authorization code"),
+					"404": {Description: "OIDC login is not enabled"},
+					"429": jsonResponse("ErrorResponse", "Too many callback requests from this address"),
 				},
 			},
 		},

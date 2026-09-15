@@ -79,6 +79,8 @@ The API provides endpoints in the following categories.
 |--------|----------|-------------|
 | POST | `/api/v1/auth/login` | Authenticate and obtain a session token. |
 | POST | `/api/v1/auth/logout` | Log out and clear the session cookie. |
+| GET | `/api/v1/auth/oidc/start` | Start a federated (OIDC) login. |
+| GET | `/api/v1/auth/oidc/callback` | Complete a federated (OIDC) login. |
 | GET | `/api/v1/user/info` | Get the current user information. |
 | GET | `/api/v1/capabilities` | Get server capability flags. |
 

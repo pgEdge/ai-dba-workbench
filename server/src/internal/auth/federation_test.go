@@ -54,17 +54,41 @@ func TestCreateSessionForUserUpdatesLastLogin(t *testing.T) {
 	if err := store.CreateUser("stamped", "Sup3r-Str0ng-Pass!", "", "", ""); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
+	// Give the account a nonzero failed_attempts count first, so the
+	// assertion below proves CreateSessionForUser actually resets it
+	// rather than merely observing a column that was already zero.
+	if _, err := store.db.Exec(
+		"UPDATE users SET failed_attempts = 3 WHERE username = ?", "stamped"); err != nil {
+		t.Fatalf("seed failed_attempts: %v", err)
+	}
 	if _, _, err := store.CreateSessionForUser("stamped"); err != nil {
 		t.Fatalf("CreateSessionForUser: %v", err)
 	}
 
 	var lastLogin sql.NullTime
+	var failedAttempts int
 	if err := store.db.QueryRow(
-		"SELECT last_login FROM users WHERE username = ?", "stamped").Scan(&lastLogin); err != nil {
+		"SELECT last_login, failed_attempts FROM users WHERE username = ?", "stamped").
+		Scan(&lastLogin, &failedAttempts); err != nil {
 		t.Fatalf("last_login: %v", err)
 	}
 	if !lastLogin.Valid {
 		t.Fatal("last_login was not set")
+	}
+	if failedAttempts != 0 {
+		t.Fatalf("failed_attempts = %d, want 0", failedAttempts)
+	}
+}
+
+func TestCreateSessionForUserRejectsServiceAccount(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateServiceAccount("svc", "", "", ""); err != nil {
+		t.Fatalf("CreateServiceAccount: %v", err)
+	}
+	if _, _, err := store.CreateSessionForUser("svc"); err == nil {
+		t.Fatal("expected a service account to be refused a session")
 	}
 }
 
@@ -115,8 +139,24 @@ func TestCreateSessionForUserForLockedSkipsMalformedSessionEntries(t *testing.T)
 	// A key that isn't a string.
 	store.sessions.Store(42, &SessionInfo{Username: "malformed", ExpiresAt: sessionFarFuture})
 
-	if _, _, err := store.CreateSessionForUser("malformed"); err != nil {
+	token, _, err := store.CreateSessionForUser("malformed")
+	if err != nil {
 		t.Fatalf("CreateSessionForUser: %v", err)
+	}
+
+	gotUsername, err := store.ValidateSessionToken(token)
+	if err != nil {
+		t.Fatalf("ValidateSessionToken: %v", err)
+	}
+	if gotUsername != "malformed" {
+		t.Fatalf("ValidateSessionToken username = %q, want %q", gotUsername, "malformed")
+	}
+
+	if _, ok := store.sessions.Load("not-a-session-info"); !ok {
+		t.Fatal("malformed-value entry was evicted, want it left alone")
+	}
+	if _, ok := store.sessions.Load(42); !ok {
+		t.Fatal("malformed-key entry was evicted, want it left alone")
 	}
 }
 

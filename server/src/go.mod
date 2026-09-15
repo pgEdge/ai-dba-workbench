@@ -3,10 +3,12 @@ module github.com/pgedge/ai-workbench/server
 go 1.26.8
 
 require (
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pgEdge/pgedge-go-llm-lib v0.3.1
 	github.com/pgedge/ai-workbench/pkg v0.0.0
 	golang.org/x/crypto v0.47.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.39.0
 	golang.org/x/text v0.40.0
@@ -18,6 +20,7 @@ replace github.com/pgedge/ai-workbench/pkg => ../../pkg
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

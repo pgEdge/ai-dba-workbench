@@ -469,7 +469,13 @@ func (s *AuthStore) migrateV2ToV3() error {
 func (s *AuthStore) migrateV3ToV4() error {
 	statements := []string{
 		"ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'",
-		"ALTER TABLE users ADD COLUMN external_subject TEXT",
+		// The CHECK keeps the empty string out of the column, which is
+		// neither a subject nor an absent one: the link path reads it as
+		// "not linked" and the unlink path reads it as "linked", so the
+		// two would disagree about the same row. Nothing writes it
+		// today, and the constraint is what keeps that true.
+		"ALTER TABLE users ADD COLUMN external_subject TEXT " +
+			"CHECK (external_subject IS NULL OR external_subject <> '')",
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
 			ON users(external_subject) WHERE external_subject IS NOT NULL`,
 	}
@@ -541,7 +547,10 @@ func (s *AuthStore) initSchema() error {
         email TEXT DEFAULT '',
         is_service_account BOOLEAN DEFAULT FALSE,
         auth_source TEXT NOT NULL DEFAULT 'local',
+        -- Never the empty string: it is neither a subject nor the absence
+        -- of one, and the link and unlink paths would read it differently.
         external_subject TEXT
+            CHECK (external_subject IS NULL OR external_subject <> '')
     );
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
@@ -1476,8 +1485,11 @@ func (s *AuthStore) InvalidateSession(token string) {
 }
 
 // InvalidateUserSessions removes all active sessions for a given username.
-// This is called after a password change to ensure that compromised sessions
-// cannot persist after credential rotation.
+// It is called after every change to how an account authenticates: a password
+// change, a lockout, a disable or delete, and the linking or unlinking of a
+// federated identity. A session outlives all of those on its own, because
+// ValidateSessionToken re-reads only enabled, so nothing but this stops a
+// session minted under the old credential from running to its expiry.
 func (s *AuthStore) InvalidateUserSessions(username string) {
 	count := 0
 	s.sessions.Range(func(key, value any) bool {
@@ -1489,7 +1501,7 @@ func (s *AuthStore) InvalidateUserSessions(username string) {
 		return true
 	})
 	if count > 0 {
-		log.Printf("[AUTH] Invalidated %d active session(s) for user %s due to password change", count, username)
+		log.Printf("[AUTH] Invalidated %d active session(s) for user %s due to a credential change", count, username)
 	}
 }
 

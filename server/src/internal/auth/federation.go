@@ -660,17 +660,31 @@ func describeSubjectKey(key string) string {
 // The account is stamped exactly as a provisioned one is, with
 // external_subject set to ExternalSubjectKey(issuer, subject) and auth_source
 // set to AuthSourceOIDC, so resolution, group reconciliation and every later
-// check treat a linked account and a provisioned account identically.
+// check treat a linked account and a provisioned account identically. One
+// consequence is worth stating plainly: from the next federated login onward
+// the provider owns this account's group membership and, when a superuser
+// group is configured, its is_superuser flag, so linking a local administrator
+// hands that privilege to the provider and revokes it if the provider does not
+// assert the configured group.
 //
-// Linking deliberately leaves password_hash alone: it is not this command's
-// business to destroy a credential, and the account stops being reachable by
-// password anyway, because AuthenticateUser refuses any auth_source other than
-// local. UnlinkFederatedIdentity puts auth_source back, which makes that old
-// hash live again, so see the note there.
+// Linking deliberately leaves password_hash alone, since the account stops
+// being reachable by password anyway: AuthenticateUser refuses any auth_source
+// other than local. UnlinkFederatedIdentity is where that decision is
+// revisited, because putting auth_source back is what would make the old hash
+// live again.
+//
+// Every live session for the account is invalidated, as it is for every other
+// credential-lifecycle change in this store: ValidateSessionToken re-reads only
+// enabled, never auth_source, so a session minted before the link would
+// otherwise outlive it by up to the session expiry.
 //
 // An account already linked to a different subject is refused unless relink is
 // true. Moving an identity silently from one account to another is how a
-// person ends up logged in as somebody else, so it has to be deliberate.
+// person ends up logged in as somebody else, so it has to be deliberate. That
+// guard, the service-account refusal and the auth_source check are all
+// conditions on the UPDATE rather than a SELECT that ran beforehand, so two
+// concurrent invocations cannot slip an unflagged move between the check and
+// the write.
 //
 // The returned string is the external subject key that was stored.
 func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, relink bool) (string, error) {
@@ -685,31 +699,18 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var id int64
-	var authSource string
-	var isServiceAccount bool
-	var existing sql.NullString
-	err := s.db.QueryRow(
-		"SELECT id, auth_source, is_service_account, external_subject FROM users WHERE username = ?",
-		username).Scan(&id, &authSource, &isServiceAccount, &existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("user not found: %s", username)
-	}
-	if err != nil {
-		return "", fmt.Errorf("looking up user: %w", err)
-	}
-
 	// Sessions are not for service accounts: CreateSessionForUser refuses
 	// one outright, so a linked service account could never complete a
-	// login and the link would be a trap rather than a configuration.
-	if isServiceAccount {
-		return "", fmt.Errorf("service account cannot be linked to an identity provider: %s", username)
-	}
-
-	if existing.Valid && existing.String != "" && existing.String != key && !relink {
-		return "", fmt.Errorf(
-			"account %s is already linked to a different identity (%s); pass -relink to move it",
-			username, describeSubjectKey(existing.String))
+	// login and the link would be a trap rather than a configuration. The
+	// auth_source condition is the converse of the belt-and-braces check
+	// lookupFederatedUserLocked makes, and keeps this from quietly
+	// converting an account whose identity some future source owns.
+	query := `UPDATE users SET auth_source = ?, external_subject = ?
+        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)`
+	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC}
+	if !relink {
+		query += " AND (external_subject IS NULL OR external_subject = ?)"
+		args = append(args, key)
 	}
 
 	// No pre-flight check that some other account already holds this
@@ -719,9 +720,8 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	// a racy SELECT that ran beforehand. The account holding the subject is
 	// then looked up so the operator is told who it is, instead of being
 	// handed a raw SQLite constraint error.
-	if _, err := s.db.Exec(
-		"UPDATE users SET auth_source = ?, external_subject = ? WHERE id = ?",
-		AuthSourceOIDC, key, id); err != nil {
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
 		if isUniqueViolation(err, "users.external_subject") {
 			holder, lookupErr := s.subjectHolderLocked(key)
 			if lookupErr == nil && holder != "" {
@@ -731,6 +731,15 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 		}
 		return "", fmt.Errorf("failed to link %s to the identity provider: %w", username, err)
 	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("failed to confirm the link for %s: %w", username, err)
+	}
+	if affected == 0 {
+		return "", s.explainLinkRefusalLocked(username, key)
+	}
+
+	s.InvalidateUserSessions(username)
 
 	// The subject originates with the identity provider by way of the
 	// operator's command line, so it is sanitized for the same reason
@@ -741,22 +750,62 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	return key, nil
 }
 
+// explainLinkRefusalLocked turns an UPDATE that matched no row into the reason
+// it matched none, by reading back the row the conditions were about. Every
+// answer it gives is a snapshot taken after the fact, so it is used for the
+// message only and never to decide whether the write should have happened.
+// s.mu must be held.
+func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
+	var authSource string
+	var isServiceAccount bool
+	var existing sql.NullString
+	err := s.db.QueryRow(
+		"SELECT auth_source, is_service_account, external_subject FROM users WHERE username = ?",
+		username).Scan(&authSource, &isServiceAccount, &existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("user not found: %s", username)
+	}
+	if err != nil {
+		return fmt.Errorf("looking up user: %w", err)
+	}
+	if isServiceAccount {
+		return fmt.Errorf("service account cannot be linked to an identity provider: %s", username)
+	}
+	if authSource != AuthSourceLocal && authSource != AuthSourceOIDC {
+		return fmt.Errorf("account %s has an identity this command does not manage (auth_source=%s)",
+			username, authSource)
+	}
+	if existing.Valid && existing.String != "" && existing.String != key {
+		return fmt.Errorf(
+			"account %s is already linked to a different identity (%s); pass -relink to move it",
+			username, describeSubjectKey(existing.String))
+	}
+	// The row changed under us between the UPDATE and this read, which is
+	// as much as can honestly be said about it.
+	return fmt.Errorf("account %s was not linked; it changed while the link was being applied", username)
+}
+
 // UnlinkFederatedIdentity detaches an account from its provider identity,
 // clearing external_subject and returning auth_source to local. It is the
 // inverse of LinkFederatedIdentity, for when a person leaves or the provider
 // reissues their subject.
 //
-// Returning auth_source to local makes the account's stored password_hash live
-// again, because AuthenticateUser only refuses a non-local auth_source and
-// never looks at external_subject. For an account that was provisioned by the
-// provider the hash is of discarded random bytes, so nothing can log in; but
-// for an account that was local before it was linked, whatever password it had
-// then works again from this moment. Unlinking is therefore not by itself a way
-// to lock somebody out: set a fresh password, or disable the account, in the
-// same maintenance window.
+// Returning auth_source to local would make the account's stored password_hash
+// live again, because AuthenticateUser only refuses a non-local auth_source and
+// never looks at external_subject: the password the account had before it was
+// linked, unrotated for the whole federated period, would start working again
+// at the moment of unlinking. So by default this writes an unusable hash at the
+// same time, exactly as provisionFederatedUserLocked does, and the account
+// leaves federation reachable by nothing until an operator sets a password with
+// -update-user. Passing restorePassword keeps the old hash and therefore the
+// old password, which is only correct when the operator means to hand the
+// account back to the person who holds it.
+//
+// Every live session for the account is invalidated either way, for the same
+// reason as in LinkFederatedIdentity.
 //
 // The returned string is the external subject key that was cleared.
-func (s *AuthStore) UnlinkFederatedIdentity(username string) (string, error) {
+func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword bool) (string, error) {
 	if username == "" {
 		return "", fmt.Errorf("a username is required")
 	}
@@ -785,15 +834,29 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string) (string, error) {
 		return "", fmt.Errorf("account %s is not linked to an identity provider", username)
 	}
 
-	if _, err := s.db.Exec(
-		"UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ?",
-		AuthSourceLocal, id); err != nil {
+	query := "UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ?"
+	args := []any{AuthSourceLocal, id}
+	if !restorePassword {
+		hash, hashErr := s.unusablePasswordHashLocked()
+		if hashErr != nil {
+			return "", hashErr
+		}
+		query = "UPDATE users SET auth_source = ?, external_subject = NULL, password_hash = ? WHERE id = ?"
+		args = []any{AuthSourceLocal, hash, id}
+	}
+	if _, err := s.db.Exec(query, args...); err != nil {
 		return "", fmt.Errorf("failed to unlink %s from the identity provider: %w", username, err)
 	}
 
+	s.InvalidateUserSessions(username)
+
+	reachable := "no password login is possible until one is set"
+	if restorePassword {
+		reachable = "its previous password works again"
+	}
 	//nolint:gosec // G706: both values passed through logging.SanitizeForLog
-	log.Printf("[AUTH] Unlinked account %s from federated subject %s",
-		logging.SanitizeForLog(username), logging.SanitizeForLog(key))
+	log.Printf("[AUTH] Unlinked account %s from federated subject %s; %s",
+		logging.SanitizeForLog(username), logging.SanitizeForLog(key), reachable)
 	return key, nil
 }
 

@@ -288,7 +288,7 @@ func TestLinkFederatedIdentityArgumentErrors(t *testing.T) {
 	}
 }
 
-func TestUnlinkFederatedIdentityRestoresLocalLogin(t *testing.T) {
+func TestUnlinkFederatedIdentityRestoresLocalLoginOnRequest(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
@@ -299,7 +299,7 @@ func TestUnlinkFederatedIdentityRestoresLocalLogin(t *testing.T) {
 		t.Fatalf("LinkFederatedIdentity: %v", err)
 	}
 
-	key, err := store.UnlinkFederatedIdentity("leo")
+	key, err := store.UnlinkFederatedIdentity("leo", true)
 	if err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
@@ -314,8 +314,9 @@ func TestUnlinkFederatedIdentityRestoresLocalLogin(t *testing.T) {
 	if subject != "" {
 		t.Fatalf("external_subject = %q, want it cleared", subject)
 	}
-	// This is the documented consequence of restoring auth_source, asserted
-	// so that nobody has to guess whether the old credential is live.
+	// With restorePassword the pre-link password is deliberately live
+	// again; that is the flag's whole purpose, asserted so that nobody has
+	// to guess what it does.
 	if _, _, err := store.AuthenticateUser("leo", linkTestPassword); err != nil {
 		t.Fatalf("the pre-link password did not work after unlinking: %v", err)
 	}
@@ -343,7 +344,7 @@ func TestUnlinkFederatedIdentityLeavesProvisionedAccountUnreachable(t *testing.T
 	if _, err := store.ResolveFederatedUser(identity, FederationOptions{ProvisionUsers: true}); err != nil {
 		t.Fatalf("provisioning: %v", err)
 	}
-	if _, err := store.UnlinkFederatedIdentity("mallory"); err != nil {
+	if _, err := store.UnlinkFederatedIdentity("mallory", true); err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
 	if _, _, err := store.AuthenticateUser("mallory", linkTestPassword); err == nil {
@@ -370,7 +371,7 @@ func TestUnlinkFederatedIdentityArgumentErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := store.UnlinkFederatedIdentity(tt.username)
+			_, err := store.UnlinkFederatedIdentity(tt.username, false)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -441,5 +442,285 @@ func TestResolveFederatedUserRefusalNamesTheLinkCommand(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not contain %q", err.Error(), want)
 		}
+	}
+}
+
+// accountRow is every column of the users row, so a test can assert that a
+// command moved the columns it claims to and nothing else.
+type accountRow struct {
+	id              int64
+	username        string
+	passwordHash    string
+	enabled         bool
+	annotation      string
+	displayName     string
+	email           string
+	failedAttempts  int
+	isSuperuser     bool
+	isService       bool
+	authSource      string
+	externalSubject string
+	groups          []int64
+}
+
+func readAccountRow(t *testing.T, store *AuthStore, username string) accountRow {
+	t.Helper()
+
+	var row accountRow
+	var displayName, email, subject sql.NullString
+	err := store.db.QueryRow(
+		`SELECT id, username, password_hash, enabled, annotation, display_name, email,
+		        failed_attempts, is_superuser, is_service_account, auth_source, external_subject
+		 FROM users WHERE username = ?`, username).
+		Scan(&row.id, &row.username, &row.passwordHash, &row.enabled, &row.annotation,
+			&displayName, &email, &row.failedAttempts, &row.isSuperuser, &row.isService,
+			&row.authSource, &subject)
+	if err != nil {
+		t.Fatalf("reading the users row for %s: %v", username, err)
+	}
+	row.displayName = displayName.String
+	row.email = email.String
+	row.externalSubject = subject.String
+
+	groups, err := store.GetUserGroups(row.id)
+	if err != nil {
+		t.Fatalf("reading group membership for %s: %v", username, err)
+	}
+	row.groups = groups
+	return row
+}
+
+// seedFullyPopulatedAccount creates an account with every column and its group
+// membership set to something distinctive, so that an unintended write to any
+// of them shows up.
+func seedFullyPopulatedAccount(t *testing.T, store *AuthStore, username string) accountRow {
+	t.Helper()
+
+	if err := store.CreateUser(username, linkTestPassword, "notes", "Full Name", "user@example.com"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := store.SetUserSuperuser(username, true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+	groupID, err := store.CreateGroup("linked-group-"+username, "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	before := readAccountRow(t, store, username)
+	if err := store.AddUserToGroup(groupID, before.id); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+	return readAccountRow(t, store, username)
+}
+
+// assertOnlyLinkColumnsChanged compares two snapshots, allowing only the
+// columns the caller names to differ.
+func assertOnlyLinkColumnsChanged(t *testing.T, before, after accountRow, allowHash bool) {
+	t.Helper()
+
+	if after.id != before.id || after.username != before.username {
+		t.Fatalf("identity columns changed: %+v -> %+v", before, after)
+	}
+	if after.enabled != before.enabled {
+		t.Fatalf("enabled changed from %v to %v", before.enabled, after.enabled)
+	}
+	if after.isSuperuser != before.isSuperuser {
+		t.Fatalf("is_superuser changed from %v to %v", before.isSuperuser, after.isSuperuser)
+	}
+	if after.isService != before.isService {
+		t.Fatalf("is_service_account changed from %v to %v", before.isService, after.isService)
+	}
+	if after.displayName != before.displayName || after.email != before.email {
+		t.Fatalf("profile columns changed: display_name %q -> %q, email %q -> %q",
+			before.displayName, after.displayName, before.email, after.email)
+	}
+	if after.annotation != before.annotation {
+		t.Fatalf("annotation changed from %q to %q", before.annotation, after.annotation)
+	}
+	if after.failedAttempts != before.failedAttempts {
+		t.Fatalf("failed_attempts changed from %d to %d", before.failedAttempts, after.failedAttempts)
+	}
+	if len(after.groups) != len(before.groups) {
+		t.Fatalf("group membership changed from %v to %v", before.groups, after.groups)
+	}
+	for i := range after.groups {
+		if after.groups[i] != before.groups[i] {
+			t.Fatalf("group membership changed from %v to %v", before.groups, after.groups)
+		}
+	}
+	if !allowHash && after.passwordHash != before.passwordHash {
+		t.Fatal("password_hash changed when it should not have")
+	}
+}
+
+func TestLinkFederatedIdentityTouchesOnlyTheTwoColumns(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	before := seedFullyPopulatedAccount(t, store, "priya")
+	if _, err := store.LinkFederatedIdentity("priya", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	after := readAccountRow(t, store, "priya")
+
+	assertOnlyLinkColumnsChanged(t, before, after, false)
+	if after.authSource != AuthSourceOIDC ||
+		after.externalSubject != ExternalSubjectKey(linkTestIssuer, linkTestSubject) {
+		t.Fatalf("the two intended columns are wrong: auth_source=%q external_subject=%q",
+			after.authSource, after.externalSubject)
+	}
+}
+
+func TestUnlinkFederatedIdentityTouchesOnlyTheIntendedColumns(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	seedFullyPopulatedAccount(t, store, "quinn")
+	if _, err := store.LinkFederatedIdentity("quinn", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	before := readAccountRow(t, store, "quinn")
+
+	if _, err := store.UnlinkFederatedIdentity("quinn", true); err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+	after := readAccountRow(t, store, "quinn")
+
+	assertOnlyLinkColumnsChanged(t, before, after, false)
+	if after.authSource != AuthSourceLocal || after.externalSubject != "" {
+		t.Fatalf("the two intended columns are wrong: auth_source=%q external_subject=%q",
+			after.authSource, after.externalSubject)
+	}
+}
+
+// Without restorePassword the hash is the one further column unlinking is
+// allowed to move, and it must become unusable rather than merely different.
+func TestUnlinkFederatedIdentityMakesThePasswordUnusable(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	seedFullyPopulatedAccount(t, store, "rafael")
+	if _, err := store.LinkFederatedIdentity("rafael", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	before := readAccountRow(t, store, "rafael")
+
+	if _, err := store.UnlinkFederatedIdentity("rafael", false); err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+	after := readAccountRow(t, store, "rafael")
+
+	assertOnlyLinkColumnsChanged(t, before, after, true)
+	if after.passwordHash == before.passwordHash {
+		t.Fatal("the password hash survived an unlink without restorePassword")
+	}
+	if after.passwordHash == "" {
+		t.Fatal("the password hash was emptied rather than replaced")
+	}
+	if _, _, err := store.AuthenticateUser("rafael", linkTestPassword); err == nil {
+		t.Fatal("the pre-link password still worked after an unlink without restorePassword")
+	}
+	// The account is recoverable: an operator sets a new password and it
+	// works, which is the state the command promises to leave behind.
+	if err := store.UpdateUser("rafael", "An0ther-Str0ng-Pass!", "", "", ""); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if _, _, err := store.AuthenticateUser("rafael", "An0ther-Str0ng-Pass!"); err != nil {
+		t.Fatalf("a freshly set password did not work: %v", err)
+	}
+}
+
+// A session minted before the account's authentication source changed must not
+// outlive the change: ValidateSessionToken re-reads only enabled, so nothing
+// else would stop it.
+func TestLinkFederatedIdentityInvalidatesSessions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("sam", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	token, _, err := store.CreateSessionForUser("sam")
+	if err != nil {
+		t.Fatalf("CreateSessionForUser: %v", err)
+	}
+	if _, err := store.ValidateSessionToken(token); err != nil {
+		t.Fatalf("the session was not valid to begin with: %v", err)
+	}
+
+	if _, err := store.LinkFederatedIdentity("sam", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	if _, err := store.ValidateSessionToken(token); err == nil {
+		t.Fatal("a session survived the account being linked")
+	}
+}
+
+func TestUnlinkFederatedIdentityInvalidatesSessions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("tara", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("tara", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	// A federated login mints its session through the same function a
+	// password login uses, so this is the session an unlink has to kill.
+	token, _, err := store.CreateSessionForUser("tara")
+	if err != nil {
+		t.Fatalf("CreateSessionForUser: %v", err)
+	}
+	if _, err := store.ValidateSessionToken(token); err != nil {
+		t.Fatalf("the session was not valid to begin with: %v", err)
+	}
+
+	if _, err := store.UnlinkFederatedIdentity("tara", true); err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+	if _, err := store.ValidateSessionToken(token); err == nil {
+		t.Fatal("a session survived the account being unlinked")
+	}
+}
+
+// The guard rides on the UPDATE, so an account whose identity some other
+// source owns is refused rather than quietly converted.
+func TestLinkFederatedIdentityRefusesForeignAuthSource(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("ulric", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.db.Exec(
+		"UPDATE users SET auth_source = 'saml' WHERE username = ?", "ulric"); err != nil {
+		t.Fatalf("seeding a third auth source: %v", err)
+	}
+
+	_, err := store.LinkFederatedIdentity("ulric", linkTestIssuer, linkTestSubject, false)
+	if err == nil {
+		t.Fatal("an account managed by another source was linked")
+	}
+	if !strings.Contains(err.Error(), "saml") {
+		t.Fatalf("error does not name the offending auth_source: %v", err)
+	}
+	if _, subject, _ := linkedAccountState(t, store, "ulric"); subject != "" {
+		t.Fatalf("the refused link still wrote external_subject = %q", subject)
+	}
+}
+
+// The empty string is neither a subject nor the absence of one, and the schema
+// is what keeps it out of the column.
+func TestExternalSubjectRejectsTheEmptyString(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("vera", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.db.Exec(
+		"UPDATE users SET external_subject = '' WHERE username = ?", "vera"); err == nil {
+		t.Fatal("the schema accepted an empty external_subject")
 	}
 }

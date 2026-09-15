@@ -176,8 +176,14 @@ func TestAuthenticateRequestSetsTokenID(t *testing.T) {
 	if !IsAPITokenFromContext(ctx) {
 		t.Error("expected the API token flag to be true")
 	}
-	if got := GetTokenIDFromContext(ctx); got != stored.ID {
-		t.Errorf("token id: got %d, want %d", got, stored.ID)
+	if got := GetAuditTokenIDFromContext(ctx); got != stored.ID {
+		t.Errorf("audit token id: got %d, want %d", got, stored.ID)
+	}
+	// TokenIDContextKey drives token-scope enforcement in RBACChecker
+	// and must stay unset on the REST path, or every REST endpoint
+	// silently becomes scope-limited.
+	if got := GetTokenIDFromContext(ctx); got != 0 {
+		t.Errorf("scoping token id: got %d, want 0 on the REST path", got)
 	}
 }
 
@@ -202,8 +208,11 @@ func TestAuthenticateRequestSessionIsNotAPIToken(t *testing.T) {
 	if IsAPITokenFromContext(ctx) {
 		t.Error("expected the API token flag to be false for a session")
 	}
+	if got := GetAuditTokenIDFromContext(ctx); got != 0 {
+		t.Errorf("audit token id: got %d, want 0 for a session", got)
+	}
 	if got := GetTokenIDFromContext(ctx); got != 0 {
-		t.Errorf("token id: got %d, want 0 for a session", got)
+		t.Errorf("scoping token id: got %d, want 0 for a session", got)
 	}
 	if _, ok := ctx.Value(IsAPITokenContextKey).(bool); !ok {
 		t.Error("expected the API token flag to be present in the context")

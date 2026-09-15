@@ -38,7 +38,8 @@ var ErrInvalidToken = errors.New("invalid or expired token")
 //     whose owner is resolved)
 //   - IsAPITokenContextKey   (always; true on the API-token path,
 //     false on the session path)
-//   - TokenIDContextKey      (API tokens only; the acting token's id)
+//   - AuditTokenIDContextKey (API tokens only; the acting token's id,
+//     for audit attribution only, never for scope checks)
 //
 // Validation order is API token first, then session token, matching the
 // historical createAuthWrapper behavior exactly. A missing credential
@@ -59,7 +60,11 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 	storedToken, err := store.ValidateToken(token)
 	if err == nil && storedToken != nil {
 		ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
-		ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
+		// AuditTokenIDContextKey, not TokenIDContextKey: the latter
+		// switches RBACChecker into token-scope enforcement, which
+		// this middleware has never done and which changing here
+		// would alter authorisation on every REST endpoint.
+		ctx = context.WithValue(ctx, AuditTokenIDContextKey, storedToken.ID)
 		ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
 		// Look up user to determine superuser status and username.
 		user, userErr := store.GetUserByID(storedToken.OwnerID)

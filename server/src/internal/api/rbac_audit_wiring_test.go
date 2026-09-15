@@ -266,8 +266,24 @@ func TestRecordDenialWithoutStore(t *testing.T) {
 	handler := &RBACHandler{}
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/rbac/groups/7", nil)
 
-	// Must not panic when the handler has no auth store to record into.
-	handler.recordDenial(req, "no store")
+	// A handler with no auth store must neither panic nor log: there is
+	// nothing to record into and nothing has gone wrong.
+	logBuf := captureLog(t)
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				t.Errorf("recordDenial panicked without a store: %v", p)
+			}
+		}()
+		handler.recordDenial(req, "no store")
+	}()
+
+	if got := logBuf.String(); got != "" {
+		t.Errorf("expected no log output, got %q", got)
+	}
+	if got := handler.actorStore(req); got != nil {
+		t.Error("expected actorStore to return nil without a store")
+	}
 }
 
 func TestRecordDenialLogsStoreError(t *testing.T) {
@@ -280,5 +296,35 @@ func TestRecordDenialLogsStoreError(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/rbac/groups/7", nil)
 	req = withActor(req, "mallory", 9, "203.0.113.7", false)
+
+	logBuf := captureLog(t)
 	handler.recordDenial(req, "closed store")
+
+	output := logBuf.String()
+	if !strings.Contains(output, "[ERROR]") {
+		t.Errorf("expected an [ERROR] log line, got %q", output)
+	}
+	if !strings.Contains(output, "/api/v1/rbac/groups/7") {
+		t.Errorf("expected the request path in the log line, got %q", output)
+	}
+}
+
+func TestRecordDenialSanitisesThePathInTheLog(t *testing.T) {
+	handler, store, cleanup := createTestRBACHandler(t)
+	defer cleanup()
+	store.Close()
+
+	// A path carrying a newline must not be able to forge a second log
+	// line; logging.SanitizeForLog strips the control characters.
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/rbac/groups/7", nil)
+	req.URL.Path = "/api/v1/rbac/groups/7\n[ERROR] forged line"
+	req = withActor(req, "mallory", 9, "203.0.113.7", false)
+
+	logBuf := captureLog(t)
+	handler.recordDenial(req, "closed store")
+
+	output := strings.TrimRight(logBuf.String(), "\n")
+	if strings.Count(output, "\n") != 0 {
+		t.Errorf("expected a single log line, got %q", output)
+	}
 }

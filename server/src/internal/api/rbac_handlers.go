@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // RBACHandler handles REST API requests for RBAC management
@@ -51,14 +52,23 @@ func (h *RBACHandler) RegisterRoutes(mux *http.ServeMux, authWrapper func(http.H
 // actorStore returns a view of the auth store that attributes every
 // audited change to the principal that made the request, so that the
 // audit log names the acting user or token rather than the server.
+//
+// Like recordDenial it tolerates a nil store, which only a partially
+// constructed handler has, returning nil so the caller fails on the
+// mutation it was about to attempt rather than inside the audit
+// plumbing.
 func (h *RBACHandler) actorStore(r *http.Request) *auth.ActorStore {
+	if h.authStore == nil {
+		return nil
+	}
 	return h.authStore.AsActor(auth.ActorFromContext(r.Context()))
 }
 
 // recordDenial writes a denied audit event for the request. A recording
 // failure is logged and otherwise ignored: the caller is about to
 // respond 403 either way, and an audit error must not change what the
-// client sees.
+// client sees. A nil store is tolerated for the same reason as in
+// actorStore.
 func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	if h.authStore == nil {
 		return
@@ -66,7 +76,7 @@ func (h *RBACHandler) recordDenial(r *http.Request, reason string) {
 	if err := h.authStore.RecordDenied(auth.ActorFromContext(r.Context()),
 		deniedAction(r), reason); err != nil {
 		log.Printf("[ERROR] Failed to record RBAC denial for %s %s: %v",
-			r.Method, r.URL.Path, err)
+			r.Method, logging.SanitizeForLog(r.URL.Path), err) //nolint:gosec // G706: r.URL.Path passed through logging.SanitizeForLog
 	}
 }
 

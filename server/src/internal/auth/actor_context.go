@@ -26,32 +26,39 @@ func SystemActor() Actor {
 // A request authenticated with an API token yields an ActorToken whose
 // ID is the token id and whose Name is the owning username; any other
 // authenticated request yields an ActorUser whose ID is the user id.
-// The ID is left nil when the store could not resolve it, and the IP,
-// when present, comes from IPAddressContextKey. A context with no
-// username has no identity to attribute the change to, so the system
-// actor is returned.
+// The ID is left nil when neither the middleware nor the store resolved
+// it, and the IP, when present, comes from IPAddressContextKey.
+//
+// A context that names neither a user nor a token has no identity to
+// attribute the change to, so the system actor is returned; a token
+// whose owning user could not be read still yields a token actor,
+// identified by its id with an empty name, because the token id alone
+// is enough to trace the change.
 func ActorFromContext(ctx context.Context) Actor {
 	if ctx == nil {
 		return systemActor
 	}
 
-	username := GetUsernameFromContext(ctx)
-	if username == "" {
-		return systemActor
-	}
-
-	actor := Actor{Name: username}
+	actor := Actor{Name: GetUsernameFromContext(ctx)}
 	if ip, ok := ctx.Value(IPAddressContextKey).(string); ok {
 		actor.IP = ip
 	}
 
 	if IsAPITokenFromContext(ctx) {
+		tokenID := actingTokenID(ctx)
+		if tokenID == 0 && actor.Name == "" {
+			return systemActor
+		}
 		actor.Type = ActorToken
-		if tokenID := GetTokenIDFromContext(ctx); tokenID != 0 {
+		if tokenID != 0 {
 			id := tokenID
 			actor.ID = &id
 		}
 		return actor
+	}
+
+	if actor.Name == "" {
+		return systemActor
 	}
 
 	actor.Type = ActorUser
@@ -61,4 +68,17 @@ func ActorFromContext(ctx context.Context) Actor {
 	}
 
 	return actor
+}
+
+// actingTokenID returns the id of the token that made the request. It
+// prefers AuditTokenIDContextKey, which the REST middleware sets purely
+// for attribution, and falls back to TokenIDContextKey, which the MCP
+// middleware sets to drive token-scope enforcement. Reading both means
+// every authenticated path attributes its changes, whilst the REST path
+// keeps its historical, unscoped authorisation.
+func actingTokenID(ctx context.Context) int64 {
+	if id := GetAuditTokenIDFromContext(ctx); id != 0 {
+		return id
+	}
+	return GetTokenIDFromContext(ctx)
 }

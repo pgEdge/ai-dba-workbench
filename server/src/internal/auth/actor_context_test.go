@@ -28,7 +28,7 @@ func TestActorFromContext(t *testing.T) {
 	tokenCtx := context.WithValue(context.Background(),
 		UsernameContextKey, "svc")
 	tokenCtx = context.WithValue(tokenCtx, IsAPITokenContextKey, true)
-	tokenCtx = context.WithValue(tokenCtx, TokenIDContextKey, int64(42))
+	tokenCtx = context.WithValue(tokenCtx, AuditTokenIDContextKey, int64(42))
 	tokenCtx = context.WithValue(tokenCtx, UserIDContextKey, int64(7))
 	tokenCtx = context.WithValue(tokenCtx, IPAddressContextKey, "192.0.2.5")
 
@@ -40,6 +40,25 @@ func TestActorFromContext(t *testing.T) {
 
 	noIDCtx := context.WithValue(context.Background(),
 		UsernameContextKey, "bob")
+
+	// The MCP middleware sets TokenIDContextKey rather than the
+	// audit-only key, so ActorFromContext must still attribute it.
+	mcpTokenCtx := context.WithValue(context.Background(),
+		UsernameContextKey, "mcpsvc")
+	mcpTokenCtx = context.WithValue(mcpTokenCtx, IsAPITokenContextKey, true)
+	mcpTokenCtx = context.WithValue(mcpTokenCtx, TokenIDContextKey, int64(11))
+
+	// A token whose owning user could not be read: the id alone is
+	// enough to trace the change, so this is not the system actor.
+	namelessTokenCtx := context.WithValue(context.Background(),
+		IsAPITokenContextKey, true)
+	namelessTokenCtx = context.WithValue(namelessTokenCtx,
+		AuditTokenIDContextKey, int64(77))
+
+	// An API-token context with neither a name nor an id identifies
+	// nothing, so it degrades to the system actor.
+	emptyTokenCtx := context.WithValue(context.Background(),
+		IsAPITokenContextKey, true)
 
 	tests := []struct {
 		name     string
@@ -70,6 +89,30 @@ func TestActorFromContext(t *testing.T) {
 			ctx:      noIDCtx,
 			wantType: ActorUser,
 			wantName: "bob",
+			wantID:   nil,
+			wantIP:   "",
+		},
+		{
+			name:     "mcp token actor via the scoping key",
+			ctx:      mcpTokenCtx,
+			wantType: ActorToken,
+			wantName: "mcpsvc",
+			wantID:   int64Ptr(11),
+			wantIP:   "",
+		},
+		{
+			name:     "token whose owner could not be resolved",
+			ctx:      namelessTokenCtx,
+			wantType: ActorToken,
+			wantName: "",
+			wantID:   int64Ptr(77),
+			wantIP:   "",
+		},
+		{
+			name:     "api token with neither name nor id",
+			ctx:      emptyTokenCtx,
+			wantType: ActorSystem,
+			wantName: "system",
 			wantID:   nil,
 			wantIP:   "",
 		},

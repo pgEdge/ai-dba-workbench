@@ -292,6 +292,29 @@ The command reports the account, the issuer, the subject and the stored
 external subject key, and notes that password login is refused for the
 account from that moment.
 
+### Linking Hands Group Membership to the Provider
+
+A linked account is deliberately indistinguishable from a provisioned
+one, so the next federated login reconciles its mapped groups exactly
+as it would for an account the provider created.
+
+Linking a pre-existing local account therefore hands that account's
+membership of every mapped group, and its superuser flag wherever
+`superuser_group` is configured, to the identity provider from that
+login onward. An administrator who links the local `admin` account
+whilst `superuser_group` names a group the provider does not put them
+in loses superuser at their next sign-in.
+
+!!! warning
+
+    Do not link the local break-glass administrator account. Keep it
+    local, keep its password, and let the provider grant superuser to
+    separate federated accounts through `superuser_group`.
+
+Where an existing account must be linked, confirm before linking that
+the provider asserts every group the account needs, including the
+superuser group.
+
 ### Refusals and Relinking
 
 Linking is refused rather than allowed to do something surprising in
@@ -330,27 +353,49 @@ identity and returns it to local authentication:
     -unlink-oidc-user -username alice
 ```
 
-Unlinking makes the account's stored password hash live again, which is
-the part that catches people out. Linking never touched the hash; the
-account stopped accepting passwords only because password login is
-refused for an account the provider owns, so the moment the account is
-local again, whatever password it held before it was linked works once
-more. That password may be years old and may be known to the person who
-has just left.
+By default, unlinking also replaces the account's password hash with an
+unusable one, so the account leaves federation reachable by nothing at
+all: no federated login, because the identity is detached, and no
+password login, until an administrator sets a password with
+`-update-user -username <name>`. That is the same arrangement
+provisioning makes when it creates a federated account, and it means an
+unlink cannot quietly revive a credential.
 
-Unlinking is therefore not a way to take access away. Follow it in the
-same maintenance window with one of two commands:
+Pass `-restore-password` to keep the password the account held before it
+was linked, for an administrator who means to hand the account back to
+its holder:
 
-- `-update-user -username <name>` sets a fresh password, for an account
-  that is staying in service.
-- `-disable-user -username <name>` disables the account, for a person
-  who has left.
+```bash
+./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
+    -unlink-oidc-user -username alice -restore-password
+```
 
-An account the provider originally created holds a hash of discarded
-random bytes, so unlinking one leaves it unreachable by any means
-rather than reachable by an old password. The command prints the same
-warning after every successful unlink, because the two cases are not
-distinguishable at a glance.
+Weigh that option carefully. The hash has been inert for the whole
+federated period, so the password it holds may be years old, will not
+have been rotated while the account was federated, and may be known to
+the person who has just left. An account the provider originally
+created holds a hash of discarded random bytes, so `-restore-password`
+on one of those restores nothing usable.
+
+For a person who has left, disable the account with
+`-disable-user -username <name>` rather than relying on the unlink
+alone; disabling refuses the account's logins and its API tokens
+immediately.
+
+The command reports which of the two outcomes applied, and the server
+log records it as well.
+
+### Linking, Unlinking and Live Sessions
+
+Both commands invalidate every session the account holds, so a change
+takes effect at once rather than at the end of a session's 24-hour
+life.
+
+This matters most when relinking. Moving an account to a new subject
+without cutting the sessions would leave whoever signed in under the
+old identity holding the account's privileges, superuser included,
+until their session expired. API tokens are unaffected by either
+command, so review them separately.
 
 ## Mapping Provider Groups to Workbench Groups
 

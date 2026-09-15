@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -52,6 +53,28 @@ const (
 	LLMProvidersPath = "/api/v1/llm/providers"
 	LLMModelsPath    = "/api/v1/llm/models"
 )
+
+// publicPaths are served without authentication. The OIDC endpoints join
+// the list because they are how an unauthenticated browser obtains a
+// session in the first place, and capabilities because the login screen
+// reads it to decide which sign-in affordances to render.
+var publicPaths = map[string]struct{}{
+	HealthCheckPath:              {},
+	UserInfoPath:                 {},
+	"/api/v1/auth/login":         {},
+	"/api/v1/auth/logout":        {},
+	"/api/v1/auth/oidc/start":    {},
+	"/api/v1/auth/oidc/callback": {},
+	"/api/v1/capabilities":       {},
+	LLMProvidersPath:             {},
+	LLMModelsPath:                {},
+}
+
+// IsPublicPath reports whether a request path is served without credentials.
+func IsPublicPath(path string) bool {
+	_, ok := publicPaths[path]
+	return ok
+}
 
 // GetTokenHashFromContext retrieves the token hash from the request context
 // Returns empty string if no token hash is found (e.g., unauthenticated request)
@@ -292,64 +315,26 @@ func AuthMiddleware(authStore *AuthStore, enabled bool) func(http.Handler) http.
 			}
 
 			// Skip authentication for public endpoints (needed before login)
-			switch r.URL.Path {
-			case HealthCheckPath, UserInfoPath, "/api/v1/auth/login", "/api/v1/auth/logout",
-				LLMProvidersPath, LLMModelsPath:
+			if IsPublicPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Get token from Authorization header or session cookie
-			token := ExtractBearerToken(r)
-			if token == "" {
+			// Delegate credential validation to the single shared
+			// implementation so this middleware, the REST wrapper and
+			// the LLM proxy all derive an identical context.
+			ctx, err := AuthenticateRequest(r, authStore)
+			switch {
+			case errors.Is(err, ErrMissingCredentials):
 				http.Error(w, "Missing or invalid authentication credentials", http.StatusUnauthorized)
 				return
-			}
-
-			// Try to validate as API token first
-			storedToken, err := authStore.ValidateToken(token)
-			if err == nil && storedToken != nil {
-				// Valid API token - use token hash for connection isolation
-				tokenHash := GetTokenHashByRawToken(token)
-				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
-				ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
-				ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
-				ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
-
-				// Look up user to determine superuser status
-				user, userErr := authStore.GetUserByID(storedToken.OwnerID)
-				if userErr == nil && user != nil {
-					ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
-				}
-
-				r = r.WithContext(ctx)
-				next.ServeHTTP(w, r)
+			case err != nil:
+				// Neither API token nor session token is valid
+				http.Error(w, "Invalid or unknown token", http.StatusUnauthorized)
 				return
 			}
 
-			// Try to validate as session token
-			username, err := authStore.ValidateSessionToken(token)
-			if err == nil && username != "" {
-				// Valid session token - use token hash for connection isolation
-				tokenHash := GetTokenHashByRawToken(token)
-				ctx := context.WithValue(r.Context(), TokenHashContextKey, tokenHash)
-				ctx = context.WithValue(ctx, UsernameContextKey, username)
-				ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
-
-				// Get user ID and superuser status for RBAC
-				user, userErr := authStore.GetUser(username)
-				if userErr == nil && user != nil {
-					ctx = context.WithValue(ctx, UserIDContextKey, user.ID)
-					ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
-				}
-
-				r = r.WithContext(ctx)
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Neither API token nor session token is valid
-			http.Error(w, "Invalid or unknown token", http.StatusUnauthorized)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

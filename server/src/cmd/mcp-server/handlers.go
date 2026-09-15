@@ -251,18 +251,6 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 	}
 }
 
-// extractToken extracts a bearer or session token from the request.
-// It delegates to auth.ExtractBearerToken and returns the raw token
-// string, a boolean indicating whether extraction succeeded, and an
-// error message suitable for the client when it fails.
-func extractToken(r *http.Request) (string, bool, string) {
-	token := auth.ExtractBearerToken(r)
-	if token == "" {
-		return "", false, "Missing or invalid authentication credentials"
-	}
-	return token, true, ""
-}
-
 // createAuthWrapper creates a handler wrapper that enforces authentication
 // Supports both Authorization header (for API tokens) and session cookies (for browser sessions).
 // The actual token/session validation is delegated to auth.AuthenticateRequest,
@@ -291,61 +279,40 @@ func createAuthWrapper(authStore *auth.AuthStore) func(http.HandlerFunc) http.Ha
 	}
 }
 
-// createUserInfoHandler creates a handler for the user info endpoint
+// createUserInfoHandler creates a handler for the user info endpoint.
+//
+// The endpoint never answers 401: the web client calls it before it knows
+// whether it holds a session, and uses the "authenticated" flag to decide
+// whether to show the login screen. Credential validation is delegated to
+// auth.AuthenticateRequest so that a caller the rest of the server would
+// accept is a caller this endpoint reports as authenticated.
 func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok, errMsg := extractToken(r)
-		if !ok {
-			// For auth header format errors, report the issue;
-			// for missing credentials just report unauthenticated.
+		ctx, err := auth.AuthenticateRequest(r, authStore)
+		if err != nil {
 			resp := map[string]any{"authenticated": false}
-			if errMsg == "Invalid Authorization header format" {
-				resp["error"] = errMsg
+			if !errors.Is(err, auth.ErrMissingCredentials) {
+				resp["error"] = "Invalid or expired token"
 			}
 			api.RespondJSON(w, http.StatusOK, resp)
 			return
 		}
 
-		// Try API token first, then fall back to session token
-		var username string
-		var isSuperuser bool
-		var userID int64
-
-		storedToken, tokenErr := authStore.ValidateToken(token)
-		if tokenErr == nil && storedToken != nil {
-			// Valid API token - look up the owner user
-			owner, ownerErr := authStore.GetUserByID(storedToken.OwnerID)
-			if ownerErr != nil || owner == nil {
-				api.RespondJSON(w, http.StatusOK, map[string]any{
-					"authenticated": false,
-					"error":         "Invalid or expired token",
-				})
-				return
-			}
-			username = owner.Username
-			isSuperuser = owner.IsSuperuser
-			userID = owner.ID
-		} else {
-			// Try session token
-			sessionUsername, sessionErr := authStore.ValidateSessionToken(token)
-			if sessionErr != nil {
-				api.RespondJSON(w, http.StatusOK, map[string]any{
-					"authenticated": false,
-					"error":         "Invalid or expired session",
-				})
-				return
-			}
-			username = sessionUsername
-			user, userErr := authStore.GetUser(username)
-			if userErr == nil && user != nil {
-				isSuperuser = user.IsSuperuser
-				userID = user.ID
-			}
+		// A credential that validates but whose owning user cannot be
+		// resolved leaves the username unset; report it as not
+		// authenticated rather than as an anonymous session.
+		username := auth.GetUsernameFromContext(ctx)
+		if username == "" {
+			api.RespondJSON(w, http.StatusOK, map[string]any{
+				"authenticated": false,
+				"error":         "Invalid or expired token",
+			})
+			return
 		}
 
 		// Get admin permissions for the user
-		var adminPermissions []string
-		if userID > 0 {
+		adminPermissions := []string{}
+		if userID := auth.GetUserIDFromContext(ctx); userID > 0 {
 			perms, permErr := authStore.GetUserAdminPermissions(userID)
 			if permErr == nil {
 				for perm := range perms {
@@ -353,15 +320,12 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 				}
 			}
 		}
-		if adminPermissions == nil {
-			adminPermissions = []string{}
-		}
 
 		// Return user info as JSON
 		api.RespondJSON(w, http.StatusOK, map[string]any{
 			"authenticated":     true,
 			"username":          username,
-			"is_superuser":      isSuperuser,
+			"is_superuser":      auth.IsSuperuserFromContext(ctx),
 			"admin_permissions": adminPermissions,
 		})
 	}

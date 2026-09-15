@@ -753,6 +753,9 @@ func TestAuthMiddleware_PublicEndpoints(t *testing.T) {
 		UserInfoPath,
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",
+		"/api/v1/auth/oidc/start",
+		"/api/v1/auth/oidc/callback",
+		"/api/v1/capabilities",
 		LLMProvidersPath,
 		LLMModelsPath,
 	}
@@ -1042,4 +1045,131 @@ func TestIPExtractor_ExtractIP_EdgeCases(t *testing.T) {
 			t.Error("Expected false for nil IP")
 		}
 	})
+}
+
+// TestIsPublicPath locks in the set of paths served without credentials.
+// The OIDC endpoints and /api/v1/capabilities are on the list because an
+// unauthenticated browser has to reach them in order to log in at all.
+func TestIsPublicPath(t *testing.T) {
+	cases := map[string]bool{
+		HealthCheckPath:              true,
+		UserInfoPath:                 true,
+		LLMProvidersPath:             true,
+		LLMModelsPath:                true,
+		"/api/v1/auth/login":         true,
+		"/api/v1/auth/logout":        true,
+		"/api/v1/auth/oidc/start":    true,
+		"/api/v1/auth/oidc/callback": true,
+		"/api/v1/capabilities":       true,
+		"/api/v1/connections":        false,
+		"/api/v1/auth":               false,
+		"":                           false,
+	}
+	for path, want := range cases {
+		if got := IsPublicPath(path); got != want {
+			t.Errorf("IsPublicPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// TestAuthMiddlewareMatchesAuthenticateRequestContext is the convergence
+// guard: whatever AuthMiddleware puts in the request context must be
+// exactly what a direct AuthenticateRequest call would have produced, for
+// both credential kinds.
+func TestAuthMiddlewareMatchesAuthenticateRequestContext(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("convuser", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	apiToken, _, err := store.CreateToken("convuser", "conv token", nil)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+	sessionToken, _, err := store.AuthenticateUser("convuser", "Testpass1234")
+	if err != nil {
+		t.Fatalf("failed to authenticate: %v", err)
+	}
+
+	keys := []contextKey{
+		TokenHashContextKey, UsernameContextKey, UserIDContextKey,
+		IsSuperuserContextKey, IsAPITokenContextKey, TokenIDContextKey,
+	}
+
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		{"api token", apiToken},
+		{"session token", sessionToken},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fromMiddleware context.Context
+			handler := AuthMiddleware(store, true)(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					fromMiddleware = r.Context()
+				}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if fromMiddleware == nil {
+				t.Fatal("middleware did not reach the wrapped handler")
+			}
+
+			direct, err := AuthenticateRequest(req, store)
+			if err != nil {
+				t.Fatalf("AuthenticateRequest: %v", err)
+			}
+
+			for _, key := range keys {
+				if fromMiddleware.Value(key) != direct.Value(key) {
+					t.Errorf("context key %q differs: middleware %v, direct %v",
+						key, fromMiddleware.Value(key), direct.Value(key))
+				}
+			}
+		})
+	}
+}
+
+// TestAuthMiddlewareSetsUsernameForAPITokens records the deliberate
+// behavior change from the convergence: an API token call now carries its
+// owner's username, where previously the middleware left it unset.
+func TestAuthMiddlewareSetsUsernameForAPITokens(t *testing.T) {
+	store, cleanup := createTestAuthStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("ownername", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	apiToken, stored, err := store.CreateToken("ownername", "token", nil)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	var seen context.Context
+	handler := AuthMiddleware(store, true)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			seen = r.Context()
+		}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := GetUsernameFromContext(seen); got != "ownername" {
+		t.Errorf("username = %q, want %q", got, "ownername")
+	}
+	if got := GetTokenIDFromContext(seen); got != stored.ID {
+		t.Errorf("token ID = %d, want %d", got, stored.ID)
+	}
+	if !IsAPITokenFromContext(seen) {
+		t.Error("IsAPITokenFromContext = false, want true")
+	}
 }

@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1567,13 +1568,56 @@ http:
 	}
 }
 
+// TestOIDCClientSecretFileMissingFails covers the read-failure return in
+// loadAPIKeysFromFiles: a client_secret_file that does not exist must
+// fail LoadConfig rather than silently leaving the client secret empty.
+func TestOIDCClientSecretFileMissingFails(t *testing.T) {
+	path := writeTempConfig(t, `
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret_file: /nonexistent/oidc-secret
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`)
+	if _, err := LoadConfig(path, CLIFlags{}); err == nil {
+		t.Fatal("expected LoadConfig to fail for a missing client_secret_file")
+	}
+}
+
+// TestOIDCClientSecretFileEmptyFails covers the same return for a
+// client_secret_file that exists but is empty; fileutil.ReadSecretFile
+// itself rejects an empty/whitespace-only file.
+func TestOIDCClientSecretFileEmptyFails(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "oidc-secret")
+	if err := os.WriteFile(secretPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	path := writeTempConfig(t, fmt.Sprintf(`
+http:
+  auth:
+    oidc:
+      enabled: true
+      issuer: https://idp.example.com
+      client_id: workbench
+      client_secret_file: %s
+      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
+`, secretPath))
+	if _, err := LoadConfig(path, CLIFlags{}); err == nil {
+		t.Fatal("expected LoadConfig to fail for an empty client_secret_file")
+	}
+}
+
 func TestValidateConfigRejectsIncompleteOIDC(t *testing.T) {
 	cases := map[string]OIDCConfig{
-		"no issuer":        {Enabled: true, ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
-		"no client id":     {Enabled: true, Issuer: "https://i.example.com", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
-		"no secret":        {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", RedirectURL: "https://w.example.com/cb"},
-		"no redirect":      {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s"},
-		"plaintext issuer": {Enabled: true, Issuer: "http://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no issuer":         {Enabled: true, ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no client id":      {Enabled: true, Issuer: "https://i.example.com", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no secret":         {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", RedirectURL: "https://w.example.com/cb"},
+		"no redirect":       {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s"},
+		"plaintext issuer":  {Enabled: true, Issuer: "http://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"relative redirect": {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "/callback"},
 	}
 	for name, oidc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1691,6 +1735,31 @@ func TestMergeConfigOIDCFields(t *testing.T) {
 	}
 }
 
+// TestMergeConfigOIDCFieldsPreservesDefaultsWhenSourceEmpty is the other
+// direction of TestMergeConfigOIDCFields: a source config with no OIDC
+// block at all must leave the defaultConfig() OIDC defaults (scopes,
+// username claim, button label) untouched, the same way
+// TestLocalAuthEnabledMergesOnlyWhenSet checks for Local.Enabled.
+func TestMergeConfigOIDCFieldsPreservesDefaultsWhenSourceEmpty(t *testing.T) {
+	dest := defaultConfig()
+	wantScopes := append([]string(nil), dest.HTTP.Auth.OIDC.Scopes...)
+	wantUsernameClaim := dest.HTTP.Auth.OIDC.UsernameClaim
+	wantButtonLabel := dest.HTTP.Auth.OIDC.ButtonLabel
+
+	src := &Config{}
+	mergeConfig(dest, src)
+
+	if !reflect.DeepEqual(dest.HTTP.Auth.OIDC.Scopes, wantScopes) {
+		t.Fatalf("Scopes = %v, want default %v", dest.HTTP.Auth.OIDC.Scopes, wantScopes)
+	}
+	if dest.HTTP.Auth.OIDC.UsernameClaim != wantUsernameClaim {
+		t.Fatalf("UsernameClaim = %q, want default %q", dest.HTTP.Auth.OIDC.UsernameClaim, wantUsernameClaim)
+	}
+	if dest.HTTP.Auth.OIDC.ButtonLabel != wantButtonLabel {
+		t.Fatalf("ButtonLabel = %q, want default %q", dest.HTTP.Auth.OIDC.ButtonLabel, wantButtonLabel)
+	}
+}
+
 // TestLocalAuthEnabledMergesOnlyWhenSet verifies mergeConfig only
 // overrides Local.Enabled when the source pointer is non-nil, and leaves
 // dest untouched (still nil, i.e. defaulting to true) otherwise.
@@ -1719,7 +1788,68 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 	newCfg.HTTP.Auth.OIDC.ClientID = "workbench"
 	newCfg.HTTP.Auth.OIDC.ClientSecret = "s3cret"
 	newCfg.HTTP.Auth.OIDC.RedirectURL = "https://workbench.example.com/api/v1/auth/oidc/callback"
+	newCfg.HTTP.Auth.OIDC.UsernameClaim = "preferred_username"
+	newCfg.HTTP.Auth.OIDC.DisplayNameClaim = "display_name"
+	newCfg.HTTP.Auth.OIDC.GroupsClaim = "roles"
+	newCfg.HTTP.Auth.OIDC.Scopes = []string{"openid"}
+	newCfg.HTTP.Auth.OIDC.ProvisionUsers = true
+	newCfg.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"example.com"}
+	newCfg.HTTP.Auth.OIDC.SuperuserGroup = "admins"
+	newCfg.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "admins"}
 
 	rc := &ReloadableConfig{config: oldCfg}
-	rc.logRestartRequiredSettings(newCfg)
+
+	out := captureStderr(t, func() {
+		rc.logRestartRequiredSettings(newCfg)
+	})
+
+	wantWarnings := []string{
+		"WARNING: http.auth.oidc.enabled changed - requires restart",
+		"WARNING: http.auth.oidc.issuer changed - requires restart",
+		"WARNING: http.auth.oidc.client_id changed - requires restart",
+		"WARNING: http.auth.oidc.client_secret changed - requires restart",
+		"WARNING: http.auth.oidc.redirect_url changed - requires restart",
+	}
+	wantNotes := []string{
+		"NOTE: http.auth.oidc.username_claim changed to preferred_username",
+		"NOTE: http.auth.oidc.display_name_claim changed to display_name",
+		"NOTE: http.auth.oidc.groups_claim changed to roles",
+		"NOTE: http.auth.oidc.scopes changed to [openid]",
+		"NOTE: http.auth.oidc.provision_users changed to true",
+		"NOTE: http.auth.oidc.allowed_email_domains changed to [example.com]",
+		"NOTE: http.auth.oidc.superuser_group changed to admins",
+		"NOTE: http.auth.oidc.group_map changed to map[idp-admins:admins]",
+	}
+	for _, want := range append(wantWarnings, wantNotes...) {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected stderr to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it, so a test can assert on the exact log lines
+// logRestartRequiredSettings produces rather than merely that it did not
+// panic.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	original := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = original }()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stderr: %v", err)
+	}
+	return string(data)
 }

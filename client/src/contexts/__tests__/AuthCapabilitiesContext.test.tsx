@@ -136,34 +136,49 @@ describe('AuthCapabilitiesContext', () => {
         expect(result.current.oidcLabel).toBe('');
     });
 
-    it('treats a 4xx as a server that predates the endpoint', async () => {
-        mockApiGet.mockRejectedValue(new ApiError('Not Found', 404));
+    it.each([404, 410])(
+        'treats a %d as a server that predates the endpoint',
+        async (status) => {
+            mockApiGet.mockRejectedValue(new ApiError('Gone', status));
 
-        const { result } = renderHook(() => useAuthCapabilities(), { wrapper });
+            const { result } = renderHook(() => useAuthCapabilities(), {
+                wrapper,
+            });
 
-        await waitFor(() => {
-            expect(result.current.loading).toBe(false);
-        });
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
 
-        // An answer, not a silence: local only, and no retry, because
-        // the same 404 would come back.
-        expect(result.current.localEnabled).toBe(true);
-        expect(result.current.oidcEnabled).toBe(false);
-        expect(mockApiGet).toHaveBeenCalledTimes(1);
-    });
+            // An answer, not a silence: local only, and no retry,
+            // because the same status would come back.
+            expect(result.current.localEnabled).toBe(true);
+            expect(result.current.oidcEnabled).toBe(false);
+            expect(mockApiGet).toHaveBeenCalledTimes(1);
+        },
+    );
 
-    it('treats a 5xx as no answer at all', async () => {
-        mockApiGet.mockRejectedValue(new ApiError('Server Error', 503));
+    it.each([403, 408, 429, 503])(
+        'treats a %d as no answer at all',
+        async (status) => {
+            // Only the server can say the endpoint is absent. These
+            // come from something in between, and a 408 is literally
+            // the timeout the unknown state exists for, so hiding the
+            // provider button on one would be the dead end this
+            // fallback avoids.
+            mockApiGet.mockRejectedValue(new ApiError('Refused', status));
 
-        const { result } = renderHook(() => useAuthCapabilities(), { wrapper });
+            const { result } = renderHook(() => useAuthCapabilities(), {
+                wrapper,
+            });
 
-        await waitFor(() => {
-            expect(result.current.loading).toBe(false);
-        });
+            await waitFor(() => {
+                expect(result.current.loading).toBe(false);
+            });
 
-        expect(result.current.oidcEnabled).toBe(true);
-        expect(mockApiGet).toHaveBeenCalledTimes(2);
-    });
+            expect(result.current.oidcEnabled).toBe(true);
+            expect(mockApiGet).toHaveBeenCalledTimes(2);
+        },
+    );
 
     it('keeps the capabilities probe out of the health accounting', async () => {
         mockApiGet.mockResolvedValueOnce({ auth: {} });

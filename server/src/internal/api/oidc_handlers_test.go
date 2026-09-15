@@ -1331,6 +1331,34 @@ func TestRegisterRoutesServesBothEndpoints(t *testing.T) {
 	}
 }
 
+func TestRegisterDisabledStartRouteRedirectsAndLeavesTheCallbackAlone(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterDisabledStartRoute(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, OIDCStartPath, nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("start status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != providerFailedTarget {
+		t.Fatalf("start Location = %q, want %q", got, providerFailedTarget)
+	}
+
+	// Every method answers the same way, since the point is that a
+	// browser following the button lands somewhere usable.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, OIDCStartPath, nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("start POST status = %d, want %d", rec.Code, http.StatusFound)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, OIDCCallbackPath, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("callback status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
 func TestCloseIsSafeWithoutARateLimiter(t *testing.T) {
 	// Close must not panic on a hand-built handler, since that is how
 	// the pure-helper tests above construct one.

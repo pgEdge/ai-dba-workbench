@@ -43,12 +43,13 @@ const LEGACY_AUTH_CAPABILITIES: AuthCapabilities = {
  *
  * Guessing wrong is not free: the provider button is a full-page
  * navigation, so following one on a deployment with OIDC switched off
- * costs the login screen itself. The server answers that case with a
- * redirect back to /?login_error=provider, so the user lands on the
- * login screen with a message rather than on a browser error page,
- * which is what makes this the recoverable side of the trade. Hiding
- * the only method that would have worked is the unrecoverable side: a
- * dead end with nothing on screen to explain it.
+ * would cost the login screen itself. The server registers the start
+ * endpoint in every configuration for exactly this reason, and answers
+ * that case with a redirect back to /?login_error=provider, so the
+ * user lands on the login screen with a message rather than on a
+ * browser error page. That is what makes this the recoverable side of
+ * the trade; hiding the only method that would have worked is the
+ * unrecoverable side, a dead end with nothing on screen to explain it.
  *
  * The label is left empty so that the button falls back to the same
  * generic wording the server itself uses.
@@ -93,15 +94,28 @@ interface CapabilitiesResponse {
     auth?: AuthCapabilitiesResponse;
 }
 
-/**
- * Whether a rejection is the server refusing in the 4xx range, which
- * is an answer about the deployment, as opposed to a network failure,
- * a timeout or a 5xx, which say only that nothing got through.
+/*
+ * The statuses that say the endpoint is not there, as opposed to not
+ * reachable. A server predating this feature answers 404, and a 410
+ * would mean the same thing more emphatically.
+ *
+ * The list is short on purpose. The endpoint itself only ever answers
+ * 200 or 405, so everything else in the 4xx range comes from something
+ * in between: a 408 is literally the timeout case, and a 429 or a 403
+ * from an intermediary says nothing about what the server offers.
+ * Treating those as "no OIDC here" would hide a working provider
+ * button on a deployment where it is the only way in.
  */
-const isClientError = (error: unknown): boolean =>
-    error instanceof ApiError
-    && error.statusCode >= 400
-    && error.statusCode < 500;
+const ENDPOINT_ABSENT_STATUSES = new Set([404, 410]);
+
+/**
+ * Whether a rejection says the endpoint is absent, which is an answer
+ * about the deployment, as opposed to a network failure, a timeout, a
+ * 5xx or an intermediary's refusal, which say only that nothing got
+ * through.
+ */
+const isEndpointAbsent = (error: unknown): boolean =>
+    error instanceof ApiError && ENDPOINT_ABSENT_STATUSES.has(error.statusCode);
 
 /**
  * Map the server's `auth` block onto the client shape, defaulting every
@@ -198,14 +212,14 @@ export const AuthCapabilitiesProvider = ({
                         return;
                     }
                     /*
-                     * A 4xx is an answer, not a silence: a server old
-                     * enough to lack this endpoint answers 404, which
+                     * A 404 is an answer, not a silence: a server old
+                     * enough to lack this endpoint answers one, which
                      * says the same thing as a missing `auth` block.
                      * Retrying it would only produce the same 404, and
                      * treating it as unknown would offer a provider
                      * button that goes nowhere.
                      */
-                    if (isClientError(error)) {
+                    if (isEndpointAbsent(error)) {
                         finish(LEGACY_AUTH_CAPABILITIES);
                         return;
                     }

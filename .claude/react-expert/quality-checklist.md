@@ -223,9 +223,17 @@ LLM. The rules are as follows:
   custom range still lacks a bound, as `useConnectionGroups` does.
 
 - An idle bucket is null, never 0% and never 100%; a headline value
-  is the latest non-null bucket, shown as `--` when there is none.
-  Do not use `extractLatestValue` for a ratio, because its
-  non-zero scan would skip a genuine 0%.
+  is the latest non-null bucket of the ratio series, shown as `--`
+  when there is none. Build the per-bucket ratio first and read its
+  last non-null point; never scan for the numerator and the
+  denominator separately with `extractLatestValue`, because the two
+  scans stop at whichever bucket each series last filled and can
+  pair readings from different buckets. Nor may a missing side
+  default to 0 (`dead ?? 0`), which turns a gap into a reassuring
+  0.0% built from no data. The Database dashboard's Dead Tuple Ratio
+  and Transactions tiles both read `latestNonNull` over their paired
+  sparkline for this reason; a bucket whose counts are genuinely
+  both zero is still a real 0% and is reported as such.
 
 - Render a null headline in a neutral colour (`text.secondary`)
   rather than the critical red, and keep nulls in bar data so the

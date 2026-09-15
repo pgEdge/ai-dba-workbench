@@ -223,9 +223,12 @@ func TestRecordAuditSetsOccurredAt(t *testing.T) {
 		Scan(&stored); err != nil {
 		t.Fatalf("Failed to read occurred_at: %v", err)
 	}
-	if stored != backdated.UTC().Format(time.RFC3339Nano) {
+	if stored != backdated.UTC().Format(auditTimeLayout) {
 		t.Errorf("Expected stored timestamp %q, got %q",
-			backdated.UTC().Format(time.RFC3339Nano), stored)
+			backdated.UTC().Format(auditTimeLayout), stored)
+	}
+	if len(stored) != len(time.Now().UTC().Format(auditTimeLayout)) {
+		t.Errorf("Expected a fixed-width timestamp, got %q", stored)
 	}
 }
 
@@ -1051,5 +1054,137 @@ func TestNewAuthStoreReportsV4MigrationFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "v3 to v4") {
 		t.Errorf("Unexpected error text: %v", err)
+	}
+}
+
+func TestAuditSchemaVersionOnFreshInstall(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	var version int
+	if err := store.db.QueryRow(
+		"SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
+		t.Fatalf("Failed to read schema version: %v", err)
+	}
+	if version != schemaVersion {
+		t.Errorf("Expected schema version %d, got %d", schemaVersion, version)
+	}
+	if schemaVersion != 4 {
+		t.Errorf("Expected schemaVersion 4, got %d", schemaVersion)
+	}
+
+	// The audit table and its append-only trigger are part of the
+	// fresh-install schema, not only of the v3 to v4 migration.
+	for _, want := range []struct{ kind, name string }{
+		{"table", "audit_events"},
+		{"trigger", "audit_events_no_update"},
+	} {
+		var name string
+		if err := store.db.QueryRow(
+			"SELECT name FROM sqlite_master WHERE type = ? AND name = ?",
+			want.kind, want.name).Scan(&name); err != nil {
+			t.Errorf("%s %s missing on a fresh install: %v",
+				want.kind, want.name, err)
+		}
+	}
+}
+
+func TestListAuditEventsSubSecondTimeRange(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	// Timestamps either side of a whole second. time.RFC3339Nano would
+	// render the whole second as "...T10:00:00Z" and the fractional
+	// ones as "...T10:00:00.4Z", which compare in the wrong order
+	// because '.' sorts before 'Z'; the fixed-width auditTimeLayout
+	// keeps string comparison in timestamp order.
+	base := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	stamps := []time.Time{
+		base.Add(-100 * time.Millisecond),
+		base,
+		base.Add(400 * time.Millisecond),
+		base.Add(1500 * time.Millisecond),
+	}
+	for i, at := range stamps {
+		ev := newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil)
+		ev.OccurredAt = at
+		mustRecord(t, store, ev)
+	}
+
+	since := base
+	until := base.Add(500 * time.Millisecond)
+	events, total, err := store.ListAuditEvents(
+		AuditFilter{Since: &since, Until: &until})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("Expected 2 events in range, got total=%d len=%d",
+			total, len(events))
+	}
+	for _, ev := range events {
+		if ev.OccurredAt.Before(since) || ev.OccurredAt.After(until) {
+			t.Errorf("Event at %v is outside the requested range", ev.OccurredAt)
+		}
+	}
+}
+
+func TestPurgeAuditEventsSubSecondCutoff(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	base := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	for i, at := range []time.Time{
+		base.Add(-400 * time.Millisecond),
+		base,
+		base.Add(400 * time.Millisecond),
+	} {
+		ev := newEvent(systemActor, "user.create", "user",
+			int64Ptr(int64(i+1)), "alice", nil)
+		ev.OccurredAt = at
+		mustRecord(t, store, ev)
+	}
+
+	removed, err := store.PurgeAuditEvents(base)
+	if err != nil {
+		t.Fatalf("PurgeAuditEvents failed: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("Expected 1 row removed, got %d", removed)
+	}
+
+	events, _, err := store.ListAuditEvents(AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 remaining events, got %d", len(events))
+	}
+	for _, ev := range events {
+		if ev.OccurredAt.Before(base) {
+			t.Errorf("Event at %v should have been purged", ev.OccurredAt)
+		}
+	}
+}
+
+func TestRecordAuditKeepsCallerActorName(t *testing.T) {
+	store, cleanup := createTestAuthStoreForAudit(t)
+	defer cleanup()
+
+	// An event with a name but no type keeps the name and only has the
+	// type defaulted.
+	mustRecord(t, store, &AuditEvent{Action: "user.create",
+		ActorName: "bootstrap"})
+
+	events, _, err := store.ListAuditEvents(AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if events[0].ActorType != ActorSystem {
+		t.Errorf("Expected actor type system, got %q", events[0].ActorType)
+	}
+	if events[0].ActorName != "bootstrap" {
+		t.Errorf("Expected the caller's actor name, got %q", events[0].ActorName)
 	}
 }

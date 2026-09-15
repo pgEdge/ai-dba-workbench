@@ -66,7 +66,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 3
+	schemaVersion = 4
 )
 
 // AuthStore manages users and tokens in SQLite

@@ -55,6 +55,15 @@ const auditSchemaDDL = `
     END;
 `
 
+// auditTimeLayout is the on-disk format for occurred_at. It is
+// RFC 3339 with a fixed nine-digit fraction, rather than
+// time.RFC3339Nano, because RFC3339Nano strips trailing zeros from the
+// fraction and so produces variable-length strings: "T10:00:00Z" and
+// "T10:00:00.4Z" then compare in the wrong order, since '.' sorts
+// before 'Z'. Every timestamp comparison in this file is a string
+// comparison against stored text, so the width must be constant.
+const auditTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
 const (
 	// defaultAuditLimit is the page size used when a caller does not
 	// ask for one.
@@ -206,7 +215,7 @@ func auditIDString(id *int64) string {
 func auditHash(ev *AuditEvent) string {
 	canonical := strings.Join([]string{
 		ev.PrevHash,
-		ev.OccurredAt.UTC().Format(time.RFC3339Nano),
+		ev.OccurredAt.UTC().Format(auditTimeLayout),
 		string(ev.ActorType),
 		auditIDString(ev.ActorID),
 		ev.ActorName,
@@ -238,10 +247,10 @@ func nullableText(v string) any {
 // change it records. The caller must hold s.mu for writing: the chain
 // is linear only because the read of the last hash and the insert of
 // the new row happen under a single writer. A zero OccurredAt is set to
-// the current UTC time; a non-zero one is kept as given and stored as
-// RFC 3339 nanosecond UTC text, which sorts lexically in timestamp
-// order. On success the event's ID, PrevHash, OccurredAt and Hash
-// fields are populated.
+// the current UTC time; a non-zero one is kept as given. The timestamp
+// is stored in auditTimeLayout, a fixed-width RFC 3339 UTC rendering
+// that sorts lexically in timestamp order. On success the event's ID,
+// PrevHash, OccurredAt and Hash fields are populated.
 func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	if ev == nil {
 		return errors.New("audit event is nil")
@@ -262,7 +271,9 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 	}
 	if ev.ActorType == "" {
 		ev.ActorType = systemActor.Type
-		ev.ActorName = systemActor.Name
+		if ev.ActorName == "" {
+			ev.ActorName = systemActor.Name
+		}
 	}
 	ev.PrevHash = prevHash
 	ev.Hash = auditHash(ev)
@@ -273,7 +284,7 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
             action, target_type, target_id, target_name, outcome,
             error, details, prev_hash, hash
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ev.OccurredAt.UTC().Format(time.RFC3339Nano),
+		ev.OccurredAt.UTC().Format(auditTimeLayout),
 		string(ev.ActorType),
 		ev.ActorID,
 		ev.ActorName,
@@ -302,7 +313,10 @@ func (s *AuthStore) recordAudit(tx *sql.Tx, ev *AuditEvent) error {
 // recordFailure records a failed mutation in its own short transaction,
 // because the transaction carrying the mutation has been rolled back by
 // the time the failure is known. The caller must hold s.mu, so this
-// helper takes no lock of its own. Errors are logged rather than
+// helper takes no lock of its own, and must already have committed or
+// rolled back its own transaction: SQLite allows one writer at a time,
+// so a still-open write transaction leaves this second one blocked for
+// the connection's five-second busy timeout and the event is then lost. Errors are logged rather than
 // returned: an audit failure must never mask the mutation error the
 // caller is about to report.
 func (s *AuthStore) recordFailure(actor Actor, action, targetType string,
@@ -411,11 +425,11 @@ func auditWhere(f AuditFilter) (string, []any) {
 	}
 	if f.Since != nil {
 		clauses = append(clauses, "occurred_at >= ?")
-		args = append(args, f.Since.UTC().Format(time.RFC3339Nano))
+		args = append(args, f.Since.UTC().Format(auditTimeLayout))
 	}
 	if f.Until != nil {
 		clauses = append(clauses, "occurred_at <= ?")
-		args = append(args, f.Until.UTC().Format(time.RFC3339Nano))
+		args = append(args, f.Until.UTC().Format(auditTimeLayout))
 	}
 
 	if len(clauses) == 0 {
@@ -444,6 +458,8 @@ func scanAuditEvent(scan func(dest ...any) error) (AuditEvent, error) {
 		return ev, err
 	}
 
+	// RFC3339Nano parses any fraction width, so it reads back both the
+	// fixed-width text this package writes and any hand-written row.
 	parsed, err := time.Parse(time.RFC3339Nano, occurredAt)
 	if err != nil {
 		return ev, fmt.Errorf("invalid occurred_at %q on audit row %d: %w",
@@ -517,8 +533,9 @@ func (s *AuthStore) ListAuditEvents(f AuditFilter) ([]AuditEvent, int, error) {
 // links to its predecessor, returning the number of rows examined and
 // the id of the first row that fails. The first remaining row's
 // prev_hash is accepted as given, because the retention purge may have
-// removed the row it points at. A firstBad of 0 with a nil error means
-// the chain is intact.
+// removed the row it points at. Callers must check the error first: a
+// firstBad of 0 means the chain is intact only when err is nil, because
+// a scan or iteration failure also reports firstBad 0.
 func (s *AuthStore) VerifyAuditChain() (int, int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -567,7 +584,7 @@ func (s *AuthStore) PurgeAuditEvents(olderThan time.Time) (int64, error) {
 	defer s.mu.Unlock()
 
 	result, err := s.db.Exec("DELETE FROM audit_events WHERE occurred_at < ?",
-		olderThan.UTC().Format(time.RFC3339Nano))
+		olderThan.UTC().Format(auditTimeLayout))
 	if err != nil {
 		return 0, fmt.Errorf("failed to purge audit events: %w", err)
 	}

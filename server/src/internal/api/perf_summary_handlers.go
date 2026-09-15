@@ -1268,6 +1268,41 @@ const (
 	defaultTopQueryOrder   = "desc"
 )
 
+// maxTopQueriesTimeSpan caps the window this endpoint will aggregate
+// over. It is deliberately tighter than metrics.MaxCustomTimeSpan, which
+// stays at 366 days for /metrics/query, where the bucket width is derived
+// from the span and so the work stays bounded however long the window is.
+// Nothing damps the cost here: the aggregation is linear in the window and
+// the whole CTE runs twice per request, once for the count and once for the
+// page, against a datastore pool with only a handful of connections and no
+// statement_timeout, so an unbounded window is a cheap authenticated
+// denial of service.
+//
+// Thirty days is the largest preset in metrics.ValidTimeRanges, so it is
+// the longest window the web client can ask for, and it is the shape
+// idx_pg_stat_statements_object (migration 12) was benchmarked against.
+// Anyone raising this figure needs to re-measure the aggregation at the new
+// span, including the exclude_collector=true case, which cannot use the
+// index-only scan and so carries the query text through a sort.
+const maxTopQueriesTimeSpan = 30 * 24 * time.Hour
+
+// topQueriesTimeSpanError is the 400 message returned when a custom window
+// exceeds maxTopQueriesTimeSpan. The wording follows the span error from
+// metrics.ResolveCustomWindow so that the two read alike.
+const topQueriesTimeSpanError = "invalid time range: span must not exceed 30 days"
+
+// checkTopQueriesTimeSpan reports whether an already-resolved window is
+// short enough for this endpoint to aggregate. It is applied per endpoint,
+// immediately after metrics.ResolveTimeWindow returns, rather than by
+// tightening the shared constant, because the other endpoints that resolve
+// a custom window legitimately need the full 366 days.
+func checkTopQueriesTimeSpan(window metrics.TimeWindow) error {
+	if window.End.Sub(window.Start) > maxTopQueriesTimeSpan {
+		return errors.New(topQueriesTimeSpanError)
+	}
+	return nil
+}
+
 // safeTopQueryOrdering maps an already-resolved ORDER BY column and
 // direction on to a pair that is safe to interpolate into SQL,
 // substituting the defaults for anything not produced by the
@@ -1791,6 +1826,13 @@ func (h *PerfSummaryHandler) handleTopQueries(
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The shared 366-day cap is far too generous for an aggregation whose
+	// cost is linear in the window; see maxTopQueriesTimeSpan. Presets are
+	// unaffected, because the longest of them is exactly 30 days.
+	if err := checkTopQueriesTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1814,15 +1856,13 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	var totalCount int64
 	if err := tx.QueryRow(ctx, countQuery, filterArgs...).Scan(
 		&totalCount); err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		respondEmptyTopQueries(w)
+		respondTopQueriesError(w, connID, err)
 		return
 	}
 
 	rows, err := tx.Query(ctx, query, pageArgs...)
 	if err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		respondEmptyTopQueries(w)
+		respondTopQueriesError(w, connID, err)
 		return
 	}
 	defer rows.Close()
@@ -1879,12 +1919,31 @@ const headerTotalCount = "X-Total-Count"
 const nameLookupWindowSQL = "1 hour"
 
 // respondEmptyTopQueries returns the empty top-queries result used when the
-// underlying metrics tables are missing or the query fails. The endpoint
-// treats missing metrics data as "no rows" rather than an error, so the
-// total count is reported as zero.
+// underlying metrics tables are missing. The endpoint treats an absent
+// metrics schema as "no rows" rather than an error, so the total count is
+// reported as zero.
 func respondEmptyTopQueries(w http.ResponseWriter) {
 	w.Header().Set(headerTotalCount, "0")
 	RespondJSON(w, http.StatusOK, []TopQueryRow{})
+}
+
+// respondTopQueriesError turns a failure from either half of the
+// top-queries aggregation into a response. Only a missing metrics schema
+// is reported as an empty result, matching handleQueryStats: a workbench
+// whose collector has never run should render an empty panel rather than a
+// failure. Every other failure, and a statement timeout on this windowed
+// aggregation is a realistic one, is reported as a 500 and logged at
+// [ERROR], so that an operator can see a timeout storm instead of reading
+// it as a quiet stretch with no query activity.
+func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
+	if isUndefinedTableError(err) {
+		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		respondEmptyTopQueries(w)
+		return
+	}
+	log.Printf("[ERROR] Failed to query top queries for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+	RespondError(w, http.StatusInternalServerError,
+		"Failed to query top queries")
 }
 
 // queryStatsSQLTemplate computes the period-scoped statistics for a single

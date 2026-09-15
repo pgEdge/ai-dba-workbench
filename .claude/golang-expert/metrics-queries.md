@@ -1080,6 +1080,20 @@ guard, not a nicety: `BuildMetricsQuery` derives the bucket width from
 the span, so an unbounded window turns one request into an arbitrarily
 large scan.
 
+That shared cap is calibrated for `/metrics/query`, where the bucket
+width absorbs a longer span; it is far too generous for an endpoint
+whose cost is linear in the window. `/metrics/top-queries` therefore
+applies its own `maxTopQueriesTimeSpan` of 30 days, in
+`checkTopQueriesTimeSpan` (`perf_summary_handlers.go`), immediately
+after `ResolveTimeWindow` returns and before any SQL is built, because
+the aggregation runs twice per request and has no statement timeout
+behind it. Thirty days is the longest preset in `ValidTimeRanges` and
+the window shape `idx_pg_stat_statements_object` was benchmarked
+against, so raising it means re-measuring, in particular the
+`exclude_collector=true` path that cannot use the index-only scan. Add
+such a cap per endpoint rather than by tightening `MaxCustomTimeSpan`,
+which the other endpoints legitimately need at 366 days.
+
 The rules are shared, not metrics-only. `GET /api/v1/timeline/events`
 takes absolute `start_time` and `end_time` values; `resolveTimelineWindow`
 in `server/src/internal/api/timeline_handlers.go` parses them with
@@ -1121,7 +1135,9 @@ the window. `/metrics/query` and `/metrics/latest` always carry the
 database name; `/metrics/query-stats` takes an optional `database_name`
 parameter, which the drill-down always sends, and `buildQueryStatsSQL`
 binds it as an extra predicate so that the object index applies.
-`/metrics/top-queries` reads the identity index described below instead.
+`/metrics/top-queries` reads the identity index described below for the
+aggregation itself, and the object index for the per-row query-text
+lateral on its page statement.
 
 ## The Three Indexes on metrics.pg_stat_statements (collector)
 

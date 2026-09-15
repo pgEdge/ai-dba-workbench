@@ -3666,7 +3666,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 							"collector probe queries and the collector's "+
 							"and alerter's own datastore queries"),
 					queryParamString("time_range",
-						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end"),
+						"Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days"),
 					queryParamString("time_start",
 						"Window start as an RFC 3339 timestamp; required when time_range is custom"),
 					queryParamString("time_end",
@@ -3678,6 +3678,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"400": jsonResponse("ErrorResponse", "Invalid parameters"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
 					"403": jsonResponse("ErrorResponse", "Permission denied"),
+					"500": jsonResponse("ErrorResponse", "Failed to query top queries"),
 				},
 			},
 		},

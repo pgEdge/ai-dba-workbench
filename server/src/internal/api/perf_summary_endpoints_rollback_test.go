@@ -15,12 +15,14 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/server/internal/database"
+	"github.com/pgedge/ai-workbench/server/internal/metrics"
 )
 
 // perfEndpointTestSchema installs the metrics tables read by the three
@@ -739,9 +741,11 @@ func TestHandleTopQueries_MissingTableReturnsEmptyList(t *testing.T) {
 
 // TestHandleTopQueries_SkipsUnscannableRows covers the per-row scan
 // failure branch, which must skip the offending row and still answer with
-// the rows it could read. Widening a numeric column to text and storing a
+// the rows it could read. min_exec_time is passed through the aggregation
+// untouched rather than summed, so widening it to text and storing a
 // non-numeric value reproduces the type mismatch that branch defends
-// against.
+// against whilst leaving the statements themselves executable: the count
+// still reports the row, and only the scan into MinExecTime fails.
 func TestHandleTopQueries_SkipsUnscannableRows(t *testing.T) {
 	h, pool, cleanup := newPerfEndpointTestHandler(t)
 	defer cleanup()
@@ -749,15 +753,20 @@ func TestHandleTopQueries_SkipsUnscannableRows(t *testing.T) {
 	ctx := context.Background()
 	const connID = 4107
 	if _, err := pool.Exec(ctx,
-		`ALTER TABLE metrics.pg_stat_statements ALTER COLUMN calls TYPE text`); err != nil {
-		t.Fatalf("Failed to alter calls column: %v", err)
+		`ALTER TABLE metrics.pg_stat_statements
+             ALTER COLUMN min_exec_time TYPE text`); err != nil {
+		t.Fatalf("Failed to alter min_exec_time column: %v", err)
 	}
+	now := time.Now().UTC()
 	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_statements
         (connection_id, collected_at, queryid, dbid, database_name, query,
-         calls, total_exec_time, mean_exec_time, rows, shared_blks_hit,
-         shared_blks_read)
-        VALUES ($1, $2, 444, 16384, 'appdb', 'SELECT 1', 'not-a-number',
-                1, 1, 1, 1, 1)`, connID, time.Now().UTC()); err != nil {
+         calls, total_exec_time, mean_exec_time, min_exec_time, max_exec_time,
+         rows, shared_blks_hit, shared_blks_read)
+        VALUES ($1, $2, 444, 16384, 'appdb', 'SELECT 1', 1, 1, 1,
+                'not-a-number', 1, 1, 1, 1),
+               ($1, $3, 444, 16384, 'appdb', 'SELECT 1', 9, 90, 10,
+                'not-a-number', 1, 9, 9, 9)`,
+		connID, now.Add(-5*time.Minute), now); err != nil {
 		t.Fatalf("seed exec failed: %v", err)
 	}
 
@@ -771,8 +780,175 @@ func TestHandleTopQueries_SkipsUnscannableRows(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %q)",
 			rec.Code, http.StatusOK, rec.Body.String())
 	}
+	if got := rec.Header().Get(headerTotalCount); got != "1" {
+		t.Errorf("X-Total-Count = %q, want \"1\" (the row counts even though it cannot be scanned)", got)
+	}
 	if rows := decodeRollbackTopQueries(t, rec); len(rows) != 0 {
 		t.Errorf("rows = %+v, want the unscannable row skipped", rows)
+	}
+}
+
+// TestHandleTopQueries_QueryFailureReportsError covers the other half of
+// the failure split added for issue #387: a failure that is not a missing
+// metrics table, such as the statement timeout this windowed aggregation
+// can now realistically hit, must be reported as a 500 rather than
+// disguised as an empty result. Widening calls to text breaks the summed
+// delta in the aggregation itself, so both the count and the page
+// statement fail with a type error rather than SQLSTATE 42P01.
+func TestHandleTopQueries_QueryFailureReportsError(t *testing.T) {
+	h, pool, cleanup := newPerfEndpointTestHandler(t)
+	defer cleanup()
+
+	if _, err := pool.Exec(context.Background(),
+		`ALTER TABLE metrics.pg_stat_statements ALTER COLUMN calls TYPE text`); err != nil {
+		t.Fatalf("Failed to alter calls column: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/top-queries?connection_id=4107", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleTopQueries(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d (body %q)",
+			rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if got := decodeError(t, rec).Error; got != "Failed to query top queries" {
+		t.Errorf("error = %q, want %q", got, "Failed to query top queries")
+	}
+}
+
+// TestHandleTopQueries_RejectsOverlongWindow covers the per-endpoint span
+// cap added for issue #387. The shared resolver allows 366 days, which is
+// far more than this aggregation can afford, so the handler applies
+// maxTopQueriesTimeSpan of its own on top.
+func TestHandleTopQueries_RejectsOverlongWindow(t *testing.T) {
+	h, pool, cleanup := newPerfEndpointTestHandler(t)
+	defer cleanup()
+
+	const connID = 4105
+	seedTopQueries(t, pool, connID)
+
+	now := time.Now().UTC()
+	customURL := func(start, end time.Time) string {
+		return "/api/v1/metrics/top-queries?connection_id=4105" +
+			"&time_range=custom&time_start=" +
+			url.QueryEscape(start.Format(time.RFC3339)) +
+			"&time_end=" + url.QueryEscape(end.Format(time.RFC3339))
+	}
+
+	t.Run("just inside the cap is accepted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxTopQueriesTimeSpan+time.Minute), now), nil)
+		rec := httptest.NewRecorder()
+
+		h.handleTopQueries(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d (body %q)",
+				rec.Code, http.StatusOK, rec.Body.String())
+		}
+	})
+
+	t.Run("just outside the cap is rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-maxTopQueriesTimeSpan-time.Minute), now), nil)
+		rec := httptest.NewRecorder()
+
+		h.handleTopQueries(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d (body %q)",
+				rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+		want := "invalid time range: span must not exceed 30 days"
+		if got := decodeError(t, rec).Error; got != want {
+			t.Errorf("error = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a span the shared resolver would allow is still rejected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			customURL(now.Add(-365*24*time.Hour), now), nil)
+		rec := httptest.NewRecorder()
+
+		h.handleTopQueries(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d (a 366-day span is fine for /metrics/query but not here)",
+				rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	// Every preset is at most 30 days long, so none of them can trip the
+	// cap; 30d sits exactly on the boundary and must still be accepted.
+	for _, preset := range []string{"1h", "6h", "24h", "7d", "30d"} {
+		t.Run("preset "+preset, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/v1/metrics/top-queries?connection_id=4105&time_range="+preset,
+				nil)
+			rec := httptest.NewRecorder()
+
+			h.handleTopQueries(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %q)",
+					rec.Code, http.StatusOK, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestCheckTopQueriesTimeSpan exercises the cap directly, including the
+// exact boundary, which the HTTP-level test cannot hit without racing the
+// clock between building the URL and resolving the window.
+func TestCheckTopQueriesTimeSpan(t *testing.T) {
+	end := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name    string
+		span    time.Duration
+		wantErr bool
+	}{
+		{name: "an hour", span: time.Hour},
+		{name: "exactly the cap", span: maxTopQueriesTimeSpan},
+		{name: "a second over the cap", span: maxTopQueriesTimeSpan + time.Second, wantErr: true},
+		{name: "the shared 366-day cap", span: metrics.MaxCustomTimeSpan, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkTopQueriesTimeSpan(metrics.TimeWindow{
+				Start: end.Add(-tc.span),
+				End:   end,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("checkTopQueriesTimeSpan(%v) = nil, want an error", tc.span)
+				}
+				if err.Error() != topQueriesTimeSpanError {
+					t.Errorf("error = %q, want %q", err.Error(), topQueriesTimeSpanError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("checkTopQueriesTimeSpan(%v) = %v, want nil", tc.span, err)
+			}
+		})
+	}
+}
+
+// TestValidTimeRangesFitTopQueriesCap locks in the relationship the cap is
+// justified by: maxTopQueriesTimeSpan is the longest preset, so tightening
+// it below one of them would start rejecting requests the web client makes
+// by default.
+func TestValidTimeRangesFitTopQueriesCap(t *testing.T) {
+	for name, span := range metrics.ValidTimeRanges {
+		if span > maxTopQueriesTimeSpan {
+			t.Errorf("preset %q spans %v, which exceeds maxTopQueriesTimeSpan of %v",
+				name, span, maxTopQueriesTimeSpan)
+		}
 	}
 }
 

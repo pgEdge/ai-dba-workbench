@@ -6305,7 +6305,7 @@
           {
             "name": "time_range",
             "in": "query",
-            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end",
+            "description": "Time range (1h, 6h, 24h, 7d, 30d, custom; default: 1h); custom requires time_start and time_end, and the span must not exceed 30 days",
             "schema": {
               "type": "string"
             }
@@ -6371,6 +6371,16 @@
           },
           "403": {
             "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to query top queries",
             "content": {
               "application/json": {
                 "schema": {

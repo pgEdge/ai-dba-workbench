@@ -49,10 +49,18 @@ const maxClaimValueLength = 256
 // cannot create a username that "-add-user" would have refused.
 //
 // The remaining values fail soft: a display name, email address or
-// group that is too long or carries control characters is dropped
+// group that is too long or carries a control character is dropped
 // rather than failing the login, because each of those is an input to a
 // later decision that is safe to make without it. Dropped groups are
 // counted on the Identity so that the caller can log the fact once.
+//
+// The two rules therefore differ by field. Every claim must be valid
+// UTF-8, within maxClaimValueLength and free of Unicode Cc characters
+// (C0, C1 and DEL). Only the username additionally has to satisfy
+// auth.ValidateUsername, which is what excludes Unicode Cf format
+// characters from it; a display name, email address or group name may
+// contain them, since a zero-width joiner is part of how some names are
+// legitimately spelled.
 func (p *Provider) identityFromClaims(issuer, subject string, claims map[string]any) (*Identity, error) {
 	username := stringClaim(claims, p.usernameClaim)
 	if username == "" {
@@ -96,16 +104,24 @@ func stringClaim(claims map[string]any, name string) string {
 
 // safeClaimValue trims value and returns it only if it is safe to carry
 // around in an Identity: valid UTF-8, no longer than
-// maxClaimValueLength runes, and free of control and format characters.
-// Anything else yields an empty string, which every caller treats as
-// "this claim was not usable".
+// maxClaimValueLength runes, and free of control characters. Anything
+// else yields an empty string, which every caller treats as "this claim
+// was not usable".
 //
-// Control characters (C0 and C1) are rejected because a newline or a
-// NUL in a display name is a log-injection and truncation hazard once
-// the value reaches the audit log or the user store. Format characters
-// (the Unicode Cf category) go with them: a zero-width joiner or a
-// right-to-left override renders as nothing, or as something other than
-// what it is, in a browser showing the name back to an administrator.
+// Control characters are the Unicode Cc category, which is C0
+// (including NUL), C1 and DEL. They are rejected for every claim,
+// because a newline or a NUL is a log-injection and truncation hazard
+// once the value reaches the audit log or the user store, and no real
+// name, address or group contains one.
+//
+// Format characters (the Unicode Cf category: zero-width joiners,
+// bidirectional overrides and the like) are deliberately NOT rejected
+// here. A zero-width joiner appears in genuinely legitimate names in
+// several scripts, a format character cannot inject a log line, and a
+// cosmetic field must never be the reason a login fails. The username
+// is the exception, and it is handled a layer up: identityFromClaims
+// puts it through auth.ValidateUsername, whose allowlist of letters,
+// digits and "_ . @ -" excludes format characters for its own reasons.
 func safeClaimValue(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || !utf8.ValidString(trimmed) {
@@ -115,7 +131,7 @@ func safeClaimValue(value string) string {
 		return ""
 	}
 	for _, r := range trimmed {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unicode.IsControl(r) {
 			return ""
 		}
 	}

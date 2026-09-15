@@ -21,11 +21,14 @@ import {
     Typography,
     Alert,
     Container,
+    Divider,
     keyframes,
     alpha,
 } from '@mui/material';
 import type { Theme } from '@mui/material/styles';
 import { useAuth } from '../contexts/useAuth';
+import { useAuthCapabilities } from '../contexts/useAuthCapabilities';
+import { navigateTo } from '../utils/navigation';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 import logoLight from '../assets/images/logo-light.png';
 
@@ -289,6 +292,24 @@ const getSubmitButtonSx = (theme: Theme) => ({
     },
 });
 
+const getOidcButtonSx = (theme: Theme) => ({
+    py: 1.5,
+    borderRadius: 1,
+    fontWeight: 600,
+    textTransform: 'none',
+    borderColor: theme.palette.primary.main,
+    color: theme.palette.primary.main,
+    '&:hover': {
+        borderColor: theme.palette.primary.dark,
+        backgroundColor: alpha(theme.palette.primary.main, 0.06),
+    },
+});
+
+const oidcDividerSx = {
+    my: 3,
+    color: 'text.secondary',
+};
+
 const footerCaptionSx = {
     color: 'grey.400',
 };
@@ -302,6 +323,29 @@ const copyrightSx = {
 
 // --- Component ---
 
+/*
+ * Where the browser is sent to begin a federated sign-in. The endpoint
+ * answers with a 302 to the identity provider, so this is a navigation
+ * rather than an API call and must not be fetched.
+ */
+const OIDC_START_URL = '/api/v1/auth/oidc/start';
+
+/*
+ * Shown when the server bounces the browser back to `/?login_error=...`
+ * because the exchange with the identity provider failed. The reason is
+ * deliberately vague: the detail is in the server log, and an
+ * unauthenticated caller has no business seeing it.
+ */
+const PROVIDER_ERROR_MESSAGE =
+    'Sign-in with your identity provider could not be completed. ' +
+    'Please try again, or contact your administrator.';
+
+/*
+ * The label to write on the federated sign-in button when the operator
+ * configured none and the server sent an empty string.
+ */
+const DEFAULT_OIDC_LABEL = 'Sign in with SSO';
+
 const Login = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -309,15 +353,44 @@ const Login = () => {
     const [warning, setWarning] = useState('');
     const [loading, setLoading] = useState(false);
     const { login } = useAuth();
+    const {
+        localEnabled,
+        oidcEnabled,
+        oidcLabel,
+        loading: capabilitiesLoading,
+    } = useAuthCapabilities();
 
-    // Check for disconnect message on mount
+    // Check for a disconnect message, and for a failed federated
+    // sign-in, on mount
     useEffect(() => {
         const disconnectMsg = sessionStorage.getItem('disconnectMessage');
         if (disconnectMsg) {
             setWarning(disconnectMsg);
             sessionStorage.removeItem('disconnectMessage');
         }
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('login_error')) {
+            setError(PROVIDER_ERROR_MESSAGE);
+
+            /*
+             * Drop the parameter once it has been read, so that a
+             * reload of the login screen does not resurrect a stale
+             * failure message.
+             */
+            params.delete('login_error');
+            const query = params.toString();
+            window.history.replaceState(
+                {},
+                '',
+                `${window.location.pathname}${query ? `?${query}` : ''}`,
+            );
+        }
     }, []);
+
+    const handleOidcLogin = () => {
+        navigateTo(OIDC_START_URL);
+    };
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -401,6 +474,33 @@ const Login = () => {
                             </Alert>
                         )}
 
+                        {!capabilitiesLoading && oidcEnabled && (
+                            <>
+                                <Button
+                                    fullWidth
+                                    variant="outlined"
+                                    size="large"
+                                    onClick={handleOidcLogin}
+                                    sx={getOidcButtonSx}
+                                    data-testid="login-oidc-button"
+                                >
+                                    {/*
+                                      * The label is operator-supplied
+                                      * text, so isolate it from the
+                                      * surrounding interface with
+                                      * <bdi> in case it carries a
+                                      * bidirectional control.
+                                      */}
+                                    <bdi>{oidcLabel || DEFAULT_OIDC_LABEL}</bdi>
+                                </Button>
+
+                                {localEnabled && (
+                                    <Divider sx={oidcDividerSx}>or</Divider>
+                                )}
+                            </>
+                        )}
+
+                        {!capabilitiesLoading && localEnabled && (
                         <form onSubmit={handleSubmit} noValidate>
                             <TextField
                                 fullWidth
@@ -452,12 +552,18 @@ const Login = () => {
                                 {loading ? 'Signing in...' : 'Sign In'}
                             </Button>
                         </form>
+                        )}
 
-                        <Box sx={{ mt: 3, textAlign: 'center' }}>
-                            <Typography variant="caption" sx={footerCaptionSx}>
-                                Contact your administrator to create an account
-                            </Typography>
-                        </Box>
+                        {!capabilitiesLoading && localEnabled && (
+                            <Box sx={{ mt: 3, textAlign: 'center' }}>
+                                <Typography
+                                    variant="caption"
+                                    sx={footerCaptionSx}
+                                >
+                                    Contact your administrator to create an account
+                                </Typography>
+                            </Box>
+                        )}
                     </CardContent>
                 </Card>
 

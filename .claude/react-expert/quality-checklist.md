@@ -394,6 +394,24 @@ whole exports object; React then throws error #130 when it renders.
 Vitest resolves the deep path natively, so unit tests pass and only
 `npm run build` plus a browser session shows the failure.
 
+## Bidirectional Isolation for Server-Supplied Names
+
+Wrap any display name or email that the server may have taken from an
+identity provider in `<bdi>` (or set `unicode-bidi: isolate` on the
+element that holds it). The server is byte-transparent for these
+values: it rejects control characters but permits the Unicode format
+category, because a zero-width joiner is part of legitimate names in
+several scripts, so the value can carry a bidirectional override such
+as U+202E and reorder the interface text around it. React's JSX
+escaping does not help, since no markup is involved and the
+characters are ordinary text being rendered as instructed. The sites
+that do this today are the display name and email columns in
+`components/AdminPanel/AdminUsers.tsx`, and the federated sign-in
+button label in `components/Login.tsx`. The authenticated `User`
+object carries only `username`, which the server constrains, so the
+header needs no isolation; add `<bdi>` at any new site that renders a
+provider-supplied string.
+
 ## LLM Chat Requests
 
 Every `POST /api/v1/llm/chat` call goes through

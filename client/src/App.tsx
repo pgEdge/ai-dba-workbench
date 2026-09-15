@@ -24,6 +24,7 @@ import { ChatProvider } from './contexts/ChatContext';
 import { useChatContext } from './contexts/useChatContext';
 import { ConnectionStatusProvider } from './contexts/ConnectionStatusContext';
 import { AICapabilitiesProvider } from './contexts/AICapabilitiesContext';
+import { AuthCapabilitiesProvider } from './contexts/AuthCapabilitiesContext';
 import { useAICapabilities } from './contexts/useAICapabilities';
 import ConnectionLostOverlay from './components/ConnectionLostOverlay';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -105,7 +106,9 @@ const AppContent = () => {
         return (
             <ThemeProvider theme={loginTheme}>
                 <CssBaseline />
-                <Login />
+                <AuthCapabilitiesProvider>
+                    <Login />
+                </AuthCapabilitiesProvider>
             </ThemeProvider>
         );
     }

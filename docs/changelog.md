@@ -598,6 +598,16 @@ project adheres to
   endpoint returns `502` with a message that names the likely
   cause. (#399)
 
+- Fix the collector testing the error from a failed configuration
+  file load with `os.IsNotExist`, which does not unwrap the wrapped
+  error and so never matched, leaving two branches unreachable. Both
+  checks now use `errors.Is`, so a configuration file named with
+  `-config` that does not exist reports "specified config file not
+  found" along with the path rather than a generic load failure, and
+  an auto-discovered configuration file removed between discovery
+  and load falls back to the compiled-in defaults as intended
+  instead of aborting startup. (#421)
+
 ### Removed
 
 - Remove 48 unused functions from the collector, server, and alerter,

@@ -16,9 +16,11 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/logger"
 
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -177,6 +179,12 @@ func maybePrintSchemaVersion(w io.Writer, enabled bool) (bool, error) {
 	return true, err
 }
 
+// discoverDefaultConfigPath locates a default configuration file when
+// --config is not given. It is a variable so tests can interpose
+// between discovery and load, which is the only deterministic way to
+// exercise the "file vanished after discovery" branch.
+var discoverDefaultConfigPath = GetDefaultConfigPath
+
 // loadConfiguration loads configuration from file, environment, and command line.
 // Priority (highest to lowest): CLI flags > environment variables > config file > defaults.
 //
@@ -199,7 +207,7 @@ func loadConfiguration(passed flagutil.Set) (*Config, error) {
 	explicitConfigPath := (configPath != "")
 
 	if !explicitConfigPath {
-		configPath = GetDefaultConfigPath("")
+		configPath = discoverDefaultConfigPath("")
 	}
 
 	if configPath == "" {
@@ -211,15 +219,17 @@ func loadConfiguration(passed flagutil.Set) (*Config, error) {
 		logger.Startupf("Configuration loaded from: %s", configPath)
 	} else if explicitConfigPath {
 		// The user explicitly asked for a file; any failure to
-		// read it is fatal. We do not differentiate a missing
-		// file from a permission error here because both
-		// indicate operator intent that the file should exist
-		// and be readable.
-		if os.IsNotExist(err) {
+		// read it is fatal. A missing file gets a clearer message
+		// than the generic wrapped error, but both indicate
+		// operator intent that the file should exist and be
+		// readable. LoadFromFile wraps the underlying error, so
+		// errors.Is (which unwraps) is required here; os.IsNotExist
+		// does not unwrap and would never match.
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("specified config file not found: %s", configPath)
 		}
 		return nil, fmt.Errorf("failed to load config file: %w", err)
-	} else if os.IsNotExist(err) {
+	} else if errors.Is(err, fs.ErrNotExist) {
 		// Auto-discovered path that has since vanished (TOCTOU
 		// race between the helper's stat and our load). Fall
 		// back to defaults rather than crashing, matching the

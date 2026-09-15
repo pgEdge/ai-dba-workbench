@@ -32,6 +32,9 @@ var ErrInvalidToken = errors.New("invalid or expired token")
 // On success the returned context carries:
 //
 //   - TokenHashContextKey   (always; used for connection isolation/tracing)
+//   - IsAPITokenContextKey   (always; true for API tokens, false for
+//     session tokens)
+//   - TokenIDContextKey      (API tokens only; drives token scoping)
 //   - UserIDContextKey       (when the owning user is resolved)
 //   - IsSuperuserContextKey  (when the owning user is resolved)
 //   - UsernameContextKey     (for session tokens, and for API tokens
@@ -55,6 +58,8 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 	// values (UserID, IsSuperuser, Username) for permission checks.
 	storedToken, err := store.ValidateToken(token)
 	if err == nil && storedToken != nil {
+		ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
+		ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
 		ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
 		// Look up user to determine superuser status and username.
 		user, userErr := store.GetUserByID(storedToken.OwnerID)
@@ -71,6 +76,7 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 		return nil, ErrInvalidToken
 	}
 	ctx = context.WithValue(ctx, UsernameContextKey, username)
+	ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
 	// Get user ID and superuser status for RBAC.
 	user, userErr := store.GetUser(username)
 	if userErr == nil && user != nil {

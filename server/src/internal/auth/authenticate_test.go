@@ -154,3 +154,63 @@ func TestAuthenticateRequest_ValidAPIToken(t *testing.T) {
 		t.Errorf("expected username 'svc', got %q", got)
 	}
 }
+
+func TestAuthenticateRequest_APITokenSetsTokenContext(t *testing.T) {
+	store := newAuthenticateTestStore(t)
+
+	if err := store.CreateUser("tokenuser", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	rawToken, stored, err := store.CreateToken("tokenuser", "test token", nil)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+
+	ctx, err := AuthenticateRequest(req, store)
+	if err != nil {
+		t.Fatalf("AuthenticateRequest: %v", err)
+	}
+	if !IsAPITokenFromContext(ctx) {
+		t.Error("IsAPITokenFromContext = false, want true")
+	}
+	if got := GetTokenIDFromContext(ctx); got != stored.ID {
+		t.Errorf("GetTokenIDFromContext = %d, want %d", got, stored.ID)
+	}
+	if got := GetUsernameFromContext(ctx); got != "tokenuser" {
+		t.Errorf("username = %q, want %q", got, "tokenuser")
+	}
+}
+
+func TestAuthenticateRequest_SessionTokenIsNotAPIToken(t *testing.T) {
+	store := newAuthenticateTestStore(t)
+
+	if err := store.CreateUser("sessionuser", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	sessionToken, _, err := store.AuthenticateUser("sessionuser", "Testpass1234")
+	if err != nil {
+		t.Fatalf("failed to authenticate: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+sessionToken)
+
+	ctx, err := AuthenticateRequest(req, store)
+	if err != nil {
+		t.Fatalf("AuthenticateRequest: %v", err)
+	}
+	if IsAPITokenFromContext(ctx) {
+		t.Error("IsAPITokenFromContext = true, want false for a session token")
+	}
+	// The key must be present and false, not merely absent, so that the
+	// middleware and the direct call agree on the full key set.
+	if v, ok := ctx.Value(IsAPITokenContextKey).(bool); !ok || v {
+		t.Errorf("IsAPITokenContextKey = (%v, %v), want (false, true)", v, ok)
+	}
+	if got := GetTokenIDFromContext(ctx); got != 0 {
+		t.Errorf("GetTokenIDFromContext = %d, want 0 for a session token", got)
+	}
+}

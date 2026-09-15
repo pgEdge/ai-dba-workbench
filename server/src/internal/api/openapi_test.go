@@ -305,7 +305,7 @@ func TestBuildOpenAPISpec_MetricsQueryCustomWindowParams(t *testing.T) {
 	}
 }
 
-func TestOIDCPathOperationsMatchHandlers(t *testing.T) {
+func TestOpenAPIOIDCPathOperationsMatchHandlers(t *testing.T) {
 	spec := BuildOpenAPISpec()
 
 	tests := []struct {
@@ -369,7 +369,7 @@ func TestOIDCPathOperationsMatchHandlers(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesResponseDescribesAuthMethods(t *testing.T) {
+func TestOpenAPICapabilitiesResponseDescribesAuthMethods(t *testing.T) {
 	spec := BuildOpenAPISpec()
 
 	schema, ok := spec.Components.Schemas["CapabilitiesResponse"]

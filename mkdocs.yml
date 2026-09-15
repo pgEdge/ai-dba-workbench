@@ -106,6 +106,7 @@ nav:
       - Group Management: admin-guide/managing-users-and-permissions/groups.md
       - Token Management: admin-guide/managing-users-and-permissions/tokens.md
       - Permission Management: admin-guide/managing-users-and-permissions/permission_mgmt.md
+      - Audit Log: admin-guide/managing-users-and-permissions/audit-log.md
     - Enforcing the Password Policy: admin-guide/password.md
     - Connection Management: admin-guide/connections.md
     - TLS & Reverse Proxy: admin-guide/tls-and-reverse-proxy.md

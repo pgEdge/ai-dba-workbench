@@ -17,7 +17,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -169,13 +168,7 @@ func TestMetricRegistrySQLIsTaggable(t *testing.T) {
 func markerTestDatastore(t *testing.T) *Datastore {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set; skipping")
-	}
+	connStr := requireLocalTestDSN(t, "the SQL marker integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -427,7 +420,7 @@ func TestGetClusterPeers_ScanError(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
+	connStr := requireLocalTestDSN(t, "the cluster peers scan error test")
 	schema := fmt.Sprintf("marker_scan_%d", time.Now().UnixNano())
 	schemaIdent := pgx.Identifier{schema}.Sanitize()
 

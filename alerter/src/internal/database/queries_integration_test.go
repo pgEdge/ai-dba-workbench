@@ -12,7 +12,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -128,13 +127,7 @@ func newHistoricalMetricsTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool,
 func newHistoricalMetricsTestDatastoreInTimeZone(t *testing.T, timeZone string) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping historical metrics integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the historical metrics integration test")
 
 	ctx := context.Background()
 	poolCfg, err := pgxpool.ParseConfig(connStr)

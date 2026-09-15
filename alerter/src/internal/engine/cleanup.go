@@ -17,6 +17,16 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
+// probeFreshnessRatioLimit is how far behind a probe's last collection may
+// be, measured in multiples of its configured collection interval, before
+// the cleaner stops believing that a missing metric row means the
+// condition has resolved. Three intervals matches both the fifteen minute
+// windows the registry's latest queries use at the collector's 300 second
+// default and the default metric_staleness rule threshold, so the cleaner
+// stops clearing at about the point the staleness alert starts firing. See
+// GitHub issue #407.
+const probeFreshnessRatioLimit = 3.0
+
 // cleanResolvedAlerts clears alerts where the condition has resolved
 func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 	e.debugLog("Checking for resolved alerts...")
@@ -125,10 +135,8 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	values, err := e.datastore.GetLatestMetricValues(ctx, *alert.MetricName)
 	if err != nil {
 		if errors.Is(err, database.ErrNoMetricData) {
-			// The query ran and reported nothing for any connection —
-			// the condition no longer exists (e.g. all values filtered
-			// out), so clear
-			e.clearResolvedAlert(ctx, alert, 0)
+			// The query ran and reported nothing for any connection.
+			e.resolveAbsentMetric(ctx, alert, "no connection reports it")
 			return
 		}
 		// The metric could not be evaluated at all: either it has no
@@ -160,8 +168,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	}
 
 	if !found {
-		// Metric no longer reports for this connection/database — clear
-		e.clearResolvedAlert(ctx, alert, 0)
+		e.resolveAbsentMetric(ctx, alert, "no row for this connection and database")
 		return
 	}
 
@@ -201,6 +208,119 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 	e.debugLog("Probe %s on connection %d is no longer reported; clearing alert %d",
 		*alert.ProbeName, alert.ConnectionID, alert.ID)
 	e.clearResolvedAlert(ctx, alert, 0)
+}
+
+// resolveAbsentMetric decides what to do with an active alert whose metric
+// returned no row for it. A missing row is only a recovery signal for
+// metrics whose query goes quiet when the condition ends or whose subject
+// can legitimately disappear (the registry marks those clearWhenAbsent);
+// for every other metric it means the data has stopped arriving, and
+// clearing on it made alerts flap or resolve falsely whenever a probe ran
+// late or a collector stopped. Those alerts stay active until fresh data
+// shows the condition has ended, and the metric_staleness rule reports
+// the stalled probe.
+//
+// Even for a clearWhenAbsent metric an empty result only means recovery
+// if the data behind it is current: every one of those queries bounds
+// collected_at, so a stopped collector empties them just as effectively
+// as a recovered condition does, and clearing then would report a
+// genuinely inactive replication slot or runaway WAL retention as
+// resolved. The clear is therefore gated on the registry's probe for the
+// metric currently reporting for this connection. See GitHub issue #407.
+func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert, reason string) {
+	metric := *alert.MetricName
+	clears := e.datastore.MetricClearsWhenAbsent(metric)
+	probe := e.datastore.MetricProbeName(metric)
+
+	// Only the metrics that can clear, and that name a probe to check,
+	// need the staleness read at all.
+	var entries []database.ProbeStaleness
+	if clears && probe != "" {
+		var err error
+		entries, err = e.datastore.GetProbeStalenessByConnection(ctx)
+		if err != nil {
+			e.log("ERROR: Cannot check whether probe %s is current for alert %d, "+
+				"leaving it active: %v", probe, alert.ID, err)
+			return
+		}
+	}
+
+	switch classifyAbsentMetric(clears, probe, alert.ConnectionID, entries) {
+	case absentMetricClear:
+		e.clearResolvedAlert(ctx, alert, 0)
+	case absentMetricNotAbsenceDriven:
+		e.debugLog("Metric %s has no current value for alert %d (%s); leaving it active until data returns",
+			metric, alert.ID, reason)
+	case absentMetricNoProbe:
+		e.log("WARNING: Metric %s clears when absent but names no collector probe; "+
+			"leaving alert %d active", metric, alert.ID)
+	case absentMetricProbeNotReporting:
+		e.log("Alert %d on metric %s has no current value (%s) and probe %s is not "+
+			"reporting for connection %d; leaving the alert active",
+			alert.ID, metric, reason, probe, alert.ConnectionID)
+	}
+}
+
+// absentMetricVerdict is what the cleaner should do with an alert whose
+// metric returned no row for it.
+type absentMetricVerdict int
+
+const (
+	// absentMetricClear means the absence is a real recovery signal: the
+	// metric clears when absent and the probe behind it is current.
+	absentMetricClear absentMetricVerdict = iota
+
+	// absentMetricNotAbsenceDriven means the metric emits a row for every
+	// healthy connection, so a missing row is missing data. Expected
+	// whenever collection lags, hence logged at debug level.
+	absentMetricNotAbsenceDriven
+
+	// absentMetricNoProbe means the registry entry clears when absent but
+	// names no probe, so its freshness cannot be established.
+	absentMetricNoProbe
+
+	// absentMetricProbeNotReporting means the probe behind the metric has
+	// stalled, been disabled, or belongs to a connection that is no
+	// longer monitored, so the empty result proves nothing.
+	absentMetricProbeNotReporting
+)
+
+// classifyAbsentMetric decides, from the registry classification for a
+// metric and the current probe staleness entries, whether an absent row
+// may clear the alert. It is pure so that every branch, including the
+// entry that names no probe, is exercised without a database.
+//
+// Failing safe in both directions is the point: a clearWhenAbsent metric
+// whose probe is demonstrably current clears as it always did, whilst an
+// unknown, stalled or disabled probe leaves the alert active. That is a
+// deliberate trade-off, because a probe the operator turns off, or a
+// connection they stop monitoring, now keeps the alert until they clear
+// or acknowledge it; the alternative is announcing a resolution nobody
+// observed, which for a critical rule such as replication_slot_inactive
+// means a genuinely inactive slot reported as fixed. See GitHub issue
+// #407.
+func classifyAbsentMetric(clearsWhenAbsent bool, probe string, connectionID int,
+	entries []database.ProbeStaleness) absentMetricVerdict {
+	if !clearsWhenAbsent {
+		return absentMetricNotAbsenceDriven
+	}
+	if probe == "" {
+		return absentMetricNoProbe
+	}
+	for _, entry := range entries {
+		if entry.ConnectionID != connectionID || entry.ProbeName != probe {
+			continue
+		}
+		if entry.StalenessRatio <= probeFreshnessRatioLimit {
+			return absentMetricClear
+		}
+		return absentMetricProbeNotReporting
+	}
+
+	// The staleness view already filters out probes that are
+	// unavailable, disabled, never collected, or whose connection is not
+	// monitored, so a probe missing from it is not reporting.
+	return absentMetricProbeNotReporting
 }
 
 // clearResolvedAlert clears an alert and queues a notification

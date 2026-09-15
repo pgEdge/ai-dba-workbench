@@ -424,8 +424,11 @@ func TestCheckAlertResolvedKeepsUnevaluableMetricAlerts(t *testing.T) {
 }
 
 // TestCheckAlertResolvedClearsWhenMetricReportsNoData pins the behavior
-// that is deliberately unchanged: a registry metric that runs successfully
-// and returns no rows still resolves the alert.
+// that is deliberately unchanged: a clearWhenAbsent registry metric that
+// runs successfully and returns no rows still resolves the alert, so long
+// as the probe behind it is still collecting. The probe seed is what
+// makes the empty result evidence of recovery rather than of a stopped
+// collector (GitHub issue #407).
 func TestCheckAlertResolvedClearsWhenMetricReportsNoData(t *testing.T) {
 	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()
@@ -433,6 +436,7 @@ func TestCheckAlertResolvedClearsWhenMetricReportsNoData(t *testing.T) {
 	ctx := context.Background()
 	ruleID := seedStalenessRule(t, pool)
 	connID := insertTestConnection(t, pool, "empty-metric")
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
 
 	var alertID int64
 	if err := pool.QueryRow(ctx, stalenessUnsupportedMetricAlertInsertSQL, ruleID, connID,

@@ -12,7 +12,6 @@ package database
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -64,13 +63,7 @@ DROP TABLE IF EXISTS alert_rules CASCADE;
 func newExtensionQueriesTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping extension query integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the extension query integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)

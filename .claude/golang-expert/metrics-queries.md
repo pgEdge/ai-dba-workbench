@@ -645,16 +645,61 @@ distinguishes three failure modes, and callers must keep them apart:
 - Any other error - the query itself failed.
 
 When `GetLatestMetricValues` returns an error, `checkAlertResolved`
-(`alerter/src/internal/engine/cleanup.go`) clears an alert only for
-`ErrNoMetricData`; it still clears on its other, non-error paths, when
-the metric reports no value for the alert's connection or database, or
-when the current value no longer violates the threshold. An
-unsupported metric or a failed query
-says nothing about whether the alerting condition still holds, so the
-alert is left active and logged. Treating those errors as a resolution
-was the root cause of issue #405, in which `metric_staleness` alerts were
-cleared by the cleaner and immediately re-raised by the evaluator, once
-per cycle, for as long as a probe stayed stale.
+(`alerter/src/internal/engine/cleanup.go`) never clears on
+`ErrMetricNotSupported` or a query failure: neither says anything about
+whether the alerting condition still holds, so the alert is left active
+and logged. Treating those errors as a resolution was the root cause of
+issue #405, in which `metric_staleness` alerts were cleared by the
+cleaner and immediately re-raised by the evaluator, once per cycle, for
+as long as a probe stayed stale.
+
+Missing data is not a resolution either (issue #407). Both the
+`ErrNoMetricData` path and the "no row for this connection and database"
+path go through `resolveAbsentMetric`, which clears the alert only when
+the registry entry sets `clearWhenAbsent` (read through
+`Datastore.MetricClearsWhenAbsent`); otherwise it logs at debug level and
+leaves the alert active until fresh data shows the condition has ended,
+with the `metric_staleness` rule reporting the stalled probe. The flag is
+true only where a healthy connection legitimately produces no row: the
+query emits a row only while the condition holds
+(`pg_stat_replication.standby_disconnected`,
+`pg_node_role.subscription_worker_down`, the five `pg_stat_activity.*`
+metrics other than `count`, `table_last_autovacuum_hours`, the two Spock
+`recent_count` metrics, `pg_replication_slots.inactive`) or the subject
+can be dropped (the other three `pg_replication_slots.*` metrics and the
+two `pg_stat_replication` lag metrics). Everything else emits a row for
+every healthy connection, so a vanished row means the collector or probe
+has stopped, and the flag stays false; each true entry carries a comment
+saying why, and `TestMetricClearsWhenAbsent` pins representative cases.
+Before the flag existed, any metric whose window could empty (a 5 minute
+window on a 300 second probe, say) cleared and re-fired on every late
+collection.
+
+`clearWhenAbsent` alone is not enough, because every one of those queries
+bounds `collected_at`, so a stopped collector empties them exactly as a
+recovered condition does. Each registry entry therefore also carries
+`probeName`, the collector probe that fills the metrics table its latest
+query reads (`pg_stat_activity`, `pg_replication_slots`,
+`pg_stat_database` and so on; `pg_stat_archiver.failed_count_delta` reads
+`metrics.pg_stat_wal`, `age_percent` reads `metrics.pg_database`, and
+`table_last_autovacuum_hours` reads `metrics.pg_stat_all_tables`),
+exposed through `Datastore.MetricProbeName`. `resolveAbsentMetric` reads
+`GetProbeStalenessByConnection`, the same source the staleness evaluator
+uses, and hands the classification to the pure `classifyAbsentMetric`:
+the alert clears only when that probe is listed for the alert's
+connection with a staleness ratio at or below
+`probeFreshnessRatioLimit` (3 intervals, matching the 15 minute windows
+at the 300 second default and the default `metric_staleness` threshold).
+A stalled probe, a probe missing from the view (the query filters on
+`is_available`, `is_enabled`, `is_monitored` and a non-NULL
+`last_collected`, so a disabled or unmonitored one disappears entirely),
+an entry with no `probeName`, or a failed staleness read all leave the
+alert active and log at operator level rather than debug. The trade-off
+is deliberate: disabling a probe or unmonitoring a connection keeps the
+alert until someone clears or acknowledges it, which beats announcing a
+resolution nobody observed. `TestMetricRegistryProbeName` requires every
+entry to name a probe its latest SQL actually reads, and
+`TestClassifyAbsentMetric` pins the four verdicts.
 
 Before the metric is queried, the cleaner applies the same
 `required_extension` gate the evaluator does. `cleanResolvedAlerts` calls
@@ -698,8 +743,8 @@ so several stale probes on one connection raise one alert each.
 metric name to the SQL that produces its value. A query error there is
 swallowed by `evaluateRuleForAllConnections` in
 `alerter/src/internal/engine/thresholds.go`, which logs at debug level and
-moves on, so a broken metric looks exactly like an idle one. Four rules
-that follow from that, all learned the hard way in #406:
+moves on, so a broken metric looks exactly like an idle one. Six rules
+that follow from that, all learned the hard way in #406 and #407:
 
 - The metric name is not the table name. `pg_stat_archiver.*` metrics read
   `metrics.pg_stat_wal`, because the collector consolidates the archiver
@@ -749,11 +794,43 @@ that follow from that, all learned the hard way in #406:
   counted in samples: one row per hour would leave these baselines short
   of the default `all` threshold of 100 at the shipped seven day
   lookback, and unable to warm at all at a lookback of four days or
-  fewer. No
-  registry entry reports a per-probe-interval delta any more (#409), and
-  `table_bloat_ratio` was removed from the registry in the same change:
+  fewer. No counter delta entry reports a per-probe-interval count any
+  more (#409); the per-interval derivations that remain are a ratio and
+  a mean rather than a count, and read the newest interval on purpose
+  (`cache_hit_ratio` and `slow_query_count`, #407). `table_bloat_ratio`
+  was removed from the registry in the same change as the hourly sums:
   its rule row survives, disabled, so historical alerts stay
   attributable, and re-enabling it logs "No data for metric" at debug.
+
+- Every `latestSQL` bounds `collected_at` with a `NOW() - INTERVAL`
+  cutoff, or is named on the allowlist in
+  `TestMetricRegistryLatestSQLFreshnessCutoff` with a reason
+  (`pg_settings.max_connections` is the only entry, for the change-tracked
+  reason above). Without a cutoff a metric keeps reporting the newest row
+  the table still holds, so an alert raised before the collector stopped
+  fires on days-old data until retention purges the partition; #407 found
+  `pg_replication_slots.inactive_count` and `.max_retained_bytes` doing
+  exactly that. Repeat the cutoff in every CTE that reads the partitioned
+  table, not just the `latest` one, so the planner can prune.
+
+- The window must be at least three probe intervals, and the query must
+  reduce to one row per connection (and database) that both the evaluator
+  and the cleaner read identically. `pg_replication_slots.inactive` used a
+  5 minute window on a 300 second probe and flapped on every late
+  collection; `pg_stat_database.cache_hit_ratio` returned every delta row
+  in its window with no `ORDER BY`, so the evaluator (any row violating)
+  and the cleaner (first row) disagreed on the same data. The fix is
+  `DISTINCT ON (connection_id, database_name) ... ORDER BY collected_at
+  DESC` over the deltas; `pg_stat_statements.slow_query_count` follows
+  the per-identity shape described under "Cumulative Counter Deltas per
+  Identity" below, differencing `total_exec_time` and `calls` within
+  `(queryid, userid, dbid, toplevel)` and counting with `COUNT(*) FILTER`
+  so a database with statements but no slow ones reports 0 rather than
+  vanishing. It takes the difference with `LEAD` over an identity window
+  ordered `collected_at DESC`, which the `ROW_NUMBER` that picks the
+  newest sample shares, so the window is sorted once: the ascending-`LAG`
+  plus descending-`ROW_NUMBER` form sorted it twice and measured about a
+  third slower on 24,000 rows in the window.
 
 - `system_stats` columns are platform-specific. `processor_time_percent`,
   `user_time_percent`, `privileged_time_percent` and
@@ -859,8 +936,10 @@ the object index applies.
 `pg_stat_statements` keeps one row per `(database_name, userid, dbid,
 toplevel)` for a queryid, and each row is an independent cumulative
 counter that `pg_stat_reset()` or a restart can zero on its own. Any
-query that turns those counters into per-period deltas must `LAG` within
-each identity, drop the negative deltas, and only then sum across
+query that turns those counters into per-period deltas must difference
+within each identity (`LAG` over an ascending window, or `LEAD` over a
+descending one where another window function needs that ordering
+anyway), drop the negative deltas, and only then sum across
 identities. Summing first hides a reset in one identity behind growth in
 its siblings, so the guard never fires and the pre-reset total is
 subtracted from the post-reset one. `queryStatsSQLTemplate` in
@@ -1055,6 +1134,10 @@ run.
   the loopback exclusion in `metricQueryClauses`, and the per-series fill
   policy with nullable points (`MetricDataPoint.Value *float64`,
   `MaxCarryIntervals`) replacing uniform LOCF.
+- #407: Missing metric data treated as resolution; introduced the
+  `clearWhenAbsent` registry flag, the `probeName` field and its
+  probe-freshness gate on clearing, the freshness-cutoff test and the
+  latest-sample reductions for `cache_hit_ratio` and `slow_query_count`.
 - #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
   `required_extension` enforced in evaluation and resolution,
   `table_bloat_ratio` retired from the registry; collector migration 11.

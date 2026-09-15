@@ -221,6 +221,96 @@ WHERE collected_at > NOW() - INTERVAL '5 minutes'
 GROUP BY connection_id;
 ```
 
+## Registry Requirements
+
+Every metric in the alerter's registry
+(`internal/database/metric_registry.go`) must satisfy two further
+requirements that govern how the alert cleaner reads its results.
+
+### Freshness Cutoffs
+
+Each `latestSQL` query must bound `collected_at` with a
+`NOW() - INTERVAL` cutoff of roughly three probe intervals. Three
+intervals leave room for two consecutive samples inside the window,
+so that a delta metric still has a predecessor, whilst one late
+collection cannot empty the window. A metric whose probe runs every
+300 seconds therefore uses a 15 minute cutoff.
+
+Without a cutoff, the query returns the newest row the table still
+holds, however old that row is. An alert then goes on firing on data
+that is days old after the collector stops, or after the connection
+stops being monitored, until retention purges the partition.
+
+In the following example, the cutoff restricts a latest query to the
+last three samples of a 300 second probe:
+
+```sql
+SELECT connection_id, your_value::float, collected_at
+FROM metrics.your_table
+WHERE collected_at > NOW() - INTERVAL '15 minutes';
+```
+
+A metric may omit the cutoff only where freshness is not meaningful.
+The `pg_settings.max_connections` metric is the one current
+exception, because the settings probe is change-tracked and stores
+nothing whilst the configuration is unchanged, so any maximum age
+predicate would silence the metric on a stable server. The
+`TestMetricRegistryLatestSQLFreshnessCutoff` test in
+`internal/database/audit_defects_test.go` enforces the requirement
+and holds the allowlist of exceptions, so a metric without a cutoff
+must be added to that allowlist with a reason.
+
+### Clearing on Missing Data
+
+The `clearWhenAbsent` field on `metricQueryConfig` tells the alert
+cleaner what a missing row means. The cleaner consults the field
+through `Datastore.MetricClearsWhenAbsent` whenever the latest query
+returns no row for an active alert's connection and database, or no
+rows at all.
+
+Choose the value from the shape of the query:
+
+- Leave the field at its default of `false` when the query emits a
+  row for every healthy connection, as a CPU percentage or a cache
+  hit ratio does. A connection that disappears from the result set
+  has stopped reporting rather than recovered, so the alert stays
+  active until fresh data shows the condition has ended, and the
+  `metric_staleness` rule reports the stalled probe.
+- Set the field to `true` when the query emits a row only whilst the
+  condition holds, as a blocked backend count does, or when the query
+  describes an object that an operator can legitimately drop, such as
+  a replication slot or a standby. A missing row is then the recovery
+  signal, so the cleaner clears the alert.
+
+Every entry that sets `clearWhenAbsent` to `true` carries a comment
+on the registry entry explaining why absence means recovery for that
+metric; add one alongside the field. A metric name that the registry
+does not know returns `false`, so a metric evaluated outside the
+registry never clears on absent data.
+
+### Naming the Collector Probe
+
+Every registry entry also sets `probeName` to the collector probe
+that fills the metrics table its latest query reads, such as
+`pg_stat_activity`, `pg_replication_slots` or `pg_stat_database`. The
+`TestMetricRegistryProbeName` test requires the name to match a table
+the query selects from, so an entry whose query reads a table other
+than its metric prefix suggests names that table's probe: the
+`pg_stat_archiver.failed_count_delta` metric reads
+`metrics.pg_stat_wal`, for example.
+
+The cleaner uses the probe name to tell a condition that ended from
+data that stopped arriving. Because every query bounds `collected_at`,
+a stopped collector empties the result set exactly as a recovered
+condition does, so an alert on a `clearWhenAbsent` metric clears only
+when that probe is currently collecting for the alert's connection,
+judged from the same probe staleness information the
+`metric_staleness` rule uses. A probe that has stalled, that an
+operator has disabled, or that belongs to a connection which is no
+longer monitored leaves the alert active until somebody clears or
+acknowledges it, which is the safe direction: the alternative is
+reporting a resolution that nobody observed.
+
 ## Choosing Thresholds
 
 Select thresholds based on your operational requirements.

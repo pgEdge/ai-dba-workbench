@@ -862,3 +862,177 @@ func TestLinkFederatedIdentityIdempotentRelinkKeepsSessions(t *testing.T) {
 	}
 	assertOnlyLinkColumnsChanged(t, before, readAccountRow(t, store, "zach"), false)
 }
+
+// countRowsFor is a small helper for the per-token rows that have no accessor
+// of their own.
+func countRowsFor(t *testing.T, store *AuthStore, query string, arg any) int {
+	t.Helper()
+
+	var count int
+	if err := store.db.QueryRow(query, arg).Scan(&count); err != nil {
+		t.Fatalf("counting rows: %v", err)
+	}
+	return count
+}
+
+// Revocation is scoped to the account being unlinked, and takes the rows that
+// hang off each token with it. Nothing else observes either property, and the
+// scoping is the first thing anyone auditing this method will look for.
+func TestUnlinkFederatedIdentityRevocationIsScopedAndComplete(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	for _, name := range []string{"leaver", "bystander"} {
+		if err := store.CreateUser(name, linkTestPassword, "", "", ""); err != nil {
+			t.Fatalf("CreateUser %s: %v", name, err)
+		}
+	}
+	if _, err := store.LinkFederatedIdentity("leaver", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+
+	leaverToken, leaverStored, err := store.CreateToken("leaver", "to be revoked", nil)
+	if err != nil {
+		t.Fatalf("CreateToken leaver: %v", err)
+	}
+	bystanderToken, bystanderStored, err := store.CreateToken("bystander", "not involved", nil)
+	if err != nil {
+		t.Fatalf("CreateToken bystander: %v", err)
+	}
+
+	// Give both tokens the full set of rows that hang off a token, so the
+	// doc comment's claim that they go with it is observed rather than
+	// merely asserted in prose.
+	for _, token := range []*StoredToken{leaverStored, bystanderStored} {
+		if err := store.SetTokenConnectionScope(token.ID,
+			[]ScopedConnection{{ConnectionID: 1, AccessLevel: "read"}}); err != nil {
+			t.Fatalf("SetTokenConnectionScope: %v", err)
+		}
+		if err := store.SetTokenAdminScope(token.ID, []string{"users"}); err != nil {
+			t.Fatalf("SetTokenAdminScope: %v", err)
+		}
+	}
+	if err := store.SetConnectionSession(GetTokenHashByRawToken(leaverToken), 1, nil); err != nil {
+		t.Fatalf("SetConnectionSession leaver: %v", err)
+	}
+	if err := store.SetConnectionSession(GetTokenHashByRawToken(bystanderToken), 1, nil); err != nil {
+		t.Fatalf("SetConnectionSession bystander: %v", err)
+	}
+
+	if _, _, err := store.UnlinkFederatedIdentity("leaver", false); err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+
+	// The leaver's token and everything hanging off it is gone.
+	if _, err := store.ValidateToken(leaverToken); err == nil {
+		t.Fatal("the unlinked account's token survived")
+	}
+	for _, table := range []string{"token_connection_scope", "token_admin_scope"} {
+		//nolint:gosec // table name is from a static list in this test
+		if n := countRowsFor(t, store,
+			"SELECT COUNT(*) FROM "+table+" WHERE token_id = ?", leaverStored.ID); n != 0 {
+			t.Fatalf("%d %s row(s) left behind for the revoked token", n, table)
+		}
+	}
+	if n := countRowsFor(t, store,
+		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?",
+		GetTokenHashByRawToken(leaverToken)); n != 0 {
+		t.Fatalf("%d connection_sessions row(s) left behind for the revoked token", n)
+	}
+
+	// The bystander is untouched: token, scope rows and connection session.
+	if _, err := store.ValidateToken(bystanderToken); err != nil {
+		t.Fatalf("another account's token was revoked: %v", err)
+	}
+	for _, table := range []string{"token_connection_scope", "token_admin_scope"} {
+		//nolint:gosec // table name is from a static list in this test
+		if n := countRowsFor(t, store,
+			"SELECT COUNT(*) FROM "+table+" WHERE token_id = ?", bystanderStored.ID); n == 0 {
+			t.Fatalf("another account's %s rows were deleted", table)
+		}
+	}
+	if n := countRowsFor(t, store,
+		"SELECT COUNT(*) FROM connection_sessions WHERE token_hash = ?",
+		GetTokenHashByRawToken(bystanderToken)); n == 0 {
+		t.Fatal("another account's connection_sessions row was deleted")
+	}
+	if after := readAccountRow(t, store, "bystander"); after.authSource != AuthSourceLocal ||
+		after.externalSubject != "" {
+		t.Fatalf("another account's row was altered: auth_source=%q external_subject=%q",
+			after.authSource, after.externalSubject)
+	}
+}
+
+// A service account that somehow carried this very subject must be refused,
+// not reported as an idempotent success: the refusal sits above the
+// short-circuit so that a future command converting an account type cannot
+// turn the combination into a silent success.
+func TestLinkFederatedIdentityRefusesServiceAccountHoldingTheSameSubject(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateServiceAccount("android", "", "", ""); err != nil {
+		t.Fatalf("CreateServiceAccount: %v", err)
+	}
+	// Not reachable through the shipped commands, which is the point: this
+	// is the state a future account-type conversion could create.
+	if _, err := store.db.Exec(
+		"UPDATE users SET auth_source = ?, external_subject = ? WHERE username = ?",
+		AuthSourceOIDC, ExternalSubjectKey(linkTestIssuer, linkTestSubject), "android"); err != nil {
+		t.Fatalf("seeding the state: %v", err)
+	}
+
+	_, err := store.LinkFederatedIdentity("android", linkTestIssuer, linkTestSubject, false)
+	if err == nil {
+		t.Fatal("a service account already carrying the subject was reported as linked")
+	}
+	if !strings.Contains(err.Error(), "service account") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// A row deleted between the read and the UPDATE is a missing user, not a
+// changed identity, and the message has to say which.
+func TestUnlinkFederatedIdentityReportsADeletedAccount(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("ghost", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("ghost", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	if err := store.DeleteUser("ghost"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+
+	_, _, err := store.UnlinkFederatedIdentity("ghost", false)
+	if err == nil {
+		t.Fatal("unlinking a deleted account succeeded")
+	}
+	if !strings.Contains(err.Error(), "user not found") {
+		t.Fatalf("error = %v, want it to report a missing user", err)
+	}
+}
+
+// The refusal explanation is exercised directly, because the interleaving it
+// exists for, a row deleted or relinked between the read and the UPDATE,
+// cannot be produced from a single-process test.
+func TestExplainUnlinkRefusalLocked(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("present", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if err := store.explainUnlinkRefusalLocked("missing"); err == nil ||
+		!strings.Contains(err.Error(), "user not found") {
+		t.Fatalf("a deleted account gave %v, want a missing-user error", err)
+	}
+	if err := store.explainUnlinkRefusalLocked("present"); err == nil ||
+		!strings.Contains(err.Error(), "changed while the unlink was being applied") {
+		t.Fatalf("a live account gave %v, want a changed-identity error", err)
+	}
+}

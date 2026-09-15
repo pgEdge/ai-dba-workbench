@@ -388,6 +388,28 @@ them are therefore labelled `Min Time (All Time)` and `Max Time
 now follows the selector. Any new tile reading a windowed endpoint
 must say in its label which of the two it is.
 
+`QueryDetail` used to carry a second average tile, `Avg Time (Last
+1h)` or `Avg Time (Custom Range)`, fed by `useQueryStats`. Once
+`mean_exec_time` became windowed the two tiles computed the same
+figure over the same window from the same delta pairs, so the
+`useQueryStats` tile was dropped and with it a second round trip on
+every overlay open. `useQueryStats` and
+`/api/v1/metrics/query-stats` both remain for API consumers, but
+`QueryDetail` no longer calls the hook and nothing else in the
+client does either; check that before assuming the hook is live.
+
+The dropped tile distinguished a failed request, a pending one and a
+genuine zero, because `avg_exec_time` is nullable. `mean_exec_time`
+is a plain `float64`, so that distinction could not survive as such,
+but it does not need to: the top-queries SQL ends its `totals` CTE
+with `HAVING SUM(delta_calls) > 0`, so a statement that was not
+executed in the window falls out of the result entirely, the
+response is empty, `queryData` is `null`, and `Mean Time` renders
+`--` exactly as `Total Calls` and `Total Time` do. A failed or
+pending fetch is handled once for the whole component, as the error
+message or the spinner. Keep any future windowed tile on that same
+footing rather than reintroducing per-tile state.
+
 Five summary-tile call sites still hardcode `time_range=24h`
 (`usePerformanceSummary`, `useDatabaseCacheHit`,
 `DatabaseSummariesSection`, `KpiTilesSection` and

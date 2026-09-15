@@ -29,10 +29,6 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
-import {
-    useQueryStats,
-    type QueryStatsParams,
-} from '../../../hooks/useQueryStats';
 import { logger } from '../../../utils/logger';
 import {
     SERVER_INFO_LABEL_BASE_SX,
@@ -363,40 +359,6 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 
     const execTimeChart = useMetrics(execTimeChartParams);
     const callsChart = useMetrics(callsChartParams);
-
-    // Period-scoped statistics for the selected time range; these sit
-    // alongside the lifetime pg_stat_statements totals above.
-    const queryStatsParams = useMemo(
-        (): QueryStatsParams | null => {
-            if (!queryData?.queryid) { return null; }
-            return {
-                connectionId,
-                queryId: queryData.queryid,
-                databaseName,
-                timeRange: timeRange.range,
-            };
-        },
-        [connectionId, databaseName, timeRange.range, queryData?.queryid]
-    );
-
-    const {
-        stats: periodStats,
-        loading: periodStatsLoading,
-        error: periodStatsError,
-    } = useQueryStats(queryStatsParams);
-
-    // The period average tile distinguishes a failed request from a
-    // pending one and from a period with no data; an error wins over
-    // a pending refetch so a failure is never masked by a spinner.
-    const periodAvgLabel = timeRange.range === 'custom'
-        ? 'Avg Time (Custom Range)'
-        : `Avg Time (Last ${timeRange.range})`;
-    const periodAvgValue = periodStatsError
-        ? 'Unavailable'
-        : periodStatsLoading && !periodStats
-            ? 'Loading...'
-            : formatTime(periodStats?.avg_exec_time ?? null);
-    const periodAvgStatus = periodStatsError ? 'critical' : undefined;
 
     const execTimeChartData = useMemo(
         () => buildChartData(
@@ -794,9 +756,13 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 {/*
                   * Calls, total time and mean time are aggregated
                   * over the selected range by the top-queries
-                  * endpoint. Min and max cannot be delta-aggregated,
-                  * so pg_stat_statements reports them for the life of
-                  * the statement and the tiles say so.
+                  * endpoint, which only returns a statement that was
+                  * executed in the window, so a window with no data
+                  * leaves every tile showing a dash rather than a
+                  * misleading zero. Min and max cannot be
+                  * delta-aggregated, so pg_stat_statements reports
+                  * them for the life of the statement and the tiles
+                  * say so.
                   */}
                 <Box sx={KPI_GRID_SX}>
                     <KpiTile
@@ -820,11 +786,6 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                                 queryData.mean_exec_time
                             )
                             : '--'}
-                    />
-                    <KpiTile
-                        label={periodAvgLabel}
-                        value={periodAvgValue}
-                        status={periodAvgStatus}
                     />
                     <KpiTile
                         label="Min Time (All Time)"

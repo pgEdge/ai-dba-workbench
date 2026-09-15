@@ -183,3 +183,9 @@ to restore a supported configuration.
   [web client configuration page](../getting-started/configuration/client.md#nginx-configuration)
   shows an annotated nginx configuration for the
   static SPA.
+- The
+  [Single Sign-On guide](managing-users-and-permissions/sso.md)
+  explains why the federated login callback URL must
+  match the address the browser reaches, and why
+  `http.trusted_proxies` matters to the callback's
+  rate limit.

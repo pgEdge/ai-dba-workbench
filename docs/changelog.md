@@ -12,6 +12,29 @@ project adheres to
 
 ### Added
 
+- Add federated login through an OpenID Connect identity
+  provider, configured in the new `http.auth.oidc` section
+  and offered as a second button on the login page. The
+  Workbench discovers the provider at start-up, runs an
+  authorisation code flow with PKCE, matches the account on
+  the issuer and `sub` claim, and can provision an account on
+  first login. Provider groups map onto Workbench groups
+  through `group_map`, and `superuser_group` names one
+  provider group that confers superuser; both are reconciled
+  at each login, and a group the map does not name is left
+  alone. Access may be restricted with
+  `allowed_email_domains`, which matches exact domains and
+  requires the provider to have verified the address.
+  Authorisation is otherwise unchanged, and service-account
+  API tokens remain the mechanism for MCP clients. Local
+  username and password login is unaffected and stays on
+  unless `http.auth.local.enabled` is set to `false`. The new
+  Single Sign-On page in the Administrator's Guide covers the
+  configuration, provider registration and the operational
+  limits, including the need for `http.trusted_proxies`, the
+  username rule the chosen claim has to satisfy, and why a
+  local break-glass administrator should be kept. (#261)
+
 - Add a `-group-description` CLI flag that sets a group's
   description when creating it with `-add-group`, matching the
   description support already available in the web console. (#301)
@@ -216,6 +239,31 @@ project adheres to
   `order_by`, is unchanged. The dashboard charts now anchor their
   x-axis to the returned window, draw null buckets as gaps, and
   mark carried-forward stretches distinctly. (#430)
+
+- Enforce an API token's connection scope on connections that
+  belong to no group. Both the access check and the visible
+  connection list previously admitted an ungrouped connection
+  on ownership or the shared flag alone, without consulting
+  the caller's token scope, so for those connections a
+  token's connection scope was dead configuration on every
+  surface. Both paths now intersect the scope, denying an
+  out-of-scope connection and applying the scope's access
+  ceiling otherwise. This is a real change for anyone handing
+  out narrowly scoped tokens: a token that has been reaching
+  an ungrouped connection outside its scope, or reaching one
+  at `read_write` whilst scoped to `read`, will now be
+  refused or capped. Review the scope of every token that
+  touches a connection with no group before upgrading.
+  (#261)
+
+- Log sessions out when the authentication database cannot be
+  read. A session whose user record failed to load previously
+  produced a context carrying the username with no user ID
+  and no superuser flag, which quietly narrowed what the
+  session could do whilst still authenticating it. Such a
+  session is now rejected outright, so a database blip ends
+  sessions rather than silently changing their privileges.
+  (#261)
 
 - Count deadlocks and temporary files per hour in the alerter. The
   `deadlocks_detected` and `temp_files_created` rules compared the

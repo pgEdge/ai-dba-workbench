@@ -81,6 +81,17 @@ http:
         workbench-readonly: Read Only
 ```
 
+Every setting in the `http.auth` section is read once, while the server
+is starting, and is then held for the life of the process. None of them
+can be changed by reloading the configuration: sending `SIGHUP` re-reads
+the file and reports each changed authentication setting as requiring a
+restart, but the running server goes on using the values it started
+with. That applies to `local.enabled` and to every OIDC option, the
+claim names and the authorisation mapping included, so narrowing
+`allowed_email_domains` or removing a group from `group_map` whilst
+containing an incident takes effect only once the server has been
+restarted.
+
 ### Local Login Settings
 
 The `http.auth.local` section controls username and password login.
@@ -376,7 +387,7 @@ credentials an account can hold:
 
 | Credential | Default | With `-restore-password` |
 |------------|---------|--------------------------|
-| Password | Replaced with an unusable hash | The password held before linking works again |
+| Password | Replaced with an unusable hash | The password the account last held as a local account works again |
 | API tokens | Revoked | Left in place |
 | Browser sessions | Left running, see below | Left running, see below |
 
@@ -397,11 +408,13 @@ for an administrator who means to hand it back to its holder:
 ```
 
 That branch is a conversion rather than a revocation, so it keeps the
-account's API tokens as well as its password. Weigh it carefully. The
-password hash has been inert for the whole federated period, so the
-password it holds may be years old, will not have been rotated while
-the account was federated, and may be known to the person who has just
-left; the tokens have the same problem, and should be reviewed with
+account's API tokens as well as its password. Weigh it carefully. What
+comes back is whatever hash the account last held as a local account:
+the server refuses to write a password onto a federated account, so
+nothing can have been set on it whilst it was linked, and the hash has
+been inert for the whole federated period. The password it holds may
+therefore be years old, will not have been rotated while the account was
+federated, and may be known to the person who has just left; the tokens have the same problem, and should be reviewed with
 `-list-tokens` and removed with `-remove-token` where they are no
 longer wanted. An account the provider originally created holds a hash
 of discarded random bytes, so `-restore-password` on one of those

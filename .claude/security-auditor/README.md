@@ -11,6 +11,8 @@ moved.
 | Location | Why it matters |
 |----------|----------------|
 | `server/src/internal/auth/` | Users, groups, tokens, permissions and the RBAC checker, backed by SQLite |
+| `server/src/internal/auth/federation.go` | Federated identity: linking, provisioning, group reconciliation and unlinking |
+| `server/src/internal/oidc/` | OIDC discovery, the authorisation request, ID-token verification, claim extraction and the sealed login-state cookie |
 | `server/src/internal/api/` | HTTP handlers; every mutating handler carries an authorisation gate (see `../golang-expert/rbac-patterns.md`) |
 | `server/src/internal/tools/` | MCP tools, including ones that execute SQL against monitored databases |
 | `server/src/internal/database/` | Datastore queries; identifier interpolation is allow-listed and quoted |
@@ -72,6 +74,19 @@ moved.
   full.
 - Token scope does not constrain a superuser: the superuser bypass
   returns before any scope check. That is deliberate, not an oversight.
+- A federated account is matched on the pair `(issuer, subject)` and
+  NEVER on username. `ExternalSubjectKey` in `auth/federation.go`
+  builds the key and `ResolveFederatedUser` looks the account up by it
+  alone, so an identity provider that reissues a username cannot hand
+  one person another person's account. Any change that reintroduces a
+  username lookup on the login path is a privilege-escalation bug, and
+  this is the single most important invariant in the federated surface.
+- `pkg/crypto`'s `EncryptGCM` and `DecryptGCM` accept any key length
+  `aes.NewCipher` will take (16, 24 or 32 bytes), despite doc comments
+  promising AES-256 and exactly 32 bytes. A short key therefore
+  downgrades the cipher silently rather than failing, so every caller
+  must check the length itself; `internal/oidc/state.go` does, in
+  `SealState` and `OpenState`, against its own `keySize` constant.
 
 ## Reporting
 

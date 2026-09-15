@@ -126,11 +126,14 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
                 (series.metric || series.name).includes('lag'),
             )
             .map(series => {
-                const lastPoint = series.data[series.data.length - 1];
+                // The latest bucket with a reading: null buckets are
+                // gaps the server could not fill.
+                const lastPoint = [...series.data].reverse()
+                    .find(point => point.value !== null);
                 return {
                     metric: series.metric || series.name,
                     label: formatMetricLabel(series.metric || series.name),
-                    value: lastPoint.value,
+                    value: lastPoint?.value ?? null,
                 };
             });
     }, [metricsData]);
@@ -188,11 +191,13 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
         <Box>
             <Box sx={KPI_GRID_SX}>
                 {kpiItems.map(item => {
-                    const status = item.value > 30
-                        ? 'critical'
-                        : item.value > 5
-                            ? 'warning'
-                            : 'good';
+                    const status = item.value === null
+                        ? undefined
+                        : item.value > 30
+                            ? 'critical'
+                            : item.value > 5
+                                ? 'warning'
+                                : 'good';
                     return (
                         <KpiTile
                             key={item.metric}

@@ -49,10 +49,11 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
  * null, not as 0.
  */
 vi.mock('../../KpiTile', () => ({
-    default: ({ label, value, unit, sparklineData }: {
+    default: ({ label, value, unit, status, sparklineData }: {
         label: string;
         value: string | number;
         unit?: string;
+        status?: string;
         sparklineData?: SparklinePoint[];
     }) => (
         <div
@@ -60,6 +61,7 @@ vi.mock('../../KpiTile', () => ({
             data-label={label}
             data-value={String(value)}
             data-unit={unit ?? ''}
+            data-status={status ?? ''}
             data-sparkline={JSON.stringify(
                 (sparklineData ?? []).map(p => p.value)
             )}
@@ -98,7 +100,10 @@ const CACHE_KEY = 'blks_hit_per_sec,blks_read_per_sec';
 const DEAD_TUPLE_KEY = 'n_dead_tup,n_live_tup';
 
 /** Build a MetricSeries for the given metric and values. */
-const series = (metric: string, values: number[]): MetricSeries => ({
+const series = (
+    metric: string,
+    values: (number | null)[],
+): MetricSeries => ({
     name: metric,
     metric,
     data: values.map((value, idx) => ({
@@ -531,6 +536,220 @@ describe('PerformanceSection', () => {
             });
             expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
                 .toBe('[]');
+            // Without a live count there is nothing to divide by, so
+            // the tile shows no data rather than a spurious 100%.
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('--');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-unit'))
+                .toBe('');
+        });
+    });
+
+    /*
+     * The server emits null for a bucket it cannot fill (a collector
+     * gap, a counter reset or a rate it cannot derive). Null cache
+     * buckets are covered by the cache hit ratio tests above and by
+     * cacheHitRatio.test.ts; these cover the section's own arithmetic.
+     */
+    describe('null buckets', () => {
+        it('sums the transaction sparkline around null buckets', async () => {
+            routeMetrics({
+                [TXN_KEY]: ready([
+                    series('xact_commit_per_sec', [null, 12, null]),
+                    series('xact_rollback_per_sec', [null, null, 2]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Transactions')).toBeInTheDocument();
+            });
+            // Both null: gap; one side null: the other stands alone.
+            expect(kpi('Transactions').getAttribute('data-sparkline'))
+                .toBe('[null,12,2]');
+            // The headline is the latest bucket of the summed series
+            // (2 rollbacks, null commits), not 12 commits from one
+            // bucket added to 2 rollbacks from another.
+            expect(kpi('Transactions').getAttribute('data-value'))
+                .toBe('2.0');
+            // The chart passes each series through untouched.
+            expect(chartValues(TXN_TITLE, 'Commits/s')).toBe('[null,12,null]');
+            expect(chartValues(TXN_TITLE, 'Rollbacks/s')).toBe('[null,null,2]');
+        });
+
+        /*
+         * A short commit series must not truncate the sum: the buckets
+         * the rollback series covers alone still carry a value, and
+         * their bucket time comes from the rollback point.
+         */
+        it('sums buckets that only the rollback series covers', async () => {
+            routeMetrics({
+                [TXN_KEY]: ready([
+                    series('xact_commit_per_sec', [12]),
+                    series('xact_rollback_per_sec', [1, 2]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Transactions')).toBeInTheDocument();
+            });
+            expect(kpi('Transactions').getAttribute('data-sparkline'))
+                .toBe('[13,2]');
+            expect(kpi('Transactions').getAttribute('data-value'))
+                .toBe('2.0');
+        });
+
+        it('shows a placeholder when the rate series is all null', async () => {
+            routeMetrics({
+                [TXN_KEY]: ready([
+                    series('xact_commit_per_sec', [null, null]),
+                    series('xact_rollback_per_sec', [null, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Transactions')).toBeInTheDocument();
+            });
+            expect(kpi('Transactions').getAttribute('data-value')).toBe('--');
+            expect(kpi('Transactions').getAttribute('data-unit')).toBe('');
+            expect(kpi('Transactions').getAttribute('data-sparkline'))
+                .toBe('[null,null]');
+        });
+
+        it('leaves a dead tuple ratio gap where a count is null', async () => {
+            routeMetrics({
+                [DEAD_TUPLE_KEY]: ready([
+                    series('n_dead_tup', [5, null]),
+                    series('n_live_tup', [95, 95]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
+            });
+            // The null bucket is a gap, not a spurious 0%, and the
+            // headline falls back to the last bucket with both counts.
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
+                .toBe('[5,null]');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('5.0');
+        });
+
+        /*
+         * A dead count missing in the latest bucket used to be read as
+         * 0 against a live count of 95, which displayed a reassuring
+         * 0.0%: a healthy-looking number built from no data at all.
+         */
+        it('shows no data when the latest dead count is missing', async () => {
+            routeMetrics({
+                [DEAD_TUPLE_KEY]: ready([
+                    series('n_dead_tup', [null]),
+                    series('n_live_tup', [95]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
+            });
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('--');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-unit'))
+                .toBe('');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-status'))
+                .toBe('');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
+                .toBe('[null]');
+        });
+
+        it('shows no data when the latest live count is missing', async () => {
+            routeMetrics({
+                [DEAD_TUPLE_KEY]: ready([
+                    series('n_dead_tup', [5]),
+                    series('n_live_tup', [null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
+            });
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('--');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
+                .toBe('[null]');
+        });
+
+        /*
+         * The counts must come from one bucket. Taking each from its
+         * own latest reading would pair the dead count of 40 with the
+         * live count of 60 and report 40%, whereas the latest aligned
+         * bucket is 10 dead against 90 live.
+         */
+        it('derives the ratio from a single aligned bucket', async () => {
+            routeMetrics({
+                [DEAD_TUPLE_KEY]: ready([
+                    series('n_dead_tup', [40, 10]),
+                    series('n_live_tup', [60, 90]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
+            });
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('10.0');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-unit'))
+                .toBe('%');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
+                .toBe('[40,10]');
+        });
+
+        /*
+         * A trailing gap must not blank the headline: the latest
+         * bucket that has both counts still stands, which is what the
+         * per-bucket sparkline already carries.
+         */
+        it('falls back to the last bucket holding both counts', async () => {
+            routeMetrics({
+                [DEAD_TUPLE_KEY]: ready([
+                    series('n_dead_tup', [40, 10, null]),
+                    series('n_live_tup', [60, 90, 90]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
+            });
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('10.0');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-sparkline'))
+                .toBe('[40,10,null]');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-status'))
+                .toBe('warning');
+        });
+
+        it('flags an aligned bucket above the critical threshold', async () => {
+            routeMetrics({
+                [DEAD_TUPLE_KEY]: ready([
+                    series('n_dead_tup', [40]),
+                    series('n_live_tup', [60]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(kpi('Dead Tuple Ratio')).toBeInTheDocument();
+            });
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-value'))
+                .toBe('40.0');
+            expect(kpi('Dead Tuple Ratio').getAttribute('data-status'))
+                .toBe('critical');
         });
     });
 });

@@ -217,8 +217,7 @@ To manage response sizes:
 			aggregation := "avg"
 			if aggVal, ok := args["aggregation"].(string); ok && aggVal != "" {
 				aggVal = strings.ToLower(aggVal)
-				validAggs := map[string]bool{"avg": true, "sum": true, "min": true, "max": true, "last": true}
-				if !validAggs[aggVal] {
+				if !metrics.IsValidAggregation(aggVal) {
 					return mcp.NewToolError("Invalid 'aggregation' parameter: must be one of avg, sum, min, max, last")
 				}
 				aggregation = aggVal

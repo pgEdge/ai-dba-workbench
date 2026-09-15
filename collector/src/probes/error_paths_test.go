@@ -85,6 +85,29 @@ func TestCheckHelpers_ErrorPath(t *testing.T) {
 			_, err := p.checkHasBlkReadTime(ctx, c)
 			return err
 		}},
+		{"statements_stats_info_view", func(ctx context.Context, c *pgxpool.Conn) error {
+			p := NewPgStatStatementsProbe(&ProbeConfig{Name: ProbeNamePgStatStatements})
+			_, err := p.checkHasStatsInfoView(ctx, c)
+			return err
+		}},
+		// Execute reaches the pg_stat_statements_info check only after the
+		// extension and column checks, so seed those cache entries as
+		// already answered and let the info-view check be the first live
+		// query to hit the broken connection.
+		{"statements_execute_stats_info_view", func(ctx context.Context, c *pgxpool.Conn) error {
+			const connName = "err-stmts-info-view"
+			for _, check := range []string{
+				"pg_stat_statements_ext",
+				"pg_stat_statements_shared_blk_time",
+			} {
+				key := featureCacheKey{connectionName: connName, checkName: check}
+				featureCache.Store(key, true)
+				defer featureCache.Delete(key)
+			}
+			p := NewPgStatStatementsProbe(&ProbeConfig{Name: ProbeNamePgStatStatements})
+			_, err := p.Execute(ctx, connName, c, 17)
+			return err
+		}},
 		{"subscription_worker_type", func(ctx context.Context, c *pgxpool.Conn) error {
 			p := NewPgStatSubscriptionProbe(&ProbeConfig{Name: ProbeNamePgStatSubscription})
 			_, err := p.checkHasWorkerType(ctx, c)

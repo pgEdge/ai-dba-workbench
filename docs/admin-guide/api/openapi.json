@@ -6033,7 +6033,7 @@
           {
             "name": "buckets",
             "in": "query",
-            "description": "Number of time buckets",
+            "description": "Number of time buckets, 1 to 500 (default 150). The count is clamped so that no bucket is narrower than the probe's collection interval; a one-hour window on a five-minute probe therefore yields at most 12 buckets however many are requested.",
             "schema": {
               "type": "integer"
             }
@@ -6041,15 +6041,22 @@
           {
             "name": "aggregation",
             "in": "query",
-            "description": "Aggregation method",
+            "description": "How samples within a bucket are combined (default avg). Ignored for _delta metrics, which always sum the increases in the bucket.",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "avg",
+                "sum",
+                "min",
+                "max",
+                "last"
+              ]
             }
           },
           {
             "name": "metrics",
             "in": "query",
-            "description": "Comma-separated metric names. A name may be a raw probe column, a cumulative counter column suffixed with _per_sec for its per-second rate, or one suffixed with _delta for its per-bucket increase; a real column of that name always takes precedence.",
+            "description": "Comma-separated metric names. A name may be a raw probe column; a cumulative counter column suffixed with _per_sec for its per-second rate or _delta for its per-bucket increase; a cumulative time counter (milliseconds) suffixed with _pct for the share of wall-clock time it advanced by, or a session time counter suffixed with _sessions for the average number of sessions it represents; or dead_tuple_ratio on a probe exposing n_live_tup and n_dead_tup. A real column of that name always takes precedence, and a suffix on a column of the wrong kind (for example _per_sec on a gauge) is rejected with 400.",
             "schema": {
               "type": "string"
             }
@@ -11916,39 +11923,60 @@
           "content"
         ]
       },
-      "MetricsQueryResult": {
+      "MetricDataPoint": {
         "type": "object",
         "properties": {
-          "aggregation": {
+          "time": {
             "type": "string",
-            "description": "Aggregation method"
+            "format": "date-time",
+            "description": "Bucket start time"
           },
-          "buckets": {
-            "type": "integer",
-            "description": "Number of time buckets"
-          },
-          "connection_ids": {
-            "type": "array",
-            "description": "Connection IDs queried",
-            "items": {
-              "type": "integer"
-            }
-          },
-          "probe_name": {
-            "type": "string",
-            "description": "Probe name"
-          },
-          "series": {
-            "type": "array",
-            "description": "Time series data",
-            "items": {
-              "type": "object"
-            }
-          },
-          "time_range": {
-            "type": "string",
-            "description": "Time range"
+          "value": {
+            "type": "number",
+            "description": "Aggregated value for the bucket, or null when the bucket has no value: no sample fell in it and, for a raw column or dead_tuple_ratio, the last reading is more than three collection intervals old; for a counter-derived metric (_per_sec, _delta, _pct, _sessions), the interval spanned a counter reset or a collection gap of more than three collection intervals. Rates are never carried forward across a gap.",
+            "nullable": true
           }
+        },
+        "required": [
+          "time",
+          "value"
+        ]
+      },
+      "MetricSeries": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "description": "One point per time bucket. Every series in a response has the same length and the same bucket times.",
+            "items": {
+              "$ref": "#/components/schemas/MetricDataPoint"
+            }
+          },
+          "metric": {
+            "type": "string",
+            "description": "Metric name as requested"
+          },
+          "name": {
+            "type": "string",
+            "description": "Series label: the metric name, suffixed with the connection (for example \"xact_commit_per_sec (conn 3)\") when more than one connection was queried"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit of the values: \"/s\" for a _per_sec rate, \"%\" for a _pct time share or dead_tuple_ratio, \"sessions\" for a _sessions average, \"ms\" for a _delta of a time counter, and empty for a raw column or an event-count _delta"
+          }
+        },
+        "required": [
+          "name",
+          "metric",
+          "unit",
+          "data"
+        ]
+      },
+      "MetricsQueryResult": {
+        "type": "array",
+        "description": "Time series in the order the metrics were requested (or column order when no metrics were named), one per metric per connection",
+        "items": {
+          "$ref": "#/components/schemas/MetricSeries"
         }
       },
       "ModelInfo": {

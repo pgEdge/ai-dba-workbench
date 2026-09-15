@@ -11,6 +11,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"math/big"
 	"strings"
@@ -1145,6 +1146,209 @@ func TestClassifyMetrics(t *testing.T) {
 			}
 		}
 	})
+
+	// Column kind rules (issue #402). These use real probe names so the
+	// static registry, not a test override, decides the kind.
+	dbCols := []string{
+		"numbackends", "xact_commit", "blk_read_time", "active_time",
+		"sessions",
+	}
+	stmtCols := []string{"calls", "total_exec_time", "mean_exec_time"}
+	cpuCols := []string{"idle_mode_percent"}
+
+	t.Run("per_sec on a gauge names the kind", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"n_dead_tup_per_sec"}, tableCols, "pg_stat_all_tables")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		want := `metric "n_dead_tup_per_sec" not supported for probe ` +
+			`"pg_stat_all_tables": "n_dead_tup" is a gauge, not a cumulative counter`
+		if err.Error() != want {
+			t.Errorf("error = %q\nwant    %q", err.Error(), want)
+		}
+	})
+
+	t.Run("per_sec on a time counter points at _pct", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"blk_read_time_per_sec"}, dbCols, "pg_stat_database")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		for _, frag := range []string{
+			`"blk_read_time" is a cumulative time counter, not a cumulative counter`,
+			`request "blk_read_time_pct"`,
+		} {
+			if !strings.Contains(err.Error(), frag) {
+				t.Errorf("error %q lacks %q", err.Error(), frag)
+			}
+		}
+	})
+
+	t.Run("per_sec on a session time counter points at _sessions", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"active_time_per_sec"}, dbCols, "pg_stat_database")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		for _, frag := range []string{
+			`"active_time" is a session time counter, not a cumulative counter`,
+			`request "active_time_sessions"`,
+		} {
+			if !strings.Contains(err.Error(), frag) {
+				t.Errorf("error %q lacks %q", err.Error(), frag)
+			}
+		}
+	})
+
+	t.Run("per_sec on a watermark and a ratio rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"mean_exec_time_per_sec"}, stmtCols, "pg_stat_statements")
+		if err == nil || !strings.Contains(err.Error(), "is a lifetime watermark") {
+			t.Errorf("watermark: got %v", err)
+		}
+		if err != nil && strings.Contains(err.Error(), "request") {
+			t.Errorf("watermark error should carry no hint: %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"idle_mode_percent_per_sec"}, cpuCols, "pg_sys_cpu_usage_info")
+		if err == nil || !strings.Contains(err.Error(), "is a ratio") {
+			t.Errorf("ratio: got %v", err)
+		}
+	})
+
+	t.Run("per_sec on a real counter carries the /s unit", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"xact_commit_per_sec", "sessions_per_sec"}, dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 2 {
+			t.Fatalf("expected 2 derived, got %d", len(derived))
+		}
+		for _, d := range derived {
+			if d.Kind != DerivedPerSec || d.Unit != "/s" {
+				t.Errorf("%s: kind %v unit %q", d.OutputName, d.Kind, d.Unit)
+			}
+		}
+	})
+
+	t.Run("delta accepts counter and time kinds with matching units", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"xact_commit_delta", "blk_read_time_delta", "active_time_delta"},
+			dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantUnits := map[string]string{
+			"xact_commit_delta":   "",
+			"blk_read_time_delta": "ms",
+			"active_time_delta":   "ms",
+		}
+		for _, d := range derived {
+			if d.Kind != DerivedDelta {
+				t.Errorf("%s: kind %v, want DerivedDelta", d.OutputName, d.Kind)
+			}
+			if d.Unit != wantUnits[d.OutputName] {
+				t.Errorf("%s: unit %q, want %q", d.OutputName, d.Unit, wantUnits[d.OutputName])
+			}
+		}
+	})
+
+	t.Run("delta on a gauge rejected", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"numbackends_delta"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"numbackends" is a gauge, not a cumulative counter`) {
+			t.Errorf("got %v", err)
+		}
+	})
+
+	t.Run("pct accepted only on a time counter", func(t *testing.T) {
+		_, derived, order, err := classifyMetrics(
+			[]string{"blk_read_time_pct"}, dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Kind != DerivedTimeShare ||
+			derived[0].BaseColumn != "blk_read_time" || derived[0].Unit != "%" {
+			t.Errorf("unexpected derived %+v", derived)
+		}
+		if len(order) != 1 || order[0] != "blk_read_time_pct" {
+			t.Errorf("unexpected order %v", order)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"xact_commit_pct"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"xact_commit" is a cumulative counter, not a cumulative time counter`) {
+			t.Errorf("counter: got %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"active_time_pct"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"active_time" is a session time counter, not a cumulative time counter`) {
+			t.Errorf("session time: got %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"nothing_pct"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(), "to compute a share of wall-clock time") {
+			t.Errorf("missing base: got %v", err)
+		}
+	})
+
+	t.Run("sessions accepted only on a session time counter", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"active_time_sessions"}, dbCols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Kind != DerivedSessionAverage ||
+			derived[0].BaseColumn != "active_time" || derived[0].Unit != "sessions" {
+			t.Errorf("unexpected derived %+v", derived)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"blk_read_time_sessions"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(),
+			`"blk_read_time" is a cumulative time counter, not a session time counter`) {
+			t.Errorf("time counter: got %v", err)
+		}
+		_, _, _, err = classifyMetrics(
+			[]string{"nothing_sessions"}, dbCols, "pg_stat_database")
+		if err == nil || !strings.Contains(err.Error(), "to compute an average session count") {
+			t.Errorf("missing base: got %v", err)
+		}
+	})
+
+	t.Run("real column ending in a derived suffix stays raw", func(t *testing.T) {
+		cols := []string{"blk_read_time", "cache_pct", "peak_sessions"}
+		raw, derived, _, err := classifyMetrics(
+			[]string{"cache_pct", "peak_sessions"}, cols, "pg_stat_database")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(raw) != 2 || len(derived) != 0 {
+			t.Errorf("raw %v derived %v", raw, derived)
+		}
+	})
+
+	t.Run("dead_tuple_ratio carries the percent unit", func(t *testing.T) {
+		_, derived, _, err := classifyMetrics(
+			[]string{"dead_tuple_ratio"}, tableCols, "pg_stat_all_tables")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(derived) != 1 || derived[0].Unit != "%" {
+			t.Errorf("unexpected derived %+v", derived)
+		}
+	})
+
+	t.Run("unregistered probe treats every column as a gauge", func(t *testing.T) {
+		_, _, _, err := classifyMetrics(
+			[]string{"hits_per_sec"}, []string{"hits"}, "not_a_probe")
+		if err == nil || !strings.Contains(err.Error(), `"hits" is a gauge`) {
+			t.Errorf("got %v", err)
+		}
+	})
 }
 
 func TestEntityKeyColumns(t *testing.T) {
@@ -1708,8 +1912,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 
 	t.Run("empty derived rejected", func(t *testing.T) {
 		_, _, err := BuildDerivedMetricsQuery(
-			"pg_stat_all_tables", nil, nil, 1, start, end, 60, "avg",
-			MetricFilters{})
+			"pg_stat_all_tables", nil, nil, nil, 1, start, end, 60, "avg",
+			MetricFilters{}, testMaxElapsed)
 		if err == nil {
 			t.Fatal("expected error for empty derived slice")
 		}
@@ -1723,7 +1927,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1749,8 +1953,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Contains(query, "ratio_buckets") {
 			t.Error("query should not reference ratio_buckets")
 		}
-		if len(args) != 4 {
-			t.Errorf("expected 4 args, got %d", len(args))
+		if len(args) != 5 {
+			t.Errorf("expected 5 args, got %d", len(args))
 		}
 		if args[1] != 1 {
 			t.Errorf("expected connection_id=1, got %v", args[1])
@@ -1764,7 +1968,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "n_tup_ins_per_sec", BaseColumn: "n_tup_ins", Kind: DerivedPerSec},
 				{OutputName: "n_tup_upd_per_sec", BaseColumn: "n_tup_upd", Kind: DerivedPerSec},
 			},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1788,7 +1992,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				OutputName: "dead_tuple_ratio",
 				Kind:       DerivedDeadTupleRatio,
 			}},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1819,7 +2023,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
 				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
 			},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1850,13 +2054,13 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, end, 60, "avg",
+			nil, nil, 1, start, end, 60, "avg",
 			MetricFilters{
 				DatabaseName:   "mydb",
 				DatabaseColumn: "database_name",
 				SchemaName:     "public",
 				TableName:      "users",
-			})
+			}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1869,8 +2073,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				t.Errorf("query missing filter %q", c)
 			}
 		}
-		if len(args) != 7 {
-			t.Errorf("expected 7 args, got %d", len(args))
+		if len(args) != 8 {
+			t.Errorf("expected 8 args, got %d", len(args))
 		}
 	})
 
@@ -1884,12 +2088,12 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "idx_scan",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, end, 60, "avg",
+			nil, nil, 1, start, end, 60, "avg",
 			MetricFilters{
 				SchemaName: "public",
 				TableName:  "orders",
 				IndexName:  "pk_orders",
-			})
+			}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1907,8 +2111,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Count(query, "indexrelname = $7") < 1 {
 			t.Error("query should filter by indexrelname")
 		}
-		if len(args) != 7 {
-			t.Fatalf("expected 7 args, got %d", len(args))
+		if len(args) != 8 {
+			t.Fatalf("expected 8 args, got %d", len(args))
 		}
 		if args[6] != "pk_orders" {
 			t.Errorf("expected indexrelname arg 'pk_orders', got %v", args[6])
@@ -1925,16 +2129,16 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "calls",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, end, 60, "avg",
-			MetricFilters{QueryID: ptrInt64(42)})
+			nil, nil, 1, start, end, 60, "avg",
+			MetricFilters{QueryID: ptrInt64(42)}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !strings.Contains(query, "queryid = $5") {
 			t.Errorf("query should filter by queryid, got:\n%s", query)
 		}
-		if len(args) != 5 {
-			t.Fatalf("expected 5 args, got %d", len(args))
+		if len(args) != 6 {
+			t.Fatalf("expected 6 args, got %d", len(args))
 		}
 		if args[4] != int64(42) {
 			t.Errorf("expected int64 queryid arg 42, got %#v", args[4])
@@ -1949,7 +2153,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, end, 60, "last", MetricFilters{})
+			nil, nil, 1, start, end, 60, "last", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1965,7 +2169,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		_, _, err := BuildDerivedMetricsQuery(
 			"pg_stat_all_tables",
 			[]DerivedMetric{{OutputName: "weird", Kind: DerivedMetricKind(99)}},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err == nil {
 			t.Fatal("expected error for unknown derived kind")
 		}
@@ -1980,7 +2184,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, tinyEnd, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, tinyEnd, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2000,7 +2204,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				OutputName: "dead_tuple_ratio",
 				Kind:       DerivedDeadTupleRatio,
 			}},
-			nil, 1, start, end, 60, "last", MetricFilters{})
+			nil, nil, 1, start, end, 60, "last", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2028,22 +2232,38 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				BaseColumn: "seq_scan",
 				Kind:       DerivedDelta,
 			}},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		checks := []string{
 			`SUM("seq_scan") AS total_0`,
 			`LAG(SUM("seq_scan")) OVER (ORDER BY collected_at) AS prev_0`,
-			`CASE WHEN prev_0 IS NOT NULL AND (total_0 - prev_0) >= 0 ` +
+			`CASE WHEN prev_0 IS NULL THEN 0 ` +
+				`WHEN elapsed_sec > $5::float8 THEN NULL ` +
+				`WHEN (total_0 - prev_0) >= 0 ` +
 				`THEN (total_0 - prev_0) ELSE 0 END AS delta_0`,
 			`SUM(delta_0) AS delta_0`,
 			`SUM(delta_0) AS "seq_scan_delta"`,
-			// The zero fill is gated on the window holding a sample at all,
-			// so a connection with no rows yields NULL buckets (no points)
-			// rather than a full window of zeros.
-			`CASE WHEN EXISTS (SELECT 1 FROM rate_samples) ` +
-				`THEN COALESCE(rate_buckets."seq_scan_delta", 0) END AS "seq_scan_delta"`,
+			`COUNT(delta_0) = 0 AS gap_0`,
+			// A bucket holding samples is a gap when every one of them was
+			// rejected; a bucket holding none reads 0 only when an accepted
+			// sample interval spans it, so a connection with no rows, the
+			// span either side of the probe's history and a collection
+			// outage all yield NULL buckets rather than confident zeros.
+			`CASE WHEN rate_buckets.bucket_time IS NOT NULL ` +
+				`THEN CASE WHEN COALESCE(rate_buckets.gap_0, false) ` +
+				`THEN NULL ELSE COALESCE(rate_buckets."seq_scan_delta", 0) END ` +
+				`WHEN EXISTS (SELECT 1 FROM rate_samples s ` +
+				`WHERE s.delta_0 IS NOT NULL ` +
+				`AND s.prev_collected_at IS NOT NULL ` +
+				`AND s.prev_collected_at < all_buckets.bucket_time + $1::interval ` +
+				`AND s.collected_at >= all_buckets.bucket_time) ` +
+				`THEN 0 END AS "seq_scan_delta"`,
+			// The predecessor time a span test needs is carried up from
+			// the innermost sample query.
+			`LAG(collected_at) OVER (ORDER BY collected_at) AS prev_collected_at`,
+			`MAX(prev_collected_at) AS prev_collected_at`,
 			`LEFT JOIN rate_buckets ON all_buckets.bucket_time = rate_buckets.bucket_time`,
 		}
 		for _, c := range checks {
@@ -2054,8 +2274,8 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 		if strings.Contains(query, "rate_0") {
 			t.Errorf("delta-only query should not emit a rate column:\n%s", query)
 		}
-		if len(args) != 4 {
-			t.Errorf("expected 4 args, got %d", len(args))
+		if len(args) != 5 {
+			t.Errorf("expected 5 args, got %d", len(args))
 		}
 	})
 
@@ -2070,7 +2290,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 					BaseColumn: "seq_scan",
 					Kind:       DerivedDelta,
 				}},
-				nil, 1, start, end, 60, agg, MetricFilters{})
+				nil, nil, 1, start, end, 60, agg, MetricFilters{}, testMaxElapsed)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2090,7 +2310,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
 				{OutputName: "n_tup_ins_delta", BaseColumn: "n_tup_ins", Kind: DerivedDelta},
 			},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2126,7 +2346,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 				{OutputName: "seq_scan_delta", BaseColumn: "seq_scan", Kind: DerivedDelta},
 				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
 			},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2149,7 +2369,7 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 					OutputName: "dead_tuple_ratio",
 					Kind:       DerivedDeadTupleRatio,
 				}},
-				nil, 1, start, end, 60, agg, MetricFilters{})
+				nil, nil, 1, start, end, 60, agg, MetricFilters{}, testMaxElapsed)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2166,6 +2386,76 @@ func TestBuildDerivedMetricsQuery(t *testing.T) {
 					agg, query)
 			}
 		})
+	}
+
+	t.Run("time share and session average are scaled rates", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery(
+			"pg_stat_database",
+			[]DerivedMetric{
+				{OutputName: "blk_read_time_pct", BaseColumn: "blk_read_time", Kind: DerivedTimeShare},
+				{OutputName: "active_time_sessions", BaseColumn: "active_time", Kind: DerivedSessionAverage},
+				{OutputName: "xact_commit_per_sec", BaseColumn: "xact_commit", Kind: DerivedPerSec},
+			},
+			[]string{"datname"}, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`SUM("blk_read_time") AS total_0`,
+			`CASE WHEN (total_0 - prev_0) >= 0 AND elapsed_sec > 0 AND elapsed_sec <= $5::float8 ` +
+				`THEN 100.0 * (total_0 - prev_0)::float / (elapsed_sec * 1000.0) END AS rate_0`,
+			`CASE WHEN (total_1 - prev_1) >= 0 AND elapsed_sec > 0 AND elapsed_sec <= $5::float8 ` +
+				`THEN (total_1 - prev_1)::float / (elapsed_sec * 1000.0) END AS rate_1`,
+			`CASE WHEN (total_2 - prev_2) >= 0 AND elapsed_sec > 0 AND elapsed_sec <= $5::float8 ` +
+				`THEN (total_2 - prev_2)::float / elapsed_sec END AS rate_2`,
+			`SUM(rate_0) AS rate_0`,
+			`SUM(rate_1) AS rate_1`,
+			`avg(rate_0) AS "blk_read_time_pct"`,
+			`avg(rate_1) AS "active_time_sessions"`,
+			`avg(rate_2) AS "xact_commit_per_sec"`,
+			`rate_buckets."blk_read_time_pct",`,
+			`rate_buckets."active_time_sessions",`,
+			`rate_buckets."xact_commit_per_sec"`,
+			`PARTITION BY "datname" ORDER BY collected_at`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, "delta_") || strings.Contains(query, "ratio_buckets") {
+			t.Error("scaled rates must not emit delta or ratio CTE columns")
+		}
+		if len(args) != 5 {
+			t.Errorf("expected 5 args, got %d", len(args))
+		}
+	})
+
+	t.Run("time share applies the last aggregation", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(
+			"pg_stat_database",
+			[]DerivedMetric{{OutputName: "blk_read_time_pct", BaseColumn: "blk_read_time", Kind: DerivedTimeShare}},
+			nil, nil, 1, start, end, 60, "last", MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, `FILTER (WHERE rate_0 IS NOT NULL))[1] AS "blk_read_time_pct"`) {
+			t.Errorf("last aggregation not applied:\n%s", query)
+		}
+	})
+}
+
+func TestRateSampleExpr(t *testing.T) {
+	for _, tc := range []struct {
+		kind DerivedMetricKind
+		want string
+	}{
+		{DerivedPerSec, "(total_3 - prev_3)::float / elapsed_sec"},
+		{DerivedTimeShare, "100.0 * (total_3 - prev_3)::float / (elapsed_sec * 1000.0)"},
+		{DerivedSessionAverage, "(total_3 - prev_3)::float / (elapsed_sec * 1000.0)"},
+	} {
+		if got := rateSampleExpr(tc.kind, 3); got != tc.want {
+			t.Errorf("rateSampleExpr(%v) = %q, want %q", tc.kind, got, tc.want)
+		}
 	}
 }
 
@@ -2219,8 +2509,8 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 	} {
 		t.Run(tc.name+" reaches one sample before the window", func(t *testing.T) {
 			query, args, err := BuildDerivedMetricsQuery(
-				"pg_stat_all_tables", tc.derived, nil, 1, start, end, 60, "avg",
-				MetricFilters{})
+				"pg_stat_all_tables", tc.derived, nil, nil, 1, start, end, 60, "avg",
+				MetricFilters{}, testMaxElapsed)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -2237,8 +2527,8 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 			if !strings.Contains(query, "collected_at <= $4") {
 				t.Error("query missing the window upper bound")
 			}
-			if len(args) != 4 {
-				t.Errorf("expected 4 args, got %d", len(args))
+			if len(args) != 5 {
+				t.Errorf("expected 5 args, got %d", len(args))
 			}
 		})
 	}
@@ -2247,13 +2537,13 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 		// The extra sample must belong to the same entity, or the LAG would
 		// subtract another table's counter from this one's.
 		query, args, err := BuildDerivedMetricsQuery(
-			"pg_stat_all_tables", perSec, nil, 1, start, end, 60, "avg",
+			"pg_stat_all_tables", perSec, nil, nil, 1, start, end, 60, "avg",
 			MetricFilters{
 				DatabaseName:   "mydb",
 				DatabaseColumn: "database_name",
 				SchemaName:     "public",
 				TableName:      "users",
-			})
+			}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2266,8 +2556,8 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 			t.Errorf("query missing filtered lookback %q\n---\n%s", want, query)
 		}
 		// Same placeholders as the outer clause: no renumbering.
-		if len(args) != 7 {
-			t.Errorf("expected 7 args, got %d", len(args))
+		if len(args) != 8 {
+			t.Errorf("expected 8 args, got %d", len(args))
 		}
 	})
 
@@ -2279,7 +2569,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 				BaseColumn: "calls",
 				Kind:       DerivedPerSec,
 			}},
-			nil, 1, start, end, 60, "avg", MetricFilters{QueryID: ptrInt64(42)})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{QueryID: ptrInt64(42)}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2299,7 +2589,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 				OutputName: "dead_tuple_ratio",
 				Kind:       DerivedDeadTupleRatio,
 			}},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2318,7 +2608,7 @@ func TestBuildDerivedMetricsQueryLookback(t *testing.T) {
 				{OutputName: "seq_scan_per_sec", BaseColumn: "seq_scan", Kind: DerivedPerSec},
 				{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio},
 			},
-			nil, 1, start, end, 60, "avg", MetricFilters{})
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2359,8 +2649,8 @@ func TestMetricQueryParts(t *testing.T) {
 
 	t.Run("where matches metricQueryBase", func(t *testing.T) {
 		filters := MetricFilters{SchemaName: "public", TableName: "orders"}
-		parts := metricQueryClauses(7, start, end, time.Minute, filters)
-		whereSQL, args := metricQueryBase(7, start, end, time.Minute, filters)
+		parts := metricQueryClauses("pg_stat_all_tables", 7, start, end, time.Minute, filters)
+		whereSQL, args := metricQueryBase("pg_stat_all_tables", 7, start, end, time.Minute, filters)
 		if parts.where() != whereSQL {
 			t.Errorf("where() = %q, metricQueryBase = %q", parts.where(), whereSQL)
 		}
@@ -2373,7 +2663,7 @@ func TestMetricQueryParts(t *testing.T) {
 	})
 
 	t.Run("lookbackWhere leaves the other clauses alone", func(t *testing.T) {
-		parts := metricQueryClauses(1, start, end, time.Minute, MetricFilters{})
+		parts := metricQueryClauses("pg_stat_all_tables", 1, start, end, time.Minute, MetricFilters{})
 		got := parts.lookbackWhere("pg_stat_all_tables")
 		if strings.Contains(got, " AND collected_at >= $3 AND") {
 			t.Errorf("lookbackWhere kept the plain lower bound: %q", got)
@@ -2392,7 +2682,7 @@ func TestMetricQueryParts(t *testing.T) {
 	t.Run("lookbackWhere does not mutate the filter clauses", func(t *testing.T) {
 		// where() and lookbackWhere() both append to filterClauses; each must
 		// copy, or the second call would observe the first call's clauses.
-		parts := metricQueryClauses(1, start, end, time.Minute,
+		parts := metricQueryClauses("pg_stat_all_tables", 1, start, end, time.Minute,
 			MetricFilters{SchemaName: "public"})
 		_ = parts.where()
 		_ = parts.lookbackWhere("pg_stat_all_tables")
@@ -2433,8 +2723,8 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 
 	t.Run("entity keys partition the LAG and group the samples", func(t *testing.T) {
 		query, args, err := BuildDerivedMetricsQuery(
-			"pg_sys_network_info", derived, []string{"interface_name"},
-			1, start, end, 60, "avg", MetricFilters{})
+			"pg_sys_network_info", derived, []string{"interface_name"}, nil,
+			1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2460,20 +2750,23 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 				t.Errorf("query missing %q\n---\n%s", c, query)
 			}
 		}
-		if n := strings.Count(query, "PARTITION BY"); n != 3 {
-			t.Errorf("expected 3 partitioned window functions, got %d:\n%s", n, query)
+		// Three counter window functions (the SUM, its LAG and the
+		// elapsed-time LAG) plus the predecessor time the delta span test
+		// needs, all partitioned by the entity keys.
+		if n := strings.Count(query, "PARTITION BY"); n != 4 {
+			t.Errorf("expected 4 partitioned window functions, got %d:\n%s", n, query)
 		}
 		// Entity keys are identifiers, never bound values.
-		if len(args) != 4 {
-			t.Errorf("expected 4 args, got %d", len(args))
+		if len(args) != 5 {
+			t.Errorf("expected 5 args, got %d", len(args))
 		}
 	})
 
 	t.Run("several entity keys are quoted and listed in order", func(t *testing.T) {
 		query, _, err := BuildDerivedMetricsQuery(
 			"pg_stat_statements", derived[:1],
-			[]string{"database_name", "queryid", "userid", "dbid", "toplevel"},
-			1, start, end, 60, "avg", MetricFilters{})
+			[]string{"database_name", "queryid", "userid", "dbid", "toplevel"}, nil,
+			1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2485,8 +2778,8 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 
 	t.Run("no entity keys reduces to the single-row form", func(t *testing.T) {
 		query, _, err := BuildDerivedMetricsQuery(
-			"pg_stat_wal", derived, nil, 1, start, end, 60, "avg",
-			MetricFilters{})
+			"pg_stat_wal", derived, nil, nil, 1, start, end, 60, "avg",
+			MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2508,7 +2801,7 @@ func TestBuildDerivedMetricsQueryEntityPartition(t *testing.T) {
 		query, _, err := BuildDerivedMetricsQuery(
 			"pg_stat_all_tables",
 			[]DerivedMetric{{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio}},
-			[]string{"relname"}, 1, start, end, 60, "avg", MetricFilters{})
+			[]string{"relname"}, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2528,6 +2821,8 @@ func TestNeedsEntityKeys(t *testing.T) {
 		{"ratio only", []DerivedMetric{{Kind: DerivedDeadTupleRatio}}, false},
 		{"per_sec", []DerivedMetric{{Kind: DerivedPerSec}}, true},
 		{"delta", []DerivedMetric{{Kind: DerivedDelta}}, true},
+		{"time share", []DerivedMetric{{Kind: DerivedTimeShare}}, true},
+		{"session average", []DerivedMetric{{Kind: DerivedSessionAverage}}, true},
 		{"ratio then delta", []DerivedMetric{{Kind: DerivedDeadTupleRatio}, {Kind: DerivedDelta}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2536,4 +2831,260 @@ func TestNeedsEntityKeys(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testMaxElapsed is the gap bound the builder unit tests pass: three
+// one-minute probe intervals, matching the fixtures' minute-spaced samples.
+const testMaxElapsed = 3 * time.Minute
+
+func TestBuildDerivedMetricsQueryGuards(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
+	rate := []DerivedMetric{{
+		OutputName: "xact_commit_per_sec", BaseColumn: "xact_commit", Kind: DerivedPerSec,
+	}}
+	delta := []DerivedMetric{{
+		OutputName: "xact_commit_delta", BaseColumn: "xact_commit", Kind: DerivedDelta,
+	}}
+	// pg_stat_database is a registered probe whose counters are guarded
+	// by stats_reset.
+	const probe = "pg_stat_database"
+	withReset := []string{"connection_id", "collected_at", "datname", "xact_commit", "stats_reset"}
+	withoutReset := []string{"connection_id", "collected_at", "datname", "xact_commit"}
+
+	t.Run("reset marker present adds the reset columns and guard", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			derived []DerivedMetric
+			want    string
+		}{
+			{"rate", rate, `CASE WHEN (total_0 - prev_0) >= 0 AND elapsed_sec > 0 ` +
+				`AND elapsed_sec <= $5::float8 ` +
+				`AND reset_0 IS NOT DISTINCT FROM prev_reset_0 ` +
+				`THEN (total_0 - prev_0)::float / elapsed_sec END AS rate_0`},
+			{"delta", delta, `CASE WHEN prev_0 IS NULL THEN 0 ` +
+				`WHEN elapsed_sec > $5::float8 THEN NULL ` +
+				`WHEN (total_0 - prev_0) >= 0 ` +
+				`AND reset_0 IS NOT DISTINCT FROM prev_reset_0 ` +
+				`THEN (total_0 - prev_0) ELSE 0 END AS delta_0`},
+		} {
+			query, args, err := BuildDerivedMetricsQuery(probe, tc.derived,
+				[]string{"datname"}, withReset, 1, start, end, 60, "avg",
+				MetricFilters{}, testMaxElapsed)
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v", tc.name, err)
+			}
+			for _, c := range []string{
+				`MAX("stats_reset") AS reset_0`,
+				`LAG(MAX("stats_reset")) OVER (PARTITION BY "datname" ORDER BY collected_at) AS prev_reset_0`,
+				tc.want,
+			} {
+				if !strings.Contains(query, c) {
+					t.Errorf("%s: query missing %q\n---\n%s", tc.name, c, query)
+				}
+			}
+			if len(args) != 5 || args[4] != 180.0 {
+				t.Errorf("%s: args = %v, want the 180s gap bound as the fifth", tc.name, args)
+			}
+		}
+	})
+
+	t.Run("reset marker absent from the table is dropped", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(probe, rate,
+			[]string{"datname"}, withoutReset, 1, start, end, 60, "avg",
+			MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(query, "reset_0") || strings.Contains(query, "stats_reset") {
+			t.Errorf("query references the absent reset column:\n%s", query)
+		}
+		if !strings.Contains(query, `AND elapsed_sec <= $5::float8 THEN`) {
+			t.Errorf("gap guard missing without the reset guard:\n%s", query)
+		}
+	})
+
+	t.Run("unregistered probe has no reset guard", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery("not_a_registered_probe", rate,
+			nil, withReset, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(query, "reset_0") {
+			t.Errorf("query has a reset guard for an unregistered probe:\n%s", query)
+		}
+	})
+
+	t.Run("gap bound follows the filter arguments", func(t *testing.T) {
+		qid := int64(42)
+		query, args, err := BuildDerivedMetricsQuery(probe, rate, nil, nil, 1,
+			start, end, 60, "avg",
+			MetricFilters{DatabaseName: "app", DatabaseColumn: "datname", QueryID: &qid},
+			2*time.Minute)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(args) != 7 || args[4] != "app" || args[5] != qid || args[6] != 120.0 {
+			t.Errorf("args = %v, want filters then the 120s gap bound", args)
+		}
+		for _, c := range []string{`"datname" = $5`, `queryid = $6`, `elapsed_sec <= $7::float8`} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+	})
+
+	t.Run("ratio-only query binds no gap argument", func(t *testing.T) {
+		query, args, err := BuildDerivedMetricsQuery("pg_stat_all_tables",
+			[]DerivedMetric{{OutputName: "dead_tuple_ratio", Kind: DerivedDeadTupleRatio}},
+			nil, nil, 1, start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(args) != 4 {
+			t.Errorf("expected 4 args for a ratio-only query, got %d", len(args))
+		}
+		if strings.Contains(query, "$5") {
+			t.Errorf("ratio-only query references an unbound $5:\n%s", query)
+		}
+	})
+
+	t.Run("delta gap flag drives the final select", func(t *testing.T) {
+		mixed := append(append([]DerivedMetric{}, rate...), delta...)
+		query, _, err := BuildDerivedMetricsQuery(probe, mixed, nil, nil, 1,
+			start, end, 60, "avg", MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range []string{
+			`COUNT(delta_1) = 0 AS gap_1`,
+			`CASE WHEN rate_buckets.bucket_time IS NOT NULL ` +
+				`THEN CASE WHEN COALESCE(rate_buckets.gap_1, false) ` +
+				`THEN NULL ELSE COALESCE(rate_buckets."xact_commit_delta", 0) END ` +
+				`WHEN EXISTS (SELECT 1 FROM rate_samples s ` +
+				`WHERE s.delta_1 IS NOT NULL ` +
+				`AND s.prev_collected_at IS NOT NULL ` +
+				`AND s.prev_collected_at < all_buckets.bucket_time + $1::interval ` +
+				`AND s.collected_at >= all_buckets.bucket_time) ` +
+				`THEN 0 END AS "xact_commit_delta"`,
+		} {
+			if !strings.Contains(query, c) {
+				t.Errorf("query missing %q\n---\n%s", c, query)
+			}
+		}
+		if strings.Contains(query, "gap_0") {
+			t.Errorf("rate slot must not carry a gap flag:\n%s", query)
+		}
+	})
+}
+
+func TestProbeEntityExclusionInQueries(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
+	const probe = "pg_sys_network_info"
+	excl := ProbeEntityExclusion(probe)
+	if excl == "" {
+		t.Fatal("pg_sys_network_info must register a loopback exclusion")
+	}
+
+	t.Run("raw query", func(t *testing.T) {
+		query, args, err := BuildMetricsQuery(probe, []string{"tx_bytes"},
+			map[string]string{"tx_bytes": "bigint"}, 1, start, end, 60, "avg",
+			MetricFilters{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(query, " AND "+excl) {
+			t.Errorf("raw query lacks the exclusion %q:\n%s", excl, query)
+		}
+		if len(args) != 4 {
+			t.Errorf("exclusion must bind no argument, got %d args", len(args))
+		}
+	})
+
+	t.Run("derived and lookback queries", func(t *testing.T) {
+		query, _, err := BuildDerivedMetricsQuery(probe, []DerivedMetric{{
+			OutputName: "tx_bytes_per_sec", BaseColumn: "tx_bytes", Kind: DerivedPerSec,
+		}}, []string{"interface_name"}, nil, 1, start, end, 60, "avg",
+			MetricFilters{}, testMaxElapsed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Once in the lookback subquery, once in the sample query.
+		if got := strings.Count(query, excl); got != 2 {
+			t.Errorf("exclusion appears %d times, want 2:\n%s", got, query)
+		}
+	})
+
+	t.Run("unregistered probe adds nothing", func(t *testing.T) {
+		parts := metricQueryClauses("pg_stat_wal", 1, start, end, time.Minute, MetricFilters{})
+		if len(parts.filterClauses) != 0 {
+			t.Errorf("unexpected clauses %v", parts.filterClauses)
+		}
+	})
+}
+
+func TestMetricDataPointJSON(t *testing.T) {
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	v := 1.5
+	got, err := json.Marshal([]MetricDataPoint{{Time: ts}, {Time: ts, Value: &v}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `[{"time":"2025-01-01T00:00:00Z","value":null},{"time":"2025-01-01T00:00:00Z","value":1.5}]`
+	if string(got) != want {
+		t.Errorf("json = %s, want %s", got, want)
+	}
+}
+
+func TestAggregationGuard(t *testing.T) {
+	start := time.Now().Add(-time.Hour)
+	end := time.Now()
+
+	t.Run("the accepted set is closed", func(t *testing.T) {
+		for _, agg := range ValidAggregations() {
+			if !IsValidAggregation(agg) {
+				t.Errorf("%q is listed but not accepted", agg)
+			}
+		}
+		for _, agg := range []string{
+			"", "AVG", "median", "avg(x)", "avg; DROP TABLE metrics.t --",
+		} {
+			if IsValidAggregation(agg) {
+				t.Errorf("%q is accepted, want it refused", agg)
+			}
+		}
+	})
+
+	// The builders interpolate the aggregation into SQL as a bare function
+	// name, so each refuses anything outside that set itself rather than
+	// relying on its caller having validated first.
+	t.Run("BuildMetricsQuery refuses an unvalidated aggregation", func(t *testing.T) {
+		_, _, err := BuildMetricsQuery("pg_stat_all_tables",
+			[]string{"seq_scan"}, map[string]string{"seq_scan": "bigint"},
+			1, start, end, 60, "avg); DROP TABLE metrics.pg_stat_all_tables --",
+			MetricFilters{})
+		if err == nil {
+			t.Fatal("expected an error for an invalid aggregation")
+		}
+		if !strings.Contains(err.Error(), "invalid aggregation") {
+			t.Errorf("error = %v, want it to mention an invalid aggregation", err)
+		}
+	})
+
+	t.Run("BuildDerivedMetricsQuery refuses an unvalidated aggregation", func(t *testing.T) {
+		derived := []DerivedMetric{{
+			OutputName: "seq_scan_per_sec",
+			BaseColumn: "seq_scan",
+			Kind:       DerivedPerSec,
+		}}
+		_, _, err := BuildDerivedMetricsQuery("pg_stat_all_tables", derived,
+			nil, nil, 1, start, end, 60, "median", MetricFilters{}, testMaxElapsed)
+		if err == nil {
+			t.Fatal("expected an error for an invalid aggregation")
+		}
+		if !strings.Contains(err.Error(), "invalid aggregation") {
+			t.Errorf("error = %v, want it to mention an invalid aggregation", err)
+		}
+	})
 }

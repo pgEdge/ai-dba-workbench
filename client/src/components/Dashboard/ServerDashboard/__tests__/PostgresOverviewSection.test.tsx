@@ -128,7 +128,10 @@ const cacheReady = (values: (number | null)[]): UseServerCacheHitResult => ({
 });
 
 /** Build a MetricSeries for the given metric and values. */
-const series = (metric: string, values: number[]): MetricSeries => ({
+const series = (
+    metric: string,
+    values: (number | null)[],
+): MetricSeries => ({
     name: metric,
     metric,
     data: values.map((value, idx) => ({
@@ -652,9 +655,10 @@ describe('PostgresOverviewSection', () => {
             });
             const tile = screen.getByLabelText('Cache Hit Ratio: --');
             // An idle bucket is a gap, not 0% and not 100%, so every
-            // sparkline point is null.
-            const spark = tile.querySelector('[data-testid="chart-series"]');
-            expect(spark?.getAttribute('data-json')).toBe('[null,null]');
+            // sparkline point is null and Sparkline draws nothing at
+            // all (a 0% series would have drawn a flat line).
+            expect(tile.querySelector('[data-testid="chart-series"]'))
+                .toBeNull();
         });
 
         it('draws an idle bucket as a gap and headlines the latest ratio', async () => {
@@ -696,6 +700,37 @@ describe('PostgresOverviewSection', () => {
                 expect(screen.getByText('Cache Hit Ratio')).toBeInTheDocument();
             });
             expect(screen.getByLabelText('Cache Hit Ratio: --')).toBeInTheDocument();
+        });
+    });
+
+    describe('null buckets', () => {
+        it('sums only the temp byte buckets that carry a reading', async () => {
+            routeMetrics({
+                'temp_bytes_delta': ready([
+                    series('temp_bytes_delta', [1024, null, 2048]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getByText('3.0 KB')).toBeInTheDocument();
+        });
+
+        it('shows a placeholder when every temp byte bucket is null', async () => {
+            routeMetrics({
+                'temp_bytes_delta': ready([
+                    series('temp_bytes_delta', [null, null]),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(screen.getByText('Temp Bytes')).toBeInTheDocument();
+            });
+            expect(screen.getAllByText('--').length)
+                .toBeGreaterThanOrEqual(1);
         });
     });
 });

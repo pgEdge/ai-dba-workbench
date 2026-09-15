@@ -48,7 +48,10 @@ const getPercentageStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 const buildChartData = (
     series: MetricSeries[] | null,

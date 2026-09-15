@@ -128,7 +128,7 @@ Most PostgreSQL statistics columns are cumulative
 counters that only ever rise, which makes the raw
 values hard to read on a chart. The metrics query
 endpoint of the REST API,
-`GET /api/v1/metrics/query`, therefore accepts three
+`GET /api/v1/metrics/query`, therefore accepts five
 derived names in its `metrics` parameter in addition
 to the columns the probe collects. The `query_metrics`
 MCP tool accepts the probe's own columns only, and
@@ -136,47 +136,222 @@ rejects the derived names described here.
 
 The following table describes the derived metrics:
 
-| Name | Description |
-|------|-------------|
-| `<column>_per_sec` | The per-second rate of change of a counter column, computed from consecutive samples. |
-| `<column>_delta` | The increase in a counter column within each time bucket, summed across the samples in the bucket. |
-| `dead_tuple_ratio` | The percentage of tuples that are dead, from `n_live_tup` and `n_dead_tup`. |
-
-A per-second rate discards a negative change between
-two samples, because a counter falls only when the
-statistics are reset rather than because work was
-undone. The bucket value follows the `aggregation`
-parameter, and `avg` gives the most representative
-result.
-
-A delta answers "how many events happened during this
-bucket", which suits a bar chart of rare events such
-as checkpoints. A bucket that contains no sample
-reports zero when the window contains at least one
-sample, and the `aggregation` parameter does not
-apply. A connection with no samples in the window
-returns no data points for either derived form,
-rather than a series of zeros.
-
-For a probe that stores one row per monitored entity
-in each sample, such as one row per network interface
-or per database, both forms compute the change of each
-entity's counter separately and then add the changes
-together. An entity that disappears between samples
-does not produce a negative change, and an entity that
-appears does not contribute its existing total.
-
-The first sample in the window is compared with the
-most recent sample before the window, provided that
-sample is no older than the larger of three bucket
-widths and 30 minutes before the window starts. Beyond
-that, the first sample contributes nothing, so a long
-gap in collection does not appear as a spike in the
-first bucket.
+| Name | Unit | Description |
+|------|------|-------------|
+| `<column>_per_sec` | `/s` | The per-second rate of change of a cumulative counter column, computed from consecutive samples. |
+| `<column>_delta` | `ms` or empty | The increase in a counter or time counter column within each time bucket, summed across the samples in the bucket. |
+| `<column>_pct` | `%` | The share of wall-clock time that a cumulative millisecond column advanced by, such as `blk_read_time_pct` on `pg_stat_database`. |
+| `<column>_sessions` | `sessions` | The average number of sessions in a state over the interval, from `session_time`, `active_time` or `idle_in_transaction_time` on `pg_stat_database`. |
+| `dead_tuple_ratio` | `%` | The percentage of tuples that are dead, from `n_live_tup` and `n_dead_tup`. |
 
 The `dead_tuple_ratio` metric requires a probe that
 collects both `n_live_tup` and `n_dead_tup`, such as
 `pg_stat_all_tables`.
+
+### Column Kinds
+
+Each derived form applies only to columns of a
+particular kind, and the server keeps a registry of
+the kind of every counter-like column in the probes it
+collects. The rules are:
+
+- `_per_sec` applies only to a cumulative event or
+  byte counter, such as `xact_commit` or `wal_bytes`.
+- `_delta` applies to a cumulative counter, to a
+  cumulative time counter, which stores elapsed
+  milliseconds as `blk_read_time` does, and to the
+  session time columns of `pg_stat_database`; the unit
+  is `ms` for either time kind and empty for a counter.
+- `_pct` applies only to a cumulative time counter.
+- `_sessions` applies only to the `session_time`,
+  `active_time` and `idle_in_transaction_time` columns
+  of `pg_stat_database`.
+
+A column that the registry does not list is a gauge.
+A gauge such as `n_dead_tup`, a lifetime watermark
+such as `mean_exec_time` and a ratio such as a CPU
+percentage cannot be differenced meaningfully, so a
+request for `_per_sec` on one of them fails with HTTP
+status 400 rather than returning a misleading series.
+The error message names the metric, the probe, the
+base column and the kind the registry records for it:
+
+```text
+metric "n_dead_tup_per_sec" not supported for probe "pg_stat_all_tables": "n_dead_tup" is a gauge, not a cumulative counter
+```
+
+A `_per_sec` request on a time counter is refused in
+the same way, because a millisecond total divided by
+seconds is a dimensionless number that only looks like
+a rate; the message adds a hint naming the `_pct` or
+`_sessions` form to request instead.
+
+A `_pct` value can exceed 100 on a probe that stores
+one row per monitored entity in each sample, because
+the shares of all entities are added together: five
+databases that each spent half the interval reading
+blocks give a `blk_read_time_pct` of 250.
+
+### Response Shape
+
+The endpoint returns a JSON array with one object per
+requested metric. Each object carries the requested
+`name`, the base `metric` column, a `unit` and a
+`data` array with one point per time bucket; a point
+holds the bucket `time` and a `value`, which is either
+a number or `null`. The `unit` is `/s`, `ms`, `%` or
+`sessions` for a derived metric, and empty for a raw
+column or a counter delta.
+
+In the following example, the response reports one
+rate series with a gap in the second bucket:
+
+```json
+[
+    {
+        "name": "xact_commit_per_sec",
+        "metric": "xact_commit",
+        "unit": "/s",
+        "data": [
+            {"time": "2026-09-14T10:00:00Z", "value": 42.5},
+            {"time": "2026-09-14T10:05:00Z", "value": null},
+            {"time": "2026-09-14T10:10:00Z", "value": 40.1}
+        ]
+    }
+]
+```
+
+Every series in a response contains every bucket, so
+all series share the same length and bucket times. A
+connection with no samples in the window returns a
+series of `null` values rather than an empty array.
+
+### Per-Entity Differencing
+
+For a probe that stores one row per monitored entity
+in each sample, such as one row per network interface
+or per database, every derived form computes the
+change of each entity's counter separately and then
+adds the changes together. An entity that disappears
+between samples does not produce a negative change,
+and an entity that appears does not contribute its
+existing total.
+
+The `pg_sys_network_info` probe leaves the loopback
+interfaces `lo` and `lo0` out of every query, raw or
+derived, because traffic on them is not network
+traffic; the exclusion also applies to the
+`query_metrics` MCP tool.
+
+### Statistics Resets
+
+A counter falls only when the statistics are reset
+rather than because work was undone, so a negative
+change between two samples is discarded rather than
+charted. Where a probe stores the `stats_reset`
+timestamp of the view it reads, the server also
+compares the marker of consecutive samples, so a reset
+is detected even when the counter has already climbed
+past its previous value. The following probes carry a
+marker:
+
+- `pg_stat_database`, `pg_stat_io`,
+  `pg_stat_recovery_prefetch`, `pg_replication_slots`
+  and `pg_stat_subscription` store `stats_reset`.
+- `pg_stat_wal` stores `stats_reset`, and
+  `archiver_stats_reset` for `archived_count` and
+  `failed_count`.
+- `pg_stat_checkpointer` stores `stats_reset`, and
+  `bgwriter_stats_reset` for `buffers_clean`,
+  `maxwritten_clean` and `buffers_alloc`.
+- `pg_stat_statements` stores `stats_reset` from
+  `pg_stat_statements_info`, a view that the
+  extension provides from version 1.9, shipped with
+  PostgreSQL 14; the collector records `null` where
+  the view is absent, and the column is added by
+  collector schema migration 10.
+
+An interval whose marker changed reports `null` for
+`_per_sec`, `_pct` and `_sessions`, and contributes
+zero to `_delta`. A probe without a marker relies on
+the negative-change rule alone.
+
+### Collection Gaps
+
+Each probe runs on a collection interval, and the
+server resolves the interval for a request from the
+collector's `probe_configs` table: the server-scope
+row for the connection, then the global row, then the
+collector's default of 300 seconds. When a request
+spans several connections, the largest interval
+applies, because one bucket width serves every series
+in the response.
+
+The configured interval describes how the collector
+runs now, whilst the stored samples were collected
+under whatever interval was configured at the time, so
+the interval used to judge them is widened to the
+spacing the samples in the window actually show when
+that spacing is wider. Tightening a probe's interval
+therefore leaves the history collected at the old,
+wider one intact rather than reading all of it as
+gaps.
+
+An interval between two consecutive samples longer
+than three times that interval is a gap in collection
+rather than a measurement, and it reports `null` for
+every derived form, `_delta` included. A bucket whose
+only samples fall in such a gap is `null` rather than
+zero. A bucket with no samples of its own reports zero
+for `_delta` when an accepted sample interval spans
+it, because the events in it are counted by the next
+sample's delta; where no accepted interval spans the
+bucket, nothing counts them anywhere and the bucket is
+`null`, so a collection outage breaks a `_delta`
+series exactly as it breaks a `_per_sec` one. Buckets
+before a probe's first sample and after its last are
+`null` for the same reason.
+
+The first sample in the window is compared with the
+most recent sample before the window, provided that
+sample is no older than the larger of three bucket
+widths and 30 minutes before the window starts. The
+gap rule still applies to the borrowed sample, so a
+long outage before the window does not appear as a
+spike in the first bucket.
+
+### Buckets and Missing Values
+
+The requested `buckets` count is clamped so that no
+bucket is narrower than the collection interval; a
+narrower bucket cannot hold a sample of its own and
+would only alternate between zero and repeated values.
+A one-hour window on a probe collected every 300
+seconds therefore yields twelve buckets however many
+were requested; the series holds 13 points, because
+the last point marks the end of the window.
+
+A bucket with no sample is filled according to the
+kind of metric:
+
+- a raw column and `dead_tuple_ratio` repeat the last
+  observed value for at most three collection
+  intervals, after which the bucket is `null`.
+- `_per_sec`, `_delta`, `_pct` and `_sessions` never
+  repeat a value; a bucket without a valid interval is
+  `null`, except that `_delta` reports zero for a
+  bucket an accepted interval spans, as described
+  above.
+
+The bucket value of a `_per_sec`, `_pct` or
+`_sessions` metric follows the `aggregation`
+parameter, and `avg` gives the most representative
+result. A `_delta` answers "how many events happened
+during this bucket", which suits a bar chart of rare
+events such as checkpoints, and the `aggregation`
+parameter does not apply to it.
+
+### Requesting Derived Metrics
 
 In the following example, the request returns the
 commit and rollback rates for the last six hours:
@@ -187,11 +362,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 A request for a derived metric whose base column the
-probe does not collect fails rather than returning
-empty data. The endpoint answers with HTTP status 400
-and an error message that names the metric and the
-probe, and the dashboards display that message in the
-affected chart panel rather than an empty chart.
+probe does not collect, or whose kind does not suit
+the derived form, fails rather than returning empty
+data. The endpoint answers with HTTP status 400 and an
+error message that names the metric and the probe, and
+the dashboards display that message in the affected
+chart panel rather than an empty chart.
 
 ## Common Probes
 

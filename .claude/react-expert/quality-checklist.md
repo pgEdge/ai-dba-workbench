@@ -135,15 +135,33 @@ The rules for new or modified charts are as follows:
   metrics API derives `<column>_per_sec` (the LAG delta over the
   elapsed seconds, aggregated across the bucket, so query it with
   `aggregation: 'avg'`) and `<column>_delta` (the per-bucket sum of
-  counter increases, with empty buckets reported as 0 and the
-  `aggregation` parameter ignored). Use `_per_sec` for anything that
-  reads as a rate and `_delta` for anything counted per interval,
-  such as checkpoints or bytes spilled to temporary files, and carry
-  the unit in the legend and the tile ('Commits/s', 'WAL Bytes/s',
-  unit `/s`). Cumulative sessions, which are deliberately shown as a
-  running total, are the one remaining exception, and its legend says
-  'Cumulative Sessions' so that a reader does not mistake it for a
-  rate.
+  counter increases, with the `aggregation` parameter ignored). Use
+  `_per_sec` for anything that reads as a rate and `_delta` for
+  anything counted per interval, such as checkpoints or bytes spilled
+  to temporary files, and carry the unit in the legend and the tile
+  ('Commits/s', 'WAL Bytes/s', unit `/s`). Cumulative sessions, which
+  are deliberately shown as a running total, are the one remaining
+  exception, and its legend says 'Cumulative Sessions' so that a
+  reader does not mistake it for a rate.
+
+- Treat a `null` data point as a gap, never as 0. Every series in a
+  `/api/v1/metrics/query` response has the same bucket times, and a
+  bucket with no reading (a collector gap, a counter reset or a rate
+  that cannot be derived) carries `"value": null`; rates never carry
+  forward and gauges carry forward for at most three probe intervals.
+  `MetricDataPoint.value` and `ChartDataSeries.data` are therefore
+  nullable, ECharts draws a null as a break in the line or a missing
+  bar (leave `connectNulls` unset), and the shared tooltip labels it
+  'no data'. Any arithmetic over points must skip nulls explicitly:
+  `extractLatestValue` and `extractLatestRate` (copies in the
+  `ServerDashboard`, `DatabaseDashboard` and `ObjectDashboard`
+  `types.ts` files) return the last non-null point, a valid zero
+  reading included, since only null marks a missing bucket; a ratio
+  with a null on either side is null; a sum
+  across a window ignores null buckets and is null when none carry a
+  reading; and `Sparkline` renders nothing for an all-null series.
+  Filling a null with 0 (`value ?? 0`) is only acceptable inside a
+  running total, where a missing bucket genuinely contributes nothing.
 
 - Keep a KPI tile's arithmetic consistent with the metric it reads:
   a `_per_sec` tile reports the latest bucket, whereas a `_delta`
@@ -205,9 +223,17 @@ LLM. The rules are as follows:
   custom range still lacks a bound, as `useConnectionGroups` does.
 
 - An idle bucket is null, never 0% and never 100%; a headline value
-  is the latest non-null bucket, shown as `--` when there is none.
-  Do not use `extractLatestValue` for a ratio, because its
-  non-zero scan would skip a genuine 0%.
+  is the latest non-null bucket of the ratio series, shown as `--`
+  when there is none. Build the per-bucket ratio first and read its
+  last non-null point; never scan for the numerator and the
+  denominator separately with `extractLatestValue`, because the two
+  scans stop at whichever bucket each series last filled and can
+  pair readings from different buckets. Nor may a missing side
+  default to 0 (`dead ?? 0`), which turns a gap into a reassuring
+  0.0% built from no data. The Database dashboard's Dead Tuple Ratio
+  and Transactions tiles both read `latestNonNull` over their paired
+  sparkline for this reason; a bucket whose counts are genuinely
+  both zero is still a real 0% and is reported as such.
 
 - Render a null headline in a neutral colour (`text.secondary`)
   rather than the critical red, and keep nulls in bar data so the

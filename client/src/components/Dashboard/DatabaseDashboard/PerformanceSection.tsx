@@ -30,7 +30,6 @@ import {
     type DatabaseSectionProps,
     extractSparklineData,
     extractLatestValue,
-    extractLatestRate,
     formatValue,
     formatBytes,
 } from './types';
@@ -74,7 +73,44 @@ const getDeadTupleStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Percentage that `part` makes of `part + rest`. A null on either side
+ * means the bucket has no reading, so the ratio is null too rather
+ * than a misleading 0 or 100; a zero total is reported as 0.
+ */
+const ratioPercent = (
+    part: number | null,
+    rest: number | null,
+): number | null => {
+    if (part === null || rest === null) { return null; }
+    const total = part + rest;
+    return total > 0 ? (part / total) * 100 : 0;
+};
+
+/**
+ * Sum two optional readings, ignoring nulls; null when neither has a
+ * value, so a gap stays a gap instead of collapsing to 0.
+ */
+const sumNullable = (
+    a: number | null | undefined,
+    b: number | null | undefined,
+): number | null => {
+    if (a == null && b == null) { return null; }
+    return (a ?? 0) + (b ?? 0);
+};
+
+/** The last non-null reading in a point series, or null when none. */
+const latestNonNull = (points: MetricDataPoint[]): number | null => {
+    for (let i = points.length - 1; i >= 0; i--) {
+        if (points[i].value !== null) { return points[i].value; }
+    }
+    return null;
+};
+
+/**
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 const buildChartData = (
     series: MetricSeries[] | null,
@@ -210,24 +246,14 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         [cacheHitSparkline]
     );
 
-    const txnCommit = extractLatestRate(
-        txnKpi.data, 'xact_commit_per_sec'
-    );
-    const txnRollback = extractLatestRate(
-        txnKpi.data, 'xact_rollback_per_sec'
-    );
-    const txnRate = useMemo(() => {
-        if (txnCommit === null && txnRollback === null) {
-            return null;
-        }
-        return (txnCommit ?? 0) + (txnRollback ?? 0);
-    }, [txnCommit, txnRollback]);
-
     /*
      * The tile shows commits plus rollbacks, so the sparkline sums the
      * two rate series bucket by bucket rather than tracking commits
      * alone; points are paired by index, and a series that is short or
-     * missing contributes 0 for the buckets it does not cover.
+     * missing contributes 0 for the buckets it does not cover. The
+     * headline is the latest non-null bucket of that summed series, so
+     * commits and rollbacks always come from the same bucket rather
+     * than each from its own latest reading.
      */
     const txnSparkline = useMemo((): MetricDataPoint[] => {
         const commitData = extractSparklineData(
@@ -243,29 +269,22 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
             const rollback = i < rollbackData.length ? rollbackData[i] : null;
             points.push({
                 time: (commit ?? rollback as MetricDataPoint).time,
-                value: (commit?.value ?? 0) + (rollback?.value ?? 0),
+                value: sumNullable(commit?.value, rollback?.value),
             });
         }
         return points;
     }, [txnKpi.data]);
+    const txnRate = useMemo(() => latestNonNull(txnSparkline), [txnSparkline]);
 
-    // Dead tuple ratio from raw n_dead_tup and n_live_tup
-    const nDeadTup = extractLatestValue(
-        deadTupleKpi.data, 'n_dead_tup'
-    );
-    const nLiveTup = extractLatestValue(
-        deadTupleKpi.data, 'n_live_tup'
-    );
-    const deadTupleRatio = useMemo(() => {
-        if (nDeadTup === null && nLiveTup === null) { return null; }
-        const dead = nDeadTup ?? 0;
-        const live = nLiveTup ?? 0;
-        const total = dead + live;
-        if (total === 0) { return 0; }
-        return (dead / total) * 100;
-    }, [nDeadTup, nLiveTup]);
-
-    // Build per-point sparkline for dead tuple ratio
+    /*
+     * Per-bucket dead tuple ratio. The dead and live counts are paired
+     * by bucket rather than each taken from its own latest reading, so
+     * the headline can never divide a dead count from one bucket by a
+     * live count from another; a bucket missing either count carries
+     * no ratio at all, so a gap shows as the no-data placeholder
+     * instead of a reassuring 0.0%. A bucket whose counts are both 0
+     * is still a genuine 0% and is reported as such.
+     */
     const deadTupleSparkline = useMemo((): MetricDataPoint[] => {
         if (!deadTupleKpi.data) { return []; }
         const deadSeries = deadTupleKpi.data.find(
@@ -281,16 +300,19 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         );
         const points: MetricDataPoint[] = [];
         for (let i = 0; i < len; i++) {
-            const d = deadSeries.data[i].value;
-            const l = liveSeries.data[i].value;
-            const total = d + l;
             points.push({
                 time: deadSeries.data[i].time,
-                value: total > 0 ? (d / total) * 100 : 0,
+                value: ratioPercent(
+                    deadSeries.data[i].value, liveSeries.data[i].value,
+                ),
             });
         }
         return points;
     }, [deadTupleKpi.data]);
+    const deadTupleRatio = useMemo(
+        () => latestNonNull(deadTupleSparkline),
+        [deadTupleSparkline]
+    );
 
     // Build chart datasets
     const txnChartData = useMemo(
@@ -372,7 +394,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                 <KpiTile
                     label="Dead Tuple Ratio"
                     value={formatValue(deadTupleRatio)}
-                    unit="%"
+                    unit={deadTupleRatio !== null ? '%' : undefined}
                     status={getDeadTupleStatus(deadTupleRatio)}
                     sparklineData={deadTupleSparkline}
                     analysisContext={{

@@ -1339,16 +1339,53 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"generated_at": {Type: "string", Format: "date-time", Description: "When the analysis was generated"},
 			},
 		},
-		"MetricsQueryResult": {
-			Type: "object",
+		"MetricDataPoint": {
+			Type:     "object",
+			Required: []string{"time", "value"},
 			Properties: map[string]*OpenAPISchema{
-				"probe_name":     {Type: "string", Description: "Probe name"},
-				"connection_ids": {Type: "array", Items: &OpenAPISchema{Type: "integer"}, Description: "Connection IDs queried"},
-				"time_range":     {Type: "string", Description: "Time range"},
-				"buckets":        {Type: "integer", Description: "Number of time buckets"},
-				"aggregation":    {Type: "string", Description: "Aggregation method"},
-				"series":         {Type: "array", Items: &OpenAPISchema{Type: "object"}, Description: "Time series data"},
+				"time": {Type: "string", Format: "date-time",
+					Description: "Bucket start time"},
+				"value": {Type: "number", Nullable: true,
+					Description: "Aggregated value for the bucket, or null " +
+						"when the bucket has no value: no sample fell in " +
+						"it and, for a raw column or dead_tuple_ratio, the " +
+						"last reading is more than three collection " +
+						"intervals old; for a counter-derived metric " +
+						"(_per_sec, _delta, _pct, _sessions), the interval " +
+						"spanned a counter reset or a collection gap of " +
+						"more than three collection intervals. Rates are " +
+						"never carried forward across a gap."},
 			},
+		},
+		"MetricSeries": {
+			Type:     "object",
+			Required: []string{"name", "metric", "unit", "data"},
+			Properties: map[string]*OpenAPISchema{
+				"name": {Type: "string",
+					Description: "Series label: the metric name, suffixed " +
+						"with the connection (for example \"xact_commit_per_sec " +
+						"(conn 3)\") when more than one connection was queried"},
+				"metric": {Type: "string",
+					Description: "Metric name as requested"},
+				"unit": {Type: "string",
+					Description: "Unit of the values: \"/s\" for a _per_sec " +
+						"rate, \"%\" for a _pct time share or dead_tuple_ratio, " +
+						"\"sessions\" for a _sessions average, \"ms\" for a " +
+						"_delta of a time counter, and empty for a raw column " +
+						"or an event-count _delta"},
+				"data": {Type: "array",
+					Items: &OpenAPISchema{Ref: "#/components/schemas/MetricDataPoint"},
+					Description: "One point per time bucket. Every series " +
+						"in a response has the same length and the same " +
+						"bucket times."},
+			},
+		},
+		"MetricsQueryResult": {
+			Type:  "array",
+			Items: &OpenAPISchema{Ref: "#/components/schemas/MetricSeries"},
+			Description: "Time series in the order the metrics were " +
+				"requested (or column order when no metrics were named), " +
+				"one per metric per connection",
 		},
 		"BaselinesResult": {
 			Type: "object",
@@ -3460,14 +3497,30 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("table_name", "Filter by table name"),
 					queryParamString("index_name", "Filter by index name"),
 					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
-					queryParamInt("buckets", "Number of time buckets"),
-					queryParamString("aggregation", "Aggregation method"),
+					queryParamInt("buckets", "Number of time buckets, "+
+						"1 to 500 (default 150). The count is clamped so "+
+						"that no bucket is narrower than the probe's "+
+						"collection interval; a one-hour window on a "+
+						"five-minute probe therefore yields at most 12 "+
+						"buckets however many are requested."),
+					queryParamEnum("aggregation",
+						"How samples within a bucket are combined "+
+							"(default avg). Ignored for _delta metrics, "+
+							"which always sum the increases in the bucket.",
+						[]string{"avg", "sum", "min", "max", "last"}),
 					queryParamString("metrics", "Comma-separated metric names. "+
-						"A name may be a raw probe column, a cumulative "+
+						"A name may be a raw probe column; a cumulative "+
 						"counter column suffixed with _per_sec for its "+
-						"per-second rate, or one suffixed with _delta for "+
-						"its per-bucket increase; a real column of that "+
-						"name always takes precedence."),
+						"per-second rate or _delta for its per-bucket "+
+						"increase; a cumulative time counter (milliseconds) "+
+						"suffixed with _pct for the share of wall-clock time "+
+						"it advanced by, or a session time counter suffixed "+
+						"with _sessions for the average number of sessions "+
+						"it represents; or dead_tuple_ratio on a probe "+
+						"exposing n_live_tup and n_dead_tup. A real column of "+
+						"that name always takes precedence, and a suffix on "+
+						"a column of the wrong kind (for example _per_sec "+
+						"on a gauge) is rejected with 400."),
 				},
 				Responses: map[string]OpenAPIResponse{
 					"200": jsonResponse("MetricsQueryResult", "Metrics query results"),
@@ -4407,6 +4460,18 @@ func pathParamString(name, description string) OpenAPIParameter {
 		Description: description,
 		Required:    true,
 		Schema:      &OpenAPISchema{Type: "string"},
+	}
+}
+
+// queryParamEnum builds an optional string query parameter restricted to
+// the given values.
+func queryParamEnum(name, description string, values []string) OpenAPIParameter {
+	return OpenAPIParameter{
+		Name:        name,
+		In:          "query",
+		Description: description,
+		Required:    false,
+		Schema:      &OpenAPISchema{Type: "string", Enum: values},
 	}
 }
 

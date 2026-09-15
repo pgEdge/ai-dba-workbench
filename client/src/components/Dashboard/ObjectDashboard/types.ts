@@ -90,29 +90,31 @@ export const extractSparklineData = (
 };
 
 /**
- * Extract the latest value from a metric series.
+ * Extract the latest value from a gauge-style metric series.
+ *
+ * The backend reports a bucket with no reading as `null`, so this
+ * scans backwards for the last non-null point and returns it, a
+ * genuine 0 included. Zeros used to be skipped when the backend filled
+ * empty buckets with 0, but a missing reading is now null, so a
+ * trailing 0 is a real reading and skipping it would show a stale
+ * value. An all-null or empty series yields null.
  */
 export const extractLatestValue = (
     data: MetricSeries[] | null,
     metricName: string,
 ): number | null => {
     const points = extractSparklineData(data, metricName);
-    if (points.length === 0) { return null; }
-
-    // Scan backwards to find the last non-zero value. This handles
-    // the common case where the most recent time bucket has no data
-    // yet (empty buckets are filled with 0 by the backend).
     for (let i = points.length - 1; i >= 0; i--) {
-        if (points[i].value !== 0) {
-            return points[i].value;
-        }
+        if (points[i].value !== null) { return points[i].value; }
     }
-
-    return 0;
+    return null;
 };
 
 /**
- * Build chart data from metric series for the Chart component.
+ * Build chart data from metric series for the Chart component. Every
+ * series in a metrics response shares the same bucket times, so the
+ * categories come from the first requested metric that was returned;
+ * null values pass straight through and ECharts draws them as gaps.
  */
 export const buildChartData = (
     series: MetricSeries[] | null,

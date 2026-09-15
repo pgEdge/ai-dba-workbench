@@ -63,7 +63,8 @@ func (p *PgStatStatementsProbe) GetQuery() string {
             temp_blks_read,
             temp_blks_written,
             blk_read_time,
-            blk_write_time
+            blk_write_time,
+            NULL::timestamptz AS stats_reset
         FROM pg_stat_statements
         ORDER BY total_exec_time DESC
         LIMIT %d
@@ -110,6 +111,43 @@ func (p *PgStatStatementsProbe) checkHasBlkReadTime(ctx context.Context, conn *p
 	return hasColumn, nil
 }
 
+// checkHasStatsInfoView reports whether the pg_stat_statements_info view
+// is visible on the monitored connection's search path. The view arrived
+// with pg_stat_statements 1.9 (PostgreSQL 14), but the extension version
+// is what matters, not the server version, so the catalog is consulted
+// directly. Visibility rather than a fixed schema is checked because the
+// extension may be installed in any schema and the probe query names the
+// view unqualified.
+func (p *PgStatStatementsProbe) checkHasStatsInfoView(ctx context.Context, conn *pgxpool.Conn) (bool, error) {
+	var hasView bool
+	err := conn.QueryRow(ctx, `
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class c
+            WHERE c.relname = 'pg_stat_statements_info'
+              AND c.relkind = 'v'
+              AND pg_catalog.pg_table_is_visible(c.oid)
+        )
+    `).Scan(&hasView)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check for pg_stat_statements_info view: %w", err)
+	}
+
+	return hasView, nil
+}
+
+// statsResetSelect returns the SELECT-list expression that yields the
+// stats_reset column: the live value from pg_stat_statements_info where
+// the view exists, otherwise a typed NULL so every query variant has the
+// same shape.
+func statsResetSelect(hasStatsInfo bool) string {
+	if hasStatsInfo {
+		return "(SELECT stats_reset FROM pg_stat_statements_info) AS stats_reset"
+	}
+	return "NULL::timestamptz AS stats_reset"
+}
+
 // Execute runs the probe against a monitored connection
 func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if extension is available (cached)
@@ -144,6 +182,16 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 		}
 	}
 
+	// Check if the pg_stat_statements_info view exists (extension 1.9+,
+	// PostgreSQL 14+) so stats_reset can be captured (cached)
+	hasStatsInfo, err := cachedCheck(connectionName, "pg_stat_statements_info_view", func() (bool, error) {
+		return p.checkHasStatsInfoView(ctx, monitoredConn)
+	})
+	if err != nil {
+		return nil, err
+	}
+	statsResetExpr := statsResetSelect(hasStatsInfo)
+
 	var query string
 	if hasSharedBlkTime {
 		// PostgreSQL 17+ with new timing column names
@@ -174,11 +222,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
                 shared_blk_read_time,
                 shared_blk_write_time,
                 local_blk_read_time,
-                local_blk_write_time
+                local_blk_write_time,
+                %s
             FROM pg_stat_statements
             ORDER BY total_exec_time DESC
             LIMIT %d
-        `, PgStatStatementsQueryLimit)
+        `, statsResetExpr, PgStatStatementsQueryLimit)
 	} else if hasBlkReadTime {
 		// PostgreSQL 13-16 with old timing column names
 		// Map old columns to new names for consistent storage
@@ -209,11 +258,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
                 blk_read_time AS shared_blk_read_time,
                 blk_write_time AS shared_blk_write_time,
                 NULL::double precision AS local_blk_read_time,
-                NULL::double precision AS local_blk_write_time
+                NULL::double precision AS local_blk_write_time,
+                %s
             FROM pg_stat_statements
             ORDER BY total_exec_time DESC
             LIMIT %d
-        `, PgStatStatementsQueryLimit)
+        `, statsResetExpr, PgStatStatementsQueryLimit)
 	} else {
 		// PostgreSQL 12 and earlier without timing columns or toplevel
 		// Use NULL for timing columns and TRUE for toplevel (not available in PG <13)
@@ -244,11 +294,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
                 NULL::double precision AS shared_blk_read_time,
                 NULL::double precision AS shared_blk_write_time,
                 NULL::double precision AS local_blk_read_time,
-                NULL::double precision AS local_blk_write_time
+                NULL::double precision AS local_blk_write_time,
+                %s
             FROM pg_stat_statements
             ORDER BY total_exec_time DESC
             LIMIT %d
-        `, PgStatStatementsQueryLimit)
+        `, statsResetExpr, PgStatStatementsQueryLimit)
 	}
 
 	wrappedQuery := WrapQuery(ProbeNamePgStatStatements, query)
@@ -283,6 +334,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 		"temp_blks_read", "temp_blks_written",
 		"shared_blk_read_time", "shared_blk_write_time",
 		"local_blk_read_time", "local_blk_write_time",
+		"stats_reset",
 	}
 
 	// Build values array, filtering out rows with NULL queryid and deduplicating
@@ -362,6 +414,7 @@ func (p *PgStatStatementsProbe) Store(ctx context.Context, datastoreConn *pgxpoo
 			metric["shared_blk_write_time"],
 			metric["local_blk_read_time"],
 			metric["local_blk_write_time"],
+			metric["stats_reset"],
 		}
 		values = append(values, row)
 	}

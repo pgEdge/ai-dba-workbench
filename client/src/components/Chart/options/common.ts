@@ -100,7 +100,26 @@ interface TooltipParam {
     axisValue: string;
     marker: string;
     seriesName: string;
-    value: number;
+    value: number | null | undefined;
+}
+
+/**
+ * Text shown in the tooltip for a bucket that carries no value: the
+ * server emits `null` for a collector gap, a counter reset or a rate it
+ * cannot derive, and ECharts hands the formatter that null (or nothing
+ * at all for a `'-'` placeholder).
+ */
+const NO_VALUE_LABEL = 'no data';
+
+/**
+ * Type guard for a usable data point value. Null marks a bucket with
+ * no value (the server emits it for a collector gap, a counter reset or
+ * a rate it cannot derive) and is drawn as a gap; undefined entries
+ * from ragged series and non-finite numbers are skipped the same way,
+ * both in the tooltip and when sizing the y-axis.
+ */
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
 }
 
 export function buildTooltip(show: boolean): object {
@@ -119,9 +138,17 @@ export function buildTooltip(show: boolean): object {
                 : formatDateTimeFull(d);
 
             const lines = list.map((p) => {
-                const val = typeof p.value === 'number'
-                    ? formatNumericValue(p.value)
-                    : String(p.value);
+                let val: string;
+                if (p.value === null || p.value === undefined) {
+                    val = NO_VALUE_LABEL;
+                } else if (typeof p.value === 'number') {
+                    // NaN and +/-Infinity carry no reading either.
+                    val = isFiniteNumber(p.value)
+                        ? formatNumericValue(p.value)
+                        : NO_VALUE_LABEL;
+                } else {
+                    val = String(p.value);
+                }
                 return `${p.marker} ${p.seriesName}: ${val}`;
             });
 
@@ -201,14 +228,6 @@ export function buildXAxis(categories?: string[]): object {
  * positive and negative totals, preserving its true ~200-unit span
  * instead of collapsing to a tiny window around a netted zero.
  */
-/**
- * Narrow a series entry to a finite number. Null marks a bucket with
- * no value (drawn as a gap) and is skipped when sizing the axis, as
- * are undefined entries from ragged series and non-finite numbers.
- */
-const isFiniteNumber = (value: number | null | undefined): value is number =>
-    typeof value === 'number' && Number.isFinite(value);
-
 export function buildYAxis(
     seriesData?: (number | null)[][],
     stacked?: boolean,

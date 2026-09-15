@@ -36,6 +36,10 @@ vi.mock('../../Chart', () => ({
             {...(props.colorPalette !== undefined && {
                 'data-color-palette': JSON.stringify(props.colorPalette),
             })}
+            data-values={JSON.stringify(
+                (props.data as { series: { data: unknown[] }[] })
+                    .series[0].data,
+            )}
         />
     ),
 }));
@@ -163,5 +167,28 @@ describe('Sparkline', () => {
             'data-color-palette',
             JSON.stringify(['#ff5722']),
         );
+    });
+
+    it('passes null gaps through to the chart untouched', () => {
+        const data: MetricDataPoint[] = [
+            { time: '2025-01-01T00:00:00Z', value: null },
+            { time: '2025-01-01T01:00:00Z', value: 5 },
+            { time: '2025-01-01T02:00:00Z', value: null },
+            { time: '2025-01-01T03:00:00Z', value: 7 },
+        ];
+        const { getByTestId } = render(<Sparkline data={data} />);
+
+        expect(getByTestId('chart-mock'))
+            .toHaveAttribute('data-values', '[null,5,null,7]');
+    });
+
+    it('renders nothing when every point is a null gap', () => {
+        const data: MetricDataPoint[] = [
+            { time: '2025-01-01T00:00:00Z', value: null },
+            { time: '2025-01-01T01:00:00Z', value: null },
+        ];
+        const { container } = render(<Sparkline data={data} />);
+
+        expect(container.firstChild).toBeNull();
     });
 });

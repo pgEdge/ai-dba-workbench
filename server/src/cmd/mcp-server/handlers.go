@@ -298,17 +298,10 @@ func createUserInfoHandler(authStore *auth.AuthStore) http.HandlerFunc {
 			return
 		}
 
-		// A credential that validates but whose owning user cannot be
-		// resolved leaves the username unset; report it as not
-		// authenticated rather than as an anonymous session.
+		// AuthenticateRequest guarantees a non-empty username on success:
+		// a credential whose identity does not resolve is rejected as
+		// ErrInvalidToken and handled above.
 		username := auth.GetUsernameFromContext(ctx)
-		if username == "" {
-			api.RespondJSON(w, http.StatusOK, map[string]any{
-				"authenticated": false,
-				"error":         "Invalid or expired token",
-			})
-			return
-		}
 
 		// Get admin permissions for the user
 		adminPermissions := []string{}

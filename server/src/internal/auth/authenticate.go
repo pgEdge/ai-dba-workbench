@@ -35,10 +35,12 @@ var ErrInvalidToken = errors.New("invalid or expired token")
 //   - IsAPITokenContextKey   (always; true for API tokens, false for
 //     session tokens)
 //   - TokenIDContextKey      (API tokens only; drives token scoping)
-//   - UserIDContextKey       (when the owning user is resolved)
-//   - IsSuperuserContextKey  (when the owning user is resolved)
-//   - UsernameContextKey     (for session tokens, and for API tokens
-//     whose owner is resolved)
+//   - UserIDContextKey       (always for API tokens; for session tokens
+//     when the owning user is resolved)
+//   - IsSuperuserContextKey  (same)
+//   - UsernameContextKey     (always, and never empty: a credential
+//     whose identity does not resolve to a username is rejected as
+//     ErrInvalidToken rather than returned as an anonymous context)
 //
 // Validation order is API token first, then session token, matching the
 // historical createAuthWrapper behavior exactly. A missing credential
@@ -61,18 +63,23 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 		ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
 		ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
 		ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
-		// Look up user to determine superuser status and username.
+		// Look up user to determine superuser status and username. A
+		// token whose owner does not resolve to a username is treated as
+		// invalid: the identity it would authenticate as is unknown, and
+		// downstream ownership comparisons would silently match the
+		// empty string.
 		user, userErr := store.GetUserByID(storedToken.OwnerID)
-		if userErr == nil && user != nil {
-			ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
-			ctx = context.WithValue(ctx, UsernameContextKey, user.Username)
+		if userErr != nil || user == nil || user.Username == "" {
+			return nil, ErrInvalidToken
 		}
+		ctx = context.WithValue(ctx, IsSuperuserContextKey, user.IsSuperuser)
+		ctx = context.WithValue(ctx, UsernameContextKey, user.Username)
 		return ctx, nil
 	}
 
 	// Try session token.
 	username, sessionErr := store.ValidateSessionToken(token)
-	if sessionErr != nil {
+	if sessionErr != nil || username == "" {
 		return nil, ErrInvalidToken
 	}
 	ctx = context.WithValue(ctx, UsernameContextKey, username)

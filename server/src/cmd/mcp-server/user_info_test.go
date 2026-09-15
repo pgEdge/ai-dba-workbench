@@ -10,16 +10,13 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
-	_ "modernc.org/sqlite"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
@@ -27,15 +24,6 @@ import (
 // newUserInfoTestStore builds a throwaway auth store for the user-info
 // handler tests.
 func newUserInfoTestStore(t *testing.T) *auth.AuthStore {
-	t.Helper()
-	store, _ := newUserInfoTestStoreDir(t)
-	return store
-}
-
-// newUserInfoTestStoreDir is newUserInfoTestStore plus the directory the
-// store's SQLite file lives in, for the one test that has to reach past
-// the store's API to manufacture an orphaned token.
-func newUserInfoTestStoreDir(t *testing.T) (*auth.AuthStore, string) {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "userinfo-test-*")
 	if err != nil {
@@ -51,7 +39,7 @@ func newUserInfoTestStoreDir(t *testing.T) (*auth.AuthStore, string) {
 		store.Close()
 		os.RemoveAll(tmpDir)
 	})
-	return store, tmpDir
+	return store
 }
 
 // callUserInfo drives the handler and decodes its JSON body, asserting the
@@ -199,44 +187,5 @@ func TestCreateUserInfoHandler_AdminPermissions(t *testing.T) {
 	}
 	if len(perms) != 1 || perms[0] != auth.PermManageUsers {
 		t.Errorf("admin_permissions = %v, want [%s]", perms, auth.PermManageUsers)
-	}
-}
-
-// TestCreateUserInfoHandler_UnresolvableOwner exercises the defensive
-// branch where a credential validates but its owner does not resolve to a
-// username. AuthStore.ValidateToken checks that the owning row exists and
-// is enabled, so the state cannot be reached through the store's own API
-// and is manufactured by blanking the username directly. The endpoint must
-// report the caller as unauthenticated rather than as an authenticated
-// session with an empty username, which the client would render as a
-// logged-in user with no name.
-func TestCreateUserInfoHandler_UnresolvableOwner(t *testing.T) {
-	store, dir := newUserInfoTestStoreDir(t)
-
-	if err := store.CreateUser("ghost", "Testpass1234", "", "", ""); err != nil {
-		t.Fatalf("failed to create user: %v", err)
-	}
-	rawToken, _, err := store.CreateToken("ghost", "test token", nil)
-	if err != nil {
-		t.Fatalf("failed to create token: %v", err)
-	}
-
-	db, err := sql.Open("sqlite", filepath.Join(dir, "auth.db"))
-	if err != nil {
-		t.Fatalf("failed to open auth database: %v", err)
-	}
-	defer db.Close()
-	if _, err := db.Exec("UPDATE users SET username = '' WHERE username = ?", "ghost"); err != nil {
-		t.Fatalf("failed to blank the owner's username: %v", err)
-	}
-
-	body := callUserInfo(t, store, func(r *http.Request) {
-		r.Header.Set("Authorization", "Bearer "+rawToken)
-	})
-	if body["authenticated"] != false {
-		t.Errorf("authenticated = %v, want false", body["authenticated"])
-	}
-	if body["error"] != "Invalid or expired token" {
-		t.Errorf("error = %v, want %q", body["error"], "Invalid or expired token")
 	}
 }

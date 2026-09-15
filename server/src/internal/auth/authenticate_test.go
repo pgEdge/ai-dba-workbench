@@ -10,13 +10,16 @@
 package auth
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 // newAuthenticateTestStore builds a throwaway SQLite-backed auth store
@@ -212,5 +215,57 @@ func TestAuthenticateRequest_SessionTokenIsNotAPIToken(t *testing.T) {
 	}
 	if got := GetTokenIDFromContext(ctx); got != 0 {
 		t.Errorf("GetTokenIDFromContext = %d, want 0 for a session token", got)
+	}
+}
+
+// TestAuthenticateRequest_UnresolvableOwnerRejected locks in the guard
+// that makes UsernameContextKey non-empty on every success: a credential
+// whose identity does not resolve must be rejected outright, because
+// downstream ownership comparisons match on the username and an empty
+// one would compare equal to an unowned connection. ValidateToken checks
+// that the owning row exists and is enabled, so the state is
+// manufactured by blanking the username directly.
+func TestAuthenticateRequest_UnresolvableOwnerRejected(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "authn-orphan-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	store, err := NewAuthStore(tmpDir, 0, 0)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+	t.Cleanup(func() {
+		store.Close()
+		os.RemoveAll(tmpDir)
+	})
+
+	if err := store.CreateUser("ghost", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	rawToken, _, err := store.CreateToken("ghost", "test token", nil)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "auth.db"))
+	if err != nil {
+		t.Fatalf("failed to open auth database: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("UPDATE users SET username = '' WHERE username = ?", "ghost"); err != nil {
+		t.Fatalf("failed to blank the owner's username: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+
+	ctx, err := AuthenticateRequest(req, store)
+	if ctx != nil {
+		t.Error("expected nil context for an unresolvable owner, got non-nil")
+	}
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("expected ErrInvalidToken, got %v", err)
 	}
 }

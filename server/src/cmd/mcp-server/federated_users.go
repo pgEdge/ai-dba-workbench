@@ -10,8 +10,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 )
 
 // sessionCaveat is printed by both commands. Sessions live in the running
@@ -23,6 +26,13 @@ import (
 const sessionCaveat = "Browser sessions the running server has already issued are held in that " +
 	"server's memory and are not cleared by this command: disable the account with -disable-user, " +
 	"or restart the server, to end them."
+
+// tokenCaveat is printed when an account is linked. Linking decides how the
+// account signs in and nothing else, so every API token it already owns keeps
+// working at its full privilege: that is precisely why unlinking revokes them.
+const tokenCaveat = "Every API token the account already owns also keeps working at its full " +
+	"privilege: list them with -list-tokens and remove any that should not outlive the change " +
+	"with -remove-token."
 
 // linkOIDCUserCommand handles the link-oidc-user command, attaching an
 // existing account to an identity provider subject. With
@@ -62,7 +72,13 @@ func linkOIDCUserCommand(dataDir, username, issuer, subject string, relink bool)
 	fmt.Printf("External subject: %s\n", key)
 	fmt.Println("Auth source:     oidc (password login is now refused for this account)")
 	fmt.Println(strings.Repeat("=", 70))
-	fmt.Printf("\n%s\n\n", sessionCaveat)
+	// Linking changes how the account signs in and nothing else, so
+	// anything it already had carries on working. Naming both the
+	// sessions and the tokens keeps the list from reading as complete
+	// when it is not: an operator tightening an account's authentication
+	// has to deal with its password-era tokens separately.
+	fmt.Printf("\n%s\n", sessionCaveat)
+	fmt.Printf("%s\n\n", tokenCaveat)
 
 	return nil
 }
@@ -88,6 +104,13 @@ func unlinkOIDCUserCommand(dataDir, username string, restorePassword bool) error
 
 	key, revoked, err := store.UnlinkFederatedIdentity(username, restorePassword)
 	if err != nil {
+		// A half-applied unlink is the one case where the operator most
+		// needs the caveat, so it is printed before the error rather
+		// than skipped along with the success output. A refusal that
+		// changed nothing, an unknown user say, gets no such line.
+		if errors.Is(err, auth.ErrPartialUnlink) {
+			fmt.Println(sessionCaveat)
+		}
 		return fmt.Errorf("failed to unlink user: %w", err)
 	}
 
@@ -98,7 +121,9 @@ func unlinkOIDCUserCommand(dataDir, username string, restorePassword bool) error
 	// branch where the password and the tokens both survive.
 	if restorePassword {
 		fmt.Println("The account now authenticates locally: any password it held before it was " +
-			"linked works again, and its API tokens were left in place.")
+			"linked works again, and its API tokens were left in place. Set a new password with " +
+			"-update-user, or disable the account with -disable-user, if that password should not " +
+			"be live.")
 	} else {
 		fmt.Printf("The account now authenticates locally with an unusable password, and %d API "+
 			"token(s) have been revoked, so no password login and no token can reach it until you "+

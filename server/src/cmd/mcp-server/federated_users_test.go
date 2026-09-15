@@ -10,6 +10,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -99,7 +100,15 @@ func TestLinkOIDCUserCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("linkOIDCUserCommand: %v", err)
 		}
-		for _, want := range []string{"alice", cliTestIssuer, cliTestSubject, "oidc"} {
+		// Both caveats matter here: linking changes how the account
+		// signs in and leaves its sessions and its tokens working, and
+		// an operator who reads the banner as a complete account of
+		// what changed would be wrong on both counts.
+		for _, want := range []string{
+			"alice", cliTestIssuer, cliTestSubject, "oidc",
+			"not cleared by this command", "-disable-user",
+			"keeps working at its full privilege", "-remove-token",
+		} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("output %q does not mention %q", output, want)
 			}
@@ -194,12 +203,25 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 
 	t.Run("an unlinked account returns error", func(t *testing.T) {
 		dataDir := seedLinkTestUser(t, "alice")
-		err := unlinkOIDCUserCommand(dataDir, "alice", false)
+
+		var err error
+		output := captureStdout(t, func() {
+			err = unlinkOIDCUserCommand(dataDir, "alice", false)
+		})
 		if err == nil {
 			t.Fatal("expected an error for an account that is not linked")
 		}
 		if !strings.Contains(err.Error(), "not linked") {
 			t.Fatalf("unexpected error: %v", err)
+		}
+		if errors.Is(err, auth.ErrPartialUnlink) {
+			t.Fatalf("a refusal that changed nothing was reported as a partial unlink: %v", err)
+		}
+		// A refusal that changed nothing says nothing about sessions;
+		// the caveat belongs to outcomes that actually altered the
+		// account.
+		if strings.Contains(output, "not cleared by this command") {
+			t.Fatalf("output %q carries the session caveat for a refusal that changed nothing", output)
 		}
 	})
 
@@ -263,7 +285,10 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unlinkOIDCUserCommand: %v", err)
 		}
-		for _, want := range []string{"works again", "tokens were", "left in place", "not cleared by this command"} {
+		for _, want := range []string{
+			"works again", "tokens were", "left in place",
+			"-update-user", "-disable-user", "not cleared by this command",
+		} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("output %q does not mention %q", output, want)
 			}

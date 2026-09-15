@@ -991,9 +991,12 @@ func TestLinkFederatedIdentityRefusesServiceAccountHoldingTheSameSubject(t *test
 	}
 }
 
-// A row deleted between the read and the UPDATE is a missing user, not a
-// changed identity, and the message has to say which.
-func TestUnlinkFederatedIdentityReportsADeletedAccount(t *testing.T) {
+// An account deleted before the call is caught by the initial read, not by
+// explainUnlinkRefusalLocked, which handles the interleaving where the row
+// goes after that read; TestExplainUnlinkRefusalLocked covers that half. This
+// pins the pre-read path, so a future refactor that drops the up-front lookup
+// still has to report a missing user.
+func TestUnlinkFederatedIdentityReportsADeletedAccountFromThePreRead(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 

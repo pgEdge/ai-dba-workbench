@@ -11,15 +11,19 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "modernc.org/sqlite"
 
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
+	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
 	"github.com/pgedge/ai-workbench/server/internal/database"
 )
@@ -309,4 +313,131 @@ func TestLogStartupInfo_KnowledgebaseDisabled(t *testing.T) {
 	if !strings.Contains(out, "Debug logging: ENABLED") {
 		t.Errorf("expected debug line, got %q", out)
 	}
+}
+
+// seedAuditEvent inserts a single audit_events row directly via a
+// second connection to the auth store's SQLite file, backdated to
+// occurredAt. It bypasses the auth package's exported recording API
+// so tests can control the timestamp precisely; the hash-chain
+// columns are left as harmless placeholders since PurgeAuditEvents
+// only touches occurred_at.
+func seedAuditEvent(t *testing.T, dbPath string, occurredAt time.Time) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open auth db for seeding: %v", err)
+	}
+	defer db.Close()
+
+	const auditTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+	_, err = db.Exec(
+		`INSERT INTO audit_events
+			(occurred_at, actor_type, actor_name, action, outcome, prev_hash, hash)
+		VALUES (?, 'system', 'system', 'test.seed', 'success', '', '')`,
+		occurredAt.UTC().Format(auditTimeLayout),
+	)
+	if err != nil {
+		t.Fatalf("failed to seed audit event: %v", err)
+	}
+}
+
+// countAuditEvents returns the total number of audit_events rows
+// currently stored, via the exported ListAuditEvents query.
+func countAuditEvents(t *testing.T, store *auth.AuthStore) int {
+	t.Helper()
+
+	_, total, err := store.ListAuditEvents(auth.AuditFilter{})
+	if err != nil {
+		t.Fatalf("failed to list audit events: %v", err)
+	}
+	return total
+}
+
+func TestPurgeAuditEventsZeroDaysKeepsForever(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.NewAuthStore(dir, 0, 10)
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	seedAuditEvent(t, store.Path(), time.Now().Add(-48*time.Hour))
+	seedAuditEvent(t, store.Path(), time.Now())
+
+	zero := 0
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &zero},
+			},
+		},
+		authStore: store,
+	}
+
+	s.purgeAuditEvents()
+
+	if got := countAuditEvents(t, store); got != 2 {
+		t.Errorf("expected both audit events to remain with retention 0, got %d", got)
+	}
+}
+
+func TestPurgeAuditEventsRemovesOldEvents(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.NewAuthStore(dir, 0, 10)
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	defer store.Close()
+
+	seedAuditEvent(t, store.Path(), time.Now().Add(-48*time.Hour))
+	seedAuditEvent(t, store.Path(), time.Now())
+
+	one := 1
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &one},
+			},
+		},
+		authStore: store,
+	}
+
+	s.purgeAuditEvents()
+
+	if got := countAuditEvents(t, store); got != 1 {
+		t.Errorf("expected exactly one audit event to remain after purge, got %d", got)
+	}
+}
+
+func TestPurgeAuditEventsNoAuthStore(t *testing.T) {
+	// Must not panic when there is no auth store wired up.
+	s := &Server{cfg: &config.Config{}}
+	s.purgeAuditEvents()
+}
+
+func TestPurgeAuditEventsLogsError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.NewAuthStore(dir, 0, 10)
+	if err != nil {
+		t.Fatalf("failed to create auth store: %v", err)
+	}
+	// Close the store up front so PurgeAuditEvents fails against the
+	// now-closed database, exercising purgeAuditEvents' error path.
+	if err := store.Close(); err != nil {
+		t.Fatalf("failed to close auth store: %v", err)
+	}
+
+	one := 1
+	s := &Server{
+		cfg: &config.Config{
+			HTTP: config.HTTPConfig{
+				Auth: config.AuthConfig{AuditRetentionDaysPtr: &one},
+			},
+		},
+		authStore: store,
+	}
+
+	// Must not panic; the error is only logged.
+	s.purgeAuditEvents()
 }

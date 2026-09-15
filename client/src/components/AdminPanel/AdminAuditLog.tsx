@@ -9,125 +9,25 @@
  */
 
 import type React from 'react';
-import { Fragment, useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Box,
     Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    TablePagination,
-    Paper,
-    IconButton,
     CircularProgress,
     Alert,
-    Chip,
-    Tooltip,
-    Collapse,
-    TextField,
-    MenuItem,
-    Button,
 } from '@mui/material';
-import { alpha, useTheme } from '@mui/material/styles';
-import type { Theme } from '@mui/material/styles';
-import {
-    KeyboardArrowDown as ExpandIcon,
-    KeyboardArrowUp as CollapseIcon,
-} from '@mui/icons-material';
 import { apiFetch } from '../../utils/apiClient';
-import {
-    tableHeaderCellSx,
-    pageHeadingSx,
-    loadingContainerSx,
-    emptyRowSx,
-    emptyRowTextSx,
-    getTableContainerSx,
-    getContainedButtonSx,
-} from './styles';
+import { pageHeadingSx, loadingContainerSx } from './styles';
 import { extractErrorMessage } from './_shared';
+import type { AuditEvent, AuditFilters } from './AdminAuditLogParts';
+import {
+    AuditFilterBar,
+    AuditTable,
+    EMPTY_FILTERS,
+    ROWS_PER_PAGE_OPTIONS,
+} from './AdminAuditLogParts';
 
-/**
- * A single immutable RBAC audit event as returned by
- * `GET /api/v1/rbac/audit`. Optional fields are omitted by the server
- * when empty, so every one of them must be treated as absent rather
- * than blank.
- */
-export interface AuditEvent {
-    id: number;
-    /** RFC 3339 timestamp of when the event was recorded. */
-    occurred_at: string;
-    actor_type: 'user' | 'token' | 'cli' | 'system';
-    actor_id: number | null;
-    actor_name: string;
-    /** Source address of the request; omitted when not known. */
-    actor_ip?: string;
-    /** Dotted noun.verb action name, for example `group.delete`. */
-    action: string;
-    /** Omitted for denials, which have no resolved target. */
-    target_type?: 'user' | 'token' | 'group';
-    target_id: number | null;
-    target_name?: string;
-    outcome: 'success' | 'failure' | 'denied';
-    /** Failure or denial reason; omitted on success. */
-    error?: string;
-    /** Arbitrary structured context; omitted when empty. */
-    details?: Record<string, unknown>;
-    prev_hash: string;
-    hash: string;
-}
-
-/** Filter values bound to the filter bar controls. */
-interface AuditFilters {
-    actor: string;
-    action: string;
-    targetType: string;
-    outcome: string;
-    since: string;
-    until: string;
-}
-
-const EMPTY_FILTERS: AuditFilters = {
-    actor: '',
-    action: '',
-    targetType: '',
-    outcome: '',
-    since: '',
-    until: '',
-};
-
-/** Target types the server recognises for the `target_type` filter. */
-const TARGET_TYPE_OPTIONS = ['user', 'token', 'group'] as const;
-
-/** Outcomes the server records for every audited operation. */
-const OUTCOME_OPTIONS = ['success', 'failure', 'denied'] as const;
-
-/** Page sizes offered by the pagination control. */
-const ROWS_PER_PAGE_OPTIONS = [25, 50, 100];
-
-/** Number of columns in the table, used for full-width rows. */
-const COLUMN_COUNT = 6;
-
-/**
- * Format an ISO timestamp for display, falling back to the raw value
- * when it cannot be parsed.
- */
-function formatTimestamp(isoDate: string): string {
-    const parsed = new Date(isoDate);
-    if (Number.isNaN(parsed.getTime())) {
-        return isoDate;
-    }
-    return parsed.toLocaleString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
-}
+export type { AuditEvent } from './AdminAuditLogParts';
 
 /**
  * Convert a `datetime-local` input value (local wall-clock time, with
@@ -157,15 +57,13 @@ function buildQuery(
     offset: number,
 ): string {
     const params = new URLSearchParams();
-    const since = toRFC3339(filters.since);
-    const until = toRFC3339(filters.until);
     const optional: [string, string][] = [
         ['actor', filters.actor.trim()],
         ['action', filters.action.trim()],
         ['target_type', filters.targetType],
         ['outcome', filters.outcome],
-        ['since', since],
-        ['until', until],
+        ['since', toRFC3339(filters.since)],
+        ['until', toRFC3339(filters.until)],
     ];
     optional.forEach(([key, value]) => {
         if (value) {
@@ -178,33 +76,36 @@ function buildQuery(
 }
 
 /**
- * Chip colours for each outcome: green for success, red for failure
- * and amber for a denial, all drawn from the theme so the contrast
- * holds in both light and dark modes.
+ * Extract the message from a failed audit response, preferring the
+ * `error` field of a JSON body, then the raw body, and finally the
+ * HTTP status when the body is empty or unreadable.
  */
-function outcomePalette(theme: Theme, outcome: AuditEvent['outcome']): string {
-    if (outcome === 'success') {
-        return theme.palette.success.main;
+async function readErrorMessage(response: Response): Promise<string> {
+    const fallback = `Request failed with status ${String(response.status)}`;
+    const body = await response.text();
+    try {
+        const parsed = JSON.parse(body) as { error?: string };
+        return parsed.error ?? body ?? fallback;
+    } catch {
+        return body || fallback;
     }
-    if (outcome === 'failure') {
-        return theme.palette.error.main;
-    }
-    return theme.palette.warning.main;
 }
 
 /**
- * The name shown for an event's target, falling back to the numeric
- * id when the server recorded no name.
+ * Read the total match count from the `X-Total-Count` header, falling
+ * back to the number of rows returned when the header is missing or
+ * not a finite number.
  */
-function targetLabel(event: AuditEvent): string {
-    if (event.target_name) {
-        return event.target_name;
+function readTotalCount(response: Response, rowCount: number): number {
+    const header = response.headers.get('X-Total-Count');
+    if (header === null) {
+        return rowCount;
     }
-    return event.target_id === null ? '' : `#${String(event.target_id)}`;
+    const parsed = Number(header);
+    return Number.isFinite(parsed) ? parsed : rowCount;
 }
 
 const AdminAuditLog: React.FC = () => {
-    const theme = useTheme();
     const [events, setEvents] = useState<AuditEvent[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -221,39 +122,48 @@ const AdminAuditLog: React.FC = () => {
     // refreshes the list rather than silently doing nothing.
     const [refreshToken, setRefreshToken] = useState(0);
 
+    // Identifies the most recently started request, so that a slower
+    // earlier response cannot overwrite a newer one or clear the
+    // loading flag whilst the newer request is still in flight.
+    const requestIdRef = useRef(0);
+
     const fetchEvents = useCallback(async () => {
+        const requestId = requestIdRef.current + 1;
+        requestIdRef.current = requestId;
+        const isCurrent = () => requestIdRef.current === requestId;
         setLoading(true);
         setError(null);
         try {
             const query = buildQuery(applied, rowsPerPage, page * rowsPerPage);
             const response = await apiFetch(`/api/v1/rbac/audit?${query}`);
+            if (!isCurrent()) {
+                return;
+            }
             if (!response.ok) {
-                const body = await response.text();
-                let message = `Request failed with status ${String(response.status)}`;
-                try {
-                    const parsed = JSON.parse(body) as { error?: string };
-                    message = parsed.error ?? body ?? message;
-                } catch {
-                    message = body || message;
+                const message = await readErrorMessage(response);
+                if (!isCurrent()) {
+                    return;
                 }
                 throw new Error(message);
             }
             const data = (await response.json()) as AuditEvent[] | null;
+            if (!isCurrent()) {
+                return;
+            }
             const rows = data ?? [];
             setEvents(rows);
-            const header = response.headers.get('X-Total-Count');
-            const parsedTotal = header === null ? NaN : Number(header);
-            setTotal(
-                Number.isFinite(parsedTotal) && header !== null
-                    ? parsedTotal
-                    : rows.length,
-            );
+            setTotal(readTotalCount(response, rows.length));
         } catch (err: unknown) {
+            if (!isCurrent()) {
+                return;
+            }
             setEvents([]);
             setTotal(0);
             setError(extractErrorMessage(err, 'Failed to load audit events'));
         } finally {
-            setLoading(false);
+            if (isCurrent()) {
+                setLoading(false);
+            }
         }
         // refreshToken is not read here; it exists only to re-run the
         // request when Apply is clicked with unchanged filters.
@@ -275,6 +185,10 @@ const AdminAuditLog: React.FC = () => {
         setRefreshToken((token) => token + 1);
     };
 
+    const handleToggleExpanded = (event: AuditEvent) => {
+        setExpandedId((current) => (current === event.id ? null : event.id));
+    };
+
     const handleChangePage = (_event: unknown, newPage: number) => {
         setExpandedId(null);
         setPage(newPage);
@@ -288,9 +202,6 @@ const AdminAuditLog: React.FC = () => {
         setPage(0);
     };
 
-    const tableContainerSx = getTableContainerSx(theme);
-    const filterFieldSx = { minWidth: 160, flex: '1 1 160px' };
-
     return (
         <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -299,91 +210,11 @@ const AdminAuditLog: React.FC = () => {
                 </Typography>
             </Box>
 
-            <Box
-                component="form"
-                aria-label="Audit log filters"
-                onSubmit={(event: React.FormEvent) => {
-                    event.preventDefault();
-                    handleApply();
-                }}
-                sx={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: 2,
-                    alignItems: 'center',
-                    mb: 2,
-                }}
-            >
-                <TextField
-                    label="Actor"
-                    size="small"
-                    value={draft.actor}
-                    onChange={(e) => { handleFilterChange('actor', e.target.value); }}
-                    sx={filterFieldSx}
-                />
-                <TextField
-                    label="Action"
-                    size="small"
-                    value={draft.action}
-                    onChange={(e) => { handleFilterChange('action', e.target.value); }}
-                    sx={filterFieldSx}
-                />
-                <TextField
-                    select
-                    label="Target type"
-                    size="small"
-                    value={draft.targetType}
-                    onChange={(e) => { handleFilterChange('targetType', e.target.value); }}
-                    sx={filterFieldSx}
-                >
-                    <MenuItem value="">Any</MenuItem>
-                    {TARGET_TYPE_OPTIONS.map((value) => (
-                        <MenuItem key={value} value={value}>
-                            {value}
-                        </MenuItem>
-                    ))}
-                </TextField>
-                <TextField
-                    select
-                    label="Outcome"
-                    size="small"
-                    value={draft.outcome}
-                    onChange={(e) => { handleFilterChange('outcome', e.target.value); }}
-                    sx={filterFieldSx}
-                >
-                    <MenuItem value="">Any</MenuItem>
-                    {OUTCOME_OPTIONS.map((value) => (
-                        <MenuItem key={value} value={value}>
-                            {value}
-                        </MenuItem>
-                    ))}
-                </TextField>
-                <TextField
-                    label="Since"
-                    type="datetime-local"
-                    size="small"
-                    value={draft.since}
-                    onChange={(e) => { handleFilterChange('since', e.target.value); }}
-                    InputLabelProps={{ shrink: true }}
-                    sx={filterFieldSx}
-                />
-                <TextField
-                    label="Until"
-                    type="datetime-local"
-                    size="small"
-                    value={draft.until}
-                    onChange={(e) => { handleFilterChange('until', e.target.value); }}
-                    InputLabelProps={{ shrink: true }}
-                    sx={filterFieldSx}
-                />
-                <Button
-                    type="submit"
-                    variant="contained"
-                    sx={getContainedButtonSx(theme)}
-                >
-                    Apply
-                </Button>
-            </Box>
+            <AuditFilterBar
+                draft={draft}
+                onChange={handleFilterChange}
+                onApply={handleApply}
+            />
 
             {error && (
                 <Alert severity="error" sx={{ mb: 2 }}>
@@ -396,255 +227,16 @@ const AdminAuditLog: React.FC = () => {
                     <CircularProgress />
                 </Box>
             ) : (
-                <TableContainer
-                    component={Paper}
-                    elevation={0}
-                    sx={tableContainerSx}
-                >
-                    <Table>
-                        <TableHead>
-                            <TableRow>
-                                <TableCell sx={tableHeaderCellSx}>
-                                    Time
-                                </TableCell>
-                                <TableCell sx={tableHeaderCellSx}>
-                                    Actor
-                                </TableCell>
-                                <TableCell sx={tableHeaderCellSx}>
-                                    Action
-                                </TableCell>
-                                <TableCell sx={tableHeaderCellSx}>
-                                    Target
-                                </TableCell>
-                                <TableCell sx={tableHeaderCellSx}>
-                                    Outcome
-                                </TableCell>
-                                <TableCell
-                                    sx={tableHeaderCellSx}
-                                    align="right"
-                                >
-                                    Details
-                                </TableCell>
-                            </TableRow>
-                        </TableHead>
-                        <TableBody>
-                            {events.length === 0 && (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={COLUMN_COUNT}
-                                        align="center"
-                                        sx={emptyRowSx}
-                                    >
-                                        <Typography
-                                            color="text.secondary"
-                                            sx={emptyRowTextSx}
-                                        >
-                                            No audit events match the
-                                            current filters.
-                                        </Typography>
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                            {events.map((event) => {
-                                const expanded = expandedId === event.id;
-                                const outcomeColour = outcomePalette(
-                                    theme,
-                                    event.outcome,
-                                );
-                                return (
-                                    <Fragment key={event.id}>
-                                        <TableRow hover>
-                                            <TableCell>
-                                                <Typography variant="body2">
-                                                    {formatTimestamp(
-                                                        event.occurred_at,
-                                                    )}
-                                                </Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Box
-                                                    sx={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: 1,
-                                                    }}
-                                                >
-                                                    <Tooltip
-                                                        title={
-                                                            event.actor_ip
-                                                                ? `IP: ${event.actor_ip}`
-                                                                : ''
-                                                        }
-                                                    >
-                                                        <Typography variant="body2">
-                                                            {event.actor_name ||
-                                                                '-'}
-                                                        </Typography>
-                                                    </Tooltip>
-                                                    <Chip
-                                                        label={event.actor_type}
-                                                        size="small"
-                                                        variant="outlined"
-                                                    />
-                                                </Box>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Typography variant="body2">
-                                                    {event.action}
-                                                </Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                {event.target_type ? (
-                                                    <Box
-                                                        sx={{
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: 1,
-                                                        }}
-                                                    >
-                                                        <Chip
-                                                            label={
-                                                                event.target_type
-                                                            }
-                                                            size="small"
-                                                            variant="outlined"
-                                                        />
-                                                        <Typography variant="body2">
-                                                            {targetLabel(event)}
-                                                        </Typography>
-                                                    </Box>
-                                                ) : (
-                                                    <Typography variant="body2">
-                                                        -
-                                                    </Typography>
-                                                )}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Chip
-                                                    label={event.outcome}
-                                                    size="small"
-                                                    sx={{
-                                                        bgcolor: alpha(
-                                                            outcomeColour,
-                                                            0.15,
-                                                        ),
-                                                        color: outcomeColour,
-                                                        fontSize: '0.875rem',
-                                                    }}
-                                                />
-                                            </TableCell>
-                                            <TableCell align="right">
-                                                <IconButton
-                                                    size="small"
-                                                    aria-label={
-                                                        expanded
-                                                            ? 'Hide details'
-                                                            : 'Show details'
-                                                    }
-                                                    aria-expanded={expanded}
-                                                    onClick={() => {
-                                                        setExpandedId(
-                                                            expanded
-                                                                ? null
-                                                                : event.id,
-                                                        );
-                                                    }}
-                                                >
-                                                    {expanded ? (
-                                                        <CollapseIcon fontSize="small" />
-                                                    ) : (
-                                                        <ExpandIcon fontSize="small" />
-                                                    )}
-                                                </IconButton>
-                                            </TableCell>
-                                        </TableRow>
-                                        <TableRow>
-                                            <TableCell
-                                                colSpan={COLUMN_COUNT}
-                                                sx={{
-                                                    py: 0,
-                                                    borderBottom: expanded
-                                                        ? undefined
-                                                        : 'none',
-                                                }}
-                                            >
-                                                <Collapse
-                                                    in={expanded}
-                                                    timeout="auto"
-                                                    unmountOnExit
-                                                >
-                                                    <Box
-                                                        data-testid={`audit-details-${String(event.id)}`}
-                                                        sx={{ py: 2 }}
-                                                    >
-                                                        {event.error && (
-                                                            <Typography
-                                                                variant="body2"
-                                                                color="error"
-                                                                sx={{ mb: 1 }}
-                                                            >
-                                                                {event.error}
-                                                            </Typography>
-                                                        )}
-                                                        {event.details ? (
-                                                            <Box
-                                                                component="pre"
-                                                                sx={{
-                                                                    m: 0,
-                                                                    p: 1.5,
-                                                                    bgcolor: alpha(
-                                                                        theme
-                                                                            .palette
-                                                                            .grey[500],
-                                                                        theme
-                                                                            .palette
-                                                                            .mode ===
-                                                                            'dark'
-                                                                            ? 0.3
-                                                                            : 0.12,
-                                                                    ),
-                                                                    borderRadius: 1,
-                                                                    overflowX: 'auto',
-                                                                    fontSize: '0.875rem',
-                                                                }}
-                                                            >
-                                                                {JSON.stringify(
-                                                                    event.details,
-                                                                    null,
-                                                                    2,
-                                                                )}
-                                                            </Box>
-                                                        ) : (
-                                                            !event.error && (
-                                                                <Typography
-                                                                    variant="body2"
-                                                                    color="text.secondary"
-                                                                >
-                                                                    No further
-                                                                    detail was
-                                                                    recorded.
-                                                                </Typography>
-                                                            )
-                                                        )}
-                                                    </Box>
-                                                </Collapse>
-                                            </TableCell>
-                                        </TableRow>
-                                    </Fragment>
-                                );
-                            })}
-                        </TableBody>
-                    </Table>
-                    <TablePagination
-                        component="div"
-                        count={total}
-                        page={page}
-                        onPageChange={handleChangePage}
-                        rowsPerPage={rowsPerPage}
-                        onRowsPerPageChange={handleChangeRowsPerPage}
-                        rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
-                    />
-                </TableContainer>
+                <AuditTable
+                    events={events}
+                    expandedId={expandedId}
+                    onToggle={handleToggleExpanded}
+                    total={total}
+                    page={page}
+                    rowsPerPage={rowsPerPage}
+                    onPageChange={handleChangePage}
+                    onRowsPerPageChange={handleChangeRowsPerPage}
+                />
             )}
         </Box>
     );

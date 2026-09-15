@@ -8,7 +8,13 @@
  *-------------------------------------------------------------------------
  */
 
-import { screen, fireEvent, waitFor, within } from '@testing-library/react';
+import {
+    screen,
+    fireEvent,
+    waitFor,
+    within,
+    act,
+} from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import renderWithTheme from '../../../test/renderWithTheme';
 
@@ -374,6 +380,37 @@ describe('AdminAuditLog', () => {
         expect(
             await screen.findByText('Request failed with status 502'),
         ).toBeInTheDocument();
+    });
+
+    it('ignores a stale response that resolves after a newer one', async () => {
+        let resolveFirst: (response: Response) => void = () => undefined;
+        const firstRequest = new Promise<Response>((resolve) => {
+            resolveFirst = resolve;
+        });
+        mockApiFetch
+            .mockReturnValueOnce(firstRequest)
+            .mockResolvedValue(okResponse([SPARSE_EVENT], '1'));
+
+        renderWithTheme(<AdminAuditLog />);
+
+        // Start a second request whilst the first is still pending.
+        fireEvent.change(screen.getByLabelText('Actor'), {
+            target: { value: 'alice' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+        expect(await screen.findByText('user.create')).toBeInTheDocument();
+
+        // The first request now resolves, out of order, and must not
+        // overwrite the newer rows or re-enter the loading state.
+        resolveFirst(okResponse(EVENTS, '2'));
+        await act(async () => {
+            await firstRequest;
+        });
+        expect(mockApiFetch).toHaveBeenCalledTimes(2);
+
+        expect(screen.getByText('user.create')).toBeInTheDocument();
+        expect(screen.queryByText('group.delete')).not.toBeInTheDocument();
+        expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     it('renders a fallback message when the request throws', async () => {

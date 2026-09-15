@@ -66,7 +66,15 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 3
+	schemaVersion = 4
+)
+
+// Authentication sources recorded in users.auth_source. A local account
+// authenticates with a password held in this store; every other value means
+// the identity is established elsewhere and the password path is refused.
+const (
+	AuthSourceLocal = "local"
+	AuthSourceOIDC  = "oidc"
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -125,6 +133,8 @@ type StoredUser struct {
 	FailedAttempts   int
 	IsSuperuser      bool
 	IsServiceAccount bool
+	AuthSource       string
+	ExternalSubject  string
 }
 
 // StoredToken represents a token in the database
@@ -453,6 +463,32 @@ func (s *AuthStore) migrateV2ToV3() error {
 	return nil
 }
 
+// migrateV3ToV4 records the origin of each account's identity so that
+// federated accounts can be refused at the password endpoint. Existing rows
+// predate federation and are therefore local.
+func (s *AuthStore) migrateV3ToV4() error {
+	statements := []string{
+		"ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'",
+		"ALTER TABLE users ADD COLUMN external_subject TEXT",
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
+			ON users(external_subject) WHERE external_subject IS NOT NULL`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.Exec(stmt); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migrating auth schema to v4: %w", err)
+		}
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clearing schema version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 4); err != nil {
+		return fmt.Errorf("recording schema version 4: %w", err)
+	}
+	return nil
+}
+
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
@@ -476,6 +512,12 @@ func (s *AuthStore) initSchema() error {
 		}
 		currentVersion = 3
 	}
+	if currentVersion == 3 {
+		if err := s.migrateV3ToV4(); err != nil {
+			return err
+		}
+		currentVersion = 4
+	}
 
 	if currentVersion < schemaVersion {
 		schema := `
@@ -497,9 +539,13 @@ func (s *AuthStore) initSchema() error {
         is_superuser BOOLEAN DEFAULT FALSE,
         display_name TEXT DEFAULT '',
         email TEXT DEFAULT '',
-        is_service_account BOOLEAN DEFAULT FALSE
+        is_service_account BOOLEAN DEFAULT FALSE,
+        auth_source TEXT NOT NULL DEFAULT 'local',
+        external_subject TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
+        ON users(external_subject) WHERE external_subject IS NOT NULL;
 
     -- Tokens table
     CREATE TABLE IF NOT EXISTS tokens (
@@ -829,9 +875,11 @@ func scanUser(row scannable) (*StoredUser, error) {
 	var user StoredUser
 	var displayName sql.NullString
 	var email sql.NullString
+	var externalSubject sql.NullString
 	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
 		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email,
-		&user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
+		&user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount,
+		&user.AuthSource, &externalSubject)
 	if err != nil {
 		return nil, err
 	}
@@ -840,6 +888,9 @@ func scanUser(row scannable) (*StoredUser, error) {
 	}
 	if email.Valid {
 		user.Email = email.String
+	}
+	if externalSubject.Valid {
+		user.ExternalSubject = externalSubject.String
 	}
 	return &user, nil
 }
@@ -879,7 +930,7 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject
          FROM users WHERE username = ?`,
 		username,
 	)
@@ -900,7 +951,7 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject
          FROM users WHERE id = ?`,
 		id,
 	)
@@ -1270,7 +1321,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject
          FROM users ORDER BY username`,
 	)
 	if err != nil {
@@ -1314,9 +1365,9 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 	var user StoredUser
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, enabled, failed_attempts, is_service_account FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, enabled, failed_attempts, is_service_account, auth_source FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts, &user.IsServiceAccount)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts, &user.IsServiceAccount, &user.AuthSource)
 
 	if err == sql.ErrNoRows {
 		// Perform a dummy bcrypt comparison to ensure consistent response
@@ -1335,6 +1386,15 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 	// Service accounts cannot authenticate with password
 	if user.IsServiceAccount {
 		log.Printf("[AUTH] Authentication failed for user %s: service account cannot use password login", username)
+		return "", time.Time{}, fmt.Errorf("invalid username or password")
+	}
+
+	// Federated accounts authenticate via their identity provider, not a
+	// password held in this store. Reject with the same opaque error the
+	// other failure paths use, so the endpoint does not disclose which
+	// accounts are federated.
+	if user.AuthSource != AuthSourceLocal {
+		log.Printf("[AUTH] Authentication failed for user %s: identity is managed by %s", username, user.AuthSource)
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 

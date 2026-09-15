@@ -299,7 +299,7 @@ func TestUnlinkFederatedIdentityRestoresLocalLoginOnRequest(t *testing.T) {
 		t.Fatalf("LinkFederatedIdentity: %v", err)
 	}
 
-	key, err := store.UnlinkFederatedIdentity("leo", true)
+	key, _, err := store.UnlinkFederatedIdentity("leo", true)
 	if err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestUnlinkFederatedIdentityLeavesProvisionedAccountUnreachable(t *testing.T
 	if _, err := store.ResolveFederatedUser(identity, FederationOptions{ProvisionUsers: true}); err != nil {
 		t.Fatalf("provisioning: %v", err)
 	}
-	if _, err := store.UnlinkFederatedIdentity("mallory", true); err != nil {
+	if _, _, err := store.UnlinkFederatedIdentity("mallory", true); err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
 	if _, _, err := store.AuthenticateUser("mallory", linkTestPassword); err == nil {
@@ -371,7 +371,7 @@ func TestUnlinkFederatedIdentityArgumentErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := store.UnlinkFederatedIdentity(tt.username, false)
+			_, _, err := store.UnlinkFederatedIdentity(tt.username, false)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -581,7 +581,7 @@ func TestUnlinkFederatedIdentityTouchesOnlyTheIntendedColumns(t *testing.T) {
 	}
 	before := readAccountRow(t, store, "quinn")
 
-	if _, err := store.UnlinkFederatedIdentity("quinn", true); err != nil {
+	if _, _, err := store.UnlinkFederatedIdentity("quinn", true); err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
 	after := readAccountRow(t, store, "quinn")
@@ -605,7 +605,7 @@ func TestUnlinkFederatedIdentityMakesThePasswordUnusable(t *testing.T) {
 	}
 	before := readAccountRow(t, store, "rafael")
 
-	if _, err := store.UnlinkFederatedIdentity("rafael", false); err != nil {
+	if _, _, err := store.UnlinkFederatedIdentity("rafael", false); err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
 	after := readAccountRow(t, store, "rafael")
@@ -676,7 +676,7 @@ func TestUnlinkFederatedIdentityInvalidatesSessions(t *testing.T) {
 		t.Fatalf("the session was not valid to begin with: %v", err)
 	}
 
-	if _, err := store.UnlinkFederatedIdentity("tara", true); err != nil {
+	if _, _, err := store.UnlinkFederatedIdentity("tara", true); err != nil {
 		t.Fatalf("UnlinkFederatedIdentity: %v", err)
 	}
 	if _, err := store.ValidateSessionToken(token); err == nil {
@@ -723,4 +723,142 @@ func TestExternalSubjectRejectsTheEmptyString(t *testing.T) {
 		"UPDATE users SET external_subject = '' WHERE username = ?", "vera"); err == nil {
 		t.Fatal("the schema accepted an empty external_subject")
 	}
+}
+
+// An offboarding unlink has to take the account's API tokens with it:
+// ValidateToken checks only expiry and the owner's enabled flag, so a token
+// minted whilst the account was federated would otherwise outlive the unlink,
+// for ever when it was minted without an expiry.
+func TestUnlinkFederatedIdentityRevokesTokens(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("wendy", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("wendy", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	// No expiry, which is the token that would otherwise live for ever.
+	rawToken, _, err := store.CreateToken("wendy", "kept after federation", nil)
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	if _, err := store.ValidateToken(rawToken); err != nil {
+		t.Fatalf("the token was not valid to begin with: %v", err)
+	}
+
+	_, revoked, err := store.UnlinkFederatedIdentity("wendy", false)
+	if err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+	if revoked != 1 {
+		t.Fatalf("revoked = %d, want 1", revoked)
+	}
+	if _, err := store.ValidateToken(rawToken); err == nil {
+		t.Fatal("an API token survived an offboarding unlink")
+	}
+	tokens, err := store.ListUserTokens("wendy")
+	if err != nil {
+		t.Fatalf("ListUserTokens: %v", err)
+	}
+	if len(tokens) != 0 {
+		t.Fatalf("%d token(s) left in the table", len(tokens))
+	}
+}
+
+// -restore-password is the convert-to-local-login branch, where the account
+// keeps working: its tokens must survive.
+func TestUnlinkFederatedIdentityKeepsTokensWithRestorePassword(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("xavier", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("xavier", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	rawToken, _, err := store.CreateToken("xavier", "still wanted", nil)
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	_, revoked, err := store.UnlinkFederatedIdentity("xavier", true)
+	if err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+	if revoked != 0 {
+		t.Fatalf("revoked = %d, want 0", revoked)
+	}
+	if _, err := store.ValidateToken(rawToken); err != nil {
+		t.Fatalf("a token was revoked on the restore-password branch: %v", err)
+	}
+}
+
+// An account with no tokens is the ordinary case, and must not be mistaken for
+// a failure by the shared token-deletion path, which treats an empty match set
+// as an error when deleting one named token.
+func TestUnlinkFederatedIdentityWithNoTokens(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("yolanda", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("yolanda", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+	_, revoked, err := store.UnlinkFederatedIdentity("yolanda", false)
+	if err != nil {
+		t.Fatalf("UnlinkFederatedIdentity: %v", err)
+	}
+	if revoked != 0 {
+		t.Fatalf("revoked = %d, want 0", revoked)
+	}
+}
+
+// Re-linking to the subject the account already holds must change nothing at
+// all. SQLite's changes() counts matched rows rather than modified ones, so a
+// configuration-management run that reasserts links every pass would otherwise
+// log every federated user out every pass.
+func TestLinkFederatedIdentityIdempotentRelinkKeepsSessions(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	if err := store.CreateUser("zach", linkTestPassword, "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := store.LinkFederatedIdentity("zach", linkTestIssuer, linkTestSubject, false); err != nil {
+		t.Fatalf("LinkFederatedIdentity: %v", err)
+	}
+
+	token, _, err := store.CreateSessionForUser("zach")
+	if err != nil {
+		t.Fatalf("CreateSessionForUser: %v", err)
+	}
+	rawToken, _, err := store.CreateToken("zach", "unaffected", nil)
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	before := readAccountRow(t, store, "zach")
+
+	// Both spellings of the reassertion: with and without -relink.
+	for _, relink := range []bool{false, true} {
+		key, err := store.LinkFederatedIdentity("zach", linkTestIssuer, linkTestSubject, relink)
+		if err != nil {
+			t.Fatalf("LinkFederatedIdentity(relink=%v): %v", relink, err)
+		}
+		if key != ExternalSubjectKey(linkTestIssuer, linkTestSubject) {
+			t.Fatalf("returned key = %q, want the linked key", key)
+		}
+	}
+
+	if _, err := store.ValidateSessionToken(token); err != nil {
+		t.Fatalf("re-linking to the same subject logged the user out: %v", err)
+	}
+	if _, err := store.ValidateToken(rawToken); err != nil {
+		t.Fatalf("re-linking to the same subject disturbed the account's tokens: %v", err)
+	}
+	assertOnlyLinkColumnsChanged(t, before, readAccountRow(t, store, "zach"), false)
 }

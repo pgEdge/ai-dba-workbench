@@ -75,24 +75,27 @@ func unlinkOIDCUserCommand(dataDir, username string, restorePassword bool) error
 	}
 	defer store.Close()
 
-	key, err := store.UnlinkFederatedIdentity(username, restorePassword)
+	key, revoked, err := store.UnlinkFederatedIdentity(username, restorePassword)
 	if err != nil {
 		return fmt.Errorf("failed to unlink user: %w", err)
 	}
 
 	fmt.Printf("Account '%s' unlinked from federated subject %s\n", username, key)
 	// Which of these two the operator gets is the whole point of the flag,
-	// so both say exactly what the account can now be reached by.
+	// so each says exactly what the account can still be reached by. Saying
+	// only that the sessions are gone would read as "access revoked" on the
+	// branch where the password and the tokens both survive.
 	if restorePassword {
-		fmt.Println("The account now authenticates locally. Any password it held before it was " +
-			"linked works again: set a new password with -update-user, or disable the account " +
-			"with -disable-user.")
+		fmt.Println("The account now authenticates locally. Its sessions have been invalidated, " +
+			"but any password it held before it was linked works again and its API tokens were " +
+			"left in place: set a new password with -update-user, or disable the account with " +
+			"-disable-user.")
 	} else {
-		fmt.Println("The account now authenticates locally and its password has been made " +
-			"unusable, so nothing can log into it until you set a password with -update-user. " +
-			"Pass -restore-password to keep the password it had before it was linked.")
+		fmt.Printf("The account now authenticates locally with an unusable password, its sessions "+
+			"have been invalidated and %d API token(s) have been revoked, so nothing can reach it "+
+			"until you set a password with -update-user. Pass -restore-password to keep the "+
+			"password and the tokens it had before it was linked.\n", revoked)
 	}
-	fmt.Println("Any sessions the account held have been invalidated.")
 
 	return nil
 }

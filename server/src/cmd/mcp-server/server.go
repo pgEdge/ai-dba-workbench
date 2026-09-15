@@ -350,6 +350,20 @@ func (s *Server) initOIDC(serverSecret string) error {
 	s.oidcStateKey = stateKey
 
 	fmt.Fprintf(os.Stderr, "OIDC login: ENABLED (issuer: %s)\n", s.cfg.HTTP.Auth.OIDC.Issuer)
+
+	// Without a trusted proxy list, every request behind a reverse proxy
+	// arrives with that proxy's address, so the callback's rate limit
+	// has one key for the whole deployment rather than one per client:
+	// it stops nothing an attacker does and can be spent deliberately to
+	// deny everyone else a login. Say so at start-up, since nothing
+	// later in the life of the process will.
+	if len(s.cfg.HTTP.TrustedProxies) == 0 {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: http.trusted_proxies is empty, so per-client rate limiting of the OIDC\n"+
+				"         callback is inoperative behind a reverse proxy: every request shares one\n"+
+				"         allowance. Set http.trusted_proxies to the reverse proxy's address.\n")
+	}
+
 	return nil
 }
 

@@ -190,6 +190,34 @@ func (e *IPExtractor) isTrustedProxy(ip net.IP) bool {
 	return false
 }
 
+// TrustsRequest reports whether this request arrived from a configured
+// trusted proxy, and therefore whether the forwarded headers it carries
+// mean anything.
+//
+// It exists so that callers which read a forwarded header other than
+// X-Forwarded-For (X-Forwarded-Proto, in particular, which decides a
+// cookie's Secure attribute and hence which state cookie name is
+// written) make exactly the decision ExtractIP makes, rather than an
+// approximation of it. Approximating it is a real hazard: an extractor
+// is built on every deployment and is therefore never nil, so "an
+// extractor exists" is not the same question as "this request came
+// through a proxy we trust", and answering the former lets any client
+// set the header and choose the answer.
+//
+// It returns false whenever no trusted proxies are configured, which is
+// the same safe default ExtractIP applies.
+func (e *IPExtractor) TrustsRequest(r *http.Request) bool {
+	if e == nil || len(e.TrustedProxies) == 0 || r == nil {
+		return false
+	}
+
+	directIP := extractIPFromRemoteAddr(r.RemoteAddr)
+	if directIP == "" {
+		return false
+	}
+	return e.isTrustedProxy(net.ParseIP(directIP))
+}
+
 // ExtractIP securely extracts the client IP address from an HTTP request.
 //
 // Algorithm:

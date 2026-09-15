@@ -178,8 +178,9 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.Scopes, newConfig.HTTP.Auth.OIDC.Scopes) {
 		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.scopes changed to %v\n", newConfig.HTTP.Auth.OIDC.Scopes)
 	}
-	if old.HTTP.Auth.OIDC.ProvisionUsers != newConfig.HTTP.Auth.OIDC.ProvisionUsers {
-		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.provision_users changed to %v\n", newConfig.HTTP.Auth.OIDC.ProvisionUsers)
+	if old.HTTP.Auth.OIDC.ProvisionUsersEnabled() != newConfig.HTTP.Auth.OIDC.ProvisionUsersEnabled() {
+		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.provision_users changed to %v\n",
+			newConfig.HTTP.Auth.OIDC.ProvisionUsersEnabled())
 	}
 	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.AllowedEmailDomains, newConfig.HTTP.Auth.OIDC.AllowedEmailDomains) {
 		fmt.Fprintf(os.Stderr, "  NOTE: http.auth.oidc.allowed_email_domains changed to %v\n", newConfig.HTTP.Auth.OIDC.AllowedEmailDomains)

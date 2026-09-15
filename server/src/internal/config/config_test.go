@@ -1687,6 +1687,7 @@ func TestValidateConfigAllowsOIDCOnly(t *testing.T) {
 // field from a file-sourced config, matching the guarded-assignment idiom
 // used throughout mergeConfig.
 func TestMergeConfigOIDCFields(t *testing.T) {
+	provisionUsers := true
 	dest := defaultConfig()
 	src := &Config{
 		HTTP: HTTPConfig{
@@ -1703,7 +1704,7 @@ func TestMergeConfigOIDCFields(t *testing.T) {
 					DisplayNameClaim:    "display_name",
 					GroupsClaim:         "roles",
 					ButtonLabel:         "Sign in with Example IdP",
-					ProvisionUsers:      true,
+					ProvisionUsers:      &provisionUsers,
 					AllowedEmailDomains: []string{"example.com"},
 					SuperuserGroup:      "admins",
 					GroupMap:            map[string]string{"admins": "superuser"},
@@ -1727,7 +1728,7 @@ func TestMergeConfigOIDCFields(t *testing.T) {
 		got.DisplayNameClaim != want.DisplayNameClaim ||
 		got.GroupsClaim != want.GroupsClaim ||
 		got.ButtonLabel != want.ButtonLabel ||
-		got.ProvisionUsers != want.ProvisionUsers ||
+		got.ProvisionUsersEnabled() != want.ProvisionUsersEnabled() ||
 		!reflect.DeepEqual(got.AllowedEmailDomains, want.AllowedEmailDomains) ||
 		got.SuperuserGroup != want.SuperuserGroup ||
 		!reflect.DeepEqual(got.GroupMap, want.GroupMap) {
@@ -1781,6 +1782,7 @@ func TestLocalAuthEnabledMergesOnlyWhenSet(t *testing.T) {
 // every changed OIDC field, mirroring how it already covers http.tls, so
 // a panic or an unguarded field access would be caught here.
 func TestReloadWarnsOnOIDCChanges(t *testing.T) {
+	provisionUsersReload := true
 	oldCfg := defaultConfig()
 	newCfg := defaultConfig()
 	newCfg.HTTP.Auth.OIDC.Enabled = true
@@ -1792,7 +1794,7 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 	newCfg.HTTP.Auth.OIDC.DisplayNameClaim = "display_name"
 	newCfg.HTTP.Auth.OIDC.GroupsClaim = "roles"
 	newCfg.HTTP.Auth.OIDC.Scopes = []string{"openid"}
-	newCfg.HTTP.Auth.OIDC.ProvisionUsers = true
+	newCfg.HTTP.Auth.OIDC.ProvisionUsers = &provisionUsersReload
 	newCfg.HTTP.Auth.OIDC.AllowedEmailDomains = []string{"example.com"}
 	newCfg.HTTP.Auth.OIDC.SuperuserGroup = "admins"
 	newCfg.HTTP.Auth.OIDC.GroupMap = map[string]string{"idp-admins": "admins"}

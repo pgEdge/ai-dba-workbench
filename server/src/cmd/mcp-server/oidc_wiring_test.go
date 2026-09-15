@@ -285,3 +285,42 @@ func TestHandleCapabilitiesRejectsNonGET(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }
+
+// TestInitOIDCWarnsWhenNoTrustedProxiesAreConfigured covers the start-up
+// warning. Without a trusted proxy list every request behind a reverse
+// proxy arrives with that proxy's address, so the callback's rate limit
+// has one key for the whole deployment: it stops nothing an attacker
+// does and can be spent deliberately to deny everybody a login.
+func TestInitOIDCWarnsWhenNoTrustedProxiesAreConfigured(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+
+	t.Run("no trusted proxies", func(t *testing.T) {
+		server := &Server{cfg: newOIDCEnabledConfig(idp), ctx: context.Background()}
+
+		out := captureStderr(t, func() {
+			if err := server.initOIDC("a-server-secret"); err != nil {
+				t.Fatalf("initOIDC: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "http.trusted_proxies is empty") {
+			t.Errorf("start-up said nothing about the inoperative rate limiting:\n%s", out)
+		}
+	})
+
+	t.Run("trusted proxies configured", func(t *testing.T) {
+		cfg := newOIDCEnabledConfig(idp)
+		cfg.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
+		server := &Server{cfg: cfg, ctx: context.Background()}
+
+		out := captureStderr(t, func() {
+			if err := server.initOIDC("a-server-secret"); err != nil {
+				t.Fatalf("initOIDC: %v", err)
+			}
+		})
+
+		if strings.Contains(out, "http.trusted_proxies is empty") {
+			t.Errorf("warned despite a configured proxy list:\n%s", out)
+		}
+	})
+}

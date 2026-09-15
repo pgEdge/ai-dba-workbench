@@ -22,31 +22,27 @@ const SessionCookieName = "session_token"
 
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
-	authStore         *auth.AuthStore
-	rateLimiter       *auth.RateLimiter // Tracks failed login attempts per IP
-	totalRateLimiter  *auth.RateLimiter // Tracks total login requests per IP (20/min)
-	ipExtractor       *auth.IPExtractor
-	tlsEnabled        bool // Whether the server itself has TLS enabled
-	trustProxyHeaders bool // Whether to trust X-Forwarded-Proto for secure detection
+	authStore        *auth.AuthStore
+	rateLimiter      *auth.RateLimiter // Tracks failed login attempts per IP
+	totalRateLimiter *auth.RateLimiter // Tracks total login requests per IP (20/min)
+	ipExtractor      *auth.IPExtractor
+	tlsEnabled       bool // Whether the server itself has TLS enabled
 }
 
 // NewAuthHandler creates a new authentication handler.
 // The ipExtractor parameter is optional; if nil, RemoteAddr will be used directly.
 // The tlsEnabled parameter indicates whether the server itself has TLS enabled.
 // When behind a reverse proxy that terminates TLS, set tlsEnabled to false but ensure
-// the proxy passes X-Forwarded-Proto header, which will be used to auto-detect HTTPS.
+// the proxy passes X-Forwarded-Proto header, which will be used to auto-detect HTTPS;
+// that header is honored only on a request the ipExtractor's trusted proxy list
+// actually covers, which is decided per request rather than once here.
 func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor, tlsEnabled bool) *AuthHandler {
-	// If an IP extractor is configured, it means we're behind a trusted proxy,
-	// so we should also trust X-Forwarded-Proto for secure cookie detection.
-	trustProxyHeaders := ipExtractor != nil
-
 	return &AuthHandler{
-		authStore:         authStore,
-		rateLimiter:       rateLimiter,
-		totalRateLimiter:  auth.NewRateLimiter(1, 20), // 20 total login requests per minute per IP
-		ipExtractor:       ipExtractor,
-		tlsEnabled:        tlsEnabled,
-		trustProxyHeaders: trustProxyHeaders,
+		authStore:        authStore,
+		rateLimiter:      rateLimiter,
+		totalRateLimiter: auth.NewRateLimiter(1, 20), // 20 total login requests per minute per IP
+		ipExtractor:      ipExtractor,
+		tlsEnabled:       tlsEnabled,
 	}
 }
 
@@ -68,7 +64,7 @@ func (h *AuthHandler) Close() {
 // which the OIDC handler shares: the X-Forwarded-Proto trust decision
 // must exist in exactly one place.
 func (h *AuthHandler) isSecureRequest(r *http.Request) bool {
-	return requestIsSecure(r, h.tlsEnabled, h.trustProxyHeaders)
+	return requestIsSecure(r, h.tlsEnabled, h.ipExtractor)
 }
 
 // LoginRequest is the request body for the login endpoint

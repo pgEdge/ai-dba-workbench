@@ -154,3 +154,58 @@ func TestAuthenticateRequest_ValidAPIToken(t *testing.T) {
 		t.Errorf("expected username 'svc', got %q", got)
 	}
 }
+
+func TestAuthenticateRequestSetsTokenID(t *testing.T) {
+	store := newAuthenticateTestStore(t)
+
+	if err := store.CreateUser("svcid", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	rawToken, stored, err := store.CreateToken("svcid", "scoped token", nil)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+
+	ctx, err := AuthenticateRequest(req, store)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !IsAPITokenFromContext(ctx) {
+		t.Error("expected the API token flag to be true")
+	}
+	if got := GetTokenIDFromContext(ctx); got != stored.ID {
+		t.Errorf("token id: got %d, want %d", got, stored.ID)
+	}
+}
+
+func TestAuthenticateRequestSessionIsNotAPIToken(t *testing.T) {
+	store := newAuthenticateTestStore(t)
+
+	if err := store.CreateUser("sessionuser", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	sessionToken, _, err := store.AuthenticateUser("sessionuser", "Testpass1234")
+	if err != nil {
+		t.Fatalf("failed to authenticate: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil)
+	req.Header.Set("Authorization", "Bearer "+sessionToken)
+
+	ctx, err := AuthenticateRequest(req, store)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if IsAPITokenFromContext(ctx) {
+		t.Error("expected the API token flag to be false for a session")
+	}
+	if got := GetTokenIDFromContext(ctx); got != 0 {
+		t.Errorf("token id: got %d, want 0 for a session", got)
+	}
+	if _, ok := ctx.Value(IsAPITokenContextKey).(bool); !ok {
+		t.Error("expected the API token flag to be present in the context")
+	}
+}

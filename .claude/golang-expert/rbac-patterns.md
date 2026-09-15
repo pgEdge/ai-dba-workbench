@@ -301,3 +301,26 @@ above. When you add a gate, add at minimum:
 
 The denial test plus the gate body (5 statements) covers the new
 lines; the admin-allowed test covers the not-taken branch.
+
+## Denial Auditing in the RBAC Management Handlers
+
+The `/api/v1/rbac/*` handlers do not inline the gate. They call the
+shared helpers `requirePermission` and `requireSuperuser` in
+`server/src/internal/api/rbac_handlers.go`, which since GitHub issue
+#65 also write a `denied` row to the audit log before responding 403.
+The action name comes from `deniedAction(r)`, which maps the request
+method and path to the same dotted action the change would have
+recorded had it been allowed (`group.delete`, `token.scope.set`,
+`permission.admin.grant` and so on), falling back to
+`rbac.<lowercase method>` for an unrecognised route shape. A recording
+failure is logged with `[ERROR]` and never changes the response.
+
+Mutations in these handlers go through `h.actorStore(r)` rather than
+`h.authStore`, so the audit row names the acting user or token:
+`actorStore` wraps `auth.ActorFromContext(r.Context())`, which reads
+the username, user or token id and client IP that
+`auth.AuthenticateRequest` and `createAuthWrapper` place in the
+request context. Read-only calls stay on `h.authStore`. When adding a
+new mutating RBAC endpoint, use `h.actorStore(r)` and extend the
+`deniedAction` mapping in the same change; the wiring is locked in by
+`server/src/internal/api/rbac_audit_wiring_test.go`.

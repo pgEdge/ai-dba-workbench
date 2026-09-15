@@ -70,7 +70,7 @@ func (h *RBACHandler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groupID, err := h.authStore.CreateGroup(name, req.Description)
+	groupID, err := h.actorStore(r).CreateGroup(name, req.Description)
 	if err != nil {
 		if errors.Is(err, auth.ErrGroupNameExists) {
 			RespondError(w, http.StatusConflict,
@@ -280,7 +280,7 @@ func (h *RBACHandler) updateGroup(w http.ResponseWriter, r *http.Request, groupI
 		}
 	}
 
-	if err := h.authStore.UpdateGroup(groupID, name, req.Description); err != nil {
+	if err := h.actorStore(r).UpdateGroup(groupID, name, req.Description); err != nil {
 		if errors.Is(err, auth.ErrGroupNameExists) {
 			RespondError(w, http.StatusConflict,
 				"A group with this name already exists")
@@ -309,7 +309,7 @@ func (h *RBACHandler) deleteGroup(w http.ResponseWriter, r *http.Request, groupI
 		return
 	}
 
-	if err := h.authStore.DeleteGroup(groupID); err != nil {
+	if err := h.actorStore(r).DeleteGroup(groupID); err != nil {
 		log.Printf("[ERROR] Failed to delete group %d: %v", groupID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to delete group")
 		return
@@ -379,13 +379,13 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 	}
 
 	if req.UserID != nil {
-		if err := h.authStore.AddUserToGroup(groupID, *req.UserID); err != nil {
+		if err := h.actorStore(r).AddUserToGroup(groupID, *req.UserID); err != nil {
 			log.Printf("[ERROR] Failed to add user %d to group %d: %v", *req.UserID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to add user to group")
 			return
 		}
 	} else {
-		if err := h.authStore.AddGroupToGroup(groupID, *req.GroupID); err != nil {
+		if err := h.actorStore(r).AddGroupToGroup(groupID, *req.GroupID); err != nil {
 			log.Printf("[ERROR] Failed to add group %d to group %d: %v", *req.GroupID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to add group to group")
 			return
@@ -398,13 +398,13 @@ func (h *RBACHandler) addGroupMember(w http.ResponseWriter, r *http.Request, gro
 func (h *RBACHandler) removeGroupMember(w http.ResponseWriter, r *http.Request, groupID int64, memberType string, memberID int64) {
 	switch memberType {
 	case "user":
-		if err := h.authStore.RemoveUserFromGroup(groupID, memberID); err != nil {
+		if err := h.actorStore(r).RemoveUserFromGroup(groupID, memberID); err != nil {
 			log.Printf("[ERROR] Failed to remove user %d from group %d: %v", memberID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to remove user from group")
 			return
 		}
 	case "group":
-		if err := h.authStore.RemoveGroupFromGroup(groupID, memberID); err != nil {
+		if err := h.actorStore(r).RemoveGroupFromGroup(groupID, memberID); err != nil {
 			log.Printf("[ERROR] Failed to remove group %d from group %d: %v", memberID, groupID, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to remove group from group")
 			return

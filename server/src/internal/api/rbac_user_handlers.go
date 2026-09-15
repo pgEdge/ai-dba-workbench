@@ -139,13 +139,13 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isServiceAccount {
-		if err := h.authStore.CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
+		if err := h.actorStore(r).CreateServiceAccount(req.Username, req.Annotation, req.DisplayName, req.Email); err != nil {
 			log.Printf("[ERROR] Failed to create service account %s: %v", req.Username, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to create service account")
 			return
 		}
 	} else {
-		if err := h.authStore.CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
+		if err := h.actorStore(r).CreateUser(req.Username, req.Password, req.Annotation, req.DisplayName, req.Email); err != nil {
 			log.Printf("[ERROR] Failed to create user %s: %v", req.Username, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to create user")
 			return
@@ -153,7 +153,7 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Enabled != nil && !*req.Enabled {
-		if err := h.authStore.DisableUser(req.Username); err != nil {
+		if err := h.actorStore(r).DisableUser(req.Username); err != nil {
 			log.Printf("[ERROR] Failed to disable user %s: %v", req.Username, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to disable user")
 			return
@@ -161,7 +161,7 @@ func (h *RBACHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.IsSuperuser != nil && *req.IsSuperuser {
-		if err := h.authStore.SetUserSuperuser(req.Username, true); err != nil {
+		if err := h.actorStore(r).SetUserSuperuser(req.Username, true); err != nil {
 			log.Printf("[ERROR] Failed to set superuser status for %s: %v", req.Username, err)
 			RespondError(w, http.StatusInternalServerError, "Failed to set superuser status")
 			return
@@ -222,7 +222,7 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 		IsSuperuser: req.IsSuperuser,
 	}
 
-	if err := h.authStore.UpdateUserAtomic(user.Username, update); err != nil {
+	if err := h.actorStore(r).UpdateUserAtomic(user.Username, update); err != nil {
 		log.Printf("[ERROR] Failed to update user %s: %v", user.Username, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to update user")
 		return
@@ -244,7 +244,7 @@ func (h *RBACHandler) deleteUser(w http.ResponseWriter, r *http.Request, userID 
 		return
 	}
 
-	if err := h.authStore.DeleteUser(user.Username); err != nil {
+	if err := h.actorStore(r).DeleteUser(user.Username); err != nil {
 		log.Printf("[ERROR] Failed to delete user %s: %v", user.Username, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to delete user")
 		return

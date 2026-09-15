@@ -36,6 +36,9 @@ var ErrInvalidToken = errors.New("invalid or expired token")
 //   - IsSuperuserContextKey  (when the owning user is resolved)
 //   - UsernameContextKey     (for session tokens, and for API tokens
 //     whose owner is resolved)
+//   - IsAPITokenContextKey   (always; true on the API-token path,
+//     false on the session path)
+//   - TokenIDContextKey      (API tokens only; the acting token's id)
 //
 // Validation order is API token first, then session token, matching the
 // historical createAuthWrapper behavior exactly. A missing credential
@@ -55,6 +58,8 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 	// values (UserID, IsSuperuser, Username) for permission checks.
 	storedToken, err := store.ValidateToken(token)
 	if err == nil && storedToken != nil {
+		ctx = context.WithValue(ctx, IsAPITokenContextKey, true)
+		ctx = context.WithValue(ctx, TokenIDContextKey, storedToken.ID)
 		ctx = context.WithValue(ctx, UserIDContextKey, storedToken.OwnerID)
 		// Look up user to determine superuser status and username.
 		user, userErr := store.GetUserByID(storedToken.OwnerID)
@@ -71,6 +76,7 @@ func AuthenticateRequest(r *http.Request, store *AuthStore) (context.Context, er
 		return nil, ErrInvalidToken
 	}
 	ctx = context.WithValue(ctx, UsernameContextKey, username)
+	ctx = context.WithValue(ctx, IsAPITokenContextKey, false)
 	// Get user ID and superuser status for RBAC.
 	user, userErr := store.GetUser(username)
 	if userErr == nil && user != nil {

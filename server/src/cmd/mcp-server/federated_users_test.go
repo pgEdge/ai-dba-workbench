@@ -218,8 +218,13 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unlinkOIDCUserCommand: %v", err)
 		}
-		if !strings.Contains(output, "unusable") || !strings.Contains(output, "-restore-password") {
-			t.Fatalf("output %q does not explain the default and the flag", output)
+		// The output is read by an operator deciding whether access is
+		// revoked, so it has to account for the password, the sessions
+		// and the tokens, not just one of the three.
+		for _, want := range []string{"unusable", "sessions", "token(s) have been revoked", "-restore-password"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("output %q does not mention %q", output, want)
+			}
 		}
 
 		store := reopenStore(t, dataDir)
@@ -251,8 +256,10 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unlinkOIDCUserCommand: %v", err)
 		}
-		if !strings.Contains(output, "works again") {
-			t.Fatalf("output %q does not warn that the old password is live", output)
+		for _, want := range []string{"works again", "tokens were", "left in place"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("output %q does not mention %q", output, want)
+			}
 		}
 
 		user, err := reopenStore(t, dataDir).GetUser("alice")

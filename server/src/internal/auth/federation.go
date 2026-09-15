@@ -705,9 +705,18 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 	// auth_source condition is the converse of the belt-and-braces check
 	// lookupFederatedUserLocked makes, and keeps this from quietly
 	// converting an account whose identity some future source owns.
+	//
+	// The last condition excludes a row that already says exactly what this
+	// UPDATE would say. SQLite's changes() counts matched rows rather than
+	// modified ones, so without it the documented idempotent re-link would
+	// report a row affected and log the user out; a configuration-management
+	// run that reasserts links every pass would then log every federated
+	// user out every pass. IS NOT is used rather than <> because
+	// external_subject is nullable.
 	query := `UPDATE users SET auth_source = ?, external_subject = ?
-        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)`
-	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC}
+        WHERE username = ? AND is_service_account = FALSE AND auth_source IN (?, ?)
+          AND (external_subject IS NOT ? OR auth_source <> ?)`
+	args := []any{AuthSourceOIDC, key, username, AuthSourceLocal, AuthSourceOIDC, key, AuthSourceOIDC}
 	if !relink {
 		query += " AND (external_subject IS NULL OR external_subject = ?)"
 		args = append(args, key)
@@ -736,7 +745,16 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 		return "", fmt.Errorf("failed to confirm the link for %s: %w", username, err)
 	}
 	if affected == 0 {
-		return "", s.explainLinkRefusalLocked(username, key)
+		// Either the row already carries this link, in which case there
+		// is nothing to do and nobody to log out, or one of the
+		// conditions refused it.
+		if err := s.explainLinkRefusalLocked(username, key); err != nil {
+			return "", err
+		}
+		//nolint:gosec // G706: both values passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Account %s is already linked to federated subject %s; nothing to do",
+			logging.SanitizeForLog(username), logging.SanitizeForLog(key))
+		return key, nil
 	}
 
 	s.InvalidateUserSessions(username)
@@ -751,10 +769,11 @@ func (s *AuthStore) LinkFederatedIdentity(username, issuer, subject string, reli
 }
 
 // explainLinkRefusalLocked turns an UPDATE that matched no row into the reason
-// it matched none, by reading back the row the conditions were about. Every
-// answer it gives is a snapshot taken after the fact, so it is used for the
-// message only and never to decide whether the write should have happened.
-// s.mu must be held.
+// it matched none, by reading back the row the conditions were about. It
+// returns nil when the row already carries the link the UPDATE would have
+// written, which is not a refusal but the idempotent case. Every answer it
+// gives is a snapshot taken after the fact, so it decides the message and the
+// no-op, never whether the write should have happened. s.mu must be held.
 func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
 	var authSource string
 	var isServiceAccount bool
@@ -767,6 +786,9 @@ func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("looking up user: %w", err)
+	}
+	if authSource == AuthSourceOIDC && existing.Valid && existing.String == key {
+		return nil
 	}
 	if isServiceAccount {
 		return fmt.Errorf("service account cannot be linked to an identity provider: %s", username)
@@ -795,19 +817,27 @@ func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
 // never looks at external_subject: the password the account had before it was
 // linked, unrotated for the whole federated period, would start working again
 // at the moment of unlinking. So by default this writes an unusable hash at the
-// same time, exactly as provisionFederatedUserLocked does, and the account
-// leaves federation reachable by nothing until an operator sets a password with
-// -update-user. Passing restorePassword keeps the old hash and therefore the
-// old password, which is only correct when the operator means to hand the
-// account back to the person who holds it.
+// same time, exactly as provisionFederatedUserLocked does, and deletes every
+// API token the account owns, because ValidateToken checks only expiry and the
+// owner's enabled flag, so a token minted whilst the account was federated
+// would otherwise keep authenticating at that account's full privileges, for
+// ever in the case of a token minted without an expiry. The account leaves
+// federation reachable by nothing until an operator sets a password with
+// -update-user.
+//
+// Passing restorePassword makes this the other command: the account is
+// converted back to local login with the password and the tokens it already
+// had, which is only correct when the operator means to hand it back to the
+// person who holds it.
 //
 // Every live session for the account is invalidated either way, for the same
 // reason as in LinkFederatedIdentity.
 //
-// The returned string is the external subject key that was cleared.
-func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword bool) (string, error) {
+// The returned values are the external subject key that was cleared and the
+// number of tokens revoked, which is always zero when restorePassword is set.
+func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword bool) (string, int, error) {
 	if username == "" {
-		return "", fmt.Errorf("a username is required")
+		return "", 0, fmt.Errorf("a username is required")
 	}
 
 	s.mu.Lock()
@@ -820,10 +850,10 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 		"SELECT id, auth_source, external_subject FROM users WHERE username = ?",
 		username).Scan(&id, &authSource, &existing)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("user not found: %s", username)
+		return "", 0, fmt.Errorf("user not found: %s", username)
 	}
 	if err != nil {
-		return "", fmt.Errorf("looking up user: %w", err)
+		return "", 0, fmt.Errorf("looking up user: %w", err)
 	}
 
 	key := ""
@@ -831,33 +861,88 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 		key = existing.String
 	}
 	if key == "" && authSource != AuthSourceOIDC {
-		return "", fmt.Errorf("account %s is not linked to an identity provider", username)
+		return "", 0, fmt.Errorf("account %s is not linked to an identity provider", username)
 	}
 
-	query := "UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ?"
-	args := []any{AuthSourceLocal, id}
+	// The UPDATE is pinned to the subject that was just read, with IS
+	// rather than = so a NULL matches, which is what makes the key reported
+	// to the operator and written to the log the key that was actually
+	// cleared: if a link commits in between, this matches no row and says
+	// so rather than naming a subject it did not clear.
+	query := "UPDATE users SET auth_source = ?, external_subject = NULL WHERE id = ? AND external_subject IS ?"
+	args := []any{AuthSourceLocal, id, existing}
 	if !restorePassword {
 		hash, hashErr := s.unusablePasswordHashLocked()
 		if hashErr != nil {
-			return "", hashErr
+			return "", 0, hashErr
 		}
-		query = "UPDATE users SET auth_source = ?, external_subject = NULL, password_hash = ? WHERE id = ?"
-		args = []any{AuthSourceLocal, hash, id}
+		query = "UPDATE users SET auth_source = ?, external_subject = NULL, password_hash = ? " +
+			"WHERE id = ? AND external_subject IS ?"
+		args = []any{AuthSourceLocal, hash, id, existing}
 	}
-	if _, err := s.db.Exec(query, args...); err != nil {
-		return "", fmt.Errorf("failed to unlink %s from the identity provider: %w", username, err)
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to unlink %s from the identity provider: %w", username, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to confirm the unlink for %s: %w", username, err)
+	}
+	if affected == 0 {
+		return "", 0, fmt.Errorf(
+			"account %s was not unlinked; its federated identity changed while the unlink was being applied",
+			username)
+	}
+
+	revoked := 0
+	if !restorePassword {
+		revoked, err = s.revokeAccountTokensLocked(username)
+		if err != nil {
+			// The account is already local and its password already
+			// unusable, so this is reported rather than rolled back:
+			// the operator has to know the tokens are still live.
+			return "", 0, fmt.Errorf(
+				"account %s was unlinked but its tokens could not be revoked, so they are still valid: %w",
+				username, err)
+		}
 	}
 
 	s.InvalidateUserSessions(username)
 
-	reachable := "no password login is possible until one is set"
+	reachable := fmt.Sprintf("no password login is possible until one is set, %d token(s) revoked", revoked)
 	if restorePassword {
-		reachable = "its previous password works again"
+		reachable = "its previous password and tokens still work"
 	}
 	//nolint:gosec // G706: both values passed through logging.SanitizeForLog
 	log.Printf("[AUTH] Unlinked account %s from federated subject %s; %s",
 		logging.SanitizeForLog(username), logging.SanitizeForLog(key), reachable)
-	return key, nil
+	return key, revoked, nil
+}
+
+// revokeAccountTokensLocked deletes every API token the named account owns,
+// through the same transactional path DeleteUserToken uses, so the per-token
+// scope rows and the connection_sessions row keyed on the token hash go with
+// them. It returns how many tokens were deleted. s.mu must be held, which is
+// why it calls deleteTokensByFilter rather than an exported method that would
+// take the lock again.
+func (s *AuthStore) revokeAccountTokensLocked(username string) (int, error) {
+	const ownedByUser = "owner_id = (SELECT id FROM users WHERE username = ?)"
+
+	var count int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM tokens WHERE "+ownedByUser, username).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting the account's tokens: %w", err)
+	}
+	// deleteTokensByFilter treats an empty match set as an error, which is
+	// right for deleting one named token and wrong here, where an account
+	// with no tokens is the ordinary case.
+	if count == 0 {
+		return 0, nil
+	}
+	if err := s.deleteTokensByFilter(ownedByUser, []any{username}, ""); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // subjectHolderLocked returns the username of the account holding key, or ""

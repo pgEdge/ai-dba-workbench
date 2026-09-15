@@ -351,37 +351,52 @@ identity and returns it to local authentication:
     -unlink-oidc-user -username alice
 ```
 
-By default, unlinking also replaces the account's password hash with an
-unusable one, so the account leaves federation reachable by nothing at
-all: no federated login, because the identity is detached, and no
-password login, until an administrator sets a password with
-`-update-user -username <name>`. That is the same arrangement
-provisioning makes when it creates a federated account, and it means an
-unlink cannot quietly revive a credential.
+The command has two branches, and which one runs decides what is left
+of the account's access.
 
-Pass `-restore-password` to keep the password the account held before it
-was linked, for an administrator who means to hand the account back to
-its holder:
+The following table describes what each branch does to the three
+credentials an account can hold:
+
+| Credential | Default | With `-restore-password` |
+|------------|---------|--------------------------|
+| Password | Replaced with an unusable hash | The password held before linking works again |
+| Sessions | Invalidated | Invalidated |
+| API tokens | Revoked | Left in place |
+
+The default is the offboarding branch. It leaves the account reachable
+by nothing at all: no federated login, because the identity is
+detached; no password login, until an administrator sets one with
+`-update-user -username <name>`; and no API access, because every token
+the account held is revoked along with its scope rows. That is the same
+arrangement provisioning makes when it creates a federated account, and
+it means an unlink cannot quietly leave a credential behind.
+
+Pass `-restore-password` to convert the account back to local login,
+for an administrator who means to hand it back to its holder:
 
 ```bash
 ./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
     -unlink-oidc-user -username alice -restore-password
 ```
 
-Weigh that option carefully. The hash has been inert for the whole
-federated period, so the password it holds may be years old, will not
-have been rotated while the account was federated, and may be known to
-the person who has just left. An account the provider originally
-created holds a hash of discarded random bytes, so `-restore-password`
-on one of those restores nothing usable.
+That branch is a conversion rather than a revocation, so it keeps the
+account's API tokens as well as its password. Weigh it carefully. The
+password hash has been inert for the whole federated period, so the
+password it holds may be years old, will not have been rotated while
+the account was federated, and may be known to the person who has just
+left; the tokens have the same problem, and should be reviewed with
+`-list-tokens` and removed with `-remove-token` where they are no
+longer wanted. An account the provider originally created holds a hash
+of discarded random bytes, so `-restore-password` on one of those
+restores nothing usable.
 
-For a person who has left, disable the account with
-`-disable-user -username <name>` rather than relying on the unlink
-alone; disabling refuses the account's logins and its API tokens
-immediately.
+For a person who has left, also disable the account with
+`-disable-user -username <name>`. Revoking tokens removes the
+credentials that exist today, whereas disabling the account stops new
+ones being minted and refuses everything the account tries.
 
-The command reports which of the two outcomes applied, and the server
-log records it as well.
+The command reports which branch ran, including how many tokens it
+revoked, and the server log records the same.
 
 ### Linking, Unlinking and Live Sessions
 
@@ -392,8 +407,14 @@ life.
 This matters most when relinking. Moving an account to a new subject
 without cutting the sessions would leave whoever signed in under the
 old identity holding the account's privileges, superuser included,
-until their session expired. API tokens are unaffected by either
-command, so review them separately.
+until their session expired. Linking an account to the identity it
+already holds changes nothing and so invalidates nothing, which keeps a
+configuration-management run that reasserts every link from logging
+everybody out on each pass.
+
+Linking never touches the account's API tokens. Unlinking revokes them
+unless `-restore-password` is passed, as described in Unlinking an
+Account above.
 
 ## Mapping Provider Groups to Workbench Groups
 

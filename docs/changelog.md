@@ -45,16 +45,20 @@ project adheres to
   spells out the command, and links the pre-created account.
   Moving an account that is already linked requires the
   `-relink` flag, and a service account cannot be linked at
-  all. Unlinking returns the account to local authentication
-  and replaces its password hash with an unusable one, so the
-  account is reachable by nothing until a password is set with
-  `-update-user`; `-restore-password` keeps the password the
-  account held before it was linked instead. Both commands
-  invalidate the account's live sessions, so a relink cuts off
-  the previous identity at once. Note that linking an existing
-  account hands its mapped group membership, and its superuser
-  flag wherever `superuser_group` is configured, to the
-  identity provider from the next federated login onward,
+  all. Unlinking returns the account to local authentication,
+  replaces its password hash with an unusable one and revokes
+  its API tokens, so the account is reachable by nothing until
+  a password is set with `-update-user`; `-restore-password`
+  converts the account back to local login instead, keeping
+  both the password it held before it was linked and its
+  tokens. Both commands invalidate the account's live
+  sessions, so a relink cuts off the previous identity at
+  once, whilst relinking an account to the identity it
+  already holds changes nothing and logs nobody out. Note
+  that linking an existing account hands its mapped group
+  membership, and its superuser flag wherever
+  `superuser_group` is configured, to the identity provider
+  from the next federated login onward,
   which is why the local break-glass administrator should not
   be linked. (#261)
 

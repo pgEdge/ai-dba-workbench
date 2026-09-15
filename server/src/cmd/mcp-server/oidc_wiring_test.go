@@ -259,7 +259,7 @@ func TestSetupHandlersRegistersTheOIDCEndpoints(t *testing.T) {
 	}
 }
 
-func TestSetupHandlersLeavesTheOIDCEndpointsUnregisteredWhenDisabled(t *testing.T) {
+func TestSetupHandlersRedirectsTheOIDCStartEndpointWhenDisabled(t *testing.T) {
 	deps := &HandlerDependencies{Config: &config.Config{}}
 
 	mux := http.NewServeMux()
@@ -267,10 +267,26 @@ func TestSetupHandlersLeavesTheOIDCEndpointsUnregisteredWhenDisabled(t *testing.
 		t.Fatalf("SetupHandlers: %v", err)
 	}
 
+	// The start endpoint exists in every configuration, because the
+	// login screen offers the button whenever it cannot reach the
+	// capabilities endpoint, and following it is a full-page
+	// navigation: a 404 here would cost the user the login screen.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/start", nil))
+	if rec.Code != http.StatusFound {
+		t.Errorf("start status = %d, want %d when no provider was discovered",
+			rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != "/?login_error=provider" {
+		t.Errorf("start Location = %q, want %q", got, "/?login_error=provider")
+	}
+
+	// The callback stays unregistered: nothing sends a user there by
+	// hand, so there is nothing to hand back to the login screen.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback", nil))
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d when no provider was discovered",
+		t.Errorf("callback status = %d, want %d when no provider was discovered",
 			rec.Code, http.StatusNotFound)
 	}
 }

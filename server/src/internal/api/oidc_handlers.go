@@ -203,6 +203,28 @@ func (h *OIDCHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(OIDCCallbackPath, h.handleCallback)
 }
 
+// RegisterDisabledStartRoute registers the start endpoint, and only the
+// start endpoint, on a deployment that has no federated login to offer.
+//
+// The start endpoint exists in every configuration because the login
+// screen offers the provider button whenever it cannot reach the
+// capabilities endpoint and so cannot know whether the button applies.
+// Following it is a full-page navigation, so a bare 404 from the mux
+// costs the user the login screen itself; this hands them back to it
+// with a marker instead. Nothing sends a user to the callback by hand,
+// so the callback stays unregistered and keeps answering 404.
+func RegisterDisabledStartRoute(mux *http.ServeMux) {
+	mux.HandleFunc(OIDCStartPath, handleStartUnavailable)
+}
+
+// handleStartUnavailable is the start endpoint on a deployment where
+// federated login is not available, whether because the wiring never
+// built a handler or because a handler was built without a usable
+// provider.
+func handleStartUnavailable(w http.ResponseWriter, _ *http.Request) {
+	redirectTo(w, providerFailedTarget)
+}
+
 // Close stops the background cleanup goroutine belonging to the rate
 // limiter this handler created, mirroring AuthHandler.Close. Callers
 // must invoke it when the handler is torn down, notably in tests, or the
@@ -228,17 +250,15 @@ func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Federated login switched off sends the browser back to the login
 	// screen with a marker, rather than answering 404, and it does so
 	// before the method check so that every method answers the same way.
+	// This is the same answer RegisterDisabledStartRoute gives, and for
+	// the same reason: see the comment there.
 	//
-	// The 404 was there to make a deployment with OIDC off look like one
-	// that never had the endpoint, but that secrecy does not exist:
-	// GET /api/v1/capabilities is public and reports oidc_enabled to
-	// anyone who asks. So the 404 bought nothing and cost a real user
-	// their way in, because the login screen offers this button whenever
-	// it cannot reach the capabilities endpoint, and a 404 on a full-page
-	// navigation leaves them on a browser error page having lost the
-	// login screen entirely.
+	// The 404 this replaced was there to make a deployment with OIDC off
+	// look like one that never had the endpoint, but that secrecy does
+	// not exist, because GET /api/v1/capabilities is public and reports
+	// oidc_enabled to anyone who asks.
 	if !h.enabled() {
-		redirectTo(w, providerFailedTarget)
+		handleStartUnavailable(w, r)
 		return
 	}
 	if !h.methodIsGET(w, r) {

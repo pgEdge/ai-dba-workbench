@@ -107,10 +107,16 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 
 		// Federated login endpoints, registered alongside the local ones
 		// and equally unauthenticated: a user starting a login has no
-		// session, and the callback is how they get one. They are
-		// registered only when a provider was discovered at start-up, so
-		// that a Workbench with OIDC switched off answers 404 from the
-		// mux itself.
+		// session, and the callback is how they get one.
+		//
+		// The start endpoint is registered either way. With no provider
+		// there is no login to start, but the login screen still offers
+		// the button whenever it cannot reach the capabilities endpoint,
+		// and following it is a full-page navigation: a 404 from the mux
+		// would leave the user on a browser error page with the login
+		// screen gone, so the disabled route redirects them back to it
+		// instead. The callback is registered only with a provider,
+		// since nothing sends a user there by hand.
 		if deps.OIDCProvider != nil && deps.Config != nil {
 			oidcHandler := api.NewOIDCHandler(deps.AuthStore, deps.OIDCProvider,
 				deps.Config.HTTP.Auth.OIDC, deps.OIDCStateKey, tlsEnabled, deps.IPExtractor)
@@ -121,6 +127,8 @@ func SetupHandlers(deps *HandlerDependencies) func(*http.ServeMux) error {
 			}
 			oidcHandler.RegisterRoutes(mux)
 			fmt.Fprintf(os.Stderr, "OIDC login endpoints: ENABLED\n")
+		} else {
+			api.RegisterDisabledStartRoute(mux)
 		}
 
 		// Chat history compaction endpoint

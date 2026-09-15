@@ -1118,13 +1118,39 @@ PostgreSQL 18, which added B-tree skip scans, a predicate on
 `connection_id` and `queryid` alone falls back to a bitmap scan of
 `idx_pg_stat_statements_conn_time` over every row of the connection in
 the window. `/metrics/query` and `/metrics/latest` always carry the
-database name; `/metrics/top-queries` aggregates every
-sample in the window for the connection, with `database_name` bound only
-when the caller filters on it, so it usually reads
-`idx_pg_stat_statements_conn_time`; `/metrics/query-stats`
-takes an optional `database_name` parameter, which the drill-down always
-sends, and `buildQueryStatsSQL` binds it as an extra predicate so that
-the object index applies.
+database name; `/metrics/query-stats` takes an optional `database_name`
+parameter, which the drill-down always sends, and `buildQueryStatsSQL`
+binds it as an extra predicate so that the object index applies.
+`/metrics/top-queries` reads the identity index described below instead.
+
+## The Three Indexes on metrics.pg_stat_statements (collector)
+
+The table carries its primary key plus three secondary indexes, and each
+one exists for a different access pattern. Do not add a fourth without
+measuring, and do not drop any of these:
+
+- `idx_pg_stat_statements_conn_time (connection_id, collected_at DESC)`
+  serves everything that wants the newest samples for a connection,
+  including the `latest` CTE that anchors the name lookups.
+- `idx_pg_stat_statements_object (connection_id, database_name, queryid,
+  collected_at DESC)` serves the per-statement drill-downs, which always
+  bind a database name, and the query-text lookup on the top-queries
+  page statement. It cannot be replaced by the identity index below:
+  that index puts `queryid` ahead of `database_name`, so it cannot
+  return one statement's samples in `collected_at` order.
+- `idx_pg_stat_statements_identity_time (connection_id, queryid,
+  database_name, userid, dbid, toplevel, collected_at) INCLUDE (calls,
+  total_exec_time, rows, shared_blks_hit, shared_blks_read,
+  min_exec_time, max_exec_time)` is migration #14, added for issue #387.
+  Its key order is exactly the identity window in `buildTopQueriesSQL`
+  (partition columns, then the ordering column), so the aggregation
+  reads the rows already sorted, with a Merge Append combining the
+  partitions; the INCLUDE list makes the scan index-only.
+
+The index costs roughly 17% of the table's size, about 39% on insert
+time and 56% on WAL volume for a collector-sized batch, measured on a
+2.6-million-row fixture. Both figures roughly double if the query text
+is added to the INCLUDE list, which is why it is not there.
 
 ## Cumulative Counter Deltas per Identity (server)
 
@@ -1149,8 +1175,8 @@ Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
 window, `totals` drops the pairs whose call or time delta is negative,
 floors the row and block deltas at zero, sums per `queryid` and keeps
 only statements with calls in the window, and `latest_sample` supplies
-the query text, the OIDs and the two lifetime columns `min_exec_time`
-and `max_exec_time`, which cannot be differenced. `mean_exec_time` is
+the OIDs and the two lifetime columns `min_exec_time` and
+`max_exec_time`, which cannot be differenced. `mean_exec_time` is
 derived as `SUM(delta_time) / SUM(delta_calls)`. A statement present in
 the snapshot but not executed in the window therefore does not appear at
 all, which is a deliberate behaviour change from the pre-#387 endpoint.
@@ -1160,6 +1186,25 @@ cannot see through the `samples` CTE, estimates both at one row, and
 otherwise joins them with a nested loop that re-runs the `DISTINCT ON`
 once per statement; on a 24-hour window of 57,000 samples that cost five
 seconds instead of a quarter of one.
+
+The query text must stay out of `samples`. It is the widest column in
+the table, `samples` is read twice and so is spilled to a tuplestore,
+and carrying the text made each of the million-odd rows of a 30-day
+window about 270 bytes rather than about 85: the spill was 368 MB
+instead of 125 MB, and no index of a sensible size could cover the scan.
+The page statement resolves it instead with a lateral lookup outside the
+`LIMIT`, so it runs once per row returned, keyed on the raw
+`database_name` recorded on the sample rather than the name resolved
+through `db_names`. The join is `LEFT`, because the column is nullable.
+
+On a 2.6-million-row, 30-day fixture the identity index plus the
+narrower `samples` took the page statement from 11.5 s to 5.5 s and the
+count statement from 10.9 s to 5.0 s, with the external merge sort gone
+entirely; 7 days went from 2.0 s to 1.5 s and 24 hours from 296 ms to
+178 ms. One caveat: `exclude_collector=true` matches on the query text,
+which both forces a heap scan and collapses the row estimate, so that
+path still plans as it did before. Shortening the window is the remedy,
+not another index.
 
 ## Bounded Activity Lookups (server)
 

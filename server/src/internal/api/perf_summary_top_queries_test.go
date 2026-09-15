@@ -1357,6 +1357,10 @@ func TestTopQueries_LastClientKeyedOnDatabaseAndRole(t *testing.T) {
 		}
 		if rows[0].ClientAddr != nil {
 			t.Errorf("client_addr = %q, want null", *rows[0].ClientAddr)
+		}
+	})
+}
+
 // seedWindowedTopQueries inserts a controlled series of samples for a set of
 // statements whose behavior inside the window differs: one that runs
 // steadily, one whose counters are reset partway through, one that is

@@ -74,7 +74,7 @@ const topQueriesCTEBody = "ORDER BY query_id, datid, usesysid, " +
 	"collected_at DESC " +
 	"), samples AS ( " +
 	"SELECT " +
-	"pss.queryid, pss.collected_at, pss.query, " +
+	"pss.queryid, pss.collected_at, " +
 	"pss.database_name, pss.dbid, pss.userid, " +
 	"pss.min_exec_time, pss.max_exec_time, " +
 	"pss.calls - LAG(pss.calls) OVER identity AS delta_calls, " +
@@ -116,16 +116,18 @@ const topQueriesCTETail = "WINDOW identity AS ( " +
 	"HAVING SUM(delta_calls) > 0 " +
 	"), latest_sample AS MATERIALIZED ( " +
 	"SELECT DISTINCT ON (queryid) " +
-	"queryid, query, database_name, dbid, userid, " +
+	"queryid, database_name, dbid, userid, " +
 	"min_exec_time, max_exec_time " +
 	"FROM samples " +
 	"ORDER BY queryid, collected_at DESC " +
 	"), deduped AS ( " +
 	"SELECT " +
 	"t.queryid::text, " +
+	"t.queryid AS sample_queryid, " +
+	"ls.database_name AS sample_database_name, " +
 	"COALESCE(dn.datname, ls.database_name) AS database_name, " +
 	"COALESCE(un.usename, '') AS username, " +
-	"ls.query, t.calls, t.total_exec_time, " +
+	"t.calls, t.total_exec_time, " +
 	"CASE WHEN t.calls > 0 " +
 	"THEN t.total_exec_time / t.calls " +
 	"ELSE 0 END AS mean_exec_time, " +
@@ -140,6 +142,34 @@ const topQueriesCTETail = "WINDOW identity AS ( " +
 	"LEFT JOIN user_names un ON ls.userid = un.usesysid " +
 	"LEFT JOIN last_client lc ON ls.queryid = lc.query_id " +
 	"AND ls.dbid = lc.datid AND ls.userid = lc.usesysid )"
+
+// topQueriesPageSelect is the projection the page statement wraps the
+// paged CTE in, and topQueriesPageLateral is the lookup that resolves the
+// query text for the rows on that page. The text is deliberately not
+// carried through the aggregation, so the page statement is no longer a
+// bare "SELECT * FROM deduped"; splitting the golden copy here lets the
+// optional database clause, the ORDER BY and the LIMIT sit between them,
+// which is where the builder puts them.
+const topQueriesPageSelect = "SELECT " +
+	"page.queryid, page.database_name, page.username, qtext.query, " +
+	"page.calls, page.total_exec_time, page.mean_exec_time, " +
+	"page.min_exec_time, page.max_exec_time, page.rows, " +
+	"page.shared_blks_hit, page.shared_blks_read, " +
+	"page.client_addr, page.client_hostname, page.client_observed_at " +
+	"FROM ( SELECT * FROM deduped"
+
+const topQueriesPageLateral = ") page " +
+	"LEFT JOIN LATERAL ( " +
+	"SELECT pss.query " +
+	"FROM metrics.pg_stat_statements pss " +
+	"WHERE pss.connection_id = $1 " +
+	"AND pss.database_name = page.sample_database_name " +
+	"AND pss.queryid = page.sample_queryid " +
+	"AND pss.collected_at >= $2 " +
+	"AND pss.collected_at <= $3 " +
+	"ORDER BY pss.collected_at DESC " +
+	"LIMIT 1 " +
+	") qtext ON TRUE"
 
 // normaliseSQL collapses every run of whitespace to a single space and trims
 // the result, so that generated statements can be compared exactly without
@@ -294,9 +324,9 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 				topQueriesCTEBody, tc.wantFilters, topQueriesCTETail)
 			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped",
 				tc.wantDBClause)
-			wantPage := joinSQL(wantCTE, "SELECT * FROM deduped",
+			wantPage := joinSQL(wantCTE, topQueriesPageSelect,
 				tc.wantDBClause, "ORDER BY total_exec_time DESC, queryid",
-				tc.wantTail)
+				tc.wantTail, topQueriesPageLateral)
 
 			if got := normaliseSQL(countSQL); got != wantCount {
 				t.Errorf("count SQL:\n got: %s\nwant: %s", got, wantCount)
@@ -328,7 +358,7 @@ func TestBuildTopQueriesSQL_OrderClause(t *testing.T) {
 					1, testTopQueriesWindow(), nil, "", false, column,
 					direction, 10, 0)
 				want := "ORDER BY " + column + " " + direction +
-					", queryid LIMIT $4 OFFSET $5"
+					", queryid LIMIT $4 OFFSET $5 " + topQueriesPageLateral
 				if got := normaliseSQL(pageSQL); !strings.HasSuffix(got,
 					want) {
 					t.Errorf("page SQL does not end with %q:\n%s", want, got)

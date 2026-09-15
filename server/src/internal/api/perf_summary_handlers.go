@@ -1468,10 +1468,26 @@ func buildTopQueriesSQL(
 	//
 	// min_exec_time and max_exec_time are lifetime extremes that cannot be
 	// differenced, so they are read from the latest sample in the window
-	// alongside the query text and the identifying OIDs. Ordering by either
-	// of them therefore sorts a windowed list on a lifetime value; that is
-	// a known wart, kept because dropping the order keys would be a
-	// breaking API change.
+	// alongside the identifying OIDs. Ordering by either of them therefore
+	// sorts a windowed list on a lifetime value; that is a known wart, kept
+	// because dropping the order keys would be a breaking API change.
+	//
+	// The query text is deliberately not carried through the aggregation.
+	// It is by far the widest column in the table, and a window over
+	// 30 days of five-minute samples reads on the order of a million rows,
+	// so projecting it made every one of those rows about 270 bytes wide
+	// rather than about 85. That is what the samples CTE has to spill to
+	// temporary files, since it is read twice, and it also puts the text
+	// out of reach of any index of sensible size. Resolving it once per
+	// returned row instead, in the page statement below, cut a 30-day page
+	// from 11.5 to 5.8 seconds on a 2.6-million-row fixture: the samples
+	// spill fell from 368MB to 125MB and the scan became an index-only
+	// scan over idx_pg_stat_statements_identity_time, whose key order
+	// (connection_id, queryid, database_name, userid, dbid, toplevel,
+	// collected_at) matches the identity window and so removes the sort
+	// entirely. Note that the exclude_collector filter matches on the
+	// query text and therefore still forces a heap scan when it is
+	// requested; that path plans exactly as it did before.
 	//
 	// totals and latest_sample are declared MATERIALIZED deliberately.
 	// Neither the planner nor the statistics can see through the samples
@@ -1524,7 +1540,7 @@ func buildTopQueriesSQL(
         ),
         samples AS (
             SELECT
-                pss.queryid, pss.collected_at, pss.query,
+                pss.queryid, pss.collected_at,
                 pss.database_name, pss.dbid, pss.userid,
                 pss.min_exec_time, pss.max_exec_time,
                 pss.calls - LAG(pss.calls) OVER identity AS delta_calls,
@@ -1563,7 +1579,7 @@ func buildTopQueriesSQL(
         ),
         latest_sample AS MATERIALIZED (
             SELECT DISTINCT ON (queryid)
-                queryid, query, database_name, dbid, userid,
+                queryid, database_name, dbid, userid,
                 min_exec_time, max_exec_time
             FROM samples
             ORDER BY queryid, collected_at DESC
@@ -1571,9 +1587,11 @@ func buildTopQueriesSQL(
         deduped AS (
             SELECT
                 t.queryid::text,
+                t.queryid AS sample_queryid,
+                ls.database_name AS sample_database_name,
                 COALESCE(dn.datname, ls.database_name) AS database_name,
                 COALESCE(un.usename, '') AS username,
-                ls.query, t.calls, t.total_exec_time,
+                t.calls, t.total_exec_time,
                 CASE WHEN t.calls > 0
                      THEN t.total_exec_time / t.calls
                      ELSE 0 END AS mean_exec_time,
@@ -1614,11 +1632,43 @@ func buildTopQueriesSQL(
 	// set and is therefore sufficient on its own; the cast in the CTE keeps
 	// the output column named queryid, which is what this clause resolves
 	// against.
+	//
+	// The query text is joined on afterwards rather than carried through
+	// the aggregation, for the reason given above the CTE. The lateral runs
+	// once per row of the page, never once per statement in the window,
+	// because it sits outside the LIMIT, and each run is a single-row index
+	// lookup on idx_pg_stat_statements_object, whose leading columns
+	// (connection_id, database_name, queryid) are exactly the equalities
+	// below and whose trailing collected_at DESC supplies the ordering. The
+	// join is LEFT so that a statement whose text was never captured, which
+	// the collector records as NULL, still appears on the page with an
+	// empty query; sample_queryid and sample_database_name carry the raw
+	// values the lookup needs, since the projected database_name may have
+	// been resolved to a different name through db_names.
 	pageSQL = fmt.Sprintf(`%s
-        SELECT * FROM deduped
-        %s
-        ORDER BY %s %s, queryid
-        LIMIT $%d OFFSET $%d
+        SELECT
+            page.queryid, page.database_name, page.username, qtext.query,
+            page.calls, page.total_exec_time, page.mean_exec_time,
+            page.min_exec_time, page.max_exec_time, page.rows,
+            page.shared_blks_hit, page.shared_blks_read,
+            page.client_addr, page.client_hostname, page.client_observed_at
+        FROM (
+            SELECT * FROM deduped
+            %s
+            ORDER BY %s %s, queryid
+            LIMIT $%d OFFSET $%d
+        ) page
+        LEFT JOIN LATERAL (
+            SELECT pss.query
+            FROM metrics.pg_stat_statements pss
+            WHERE pss.connection_id = $1
+              AND pss.database_name = page.sample_database_name
+              AND pss.queryid = page.sample_queryid
+              AND pss.collected_at >= $2
+              AND pss.collected_at <= $3
+            ORDER BY pss.collected_at DESC
+            LIMIT 1
+        ) qtext ON TRUE
     `, cte, databaseClause, orderCol, orderDir, limitPos, limitPos+1)
 
 	return countSQL, pageSQL, filterArgs, pageArgs

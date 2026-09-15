@@ -11,6 +11,7 @@ package auth
 
 import (
 	"bytes"
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
@@ -2423,12 +2424,37 @@ func TestMigrateV3ToV4AddsFederationColumns(t *testing.T) {
 	}
 
 	var source string
+	var externalSubject sql.NullString
 	if err := store.db.QueryRow(
-		"SELECT auth_source FROM users WHERE username = ?", "legacy").Scan(&source); err != nil {
-		t.Fatalf("auth_source: %v", err)
+		"SELECT auth_source, external_subject FROM users WHERE username = ?", "legacy",
+	).Scan(&source, &externalSubject); err != nil {
+		t.Fatalf("auth_source/external_subject: %v", err)
 	}
 	if source != AuthSourceLocal {
 		t.Fatalf("auth_source = %q, want %q", source, AuthSourceLocal)
+	}
+	if externalSubject.Valid {
+		t.Fatalf("external_subject = %q, want NULL", externalSubject.String)
+	}
+
+	var indexName string
+	if err := store.db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+		"idx_users_external_subject").Scan(&indexName); err != nil {
+		t.Fatalf("idx_users_external_subject: %v", err)
+	}
+
+	// A second initSchema() call must be a no-op: currentVersion is
+	// already 4, so migrateV3ToV4 is not invoked again by the
+	// dispatcher. Exercise migrateV3ToV4 directly a second time as well,
+	// to cover its duplicate-column tolerance branch (the crash-recovery
+	// path where a previous run added the columns but failed before
+	// recording the new schema version).
+	if err := store.initSchema(); err != nil {
+		t.Fatalf("second initSchema: %v", err)
+	}
+	if err := store.migrateV3ToV4(); err != nil {
+		t.Fatalf("second migrateV3ToV4: %v", err)
 	}
 }
 
@@ -2445,7 +2471,12 @@ func TestAuthenticateUserRejectsFederatedAccount(t *testing.T) {
 		t.Fatalf("update auth_source: %v", err)
 	}
 
-	if _, _, err := store.AuthenticateUser("federated", "Sup3r-Str0ng-Pass!"); err == nil {
+	_, _, err := store.AuthenticateUser("federated", "Sup3r-Str0ng-Pass!")
+	if err == nil {
 		t.Fatal("expected password login to be refused for a federated account")
+	}
+	const wantErr = "invalid username or password"
+	if err.Error() != wantErr {
+		t.Fatalf("error = %q, want %q", err.Error(), wantErr)
 	}
 }

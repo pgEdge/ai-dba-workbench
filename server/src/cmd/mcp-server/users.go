@@ -93,7 +93,7 @@ func addUserCommand(dataDir, username, password, annotation, fullName, email str
 	}
 
 	// Add user to store
-	if err := store.CreateUser(username, password, annotation, fullName, email); err != nil {
+	if err := cliStore(store).CreateUser(username, password, annotation, fullName, email); err != nil {
 		return fmt.Errorf("failed to add user: %w", err)
 	}
 
@@ -240,7 +240,7 @@ func updateUserCommand(dataDir, username, newPassword, newAnnotation, newFullNam
 	}
 
 	// Update user
-	if err := store.UpdateUser(username, newPassword, annotation, fullName, email); err != nil {
+	if err := cliStore(store).UpdateUser(username, newPassword, annotation, fullName, email); err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 
@@ -281,7 +281,7 @@ func deleteUserCommand(dataDir, username string) error {
 	}
 
 	// Remove user
-	if err := store.DeleteUser(username); err != nil {
+	if err := cliStore(store).DeleteUser(username); err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
@@ -368,7 +368,7 @@ func enableUserCommand(dataDir, username string) error {
 	}
 
 	// Enable user (also resets failed attempts)
-	if err := store.EnableUser(username); err != nil {
+	if err := cliStore(store).EnableUser(username); err != nil {
 		return fmt.Errorf("failed to enable user: %w", err)
 	}
 
@@ -428,7 +428,7 @@ func addServiceAccountCommand(dataDir, username, annotation, fullName, email str
 	}
 
 	// Create service account
-	if err := store.CreateServiceAccount(username, annotation, fullName, email); err != nil {
+	if err := cliStore(store).CreateServiceAccount(username, annotation, fullName, email); err != nil {
 		return fmt.Errorf("failed to create service account: %w", err)
 	}
 
@@ -477,7 +477,7 @@ func disableUserCommand(dataDir, username string) error {
 	}
 
 	// Disable user
-	if err := store.DisableUser(username); err != nil {
+	if err := cliStore(store).DisableUser(username); err != nil {
 		return fmt.Errorf("failed to disable user: %w", err)
 	}
 

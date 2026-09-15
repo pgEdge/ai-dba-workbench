@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../utils/apiClient';
 import { formatTime } from '../utils/formatters';
 import type { LLMResponse } from '../types/llm';
+import { LLM_CHAT_PATH, buildChatRequestInit } from '../utils/llmChat';
 import { djb2Hash, ANALYSIS_CACHE_TTL_MS } from '../utils/textHelpers';
 import { useAnalysisState } from './useAnalysisState';
 import { logger } from '../utils/logger';
@@ -132,23 +133,13 @@ export function useQueryOverview(
                     + ` | Rows: ${data.rows.toLocaleString()}`
                     + ` | Buffer Hit Ratio: ${hitRatio}%`;
 
-                const response = await apiFetch('/api/v1/llm/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        messages: [
-                            {
-                                role: 'user',
-                                content: [
-                                    { type: 'text', text: userMessage },
-                                ],
-                            },
-                        ],
-                        system_prompt: SYSTEM_PROMPT,
+                const response = await apiFetch(
+                    LLM_CHAT_PATH,
+                    buildChatRequestInit({
+                        messages: [{ role: 'user', content: userMessage }],
+                        systemPrompt: SYSTEM_PROMPT,
                     }),
-                });
+                );
 
                 if (!response.ok) {
                     const errorText = await response.text();

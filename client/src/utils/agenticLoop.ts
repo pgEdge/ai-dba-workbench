@@ -19,7 +19,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../types/llm';
-import { normaliseMessages, normaliseTools } from '../types/llm';
+import { LLM_CHAT_PATH, buildChatRequestInit } from './llmChat';
 
 export interface AgenticLoopOptions {
     /** Initial messages (typically a single user message). */
@@ -61,15 +61,10 @@ export async function runAgenticLoop(
     while (iterations < maxIterations) {
         iterations++;
 
-        const response = await apiFetch('/api/v1/llm/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                messages: normaliseMessages(messages),
-                tools: tools.length > 0 ? normaliseTools(tools) : undefined,
-                system_prompt: systemPrompt,
-            }),
-        });
+        const response = await apiFetch(
+            LLM_CHAT_PATH,
+            buildChatRequestInit({ messages, tools, systemPrompt }),
+        );
 
         if (!response.ok) {
             const errorText = await response.text();

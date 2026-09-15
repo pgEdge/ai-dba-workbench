@@ -24,7 +24,7 @@ import type {
     ToolCallResponse,
     ToolResult,
 } from '../../types/llm';
-import { normaliseMessages, normaliseTools } from '../../types/llm';
+import { LLM_CHAT_PATH, buildChatRequestInit } from '../../utils/llmChat';
 import type { APIMessage, ToolDefinition } from './chatTypes';
 
 /**
@@ -186,16 +186,15 @@ export async function runAgenticLoop(
         iterations++;
 
         // Call the LLM with current message history and tools
-        const response = await fetchFn('/api/v1/llm/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                messages: normaliseMessages(currentMessages),
-                tools: normaliseTools(availableTools),
-                system_prompt: systemPrompt,
+        const response = await fetchFn(
+            LLM_CHAT_PATH,
+            buildChatRequestInit({
+                messages: currentMessages,
+                tools: availableTools,
+                systemPrompt,
+                signal: abortSignal,
             }),
-            signal: abortSignal,
-        });
+        );
 
         if (!response.ok) {
             const errorText = await response.text();

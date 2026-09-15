@@ -368,6 +368,21 @@ whole exports object; React then throws error #130 when it renders.
 Vitest resolves the deep path natively, so unit tests pass and only
 `npm run build` plus a browser session shows the failure.
 
+## LLM Chat Requests
+
+Every `POST /api/v1/llm/chat` call goes through
+`src/utils/llmChat.ts`: use `LLM_CHAT_PATH` for the path and
+`buildChatRequestInit({ messages, tools, systemPrompt, signal })` for
+the `RequestInit`. That builder is the only place that knows the
+library wire contract (typed content blocks via `normaliseMessages`,
+snake_case `tools[].input_schema` via `normaliseTools`, and
+`system_prompt`), and it omits `tools` when the list is empty and
+`signal` when none is given. Never hand-assemble the body at a call
+site; issue #370 was a silently emptied tool schema caused by exactly
+that, and #373 centralised the construction. Current callers are
+`utils/agenticLoop.ts`, `hooks/chat/chatAgenticLoop.ts`,
+`hooks/useChartAnalysis.ts` and `hooks/useQueryOverview.ts`.
+
 ## Coverage Requirements
 
 The 90% line coverage floor in `CLAUDE.md` applies to all new and

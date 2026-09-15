@@ -1868,17 +1868,18 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Summary: "Start a federated login",
 				Description: "Redirects the browser to the identity provider to begin an " +
 					"OIDC login. Sets a short-lived, sealed state cookie before " +
-					"redirecting. Not registered at all, and so answers 404, " +
-					"on a deployment where OIDC is disabled or no provider was " +
-					"discovered at start-up.",
+					"redirecting. On a deployment where OIDC is disabled or no " +
+					"provider was discovered at start-up, redirects to \"/\" with " +
+					"login_error set to \"provider\" instead, so that a browser " +
+					"following the link lands back on the login screen rather " +
+					"than on an error page.",
 				OperationID: "startOIDCLogin",
 				Tags:        []string{"Authentication"},
 				Parameters: []OpenAPIParameter{
 					queryParamString("return", "Path to return to after a successful login"),
 				},
 				Responses: map[string]OpenAPIResponse{
-					"302": {Description: "Redirect to the identity provider"},
-					"404": {Description: "OIDC login is not enabled"},
+					"302": {Description: "Redirect to the identity provider, or to \"/\" with login_error set when OIDC login is not enabled"},
 					"500": jsonResponse("ErrorResponse", "Failed to create or seal the login state"),
 				},
 			},

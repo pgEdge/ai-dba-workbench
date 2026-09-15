@@ -225,12 +225,20 @@ func (h *OIDCHandler) enabled() bool {
 // state, seals it into a short-lived cookie and redirects the browser to
 // the identity provider.
 func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
-	// A 404 rather than a 503 or a 400, and before the method check so
-	// that every method answers it: a Workbench with federated login
-	// switched off should look exactly like one that never had the
-	// endpoint, so that probing it says nothing about the deployment.
+	// Federated login switched off sends the browser back to the login
+	// screen with a marker, rather than answering 404, and it does so
+	// before the method check so that every method answers the same way.
+	//
+	// The 404 was there to make a deployment with OIDC off look like one
+	// that never had the endpoint, but that secrecy does not exist:
+	// GET /api/v1/capabilities is public and reports oidc_enabled to
+	// anyone who asks. So the 404 bought nothing and cost a real user
+	// their way in, because the login screen offers this button whenever
+	// it cannot reach the capabilities endpoint, and a 404 on a full-page
+	// navigation leaves them on a browser error page having lost the
+	// login screen entirely.
 	if !h.enabled() {
-		http.NotFound(w, r)
+		redirectTo(w, providerFailedTarget)
 		return
 	}
 	if !h.methodIsGET(w, r) {

@@ -219,12 +219,19 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 			t.Fatalf("unlinkOIDCUserCommand: %v", err)
 		}
 		// The output is read by an operator deciding whether access is
-		// revoked, so it has to account for the password, the sessions
-		// and the tokens, not just one of the three.
-		for _, want := range []string{"unusable", "sessions", "token(s) have been revoked", "-restore-password"} {
+		// revoked, so it has to account for the password, the tokens and
+		// the sessions, and it must not claim to have ended sessions
+		// that live in another process's memory.
+		for _, want := range []string{
+			"unusable", "token(s) have been revoked", "-restore-password",
+			"not cleared by this command", "-disable-user",
+		} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("output %q does not mention %q", output, want)
 			}
+		}
+		if strings.Contains(output, "sessions have been invalidated") {
+			t.Fatalf("output %q claims to have ended sessions this process cannot reach", output)
 		}
 
 		store := reopenStore(t, dataDir)
@@ -256,10 +263,13 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unlinkOIDCUserCommand: %v", err)
 		}
-		for _, want := range []string{"works again", "tokens were", "left in place"} {
+		for _, want := range []string{"works again", "tokens were", "left in place", "not cleared by this command"} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("output %q does not mention %q", output, want)
 			}
+		}
+		if strings.Contains(output, "sessions have been invalidated") {
+			t.Fatalf("output %q claims to have ended sessions this process cannot reach", output)
 		}
 
 		user, err := reopenStore(t, dataDir).GetUser("alice")

@@ -14,6 +14,16 @@ import (
 	"strings"
 )
 
+// sessionCaveat is printed by both commands. Sessions live in the running
+// server's own memory, keyed by a map this process does not share, so neither
+// command can end one: only the server itself, or the enabled flag that
+// ValidateSessionToken re-reads from the database on every request, can.
+// Saying so is the difference between an operator closing an offboarding
+// ticket and finishing the job.
+const sessionCaveat = "Browser sessions the running server has already issued are held in that " +
+	"server's memory and are not cleared by this command: disable the account with -disable-user, " +
+	"or restart the server, to end them."
+
 // linkOIDCUserCommand handles the link-oidc-user command, attaching an
 // existing account to an identity provider subject. With
 // http.auth.oidc.provision_users disabled, which is the default, this is the
@@ -51,7 +61,8 @@ func linkOIDCUserCommand(dataDir, username, issuer, subject string, relink bool)
 	fmt.Printf("Subject:         %s\n", subject)
 	fmt.Printf("External subject: %s\n", key)
 	fmt.Println("Auth source:     oidc (password login is now refused for this account)")
-	fmt.Println(strings.Repeat("=", 70) + "\n")
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Printf("\n%s\n\n", sessionCaveat)
 
 	return nil
 }
@@ -86,16 +97,20 @@ func unlinkOIDCUserCommand(dataDir, username string, restorePassword bool) error
 	// only that the sessions are gone would read as "access revoked" on the
 	// branch where the password and the tokens both survive.
 	if restorePassword {
-		fmt.Println("The account now authenticates locally. Its sessions have been invalidated, " +
-			"but any password it held before it was linked works again and its API tokens were " +
-			"left in place: set a new password with -update-user, or disable the account with " +
-			"-disable-user.")
+		fmt.Println("The account now authenticates locally: any password it held before it was " +
+			"linked works again, and its API tokens were left in place.")
 	} else {
-		fmt.Printf("The account now authenticates locally with an unusable password, its sessions "+
-			"have been invalidated and %d API token(s) have been revoked, so nothing can reach it "+
-			"until you set a password with -update-user. Pass -restore-password to keep the "+
-			"password and the tokens it had before it was linked.\n", revoked)
+		fmt.Printf("The account now authenticates locally with an unusable password, and %d API "+
+			"token(s) have been revoked, so no password login and no token can reach it until you "+
+			"set a password with -update-user. Pass -restore-password to keep the password and "+
+			"the tokens it had before it was linked.\n", revoked)
 	}
+	// Said on both branches, because it is the one thing this command
+	// cannot do: the session map is per-process and in memory, so the
+	// running server still holds whatever sessions it minted. Disabling
+	// the account does cut them, since ValidateSessionToken re-reads the
+	// enabled flag from the database on every request.
+	fmt.Println(sessionCaveat)
 
 	return nil
 }

@@ -673,10 +673,14 @@ func describeSubjectKey(key string) string {
 // revisited, because putting auth_source back is what would make the old hash
 // live again.
 //
-// Every live session for the account is invalidated, as it is for every other
-// credential-lifecycle change in this store: ValidateSessionToken re-reads only
-// enabled, never auth_source, so a session minted before the link would
-// otherwise outlive it by up to the session expiry.
+// This process's live sessions for the account are invalidated, as they are
+// for every other credential-lifecycle change in this store: ValidateSessionToken
+// re-reads only enabled, never auth_source, so a session minted before the link
+// would otherwise outlive it by up to the session expiry. Note the scope: the
+// session map is per-process and in memory, so a caller in another process, the
+// CLI in particular, invalidates nothing the running server holds. Only the
+// enabled flag, which ValidateSessionToken does re-read from the database, ends
+// another process's sessions.
 //
 // An account already linked to a different subject is refused unless relink is
 // true. Moving an identity silently from one account to another is how a
@@ -787,15 +791,24 @@ func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
 	if err != nil {
 		return fmt.Errorf("looking up user: %w", err)
 	}
-	if authSource == AuthSourceOIDC && existing.Valid && existing.String == key {
-		return nil
-	}
+	// Both refusals sit above the idempotent short-circuit deliberately.
+	// Neither state is reachable through the shipped commands today, since
+	// nothing stamps a subject onto a service account or onto an account
+	// another source owns, but a refusal that sits downstream of a success
+	// short-circuit is one command away from being skipped: anything that
+	// later converted an account type would turn that combination into a
+	// silent success.
 	if isServiceAccount {
 		return fmt.Errorf("service account cannot be linked to an identity provider: %s", username)
 	}
 	if authSource != AuthSourceLocal && authSource != AuthSourceOIDC {
 		return fmt.Errorf("account %s has an identity this command does not manage (auth_source=%s)",
 			username, authSource)
+	}
+	// The row already says exactly what the UPDATE would have said, so
+	// there is nothing to do and nobody to log out.
+	if authSource == AuthSourceOIDC && existing.Valid && existing.String == key {
+		return nil
 	}
 	if existing.Valid && existing.String != "" && existing.String != key {
 		return fmt.Errorf(
@@ -830,8 +843,9 @@ func (s *AuthStore) explainLinkRefusalLocked(username, key string) error {
 // had, which is only correct when the operator means to hand it back to the
 // person who holds it.
 //
-// Every live session for the account is invalidated either way, for the same
-// reason as in LinkFederatedIdentity.
+// This process's live sessions for the account are invalidated either way,
+// with the same per-process caveat as in LinkFederatedIdentity: a call from the
+// CLI cannot end a session the running server is holding.
 //
 // The returned values are the external subject key that was cleared and the
 // number of tokens revoked, which is always zero when restorePassword is set.
@@ -889,10 +903,15 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 		return "", 0, fmt.Errorf("failed to confirm the unlink for %s: %w", username, err)
 	}
 	if affected == 0 {
-		return "", 0, fmt.Errorf(
-			"account %s was not unlinked; its federated identity changed while the unlink was being applied",
-			username)
+		// Which of the two conditions failed decides the message only,
+		// never the write, exactly as on the link side.
+		return "", 0, s.explainUnlinkRefusalLocked(username)
 	}
+
+	// Before the token revocation, because it cannot fail and the failure
+	// path below must not leave the worst of the three states behind:
+	// password dead, tokens live, sessions live.
+	s.InvalidateUserSessions(username)
 
 	revoked := 0
 	if !restorePassword {
@@ -902,12 +921,11 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 			// unusable, so this is reported rather than rolled back:
 			// the operator has to know the tokens are still live.
 			return "", 0, fmt.Errorf(
-				"account %s was unlinked but its tokens could not be revoked, so they are still valid: %w",
+				"account %s was unlinked and its in-process sessions cleared, but its tokens "+
+					"could not be revoked, so they are still valid: %w",
 				username, err)
 		}
 	}
-
-	s.InvalidateUserSessions(username)
 
 	reachable := fmt.Sprintf("no password login is possible until one is set, %d token(s) revoked", revoked)
 	if restorePassword {
@@ -917,6 +935,23 @@ func (s *AuthStore) UnlinkFederatedIdentity(username string, restorePassword boo
 	log.Printf("[AUTH] Unlinked account %s from federated subject %s; %s",
 		logging.SanitizeForLog(username), logging.SanitizeForLog(key), reachable)
 	return key, revoked, nil
+}
+
+// explainUnlinkRefusalLocked says why an unlink UPDATE matched no row: either
+// the account has gone since it was read, or its federated identity moved
+// under us. s.mu must be held.
+func (s *AuthStore) explainUnlinkRefusalLocked(username string) error {
+	var present int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", username).Scan(&present)
+	if err != nil {
+		return fmt.Errorf("looking up user: %w", err)
+	}
+	if present == 0 {
+		return fmt.Errorf("user not found: %s", username)
+	}
+	return fmt.Errorf(
+		"account %s was not unlinked; its federated identity changed while the unlink was being applied",
+		username)
 }
 
 // revokeAccountTokensLocked deletes every API token the named account owns,

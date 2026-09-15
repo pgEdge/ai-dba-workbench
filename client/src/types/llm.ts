@@ -35,6 +35,12 @@ export interface LLMToolUse {
     id: string;
     name: string;
     input?: Record<string, unknown>;
+    /**
+     * Opaque provider token (Gemini's `thoughtSignature`) that must be
+     * echoed back unchanged when the block is replayed as history.
+     * Never construct or alter it; pass response blocks through intact.
+     */
+    signature?: string;
 }
 
 /**

@@ -195,6 +195,53 @@ describe('runAgenticLoop', () => {
             expect(mockApiFetch).toHaveBeenCalledTimes(4);
         });
 
+        it('replays the provider signature on a tool_use block unchanged', async () => {
+            // Gemini rejects the next request unless the opaque signature on
+            // a function call is echoed back verbatim (#425).
+            const signature = 'opaque-thought-signature-abc123';
+            mockApiFetch.mockResolvedValueOnce(
+                createMockResponse({
+                    content: [
+                        {
+                            type: 'tool_use',
+                            tool_use: {
+                                id: 'tool-1',
+                                name: 'query_database',
+                                input: {},
+                                signature,
+                            },
+                        },
+                    ],
+                }),
+            );
+            mockApiFetch.mockResolvedValueOnce(
+                createMockResponse({ content: [{ type: 'text', text: '1' }] }),
+            );
+            mockApiFetch.mockResolvedValueOnce(
+                createMockResponse({
+                    content: [{ type: 'text', text: 'Done.' }],
+                }),
+            );
+
+            // Fresh history: baseOptions.messages is mutated in place by
+            // the loop, so earlier tests leave assistant turns behind.
+            await runAgenticLoop({
+                ...baseOptions,
+                messages: [{ role: 'user', content: 'Test query' }],
+            });
+
+            const secondChat = mockApiFetch.mock.calls[2];
+            expect(secondChat[0]).toBe('/api/v1/llm/chat');
+            const body = JSON.parse(secondChat[1].body as string);
+            const assistantMsg = body.messages.find(
+                (m: { role: string }) => m.role === 'assistant',
+            );
+            const toolUseBlock = (
+                assistantMsg.content as Array<{ type: string; tool_use?: { signature?: string } }>
+            ).find(b => b.type === 'tool_use');
+            expect(toolUseBlock?.tool_use?.signature).toBe(signature);
+        });
+
         it('handles tool execution errors gracefully', async () => {
             // First call: LLM requests a tool
             mockApiFetch.mockResolvedValueOnce(

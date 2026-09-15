@@ -21,15 +21,21 @@ import (
 // CreateSessionForUser mints a session for an already-authenticated user. It is
 // the single place a session comes into existence, so the per-user cap, the
 // expiry and the eviction of the oldest session behave identically however the
-// user proved their identity.
+// user proved their identity. Deliberately not gated on auth_source: both
+// local and federated logins mint sessions through this function.
+//
+// Callers must map every error this returns to a single opaque response
+// before it reaches a client; the distinct error text below is for the
+// server log only, so that an operator can see the real reason, and must
+// never be relayed verbatim to an API caller.
 func (s *AuthStore) CreateSessionForUser(username string) (string, time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var user StoredUser
 	err := s.db.QueryRow(
-		"SELECT id, username, enabled FROM users WHERE username = ?",
-		username).Scan(&user.ID, &user.Username, &user.Enabled)
+		"SELECT id, username, enabled, is_service_account FROM users WHERE username = ?",
+		username).Scan(&user.ID, &user.Username, &user.Enabled, &user.IsServiceAccount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", time.Time{}, fmt.Errorf("user not found: %s", username)
 	}
@@ -38,6 +44,9 @@ func (s *AuthStore) CreateSessionForUser(username string) (string, time.Time, er
 	}
 	if !user.Enabled {
 		return "", time.Time{}, fmt.Errorf("account is disabled: %s", username)
+	}
+	if user.IsServiceAccount {
+		return "", time.Time{}, fmt.Errorf("service account cannot hold a session: %s", username)
 	}
 
 	return s.createSessionForUserLocked(user.Username, user.ID)

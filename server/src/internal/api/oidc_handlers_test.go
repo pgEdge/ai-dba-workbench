@@ -616,6 +616,14 @@ func TestCallbackSetsSessionCookieAndRedirectsToReturnPath(t *testing.T) {
 	if form == nil {
 		t.Fatal("the token endpoint was never called")
 	}
+	// Establish that there is a verifier before comparing against it.
+	// url.Values.Get answers "" for a key that is absent, so without
+	// this the comparison would hold just as well against a client that
+	// sent no code_verifier at all, which is to say against PKCE having
+	// been removed outright.
+	if env.lastState.CodeVerifier == "" {
+		t.Fatal("the sealed login state carries no PKCE code verifier")
+	}
 	if got := form.Get("code_verifier"); got != env.lastState.CodeVerifier {
 		t.Errorf("code_verifier sent = %q, want the sealed %q", got, env.lastState.CodeVerifier)
 	}

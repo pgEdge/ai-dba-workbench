@@ -158,13 +158,10 @@ http:
 	}
 }
 
-// TestProvisionUsersCanBeDisabledExplicitly is the regression for a
-// plain bool: an explicit "false" has to survive the whole load
-// pipeline, defaults and merge included. Provisioning decides whether an
-// unknown identity is given an account, so a switch that cannot be
-// switched off is not a cosmetic problem.
-func TestProvisionUsersCanBeDisabledExplicitly(t *testing.T) {
-	const oidcBlock = `
+// oidcConfigYAML is a minimal valid OIDC block, with provisionUsers
+// appended when it is not empty.
+func oidcConfigYAML(provisionUsers string) string {
+	yaml := `
 http:
   auth:
     oidc:
@@ -173,9 +170,27 @@ http:
       client_id: workbench
       client_secret: s3cret
       redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
-      provision_users: %s
 `
+	if provisionUsers != "" {
+		yaml += "      provision_users: " + provisionUsers + "\n"
+	}
+	return yaml
+}
 
+// TestProvisionUsersCanBeDisabledExplicitly is the regression for a
+// plain bool: an explicit "false" has to survive the whole load
+// pipeline, defaults and merge included. Provisioning decides whether an
+// unknown identity is given an account, so a switch that cannot be
+// switched off is not a cosmetic problem.
+//
+// The subtests below load a single file onto the defaults, which proves
+// the YAML parses into the right effective value but NOT the override
+// the pointer exists for: nothing in that path sets the value true
+// before the file is merged, so "false" has nothing to overcome and the
+// old plain-bool code would pass it too. The override itself is
+// exercised further down, and at the merge level by
+// TestMergeConfigRestoresProvisionUsersToFalse.
+func TestProvisionUsersCanBeDisabledExplicitly(t *testing.T) {
 	for _, testCase := range []struct {
 		name  string
 		value string
@@ -183,10 +198,12 @@ http:
 	}{
 		{name: "explicitly false", value: "false"},
 		{name: "explicitly true", value: "true", want: true},
+		// Omitted entirely, provisioning is off: an operator who has
+		// said nothing has not asked for accounts to be created.
+		{name: "omitted", value: ""},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg, err := LoadConfig(writeTempConfig(t,
-				strings.Replace(oidcBlock, "%s", testCase.value, 1)), CLIFlags{})
+			cfg, err := LoadConfig(writeTempConfig(t, oidcConfigYAML(testCase.value)), CLIFlags{})
 			if err != nil {
 				t.Fatalf("LoadConfig: %v", err)
 			}
@@ -196,24 +213,30 @@ http:
 		})
 	}
 
-	// Omitted entirely, provisioning is off: an operator who has said
-	// nothing has not asked for accounts to be created.
-	cfg, err := LoadConfig(writeTempConfig(t, `
-http:
-  auth:
-    oidc:
-      enabled: true
-      issuer: https://idp.example.com
-      client_id: workbench
-      client_secret: s3cret
-      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback
-`), CLIFlags{})
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if cfg.HTTP.Auth.OIDC.ProvisionUsersEnabled() {
-		t.Fatal("provisioning defaulted to enabled")
-	}
+	// The real regression, run through the same steps LoadConfig runs:
+	// an earlier source has already turned provisioning on, and the
+	// operator's file turns it off again. Against the old plain bool the
+	// "false" was discarded here and provisioning stayed on, which is
+	// the bug. The environment and CLI stages are not repeated because
+	// neither touches this key.
+	t.Run("an explicit false overrides an earlier true", func(t *testing.T) {
+		cfg := defaultConfig()
+		enabled := true
+		cfg.HTTP.Auth.OIDC.ProvisionUsers = &enabled
+
+		fileCfg, err := loadConfigFile(writeTempConfig(t, oidcConfigYAML("false")))
+		if err != nil {
+			t.Fatalf("loadConfigFile: %v", err)
+		}
+		mergeConfig(cfg, fileCfg)
+		if err := validateConfig(cfg); err != nil {
+			t.Fatalf("validateConfig: %v", err)
+		}
+
+		if cfg.HTTP.Auth.OIDC.ProvisionUsersEnabled() {
+			t.Fatal("an explicit false was discarded, leaving provisioning on")
+		}
+	})
 }
 
 // TestMergeConfigRestoresProvisionUsersToFalse is the merge-level half

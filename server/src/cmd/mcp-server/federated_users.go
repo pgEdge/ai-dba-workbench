@@ -59,7 +59,12 @@ func linkOIDCUserCommand(dataDir, username, issuer, subject string, relink bool)
 // unlinkOIDCUserCommand handles the unlink-oidc-user command, detaching an
 // account from its identity provider subject and returning it to local
 // authentication.
-func unlinkOIDCUserCommand(dataDir, username string) error {
+//
+// By default the account's password hash is replaced with an unusable one, so
+// that unlinking cannot quietly revive a password nobody has rotated since
+// before the account was federated. restorePassword keeps the old hash, for
+// the case where the operator means to hand the account back to its holder.
+func unlinkOIDCUserCommand(dataDir, username string, restorePassword bool) error {
 	if username == "" {
 		return fmt.Errorf("username is required")
 	}
@@ -70,21 +75,24 @@ func unlinkOIDCUserCommand(dataDir, username string) error {
 	}
 	defer store.Close()
 
-	key, err := store.UnlinkFederatedIdentity(username)
+	key, err := store.UnlinkFederatedIdentity(username, restorePassword)
 	if err != nil {
 		return fmt.Errorf("failed to unlink user: %w", err)
 	}
 
 	fmt.Printf("Account '%s' unlinked from federated subject %s\n", username, key)
-	// Said plainly because it is easy to assume the opposite: the account
-	// is local again, so whatever password hash it still holds verifies
-	// again. An account the provider originally created holds a hash of
-	// discarded random bytes and so cannot be logged into at all, but an
-	// account that was local before it was linked accepts its old password
-	// from this moment.
-	fmt.Println("The account now authenticates locally. Any password it held before it was " +
-		"linked works again: set a new password with -update-user, or disable the account " +
-		"with -disable-user.")
+	// Which of these two the operator gets is the whole point of the flag,
+	// so both say exactly what the account can now be reached by.
+	if restorePassword {
+		fmt.Println("The account now authenticates locally. Any password it held before it was " +
+			"linked works again: set a new password with -update-user, or disable the account " +
+			"with -disable-user.")
+	} else {
+		fmt.Println("The account now authenticates locally and its password has been made " +
+			"unusable, so nothing can log into it until you set a password with -update-user. " +
+			"Pass -restore-password to keep the password it had before it was linked.")
+	}
+	fmt.Println("Any sessions the account held have been invalidated.")
 
 	return nil
 }

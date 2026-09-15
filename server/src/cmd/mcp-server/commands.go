@@ -118,7 +118,7 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 		}
 
 		if f.UnlinkOIDCUserCmd {
-			if err := unlinkOIDCUserCommand(dataDir, f.Username); err != nil {
+			if err := unlinkOIDCUserCommand(dataDir, f.Username, f.RestorePassword); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 				os.Exit(1)
 			}

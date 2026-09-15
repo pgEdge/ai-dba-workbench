@@ -64,6 +64,7 @@ type Flags struct {
 	OIDCIssuer           string
 	OIDCSubject          string
 	Relink               bool
+	RestorePassword      bool
 	Username             string
 	UserPassword         string
 	UserPasswordFile     string
@@ -160,6 +161,9 @@ func ParseFlags(defaultConfigPath string) *Flags {
 		"OIDC subject ('sub' claim), exactly as the server logged it (used with -link-oidc-user)")
 	flag.BoolVar(&f.Relink, "relink", false,
 		"Allow -link-oidc-user to move an account that is already linked to a different identity")
+	flag.BoolVar(&f.RestorePassword, "restore-password", false,
+		"Let -unlink-oidc-user keep the password the account had before it was linked, "+
+			"instead of making it unusable")
 	flag.StringVar(&f.Username, "username", "", "Username for user management commands")
 	flag.StringVar(&f.UserPassword, "password", "", "Password for user management commands (prefer -password-file for production use)")
 	flag.StringVar(&f.UserPasswordFile, "password-file", "", "Path to file containing the user password")

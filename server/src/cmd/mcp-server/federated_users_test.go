@@ -162,7 +162,7 @@ func TestRunCLICommandsDispatchesOIDCLinking(t *testing.T) {
 		}
 	})
 
-	unlink := &Flags{UnlinkOIDCUserCmd: true, Username: "alice"}
+	unlink := &Flags{UnlinkOIDCUserCmd: true, Username: "alice", RestorePassword: true}
 	captureStdout(t, func() {
 		if !RunCLICommands(unlink, dataDir) {
 			t.Error("RunCLICommands did not handle -unlink-oidc-user")
@@ -181,25 +181,58 @@ func TestRunCLICommandsDispatchesOIDCLinking(t *testing.T) {
 
 func TestUnlinkOIDCUserCommand(t *testing.T) {
 	t.Run("missing username returns error", func(t *testing.T) {
-		if err := unlinkOIDCUserCommand(t.TempDir(), ""); err == nil {
+		if err := unlinkOIDCUserCommand(t.TempDir(), "", false); err == nil {
 			t.Fatal("expected an error for an empty username")
 		}
 	})
 
 	t.Run("unopenable data dir returns error", func(t *testing.T) {
-		if err := unlinkOIDCUserCommand(blockingDataDir(t), "alice"); err == nil {
+		if err := unlinkOIDCUserCommand(blockingDataDir(t), "alice", false); err == nil {
 			t.Fatal("expected an error when the auth store cannot be opened")
 		}
 	})
 
 	t.Run("an unlinked account returns error", func(t *testing.T) {
 		dataDir := seedLinkTestUser(t, "alice")
-		err := unlinkOIDCUserCommand(dataDir, "alice")
+		err := unlinkOIDCUserCommand(dataDir, "alice", false)
 		if err == nil {
 			t.Fatal("expected an error for an account that is not linked")
 		}
 		if !strings.Contains(err.Error(), "not linked") {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("by default the password is made unusable", func(t *testing.T) {
+		dataDir := seedLinkTestUser(t, "alice")
+		captureStdout(t, func() {
+			if err := linkOIDCUserCommand(dataDir, "alice", cliTestIssuer, cliTestSubject, false); err != nil {
+				t.Errorf("link: %v", err)
+			}
+		})
+
+		var err error
+		output := captureStdout(t, func() {
+			err = unlinkOIDCUserCommand(dataDir, "alice", false)
+		})
+		if err != nil {
+			t.Fatalf("unlinkOIDCUserCommand: %v", err)
+		}
+		if !strings.Contains(output, "unusable") || !strings.Contains(output, "-restore-password") {
+			t.Fatalf("output %q does not explain the default and the flag", output)
+		}
+
+		store := reopenStore(t, dataDir)
+		if _, _, err := store.AuthenticateUser("alice", cliTestPassword); err == nil {
+			t.Fatal("the pre-link password still worked after the default unlink")
+		}
+		user, err := store.GetUser("alice")
+		if err != nil {
+			t.Fatalf("GetUser: %v", err)
+		}
+		if user.AuthSource != auth.AuthSourceLocal || user.ExternalSubject != "" {
+			t.Fatalf("account not returned to local: auth_source=%q external_subject=%q",
+				user.AuthSource, user.ExternalSubject)
 		}
 	})
 
@@ -213,7 +246,7 @@ func TestUnlinkOIDCUserCommand(t *testing.T) {
 
 		var err error
 		output := captureStdout(t, func() {
-			err = unlinkOIDCUserCommand(dataDir, "alice")
+			err = unlinkOIDCUserCommand(dataDir, "alice", true)
 		})
 		if err != nil {
 			t.Fatalf("unlinkOIDCUserCommand: %v", err)

@@ -147,6 +147,7 @@ func TestHasUserCommand(t *testing.T) {
 		{"disable user", Flags{DisableUserCmd: true}, true},
 		{"add service account", Flags{AddServiceAccountCmd: true}, true},
 		{"link oidc user", Flags{LinkOIDCUserCmd: true}, true},
+		{"restore password alone is not a command", Flags{RestorePassword: true}, false},
 		{"unlink oidc user", Flags{UnlinkOIDCUserCmd: true}, true},
 	}
 

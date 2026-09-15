@@ -57,6 +57,17 @@ const renderPanel = () =>
         </ThemeProvider>
     );
 
+/*
+ * Several tests here drive the whole create-token flow through userEvent
+ * before they reach the behaviour under test, and take two to three
+ * seconds each on an idle machine. Under the full suite's parallel load
+ * that comfortably exceeds Vitest's five-second default, which made the
+ * copy-to-clipboard test fail for reasons unrelated to whatever the
+ * developer was working on (#422). The generous ceiling applies to this
+ * file only; a genuine hang still fails.
+ */
+vi.setConfig({ testTimeout: 20_000 });
+
 const CREATED_TOKEN = 'pgedge_test_token_abcdef1234567890';
 
 /**
@@ -180,11 +191,11 @@ const clickCopyAndAwaitCopiedState = async (
         fireEvent.click(copyButton);
     });
 
+    // The component reverts to the copy icon two seconds after a
+    // successful write, so assert the call and the copied state in one
+    // pass rather than letting a second polling cycle race that timer.
     await waitFor(() => {
         expect(writeTextMock).toHaveBeenCalledWith(CREATED_TOKEN);
-    });
-
-    await waitFor(() => {
         expect(screen.getByTestId('CheckIcon')).toBeInTheDocument();
     });
 };

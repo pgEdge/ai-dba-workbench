@@ -26,6 +26,12 @@ func auditTestActor() auth.Actor {
 	return auth.Actor{Type: auth.ActorUser, Name: "seeder"}
 }
 
+// seedActorFilter is a query fragment that restricts a request to the
+// events seedAuditEvents and seedManyAuditEvents attribute to the seeding
+// actor, excluding any incidental "system" actor events that setup
+// mutations not routed through an actor (such as CreateGroup) also record.
+const seedActorFilter = "actor=seeder&actor_type=user"
+
 // seedAuditEvents creates a handful of audit events of known shape: two
 // successful user creations, one failed user update and one successful
 // admin permission grant. It returns the handler under test.
@@ -79,7 +85,10 @@ func TestRBACHandlerAuditListsNewestFirst(t *testing.T) {
 
 	seedAuditEvents(t, store)
 
-	rec := auditRequest(handler, "")
+	// Filter to the seeding actor: CreateGroup records its own
+	// "system"-actor event, which would otherwise appear between the
+	// seeded events and throw off the newest-first assertions below.
+	rec := auditRequest(handler, "?"+seedActorFilter)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
 			http.StatusOK, rec.Code, rec.Body.String())
@@ -202,8 +211,11 @@ func TestRBACHandlerAuditAcceptsRFC3339Range(t *testing.T) {
 
 	seedAuditEvents(t, store)
 
+	// Filter to the seeding actor so the count reflects only the events
+	// seedAuditEvents attributes to it, not the incidental "system"-actor
+	// event that CreateGroup also records.
 	rec := auditRequest(handler,
-		"?since=2000-01-01T00:00:00Z&until=2100-01-01T00:00:00Z")
+		"?since=2000-01-01T00:00:00Z&until=2100-01-01T00:00:00Z&"+seedActorFilter)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected status %d, got %d. Body: %s",
 			http.StatusOK, rec.Code, rec.Body.String())
@@ -275,7 +287,7 @@ func TestRBACHandlerAuditFiltersByActorTargetAndPage(t *testing.T) {
 		t.Errorf("Expected target id %d, got %v", aliceID, events[0].TargetID)
 	}
 
-	rec = auditRequest(handler, "?limit=1&offset=1")
+	rec = auditRequest(handler, "?"+seedActorFilter+"&limit=1&offset=1")
 	events = decodeAuditEvents(t, rec)
 	if len(events) != 1 {
 		t.Fatalf("Expected a single-event page, got %d", len(events))
@@ -319,8 +331,10 @@ func TestRBACHandlerAuditDefaultPageSize(t *testing.T) {
 	total := seedManyAuditEvents(t, store)
 
 	// An absent limit and an explicit limit of zero both mean "use the
-	// default", which the store pins at 50.
-	for _, query := range []string{"", "?limit=0"} {
+	// default", which the store pins at 50. Filter to the seeding actor
+	// so the total excludes the incidental "system"-actor event that
+	// CreateGroup also records.
+	for _, query := range []string{"?" + seedActorFilter, "?" + seedActorFilter + "&limit=0"} {
 		rec := auditRequest(handler, query)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("Query %q: expected status %d, got %d",
@@ -343,7 +357,7 @@ func TestRBACHandlerAuditLimitIsCapped(t *testing.T) {
 
 	total := seedManyAuditEvents(t, store)
 
-	rec := auditRequest(handler, "?limit=1000")
+	rec := auditRequest(handler, "?"+seedActorFilter+"&limit=1000")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected status %d, got %d", http.StatusOK, rec.Code)
 	}

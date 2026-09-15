@@ -186,6 +186,80 @@ type AuthConfig struct {
 	MaxFailedAttemptsBeforeLockout int `yaml:"max_failed_attempts_before_lockout"` // Number of failed login attempts before account lockout (0 = disabled)
 	RateLimitWindowMinutes         int `yaml:"rate_limit_window_minutes"`          // Time window in minutes for rate limiting (default: 15)
 	RateLimitMaxAttempts           int `yaml:"rate_limit_max_attempts"`            // Maximum failed attempts per IP in the time window (default: 10)
+
+	// Local holds settings for local username/password authentication.
+	Local LocalAuthConfig `yaml:"local"`
+
+	// OIDC holds settings for OpenID Connect federated login.
+	OIDC OIDCConfig `yaml:"oidc"`
+}
+
+// LocalAuthConfig holds settings for local username/password authentication.
+type LocalAuthConfig struct {
+	// Enabled is a pointer so that an explicit "false" in the configuration
+	// file overrides the default of true; mergeConfig cannot distinguish an
+	// explicit false from an unset field, and a plain bool would make it
+	// impossible to turn local login off. A nil pointer means "not set in
+	// this config source"; read the effective value via
+	// AuthConfig.LocalEnabled rather than this field directly.
+	Enabled *bool `yaml:"enabled"`
+}
+
+// OIDCConfig holds settings for OpenID Connect federated login.
+type OIDCConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Issuer   string `yaml:"issuer"`
+	ClientID string `yaml:"client_id"`
+
+	// ClientSecret holds a client secret supplied inline in the
+	// configuration file. It may legitimately round-trip if the config is
+	// ever marshaled again, the same way DatabaseConfig.Password does: the
+	// operator already chose to put the plaintext value in a file on disk.
+	// A secret resolved from ClientSecretFile is NOT stored here; see
+	// resolvedClientSecret and EffectiveClientSecret.
+	ClientSecret     string `yaml:"client_secret"`
+	ClientSecretFile string `yaml:"client_secret_file"`
+
+	// resolvedClientSecret holds a secret read from ClientSecretFile. It
+	// is deliberately unexported and tagged yaml:"-" / json:"-", mirroring
+	// DatabaseConfig.resolvedPassword, so that a file-sourced secret never
+	// round-trips into a serialized config; writing it inline would defeat
+	// the purpose of client_secret_file. Read the effective secret via
+	// EffectiveClientSecret.
+	resolvedClientSecret string `yaml:"-" json:"-"`
+
+	RedirectURL         string            `yaml:"redirect_url"`
+	Scopes              []string          `yaml:"scopes"`
+	UsernameClaim       string            `yaml:"username_claim"`
+	DisplayNameClaim    string            `yaml:"display_name_claim"`
+	GroupsClaim         string            `yaml:"groups_claim"`
+	ButtonLabel         string            `yaml:"button_label"`
+	ProvisionUsers      bool              `yaml:"provision_users"`
+	AllowedEmailDomains []string          `yaml:"allowed_email_domains"`
+	SuperuserGroup      string            `yaml:"superuser_group"`
+	GroupMap            map[string]string `yaml:"group_map"`
+}
+
+// EffectiveClientSecret returns the OIDC client secret to use. An inline
+// ClientSecret takes precedence; otherwise the value resolved from
+// ClientSecretFile (by loadAPIKeysFromFiles) is returned. The result is
+// empty when no client secret was configured at all.
+func (o OIDCConfig) EffectiveClientSecret() string {
+	if o.ClientSecret != "" {
+		return o.ClientSecret
+	}
+	return o.resolvedClientSecret
+}
+
+// LocalEnabled returns the effective value of Local.Enabled, defaulting to
+// true when the pointer is nil (omitted from every config source) so that
+// local username/password login remains available unless an operator
+// explicitly disables it.
+func (a AuthConfig) LocalEnabled() bool {
+	if a.Local.Enabled == nil {
+		return true
+	}
+	return *a.Local.Enabled
 }
 
 // TLSConfig holds TLS/HTTPS settings
@@ -595,6 +669,14 @@ func defaultConfig() *Config {
 				MaxFailedAttemptsBeforeLockout: 10, // Lock account after 10 failed attempts
 				RateLimitWindowMinutes:         15, // 15 minute window for rate limiting
 				RateLimitMaxAttempts:           10, // 10 attempts per IP per window
+				// Local.Enabled is left nil so LocalEnabled() defaults to true.
+				OIDC: OIDCConfig{
+					Scopes:           []string{"openid", "email", "profile"},
+					UsernameClaim:    "email",
+					DisplayNameClaim: "name",
+					GroupsClaim:      "groups",
+					ButtonLabel:      "Sign in with your identity provider",
+				},
 			},
 		},
 		Database: nil, // No database configured by default
@@ -696,6 +778,60 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.HTTP.Auth.RateLimitMaxAttempts > 0 {
 		dest.HTTP.Auth.RateLimitMaxAttempts = src.HTTP.Auth.RateLimitMaxAttempts
+	}
+
+	// Local login - only override when explicitly set in the source
+	// config; a nil pointer means "not present in this source" (see
+	// LocalAuthConfig.Enabled).
+	if src.HTTP.Auth.Local.Enabled != nil {
+		dest.HTTP.Auth.Local.Enabled = src.HTTP.Auth.Local.Enabled
+	}
+
+	// OIDC - each field merges independently when non-zero/non-empty
+	if src.HTTP.Auth.OIDC.Enabled {
+		dest.HTTP.Auth.OIDC.Enabled = src.HTTP.Auth.OIDC.Enabled
+	}
+	if src.HTTP.Auth.OIDC.Issuer != "" {
+		dest.HTTP.Auth.OIDC.Issuer = src.HTTP.Auth.OIDC.Issuer
+	}
+	if src.HTTP.Auth.OIDC.ClientID != "" {
+		dest.HTTP.Auth.OIDC.ClientID = src.HTTP.Auth.OIDC.ClientID
+	}
+	if src.HTTP.Auth.OIDC.ClientSecret != "" {
+		dest.HTTP.Auth.OIDC.ClientSecret = src.HTTP.Auth.OIDC.ClientSecret
+	}
+	if src.HTTP.Auth.OIDC.ClientSecretFile != "" {
+		dest.HTTP.Auth.OIDC.ClientSecretFile = src.HTTP.Auth.OIDC.ClientSecretFile
+	}
+	if src.HTTP.Auth.OIDC.RedirectURL != "" {
+		dest.HTTP.Auth.OIDC.RedirectURL = src.HTTP.Auth.OIDC.RedirectURL
+	}
+	if len(src.HTTP.Auth.OIDC.Scopes) > 0 {
+		dest.HTTP.Auth.OIDC.Scopes = src.HTTP.Auth.OIDC.Scopes
+	}
+	if src.HTTP.Auth.OIDC.UsernameClaim != "" {
+		dest.HTTP.Auth.OIDC.UsernameClaim = src.HTTP.Auth.OIDC.UsernameClaim
+	}
+	if src.HTTP.Auth.OIDC.DisplayNameClaim != "" {
+		dest.HTTP.Auth.OIDC.DisplayNameClaim = src.HTTP.Auth.OIDC.DisplayNameClaim
+	}
+	if src.HTTP.Auth.OIDC.GroupsClaim != "" {
+		dest.HTTP.Auth.OIDC.GroupsClaim = src.HTTP.Auth.OIDC.GroupsClaim
+	}
+	if src.HTTP.Auth.OIDC.ButtonLabel != "" {
+		dest.HTTP.Auth.OIDC.ButtonLabel = src.HTTP.Auth.OIDC.ButtonLabel
+	}
+	if src.HTTP.Auth.OIDC.ProvisionUsers {
+		dest.HTTP.Auth.OIDC.ProvisionUsers = src.HTTP.Auth.OIDC.ProvisionUsers
+	}
+	if len(src.HTTP.Auth.OIDC.AllowedEmailDomains) > 0 {
+		dest.HTTP.Auth.OIDC.AllowedEmailDomains = src.HTTP.Auth.OIDC.AllowedEmailDomains
+	}
+	if src.HTTP.Auth.OIDC.SuperuserGroup != "" {
+		dest.HTTP.Auth.OIDC.SuperuserGroup = src.HTTP.Auth.OIDC.SuperuserGroup
+	}
+	if len(src.HTTP.Auth.OIDC.GroupMap) > 0 {
+		dest.HTTP.Auth.OIDC.GroupMap = src.HTTP.Auth.OIDC.GroupMap
 	}
 
 	// Database - if source has database defined, use it
@@ -1004,6 +1140,21 @@ func loadAPIKeysFromFiles(cfg *Config) error {
 		cfg.Knowledgebase.EmbeddingGeminiAPIKey = key
 	}
 
+	// OIDC client secret. Unlike the API keys above, the resolved value is
+	// stored in the unexported resolvedClientSecret field rather than the
+	// exported ClientSecret field: ClientSecret carries yaml:"client_secret"
+	// and legitimately round-trips an inline secret, so writing the
+	// file-sourced value into it would let a file-sourced secret leak back
+	// out in plaintext if the config is ever marshaled. Read the resolved
+	// value via OIDCConfig.EffectiveClientSecret.
+	if cfg.HTTP.Auth.OIDC.ClientSecret == "" && cfg.HTTP.Auth.OIDC.ClientSecretFile != "" {
+		secret, err := fileutil.ReadSecretFile(cfg.HTTP.Auth.OIDC.ClientSecretFile)
+		if err != nil {
+			return fmt.Errorf("failed to read OIDC client secret: %w", err)
+		}
+		cfg.HTTP.Auth.OIDC.resolvedClientSecret = secret
+	}
+
 	return nil
 }
 
@@ -1099,6 +1250,38 @@ func validateConfig(cfg *Config) error {
 	// Database configuration validation
 	if cfg.Database != nil && cfg.Database.User == "" {
 		return fmt.Errorf("database user is required (set via -db-user flag or config file)")
+	}
+
+	// OIDC configuration validation
+	if cfg.HTTP.Auth.OIDC.Enabled {
+		oidc := cfg.HTTP.Auth.OIDC
+		if oidc.Issuer == "" {
+			return fmt.Errorf("http.auth.oidc.issuer is required when OIDC is enabled")
+		}
+		issuerURL, err := url.Parse(oidc.Issuer)
+		if err != nil || issuerURL.Scheme != "https" {
+			return fmt.Errorf("http.auth.oidc.issuer must be a valid https:// URL")
+		}
+		if oidc.ClientID == "" {
+			return fmt.Errorf("http.auth.oidc.client_id is required when OIDC is enabled")
+		}
+		if oidc.EffectiveClientSecret() == "" {
+			return fmt.Errorf("http.auth.oidc.client_secret or http.auth.oidc.client_secret_file is required when OIDC is enabled")
+		}
+		if oidc.RedirectURL == "" {
+			return fmt.Errorf("http.auth.oidc.redirect_url is required when OIDC is enabled")
+		}
+		redirectURL, err := url.Parse(oidc.RedirectURL)
+		if err != nil || !redirectURL.IsAbs() {
+			return fmt.Errorf("http.auth.oidc.redirect_url must be a valid absolute URL")
+		}
+	}
+
+	// Refuse a configuration that leaves no way to log into the Workbench
+	// at all. A bare configuration with no http.auth block still passes:
+	// local login defaults to enabled (see AuthConfig.LocalEnabled).
+	if !cfg.HTTP.Auth.LocalEnabled() && !cfg.HTTP.Auth.OIDC.Enabled {
+		return fmt.Errorf("no authentication method is available: enable http.auth.local or http.auth.oidc")
 	}
 
 	return nil

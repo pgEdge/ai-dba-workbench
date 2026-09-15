@@ -275,6 +275,22 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         setTotalCount(null);
     }
 
+    // The selected window is a filter like any other here, and
+    // narrowing it shrinks the result set, so a stale offset would
+    // strand the user on an empty page. Reset paging during render for
+    // the same reason the connection change does, and key on the
+    // bounds as well as the range, because a custom window can be
+    // narrowed without the range ever leaving 'custom'.
+    const windowKey =
+        `${selectedRange}|${customStart ?? ''}|${customEnd ?? ''}`;
+    const [renderedWindowKey, setRenderedWindowKey] =
+        useState<string>(windowKey);
+    if (renderedWindowKey !== windowKey) {
+        setRenderedWindowKey(windowKey);
+        setPage(0);
+        setTotalCount(null);
+    }
+
     // The database list drives the filter control only, so it tracks
     // the connection rather than the dashboard refresh cycle.
     const { databases } = useDatabaseSummaries(connectionId);

@@ -362,6 +362,16 @@ yet, so each call site repeats the same two-part pattern that
 - Put `range`, `customStart` and `customEnd` in the fetch callback's
   dependency list, so that moving the selector refetches.
 
+- Where the view is paged, treat the window as a filter that changes
+  the size of the result set and reset the offset when it moves, or
+  narrowing the window strands the user on a page that no longer
+  exists. `TopQueriesSection` resets during render off a tracked
+  previous value, the same way it handles a connection change, so
+  that the next fetch cannot run with a stale offset; an effect would
+  let one windowed request go out first. Key the tracked value on the
+  bounds as well as the range, because a custom window can be
+  narrowed without `range` ever leaving `custom`.
+
 `/api/v1/metrics/top-queries` is windowed, and both of its callers
 pass the selected range: `TopQueriesSection` for the leaderboard and
 `QueryDetail` for the header statistics behind the overlay a row

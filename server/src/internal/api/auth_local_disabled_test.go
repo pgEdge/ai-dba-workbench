@@ -78,13 +78,21 @@ func TestLoginRefusedWhenLocalAuthDisabled(t *testing.T) {
 	}
 }
 
-// TestLoginRefusalIsIndistinguishableFromBadPassword checks the property
-// that makes the refusal worth having: a probe must not be able to tell
-// "local login is off" from "wrong password", because knowing which
-// tells it whether to keep guessing this password or go and find another
-// way in. The comparison is over the whole response, so an added header
+// TestLoginRefusalMatchesTheBadPasswordResponse checks the property the
+// refusal actually has: its body, status and headers are the
+// wrong-password answer exactly, so it discloses nothing further about
+// the credential that was presented or about whether the account
+// exists. The comparison is over the whole response, so an added header
 // or a differently worded message fails here.
-func TestLoginRefusalIsIndistinguishableFromBadPassword(t *testing.T) {
+//
+// It is not a timing or a shape equivalence, and does not need to be:
+// this path skips the bcrypt comparison and so answers much faster, and
+// with local login off a malformed body is answered 401 rather than
+// 400. The flag is public - the capabilities endpoint reports
+// local_enabled so the login screen knows whether to draw the password
+// form - so nothing is lost by a probe being able to work out that
+// local login is switched off.
+func TestLoginRefusalMatchesTheBadPasswordResponse(t *testing.T) {
 	store := newLocalLoginTestStore(t)
 
 	enabled := NewAuthHandler(store, nil, nil, false, true)

@@ -276,23 +276,15 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
     }, [txnKpi.data]);
     const txnRate = useMemo(() => latestNonNull(txnSparkline), [txnSparkline]);
 
-    // Dead tuple ratio from raw n_dead_tup and n_live_tup
-    const nDeadTup = extractLatestValue(
-        deadTupleKpi.data, 'n_dead_tup'
-    );
-    const nLiveTup = extractLatestValue(
-        deadTupleKpi.data, 'n_live_tup'
-    );
-    const deadTupleRatio = useMemo(() => {
-        if (nDeadTup === null && nLiveTup === null) { return null; }
-        const dead = nDeadTup ?? 0;
-        const live = nLiveTup ?? 0;
-        const total = dead + live;
-        if (total === 0) { return 0; }
-        return (dead / total) * 100;
-    }, [nDeadTup, nLiveTup]);
-
-    // Build per-point sparkline for dead tuple ratio
+    /*
+     * Per-bucket dead tuple ratio. The dead and live counts are paired
+     * by bucket rather than each taken from its own latest reading, so
+     * the headline can never divide a dead count from one bucket by a
+     * live count from another; a bucket missing either count carries
+     * no ratio at all, so a gap shows as the no-data placeholder
+     * instead of a reassuring 0.0%. A bucket whose counts are both 0
+     * is still a genuine 0% and is reported as such.
+     */
     const deadTupleSparkline = useMemo((): MetricDataPoint[] => {
         if (!deadTupleKpi.data) { return []; }
         const deadSeries = deadTupleKpi.data.find(
@@ -317,6 +309,10 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
         }
         return points;
     }, [deadTupleKpi.data]);
+    const deadTupleRatio = useMemo(
+        () => latestNonNull(deadTupleSparkline),
+        [deadTupleSparkline]
+    );
 
     // Build chart datasets
     const txnChartData = useMemo(
@@ -398,7 +394,7 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
                 <KpiTile
                     label="Dead Tuple Ratio"
                     value={formatValue(deadTupleRatio)}
-                    unit="%"
+                    unit={deadTupleRatio !== null ? '%' : undefined}
                     status={getDeadTupleStatus(deadTupleRatio)}
                     sparklineData={deadTupleSparkline}
                     analysisContext={{

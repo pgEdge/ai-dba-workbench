@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/pgedge/ai-workbench/server/internal/logging"
 )
 
 // CreateSessionForUser mints a session for an already-authenticated user. It is
@@ -255,7 +257,9 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 	email := identity.Email
 	if email != "" {
 		if err := ValidateEmail(email); err != nil {
-			log.Printf("[AUTH] Ignoring malformed email claim for federated subject %s: %v", key, err)
+			//nolint:gosec // G706: key passed through logging.SanitizeForLog
+			log.Printf("[AUTH] Ignoring malformed email claim for federated subject %s: %v",
+				logging.SanitizeForLog(key), err)
 			email = ""
 		}
 	}
@@ -312,7 +316,12 @@ func (s *AuthStore) provisionFederatedUserLocked(identity FederatedIdentity, key
 	if err != nil {
 		return nil, fmt.Errorf("failed to read back provisioned user: %w", err)
 	}
-	log.Printf("[AUTH] Provisioned federated user %s for subject %s", user.Username, key)
+	// Both values originate with the identity provider, and the subject key
+	// embeds the raw "sub" claim, so a hostile provider could otherwise put
+	// CR/LF in it and forge whole log lines.
+	//nolint:gosec // G706: both values passed through logging.SanitizeForLog
+	log.Printf("[AUTH] Provisioned federated user %s for subject %s",
+		logging.SanitizeForLog(user.Username), logging.SanitizeForLog(key))
 	return user, nil
 }
 
@@ -386,16 +395,25 @@ func (s *AuthStore) unusablePasswordHashLocked() (string, error) {
 //
 // A mapped Workbench group that does not exist is logged and skipped rather
 // than failing the login, since a typo in the operator's map should not lock
-// everybody out.
+// everybody out. A disabled account, or one that is not federated, is refused
+// outright.
 //
-// The work runs in two committed phases, revocations first and grants second,
-// each phase atomic in its own transaction. The ordering is what matters: a
-// failure anywhere can then only leave the user with fewer privileges than the
-// provider asserts, never more. A single transaction spanning both phases
-// would be worse rather than better, because rolling back a failed grant would
-// also roll back the revocation that preceded it, leaving a user the provider
-// has just demoted still holding is_superuser, which every authorisation path
-// reads live and which bypasses token scope entirely.
+// The work runs in three separately committed steps, in this order: the
+// superuser revocation on its own, then the membership removals as one
+// transaction, then every grant as one transaction. So each step's own writes
+// are all-or-nothing, and a failure in any step leaves the steps before it
+// committed and the steps after it unapplied. Since every revocation precedes
+// every grant, and the superuser revocation precedes the membership removals,
+// a failure can only leave the user holding fewer privileges than the provider
+// asserts, never more.
+//
+// The steps are deliberately not bound into one transaction. Rolling a failed
+// step back over a revocation that already succeeded would restore exactly the
+// privilege being taken away: a user the provider has just demoted would keep
+// is_superuser, which every authorisation path reads live and which bypasses
+// token scope entirely. Nothing needs the flag and the membership rows to move
+// atomically, because both are revocations and a partial revocation errs in
+// the safe direction.
 func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIdentity, opts FederationOptions) error {
 	asserted := make(map[string]bool, len(identity.Groups))
 	for _, group := range identity.Groups {
@@ -415,7 +433,16 @@ func (s *AuthStore) ReconcileFederatedGroups(userID int64, identity FederatedIde
 	}
 	superuser := opts.SuperuserGroup != "" && asserted[opts.SuperuserGroup]
 
-	if err := s.revokeFederatedLocked(userID, username, targets, opts, superuser); err != nil {
+	// Step one, on its own and first: take superuser away. It is the most
+	// consequential privilege here, so nothing that can fail is allowed to
+	// stand between the decision and its commit.
+	if opts.SuperuserGroup != "" && !superuser {
+		if _, err := s.db.Exec("UPDATE users SET is_superuser = FALSE WHERE id = ?", userID); err != nil {
+			return fmt.Errorf("revoking superuser for %s: %w", username, err)
+		}
+	}
+
+	if err := s.revokeFederatedLocked(userID, username, targets); err != nil {
 		return err
 	}
 	return s.grantFederatedLocked(userID, username, targets, opts, superuser)
@@ -433,13 +460,21 @@ type mappedGroupTarget struct {
 // reconciliation may act on, returning its username. s.mu must be held.
 func (s *AuthStore) federatedAccountForReconcileLocked(userID int64) (string, error) {
 	var username, authSource string
-	err := s.db.QueryRow("SELECT username, auth_source FROM users WHERE id = ?", userID).
-		Scan(&username, &authSource)
+	var enabled bool
+	err := s.db.QueryRow("SELECT username, auth_source, enabled FROM users WHERE id = ?", userID).
+		Scan(&username, &authSource, &enabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("user not found: %d", userID)
 	}
 	if err != nil {
 		return "", fmt.Errorf("looking up user for reconciliation: %w", err)
+	}
+	// A disabled account is refused outright. Nothing here would re-enable
+	// it, but reconciling one would pre-load the privileges, including
+	// is_superuser, that an administrator has just taken the account out of
+	// service to contain.
+	if !enabled {
+		return "", fmt.Errorf("refusing to reconcile groups for disabled account %s", username)
 	}
 	// Reconciliation is only ever correct for an account the provider owns;
 	// refusing anything else keeps this from becoming a way to rewrite a
@@ -476,7 +511,9 @@ func (s *AuthStore) mappedGroupTargetsLocked(opts FederationOptions, asserted ma
 		var groupID int64
 		err := s.db.QueryRow("SELECT id FROM user_groups WHERE name = ?", name).Scan(&groupID)
 		if errors.Is(err, sql.ErrNoRows) {
-			log.Printf("[AUTH] Federated group map names unknown Workbench group %q; skipping", name)
+			//nolint:gosec // G706: name passed through logging.SanitizeForLog
+			log.Printf("[AUTH] Federated group map names unknown Workbench group %q; skipping",
+				logging.SanitizeForLog(name))
 			continue
 		}
 		if err != nil {
@@ -487,11 +524,13 @@ func (s *AuthStore) mappedGroupTargetsLocked(opts FederationOptions, asserted ma
 	return targets, nil
 }
 
-// revokeFederatedLocked applies everything that takes privilege away, as one
-// transaction, before any grant is attempted. Superuser goes first within the
-// phase, since it is the privilege that matters most. s.mu must be held.
+// revokeFederatedLocked removes the memberships the provider no longer
+// asserts, as one transaction. It deliberately does not carry the superuser
+// revocation: that is committed by the caller beforehand, so a failure here
+// cannot roll it back and hand a demoted user their flag again. s.mu must be
+// held.
 func (s *AuthStore) revokeFederatedLocked(userID int64, username string,
-	targets []mappedGroupTarget, opts FederationOptions, superuser bool) error {
+	targets []mappedGroupTarget) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin revocation transaction: %w", err)
@@ -503,13 +542,6 @@ func (s *AuthStore) revokeFederatedLocked(userID int64, username string,
 			tx.Rollback()
 		}
 	}()
-
-	if opts.SuperuserGroup != "" && !superuser {
-		if _, execErr := tx.Exec("UPDATE users SET is_superuser = FALSE WHERE id = ?", userID); execErr != nil {
-			err = fmt.Errorf("revoking superuser for %s: %w", username, execErr)
-			return err
-		}
-	}
 
 	for _, target := range targets {
 		if target.desired {

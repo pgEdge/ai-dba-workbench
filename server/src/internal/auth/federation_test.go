@@ -1017,6 +1017,45 @@ func TestReconcileFederatedGroupsRevokesBeforeGrantsFail(t *testing.T) {
 	assertInGroup(t, store, user.ID, groupID, false)
 }
 
+// TestReconcileFederatedGroupsRevokesSuperuserBeforeMembershipDeletesFail is
+// the mirror of the test above, for the other revocation. The superuser
+// revocation is committed on its own before the membership deletes, so a
+// failing DELETE cannot roll it back and hand the flag back to a user the
+// provider has demoted.
+func TestReconcileFederatedGroupsRevokesSuperuserBeforeMembershipDeletesFail(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+
+	groupID, err := store.CreateGroup("workbench-admins", "")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	user := resolveForTest(t, store)
+	if err := store.SetUserSuperuser(user.Username, true); err != nil {
+		t.Fatalf("SetUserSuperuser: %v", err)
+	}
+	if err := store.AddUserToGroup(groupID, user.ID); err != nil {
+		t.Fatalf("AddUserToGroup: %v", err)
+	}
+
+	if _, err := store.db.Exec(`CREATE TRIGGER refuse_membership_delete
+        BEFORE DELETE ON group_memberships
+        BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	// The provider asserts neither the mapped group nor superuser any more.
+	if err := store.ReconcileFederatedGroups(user.ID, FederatedIdentity{},
+		FederationOptions{
+			GroupMap:       map[string]string{"idp-admins": "workbench-admins"},
+			SuperuserGroup: "idp-supers",
+		}); err == nil {
+		t.Fatal("expected the membership delete failure to surface")
+	}
+
+	assertSuperuser(t, store, user.Username, false)
+}
+
 func TestReconcileFederatedGroupsSurfacesSuperuserWriteErrors(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
@@ -1062,8 +1101,8 @@ func TestReconcileFederatedGroupsCannotReEnableADisabledAccount(t *testing.T) {
 		FederationOptions{
 			GroupMap:       map[string]string{"idp-admins": "workbench-admins"},
 			SuperuserGroup: "idp-supers",
-		}); err != nil {
-		t.Fatalf("reconcile: %v", err)
+		}); err == nil {
+		t.Fatal("expected reconciliation to refuse a disabled account")
 	}
 
 	stored, err := store.GetUser(user.Username)
@@ -1072,6 +1111,12 @@ func TestReconcileFederatedGroupsCannotReEnableADisabledAccount(t *testing.T) {
 	}
 	if stored.Enabled {
 		t.Fatal("reconciliation re-enabled a disabled account")
+	}
+	// The account must also not be handed superuser on the way past: an
+	// administrator who has disabled it gets neither a usable login nor a
+	// privilege escalation waiting for them if it is ever re-enabled.
+	if stored.IsSuperuser {
+		t.Fatal("reconciliation granted superuser to a disabled account")
 	}
 }
 

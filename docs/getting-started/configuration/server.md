@@ -314,6 +314,7 @@ builtins:
 | `tls.chain_file` | string | | Certificate chain |
 | `trusted_proxies` | list | `[]` | Trusted proxy CIDRs |
 | `cors_origin` | string | `""` | Allowed CORS origin |
+| `hsts_enabled` | bool | `false` | Send the Strict-Transport-Security header |
 | `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures |
 | `auth.max_user_token_days` | int | `0` | Max token lifetime |
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit window |

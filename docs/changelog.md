@@ -35,6 +35,22 @@ project adheres to
   username rule the chosen claim has to satisfy, and why a
   local break-glass administrator should be kept. (#261)
 
+- Add `-link-oidc-user` and `-unlink-oidc-user` commands to
+  the server, which attach an existing account to an identity
+  provider subject and detach it again. Linking is how an
+  account is reached by a federated login where
+  `http.auth.oidc.provision_users` is left at its default of
+  `false`: the operator reads the issuer and subject from the
+  refused login's server log line, which now quotes both and
+  spells out the command, and links the pre-created account.
+  Moving an account that is already linked requires the
+  `-relink` flag, and a service account cannot be linked at
+  all. Unlinking returns the account to local authentication,
+  which makes any password hash it held before it was linked
+  live again, so the command prints a reminder to set a new
+  password with `-update-user` or to disable the account with
+  `-disable-user`. (#261)
+
 - Add a `-group-description` CLI flag that sets a group's
   description when creating it with `-add-group`, matching the
   description support already available in the web console. (#301)
@@ -293,6 +309,19 @@ project adheres to
   bars. (#402)
 
 ### Fixed
+
+- Correct the documented default for
+  `http.auth.max_failed_attempts_before_lockout`, which the
+  server configuration reference gave as `0`, meaning lockout
+  disabled, in both its option table and its example
+  configuration. The server has always defaulted the setting
+  to `10`, so an operator who configured around the documented
+  value was working from the wrong baseline. The same page
+  also showed an `http.auth.enabled` key that has never
+  existed on the configuration struct and that the loader
+  silently discards; it has been removed from the
+  documentation, from the server README and from the Docker
+  and walkthrough sample configurations. (#261)
 
 - Fix Ask Ellie failing with `Function call is missing a
   thought_signature in functionCall parts` on every question that

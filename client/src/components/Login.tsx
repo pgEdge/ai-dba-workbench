@@ -20,6 +20,7 @@ import {
     Button,
     Typography,
     Alert,
+    CircularProgress,
     Container,
     Divider,
     keyframes,
@@ -292,18 +293,41 @@ const getSubmitButtonSx = (theme: Theme) => ({
     },
 });
 
+/*
+ * The federated sign-in button is deliberately neutral rather than
+ * brand cyan. Measured against the card, which composites to #FAFAFB
+ * over the background gradient, `primary.main` (#15AABF) reaches only
+ * 2.67:1 and fails both the 4.5:1 that the label needs and the 3:1
+ * that the border needs; `primary.dark` (#0C8599) reaches 4.17:1,
+ * which is enough for a boundary but still short for text. The
+ * treatment below measures 14.07:1 for the label on `text.primary`,
+ * 4.63:1 for the `grey.500` border, 13.07:1 for the label over the
+ * hover tint and 3.87:1 for the hover border, so every part clears
+ * WCAG AA. The cyan is kept as the hover tint and the focus ring,
+ * where 3:1 is the requirement and `primary.dark` meets it.
+ */
 const getOidcButtonSx = (theme: Theme) => ({
     py: 1.5,
     borderRadius: 1,
     fontWeight: 600,
     textTransform: 'none',
-    borderColor: theme.palette.primary.main,
-    color: theme.palette.primary.main,
+    color: theme.palette.text.primary,
+    borderColor: theme.palette.grey[500],
     '&:hover': {
         borderColor: theme.palette.primary.dark,
-        backgroundColor: alpha(theme.palette.primary.main, 0.06),
+        backgroundColor: alpha(theme.palette.primary.main, 0.08),
+    },
+    '&.Mui-focusVisible': {
+        outline: `2px solid ${theme.palette.primary.dark}`,
+        outlineOffset: '2px',
     },
 });
+
+const capabilitiesLoadingSx = {
+    display: 'flex',
+    justifyContent: 'center',
+    py: 4,
+};
 
 const oidcDividerSx = {
     my: 3,
@@ -474,6 +498,19 @@ const Login = () => {
                             </Alert>
                         )}
 
+                        {capabilitiesLoading && (
+                            <Box
+                                sx={capabilitiesLoadingSx}
+                                aria-busy="true"
+                                data-testid="login-capabilities-loading"
+                            >
+                                <CircularProgress
+                                    size={28}
+                                    aria-label="Loading sign-in options"
+                                />
+                            </Box>
+                        )}
+
                         {!capabilitiesLoading && oidcEnabled && (
                             <>
                                 <Button
@@ -501,57 +538,57 @@ const Login = () => {
                         )}
 
                         {!capabilitiesLoading && localEnabled && (
-                        <form onSubmit={handleSubmit} noValidate>
-                            <TextField
-                                fullWidth
-                                label="Username"
-                                type="text"
-                                name="username"
-                                id="username"
-                                value={username}
-                                onChange={(e) => { setUsername(e.target.value); }}
-                                margin="normal"
-                                required
-                                autoFocus
-                                disabled={loading}
-                                inputProps={{
-                                    autoComplete: 'off',
-                                    'data-testid': 'login-username-input',
-                                }}
-                                InputLabelProps={{ shrink: true }}
-                                sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
-                            />
+                            <form onSubmit={handleSubmit} noValidate>
+                                <TextField
+                                    fullWidth
+                                    label="Username"
+                                    type="text"
+                                    name="username"
+                                    id="username"
+                                    value={username}
+                                    onChange={(e) => { setUsername(e.target.value); }}
+                                    margin="normal"
+                                    required
+                                    autoFocus
+                                    disabled={loading}
+                                    inputProps={{
+                                        autoComplete: 'off',
+                                        'data-testid': 'login-username-input',
+                                    }}
+                                    InputLabelProps={{ shrink: true }}
+                                    sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
+                                />
 
-                            <TextField
-                                fullWidth
-                                label="Password"
-                                type="password"
-                                name="password"
-                                value={password}
-                                onChange={(e) => { setPassword(e.target.value); }}
-                                margin="normal"
-                                required
-                                disabled={loading}
-                                inputProps={{
-                                    autoComplete: 'current-password',
-                                    'data-testid': 'login-password-input',
-                                }}
-                                InputLabelProps={{ shrink: true }}
-                                sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
-                            />
+                                <TextField
+                                    fullWidth
+                                    label="Password"
+                                    type="password"
+                                    name="password"
+                                    value={password}
+                                    onChange={(e) => { setPassword(e.target.value); }}
+                                    margin="normal"
+                                    required
+                                    disabled={loading}
+                                    inputProps={{
+                                        autoComplete: 'current-password',
+                                        'data-testid': 'login-password-input',
+                                    }}
+                                    InputLabelProps={{ shrink: true }}
+                                    sx={{ ...textFieldSx, ...SELECT_FIELD_SX }}
+                                />
 
-                            <Button
-                                fullWidth
-                                type="submit"
-                                variant="contained"
-                                size="large"
-                                disabled={loading}
-                                sx={getSubmitButtonSx}
-                                data-testid="login-submit"
-                            >
-                                {loading ? 'Signing in...' : 'Sign In'}
-                            </Button>
-                        </form>
+                                <Button
+                                    fullWidth
+                                    type="submit"
+                                    variant="contained"
+                                    size="large"
+                                    disabled={loading}
+                                    sx={getSubmitButtonSx}
+                                    data-testid="login-submit"
+                                >
+                                    {loading ? 'Signing in...' : 'Sign In'}
+                                </Button>
+                            </form>
                         )}
 
                         {!capabilitiesLoading && localEnabled && (

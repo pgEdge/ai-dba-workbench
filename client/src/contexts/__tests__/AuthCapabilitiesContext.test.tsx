@@ -9,7 +9,7 @@
  */
 
 import type React from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AuthCapabilitiesProvider } from '../AuthCapabilitiesContext';
 import { useAuthCapabilities } from '../useAuthCapabilities';
@@ -108,14 +108,103 @@ describe('AuthCapabilitiesContext', () => {
         expect(result.current.oidcLabel).toBe('');
     });
 
-    it('calls /api/v1/capabilities', async () => {
+    it('calls /api/v1/capabilities with an abort signal', async () => {
         mockApiGet.mockResolvedValueOnce({ auth: {} });
 
         renderHook(() => useAuthCapabilities(), { wrapper });
 
         await waitFor(() => {
-            expect(mockApiGet).toHaveBeenCalledWith('/api/v1/capabilities');
+            expect(mockApiGet).toHaveBeenCalledWith('/api/v1/capabilities', {
+                signal: expect.any(AbortSignal),
+            });
         });
+    });
+
+    it('applies the defaults when the request never answers', async () => {
+        vi.useFakeTimers();
+        try {
+            // A promise that never settles stands in for a connection
+            // held open by a proxy; `apiGet` sets no timeout of its
+            // own, so the provider must impose one.
+            mockApiGet.mockReturnValue(new Promise(() => { /* hangs */ }));
+
+            const { result } = renderHook(() => useAuthCapabilities(), {
+                wrapper,
+            });
+
+            expect(result.current.loading).toBe(true);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(5000);
+            });
+
+            expect(result.current.loading).toBe(false);
+            expect(result.current.localEnabled).toBe(true);
+            expect(result.current.oidcEnabled).toBe(false);
+
+            const signal = mockApiGet.mock.calls[0][1].signal as AbortSignal;
+            expect(signal.aborted).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does nothing once the provider has unmounted', async () => {
+        vi.useFakeTimers();
+        try {
+            mockApiGet.mockReturnValue(new Promise(() => { /* hangs */ }));
+
+            const { unmount } = renderHook(() => useAuthCapabilities(), {
+                wrapper,
+            });
+
+            unmount();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(5000);
+            });
+
+            // The request is abandoned on unmount, and the timeout
+            // that fires afterwards must not touch React state.
+            const signal = mockApiGet.mock.calls[0][1].signal as AbortSignal;
+            expect(signal.aborted).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('ignores an answer that arrives after the timeout', async () => {
+        vi.useFakeTimers();
+        try {
+            let resolveLate: (value: unknown) => void = () => undefined;
+            mockApiGet.mockReturnValue(
+                new Promise((resolve) => { resolveLate = resolve; }),
+            );
+
+            const { result } = renderHook(() => useAuthCapabilities(), {
+                wrapper,
+            });
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(5000);
+            });
+
+            await act(async () => {
+                resolveLate({
+                    auth: {
+                        local_enabled: false,
+                        oidc_enabled: true,
+                        oidc_label: 'Too late',
+                    },
+                });
+                await Promise.resolve();
+            });
+
+            expect(result.current.localEnabled).toBe(true);
+            expect(result.current.oidcEnabled).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('throws when the hook is used outside the provider', () => {

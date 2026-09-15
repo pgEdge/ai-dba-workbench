@@ -453,6 +453,26 @@ func (s *AuthStore) migrateV2ToV3() error {
 	return nil
 }
 
+// migrateV3ToV4 adds the append-only audit_events table, its indexes
+// and the trigger that rejects updates. The DDL is shared with the
+// fresh-install schema below and is idempotent, so a partially applied
+// migration is safe to re-run.
+func (s *AuthStore) migrateV3ToV4() error {
+	if _, err := s.db.Exec(auditSchemaDDL); err != nil {
+		return fmt.Errorf("failed to create audit_events table: %w", err)
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("failed to clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO schema_version (version) VALUES (?)", 4); err != nil {
+		return fmt.Errorf("failed to set schema version: %w", err)
+	}
+
+	return nil
+}
+
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
@@ -475,6 +495,12 @@ func (s *AuthStore) initSchema() error {
 			return fmt.Errorf("failed to migrate from v2 to v3: %w", err)
 		}
 		currentVersion = 3
+	}
+	if currentVersion == 3 {
+		if err := s.migrateV3ToV4(); err != nil {
+			return fmt.Errorf("failed to migrate from v3 to v4: %w", err)
+		}
+		currentVersion = 4
 	}
 
 	if currentVersion < schemaVersion {
@@ -647,7 +673,7 @@ func (s *AuthStore) initSchema() error {
     );
     CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
     CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-    `
+    ` + auditSchemaDDL
 
 		_, err = s.db.Exec(schema)
 		if err != nil {

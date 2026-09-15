@@ -196,8 +196,8 @@ logs a diagnostic naming the claim and the class of character that
 offended, so that the failure points at the configuration rather than
 looking like a bug.
 
-The default of `email` is convenient but not universally safe. Two
-common cases fail:
+The default of `email` is convenient but not universally safe. Logins
+fail in both of the following common cases:
 
 - a plus-addressed email such as `jane+work@example.com` contains a
   character the rule does not allow.
@@ -218,10 +218,11 @@ an unusable password hash, so it can never be reached through password
 login, and it starts with no groups and no superuser flag until
 reconciliation grants them.
 
-Leave `provision_users` at `false` to pre-create every account instead.
-A login by an identity with no matching account is then refused, and
-each account has to be linked to its provider subject before that
-person can log in.
+Leave `provision_users` at `false`, which is the default, to pre-create
+every account instead. A login by an identity that no account is linked
+to is then refused, and an administrator links each account to its
+provider identity with the server command line, as described in
+Linking an Existing Account below.
 
 The address itself always comes from the standard `email` claim, which
 is not configurable, and the verification flag from the standard
@@ -245,6 +246,111 @@ only when `allowed_email_domains` is non-empty; with no allow-list
 configured, an unverified address is still stored on the account.
 Treat the stored address as a label, never as a credential or as
 grounds for granting anything.
+
+## Linking an Existing Account
+
+An account is reached by a federated login only once the issuer and
+subject of the provider identity are recorded against it. Automatic
+provisioning records them when it creates the account; where
+`provision_users` is `false`, an administrator records them with the
+`-link-oidc-user` command.
+
+Linking stamps the account exactly as provisioning would, so a linked
+account and a provisioned one are indistinguishable to login, to group
+reconciliation and to every later permission check.
+
+The workflow starts with a failed login, because the server log is
+where the issuer and subject come from:
+
+1. Ask the person to attempt a federated login. It is refused, and the
+   browser returns to the login page.
+2. Read the refusal from the server log. The line begins
+   `[OIDC] Refusing federated login:` and quotes both values, along
+   with the command to run:
+
+   ```text
+   [OIDC] Refusing federated login: no account for federated identity
+   issuer "https://idp.example.com", subject "8a7f-sub" (username
+   "alice") and provisioning is disabled; link an existing account
+   with: ai-dba-server -link-oidc-user -username <name> -issuer
+   "https://idp.example.com" -subject "8a7f-sub"
+   ```
+
+3. Link the pre-created account to that identity, passing the issuer
+   and subject exactly as they were logged:
+
+   ```bash
+   ./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
+       -link-oidc-user -username alice \
+       -issuer "https://idp.example.com" -subject "8a7f-sub"
+   ```
+
+4. Ask the person to sign in again. The login now resolves to the
+   linked account, and group reconciliation runs against it.
+
+The command reports the account, the issuer, the subject and the stored
+external subject key, and notes that password login is refused for the
+account from that moment.
+
+### Refusals and Relinking
+
+Linking is refused rather than allowed to do something surprising in
+three cases.
+
+The following table describes each refusal and the way past it:
+
+| Situation | Outcome |
+|-----------|---------|
+| The account is already linked to a different identity | Refused, naming the identity currently in the way; pass `-relink` to move the account. |
+| Another account already holds the subject | Refused, naming the account that holds it; unlink that account first. |
+| The account is a service account | Refused outright, because a service account can never hold a session and the link would never work. |
+
+Linking an account to the identity it already holds succeeds and
+changes nothing, so a script that runs the command twice does not fail.
+A disabled account may be linked, which is convenient when accounts are
+prepared ahead of a rollout, though nothing works until the account is
+enabled.
+
+To move an account to a new identity, for example after a provider
+migration changes the subject, pass `-relink`:
+
+```bash
+./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
+    -link-oidc-user -username alice \
+    -issuer "https://idp.example.com" -subject "new-sub" -relink
+```
+
+### Unlinking an Account
+
+The `-unlink-oidc-user` command detaches an account from its provider
+identity and returns it to local authentication:
+
+```bash
+./bin/ai-dba-server -config /etc/pgedge/ai-dba-server.yaml \
+    -unlink-oidc-user -username alice
+```
+
+Unlinking makes the account's stored password hash live again, which is
+the part that catches people out. Linking never touched the hash; the
+account stopped accepting passwords only because password login is
+refused for an account the provider owns, so the moment the account is
+local again, whatever password it held before it was linked works once
+more. That password may be years old and may be known to the person who
+has just left.
+
+Unlinking is therefore not a way to take access away. Follow it in the
+same maintenance window with one of two commands:
+
+- `-update-user -username <name>` sets a fresh password, for an account
+  that is staying in service.
+- `-disable-user -username <name>` disables the account, for a person
+  who has left.
+
+An account the provider originally created holds a hash of discarded
+random bytes, so unlinking one leaves it unreachable by any means
+rather than reachable by an old password. The command prints the same
+warning after every successful unlink, because the two cases are not
+distinguishable at a glance.
 
 ## Mapping Provider Groups to Workbench Groups
 
@@ -270,7 +376,8 @@ http:
 ```
 
 At each login, the Workbench compares the groups the provider asserted
-against the map and reconciles membership of the mapped groups only:
+against the map and reconciles membership of the mapped groups only, so
+that:
 
 - a user the provider puts in `workbench-dba` is added to `DBAs`.
 - a user the provider no longer puts in `workbench-dba` is removed from
@@ -389,6 +496,15 @@ A non-empty `allowed_email_domains` list also refuses a login when the
 provider sends no email address, sends one the Workbench cannot use, or
 has not set `email_verified`. Check that the requested scopes include
 whatever the provider requires before it releases a verified address.
+
+### A Pre-Created Account Is Not Recognised
+
+A refusal logged as `no account for federated identity` means no
+account carries that issuer and subject. With `provision_users` set to
+`false` this is the expected first attempt: link the account as
+described in Linking an Existing Account. With provisioning enabled it
+means the account could not be created, usually because the asserted
+username is already taken by another account, which is also logged.
 
 ### The Login Button Does Nothing
 

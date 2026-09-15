@@ -472,10 +472,20 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
+	// X-Forwarded-Proto is honored only on a request that actually came
+	// from a configured trusted proxy, decided per request. An
+	// IPExtractor existing is not the same question: one is constructed
+	// on every deployment, so treating its presence as the answer would
+	// let any client set the header and pick the Secure attribute.
+	const trustedProxyCIDR = "10.0.0.0/8"
+	const fromTrustedProxy = "10.1.2.3:4000"
+	const fromElsewhere = "203.0.113.9:4000"
+
 	tests := []struct {
 		name           string
 		tlsEnabled     bool
 		useIPExtractor bool
+		remoteAddr     string
 		forwardedProto string
 		expectSecure   bool
 	}{
@@ -494,23 +504,42 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 			expectSecure:   false, // Header ignored without IPExtractor
 		},
 		{
-			name:           "TLS disabled, with proxy, https header - secure",
+			name:           "TLS disabled, from the trusted proxy, https header - secure",
 			tlsEnabled:     false,
 			useIPExtractor: true,
+			remoteAddr:     fromTrustedProxy,
 			forwardedProto: "https",
 			expectSecure:   true,
 		},
 		{
-			name:           "TLS disabled, with proxy, http header - not secure",
+			name:           "TLS disabled, from the trusted proxy, HTTPS in upper case - secure",
 			tlsEnabled:     false,
 			useIPExtractor: true,
+			remoteAddr:     fromTrustedProxy,
+			forwardedProto: "HTTPS",
+			expectSecure:   true,
+		},
+		{
+			name:           "TLS disabled, https header from somewhere else - not secure",
+			tlsEnabled:     false,
+			useIPExtractor: true,
+			remoteAddr:     fromElsewhere,
+			forwardedProto: "https",
+			expectSecure:   false,
+		},
+		{
+			name:           "TLS disabled, from the trusted proxy, http header - not secure",
+			tlsEnabled:     false,
+			useIPExtractor: true,
+			remoteAddr:     fromTrustedProxy,
 			forwardedProto: "http",
 			expectSecure:   false,
 		},
 		{
-			name:           "TLS disabled, with proxy, no header - not secure",
+			name:           "TLS disabled, from the trusted proxy, no header - not secure",
 			tlsEnabled:     false,
 			useIPExtractor: true,
+			remoteAddr:     fromTrustedProxy,
 			forwardedProto: "",
 			expectSecure:   false,
 		},
@@ -527,8 +556,7 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var ipExtractor *auth.IPExtractor
 			if tt.useIPExtractor {
-				// Create an IPExtractor - its presence indicates we trust proxy headers
-				ipExtractor = auth.NewIPExtractor([]string{"10.0.0.0/8"})
+				ipExtractor = auth.NewIPExtractor([]string{trustedProxyCIDR})
 			}
 
 			handler := NewAuthHandler(authStore, nil, ipExtractor, tt.tlsEnabled)
@@ -537,6 +565,9 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 			body, _ := json.Marshal(LoginRequest{Username: "testuser", Password: "Testpass1234"})
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
+			}
 			if tt.forwardedProto != "" {
 				req.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
 			}

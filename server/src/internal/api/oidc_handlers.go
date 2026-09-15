@@ -29,9 +29,14 @@ import (
 // unauthenticated path list in internal/auth/middleware.go, for the
 // obvious reason that a user starting a login does not yet have a
 // session.
+//
+// The values come from internal/config, which is where configuration
+// validation needs them in order to check redirect_url against the
+// callback path; these names exist so that the handlers below read as
+// handlers rather than as configuration.
 const (
-	OIDCStartPath    = "/api/v1/auth/oidc/start"
-	OIDCCallbackPath = "/api/v1/auth/oidc/callback"
+	OIDCStartPath    = config.OIDCStartPath
+	OIDCCallbackPath = config.OIDCCallbackPath
 )
 
 // loginErrorProvider and loginErrorFailed are the only two values that
@@ -82,14 +87,24 @@ const genericCallbackError = "The login request could not be completed"
 const exchangeTimeout = 15 * time.Second
 
 // callbackRateWindowMinutes and callbackRateMaxAttempts bound how often
-// one client IP may call the callback. The endpoint drives an outbound
-// request to the identity provider on every call that gets as far as the
-// exchange, so leaving it unbounded would make it a convenient way to
-// have the Workbench hammer someone else's provider. The figures match
-// the total-request limiter handleLogin applies for the same reason.
+// one rate-limit key may call the callback. The endpoint drives an
+// outbound request to the identity provider on every call that gets as
+// far as the exchange, so leaving it unbounded would make it a
+// convenient way to have the Workbench hammer someone else's provider.
+//
+// The ceiling is deliberately far above the twenty per minute
+// handleLogin allows, because the key is usually not a client at all.
+// Without http.trusted_proxies configured, every request behind a
+// reverse proxy shares that proxy's address, so the allowance is one
+// per deployment and a low ceiling would let any unauthenticated party
+// spend it and take federated login down for everybody. On a deployment
+// where local login is switched off, that is the whole way in. A
+// completed login returns its allowance (see completeLogin), so the
+// figure bounds failures rather than logins, and initOIDC warns at
+// start-up when no trusted proxy list makes the key per client.
 const (
 	callbackRateWindowMinutes = 1
-	callbackRateMaxAttempts   = 20
+	callbackRateMaxAttempts   = 240
 )
 
 // OIDCHandler serves the two endpoints of a federated login.
@@ -101,7 +116,7 @@ const (
 // rule that the browser learns nothing from a failure beyond the fact of
 // it.
 type OIDCHandler struct {
-	authStore *auth.AuthStore
+	authStore federationStore
 	provider  *oidc.Provider
 	cfg       config.OIDCConfig
 	stateKey  []byte
@@ -111,9 +126,27 @@ type OIDCHandler struct {
 	// failing is not a password guess.
 	rateLimiter *auth.RateLimiter
 
-	ipExtractor       *auth.IPExtractor
-	tlsEnabled        bool
-	trustProxyHeaders bool
+	ipExtractor *auth.IPExtractor
+	tlsEnabled  bool
+}
+
+// federationStore is the slice of auth.AuthStore a federated login
+// actually uses: resolve the account, reconcile its groups, mint the
+// session. It is an interface rather than the concrete store so that a
+// test can drive the failure of any one of the three, including the
+// session failure, which on the real store needs the account to change
+// between two calls inside one request and is therefore not reachable
+// otherwise.
+//
+// The exported constructor still takes *auth.AuthStore: nothing outside
+// this package has any business supplying a different implementation,
+// and narrowing the public signature would invite one.
+type federationStore interface {
+	ResolveFederatedUser(identity auth.FederatedIdentity,
+		opts auth.FederationOptions) (*auth.StoredUser, error)
+	ReconcileFederatedGroups(userID int64, identity auth.FederatedIdentity,
+		opts auth.FederationOptions) error
+	CreateSessionForUser(username string) (string, time.Time, error)
 }
 
 // NewOIDCHandler creates the federated login handler.
@@ -127,8 +160,26 @@ type OIDCHandler struct {
 //
 // The ipExtractor parameter is optional, matching NewAuthHandler: when
 // it is nil, RemoteAddr is used directly and no forwarded header is
-// trusted, and X-Forwarded-Proto is not trusted either.
+// trusted. Whether X-Forwarded-Proto is honored is decided per request
+// against the extractor's trusted proxy list, not by the extractor
+// merely existing.
 func NewOIDCHandler(authStore *auth.AuthStore, provider *oidc.Provider,
+	cfg config.OIDCConfig, stateKey []byte, tlsEnabled bool,
+	ipExtractor *auth.IPExtractor) *OIDCHandler {
+
+	handler := newOIDCHandler(nil, provider, cfg, stateKey, tlsEnabled, ipExtractor)
+	// Assigned only when non-nil, so that a nil *auth.AuthStore does not
+	// become a non-nil interface holding a nil pointer, which enabled()
+	// would then read as a usable store.
+	if authStore != nil {
+		handler.authStore = authStore
+	}
+	return handler
+}
+
+// newOIDCHandler is the constructor the tests use to supply a stand-in
+// store. Production code goes through NewOIDCHandler.
+func newOIDCHandler(authStore federationStore, provider *oidc.Provider,
 	cfg config.OIDCConfig, stateKey []byte, tlsEnabled bool,
 	ipExtractor *auth.IPExtractor) *OIDCHandler {
 
@@ -140,10 +191,6 @@ func NewOIDCHandler(authStore *auth.AuthStore, provider *oidc.Provider,
 		rateLimiter: auth.NewRateLimiter(callbackRateWindowMinutes, callbackRateMaxAttempts),
 		ipExtractor: ipExtractor,
 		tlsEnabled:  tlsEnabled,
-		// An IP extractor being configured is what says the deployment
-		// sits behind a trusted proxy, and therefore that its forwarded
-		// headers mean anything. This mirrors NewAuthHandler exactly.
-		trustProxyHeaders: ipExtractor != nil,
 	}
 }
 
@@ -178,14 +225,15 @@ func (h *OIDCHandler) enabled() bool {
 // state, seals it into a short-lived cookie and redirects the browser to
 // the identity provider.
 func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
-	if !h.methodIsGET(w, r) {
-		return
-	}
-	// A 404 rather than a 503 or a 400: a Workbench with federated login
+	// A 404 rather than a 503 or a 400, and before the method check so
+	// that every method answers it: a Workbench with federated login
 	// switched off should look exactly like one that never had the
 	// endpoint, so that probing it says nothing about the deployment.
 	if !h.enabled() {
 		http.NotFound(w, r)
+		return
+	}
+	if !h.methodIsGET(w, r) {
 		return
 	}
 
@@ -194,14 +242,21 @@ func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 	// guard, before it is ever stored.
 	state, err := oidc.NewLoginState(r.URL.Query().Get("return"))
 	if err != nil {
-		log.Printf("[OIDC] Failed to create login state: %v", err)
+		// Sanitized like every other log call in this file. This one
+		// carries no attacker-controlled text today, but uniformity is
+		// what stops the next edit being the exception.
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[OIDC] Failed to create login state: %s",
+			logging.SanitizeForLog(err.Error()))
 		RespondError(w, http.StatusInternalServerError, genericCallbackError)
 		return
 	}
 
 	sealed, err := oidc.SealState(h.stateKey, state)
 	if err != nil {
-		log.Printf("[OIDC] Failed to seal login state: %v", err)
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[OIDC] Failed to seal login state: %s",
+			logging.SanitizeForLog(err.Error()))
 		RespondError(w, http.StatusInternalServerError, genericCallbackError)
 		return
 	}
@@ -243,24 +298,27 @@ func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 // response bodies, and the error text from auth.ResolveFederatedUser
 // names local accounts and their exact stored spelling.
 func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
-	if !h.methodIsGET(w, r) {
-		return
-	}
+	// The 404 comes first, before the method check, so that a disabled
+	// endpoint answers exactly as an absent one does for every method.
 	if !h.enabled() {
 		http.NotFound(w, r)
 		return
 	}
-
-	if !h.allowRequest(w, r) {
+	if !h.methodIsGET(w, r) {
 		return
 	}
 
-	// Clear the state cookie before anything else can fail, so that it
-	// is gone on every path out of this function: a state that has been
-	// presented once must never be usable again, whether it was accepted
-	// or refused.
+	// Clear the state cookie before anything else can fail, the rate
+	// limit included, so that it is gone on every path out of this
+	// function: a state that has been presented once must never be
+	// usable again, whether it was accepted, refused or never looked at.
 	secure := h.isSecureRequest(r)
 	h.clearStateCookie(w, secure)
+
+	ipAddress := h.extractIPFromRequest(r)
+	if !h.allowRequest(w, ipAddress) {
+		return
+	}
 
 	state, ok := h.openPresentedState(w, r, secure)
 	if !ok {
@@ -272,7 +330,7 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.completeLogin(w, r, state, identity)
+	h.completeLogin(w, r, state, identity, ipAddress)
 }
 
 // openPresentedState performs every check that can be made before the
@@ -306,7 +364,13 @@ func (h *OIDCHandler) openPresentedState(w http.ResponseWriter, r *http.Request,
 
 	state, err := oidc.OpenState(h.stateKey, cookie.Value)
 	if err != nil {
-		log.Printf("[OIDC] Failed to open the login state cookie: %v", err)
+		// cookie.Value is wholly attacker-controlled, and whether any of
+		// it reaches this error is a decision made in another package;
+		// sanitize rather than depend on that package's error strings
+		// staying the shape they are today.
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[OIDC] Failed to open the login state cookie: %s",
+			logging.SanitizeForLog(err.Error()))
 		RespondError(w, http.StatusBadRequest, genericCallbackError)
 		return nil, false
 	}
@@ -363,7 +427,7 @@ func (h *OIDCHandler) exchange(w http.ResponseWriter, r *http.Request,
 // operator's email domain policy, resolving the Workbench account and
 // reconciling its group membership on the way.
 func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
-	state *oidc.LoginState, identity *oidc.Identity) {
+	state *oidc.LoginState, identity *oidc.Identity, ipAddress string) {
 
 	logIdentityDiagnostics(identity)
 
@@ -424,6 +488,14 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+
+	// A login that worked gives its allowance back. Without this, the
+	// budget is spent by success as readily as by abuse, and on a
+	// deployment with no trusted proxy list configured that budget is
+	// shared by everyone behind the reverse proxy.
+	if h.rateLimiter != nil && ipAddress != "" {
+		h.rateLimiter.Reset(ipAddress)
+	}
 
 	//nolint:gosec // G706: username passed through logging.SanitizeForLog
 	log.Printf("[OIDC] Federated login succeeded for %s", logging.SanitizeForLog(user.Username))
@@ -505,7 +577,7 @@ func (h *OIDCHandler) emailDomainAllowed(identity *oidc.Identity) bool {
 // two vocabularies meet.
 func (h *OIDCHandler) federationOptions() auth.FederationOptions {
 	return auth.FederationOptions{
-		ProvisionUsers: h.cfg.ProvisionUsers,
+		ProvisionUsers: h.cfg.ProvisionUsersEnabled(),
 		GroupMap:       h.cfg.GroupMap,
 		SuperuserGroup: h.cfg.SuperuserGroup,
 	}
@@ -552,13 +624,15 @@ func (h *OIDCHandler) clearStateCookie(w http.ResponseWriter, secure bool) {
 
 // allowRequest applies the per-IP rate limit, answering 429 and
 // returning false when the caller has run out of allowance.
-func (h *OIDCHandler) allowRequest(w http.ResponseWriter, r *http.Request) bool {
-	if h.rateLimiter == nil {
-		return true
-	}
-
-	ipAddress := h.extractIPFromRequest(r)
-	if ipAddress == "" {
+//
+// Every call that gets this far is counted, because the point is to
+// bound how often this endpoint can be made to call out to the identity
+// provider. A login that completes hands its allowance back again, in
+// completeLogin, so that working logins do not spend a budget that,
+// without a trusted proxy list, is shared by everyone behind the
+// reverse proxy.
+func (h *OIDCHandler) allowRequest(w http.ResponseWriter, ipAddress string) bool {
+	if h.rateLimiter == nil || ipAddress == "" {
 		return true
 	}
 
@@ -567,9 +641,6 @@ func (h *OIDCHandler) allowRequest(w http.ResponseWriter, r *http.Request) bool 
 			"Too many login requests, please try again later")
 		return false
 	}
-	// Every call counts, not only the ones that fail: the point is to
-	// bound how often this endpoint can be made to call out to the
-	// identity provider, and a successful call does that too.
 	h.rateLimiter.RecordFailedAttempt(ipAddress)
 	return true
 }
@@ -588,7 +659,7 @@ func (h *OIDCHandler) extractIPFromRequest(r *http.Request) string {
 // the shared rule so that the X-Forwarded-Proto trust decision matches
 // AuthHandler's exactly.
 func (h *OIDCHandler) isSecureRequest(r *http.Request) bool {
-	return requestIsSecure(r, h.tlsEnabled, h.trustProxyHeaders)
+	return requestIsSecure(r, h.tlsEnabled, h.ipExtractor)
 }
 
 // methodIsGET rejects anything but GET, which is all either endpoint

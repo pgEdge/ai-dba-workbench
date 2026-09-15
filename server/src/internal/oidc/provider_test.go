@@ -41,7 +41,7 @@ func newTestProvider(t *testing.T, idp *oidctest.FakeIDP, cfg config.OIDCConfig)
 		cfg.ClientSecret = "test-client-secret"
 	}
 	if cfg.RedirectURL == "" {
-		cfg.RedirectURL = "https://workbench.example.com/api/auth/oidc/callback"
+		cfg.RedirectURL = "https://workbench.example.com/api/v1/auth/oidc/callback"
 	}
 
 	provider, err := NewProvider(context.Background(), cfg)
@@ -699,7 +699,7 @@ func TestNewProviderUsesTheEffectiveClientSecret(t *testing.T) {
 		"      issuer: https://idp.example.com\n" +
 		"      client_id: " + idp.ClientID() + "\n" +
 		"      client_secret_file: " + secretFile + "\n" +
-		"      redirect_url: https://workbench.example.com/api/auth/oidc/callback\n"
+		"      redirect_url: https://workbench.example.com/api/v1/auth/oidc/callback\n"
 	if err := os.WriteFile(configFile, []byte(configBody), 0o600); err != nil {
 		t.Fatalf("failed to write the config file: %v", err)
 	}

@@ -12,6 +12,7 @@ package api
 import (
 	"crypto/tls"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -28,6 +30,12 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/oidc/oidctest"
 )
+
+// boolPointer is the shorthand for the *bool configuration fields that
+// distinguish "unset" from "explicitly false".
+func boolPointer(value bool) *bool {
+	return &value
+}
 
 // testStateKey is the 32-byte key the tests seal login state with. Its
 // exact value is irrelevant; only its length is, since oidc.SealState
@@ -46,6 +54,11 @@ type oidcTestEnv struct {
 	idp     *oidctest.FakeIDP
 	store   *auth.AuthStore
 	dataDir string
+
+	// lastState is the login state the most recent call to login sealed,
+	// so a test can compare what the handler sent to the token endpoint
+	// against what it actually held.
+	lastState *oidc.LoginState
 }
 
 // newTestOIDCEnv stands up a handler against a fake identity provider.
@@ -65,7 +78,7 @@ func newTestOIDCEnv(t *testing.T, mutators ...func(*config.OIDCConfig)) *oidcTes
 		RedirectURL:    "https://workbench.example.com" + OIDCCallbackPath,
 		UsernameClaim:  "email",
 		GroupsClaim:    "groups",
-		ProvisionUsers: true,
+		ProvisionUsers: boolPointer(true),
 	}
 	for _, mutate := range mutators {
 		mutate(&cfg)
@@ -162,6 +175,7 @@ func (e *oidcTestEnv) login(t *testing.T, returnPath string,
 
 	cookie := e.startLogin(t, returnPath)
 	state := e.openState(t, cookie)
+	e.lastState = state
 
 	payload := map[string]any{"sub": "subject-1", "email": testUsername}
 	for name, value := range claims {
@@ -397,15 +411,32 @@ func TestStartUsesTheHostPrefixedCookieOverHTTPS(t *testing.T) {
 }
 
 func TestSecureRequestDerivationMatchesTheAuthHandler(t *testing.T) {
-	forwarded := httptest.NewRequest(http.MethodGet, OIDCStartPath, nil)
-	forwarded.Header.Set("X-Forwarded-Proto", "https")
+	// A request that really did arrive through the trusted proxy, and
+	// one carrying the same header from somewhere else. The difference
+	// between them is the whole point: an extractor exists on every
+	// deployment, so "is there an extractor" would answer yes for both.
+	const trustedCIDR = "192.0.2.0/24"
+	trusted := auth.NewIPExtractor([]string{trustedCIDR})
+	untrusted := auth.NewIPExtractor(nil)
+
+	fromProxy := func(header, value string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, OIDCStartPath, nil)
+		req.RemoteAddr = "192.0.2.40:5000"
+		req.Header.Set(header, value)
+		return req
+	}
+	fromElsewhere := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, OIDCStartPath, nil)
+		req.RemoteAddr = "203.0.113.9:5000"
+		req.Header.Set("X-Forwarded-Proto", "https")
+		return req
+	}
 
 	cases := map[string]struct {
-		tlsEnabled  bool
-		trustProxy  bool
-		request     *http.Request
-		wantSecure  bool
-		description string
+		tlsEnabled bool
+		extractor  *auth.IPExtractor
+		request    *http.Request
+		wantSecure bool
 	}{
 		"plain HTTP": {
 			request: httptest.NewRequest(http.MethodGet, OIDCStartPath, nil),
@@ -415,14 +446,6 @@ func TestSecureRequestDerivationMatchesTheAuthHandler(t *testing.T) {
 			request:    httptest.NewRequest(http.MethodGet, OIDCStartPath, nil),
 			wantSecure: true,
 		},
-		"forwarded header from a trusted proxy": {
-			trustProxy: true,
-			request:    forwarded,
-			wantSecure: true,
-		},
-		"forwarded header without a trusted proxy": {
-			request: forwarded,
-		},
 		"connection Go itself terminated": {
 			request: func() *http.Request {
 				req := httptest.NewRequest(http.MethodGet, OIDCStartPath, nil)
@@ -431,16 +454,48 @@ func TestSecureRequestDerivationMatchesTheAuthHandler(t *testing.T) {
 			}(),
 			wantSecure: true,
 		},
+		"forwarded header from a trusted proxy": {
+			extractor:  trusted,
+			request:    fromProxy("X-Forwarded-Proto", "https"),
+			wantSecure: true,
+		},
+		"forwarded header in upper case from a trusted proxy": {
+			// A proxy writing "HTTPS" is describing the same deployment;
+			// reading it as plain HTTP would silently drop the Secure
+			// attribute and the "__Host-" cookie prefix.
+			extractor:  trusted,
+			request:    fromProxy("X-Forwarded-Proto", "HTTPS"),
+			wantSecure: true,
+		},
+		"forwarded header from a client that is not the proxy": {
+			extractor: trusted,
+			request:   fromElsewhere(),
+		},
+		"forwarded header with an extractor that trusts nothing": {
+			// The regression this case exists for: an extractor is built
+			// unconditionally at start-up, so before the per-request
+			// check any client could set this header and choose both the
+			// Secure attribute and the state cookie name.
+			extractor: untrusted,
+			request:   fromProxy("X-Forwarded-Proto", "https"),
+		},
+		"forwarded header with no extractor at all": {
+			request: fromProxy("X-Forwarded-Proto", "https"),
+		},
+		"forwarded header naming plain HTTP": {
+			extractor: trusted,
+			request:   fromProxy("X-Forwarded-Proto", "http"),
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := requestIsSecure(tc.request, tc.tlsEnabled, tc.trustProxy); got != tc.wantSecure {
+			if got := requestIsSecure(tc.request, tc.tlsEnabled, tc.extractor); got != tc.wantSecure {
 				t.Errorf("requestIsSecure = %v, want %v", got, tc.wantSecure)
 			}
 			// The AuthHandler must agree, since the two handlers set
 			// cookies the browser is expected to treat alike.
-			authHandler := &AuthHandler{tlsEnabled: tc.tlsEnabled, trustProxyHeaders: tc.trustProxy}
+			authHandler := &AuthHandler{tlsEnabled: tc.tlsEnabled, ipExtractor: tc.extractor}
 			if got := authHandler.isSecureRequest(tc.request); got != tc.wantSecure {
 				t.Errorf("AuthHandler.isSecureRequest = %v, want %v", got, tc.wantSecure)
 			}
@@ -552,6 +607,17 @@ func TestCallbackSetsSessionCookieAndRedirectsToReturnPath(t *testing.T) {
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d (body %q)", rec.Code, http.StatusFound, rec.Body.String())
+	}
+
+	// PKCE is only protection if the verifier actually reaches the token
+	// request: without it, whoever intercepted the redirect could redeem
+	// the code themselves.
+	form := env.idp.LastTokenRequestForm()
+	if form == nil {
+		t.Fatal("the token endpoint was never called")
+	}
+	if got := form.Get("code_verifier"); got != env.lastState.CodeVerifier {
+		t.Errorf("code_verifier sent = %q, want the sealed %q", got, env.lastState.CodeVerifier)
 	}
 	if got := rec.Header().Get("Location"); got != "/dashboard" {
 		t.Fatalf("Location = %q, want /dashboard", got)
@@ -678,7 +744,7 @@ func TestCallbackPropagatesProviderError(t *testing.T) {
 
 func TestCallbackRefusesUnknownSubjectWithoutProvisioning(t *testing.T) {
 	env := newTestOIDCEnv(t, func(cfg *config.OIDCConfig) {
-		cfg.ProvisionUsers = false
+		cfg.ProvisionUsers = boolPointer(false)
 	})
 
 	rec := env.login(t, "/dashboard", nil)
@@ -822,7 +888,7 @@ func TestCallbackFailuresAreIndistinguishable(t *testing.T) {
 	scenarios := []scenario{
 		{
 			name:    "unknown subject",
-			mutate:  func(cfg *config.OIDCConfig) { cfg.ProvisionUsers = false },
+			mutate:  func(cfg *config.OIDCConfig) { cfg.ProvisionUsers = boolPointer(false) },
 			prepare: func(*testing.T, *oidcTestEnv) {},
 		},
 		{
@@ -982,6 +1048,109 @@ func TestCallbackIsRateLimitedPerClientIP(t *testing.T) {
 	}
 }
 
+// TestCallbackRateLimitIsReturnedByASuccessfulLogin covers the reason
+// the allowance is given back: without a trusted proxy list the key is
+// the reverse proxy's address, so every working login would otherwise
+// spend from one budget shared by the whole deployment.
+func TestCallbackRateLimitIsReturnedByASuccessfulLogin(t *testing.T) {
+	_, env := newTestOIDCHandler(t)
+
+	// Spend all but one of the allowance, then log in, which must hand
+	// the whole allowance back rather than exhaust it.
+	for range callbackRateMaxAttempts - 1 {
+		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
+		req.RemoteAddr = "192.0.2.12:4000"
+		env.handler.handleCallback(httptest.NewRecorder(), req)
+	}
+
+	cookie := env.startLogin(t, "/dashboard")
+	state := env.openState(t, cookie)
+	env.idp.SetNextIDToken(env.idp.MintIDToken(t, map[string]any{
+		"sub": "subject-1", "email": testUsername, "nonce": state.Nonce,
+	}))
+	req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?"+url.Values{
+		"code": {"authorization-code"}, "state": {state.State},
+	}.Encode(), nil)
+	req.RemoteAddr = "192.0.2.12:4000"
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	env.handler.handleCallback(rec, req)
+
+	if rec.Code != http.StatusFound || findCookie(rec, SessionCookieName) == nil {
+		t.Fatalf("the login did not succeed: status %d", rec.Code)
+	}
+
+	// The next request must still be allowed, which it would not be if
+	// the successful login had spent the last of the allowance.
+	next := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
+	next.RemoteAddr = "192.0.2.12:4000"
+	nextRec := httptest.NewRecorder()
+	env.handler.handleCallback(nextRec, next)
+	if nextRec.Code == http.StatusTooManyRequests {
+		t.Error("a successful login did not return its rate-limit allowance")
+	}
+}
+
+// TestCallbackClearsTheStateCookieWhenRateLimited pins the ordering the
+// comment in handleCallback claims: the cookie is gone on every path out
+// of the function, the 429 included.
+func TestCallbackClearsTheStateCookieWhenRateLimited(t *testing.T) {
+	_, env := newTestOIDCHandler(t)
+
+	cookie := env.startLogin(t, "/dashboard")
+	var rec *httptest.ResponseRecorder
+	for range callbackRateMaxAttempts + 1 {
+		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
+		req.RemoteAddr = "192.0.2.13:4000"
+		req.AddCookie(cookie)
+		rec = httptest.NewRecorder()
+		env.handler.handleCallback(rec, req)
+	}
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+	cleared := findCookie(rec, oidc.StateCookieName)
+	if cleared == nil || cleared.Value != "" || cleared.MaxAge != -1 {
+		t.Error("the state cookie was not cleared on the rate-limited path")
+	}
+}
+
+// TestCallbackSanitisesTheSubjectClaimInTheLog is the log-injection
+// guard. The subject comes from the verified token rather than from the
+// claim map, so it never goes through safeClaimValue: nothing but
+// logging.SanitizeForLog stands between a hostile provider and a forged
+// log line. A "sub" carrying a newline and a plausible success line must
+// not produce one.
+func TestCallbackSanitisesTheSubjectClaimInTheLog(t *testing.T) {
+	const forged = "[OIDC] Federated login succeeded for admin"
+
+	env := newTestOIDCEnv(t, func(cfg *config.OIDCConfig) {
+		// Provisioning off, so the login is refused and the refusal logs
+		// the subject by way of the resolve error.
+		cfg.ProvisionUsers = boolPointer(false)
+	})
+
+	logged := captureLogDuring(t, func() {
+		rec := env.login(t, "/dashboard", map[string]any{
+			"sub": "subject-1\n" + forged,
+		})
+		if got := rec.Header().Get("Location"); got != loginFailedTarget {
+			t.Fatalf("Location = %q, want the refusal", got)
+		}
+		requireNoSessionCookie(t, rec)
+	})
+
+	for _, line := range strings.Split(logged, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[OIDC] Federated login succeeded") {
+			t.Fatalf("a forged log line was written:\n%s", logged)
+		}
+	}
+	if !strings.Contains(logged, "Refusing federated login") {
+		t.Errorf("the refusal was not logged at all; log was %q", logged)
+	}
+}
+
 func TestCallbackLogsTheClaimExtractionDiagnostics(t *testing.T) {
 	env := newTestOIDCEnv(t, func(cfg *config.OIDCConfig) {
 		cfg.DisplayNameClaim = "name"
@@ -1119,7 +1288,7 @@ func TestFederatedIdentityCarriesOnlyTheDecisionInputs(t *testing.T) {
 
 func TestFederationOptionsMirrorTheConfiguration(t *testing.T) {
 	handler := &OIDCHandler{cfg: config.OIDCConfig{
-		ProvisionUsers: true,
+		ProvisionUsers: boolPointer(true),
 		GroupMap:       map[string]string{"idp-eng": "engineers"},
 		SuperuserGroup: "idp-admins",
 	}}
@@ -1196,9 +1365,117 @@ func TestAllowRequestPassesWhenNoIPCanBeDetermined(t *testing.T) {
 	handler := NewOIDCHandler(nil, nil, config.OIDCConfig{}, testStateKey, false, nil)
 	defer handler.Close()
 
-	req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath, nil)
-	req.RemoteAddr = ""
-	if !handler.allowRequest(httptest.NewRecorder(), req) {
+	if !handler.allowRequest(httptest.NewRecorder(), "") {
 		t.Error("a request with no determinable IP must not be rate limited into a 429")
+	}
+
+	// And a handler with no limiter at all, which is how the pure-helper
+	// tests construct one, must not refuse either.
+	if !(&OIDCHandler{}).allowRequest(httptest.NewRecorder(), "192.0.2.1:5000") {
+		t.Error("a handler with no rate limiter must let the request through")
+	}
+}
+
+// stubFederationStore stands in for auth.AuthStore so that a test can
+// fail any one of the three calls a login makes. The real store cannot
+// be made to fail the session call from a test, because doing so needs
+// the account to change between the resolve and the session within one
+// request.
+type stubFederationStore struct {
+	user           *auth.StoredUser
+	resolveErr     error
+	reconcileErr   error
+	sessionErr     error
+	reconcileCalls int
+	sessionCalls   int
+}
+
+func (s *stubFederationStore) ResolveFederatedUser(auth.FederatedIdentity,
+	auth.FederationOptions) (*auth.StoredUser, error) {
+	if s.resolveErr != nil {
+		return nil, s.resolveErr
+	}
+	return s.user, nil
+}
+
+func (s *stubFederationStore) ReconcileFederatedGroups(int64, auth.FederatedIdentity,
+	auth.FederationOptions) error {
+	s.reconcileCalls++
+	return s.reconcileErr
+}
+
+func (s *stubFederationStore) CreateSessionForUser(string) (string, time.Time, error) {
+	s.sessionCalls++
+	if s.sessionErr != nil {
+		return "", time.Time{}, s.sessionErr
+	}
+	return "a-session-token", time.Now().Add(time.Hour), nil
+}
+
+// newStubbedOIDCEnv builds an env whose handler talks to store instead
+// of the real auth store; the fake identity provider is still real, so
+// the whole protocol round trip runs.
+func newStubbedOIDCEnv(t *testing.T, store federationStore) *oidcTestEnv {
+	t.Helper()
+
+	env := newTestOIDCEnv(t)
+	handler := newOIDCHandler(store, env.handler.provider, env.handler.cfg,
+		testStateKey, false, nil)
+	t.Cleanup(handler.Close)
+	env.handler = handler
+	return env
+}
+
+// TestCallbackRefusesWhenTheSessionCannotBeCreated covers the last
+// failure on the way to a session. It must look exactly like every other
+// refusal, and must not leave a cookie behind.
+func TestCallbackRefusesWhenTheSessionCannotBeCreated(t *testing.T) {
+	store := &stubFederationStore{
+		user:       &auth.StoredUser{ID: 7, Username: testUsername},
+		sessionErr: errors.New("service account cannot hold a session: " + testUsername),
+	}
+	env := newStubbedOIDCEnv(t, store)
+
+	var rec *httptest.ResponseRecorder
+	logged := captureLogDuring(t, func() {
+		rec = env.login(t, "/dashboard", nil)
+	})
+
+	if got := rec.Header().Get("Location"); got != loginFailedTarget {
+		t.Fatalf("Location = %q, want %q", got, loginFailedTarget)
+	}
+	if body := rec.Body.String(); body != "" {
+		t.Errorf("body = %q, want it empty", body)
+	}
+	requireNoSessionCookie(t, rec)
+	if strings.Contains(rec.Header().Get("Location"), "service account") {
+		t.Error("the store's error text leaked into the redirect")
+	}
+	if !strings.Contains(logged, "Refusing federated login") {
+		t.Errorf("the session failure was not logged; log was %q", logged)
+	}
+}
+
+// TestCallbackDoesNotMintASessionAfterAFailedReconciliation pins the
+// ordering directly rather than through a database side effect: the
+// session call must not happen at all.
+func TestCallbackDoesNotMintASessionAfterAFailedReconciliation(t *testing.T) {
+	store := &stubFederationStore{
+		user:         &auth.StoredUser{ID: 7, Username: testUsername},
+		reconcileErr: errors.New("removing jane from mapped group \"engineers\": disk full"),
+	}
+	env := newStubbedOIDCEnv(t, store)
+
+	rec := env.login(t, "/dashboard", nil)
+
+	if got := rec.Header().Get("Location"); got != loginFailedTarget {
+		t.Fatalf("Location = %q, want %q", got, loginFailedTarget)
+	}
+	requireNoSessionCookie(t, rec)
+	if store.reconcileCalls != 1 {
+		t.Errorf("reconciliation ran %d times, want once", store.reconcileCalls)
+	}
+	if store.sessionCalls != 0 {
+		t.Error("a session was minted despite the failed reconciliation")
 	}
 }

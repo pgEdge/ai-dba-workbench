@@ -205,6 +205,17 @@ type LocalAuthConfig struct {
 	Enabled *bool `yaml:"enabled" json:"enabled"`
 }
 
+// OIDCStartPath and OIDCCallbackPath are the two HTTP endpoints of a
+// federated login. They live here, rather than beside the handlers in
+// internal/api, because validation has to check redirect_url against the
+// callback path and internal/api already imports this package; the
+// handlers refer to these constants rather than spelling the paths
+// again.
+const (
+	OIDCStartPath    = "/api/v1/auth/oidc/start"
+	OIDCCallbackPath = "/api/v1/auth/oidc/callback"
+)
+
 // OIDCConfig holds settings for OpenID Connect federated login. Every
 // field except the two noted below is safe to hand to a handler that
 // reports login-page state (e.g. "is OIDC on, what does the button say")
@@ -239,13 +250,22 @@ type OIDCConfig struct {
 	// EffectiveClientSecret.
 	resolvedClientSecret string `yaml:"-" json:"-"`
 
-	RedirectURL         string            `yaml:"redirect_url" json:"redirect_url"`
-	Scopes              []string          `yaml:"scopes" json:"scopes"`
-	UsernameClaim       string            `yaml:"username_claim" json:"username_claim"`
-	DisplayNameClaim    string            `yaml:"display_name_claim" json:"display_name_claim"`
-	GroupsClaim         string            `yaml:"groups_claim" json:"groups_claim"`
-	ButtonLabel         string            `yaml:"button_label" json:"button_label"`
-	ProvisionUsers      bool              `yaml:"provision_users" json:"provision_users"`
+	RedirectURL      string   `yaml:"redirect_url" json:"redirect_url"`
+	Scopes           []string `yaml:"scopes" json:"scopes"`
+	UsernameClaim    string   `yaml:"username_claim" json:"username_claim"`
+	DisplayNameClaim string   `yaml:"display_name_claim" json:"display_name_claim"`
+	GroupsClaim      string   `yaml:"groups_claim" json:"groups_claim"`
+	ButtonLabel      string   `yaml:"button_label" json:"button_label"`
+	// ProvisionUsers is a pointer for the same reason Local.Enabled is:
+	// mergeConfig cannot tell an explicit "false" from an unset field,
+	// so a plain bool could be switched on by one configuration source
+	// and never switched off again by a later one. It is the most
+	// consequential OIDC setting an operator has, since it decides
+	// whether an unknown identity gets an account, so one that silently
+	// ignores being turned off is not acceptable. A nil pointer means
+	// "not set in this config source"; read the effective value through
+	// OIDCConfig.ProvisionUsersEnabled rather than this field.
+	ProvisionUsers      *bool             `yaml:"provision_users" json:"provision_users"`
 	AllowedEmailDomains []string          `yaml:"allowed_email_domains" json:"allowed_email_domains"`
 	SuperuserGroup      string            `yaml:"superuser_group" json:"superuser_group"`
 	GroupMap            map[string]string `yaml:"group_map" json:"group_map"`
@@ -260,6 +280,15 @@ func (o OIDCConfig) EffectiveClientSecret() string {
 		return o.ClientSecret
 	}
 	return o.resolvedClientSecret
+}
+
+// ProvisionUsersEnabled returns the effective value of ProvisionUsers,
+// defaulting to false when the pointer is nil (omitted from every config
+// source). False is the safe default: an operator who has said nothing
+// about provisioning has not asked the Workbench to create accounts for
+// identities it has never seen.
+func (o OIDCConfig) ProvisionUsersEnabled() bool {
+	return o.ProvisionUsers != nil && *o.ProvisionUsers
 }
 
 // LocalEnabled returns the effective value of Local.Enabled, defaulting to
@@ -832,7 +861,7 @@ func mergeConfig(dest, src *Config) {
 	if src.HTTP.Auth.OIDC.ButtonLabel != "" {
 		dest.HTTP.Auth.OIDC.ButtonLabel = src.HTTP.Auth.OIDC.ButtonLabel
 	}
-	if src.HTTP.Auth.OIDC.ProvisionUsers {
+	if src.HTTP.Auth.OIDC.ProvisionUsers != nil {
 		dest.HTTP.Auth.OIDC.ProvisionUsers = src.HTTP.Auth.OIDC.ProvisionUsers
 	}
 	if len(src.HTTP.Auth.OIDC.AllowedEmailDomains) > 0 {
@@ -1282,9 +1311,8 @@ func validateConfig(cfg *Config) error {
 		if oidc.RedirectURL == "" {
 			return fmt.Errorf("http.auth.oidc.redirect_url is required when OIDC is enabled")
 		}
-		redirectURL, err := url.Parse(oidc.RedirectURL)
-		if err != nil || !redirectURL.IsAbs() {
-			return fmt.Errorf("http.auth.oidc.redirect_url must be a valid absolute URL")
+		if err := validateOIDCRedirectURL(oidc.RedirectURL); err != nil {
+			return err
 		}
 	}
 
@@ -1296,6 +1324,60 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// validateOIDCRedirectURL checks that redirect_url is the address of
+// this Workbench's own callback endpoint, and refuses anything else.
+//
+// This is a stricter check than "some absolute URL" for a blunt reason:
+// the value is handed to the identity provider as the place to deliver
+// the authorization code, so a typo or a hostile edit sends every user's
+// code somewhere else, and the only thing standing in the way would be
+// the provider's own list of registered redirect URLs, which is to say
+// we would be relying on somebody else to catch our misconfiguration.
+//
+// The rules: an absolute URL with a host; https, unless the host is
+// loopback, which is how local development runs without a certificate;
+// a path equal to OIDCCallbackPath, since that is the only path this
+// server serves the callback on; and no query string or fragment, both
+// of which the provider is entitled to mangle when it appends its own
+// parameters.
+func validateOIDCRedirectURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return fmt.Errorf("http.auth.oidc.redirect_url must be a valid absolute URL")
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	loopbackHTTP := scheme == "http" && isLoopbackHost(parsed.Hostname())
+	if scheme != "https" && !loopbackHTTP {
+		return fmt.Errorf(
+			"http.auth.oidc.redirect_url must use https (http is permitted only for a loopback host)")
+	}
+
+	if parsed.Path != OIDCCallbackPath {
+		return fmt.Errorf("http.auth.oidc.redirect_url path must be %q, not %q",
+			OIDCCallbackPath, parsed.Path)
+	}
+
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("http.auth.oidc.redirect_url must carry no query string or fragment")
+	}
+
+	return nil
+}
+
+// isLoopbackHost reports whether host is the local machine by a name or
+// address a developer would actually type. The literal names are matched
+// as well as the addresses, because "localhost" does not parse as an IP.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // GetDefaultConfigPath returns the path to an existing default

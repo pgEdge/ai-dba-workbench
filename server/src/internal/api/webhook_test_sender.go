@@ -234,7 +234,7 @@ func sendTestTelegram(botToken, chatID string) error {
 
 	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", telegramSendBaseURL, botToken)
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body)) //nolint:gosec // G704: no host validation happens here and none is required. The host is the compile-time constant telegramAPIBaseURL, reached through the unexported telegramSendBaseURL that only in-package tests reassign, so no operator input reaches it. The tainted component is the bot token, and it lands in the path, where telegramBotTokenPattern forbids whitespace, '/', '?' and '#' and so leaves it unable to alter the path structure or the authority.
 	if err != nil {
 		// The error from net/http carries the request URL, which embeds
 		// the bot token; report only the redacted form.
@@ -242,7 +242,7 @@ func sendTestTelegram(botToken, chatID string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: the request built above, whose host is the constant telegramAPIBaseURL rather than anything operator-supplied; CheckRedirect refuses every 3xx, so no Location header can move the request to another host.
 	if err != nil {
 		return fmt.Errorf("failed to send request: %s", telegramTransportError(err))
 	}

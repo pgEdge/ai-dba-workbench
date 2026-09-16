@@ -196,9 +196,10 @@ skip every non-string, which was safe only by accident - every
 non-string the payload produces today is numeric or a `time.Time`.
 `TestNotificationPayloadFieldTypesAreEscapable` reflects over
 `database.NotificationPayload` and fails when an exported field has a
-type outside {string, *string, bool, numeric, time.Time, *time.Time}, so
-the first field of affected relations or map of labels forces somebody
-back to this function before it can reach a `parse_mode: HTML` message.
+type outside the set `string`, `*string`, `bool`, numeric, `time.Time`
+and `*time.Time`, so the first field of affected relations or map of
+labels forces somebody back to this function before it can reach a
+`parse_mode: HTML` message.
 
 HTML parse mode is used rather than MarkdownV2 deliberately: MarkdownV2
 requires escaping eighteen characters, among them `_`, `.`, `-`, `(`
@@ -255,6 +256,30 @@ from the constant `telegramAPIBaseURL`, so there is no host to validate.
 The seam `telegramSendBaseURL` exists only for in-package tests. Making
 it configurable would manufacture the SSRF surface the validator exists
 to close.
+
+gosec's G704 (SSRF via taint analysis) nonetheless flags both
+`http.NewRequest` and `client.Do` in `sendTestTelegram`: it traces
+`botToken` back through `testChannel` to that handler's `*http.Request`
+parameter, which is a configured taint source. Each of the two lines
+therefore carries a `//nolint:gosec // G704: ...` directive. The
+justification must not claim that a host check happens, because none
+does and none is needed. What confines the tainted token to the path is
+`telegramBotTokenPattern`, which forbids whitespace, `/`, `?` and `#`,
+together with `CheckRedirect` refusing every 3xx so that no `Location`
+header can move the request.
+
+G704 is a recent rule. gosec v2.22.8, bundled with golangci-lint
+v2.5.0, has no G7xx rules at all; gosec v2.28.0, bundled with
+golangci-lint v2.13.2, has G701 to G710. CI installs
+`golangci-lint@latest`, so a locally pinned v2.5.0 reports zero issues
+on code that CI rejects.
+
+`postMessage` in `alerter/src/internal/notifications/telegram.go`
+builds the same URL but is not flagged, because its token reaches the
+endpoint from a `*database.NotificationChannel` field rather than from
+an `*http.Request`, `os.Args` or `os.Getenv`. It carries no `//nolint`
+and must not gain one; a directive for a rule that never fires is noise
+that `nolintlint` would itself report.
 
 The server is a separate Go module from the alerter, so
 `redactTelegramToken` and `telegramTransportError` are duplicated into

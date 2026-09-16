@@ -165,6 +165,33 @@ pool:
   monitored_max_wait_seconds: 60
 
 #=========================================================================
+# PROBE SCHEDULER SETTINGS
+#=========================================================================
+#
+# These settings govern how probe executions are spread out and how many
+# may run at once. They matter most at startup: after a restart every
+# probe whose interval is shorter than the outage is past due, and
+# without these limits all of them would run simultaneously.
+#
+
+scheduler:
+  # Maximum number of probe executions running concurrently, across all
+  # monitored connections. This bounds the collector's peak memory and
+  # connection usage so that it does not scale with the number of
+  # monitored servers multiplied by their probes.
+  # Default: 8
+  max_concurrent_probes: 8
+
+  # Upper bound, in seconds, on the random delay applied before the first
+  # execution of a probe that is past due or has never run. The delay is
+  # drawn uniformly from [0, min(probe interval, this value)), so a
+  # 30-second probe still starts within 30 seconds whilst an hourly probe
+  # starts within this window.
+  # Set to 0 to disable the jitter and run past-due probes immediately.
+  # Default: 60
+  startup_jitter_seconds: 60
+
+#=========================================================================
 # SECURITY SETTINGS
 #=========================================================================
 

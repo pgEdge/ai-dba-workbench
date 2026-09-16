@@ -114,18 +114,26 @@ func teardownIntegration() {
 // schedulerConfig satisfies scheduler.Config and matches the fields
 // exposed by the production *main.Config wiring.
 type schedulerConfig struct {
-	datastoreMaxWait int
-	monitoredMaxWait int
+	datastoreMaxWait    int
+	monitoredMaxWait    int
+	maxConcurrentProbes int
+	startupJitter       int
 }
 
 func (c schedulerConfig) GetDatastorePoolMaxWaitSeconds() int { return c.datastoreMaxWait }
 func (c schedulerConfig) GetMonitoredPoolMaxWaitSeconds() int { return c.monitoredMaxWait }
+func (c schedulerConfig) GetMaxConcurrentProbes() int         { return c.maxConcurrentProbes }
+func (c schedulerConfig) GetStartupJitterSeconds() int        { return c.startupJitter }
 
 // integrationTestConfig builds a schedulerConfig with sane test defaults.
 func integrationTestConfig() schedulerConfig {
+	// Startup jitter is left at zero so the existing timing-sensitive
+	// tests still see the first execution promptly; the jittered path
+	// has dedicated tests of its own.
 	return schedulerConfig{
-		datastoreMaxWait: 10,
-		monitoredMaxWait: 10,
+		datastoreMaxWait:    10,
+		monitoredMaxWait:    10,
+		maxConcurrentProbes: 4,
 	}
 }
 
@@ -2291,5 +2299,209 @@ func TestSchedulerCalculateInitialDelay_DatastoreClosed(t *testing.T) {
 	delay := ps.calculateInitialDelay(probe, 1, "x", cfg)
 	if delay != 0 {
 		t.Errorf("expected 0 delay when datastore unavailable, got %v", delay)
+	}
+}
+
+// jitterTestConfig returns an integration config with an explicit
+// startup jitter ceiling and concurrency cap.
+func jitterTestConfig(jitterSeconds, maxConcurrent int) schedulerConfig {
+	return schedulerConfig{
+		datastoreMaxWait:    10,
+		monitoredMaxWait:    10,
+		maxConcurrentProbes: maxConcurrent,
+		startupJitter:       jitterSeconds,
+	}
+}
+
+// TestSchedulerScheduleProbeForConnection_StartupJitterShutdown covers
+// the shutdown branch of the startup-jitter wait: a probe with no
+// previous collection would once have executed immediately, and must
+// now be interruptible whilst it waits out its jitter.
+func TestSchedulerScheduleProbeForConnection_StartupJitterShutdown(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, jitterTestConfig(60, 4), testServerSecret)
+
+	connID := seedTestConnection(t, f, fmt.Sprintf("jitter-shut-%d", time.Now().UnixNano()))
+
+	conn, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	if _, err := conn.Exec(context.Background(),
+		"UPDATE connections SET is_monitored = TRUE WHERE id = $1", connID); err != nil {
+		f.ds.ReturnConnection(conn)
+		t.Fatalf("UPDATE: %v", err)
+	}
+	f.ds.ReturnConnection(conn)
+
+	// No seeded metric, so calculateInitialDelay returns 0 and the
+	// goroutine takes the jittered path.
+	cfg := &probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 3600,
+	}
+	probe := probes.NewPgConnectivityProbe(cfg)
+
+	ps.probesMutex.Lock()
+	ps.probesByConn[connID] = map[string]probes.MetricsProbe{probe.GetName(): probe}
+	ps.probesMutex.Unlock()
+
+	ps.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		ps.scheduleProbeForConnection(probe, connID)
+		close(done)
+	}()
+
+	// Close shutdownChan directly so that branch wins the select.
+	time.Sleep(100 * time.Millisecond)
+	close(ps.shutdownChan)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduleProbeForConnection did not exit during startup jitter")
+	}
+
+	ps.shutdownChan = make(chan struct{})
+	ps.Stop()
+}
+
+// TestSchedulerScheduleProbeForConnection_StartupJitterCanceled covers
+// the context-cancellation branch of the same wait.
+func TestSchedulerScheduleProbeForConnection_StartupJitterCanceled(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, jitterTestConfig(60, 4), testServerSecret)
+
+	connID := seedTestConnection(t, f, fmt.Sprintf("jitter-cancel-%d", time.Now().UnixNano()))
+
+	conn, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	if _, err := conn.Exec(context.Background(),
+		"UPDATE connections SET is_monitored = TRUE WHERE id = $1", connID); err != nil {
+		f.ds.ReturnConnection(conn)
+		t.Fatalf("UPDATE: %v", err)
+	}
+	f.ds.ReturnConnection(conn)
+
+	cfg := &probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 3600,
+	}
+	probe := probes.NewPgConnectivityProbe(cfg)
+
+	ps.probesMutex.Lock()
+	ps.probesByConn[connID] = map[string]probes.MetricsProbe{probe.GetName(): probe}
+	ps.probesMutex.Unlock()
+
+	ps.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		ps.scheduleProbeForConnection(probe, connID)
+		close(done)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	ps.cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduleProbeForConnection did not exit on context cancellation")
+	}
+
+	ps.Stop()
+}
+
+// TestSchedulerScheduleProbeForConnection_PastDueJittered confirms a
+// past-due probe still runs, but only after its startup jitter, rather
+// than joining a thundering herd at startup (issue #441).
+func TestSchedulerScheduleProbeForConnection_PastDueJittered(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, jitterTestConfig(1, 2), testServerSecret)
+
+	connID := seedTestConnection(t, f, fmt.Sprintf("jitter-run-%d", time.Now().UnixNano()))
+
+	conn, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection: %v", err)
+	}
+	pwParam := sql.NullString{String: f.passwordEncrypted, Valid: f.passwordEncrypted != ""}
+	if _, err := conn.Exec(context.Background(),
+		"UPDATE connections SET is_monitored = TRUE, host = $1, port = $2, database_name = $3, username = $4, sslmode = 'disable', password_encrypted = $5 WHERE id = $6",
+		f.host, f.port, f.dbName, f.username, pwParam, connID); err != nil {
+		f.ds.ReturnConnection(conn)
+		t.Fatalf("UPDATE: %v", err)
+	}
+	f.ds.ReturnConnection(conn)
+
+	cfg := &probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 3600,
+	}
+	probe := probes.NewPgConnectivityProbe(cfg)
+
+	// Seed an old metric so the probe is past due by hours.
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	conn2, err := f.ds.GetConnection()
+	if err != nil {
+		t.Fatalf("GetConnection 2: %v", err)
+	}
+	if err := probe.EnsurePartition(context.Background(), conn2, twoHoursAgo); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("EnsurePartition: %v", err)
+	}
+	if err := probe.EnsurePartition(context.Background(), conn2, time.Now()); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("EnsurePartition now: %v", err)
+	}
+	if _, err := conn2.Exec(context.Background(), `
+		INSERT INTO metrics.pg_connectivity (connection_id, collected_at, response_time_ms)
+		VALUES ($1, $2, 1.0)
+	`, connID, twoHoursAgo); err != nil {
+		f.ds.ReturnConnection(conn2)
+		t.Fatalf("seed metric: %v", err)
+	}
+	f.ds.ReturnConnection(conn2)
+
+	ps.probesMutex.Lock()
+	ps.probesByConn[connID] = map[string]probes.MetricsProbe{probe.GetName(): probe}
+	ps.probesMutex.Unlock()
+
+	started := time.Now()
+	ps.wg.Add(1)
+	go ps.scheduleProbeForConnection(probe, connID)
+
+	// The jitter window is one second, so the fresh row should appear
+	// within a few seconds.
+	deadline := time.Now().Add(10 * time.Second)
+	var collected bool
+	for time.Now().Before(deadline) {
+		conn3, err := f.ds.GetConnection()
+		if err != nil {
+			t.Fatalf("GetConnection 3: %v", err)
+		}
+		var count int
+		err = conn3.QueryRow(context.Background(), `
+			SELECT COUNT(*) FROM metrics.pg_connectivity
+			WHERE connection_id = $1 AND collected_at > $2
+		`, connID, started).Scan(&count)
+		f.ds.ReturnConnection(conn3)
+		if err != nil {
+			t.Fatalf("count metrics: %v", err)
+		}
+		if count > 0 {
+			collected = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	ps.Stop()
+
+	if !collected {
+		t.Fatal("past-due probe never executed after its startup jitter")
 	}
 }

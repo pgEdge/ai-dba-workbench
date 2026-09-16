@@ -20,4 +20,13 @@ pool:
   # pg_stat_statements can take longer to complete.
   monitored_max_wait_seconds: 120
 
+scheduler:
+  # Maximum probe executions running concurrently across all monitored
+  # connections.
+  max_concurrent_probes: 8
+  # Upper bound (seconds) on the random delay applied before the first
+  # execution of a probe that is past due or has never run, so a restart
+  # does not fire every probe at once. Zero disables the jitter.
+  startup_jitter_seconds: 60
+
 secret_file: /etc/pgedge/ai-dba.secret

@@ -18,6 +18,9 @@ Before implementing or advising, consult `.claude/golang-expert/`:
   including filtering rows orphaned by a deleted connection
 - `partitioning.md` - The UTC invariant governing weekly partition
   names and range boundaries under the `metrics` schema
+- `probe-scheduling.md` - The collector scheduler's startup jitter,
+  ticker realignment and probe concurrency cap, and the config that
+  drives them
 - `rbac-patterns.md` - The three canonical authorization-gate models
   for HTTP handlers, and the tests that lock them in
 - `testing-strategy.md` - Repo-specific Go testing conventions, Makefile

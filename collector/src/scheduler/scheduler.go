@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -39,17 +40,46 @@ type ProbeScheduler struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	configReloader *time.Ticker
+
+	// probeSlots is a counting semaphore bounding how many probe
+	// executions run concurrently. Every execution holds a slot for its
+	// whole duration, so the collector's peak footprint is governed by
+	// scheduler.max_concurrent_probes rather than by the number of
+	// monitored connections multiplied by their probes.
+	probeSlots chan struct{}
+
+	// startupJitter bounds the random delay applied before the first
+	// execution of a past-due probe.
+	startupJitter time.Duration
 }
+
+// defaultMaxConcurrentProbes is used when the supplied configuration
+// reports a non-positive cap, which would otherwise deadlock every
+// probe on a zero-capacity semaphore.
+const defaultMaxConcurrentProbes = 8
 
 // Config interface defines the minimal configuration needed by ProbeScheduler
 type Config interface {
 	GetDatastorePoolMaxWaitSeconds() int
 	GetMonitoredPoolMaxWaitSeconds() int
+	GetMaxConcurrentProbes() int
+	GetStartupJitterSeconds() int
 }
 
 // NewProbeScheduler creates a new probe scheduler
 func NewProbeScheduler(datastore *database.Datastore, poolManager *database.MonitoredConnectionPoolManager, config Config, serverSecret string) *ProbeScheduler {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	maxConcurrent := config.GetMaxConcurrentProbes()
+	if maxConcurrent <= 0 {
+		maxConcurrent = defaultMaxConcurrentProbes
+	}
+
+	jitter := time.Duration(config.GetStartupJitterSeconds()) * time.Second
+	if jitter < 0 {
+		jitter = 0
+	}
+
 	return &ProbeScheduler{
 		datastore:    datastore,
 		poolManager:  poolManager,
@@ -59,7 +89,76 @@ func NewProbeScheduler(datastore *database.Datastore, poolManager *database.Moni
 		shutdownChan: make(chan struct{}),
 		ctx:          ctx,
 		cancel:       cancel,
+
+		probeSlots:    make(chan struct{}, maxConcurrent),
+		startupJitter: jitter,
 	}
+}
+
+// acquireProbeSlot takes a slot from the concurrency semaphore,
+// returning false if the scheduler is shutting down before one becomes
+// free so that Stop is never delayed by a queued probe.
+func (ps *ProbeScheduler) acquireProbeSlot() bool {
+	// Prefer shutdown over an immediately available slot, so a probe
+	// queued at shutdown does not start a fresh execution.
+	select {
+	case <-ps.shutdownChan:
+		return false
+	case <-ps.ctx.Done():
+		return false
+	default:
+	}
+
+	select {
+	case ps.probeSlots <- struct{}{}:
+		return true
+	case <-ps.shutdownChan:
+		return false
+	case <-ps.ctx.Done():
+		return false
+	}
+}
+
+// releaseProbeSlot returns a slot to the concurrency semaphore.
+func (ps *ProbeScheduler) releaseProbeSlot() {
+	select {
+	case <-ps.probeSlots:
+	default:
+	}
+}
+
+// initialStartupJitter returns the random delay to apply before the
+// first execution of a probe that is past due, has never run, or whose
+// last collection time could not be determined. The delay is drawn
+// uniformly from [0, min(interval, startupJitter)), so a 30-second
+// probe still starts within 30 seconds whilst an hourly probe starts
+// within the configured jitter window.
+func (ps *ProbeScheduler) initialStartupJitter(interval time.Duration) time.Duration {
+	window := ps.startupJitter
+	if interval > 0 && interval < window {
+		window = interval
+	}
+	if window <= 0 {
+		return 0
+	}
+	// math/rand is deliberate: this jitter de-clusters probe startup and
+	// carries no security weight, so a cryptographic source would buy
+	// nothing.
+	return time.Duration(rand.Int64N(int64(window))) //nolint:gosec // G404: scheduling jitter, not security
+}
+
+// restartTicker stops, drains and restarts a ticker so that a tick
+// buffered whilst the goroutine waited out its initial delay cannot
+// fire immediately after the first execution. Without this the phase
+// offset gained from the startup jitter would be lost straight away and
+// the probes would re-cluster.
+func restartTicker(ticker *time.Ticker, interval time.Duration) {
+	ticker.Stop()
+	select {
+	case <-ticker.C:
+	default:
+	}
+	ticker.Reset(interval)
 }
 
 // Start begins the probe scheduling loop
@@ -248,7 +347,8 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 	defer ps.wg.Done()
 
 	config := probe.GetConfig()
-	ticker := time.NewTicker(time.Duration(config.CollectionIntervalSeconds) * time.Second)
+	interval := time.Duration(config.CollectionIntervalSeconds) * time.Second
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Get connection info
@@ -278,13 +378,37 @@ func (ps *ProbeScheduler) scheduleProbeForConnection(probe probes.MetricsProbe, 
 			ps.executeProbeForConnection(ps.ctx, probe, conn)
 		}
 	} else {
-		// No delay needed, run immediately
+		// The probe is past due, has never run, or its last collection
+		// time could not be determined. Rather than firing immediately,
+		// which on a restart would start every probe on every connection
+		// at once, wait out a per-probe random jitter.
+		jitter := ps.initialStartupJitter(interval)
 		if initialDelay < 0 {
-			logger.Infof("Probe %s on %s is past due by %v, executing immediately",
-				config.Name, conn.Name, -initialDelay)
+			logger.Infof("Probe %s on %s is past due by %v, first execution jittered by %v",
+				config.Name, conn.Name, -initialDelay, jitter)
+		} else {
+			logger.Infof("Probe %s on %s has no usable last collection time, first execution jittered by %v",
+				config.Name, conn.Name, jitter)
 		}
+
+		if jitter > 0 {
+			select {
+			case <-ps.shutdownChan:
+				logger.Infof("Stopping probe scheduler for %s on %s during startup jitter", config.Name, conn.Name)
+				return
+			case <-ps.ctx.Done():
+				logger.Infof("Context canceled, stopping probe scheduler for %s on %s during startup jitter", config.Name, conn.Name)
+				return
+			case <-time.After(jitter):
+			}
+		}
+
 		ps.executeProbeForConnection(ps.ctx, probe, conn)
 	}
+
+	// Realign the ticker with the first execution: it was created before
+	// the initial wait, so a tick may already be buffered.
+	restartTicker(ticker, interval)
 
 	for {
 		select {
@@ -373,6 +497,14 @@ func classifyProbeResult(metrics []map[string]any, err error) extensionStatus {
 // executeProbeForConnection executes a probe against a single monitored connection
 func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) {
 	config := probe.GetConfig()
+
+	// Bound overall probe concurrency. Acquisition respects shutdown, so
+	// a backlog of queued probes cannot hold up Stop.
+	if !ps.acquireProbeSlot() {
+		logger.Infof("Skipping probe %s on %s: scheduler is shutting down", config.Name, conn.Name)
+		return
+	}
+	defer ps.releaseProbeSlot()
 	// Check if connection details have been updated since the pool was created
 	if ps.poolManager.CheckConnectionUpdated(conn.ID, conn.UpdatedAt) {
 		logger.Infof("Connection %d (%s) was updated, invalidated cached pool", conn.ID, conn.Name)

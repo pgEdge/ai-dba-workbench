@@ -28,6 +28,9 @@ type Config struct {
 	// Connection pool settings
 	Pool PoolConfig `yaml:"pool"`
 
+	// Probe scheduling settings
+	Scheduler SchedulerConfig `yaml:"scheduler"`
+
 	// Path to file containing server secret for encryption.
 	// When unset, LoadSecret searches the per-user config directory
 	// (e.g. ~/.config/pgedge/ai-dba-collector.secret) first and
@@ -51,6 +54,21 @@ type PoolConfig struct {
 	MonitoredMaxWaitSeconds int `yaml:"monitored_max_wait_seconds"` // Max wait time to acquire a connection
 }
 
+// SchedulerConfig holds probe scheduling settings
+type SchedulerConfig struct {
+	// MaxConcurrentProbes caps how many probe executions may run at the
+	// same time across every monitored connection, so that the worst
+	// case does not scale with the number of connections.
+	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
+
+	// StartupJitterSeconds bounds the random delay applied before the
+	// first execution of a probe that is past due (or has never run), so
+	// that a restart does not fire every probe at once. The delay is
+	// drawn from [0, min(probe interval, StartupJitterSeconds)). Zero
+	// disables jitter.
+	StartupJitterSeconds int `yaml:"startup_jitter_seconds"`
+}
+
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
@@ -72,6 +90,10 @@ func NewConfig() *Config {
 			MaxConnectionsPerServer: 3,
 			MonitoredMaxIdleSeconds: 300,
 			MonitoredMaxWaitSeconds: 120,
+		},
+		Scheduler: SchedulerConfig{
+			MaxConcurrentProbes:  8,
+			StartupJitterSeconds: 60,
 		},
 	}
 }
@@ -228,6 +250,12 @@ func (c *Config) Validate() error {
 	if c.Pool.MonitoredMaxWaitSeconds <= 0 {
 		return fmt.Errorf("pool.monitored_max_wait_seconds must be greater than 0")
 	}
+	if c.Scheduler.MaxConcurrentProbes <= 0 {
+		return fmt.Errorf("scheduler.max_concurrent_probes must be greater than 0")
+	}
+	if c.Scheduler.StartupJitterSeconds < 0 {
+		return fmt.Errorf("scheduler.startup_jitter_seconds must be non-negative")
+	}
 	return nil
 }
 
@@ -246,6 +274,8 @@ func (c *Config) GetDatastorePoolMaxConnections() int { return c.Pool.DatastoreM
 func (c *Config) GetDatastorePoolMaxIdleSeconds() int { return c.Pool.DatastoreMaxIdleSeconds }
 func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.Pool.DatastoreMaxWaitSeconds }
 func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredMaxWaitSeconds }
+func (c *Config) GetMaxConcurrentProbes() int         { return c.Scheduler.MaxConcurrentProbes }
+func (c *Config) GetStartupJitterSeconds() int        { return c.Scheduler.StartupJitterSeconds }
 
 // GetDefaultConfigPath returns the path to an existing default
 // config file, or "" if none was found. Searches the per-user

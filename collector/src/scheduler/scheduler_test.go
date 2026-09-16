@@ -17,17 +17,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pgedge/ai-workbench/collector/src/database"
 	"github.com/pgedge/ai-workbench/collector/src/probes"
 )
 
 // testConfig satisfies the scheduler.Config interface for unit tests.
 type testConfig struct {
-	datastoreMaxWait int
-	monitoredMaxWait int
+	datastoreMaxWait    int
+	monitoredMaxWait    int
+	maxConcurrentProbes int
+	startupJitter       int
 }
 
 func (c testConfig) GetDatastorePoolMaxWaitSeconds() int { return c.datastoreMaxWait }
 func (c testConfig) GetMonitoredPoolMaxWaitSeconds() int { return c.monitoredMaxWait }
+func (c testConfig) GetMaxConcurrentProbes() int         { return c.maxConcurrentProbes }
+func (c testConfig) GetStartupJitterSeconds() int        { return c.startupJitter }
 
 func TestIsClosedPoolError(t *testing.T) {
 	tests := []struct {
@@ -289,4 +294,256 @@ func TestProbeScheduler_ProbesMapConcurrency(t *testing.T) {
 func TestTestConfigInterface(t *testing.T) {
 	var _ Config = testConfig{}
 	_ = context.Background // keep import
+}
+
+// TestInitialStartupJitter_Bounds confirms the jitter window is the
+// smaller of the probe interval and the configured jitter ceiling, and
+// that a non-positive window disables jitter entirely.
+func TestInitialStartupJitter_Bounds(t *testing.T) {
+	tests := []struct {
+		name          string
+		jitterSeconds int
+		interval      time.Duration
+		wantMax       time.Duration // exclusive upper bound; 0 means "always zero"
+	}{
+		{"interval shorter than ceiling", 60, 30 * time.Second, 30 * time.Second},
+		{"ceiling shorter than interval", 60, time.Hour, 60 * time.Second},
+		{"jitter disabled", 0, 30 * time.Second, 0},
+		{"negative jitter treated as disabled", -5, 30 * time.Second, 0},
+		{"zero interval falls back to ceiling", 10, 0, 10 * time.Second},
+		{"negative interval falls back to ceiling", 10, -time.Second, 10 * time.Second},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := NewProbeScheduler(nil, nil, testConfig{startupJitter: tc.jitterSeconds}, "")
+
+			for i := 0; i < 200; i++ {
+				got := ps.initialStartupJitter(tc.interval)
+				if got < 0 {
+					t.Fatalf("jitter %v is negative", got)
+				}
+				if tc.wantMax == 0 {
+					if got != 0 {
+						t.Fatalf("jitter %v, want 0 when disabled", got)
+					}
+					continue
+				}
+				if got >= tc.wantMax {
+					t.Fatalf("jitter %v is not below %v", got, tc.wantMax)
+				}
+			}
+		})
+	}
+}
+
+// TestInitialStartupJitter_Spreads checks the draws actually vary, which
+// is the whole point: a constant would reproduce the thundering herd.
+func TestInitialStartupJitter_Spreads(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{startupJitter: 60}, "")
+
+	seen := make(map[time.Duration]struct{})
+	for i := 0; i < 100; i++ {
+		seen[ps.initialStartupJitter(time.Minute)] = struct{}{}
+	}
+	if len(seen) < 10 {
+		t.Errorf("expected varied jitter values, got only %d distinct draws", len(seen))
+	}
+}
+
+// TestProbeSlots_DefaultCapacity verifies a non-positive configured cap
+// falls back to the built-in default rather than deadlocking on a
+// zero-capacity semaphore.
+func TestProbeSlots_DefaultCapacity(t *testing.T) {
+	for _, configured := range []int{0, -1} {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: configured}, "")
+		if got := cap(ps.probeSlots); got != defaultMaxConcurrentProbes {
+			t.Errorf("cap for configured %d: got %d, want %d", configured, got, defaultMaxConcurrentProbes)
+		}
+	}
+
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 3}, "")
+	if got := cap(ps.probeSlots); got != 3 {
+		t.Errorf("cap: got %d, want 3", got)
+	}
+}
+
+// TestAcquireProbeSlot_CapEnforced confirms the semaphore blocks once
+// the cap is reached, and admits the next waiter after a release.
+func TestAcquireProbeSlot_CapEnforced(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2}, "")
+
+	for i := 0; i < 2; i++ {
+		if !ps.acquireProbeSlot() {
+			t.Fatalf("acquisition %d should have succeeded", i+1)
+		}
+	}
+
+	acquired := make(chan bool, 1)
+	go func() { acquired <- ps.acquireProbeSlot() }()
+
+	select {
+	case <-acquired:
+		t.Fatal("third acquisition should have blocked at the cap")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	ps.releaseProbeSlot()
+
+	select {
+	case ok := <-acquired:
+		if !ok {
+			t.Fatal("acquisition after release returned false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("acquisition did not proceed after a slot was released")
+	}
+}
+
+// TestAcquireProbeSlot_ShutdownWins covers both shutdown paths: a
+// scheduler already stopping refuses a free slot, and a goroutine
+// queued behind a full semaphore is released by shutdown rather than
+// holding up Stop.
+func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
+	t.Run("already shut down", func(t *testing.T) {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2}, "")
+		close(ps.shutdownChan)
+		if ps.acquireProbeSlot() {
+			t.Error("acquired a slot after shutdown")
+		}
+	})
+
+	t.Run("context canceled", func(t *testing.T) {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2}, "")
+		ps.cancel()
+		if ps.acquireProbeSlot() {
+			t.Error("acquired a slot after context cancellation")
+		}
+	})
+
+	t.Run("queued waiter released by shutdown", func(t *testing.T) {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
+		if !ps.acquireProbeSlot() {
+			t.Fatal("first acquisition failed")
+		}
+
+		acquired := make(chan bool, 1)
+		go func() { acquired <- ps.acquireProbeSlot() }()
+
+		time.Sleep(20 * time.Millisecond)
+		close(ps.shutdownChan)
+
+		select {
+		case ok := <-acquired:
+			if ok {
+				t.Error("queued waiter acquired a slot during shutdown")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("queued waiter was not released by shutdown")
+		}
+	})
+
+	t.Run("queued waiter released by context cancel", func(t *testing.T) {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
+		if !ps.acquireProbeSlot() {
+			t.Fatal("first acquisition failed")
+		}
+
+		acquired := make(chan bool, 1)
+		go func() { acquired <- ps.acquireProbeSlot() }()
+
+		time.Sleep(20 * time.Millisecond)
+		ps.cancel()
+
+		select {
+		case ok := <-acquired:
+			if ok {
+				t.Error("queued waiter acquired a slot during cancellation")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("queued waiter was not released by cancellation")
+		}
+	})
+}
+
+// TestReleaseProbeSlot_NoUnderflow confirms releasing an unheld slot is
+// a no-op rather than a block or a panic.
+func TestReleaseProbeSlot_NoUnderflow(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
+	ps.releaseProbeSlot()
+	if len(ps.probeSlots) != 0 {
+		t.Errorf("semaphore depth: got %d, want 0", len(ps.probeSlots))
+	}
+	if !ps.acquireProbeSlot() {
+		t.Error("expected to acquire a slot after a spurious release")
+	}
+}
+
+// TestRestartTicker_RealignsPhase is the regression test for the
+// subtlety that makes the jitter worthwhile: the ticker is created
+// before the initial wait, so a tick that came due during that wait
+// would otherwise fire immediately after the first execution and undo
+// the de-clustering. After the restart the next tick must be a full
+// interval away.
+func TestRestartTicker_RealignsPhase(t *testing.T) {
+	const interval = 200 * time.Millisecond
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Simulate waiting out a startup jitter longer than one interval, so
+	// a tick is already due by the time we realign.
+	time.Sleep(interval + 50*time.Millisecond)
+
+	restartTicker(ticker, interval)
+	start := time.Now()
+
+	select {
+	case <-ticker.C:
+		elapsed := time.Since(start)
+		if elapsed < interval/2 {
+			t.Errorf("tick arrived after %v, too soon after the restart", elapsed)
+		}
+	case <-time.After(3 * interval):
+		t.Fatal("ticker did not fire after being restarted")
+	}
+}
+
+// TestExecuteProbeForConnection_CapAndShutdown proves the concurrency
+// cap wraps every execution, not just the startup burst: with the only
+// slot held, a second execution waits, and shutdown releases it without
+// it ever reaching the datastore (which is nil here, so any attempt
+// would panic).
+func TestExecuteProbeForConnection_CapAndShutdown(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
+
+	probe := probes.NewPgConnectivityProbe(&probes.ProbeConfig{
+		Name:                      probes.ProbeNamePgConnectivity,
+		CollectionIntervalSeconds: 30,
+	})
+	conn := database.MonitoredConnection{ID: 1, Name: "test-connection"}
+
+	if !ps.acquireProbeSlot() {
+		t.Fatal("failed to take the only slot")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		ps.executeProbeForConnection(ps.ctx, probe, conn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("execution proceeded whilst the cap was fully taken")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ps.shutdownChan)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("execution did not abandon its wait at shutdown")
+	}
 }

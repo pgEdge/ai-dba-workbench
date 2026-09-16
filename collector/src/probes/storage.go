@@ -16,7 +16,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgedge/ai-workbench/pkg/logger"
 	"github.com/pgedge/ai-workbench/pkg/rollback"
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 )
@@ -82,13 +81,7 @@ func StoreMetrics(ctx context.Context, conn *pgxpool.Conn, tableName string, col
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			if rerr := rollback.Tx(ctx, txn); rerr != nil {
-				logger.Errorf("Error rolling back transaction: %v", rerr)
-			}
-		}
-	}()
+	defer rollback.Tx(ctx, txn) //nolint:errcheck // no-op after commit
 
 	// Build multi-value INSERT statement
 	// INSERT INTO table (col1, col2, ...) VALUES ($1, $2, ...), ($N+1, $N+2, ...), ...

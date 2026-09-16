@@ -36,9 +36,14 @@ defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 with `Timeout` fixed at five seconds. The timeout starts when the
 helper runs, so a deferred `rollback.Tx` is correct however long the
 transaction lasts; never build the rollback context at `Begin` time.
-`Tx` returns the underlying error, so inline error paths that log the
-rollback failure (the collector's `Migrate` and `StoreMetrics`) keep
-doing so from the returned value.
+`Tx` returns the underlying error, so an inline error path that wants
+to log a failed rollback can still do so from the returned value; the
+collector's `Migrate` in `collector/src/database/schema.go` is the one
+remaining caller that does. `StoreMetrics` in
+`collector/src/probes/storage.go` used to as well, but its guard tested
+an `err` that every later failure path shadowed, so the rollback never
+ran; issue #424 replaced the whole block with the deferred one-liner
+above.
 
 Savepoint unwinds use `rollback.ToSavepoint(ctx, tx, name)`, which
 issues `ROLLBACK TO SAVEPOINT <name>` on the same bounded context and

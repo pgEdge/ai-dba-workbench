@@ -106,6 +106,22 @@ jobs:
                     sleep 2
                   done
 
+            # Service containers take no command line, so the library the
+            # pg_stat_statements probe tests need is preloaded by editing
+            # the server configuration and restarting the container;
+            # without it those tests skip and the probe goes untested.
+            - name: Preload pg_stat_statements
+              env:
+                  PGPASSWORD: postgres
+              run: |
+                  psql -h localhost -U postgres -d postgres -c \
+                    "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'"
+                  docker restart ${{ job.services.postgres.id }}
+                  until pg_isready -h localhost -p 5432 -U postgres; do
+                    echo "Waiting for PostgreSQL to restart..."
+                    sleep 2
+                  done
+
             - name: Run tests with coverage
               working-directory: collector
               env:

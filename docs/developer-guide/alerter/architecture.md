@@ -169,11 +169,15 @@ configurable interval, defaulting to one hour. The calculator
 generates three types of baselines:
 
 - Global baselines aggregate all historical data.
-- Hourly baselines capture patterns for each hour of the day.
-- Daily baselines capture patterns for each day of the week.
+- Hourly baselines capture patterns for each UTC hour of the day.
+- Daily baselines capture patterns for each UTC day of the week.
 
 The calculator uses a configurable lookback period, defaulting
 to 7 days, to gather historical data for baseline calculations.
+Baselines are written per connection and, for per-database
+metrics, per database. Metrics whose registry entry has no
+historical query are skipped, and any leftover baseline rows for
+them are deleted at the start of each cycle.
 
 ### Anomaly Detector
 
@@ -185,9 +189,14 @@ The anomaly detector implements a tiered detection system:
 - Tier 3 uses LLM classification to determine alert or suppress
   decisions.
 
-The detector creates anomaly candidates that progress through
-each tier. The final decision determines whether to create an
-alert or suppress the anomaly as a false positive.
+Tier 1 scores each value against the baseline for the same
+connection and database, preferring the hourly baseline for the
+current UTC hour, then the daily baseline for the current UTC
+weekday, then the global baseline, and taking the first of those
+that has passed its warmup gate. The detector creates anomaly
+candidates that progress through each tier. The final decision
+determines whether to create an alert or suppress the anomaly as
+a false positive.
 
 ### Blackout Scheduler
 

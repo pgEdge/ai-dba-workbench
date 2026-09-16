@@ -42,11 +42,14 @@ the connection's own.
 
 `probes.ErrExtensionNotInstalled` is the explicit signal that a
 required extension is missing in the database being probed. It is not
-a failure: `executeProbeForAllDatabases` and
-`executeProbeForServerWide` in `collector/src/scheduler/scheduler.go`
-log it at `Debugf` and record the observation, whereas every other
-`Execute` error is logged at `Errorf` so a probe that collects nothing
-is visible at default verbosity.
+a failure: the database-scoped helpers
+`executeProbeOnDefaultDatabase` and `executeProbeOnDatabase`, which
+`executeProbeForAllDatabases` drives, along with
+`executeProbeForServerWide`, all in
+`collector/src/scheduler/scheduler.go`, log it at `Debugf` and record
+the observation, whereas every other `Execute` error is logged at
+`Errorf` so a probe that collects nothing is visible at default
+verbosity.
 
 The scheduler classifies each `Execute` outcome with
 `classifyProbeResult` and merges the observations across databases

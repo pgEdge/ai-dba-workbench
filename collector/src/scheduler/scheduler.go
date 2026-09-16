@@ -539,100 +539,24 @@ func isClosedPoolError(err error) bool {
 func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection) ([]map[string]any, []string, bool, string, extensionStatus) {
 	config := probe.GetConfig()
 	var allMetrics []map[string]any
-	var databases []string
 	extStatus := extensionUnknown
 
-	// Check if context is already canceled
-	if ctx.Err() != nil {
-		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
-			config.Name, conn.Name)
+	// Acquire a connection to the monitored server, detect its PostgreSQL
+	// version and list the databases the probe should visit.
+	monitoredDB, pgVersion, databases, connFailed, errMsg, ok := ps.prepareDatabaseScopedProbe(ctx, config, conn)
+	if !ok {
+		return allMetrics, databases, connFailed, errMsg, extStatus
+	}
+
+	// Execute the probe on the database the existing connection is already
+	// attached to, which also returns that connection to the pool.
+	defaultMetrics, currentDB, defaultStatus, ok := ps.executeProbeOnDefaultDatabase(
+		ctx, probe, conn, monitoredDB, databases, pgVersion)
+	extStatus = extStatus.merge(defaultStatus)
+	allMetrics = append(allMetrics, defaultMetrics...)
+	if !ok {
 		return allMetrics, databases, false, "", extStatus
 	}
-
-	// Get connection to query pg_database (connects to default database)
-	monitoredDB, err := ps.poolManager.GetConnection(ctx, conn, ps.serverSecret)
-	if err != nil {
-		// A "closed pool" error means another concurrent probe already
-		// detected a real connection failure and called RemovePool. Do
-		// not report this as a connection error; the original probe
-		// already recorded the meaningful error message.
-		if isClosedPoolError(err) {
-			logger.Debugf("Skipping closed pool error for probe %s on %s (another probe already reported the connection failure)",
-				config.Name, conn.Name)
-			return allMetrics, databases, false, "", extStatus
-		}
-
-		// Check if this was a timeout/cancellation
-		if ctx.Err() != nil {
-			logger.Errorf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
-				conn.Name, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
-		} else {
-			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
-				conn.Name, config.Name, err)
-		}
-		errMsg := fmt.Sprintf("connection error: %v", err)
-		return allMetrics, databases, true, errMsg, extStatus
-	}
-
-	// Detect and cache PostgreSQL version
-	pgVersion, err := ps.poolManager.DetectAndCacheVersion(ctx, conn.ID, monitoredDB)
-	if err != nil {
-		logger.Debugf("Warning: failed to detect PostgreSQL version for %s: %v", conn.Name, err)
-		pgVersion = 0 // Use 0 to indicate unknown version
-	}
-
-	// Query pg_database to get list of databases
-	databases, err = ps.getDatabaseList(ctx, monitoredDB)
-	if err != nil {
-		// Return connection before returning
-		ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
-
-		// Check if this was a timeout/cancellation
-		if ctx.Err() != nil {
-			logger.Errorf("Error getting database list for probe %s on %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
-				config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
-		} else {
-			logger.Errorf("Error getting database list for probe %s on connection %s: %v",
-				config.Name, conn.Name, err)
-		}
-		return allMetrics, databases, false, "", extStatus
-	}
-
-	// Determine which database the existing connection is actually connected to.
-	// The default connection may not match databases[0] (the sorted list), so we
-	// must query current_database() to avoid labeling results with the wrong name.
-	var currentDB string
-	if len(databases) > 0 {
-		err = monitoredDB.QueryRow(ctx, "SELECT current_database()").Scan(&currentDB)
-		if err != nil {
-			ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
-			logger.Errorf("Error querying current_database() for probe %s on %s: %v",
-				config.Name, conn.Name, err)
-			return allMetrics, databases, false, "", extStatus
-		}
-
-		// Execute probe on the current database using the existing connection
-		metrics, err := probe.Execute(ctx, conn.Name, monitoredDB, pgVersion)
-		extStatus = extStatus.merge(classifyProbeResult(metrics, err))
-		if errors.Is(err, probes.ErrExtensionNotInstalled) {
-			// Not a failure: the extension simply is not installed in
-			// this database, and the scheduler records that separately.
-			logger.Debugf("Probe %s skipped on %s/%s: %v",
-				config.Name, conn.Name, currentDB, err)
-		} else if err != nil {
-			logger.Errorf("Error executing probe %s on default database %s/%s: %v",
-				config.Name, conn.Name, currentDB, err)
-		} else if len(metrics) > 0 {
-			// Add database name to metrics
-			for i := range metrics {
-				metrics[i]["_database_name"] = currentDB
-			}
-			allMetrics = append(allMetrics, metrics...)
-		}
-	}
-
-	// Return the connection now that we're done with the default database
-	ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
 
 	// Execute probe for remaining databases (skip the one we already did)
 	for _, dbName := range databases {
@@ -647,59 +571,194 @@ func (ps *ProbeScheduler) executeProbeForAllDatabases(ctx context.Context, probe
 			break
 		}
 
-		// Get connection for this specific database
-		db, err := ps.poolManager.GetConnectionForDatabase(ctx, conn, dbName, ps.serverSecret)
-		if err != nil {
-			// Skip closed pool errors; the original probe already
-			// reported the real connection failure.
-			if isClosedPoolError(err) {
-				logger.Debugf("Skipping closed pool error for probe %s on %s/%s (another probe already reported the connection failure)",
-					config.Name, conn.Name, dbName)
-				continue
-			}
-
-			if ctx.Err() != nil {
-				logger.Errorf("Error getting connection to %s/%s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
-					conn.Name, dbName, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
-			} else {
-				logger.Errorf("Error getting connection to %s/%s for probe %s: %v",
-					conn.Name, dbName, config.Name, err)
-			}
-			continue // Skip this database but continue with others
-		}
-
-		// Execute probe
-		metrics, err := probe.Execute(ctx, conn.Name, db, pgVersion)
-
-		// Return the connection immediately
-		ps.poolManager.ReturnConnection(conn.ID, db)
-
-		extStatus = extStatus.merge(classifyProbeResult(metrics, err))
-
-		if errors.Is(err, probes.ErrExtensionNotInstalled) {
-			// Not a failure: the extension simply is not installed in
-			// this database, and the scheduler records that separately.
-			logger.Debugf("Probe %s skipped on %s/%s: %v",
-				config.Name, conn.Name, dbName, err)
-			continue
-		}
-
-		if err != nil {
-			logger.Errorf("Error executing probe %s on database %s/%s: %v",
-				config.Name, conn.Name, dbName, err)
-			continue // Skip this database but continue with others
-		}
-
-		if len(metrics) > 0 {
-			// Add database name to metrics
-			for j := range metrics {
-				metrics[j]["_database_name"] = dbName
-			}
-			allMetrics = append(allMetrics, metrics...)
-		}
+		metrics, status := ps.executeProbeOnDatabase(ctx, probe, conn, dbName, pgVersion)
+		extStatus = extStatus.merge(status)
+		allMetrics = append(allMetrics, metrics...)
 	}
 
 	return allMetrics, databases, false, "", extStatus
+}
+
+// prepareDatabaseScopedProbe acquires a connection to a monitored server
+// for a database-scoped probe, detects and caches the server's PostgreSQL
+// version, and lists the databases the probe should visit. It returns the
+// connection (still held by the caller, which must return it to the pool),
+// the detected version, the database list, whether the connection failed
+// along with the message describing it, and whether the caller should
+// carry on. When it reports that the caller should not carry on, any
+// connection it acquired has already been returned to the pool.
+func (ps *ProbeScheduler) prepareDatabaseScopedProbe(ctx context.Context, config *probes.ProbeConfig, conn database.MonitoredConnection) (*pgxpool.Conn, int, []string, bool, string, bool) {
+	// Check if context is already canceled
+	if ctx.Err() != nil {
+		logger.Errorf("Error getting connection for probe %s on %s: context already canceled",
+			config.Name, conn.Name)
+		return nil, 0, nil, false, "", false
+	}
+
+	// Get connection to query pg_database (connects to default database)
+	monitoredDB, err := ps.poolManager.GetConnection(ctx, conn, ps.serverSecret)
+	if err != nil {
+		// A "closed pool" error means another concurrent probe already
+		// detected a real connection failure and called RemovePool. Do
+		// not report this as a connection error; the original probe
+		// already recorded the meaningful error message.
+		if isClosedPoolError(err) {
+			logger.Debugf("Skipping closed pool error for probe %s on %s (another probe already reported the connection failure)",
+				config.Name, conn.Name)
+			return nil, 0, nil, false, "", false
+		}
+
+		// Check if this was a timeout/cancellation
+		if ctx.Err() != nil {
+			logger.Errorf("Error getting connection to %s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+				conn.Name, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
+		} else {
+			logger.Errorf("Error getting connection to monitored database %s for probe %s: %v",
+				conn.Name, config.Name, err)
+		}
+		return nil, 0, nil, true, fmt.Sprintf("connection error: %v", err), false
+	}
+
+	// Detect and cache PostgreSQL version
+	pgVersion, err := ps.poolManager.DetectAndCacheVersion(ctx, conn.ID, monitoredDB)
+	if err != nil {
+		logger.Debugf("Warning: failed to detect PostgreSQL version for %s: %v", conn.Name, err)
+		pgVersion = 0 // Use 0 to indicate unknown version
+	}
+
+	// Query pg_database to get list of databases
+	databases, err := ps.getDatabaseList(ctx, monitoredDB)
+	if err != nil {
+		// Return connection before returning
+		ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
+
+		// Check if this was a timeout/cancellation
+		if ctx.Err() != nil {
+			logger.Errorf("Error getting database list for probe %s on %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+				config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
+		} else {
+			logger.Errorf("Error getting database list for probe %s on connection %s: %v",
+				config.Name, conn.Name, err)
+		}
+		return nil, 0, databases, false, "", false
+	}
+
+	return monitoredDB, pgVersion, databases, false, "", true
+}
+
+// executeProbeOnDefaultDatabase executes a database-scoped probe against
+// the database the supplied connection is already attached to, and always
+// returns that connection to the pool before it finishes. The default
+// connection may not match databases[0] (the sorted list), so
+// current_database() is queried to avoid labeling results with the wrong
+// name. It returns the metrics collected, the name of that database, what
+// the execution learned about the probe's required extension, and whether
+// the caller should carry on with the remaining databases.
+func (ps *ProbeScheduler) executeProbeOnDefaultDatabase(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection, monitoredDB *pgxpool.Conn, databases []string, pgVersion int) ([]map[string]any, string, extensionStatus, bool) {
+	config := probe.GetConfig()
+	var allMetrics []map[string]any
+	var currentDB string
+	extStatus := extensionUnknown
+
+	if len(databases) == 0 {
+		ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
+		return allMetrics, currentDB, extStatus, true
+	}
+
+	if err := monitoredDB.QueryRow(ctx, "SELECT current_database()").Scan(&currentDB); err != nil {
+		ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
+		logger.Errorf("Error querying current_database() for probe %s on %s: %v",
+			config.Name, conn.Name, err)
+		return allMetrics, currentDB, extStatus, false
+	}
+
+	// Execute probe on the current database using the existing connection
+	metrics, err := probe.Execute(ctx, conn.Name, monitoredDB, pgVersion)
+	extStatus = extStatus.merge(classifyProbeResult(metrics, err))
+	if errors.Is(err, probes.ErrExtensionNotInstalled) {
+		// Not a failure: the extension simply is not installed in
+		// this database, and the scheduler records that separately.
+		logger.Debugf("Probe %s skipped on %s/%s: %v",
+			config.Name, conn.Name, currentDB, err)
+	} else if err != nil {
+		logger.Errorf("Error executing probe %s on default database %s/%s: %v",
+			config.Name, conn.Name, currentDB, err)
+	} else if len(metrics) > 0 {
+		// Add database name to metrics
+		for i := range metrics {
+			metrics[i]["_database_name"] = currentDB
+		}
+		allMetrics = append(allMetrics, metrics...)
+	}
+
+	// Return the connection now that we're done with the default database
+	ps.poolManager.ReturnConnection(conn.ID, monitoredDB)
+
+	return allMetrics, currentDB, extStatus, true
+}
+
+// executeProbeOnDatabase executes a database-scoped probe against one named
+// database on a monitored connection, acquiring and returning its own
+// connection, and reports the metrics collected along with what the
+// execution learned about the probe's required extension. Every failure is
+// logged and yields no metrics, so that the caller can move on to the next
+// database.
+func (ps *ProbeScheduler) executeProbeOnDatabase(ctx context.Context, probe probes.MetricsProbe, conn database.MonitoredConnection, dbName string, pgVersion int) ([]map[string]any, extensionStatus) {
+	config := probe.GetConfig()
+	extStatus := extensionUnknown
+
+	// Get connection for this specific database
+	db, err := ps.poolManager.GetConnectionForDatabase(ctx, conn, dbName, ps.serverSecret)
+	if err != nil {
+		// Skip closed pool errors; the original probe already
+		// reported the real connection failure.
+		if isClosedPoolError(err) {
+			logger.Debugf("Skipping closed pool error for probe %s on %s/%s (another probe already reported the connection failure)",
+				config.Name, conn.Name, dbName)
+			return nil, extStatus
+		}
+
+		if ctx.Err() != nil {
+			logger.Errorf("Error getting connection to %s/%s for probe %s: timed out after %d seconds while waiting for a connection from the monitored connection pool",
+				conn.Name, dbName, config.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
+		} else {
+			logger.Errorf("Error getting connection to %s/%s for probe %s: %v",
+				conn.Name, dbName, config.Name, err)
+		}
+		return nil, extStatus
+	}
+
+	// Execute probe
+	metrics, err := probe.Execute(ctx, conn.Name, db, pgVersion)
+
+	// Return the connection immediately
+	ps.poolManager.ReturnConnection(conn.ID, db)
+
+	extStatus = extStatus.merge(classifyProbeResult(metrics, err))
+
+	if errors.Is(err, probes.ErrExtensionNotInstalled) {
+		// Not a failure: the extension simply is not installed in
+		// this database, and the scheduler records that separately.
+		logger.Debugf("Probe %s skipped on %s/%s: %v",
+			config.Name, conn.Name, dbName, err)
+		return nil, extStatus
+	}
+
+	if err != nil {
+		logger.Errorf("Error executing probe %s on database %s/%s: %v",
+			config.Name, conn.Name, dbName, err)
+		return nil, extStatus
+	}
+
+	if len(metrics) > 0 {
+		// Add database name to metrics
+		for j := range metrics {
+			metrics[j]["_database_name"] = dbName
+		}
+		return metrics, extStatus
+	}
+
+	return nil, extStatus
 }
 
 // databaseListQuery lists the databases the collector should visit on a

@@ -12,8 +12,11 @@ package probes
 import (
 	"context"
 	"math"
+	"math/big"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func newPgSysMemoryInfoProbeForTest() *PgSysMemoryInfoProbe {
@@ -48,10 +51,11 @@ func TestPgSysMemoryInfoProbe_StoreEmpty(t *testing.T) {
 	}
 }
 
-// TestMetricInt64 covers every concrete numeric type the helper accepts
-// plus the rejections, because the values arrive as map[string]any and
-// the concrete type pgx hands back is not guaranteed across drivers or
-// column types.
+// TestMetricInt64 covers the three signed widths the helper accepts and
+// the rejections. The accepted set is exactly what pgx v5 decodes
+// PostgreSQL's integer types to: BIGINT to int64, INTEGER to int32 and
+// SMALLINT to int16. Everything else, unsigned widths included, must be
+// rejected so the caller stores NULL rather than a coerced number.
 func TestMetricInt64(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -62,18 +66,16 @@ func TestMetricInt64(t *testing.T) {
 		{"int64", int64(42), 42, true},
 		{"int32", int32(42), 42, true},
 		{"int16", int16(42), 42, true},
-		{"int8", int8(42), 42, true},
-		{"int", 42, 42, true},
-		{"uint64", uint64(42), 42, true},
-		{"uint64 overflow", uint64(math.MaxUint64), 0, false},
-		{"uint32", uint32(42), 42, true},
-		{"uint16", uint16(42), 42, true},
-		{"uint8", uint8(42), 42, true},
-		{"uint", uint(42), 42, true},
-		{"uint overflow", uint(math.MaxUint64), 0, false},
 		{"negative int64", int64(-1), -1, true},
+		{"int8 rejected", int8(42), 0, false},
+		{"int rejected", 42, 0, false},
+		{"uint64 rejected", uint64(42), 0, false},
+		{"uint64 above MaxInt64 rejected", uint64(math.MaxUint64), 0, false},
+		{"uint32 rejected", uint32(42), 0, false},
+		{"uint rejected", uint(42), 0, false},
 		{"float64 rejected", float64(42), 0, false},
 		{"float32 rejected", float32(42), 0, false},
+		{"numeric rejected", pgtype.Numeric{Int: big.NewInt(42), Valid: true}, 0, false},
 		{"string rejected", "42", 0, false},
 		{"bool rejected", true, 0, false},
 		{"nil rejected", nil, 0, false},
@@ -120,12 +122,20 @@ func TestEstimateAvailableMemory(t *testing.T) {
 			want: int64(0),
 		},
 		{
-			name: "mixed integer widths",
+			name: "mixed signed integer widths",
 			metric: map[string]any{
 				"free_memory": int32(10),
-				"cache_total": uint64(5),
+				"cache_total": int16(5),
 			},
 			want: int64(15),
+		},
+		{
+			name: "unsigned input rejected",
+			metric: map[string]any{
+				"free_memory": uint64(10),
+				"cache_total": int64(5),
+			},
+			want: nil,
 		},
 		{
 			name:   "both missing",

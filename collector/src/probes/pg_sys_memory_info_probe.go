@@ -168,12 +168,19 @@ func estimateAvailableMemory(metric map[string]any) any {
 }
 
 // metricInt64 converts a value scanned out of a metrics row into an
-// int64. The rows arrive as map[string]any from utils.ScanRowsToMaps, so
-// the concrete type depends on what pgx hands back for the column: a
-// BIGINT normally arrives as int64, but the same helper is used against
-// test doubles and future column types, so every fixed-width integer
-// kind is accepted. Floats, strings, nil and anything else report false
-// rather than being coerced, so the caller can store NULL.
+// int64. The rows arrive as map[string]any from utils.ScanRowsToMaps,
+// which fills the map from pgx's rows.Values(), so the concrete type is
+// whatever codec pgx picked for the column's PostgreSQL type rather
+// than anything the caller chose.
+//
+// For the integer types pgx v5 decodes BIGINT to int64, INTEGER to
+// int32 and SMALLINT to int16, and a SQL NULL to an untyped nil. All
+// three signed widths are accepted so that a system_stats build
+// declaring one of these columns narrower than BIGINT still yields a
+// reading. No unsigned width is accepted: the only unsigned type pgx
+// produces is uint32 for an OID, which no column here can be. Floats,
+// pgtype.Numeric, strings, nil and anything else report false rather
+// than being coerced, so the caller stores NULL.
 func metricInt64(v any) (int64, bool) {
 	switch n := v.(type) {
 	case int64:
@@ -182,26 +189,6 @@ func metricInt64(v any) (int64, bool) {
 		return int64(n), true
 	case int16:
 		return int64(n), true
-	case int8:
-		return int64(n), true
-	case int:
-		return int64(n), true
-	case uint64:
-		if n > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(n), true // #nosec G115 -- range checked above
-	case uint32:
-		return int64(n), true
-	case uint16:
-		return int64(n), true
-	case uint8:
-		return int64(n), true
-	case uint:
-		if uint64(n) > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(n), true // #nosec G115 -- range checked above
 	default:
 		return 0, false
 	}

@@ -11,11 +11,9 @@ package database
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -155,22 +153,12 @@ func TestMigrationV15_UpgradeAddsIndexToExistingSchema(t *testing.T) {
 		t.Fatal("setup failure: index still present after the rewind")
 	}
 
-	const partitionSuffix = "20260914"
-	parentIdent := pgx.Identifier{"metrics", "pg_stat_statements"}.Sanitize()
-	childIdent := pgx.Identifier{
-		"metrics", "pg_stat_statements_" + partitionSuffix,
-	}.Sanitize()
-	// This is not a SQL injection risk despite passing a non-literal DDL
-	// string: ddl is built entirely from hardcoded test constants and from
-	// identifiers produced by pgx's own Identifier.Sanitize(). No user
-	// input or untrusted external data is involved.
-	// nosemgrep: go_sql_rule-concat-sqli
-	ddl := fmt.Sprintf(
-		"CREATE TABLE IF NOT EXISTS %s PARTITION OF %s "+
-			"FOR VALUES FROM ('2026-09-14') TO ('2026-09-21')",
-		childIdent, parentIdent,
-	)
-	if _, err := pool.Exec(ctx, ddl); err != nil {
+	const createPartition = `
+		CREATE TABLE IF NOT EXISTS metrics.pg_stat_statements_20260914
+		PARTITION OF metrics.pg_stat_statements
+		FOR VALUES FROM ('2026-09-14') TO ('2026-09-21')
+	`
+	if _, err := pool.Exec(ctx, createPartition); err != nil {
 		t.Fatalf("create partition: %v", err)
 	}
 

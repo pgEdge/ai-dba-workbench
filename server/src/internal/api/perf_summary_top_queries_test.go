@@ -1421,11 +1421,10 @@ func seedWindowedTopQueries(t *testing.T, pool *pgxpool.Pool) time.Time {
              database_name, query, calls, total_exec_time, mean_exec_time,
              min_exec_time, max_exec_time, rows,
              shared_blks_hit, shared_blks_read)
-            VALUES ($1, $2, $3, 10, 100, 'alpha', $7,
+            VALUES ($1, $2, $3, 10, 100, 'alpha', 'SELECT ' || $3::bigint::text,
                     $4, $5, 1, 1.25, 99.5, $6, $4, $4)`,
 			topQueriesConnID, at(smp.at), smp.queryID, smp.calls,
-			smp.execTime, smp.rows,
-			"SELECT "+strconv.FormatInt(smp.queryID, 10)); err != nil {
+			smp.execTime, smp.rows); err != nil {
 			t.Fatalf("windowed fixture seed failed: %v", err)
 		}
 	}

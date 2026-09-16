@@ -937,6 +937,62 @@ starting `Retired:`, and its `active` and `acknowledged` alerts are set to
 `ClearAlert`. Each such migration has a `migration_vN_test.go` covering
 registration, the fresh-install seed values and the upgrade path.
 
+## Alerter Baselines and Anomaly Detection (alerter)
+
+The baseline calculator (`alerter/src/internal/engine/baselines.go`) and
+the tier-1 detector (`anomalies.go`) were reworked in #408, and four
+conventions from that change hold across both:
+
+- Only metrics with a `historicalSQL` are baselined or scored.
+  `database.SupportsBaselines(name)` (`baseline_support.go`) is the one
+  test for that, and it is false for names outside the registry too, so
+  `metric_staleness` is excluded without a special case.
+  `calculateBaselines` and `detectAnomalies` both skip on it; there is no
+  fallback path that builds a baseline from the latest sample, because
+  such a row (one sample, zero stddev, NULL `earliest_sample_at`) can
+  never pass `isBaselineWarm`. `DeleteBaselinesForUnsupportedMetrics`
+  runs once per `calculateBaselines` cycle, binding
+  `BaselineSupportedMetrics()` as a `text[]` and deleting
+  `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
+  `TestAuditC7HistoricalSQLCoverage` pins by name the thirteen registry
+  entries that still have no historical query; giving them one is a
+  follow-up, and any entry gaining one must be removed from that list.
+
+- `GetMetricBaselines(ctx, connID, metric, dbName *string)` is scoped to
+  one database with the same NULL-aware predicate as
+  `GetActiveAnomalyAlert`: `(database_name = $3 OR ($3 IS NULL AND
+  database_name IS NULL))`. Its `ORDER BY period_type, day_of_week,
+  hour_of_day` only makes the result deterministic; nothing may read
+  `baselines[0]` as a preference. The server's `get_metric_baselines`
+  tool is a separate implementation over the pool and is unaffected.
+
+- Selection is in Go. `selectBaseline` prefers the `hourly` row for the
+  current hour, then the `daily` row for the current weekday, then
+  `all`, and returns the first candidate that is warm; a cold candidate
+  falls through rather than blocking a warmer, less specific one. When
+  none is warm it returns the most preferred cold row so the caller can
+  log why detection was suppressed.
+
+- Hour and weekday keys come from `baselinePeriodKeys`, used both when
+  hourly and daily rows are written and when `selectBaseline` matches
+  them, and it normalises to UTC first. pgx scans `timestamptz` into the
+  process's local zone unless `ScanLocation` is set, and `time.Now()` is
+  local too, so without the shared helper an alerter in a non-UTC zone
+  would write rows under one key and look them up under another.
+
+`detectAnomalies` loops rules on the outside so `GetLatestMetricValues`
+runs once per rule, resolves the blacked-out connection set once per
+run, and scores every latest value for a connection (one per database
+for `scanWithDB` metrics) against the baselines for that value's
+`DatabaseName`, setting `candidate.DatabaseName` so the active-alert
+deduplication in `createAnomalyAlert` is per database as well.
+`baselineableValues` drops object-scoped values, since `metric_baselines`
+has no object column. The audit tests
+(`engine/audit_defects_test.go`, `database/audit_defects_test.go`, C6,
+C7 and C10) assert this behaviour end to end, and
+`engine/baseline_selection_test.go` covers the selector and the key
+helper.
+
 ## Time-Window Resolution (server)
 
 Every dashboard metrics query runs against an absolute window, and the
@@ -1295,6 +1351,10 @@ run.
 - #428: Pseudo filesystems excluded from
   `pg_sys_disk_info.used_percent`, so a squashfs mount no longer pins the
   disk metric at 100%.
+- #408: Baseline selection prefers the current hour's and weekday's
+  rows; metrics without `historicalSQL` excluded via `SupportsBaselines`
+  and the latest-sample fallback removed; `GetMetricBaselines` and
+  detection scoped by database; period keys normalised to UTC.
 - #407: Missing metric data treated as resolution; introduced the
   `clearWhenAbsent` registry flag, the `probeName` field, the
   `absenceWindow` field and the window gate on clearing (which replaced

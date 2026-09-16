@@ -795,6 +795,29 @@ func TestMetricClearsWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestMetricAbsenceWindow pins the accessor the cleaner gates on,
+// including the zero value for a metric the registry does not know and
+// for one that does not clear when absent.
+func TestMetricAbsenceWindow(t *testing.T) {
+	ds := &Datastore{}
+	cases := map[string]time.Duration{
+		"pg_replication_slots.inactive":         15 * time.Minute,
+		"pg_node_role.subscription_worker_down": 15 * time.Minute,
+		"table_last_autovacuum_hours":           15 * time.Minute,
+		"pg_stat_activity.blocked_count":        5 * time.Minute,
+		"spock_exception_log.recent_count":      5 * time.Minute,
+		// Not clearWhenAbsent, so it declares no window.
+		"pg_stat_database.cache_hit_ratio": 0,
+		// Not in the registry at all.
+		"probe_staleness_ratio": 0,
+	}
+	for name, want := range cases {
+		if got := ds.MetricAbsenceWindow(name); got != want {
+			t.Errorf("MetricAbsenceWindow(%q) = %s, want %s", name, got, want)
+		}
+	}
+}
+
 // nowMinus returns the database's NOW() minus the given interval. The
 // value is computed server-side so the seeded timestamps line up with
 // the NOW() used inside the registry queries regardless of client

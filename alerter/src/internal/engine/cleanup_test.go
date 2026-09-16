@@ -12,6 +12,7 @@ package engine
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
@@ -73,26 +74,36 @@ func TestCheckAlertResolvedMissingFields(t *testing.T) {
 // TestClassifyAbsentMetric covers the decision the cleaner makes when a
 // metric returns no row for an active alert. Clearing on absence is only
 // safe when the registry says absence is the recovery signal *and* the
-// probe feeding the metric is currently reporting for the connection;
-// every other combination leaves the alert active. See GitHub issue #407.
+// probe feeding the metric collected inside the window that metric's
+// latest query reads; every other combination leaves the alert active.
+// See GitHub issue #407.
 func TestClassifyAbsentMetric(t *testing.T) {
 	const connID = 7
 
+	// The slots metrics read a fifteen minute window, so a collection
+	// four minutes ago is inside it and one forty minutes ago is not.
+	const slotWindow = 15 * time.Minute
+
 	fresh := []database.ProbeStaleness{
-		{ConnectionID: connID, ProbeName: "pg_replication_slots", StalenessRatio: 0.4},
-		{ConnectionID: connID, ProbeName: "pg_stat_activity", StalenessRatio: 1.0},
+		{ConnectionID: connID, ProbeName: "pg_replication_slots",
+			SinceCollected: 4 * time.Minute},
+		{ConnectionID: connID, ProbeName: "pg_stat_activity",
+			SinceCollected: 1 * time.Minute},
 	}
 	stale := []database.ProbeStaleness{
-		{ConnectionID: connID, ProbeName: "pg_replication_slots", StalenessRatio: 8.0},
+		{ConnectionID: connID, ProbeName: "pg_replication_slots",
+			SinceCollected: 40 * time.Minute},
 	}
 	otherConnection := []database.ProbeStaleness{
-		{ConnectionID: connID + 1, ProbeName: "pg_replication_slots", StalenessRatio: 0.2},
+		{ConnectionID: connID + 1, ProbeName: "pg_replication_slots",
+			SinceCollected: 30 * time.Second},
 	}
 
 	tests := []struct {
 		name             string
 		clearsWhenAbsent bool
 		probe            string
+		window           time.Duration
 		entries          []database.ProbeStaleness
 		want             absentMetricVerdict
 	}{
@@ -100,6 +111,7 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			name:             "absence is not a recovery signal",
 			clearsWhenAbsent: false,
 			probe:            "pg_stat_database",
+			window:           0,
 			entries:          fresh,
 			want:             absentMetricNotAbsenceDriven,
 		},
@@ -107,24 +119,84 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			name:             "registry entry names no probe",
 			clearsWhenAbsent: true,
 			probe:            "",
+			window:           slotWindow,
 			entries:          fresh,
 			want:             absentMetricNoProbe,
 		},
 		{
-			name:             "probe is reporting",
+			name:             "registry entry declares no window",
 			clearsWhenAbsent: true,
 			probe:            "pg_replication_slots",
+			window:           0,
+			entries:          fresh,
+			want:             absentMetricNoWindow,
+		},
+		{
+			name:             "probe collected inside the window",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
 			entries:          fresh,
 			want:             absentMetricClear,
 		},
 		{
-			name:             "probe is at the freshness limit",
+			name:             "probe collected exactly on the window edge",
 			clearsWhenAbsent: true,
 			probe:            "pg_replication_slots",
+			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
 				ConnectionID:   connID,
 				ProbeName:      "pg_replication_slots",
-				StalenessRatio: probeFreshnessRatioLimit,
+				SinceCollected: slotWindow,
+			}},
+			want: absentMetricClear,
+		},
+		{
+			name:             "probe collected just outside the window",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:   connID,
+				ProbeName:      "pg_replication_slots",
+				SinceCollected: slotWindow + time.Second,
+			}},
+			want: absentMetricProbeNotReporting,
+		},
+		{
+			// A probe configured to run every hour is well within its
+			// interval two minutes after collecting, so the old ratio
+			// gate said it was current, yet its fifteen minute window
+			// empties long before the next collection lands. The
+			// verdict must follow the window, not the interval.
+			name:             "interval is longer than the window",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:       connID,
+				ProbeName:          "pg_replication_slots",
+				CollectionInterval: 3600,
+				StalenessRatio:     0.5,
+				SinceCollected:     30 * time.Minute,
+			}},
+			want: absentMetricProbeNotReporting,
+		},
+		{
+			// The mirror image: a probe running every ten seconds is a
+			// hundred intervals late two minutes after collecting, and
+			// the old ratio gate refused to clear, but its window is
+			// still wide open and the absence is genuine.
+			name:             "probe is many intervals late but inside the window",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:       connID,
+				ProbeName:          "pg_replication_slots",
+				CollectionInterval: 10,
+				StalenessRatio:     12.0,
+				SinceCollected:     2 * time.Minute,
 			}},
 			want: absentMetricClear,
 		},
@@ -132,6 +204,7 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			name:             "probe has stalled",
 			clearsWhenAbsent: true,
 			probe:            "pg_replication_slots",
+			window:           slotWindow,
 			entries:          stale,
 			want:             absentMetricProbeNotReporting,
 		},
@@ -139,6 +212,7 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			name:             "probe is absent from the staleness view",
 			clearsWhenAbsent: true,
 			probe:            "pg_replication_slots",
+			window:           slotWindow,
 			entries:          nil,
 			want:             absentMetricProbeNotReporting,
 		},
@@ -146,6 +220,7 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			name:             "another probe is fresh but this one is not listed",
 			clearsWhenAbsent: true,
 			probe:            "spock_resolutions",
+			window:           5 * time.Minute,
 			entries:          fresh,
 			want:             absentMetricProbeNotReporting,
 		},
@@ -153,6 +228,7 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			name:             "the probe is fresh on another connection only",
 			clearsWhenAbsent: true,
 			probe:            "pg_replication_slots",
+			window:           slotWindow,
 			entries:          otherConnection,
 			want:             absentMetricProbeNotReporting,
 		},
@@ -160,10 +236,11 @@ func TestClassifyAbsentMetric(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyAbsentMetric(tt.clearsWhenAbsent, tt.probe, connID, tt.entries)
+			got := classifyAbsentMetric(tt.clearsWhenAbsent, tt.probe, tt.window,
+				connID, tt.entries)
 			if got != tt.want {
-				t.Errorf("classifyAbsentMetric(%v, %q) = %v, want %v",
-					tt.clearsWhenAbsent, tt.probe, got, tt.want)
+				t.Errorf("classifyAbsentMetric(%v, %q, %s) = %v, want %v",
+					tt.clearsWhenAbsent, tt.probe, tt.window, got, tt.want)
 			}
 		})
 	}

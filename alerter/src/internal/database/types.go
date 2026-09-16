@@ -222,6 +222,15 @@ type ProbeStaleness struct {
 	ProbeName          string
 	CollectionInterval int     // seconds
 	StalenessRatio     float64 // elapsed / interval
+
+	// SinceCollected is how long ago the probe last stored a row,
+	// measured from the same NOW() as StalenessRatio. The metric
+	// staleness rule works in ratios, because what counts as late
+	// depends on how often the probe is meant to run, whilst the alert
+	// cleaner works in this elapsed time, because what it needs to know
+	// is whether the probe collected inside the window a metric's query
+	// reads. See GitHub issue #407.
+	SinceCollected time.Duration
 }
 
 // AnomalyEmbedding represents a stored embedding for an anomaly candidate

@@ -943,6 +943,13 @@ func TestGetProbeStalenessByConnection(t *testing.T) {
 	if results[0].StalenessRatio < 1.5 {
 		t.Errorf("ratio = %v, want >= 1.5", results[0].StalenessRatio)
 	}
+	// The alert cleaner gates on the elapsed time rather than the ratio,
+	// so the query must report it alongside: the probe last collected
+	// 120 seconds ago. See GitHub issue #407.
+	if results[0].SinceCollected < 120*time.Second ||
+		results[0].SinceCollected > 150*time.Second {
+		t.Errorf("SinceCollected = %s, want about 120s", results[0].SinceCollected)
+	}
 }
 
 func TestGetAlertRuleByName(t *testing.T) {

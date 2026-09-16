@@ -425,6 +425,103 @@ func assertNoClearQueued(t *testing.T, capture *notificationCapture) {
 	}
 }
 
+// setProbeInterval rewrites the server-wide collection interval for one
+// probe, which is what an operator does through the probe configuration
+// page documented in docs/admin-guide/probes.md.
+func setProbeInterval(t *testing.T, pool *pgxpool.Pool, probe string, seconds int) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE probe_configs SET collection_interval_seconds = $2
+		  WHERE name = $1 AND connection_id IS NULL`, probe, seconds); err != nil {
+		t.Fatalf("failed to set the %s interval: %v", probe, err)
+	}
+}
+
+// overrideProbeInterval adds a per-connection collection interval for one
+// probe, the other override documented on the same page.
+func overrideProbeInterval(t *testing.T, pool *pgxpool.Pool, connID int, probe string, seconds int) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO probe_configs
+		     (name, connection_id, is_enabled, collection_interval_seconds)
+		 VALUES ($1, $2, TRUE, $3)`, probe, connID, seconds); err != nil {
+		t.Fatalf("failed to override the %s interval for connection %d: %v",
+			probe, connID, err)
+	}
+}
+
+// TestCleaner_AbsentMetricWithRaisedIntervalStaysActive covers an
+// operator raising the probe's collection interval past the window its
+// metric reads. The slots probe now runs hourly and last collected 30
+// minutes ago, so it is only half an interval late whilst its fifteen
+// minute window has been empty for a quarter of an hour. Gating on the
+// interval cleared a genuinely inactive slot here; gating on the window
+// leaves the alert active. See GitHub issue #407.
+func TestCleaner_AbsentMetricWithRaisedIntervalStaysActive(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-long-interval")
+	defer cleanup()
+
+	capture := installNotificationCapture(t, engine)
+	seedProbeReporting(t, pool, connID, "pg_replication_slots", "30 minutes")
+	setProbeInterval(t, pool, "pg_replication_slots", 3600)
+
+	engine.cleanResolvedAlerts(context.Background())
+
+	if status := alertStatus(t, pool, alertID); status != "active" {
+		t.Errorf("alert status with an hourly probe 30 minutes late = %q, want \"active\"",
+			status)
+	}
+	assertNoClearQueued(t, capture)
+}
+
+// TestCleaner_AbsentMetricWithPerConnectionIntervalStaysActive is the
+// same case expressed as a per-connection override, which the staleness
+// ratio never sees at all because GetProbeStalenessByConnection joins the
+// server-wide probe_configs row. The window gate does not read either
+// interval, so the verdict follows the data: the probe last collected
+// outside the metric's window, so the alert stays active.
+func TestCleaner_AbsentMetricWithPerConnectionIntervalStaysActive(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-conn-interval")
+	defer cleanup()
+
+	capture := installNotificationCapture(t, engine)
+	seedProbeReporting(t, pool, connID, "pg_replication_slots", "30 minutes")
+	overrideProbeInterval(t, pool, connID, "pg_replication_slots", 3600)
+
+	engine.cleanResolvedAlerts(context.Background())
+
+	if status := alertStatus(t, pool, alertID); status != "active" {
+		t.Errorf("alert status with a per-connection hourly interval = %q, want \"active\"",
+			status)
+	}
+	assertNoClearQueued(t, capture)
+}
+
+// TestCleaner_AbsentMetricWithPerConnectionIntervalClears is its
+// positive half: the same per-connection override, but the probe
+// collected four minutes ago, inside the fifteen minute window. The
+// absence is then genuine and the alert clears, whatever either
+// configured interval says.
+func TestCleaner_AbsentMetricWithPerConnectionIntervalClears(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-conn-interval-fresh")
+	defer cleanup()
+
+	capture := installNotificationCapture(t, engine)
+	seedProbeReporting(t, pool, connID, "pg_replication_slots", "4 minutes")
+	overrideProbeInterval(t, pool, connID, "pg_replication_slots", 10)
+
+	engine.cleanResolvedAlerts(context.Background())
+
+	if status := alertStatus(t, pool, alertID); status != "cleared" {
+		t.Errorf("alert status with a collection inside the window = %q, want \"cleared\"",
+			status)
+	}
+	counts := countTypes(capture.await(t, 1))
+	if counts[database.NotificationTypeAlertClear] != 1 {
+		t.Errorf("notifications = %v, want one clear", counts)
+	}
+}
+
 // TestCleaner_AbsentMetricWithUnreadableProbesStaysActive covers the last
 // way the freshness check can come back inconclusive: the staleness query
 // itself fails. A failed read says nothing about whether the condition

@@ -17,16 +17,6 @@ import (
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 )
 
-// probeFreshnessRatioLimit is how far behind a probe's last collection may
-// be, measured in multiples of its configured collection interval, before
-// the cleaner stops believing that a missing metric row means the
-// condition has resolved. Three intervals matches both the fifteen minute
-// windows the registry's latest queries use at the collector's 300 second
-// default and the default metric_staleness rule threshold, so the cleaner
-// stops clearing at about the point the staleness alert starts firing. See
-// GitHub issue #407.
-const probeFreshnessRatioLimit = 3.0
-
 // cleanResolvedAlerts clears alerts where the condition has resolved
 func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 	e.debugLog("Checking for resolved alerts...")
@@ -226,16 +216,18 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 // as a recovered condition does, and clearing then would report a
 // genuinely inactive replication slot or runaway WAL retention as
 // resolved. The clear is therefore gated on the registry's probe for the
-// metric currently reporting for this connection. See GitHub issue #407.
+// metric having collected inside the very window that query reads. See
+// GitHub issue #407.
 func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert, reason string) {
 	metric := *alert.MetricName
 	clears := e.datastore.MetricClearsWhenAbsent(metric)
 	probe := e.datastore.MetricProbeName(metric)
+	window := e.datastore.MetricAbsenceWindow(metric)
 
-	// Only the metrics that can clear, and that name a probe to check,
-	// need the staleness read at all.
+	// Only the metrics that can clear, and that name both a probe and a
+	// window to check it against, need the staleness read at all.
 	var entries []database.ProbeStaleness
-	if clears && probe != "" {
+	if clears && probe != "" && window > 0 {
 		var err error
 		entries, err = e.datastore.GetProbeStalenessByConnection(ctx)
 		if err != nil {
@@ -245,7 +237,7 @@ func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
 		}
 	}
 
-	switch classifyAbsentMetric(clears, probe, alert.ConnectionID, entries) {
+	switch classifyAbsentMetric(clears, probe, window, alert.ConnectionID, entries) {
 	case absentMetricClear:
 		e.clearResolvedAlert(ctx, alert, 0)
 	case absentMetricNotAbsenceDriven:
@@ -254,10 +246,14 @@ func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
 	case absentMetricNoProbe:
 		e.log("WARNING: Metric %s clears when absent but names no collector probe; "+
 			"leaving alert %d active", metric, alert.ID)
+	case absentMetricNoWindow:
+		e.log("WARNING: Metric %s clears when absent but declares no collection "+
+			"window; leaving alert %d active", metric, alert.ID)
 	case absentMetricProbeNotReporting:
-		e.log("Alert %d on metric %s has no current value (%s) and probe %s is not "+
-			"reporting for connection %d; leaving the alert active",
-			alert.ID, metric, reason, probe, alert.ConnectionID)
+		e.log("Alert %d on metric %s has no current value (%s) and probe %s has not "+
+			"collected for connection %d within the %s window its query reads; "+
+			"leaving the alert active",
+			alert.ID, metric, reason, probe, alert.ConnectionID, window)
 	}
 }
 
@@ -279,6 +275,12 @@ const (
 	// names no probe, so its freshness cannot be established.
 	absentMetricNoProbe
 
+	// absentMetricNoWindow means the registry entry clears when absent
+	// but declares no collection window, so there is nothing to judge
+	// the probe's last collection against. The registry audit tests keep
+	// this unreachable in practice.
+	absentMetricNoWindow
+
 	// absentMetricProbeNotReporting means the probe behind the metric has
 	// stalled, been disabled, or belongs to a connection that is no
 	// longer monitored, so the empty result proves nothing.
@@ -290,6 +292,18 @@ const (
 // may clear the alert. It is pure so that every branch, including the
 // entry that names no probe, is exercised without a database.
 //
+// window is how far back the metric's latest query looks. Outside it the
+// query reports nothing whatever the server is doing, so an absent row
+// is only evidence of recovery when the probe stored something inside
+// it; a probe whose last collection is older than the window tells us
+// only that the data stopped arriving. Measuring the gate against the
+// query's own window rather than against a multiple of the configured
+// collection interval keeps it correct at any interval, global or
+// per-connection: an operator who raises probe_configs.collection_
+// interval_seconds past the window would otherwise widen the gate whilst
+// the window stayed put, leaving the cleaner quiet exactly where
+// ordinary collection starts emptying the query.
+//
 // Failing safe in both directions is the point: a clearWhenAbsent metric
 // whose probe is demonstrably current clears as it always did, whilst an
 // unknown, stalled or disabled probe leaves the alert active. That is a
@@ -299,19 +313,22 @@ const (
 // observed, which for a critical rule such as replication_slot_inactive
 // means a genuinely inactive slot reported as fixed. See GitHub issue
 // #407.
-func classifyAbsentMetric(clearsWhenAbsent bool, probe string, connectionID int,
-	entries []database.ProbeStaleness) absentMetricVerdict {
+func classifyAbsentMetric(clearsWhenAbsent bool, probe string, window time.Duration,
+	connectionID int, entries []database.ProbeStaleness) absentMetricVerdict {
 	if !clearsWhenAbsent {
 		return absentMetricNotAbsenceDriven
 	}
 	if probe == "" {
 		return absentMetricNoProbe
 	}
+	if window <= 0 {
+		return absentMetricNoWindow
+	}
 	for _, entry := range entries {
 		if entry.ConnectionID != connectionID || entry.ProbeName != probe {
 			continue
 		}
-		if entry.StalenessRatio <= probeFreshnessRatioLimit {
+		if entry.SinceCollected <= window {
 			return absentMetricClear
 		}
 		return absentMetricProbeNotReporting

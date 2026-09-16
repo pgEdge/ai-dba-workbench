@@ -9,7 +9,10 @@
  */
 package testdsn
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // TestAllowedTestDatabase pins the allowlist. It matters that plausible
 // real database names are refused, because the loopback host check alone
@@ -38,5 +41,108 @@ func TestAllowedTestDatabase(t *testing.T) {
 		if allowedTestDatabase.MatchString(name) {
 			t.Errorf("database %q should be refused", name)
 		}
+	}
+}
+
+// recorder stands in for *testing.T so the guard's refusals can be
+// exercised without skipping or failing the test running them. It
+// records the first skip or failure and nothing else.
+type recorder struct {
+	skipped string
+	failed  string
+}
+
+func (r *recorder) Helper() {}
+
+func (r *recorder) Skip(args ...any) {
+	if r.skipped == "" {
+		r.skipped = fmt.Sprint(args...)
+	}
+}
+
+func (r *recorder) Skipf(format string, args ...any) {
+	if r.skipped == "" {
+		r.skipped = fmt.Sprintf(format, args...)
+	}
+}
+
+func (r *recorder) Fatalf(format string, args ...any) {
+	if r.failed == "" {
+		r.failed = fmt.Sprintf(format, args...)
+	}
+}
+
+// TestRequire covers each way the guard can answer: the two skips, the
+// three refusals, and the DSN this project's tests actually use. A
+// refusal must return no DSN at all, because a caller that ran on with
+// one would be pointing destructive DDL at whatever the guard just
+// rejected.
+func TestRequire(t *testing.T) {
+	const local = "postgresql://postgres@127.0.0.1:5432/ai_workbench_pr407"
+
+	tests := []struct {
+		name     string
+		skipVar  string
+		dsn      string
+		wantDSN  string
+		wantSkip bool
+		wantFail bool
+	}{
+		{
+			name:     "SKIP_DB_TESTS is set",
+			skipVar:  "1",
+			dsn:      local,
+			wantSkip: true,
+		},
+		{
+			name:     "no server configured",
+			dsn:      "",
+			wantSkip: true,
+		},
+		{
+			name:     "unparseable DSN",
+			dsn:      "postgresql://user:pass@host:notaport/db",
+			wantFail: true,
+		},
+		{
+			name:     "remote host",
+			dsn:      "postgresql://postgres@db.example.com:5432/ai_workbench",
+			wantFail: true,
+		},
+		{
+			name:     "production-shaped database",
+			dsn:      "postgresql://postgres@127.0.0.1:5432/ai_workbench_prod2",
+			wantFail: true,
+		},
+		{
+			name:    "a local test database",
+			dsn:     local,
+			wantDSN: local,
+		},
+		{
+			name:    "the CI default database",
+			dsn:     "postgresql://postgres@localhost:5432/postgres",
+			wantDSN: "postgresql://postgres@localhost:5432/postgres",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SKIP_DB_TESTS", tt.skipVar)
+			t.Setenv("TEST_AI_WORKBENCH_SERVER", tt.dsn)
+
+			rec := &recorder{}
+			got := Require(rec, "the guard's own test")
+
+			if got != tt.wantDSN {
+				t.Errorf("Require returned %q, want %q", got, tt.wantDSN)
+			}
+			if (rec.skipped != "") != tt.wantSkip {
+				t.Errorf("skipped = %q, want a skip: %v", rec.skipped, tt.wantSkip)
+			}
+			if (rec.failed != "") != tt.wantFail {
+				t.Errorf("failed = %q, want a failure: %v", rec.failed, tt.wantFail)
+			}
+		})
 	}
 }

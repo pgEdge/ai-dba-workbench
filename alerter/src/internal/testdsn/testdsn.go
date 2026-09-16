@@ -18,7 +18,6 @@ package testdsn
 import (
 	"os"
 	"regexp"
-	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,41 +45,61 @@ var allowedTestHosts = map[string]struct{}{
 	"":          {}, // unix socket; only reachable on this host
 }
 
+// TB is the part of *testing.T this package needs. Taking an interface
+// rather than the concrete type lets the guard's own tests exercise the
+// skip and failure branches with a recorder, which a real *testing.T
+// would turn into a skipped or failed test.
+type TB interface {
+	Helper()
+	Skip(args ...any)
+	Skipf(format string, args ...any)
+	Fatalf(format string, args ...any)
+}
+
 // Require returns the DSN every integration test in the alerter must
-// use, having checked that it points at a local loopback
-// Postgres holding one of the known safe test databases. The test is
-// skipped when SKIP_DB_TESTS is set or TEST_AI_WORKBENCH_SERVER is
-// empty, and failed outright when the DSN points anywhere else:
-// CLAUDE.local.md is explicit that these tests must only target a local
-// loopback Postgres, and the destructive DDL in the integration schemas,
-// which drops and recreates tables and the whole metrics schema, would
-// wipe any other instance the variable resolved to.
+// use, having checked that it points at a local loopback Postgres
+// holding one of the known safe test databases. The test is skipped when
+// SKIP_DB_TESTS is set or TEST_AI_WORKBENCH_SERVER is empty, and failed
+// outright when the DSN points anywhere else: CLAUDE.local.md is
+// explicit that these tests must only target a local loopback Postgres,
+// and the destructive DDL in the integration schemas, which drops and
+// recreates tables and the whole metrics schema, would wipe any other
+// instance the variable resolved to.
 //
 // Every entry point that reads TEST_AI_WORKBENCH_SERVER goes through
 // this helper, so a new integration test cannot acquire a connection
 // string without the guard. It lives in its own package, rather than
 // once per test package, so that the rule has a single definition.
 // purpose names the test in the skip message.
-func Require(t *testing.T, purpose string) string {
+//
+// Each skip and failure is followed by an explicit return. A real
+// *testing.T never reaches them, because Skip and Fatalf end the
+// goroutine, but the recorder used in this package's own tests does, and
+// returning keeps it from running on with a DSN the guard just refused.
+func Require(t TB, purpose string) string {
 	t.Helper()
 
 	if os.Getenv("SKIP_DB_TESTS") != "" {
 		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
+		return ""
 	}
 	dsn := os.Getenv("TEST_AI_WORKBENCH_SERVER")
 	if dsn == "" {
 		t.Skipf("TEST_AI_WORKBENCH_SERVER not set, skipping %s", purpose)
+		return ""
 	}
 
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse test DSN: %v", err)
+		return ""
 	}
 	if _, ok := allowedTestHosts[cfg.ConnConfig.Host]; !ok {
 		t.Fatalf("refusing to run destructive integration tests "+
 			"against non-loopback host %q; set "+
 			"TEST_AI_WORKBENCH_SERVER to a "+
 			"postgresql://...@127.0.0.1 DSN", cfg.ConnConfig.Host)
+		return ""
 	}
 	if !allowedTestDatabase.MatchString(cfg.ConnConfig.Database) {
 		t.Fatalf("refusing to run destructive integration tests "+
@@ -88,6 +107,7 @@ func Require(t *testing.T, purpose string) string {
 			"ai_workbench_pr<n>, ai_workbench_issue<n>, "+
 			"ai_workbench_sess<n> or postgres",
 			cfg.ConnConfig.Database)
+		return ""
 	}
 	return dsn
 }

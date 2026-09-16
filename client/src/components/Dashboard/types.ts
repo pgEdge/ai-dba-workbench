@@ -164,6 +164,16 @@ export interface KpiTileData {
     unit?: string;
     trend?: 'up' | 'down' | 'flat';
     trendValue?: string;
+    /**
+     * Optional supporting figure rendered as a small line beneath the
+     * headline value, for a second reading that belongs with the same
+     * metric (for example the available memory behind a usage
+     * percentage). Unlike `trendValue` it carries no direction, colour
+     * or icon, and it is folded into the tile's `aria-label`. Omit it
+     * entirely when the underlying figure is unavailable, rather than
+     * passing a placeholder.
+     */
+    secondaryText?: string;
     sparklineData?: SparklinePoint[];
     status?: 'good' | 'warning' | 'critical';
 }

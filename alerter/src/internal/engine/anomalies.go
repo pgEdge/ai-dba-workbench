@@ -90,26 +90,14 @@ func warmupThresholdFor(
 	}
 }
 
-// selectBaseline picks the baseline row to score a value against. The
-// preference order is the hourly row for the current UTC hour, then the
-// daily row for the current UTC weekday, then the 'all' row; the first
-// candidate in that order that passes isBaselineWarm is returned as
-// chosen. When no candidate is warm, chosen is nil and fallbackCold is
-// the most preferred candidate that exists (nil if none), so the caller
-// can log why detection was suppressed.
-//
-// Hourly and daily rows are preferred over 'all' because a metric with a
-// diurnal or weekly cycle has a much tighter spread within one period
-// than across the whole window; scoring against the grand mean inflates
-// the divisor and hides genuine within-cycle deviation. Warmth is
-// checked per candidate so a cold hourly row does not block a mature
-// 'all' row, and a cold 'all' row does not block a mature hourly one.
-// See GitHub issue #408.
-func selectBaseline(
+// baselineCandidates returns the rows selectBaseline considers, in
+// preference order: the hourly row for now's UTC hour, the daily row for
+// now's UTC weekday, then the 'all' row. Missing rows are nil entries so
+// the caller can keep the order without re-deriving it.
+func baselineCandidates(
 	baselines []*database.MetricBaseline,
 	now time.Time,
-	cfg config.WarmupConfig,
-) (chosen, fallbackCold *database.MetricBaseline) {
+) []*database.MetricBaseline {
 	hour, weekday := baselinePeriodKeys(now)
 
 	var hourly, daily, all *database.MetricBaseline
@@ -130,8 +118,30 @@ func selectBaseline(
 			all = b
 		}
 	}
+	return []*database.MetricBaseline{hourly, daily, all}
+}
 
-	for _, candidate := range []*database.MetricBaseline{hourly, daily, all} {
+// selectBaseline picks the baseline row to score a value against. The
+// preference order is the hourly row for the current UTC hour, then the
+// daily row for the current UTC weekday, then the 'all' row; the first
+// candidate in that order that passes isBaselineWarm is returned as
+// chosen. When no candidate is warm, chosen is nil and fallbackCold is
+// the most preferred candidate that exists (nil if none), so the caller
+// can log why detection was suppressed.
+//
+// Hourly and daily rows are preferred over 'all' because a metric with a
+// diurnal or weekly cycle has a much tighter spread within one period
+// than across the whole window; scoring against the grand mean inflates
+// the divisor and hides genuine within-cycle deviation. Warmth is
+// checked per candidate so a cold hourly row does not block a mature
+// 'all' row, and a cold 'all' row does not block a mature hourly one.
+// See GitHub issue #408.
+func selectBaseline(
+	baselines []*database.MetricBaseline,
+	now time.Time,
+	cfg config.WarmupConfig,
+) (chosen, fallbackCold *database.MetricBaseline) {
+	for _, candidate := range baselineCandidates(baselines, now) {
 		if candidate == nil {
 			continue
 		}

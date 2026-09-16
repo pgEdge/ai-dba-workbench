@@ -244,6 +244,24 @@ project adheres to
   like every other derived form, rather than a run of confident zero
   bars. (#402)
 
+- Gate the shared `pkg` module with its own formatting, linting and
+  test targets. The module is a separate Go module with no Makefile
+  and no CI workflow of its own, and the per-sub-project workflows
+  check only their own `src` directories, so six test files under
+  `pkg/connstring`, `pkg/crypto`, `pkg/datastoreconfig`,
+  `pkg/hostvalidation`, `pkg/logger` and `pkg/worker` had drifted out
+  of `gofmt` shape unnoticed. Those files are now formatted, and two
+  `staticcheck` findings in `pkg/fileutil/fileutil.go` are fixed: the
+  tilde-path guard is simplified, and the error returned for an
+  unsupported tilde path no longer ends in punctuation, so it now
+  reads `unsupported tilde path %q: use ~ or ~/... rather than a
+  ~user/... path`. A new `pkg/Makefile` and a new
+  `.github/workflows/ci-pkg.yml` keep the module gated from now on,
+  and the root `Makefile` delegates its `test`, `lint` and
+  `test-all` targets to the new Makefile; without that gate the same
+  files would simply drift again. Behavior is otherwise unchanged.
+  (#423)
+
 ### Fixed
 
 - Fix Ask Ellie failing with `Function call is missing a

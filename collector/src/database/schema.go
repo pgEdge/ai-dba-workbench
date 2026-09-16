@@ -3295,6 +3295,45 @@ func (sm *SchemaManager) registerMigrations() {
 			return nil
 		},
 	})
+
+	// Migration #13: Store an estimated available memory figure alongside
+	// each pg_sys_memory_info sample. See GitHub issue #429.
+	//
+	// The system_stats extension does not expose the kernel's
+	// MemAvailable: pg_sys_memory_info() returns the same twelve columns
+	// in versions 1.0 through 4.0, and the only availability-ish column,
+	// avail_page_file, is a Windows page file figure. The collector
+	// reaches the monitored host only over SQL through that extension, so
+	// /proc/meminfo is out of reach and the kernel figure cannot be
+	// obtained today. The collector therefore estimates the value as
+	// free_memory + cache_total and stores it, rather than computing it
+	// in the client, so that when system_stats later gains MemAvailable
+	// the probe can swap its source while the column, its retention and
+	// the chart drawn from it all stay as they are.
+	//
+	// As with migrations 7 and 10, the column lands on the partitioned
+	// parent and PostgreSQL 14-18 propagate ADD COLUMN to existing and
+	// future partitions automatically, so no per-partition DDL is needed.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     13,
+		Description: "Add estimated available_memory column to pg_sys_memory_info metrics",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE metrics.pg_sys_memory_info
+					ADD COLUMN IF NOT EXISTS available_memory BIGINT;
+
+				COMMENT ON COLUMN metrics.pg_sys_memory_info.available_memory IS
+					'Estimated memory available for new workloads without swapping, in bytes: the sum of free_memory and cache_total at collection time. This is an estimate, not the kernel''s MemAvailable, because the system_stats extension does not expose that figure and the collector reads the monitored host only over SQL. It overestimates availability where non-reclaimable slab is large or where much of the page cache is dirty, since neither can be reclaimed on demand. NULL where either input was missing or was not an integer value.';
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add available_memory column to pg_sys_memory_info metrics: %w", err)
+			}
+
+			return nil
+		},
+	})
 }
 
 // Migrate applies all pending migrations

@@ -216,6 +216,46 @@ describe('useMetrics', () => {
         expect(url).toContain('table_name=orders');
     });
 
+    it('builds URL with mount_point when mountPoint is set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_sys_disk_info',
+            timeRange: '24h',
+            connectionId: 5,
+            mountPoint: '/var/lib/postgresql',
+            metrics: ['used_space', 'free_space', 'total_space'],
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).toContain('mount_point=%2Fvar%2Flib%2Fpostgresql');
+    });
+
+    it('omits mount_point when mountPoint is not set', async () => {
+        mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+        const params: MetricQueryParams = {
+            probeName: 'pg_sys_disk_info',
+            timeRange: '24h',
+            connectionId: 5,
+        };
+
+        renderHook(() => useMetrics(params));
+
+        await waitFor(() => {
+            expect(mockApiGet).toHaveBeenCalled();
+        });
+
+        const url = mockApiGet.mock.calls[0][0];
+        expect(url).not.toContain('mount_point');
+    });
+
     it('builds URL with queryid when queryId is set', async () => {
         mockApiGet.mockResolvedValueOnce(makeMetricSeries());
 

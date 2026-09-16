@@ -50,6 +50,23 @@ vi.mock('../../../Chart', () => ({
     ),
 }));
 
+// The disk mount lookup goes straight through apiGet rather than
+// useMetrics, so it is mocked separately.
+const mockApiGet = vi.fn();
+vi.mock('../../../../utils/apiClient', () => ({
+    apiGet: (url: string, options?: { signal?: AbortSignal }) =>
+        mockApiGet(url, options) as unknown,
+}));
+
+vi.mock('../../../../utils/logger', () => ({
+    logger: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+    },
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -116,11 +133,31 @@ const realMetrics = (): UseMetricsReturn => ({
 // Tests
 // ---------------------------------------------------------------------------
 
+/** Build a pg_sys_disk_info latest row for the mount lookup. */
+const diskRow = (
+    mountPoint: string,
+    usedSpace: number,
+    fileSystemType: string | null = 'ext4',
+) => ({
+    mount_point: mountPoint,
+    file_system_type: fileSystemType,
+    total_space: 1000,
+    used_space: usedSpace,
+    free_space: 1000 - usedSpace,
+});
+
+/** The parameters of every useMetrics call naming the disk probe. */
+const diskCallParams = (): MetricQueryParams[] => mockUseMetrics.mock.calls
+    .map(([params]) => params)
+    .filter((params): params is MetricQueryParams =>
+        params?.probeName === 'pg_sys_disk_info');
+
 describe('SystemResourcesSection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
         vi.mocked(localStorage.setItem).mockClear();
+        mockApiGet.mockResolvedValue([]);
     });
 
     describe('force collapse behavior', () => {
@@ -398,7 +435,7 @@ describe('SystemResourcesSection', () => {
             expect(requested).toContain('tx_bytes_per_sec,rx_bytes_per_sec');
         });
 
-        it('reports a query error in place of the empty message', async () => {
+        it('reports a network query error in place of the empty message', async () => {
             mockUseMetrics.mockImplementation((params) => {
                 const key = (params?.metrics ?? []).join(',');
                 if (key === 'tx_bytes_per_sec,rx_bytes_per_sec') {
@@ -422,6 +459,241 @@ describe('SystemResourcesSection', () => {
             await waitFor(() => {
                 expect(screen.getByText('metric not found in probe'))
                     .toBeInTheDocument();
+            });
+        });
+    });
+
+    describe('disk mount selection', () => {
+        it('defaults to the fullest real filesystem', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/var/lib/postgresql', 900),
+                diskRow('/dev/shm', 950, 'tmpfs'),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage (/var/lib/postgresql)'))
+                    .toBeInTheDocument();
+            });
+            expect(
+                screen.getByText('Disk Space Over Time (/var/lib/postgresql)'),
+            ).toBeInTheDocument();
+        });
+
+        it('sends the selected mount with both disk queries', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/data', 900),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(diskCallParams().some(p => p.mountPoint === '/data'))
+                    .toBe(true);
+            });
+
+            const withMount = diskCallParams()
+                .filter(p => p.mountPoint === '/data');
+            // The KPI query asks for the total so the percentage can be
+            // taken against it rather than against used plus free.
+            expect(withMount.some(
+                p => p.metrics?.includes('total_space') === true
+                    && p.buckets === 30,
+            )).toBe(true);
+            expect(withMount.some(p => p.buckets === 150)).toBe(true);
+        });
+
+        it('hides the selector when only one real filesystem exists', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 400),
+                diskRow('/dev/shm', 950, 'tmpfs'),
+                diskRow('/snap/core', 1000, 'squashfs'),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage (/)')).toBeInTheDocument();
+            });
+            expect(screen.queryByLabelText('Filesystem'))
+                .not.toBeInTheDocument();
+        });
+
+        it('offers the real filesystems when there are several', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/data', 900),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            const select = await screen.findByLabelText('Filesystem');
+            fireEvent.mouseDown(select);
+
+            const options = await screen.findAllByRole('option');
+            expect(options.map(o => o.textContent)).toEqual(['/data', '/']);
+        });
+
+        it('re-queries the newly selected mount', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/', 100),
+                diskRow('/data', 900),
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            const select = await screen.findByLabelText('Filesystem');
+            fireEvent.mouseDown(select);
+            fireEvent.click(await screen.findByRole('option', { name: '/' }));
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage (/)')).toBeInTheDocument();
+            });
+            expect(diskCallParams().some(p => p.mountPoint === '/')).toBe(true);
+        });
+
+        it('falls back to an empty state when no real mount is found', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            mockApiGet.mockResolvedValue([
+                diskRow('/dev/shm', 950, 'tmpfs'),
+                { ...diskRow('/broken', 0), total_space: 0 },
+            ]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Disk Usage')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Disk Space Over Time'))
+                .toBeInTheDocument();
+            expect(screen.queryByLabelText('Filesystem'))
+                .not.toBeInTheDocument();
+
+            // The empty state must say what is actually wrong rather
+            // than blaming an extension that is plainly working.
+            expect(
+                screen.getByText('No real filesystem reported for this server.'),
+            ).toBeInTheDocument();
+
+            // Reverting to the averaged query is exactly the behaviour
+            // issue #428 removes, so no disk query may have fired.
+            expect(diskCallParams()).toHaveLength(0);
+        });
+
+        it('issues no disk query until the mount lookup resolves', async () => {
+            mockUseMetrics.mockReturnValue(realMetrics());
+            let resolveMounts: (rows: unknown) => void = () => {};
+            mockApiGet.mockImplementation(() => new Promise((resolve) => {
+                resolveMounts = resolve;
+            }));
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => { expect(mockApiGet).toHaveBeenCalled(); });
+
+            // Whilst the lookup is in flight the panel must show the
+            // loading state, not an averaged figure and not an empty
+            // state that would read as a missing extension.
+            expect(diskCallParams()).toHaveLength(0);
+            expect(screen.getAllByLabelText('Loading chart').length)
+                .toBeGreaterThan(0);
+            expect(
+                screen.queryByText('No real filesystem reported for this server.'),
+            ).not.toBeInTheDocument();
+
+            resolveMounts([diskRow('/data', 700)]);
+
+            await waitFor(() => {
+                expect(diskCallParams().some(p => p.mountPoint === '/data'))
+                    .toBe(true);
+            });
+        });
+
+        it('takes the percentage from the reported total', async () => {
+            mockApiGet.mockResolvedValue([diskRow('/data', 800)]);
+            mockUseMetrics.mockImplementation((params) => {
+                if (params?.probeName === 'pg_sys_disk_info'
+                    && params.buckets === 30) {
+                    return {
+                        data: [
+                            {
+                                name: 'used_space',
+                                metric: 'used_space',
+                                data: [{ time: 't', value: 800 }],
+                            },
+                            {
+                                name: 'free_space',
+                                metric: 'free_space',
+                                data: [{ time: 't', value: 100 }],
+                            },
+                            {
+                                name: 'total_space',
+                                metric: 'total_space',
+                                data: [{ time: 't', value: 1000 }],
+                            },
+                        ] as MetricSeries[],
+                        loading: false,
+                        error: null,
+                        refetch: vi.fn(),
+                    };
+                }
+                return realMetrics();
+            });
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            // 800 / 1000 is 80.0; used over used-plus-free would have
+            // given 88.9 on a filesystem with reserved blocks.
+            await waitFor(() => {
+                expect(screen.getByText('80.0')).toBeInTheDocument();
             });
         });
     });

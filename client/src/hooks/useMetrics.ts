@@ -75,6 +75,10 @@ const buildMetricsUrl = (
         searchParams.append('index_name', params.indexName);
     }
 
+    if (params.mountPoint) {
+        searchParams.append('mount_point', params.mountPoint);
+    }
+
     if (params.queryId) {
         searchParams.append('queryid', params.queryId);
     }
@@ -163,6 +167,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         params?.indexName,
         params?.tableName,
         params?.schemaName,
+        params?.mountPoint,
         // A new custom window is as much a change of query as a new
         // preset is, so the loading state must show for it too.
         customStart,

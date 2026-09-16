@@ -9,19 +9,26 @@
  */
 
 import type React from 'react';
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
+import type { SelectChangeEvent } from '@mui/material/Select';
 import { Computer as ComputerIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import type { MetricQueryParams, MetricSeries } from '../types';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
+import { DASHBOARD_CONTROL_TEXT_SX } from '../../../theme/tokens';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
 import { Chart } from '../../Chart';
 import ChartPanel from '../ChartPanel';
 import { formatBytes, formatValue } from '../../../utils/formatters';
+import { useDiskMounts } from './diskMounts';
 import {
     type ServerSectionProps, extractSparklineData, extractLatestValue, hasNonZeroData,
 } from './types';
@@ -34,6 +41,20 @@ const CHART_BUCKETS = 150;
 
 /** Chart height in pixels */
 const CHART_HEIGHT = 250;
+
+/** Selector bar holding the disk mount picker above the disk chart */
+const MOUNT_SELECT_BAR_SX = {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    mb: 1,
+};
+
+/** Width and typography of the disk mount picker */
+const MOUNT_SELECT_SX = {
+    minWidth: 180,
+    '& .MuiInputBase-root': DASHBOARD_CONTROL_TEXT_SX,
+    '& .MuiInputLabel-root': DASHBOARD_CONTROL_TEXT_SX,
+};
 
 /**
  * Determine a status level from a percentage value.
@@ -93,6 +114,57 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
 }) => {
     const { timeRange } = useDashboard();
 
+    /*
+     * pg_sys_disk_info records one row per mounted filesystem, so both
+     * the disk tile and the disk chart describe a single mount chosen
+     * here. Without the filter the query averages the data volume, the
+     * WAL volume and every pseudo filesystem into a figure that
+     * corresponds to no real filesystem at all.
+     */
+    const { mounts: diskMounts, settled: mountsSettled } =
+        useDiskMounts(connectionId);
+    const mountNames = useMemo(
+        () => diskMounts.map(mount => mount.mount_point ?? ''),
+        [diskMounts],
+    );
+    const [selectedMount, setSelectedMount] = useState<string>('');
+
+    /*
+     * Default to the fullest real filesystem, which is the one the
+     * alerter's disk threshold reports on, and fall back to the new
+     * default whenever the connection changes or the selected mount
+     * disappears from the list.
+     */
+    useEffect(() => {
+        setSelectedMount((current) => {
+            if (current !== '' && mountNames.includes(current)) {
+                return current;
+            }
+            return mountNames[0] ?? '';
+        });
+    }, [mountNames]);
+
+    const handleMountChange = useCallback((event: SelectChangeEvent): void => {
+        setSelectedMount(event.target.value);
+    }, []);
+
+    const diskLabelSuffix = selectedMount ? ` (${selectedMount})` : '';
+    const diskChartTitle = `Disk Space Over Time${diskLabelSuffix}`;
+
+    /*
+     * The mount lookup gates both disk queries: without a mount the
+     * server would fall back to averaging every mounted filesystem,
+     * which is the very figure this section no longer reports. The
+     * panel therefore stays in its loading state whilst the lookup is
+     * in flight, and shows the empty state only once it has settled
+     * with no real filesystem to chart.
+     */
+    const diskMountPending = !mountsSettled && selectedMount === '';
+    const diskMountMissing = mountsSettled && selectedMount === '';
+    const diskEmptyMessage = diskMountMissing
+        ? 'No real filesystem reported for this server.'
+        : 'No disk data available. Is the system_stats extension installed?';
+
     // KPI sparkline queries (30 buckets)
     const cpuKpiParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_sys_cpu_usage_info',
@@ -113,14 +185,17 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         metrics: ['used_memory', 'total_memory'],
     }), [connectionId, timeRange.range]);
 
-    const diskKpiParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_sys_disk_info',
-        connectionId,
-        timeRange: timeRange.range,
-        buckets: KPI_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['used_space', 'free_space'],
-    }), [connectionId, timeRange.range]);
+    const diskKpiParams = useMemo((): MetricQueryParams | null => (
+        selectedMount === '' ? null : {
+            probeName: 'pg_sys_disk_info',
+            connectionId,
+            timeRange: timeRange.range,
+            buckets: KPI_BUCKETS,
+            aggregation: 'avg',
+            mountPoint: selectedMount,
+            metrics: ['used_space', 'free_space', 'total_space'],
+        }
+    ), [connectionId, timeRange.range, selectedMount]);
 
     const loadKpiParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_sys_load_avg_info',
@@ -155,14 +230,17 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         metrics: ['used_memory', 'free_memory', 'cache_total'],
     }), [connectionId, timeRange.range]);
 
-    const diskChartParams = useMemo((): MetricQueryParams => ({
-        probeName: 'pg_sys_disk_info',
-        connectionId,
-        timeRange: timeRange.range,
-        buckets: CHART_BUCKETS,
-        aggregation: 'avg',
-        metrics: ['used_space', 'free_space'],
-    }), [connectionId, timeRange.range]);
+    const diskChartParams = useMemo((): MetricQueryParams | null => (
+        selectedMount === '' ? null : {
+            probeName: 'pg_sys_disk_info',
+            connectionId,
+            timeRange: timeRange.range,
+            buckets: CHART_BUCKETS,
+            aggregation: 'avg',
+            mountPoint: selectedMount,
+            metrics: ['used_space', 'free_space'],
+        }
+    ), [connectionId, timeRange.range, selectedMount]);
 
     const loadChartParams = useMemo((): MetricQueryParams => ({
         probeName: 'pg_sys_load_avg_info',
@@ -234,15 +312,21 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     }, [usedMemory, totalMemory, hasSystemStats]);
 
     const usedSpace = extractLatestValue(diskKpi.data, 'used_space');
-    const freeSpace = extractLatestValue(diskKpi.data, 'free_space');
+    const totalSpace = extractLatestValue(diskKpi.data, 'total_space');
+
+    /*
+     * The percentage comes from the reported total rather than from
+     * used plus free, because a filesystem with reserved blocks holds
+     * back space that is counted in neither, and the two figures then
+     * disagree.
+     */
     const diskUsagePercent = useMemo(() => {
         if (!hasSystemStats) { return null; }
-        if (usedSpace !== null && freeSpace !== null) {
-            const total = usedSpace + freeSpace;
-            if (total > 0) { return (usedSpace / total) * 100; }
+        if (usedSpace !== null && totalSpace !== null && totalSpace > 0) {
+            return (usedSpace / totalSpace) * 100;
         }
         return null;
-    }, [usedSpace, freeSpace, hasSystemStats]);
+    }, [usedSpace, totalSpace, hasSystemStats]);
 
     const loadValue = extractLatestValue(loadKpi.data, 'load_avg_one_minute');
 
@@ -365,7 +449,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                     }}
                 />
                 <KpiTile
-                    label="Disk Usage"
+                    label={`Disk Usage${diskLabelSuffix}`}
                     value={!hasSystemStats ? '--'
                         : diskUsagePercent !== null
                             ? formatValue(diskUsagePercent)
@@ -378,7 +462,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         diskKpi.data, 'used_space'
                     )}
                     analysisContext={{
-                        metricDescription: 'Disk space usage over time',
+                        metricDescription: `Disk space usage over time for ${selectedMount || 'the selected filesystem'}`,
                         connectionId,
                         connectionName,
                         timeRange: timeRange.range,
@@ -464,11 +548,34 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                 </Box>
 
                 <Box>
+                    {mountNames.length > 1 && (
+                        <Box sx={MOUNT_SELECT_BAR_SX}>
+                            <FormControl size="small" sx={MOUNT_SELECT_SX}>
+                                <InputLabel id="disk-mount-select-label">
+                                    Filesystem
+                                </InputLabel>
+                                <Select
+                                    labelId="disk-mount-select-label"
+                                    id="disk-mount-select"
+                                    label="Filesystem"
+                                    value={selectedMount}
+                                    onChange={handleMountChange}
+                                >
+                                    {mountNames.map(name => (
+                                        <MenuItem key={name} value={name}>
+                                            {name}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Box>
+                    )}
                     <ChartPanel
-                        title="Disk Space"
-                        loading={diskChart.loading && !diskChartData}
+                        title={diskChartTitle}
+                        loading={diskMountPending
+                            || (diskChart.loading && !diskChartData)}
                         hasData={hasSystemStats && !!diskChartData}
-                        emptyMessage="No disk data available. Is the system_stats extension installed?"
+                        emptyMessage={diskEmptyMessage}
                         errorMessage={diskChart.error}
                         height={CHART_HEIGHT}
                     >
@@ -476,7 +583,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                             <Chart
                                 type="line"
                                 data={diskChartData}
-                                title="Disk Space"
+                                title={diskChartTitle}
                                 height={CHART_HEIGHT}
                                 smooth
                                 areaFill
@@ -484,7 +591,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Disk space usage showing used and free space',
+                                    metricDescription: `Disk space usage showing used and free space for ${selectedMount || 'the selected filesystem'}`,
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,

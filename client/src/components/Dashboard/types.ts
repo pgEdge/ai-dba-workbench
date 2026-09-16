@@ -150,6 +150,12 @@ export interface MetricQueryParams {
     tableName?: string;
     indexName?: string;
     /**
+     * Filesystem mount point, for probes such as pg_sys_disk_info that
+     * record one row per mounted filesystem. Without it the query
+     * aggregates across every mount, which describes no real volume.
+     */
+    mountPoint?: string;
+    /**
      * pg_stat_statements query identifier. Carried as a string because
      * query identifiers are 64-bit values that JavaScript numbers cannot
      * represent exactly.

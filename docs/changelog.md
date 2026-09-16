@@ -677,6 +677,24 @@ project adheres to
   and load falls back to the compiled-in defaults as intended
   instead of aborting startup. (#421)
 
+- Fix the Disk Space chart and the Disk Usage KPI tile on the server
+  dashboard averaging `used_space` and `free_space` across every
+  mounted filesystem, including pseudo filesystems such as `tmpfs` and
+  `devtmpfs`, so that the figures described no real filesystem. Both
+  now describe a single real filesystem, chosen with a new Filesystem
+  selector above the chart and defaulting to the filesystem closest to
+  full, with the mount point shown in the tile label and the chart
+  title; pseudo filesystems are excluded. The usage percentage is now
+  derived from the filesystem's reported total size rather than from
+  used plus free space, which differ on any filesystem with reserved
+  blocks. The `GET /api/v1/metrics/query` endpoint gained a
+  `mount_point` query parameter, which filters both the time-series
+  and the latest-row responses. The alerter's disk usage threshold
+  metric took the highest usage across all mounts and so was pinned at
+  100% on any host with a squashfs mount, because a squashfs image is
+  by construction fully used; the metric now ignores pseudo
+  filesystems, matching the dashboard. (#428)
+
 ### Removed
 
 - Retire the `table_bloat_ratio` alert rule, which duplicated the

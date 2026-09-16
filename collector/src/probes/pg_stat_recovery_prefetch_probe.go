@@ -51,7 +51,7 @@ func (p *PgStatRecoveryPrefetchProbe) GetQuery() string {
 // Execute runs the probe against a monitored connection
 func (p *PgStatRecoveryPrefetchProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if view is available (cached)
-	available, err := cachedCheck(connectionName, "pg_stat_recovery_prefetch_exists", func() (bool, error) {
+	available, err := cachedCheck(connectionName, monitoredConn, "pg_stat_recovery_prefetch_exists", func() (bool, error) {
 		return CheckViewExists(ctx, monitoredConn, "pg_stat_recovery_prefetch")
 	})
 	if err != nil {

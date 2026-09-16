@@ -89,17 +89,18 @@ func TestPgStatStatementsProbe_ExecuteExtensionMissing(t *testing.T) {
 	})
 
 	metrics, err := p.Execute(ctx, "stmts-noext", conn, pgVersion)
-	if err != nil {
-		t.Fatalf("Execute (no extension): %v", err)
+	if !errors.Is(err, ErrExtensionNotInstalled) {
+		t.Fatalf("Execute (no extension) = %v, want ErrExtensionNotInstalled",
+			err)
 	}
-	if len(metrics) != 0 {
-		t.Errorf("expected 0 rows when extension is missing, got %d",
+	if metrics != nil {
+		t.Errorf("expected nil metrics when the extension is missing, got %d rows",
 			len(metrics))
 	}
 	// Cache path
 	if _, err := p.Execute(ctx, "stmts-noext", conn,
-		pgVersion); err != nil {
-		t.Fatalf("Execute cached: %v", err)
+		pgVersion); !errors.Is(err, ErrExtensionNotInstalled) {
+		t.Fatalf("Execute cached = %v, want ErrExtensionNotInstalled", err)
 	}
 }
 
@@ -172,9 +173,9 @@ func TestPgStatStatementsProbe_ExecuteWithoutStatsInfoView(t *testing.T) {
 	requirePgStatStatementsReadable(t, conn)
 
 	const connName = "stmts-no-info-view"
-	scope := featureCacheScope(connName, conn.Conn().Config().Database)
-	key := featureCacheKey{connectionName: scope,
-		checkName: "pg_stat_statements_info_view"}
+	key := featureCacheKey{connectionName: connName,
+		databaseName: connectionDatabaseName(conn),
+		checkName:    "pg_stat_statements_info_view"}
 	featureCache.Store(key, false)
 	defer featureCache.Delete(key)
 
@@ -222,20 +223,21 @@ func TestPgStatStatementsProbe_ExecuteTimingColumnVariants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			connName := "stmts-variant-" + tc.name
-			scope := featureCacheScope(connName,
-				conn.Conn().Config().Database)
 			seed := map[string]bool{
 				"pg_stat_statements_ext":             true,
 				"pg_stat_statements_shared_blk_time": tc.sharedBlkTime,
 				"pg_stat_statements_blk_read_time":   tc.blkReadTime,
 			}
 			for check, val := range seed {
-				key := featureCacheKey{connectionName: scope, checkName: check}
+				key := featureCacheKey{connectionName: connName,
+					databaseName: connectionDatabaseName(conn),
+					checkName:    check}
 				featureCache.Store(key, val)
 				defer featureCache.Delete(key)
 			}
-			infoKey := featureCacheKey{connectionName: scope,
-				checkName: "pg_stat_statements_info_view"}
+			infoKey := featureCacheKey{connectionName: connName,
+				databaseName: connectionDatabaseName(conn),
+				checkName:    "pg_stat_statements_info_view"}
 			defer featureCache.Delete(infoKey)
 
 			metrics, err := p.Execute(ctx, connName, conn, pgVersion)
@@ -632,10 +634,7 @@ func TestPgStatStatementsProbe_FeatureCacheIsPerDatabase(t *testing.T) {
 	t.Run("extension availability", func(t *testing.T) {
 		const connName = "stmts-xdb-availability"
 		for _, db := range []string{firstDB, secondDB} {
-			key := featureCacheKey{
-				connectionName: featureCacheScope(connName, db),
-				checkName:      "pg_stat_statements_ext",
-			}
+			key := featureCacheKey{connectionName: connName, databaseName: db, checkName: "pg_stat_statements_ext"}
 			defer featureCache.Delete(key)
 		}
 
@@ -674,7 +673,6 @@ func TestPgStatStatementsProbe_FeatureCacheIsPerDatabase(t *testing.T) {
 
 		const connName = "stmts-xdb-info-view"
 		for _, db := range []string{firstDB, secondDB} {
-			scope := featureCacheScope(connName, db)
 			for _, check := range []string{
 				"pg_stat_statements_ext",
 				"pg_stat_statements_shared_blk_time",
@@ -682,15 +680,12 @@ func TestPgStatStatementsProbe_FeatureCacheIsPerDatabase(t *testing.T) {
 				"pg_stat_statements_info_view",
 			} {
 				defer featureCache.Delete(featureCacheKey{
-					connectionName: scope, checkName: check})
+					connectionName: connName, databaseName: db, checkName: check})
 			}
 		}
 
 		// Say the info view is absent for the first database only.
-		featureCache.Store(featureCacheKey{
-			connectionName: featureCacheScope(connName, firstDB),
-			checkName:      "pg_stat_statements_info_view",
-		}, false)
+		featureCache.Store(featureCacheKey{connectionName: connName, databaseName: firstDB, checkName: "pg_stat_statements_info_view"}, false)
 
 		first, err := p.Execute(ctx, connName, conn, pgVersion)
 		if err != nil {
@@ -725,10 +720,7 @@ func TestPgStatStatementsProbe_FeatureCacheIsPerDatabase(t *testing.T) {
 		// Each database must have left its own info-view answer behind:
 		// a connection-only key would have stored just the one.
 		for db, want := range map[string]bool{firstDB: false, secondDB: true} {
-			got, ok := featureCache.Load(featureCacheKey{
-				connectionName: featureCacheScope(connName, db),
-				checkName:      "pg_stat_statements_info_view",
-			})
+			got, ok := featureCache.Load(featureCacheKey{connectionName: connName, databaseName: db, checkName: "pg_stat_statements_info_view"})
 			if !ok {
 				t.Errorf("no cached info-view answer for %s; the check "+
 					"is not keyed by database", db)
@@ -756,7 +748,6 @@ func TestPgStatStatementsProbe_ExecutePreThirteenFallback(t *testing.T) {
 	requirePgStatStatementsReadable(t, conn)
 
 	const connName = "stmts-pre-13"
-	scope := featureCacheScope(connName, conn.Conn().Config().Database)
 	for _, check := range []string{
 		"pg_stat_statements_ext",
 		"pg_stat_statements_shared_blk_time",
@@ -764,9 +755,9 @@ func TestPgStatStatementsProbe_ExecutePreThirteenFallback(t *testing.T) {
 		"pg_stat_statements_info_view",
 	} {
 		defer featureCache.Delete(featureCacheKey{
-			connectionName: scope, checkName: check})
+			connectionName: connName, databaseName: conn.Conn().Config().Database, checkName: check})
 	}
-	featureCache.Store(featureCacheKey{connectionName: scope,
+	featureCache.Store(featureCacheKey{connectionName: connName, databaseName: conn.Conn().Config().Database,
 		checkName: "pg_stat_statements_shared_blk_time"}, false)
 
 	if hasOld, err := p.checkHasBlkReadTime(ctx, conn); err != nil {
@@ -826,7 +817,6 @@ func TestPgStatStatementsProbe_ExecuteCachedCheckErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			connName := "stmts-bad-cache-" + tc.name
-			scope := featureCacheScope(connName, database)
 			for _, check := range []string{
 				"pg_stat_statements_ext",
 				"pg_stat_statements_shared_blk_time",
@@ -834,15 +824,15 @@ func TestPgStatStatementsProbe_ExecuteCachedCheckErrors(t *testing.T) {
 				"pg_stat_statements_info_view",
 			} {
 				defer featureCache.Delete(featureCacheKey{
-					connectionName: scope, checkName: check})
+					connectionName: connName, databaseName: database, checkName: check})
 			}
-			featureCache.Store(featureCacheKey{connectionName: scope,
+			featureCache.Store(featureCacheKey{connectionName: connName, databaseName: database,
 				checkName: "pg_stat_statements_ext"}, true)
 			for check, val := range tc.seed {
 				featureCache.Store(featureCacheKey{
-					connectionName: scope, checkName: check}, val)
+					connectionName: connName, databaseName: database, checkName: check}, val)
 			}
-			featureCache.Store(featureCacheKey{connectionName: scope,
+			featureCache.Store(featureCacheKey{connectionName: connName, databaseName: database,
 				checkName: tc.check}, "not a bool")
 
 			metrics, err := p.Execute(ctx, connName, conn, pgVersion)

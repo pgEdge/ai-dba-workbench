@@ -591,7 +591,7 @@ func TestSchedulerExecuteProbeForServerWide(t *testing.T) {
 	probe := probes.NewPgConnectivityProbe(cfg)
 
 	mc := makeMonitoredConn(f)
-	metrics, connErr, msg := ps.executeProbeForServerWide(context.Background(), probe, mc)
+	metrics, connErr, msg, _ := ps.executeProbeForServerWide(context.Background(), probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error: %s", msg)
 	}
@@ -614,7 +614,7 @@ func TestSchedulerExecuteProbeForServerWide_CtxCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	mc := makeMonitoredConn(f)
-	metrics, connErr, _ := ps.executeProbeForServerWide(ctx, probe, mc)
+	metrics, connErr, _, _ := ps.executeProbeForServerWide(ctx, probe, mc)
 	if connErr {
 		t.Error("canceled context should not register as connection error")
 	}
@@ -647,7 +647,7 @@ func TestSchedulerExecuteProbeForServerWide_ConnectionFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, connErr, msg := ps.executeProbeForServerWide(ctx, probe, bad)
+	_, connErr, msg, _ := ps.executeProbeForServerWide(ctx, probe, bad)
 	if !connErr {
 		t.Error("expected connection error for unreachable host")
 	}
@@ -674,7 +674,7 @@ func TestSchedulerExecuteProbeForAllDatabases(t *testing.T) {
 	// pg_stat_statements may fail because the extension isn't installed
 	// — that's fine. We're exercising the multi-database loop and
 	// ensuring no panic.
-	metrics, dbs, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	metrics, dbs, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error during multi-database probe")
 	}
@@ -709,7 +709,7 @@ func TestSchedulerExecuteProbeForAllDatabases_HappyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	metrics, dbs, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	metrics, dbs, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error")
 	}
@@ -733,7 +733,7 @@ func TestSchedulerExecuteProbeForAllDatabases_PreCanceled(t *testing.T) {
 	mc := makeMonitoredConn(f)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	_, _, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Error("canceled-ctx pre-check should return no connection error")
 	}
@@ -763,7 +763,7 @@ func TestSchedulerExecuteProbeForAllDatabases_ConnectionFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, _, connErr, msg := ps.executeProbeForAllDatabases(ctx, probe, bad)
+	_, _, connErr, msg, _ := ps.executeProbeForAllDatabases(ctx, probe, bad)
 	if !connErr {
 		t.Error("expected connection error")
 	}
@@ -1209,7 +1209,7 @@ func TestSchedulerExecuteProbeForAllDatabases_CancelMidLoop(t *testing.T) {
 	probe := &cancelAfterFirst{cancel: cancel, dbScoped: true, probeName: "cancel-mid-loop"}
 
 	mc := makeMonitoredConn(f)
-	_, _, _, _ = ps.executeProbeForAllDatabases(ctx, probe, mc)
+	_, _, _, _, _ = ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if probe.called == 0 {
 		t.Error("expected probe.Execute to be called at least once")
 	}
@@ -1227,7 +1227,7 @@ func TestSchedulerExecuteProbeForAllDatabases_ExecuteFails(t *testing.T) {
 	mc := makeMonitoredConn(f)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	metrics, dbs, connErr, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
+	metrics, dbs, connErr, _, _ := ps.executeProbeForAllDatabases(ctx, probe, mc)
 	if connErr {
 		t.Errorf("unexpected connection error")
 	}
@@ -1360,7 +1360,7 @@ func TestSchedulerExecuteProbeForServerWide_ExecuteCanceled(t *testing.T) {
 	probe := &cancelOnExecute{cancel: cancel, dbScoped: false, probeName: "cancel-on-exec"}
 
 	mc := makeMonitoredConn(f)
-	_, _, _ = ps.executeProbeForServerWide(ctx, probe, mc)
+	_, _, _, _ = ps.executeProbeForServerWide(ctx, probe, mc)
 }
 
 // TestSchedulerExecuteProbeForServerWide_ExecuteFails exercises the
@@ -1374,7 +1374,7 @@ func TestSchedulerExecuteProbeForServerWide_ExecuteFails(t *testing.T) {
 	mc := makeMonitoredConn(f)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	metrics, connErr, _ := ps.executeProbeForServerWide(ctx, probe, mc)
+	metrics, connErr, _, _ := ps.executeProbeForServerWide(ctx, probe, mc)
 	if connErr {
 		t.Error("Execute failure should not register as connection error")
 	}

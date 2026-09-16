@@ -74,7 +74,7 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 	var allMetrics []map[string]any
 
 	// Check if pg_stat_io exists (PG 16+)
-	ioExists, err := cachedCheck(connectionName, "pg_stat_io_exists", func() (bool, error) {
+	ioExists, err := cachedCheck(connectionName, monitoredConn, "pg_stat_io_exists", func() (bool, error) {
 		return p.checkIOViewExists(ctx, monitoredConn)
 	})
 	if err != nil {
@@ -157,7 +157,7 @@ func (p *PgStatIOProbe) Execute(ctx context.Context, connectionName string, moni
 	}
 
 	// Check if pg_stat_slru exists (PG 13+)
-	slruExists, err := cachedCheck(connectionName, "pg_stat_slru_exists", func() (bool, error) {
+	slruExists, err := cachedCheck(connectionName, monitoredConn, "pg_stat_slru_exists", func() (bool, error) {
 		return p.checkSLRUViewExists(ctx, monitoredConn)
 	})
 	if err != nil {

@@ -151,25 +151,10 @@ func statsResetSelect(hasStatsInfo bool) string {
 	return "NULL::timestamptz AS stats_reset"
 }
 
-// featureCacheScope builds the feature-cache scope for a database-scoped
-// probe. The scheduler opens one pool per monitored database on the same
-// connection, so the cache must be keyed by database as well as by
-// connection: the extension may be installed, or installed into a schema
-// on the search path, in one database and not another, and a result
-// cached for one must never decide the query shape for the other. Every
-// cached check in Execute uses this scope, and the tests build their
-// seeded keys with it, so the two cannot drift apart.
-func featureCacheScope(connectionName, database string) string {
-	return connectionName + "/" + database
-}
-
 // Execute runs the probe against a monitored connection
 func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
-	cacheScope := featureCacheScope(connectionName,
-		monitoredConn.Conn().Config().Database)
-
 	// Check if extension is available (cached)
-	available, err := cachedCheck(cacheScope, "pg_stat_statements_ext", func() (bool, error) {
+	available, err := cachedCheck(connectionName, monitoredConn, "pg_stat_statements_ext", func() (bool, error) {
 		return CheckExtensionExists(ctx, connectionName, monitoredConn, "pg_stat_statements")
 	})
 	if err != nil {
@@ -177,12 +162,14 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 
 	if !available {
-		// Extension not available, return empty metrics (not an error)
-		return []map[string]any{}, nil
+		// The extension is not installed in this database. Report that
+		// explicitly so the scheduler can distinguish it from an
+		// installed extension that simply has no rows to report.
+		return nil, ErrExtensionNotInstalled
 	}
 
 	// Check if we have the new shared_blk_read_time column (PG 17+) (cached)
-	hasSharedBlkTime, err := cachedCheck(cacheScope, "pg_stat_statements_shared_blk_time", func() (bool, error) {
+	hasSharedBlkTime, err := cachedCheck(connectionName, monitoredConn, "pg_stat_statements_shared_blk_time", func() (bool, error) {
 		return p.checkHasSharedBlkTime(ctx, monitoredConn)
 	})
 	if err != nil {
@@ -192,7 +179,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	// Check if we have the blk_read_time column (PG 13-16) (cached)
 	hasBlkReadTime := false
 	if !hasSharedBlkTime {
-		hasBlkReadTime, err = cachedCheck(cacheScope, "pg_stat_statements_blk_read_time", func() (bool, error) {
+		hasBlkReadTime, err = cachedCheck(connectionName, monitoredConn, "pg_stat_statements_blk_read_time", func() (bool, error) {
 			return p.checkHasBlkReadTime(ctx, monitoredConn)
 		})
 		if err != nil {
@@ -202,7 +189,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 
 	// Check if the pg_stat_statements_info view exists (extension 1.9+,
 	// PostgreSQL 14+) so stats_reset can be captured (cached)
-	hasStatsInfo, err := cachedCheck(cacheScope, "pg_stat_statements_info_view", func() (bool, error) {
+	hasStatsInfo, err := cachedCheck(connectionName, monitoredConn, "pg_stat_statements_info_view", func() (bool, error) {
 		return p.checkHasStatsInfoView(ctx, monitoredConn)
 	})
 	if err != nil {
@@ -327,7 +314,12 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 	}
 	defer rows.Close()
 
-	return utils.ScanRowsToMaps(rows)
+	// Appending onto an empty slice guarantees a non-nil result: an
+	// installed extension with no rows to report is a different thing
+	// from an absent one, which returns ErrExtensionNotInstalled, and
+	// the scheduler records the two differently.
+	metrics, err := utils.ScanRowsToMaps(rows)
+	return append([]map[string]any{}, metrics...), err
 }
 
 // Store stores the collected metrics in the datastore

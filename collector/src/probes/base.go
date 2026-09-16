@@ -12,6 +12,7 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -37,9 +38,14 @@ func WrapQuery(probeName, query string) string {
 }
 
 // featureCacheKey is a typed key for the feature cache that avoids
-// the ambiguity of string keys containing colons.
+// the ambiguity of string keys containing colons. The database name is
+// part of the key because feature detection is not necessarily
+// server-wide: an extension such as pg_stat_statements can be installed
+// in one database and absent from another on the same server, so a
+// verdict reached in one database must never be reused in another.
 type featureCacheKey struct {
 	connectionName string
+	databaseName   string
 	checkName      string
 }
 
@@ -47,13 +53,35 @@ type featureCacheKey struct {
 // featureCacheKey. View and column existence checks never change
 // during the lifetime of a PostgreSQL connection, so caching them
 // avoids repeated catalog queries on every collection cycle.
+//
+// Nothing invalidates the cache today; entries are keyed by connection
+// name, database name and check name, and live for the lifetime of the
+// process. Should pool recycling ever need to drop cached verdicts, it
+// has to clear every entry for the connection, across all databases.
 var featureCache sync.Map
 
+// connectionDatabaseName returns the database a pooled connection is
+// attached to, taken from the pool's own configuration so no extra
+// round trip is needed. Each database gets its own pool, so the value
+// is stable for the life of the connection. A nil connection yields an
+// empty string rather than panicking.
+func connectionDatabaseName(conn *pgxpool.Conn) string {
+	if conn == nil {
+		return ""
+	}
+	return conn.Conn().Config().Database
+}
+
 // cachedCheck returns a cached boolean result for a feature-detection
-// check identified by connectionName and checkName. If no cached value
-// exists, it calls checkFn, caches the result, and returns it.
-func cachedCheck(connectionName, checkName string, checkFn func() (bool, error)) (bool, error) {
-	key := featureCacheKey{connectionName: connectionName, checkName: checkName}
+// check identified by connectionName, the database conn is attached to,
+// and checkName. If no cached value exists, it calls checkFn, caches the
+// result, and returns it.
+func cachedCheck(connectionName string, conn *pgxpool.Conn, checkName string, checkFn func() (bool, error)) (bool, error) {
+	key := featureCacheKey{
+		connectionName: connectionName,
+		databaseName:   connectionDatabaseName(conn),
+		checkName:      checkName,
+	}
 	if val, ok := featureCache.Load(key); ok {
 		boolVal, ok2 := val.(bool)
 		if !ok2 {
@@ -113,6 +141,15 @@ type MetricsProbe interface {
 type ExtensionProbe interface {
 	GetExtensionName() string
 }
+
+// ErrExtensionNotInstalled is returned by an extension probe's Execute
+// when the required extension is not installed in the database being
+// probed. It is not a failure: the scheduler treats it as the verdict
+// "absent here" and records the probe as unavailable for that reason,
+// rather than logging it as an error. Reporting absence explicitly is
+// what lets the scheduler tell an absent extension apart from one that
+// is installed but currently has nothing to report.
+var ErrExtensionNotInstalled = errors.New("extension not installed")
 
 // BaseMetricsProbe provides common probe functionality
 type BaseMetricsProbe struct {

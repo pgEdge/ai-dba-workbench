@@ -6023,6 +6023,14 @@
             }
           },
           {
+            "name": "mount_point",
+            "in": "query",
+            "description": "Filter by filesystem mount point",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "queryid",
             "in": "query",
             "description": "Filter by pg_stat_statements query ID",

@@ -47,9 +47,11 @@ A failed login takes one of two shapes, and which one an operator sees
 says where the failure happened. The callback answers `400` with a
 generic JSON error when the request never reached the provider
 successfully: no state cookie, a state cookie that does not open, a
-state parameter that does not match the sealed one, or no
-authorisation code. It redirects the browser back to the login page
-with a `login_error` query parameter when the request did come back
+state parameter that does not match the sealed one, or neither an
+authorisation code nor a provider error, since the provider's `error`
+parameter is read first and takes the redirect branch below. It
+redirects the browser back to the login page with a `login_error`
+query parameter when the request did come back
 from the provider: `login_error=provider` when the provider itself
 declined, which includes the person cancelling at the consent screen,
 and `login_error=login` when the code exchange or any later step

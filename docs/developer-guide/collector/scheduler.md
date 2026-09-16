@@ -94,8 +94,21 @@ func (ps *ProbeScheduler) scheduleProbe(
     ticker := time.NewTicker(interval)
     defer ticker.Stop()
 
-    // Execute immediately on startup
+    // Stagger the first execution of a probe that
+    // is past due or has never run, then realign
+    // the ticker
+    jitter := ps.initialStartupJitter(interval)
+    if jitter > 0 {
+        select {
+        case <-ps.shutdownChan:
+            return
+        case <-ps.ctx.Done():
+            return
+        case <-time.After(jitter):
+        }
+    }
     ps.executeProbe(ps.ctx, probe)
+    restartTicker(ticker, interval)
 
     // Then execute on timer
     for {
@@ -389,6 +402,18 @@ short-lived and last only for the duration of probe
 execution. With 10 monitored servers, the system
 can produce up to 340 concurrent goroutines during
 probe execution.
+
+### Global Probe Concurrency Limit
+
+Every probe execution holds a slot in a counting
+semaphore shared by the whole scheduler, sized from
+`scheduler.max_concurrent_probes` and defaulting to
+8 slots. The limit bounds peak memory and connection
+demand so that neither scales with the number of
+monitored connections. A goroutine waiting for a
+slot abandons the wait when the scheduler shuts
+down, so a backlog of queued probes cannot delay
+`Stop`.
 
 ### Connection Pool Limits
 

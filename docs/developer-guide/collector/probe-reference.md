@@ -769,9 +769,42 @@ This probe monitors system memory usage.
 - Source: `pg_sys_memory_info()` function
 - Default Interval: 300 seconds (5 minutes)
 - Default Retention: 7 days
-- Key Metrics: Total, used, free, cached memory
+- Key Metrics: Total, used, free, cached memory, and an
+  estimated available memory figure
 - Use Cases: Memory utilization monitoring, capacity
   planning
+
+The probe also stores `available_memory`, a `BIGINT`
+column added by schema migration 13. The collector
+derives the value as `free_memory + cache_total` rather
+than reading a column of that name from the monitored
+server, and stores NULL whenever either input is
+missing, NULL, or not an integer, because zero is itself
+a meaningful reading.
+
+The derived column exists because `free_memory` reports
+`MemFree` from `/proc/meminfo`, which counts only memory
+that is entirely unused. The figure a DBA wants when
+sizing `shared_buffers` or `work_mem` is the kernel's
+`MemAvailable`, an estimate of how much memory a new
+workload could claim without swapping, because that
+figure also counts reclaimable page cache and slab; on a
+busy PostgreSQL host the two differ by most of the
+machine's memory.
+
+The collector cannot collect `MemAvailable` today, since
+the collector reads host metrics only through the
+`system_stats` extension over SQL, and
+`pg_sys_memory_info()` returns the same twelve columns
+in versions 1.0 through 4.0. None of those columns
+carries `MemAvailable`, and the only availability-like
+column, `avail_page_file`, reports a Windows page file
+figure. The `free_memory + cache_total` approximation is
+what tooling used before `MemAvailable` existed, and the
+approximation overestimates availability on a host with
+a large non-reclaimable slab or a largely dirty page
+cache, so `available_memory` is an estimate and every
+presentation of the value must say so.
 
 ### pg_sys_io_analysis_info
 

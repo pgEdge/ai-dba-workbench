@@ -161,6 +161,21 @@ project adheres to
   `compute_query_id` off, where the drill-down reads "Not
   observed", so operators who want the attribution should enable
   `compute_query_id` on each monitored server. (#384)
+- Add an estimated available memory figure to the memory metrics.
+  The collector schema migration 13 adds an `available_memory`
+  column to `metrics.pg_sys_memory_info`, and the
+  `pg_sys_memory_info` probe populates the column with free memory
+  plus cached memory, storing NULL whenever either input is
+  missing. The Memory Usage chart on the server dashboard plots the
+  figure as a fourth series, "Available (est.)", alongside Used,
+  Free and Cached, and the memory KPI tile keeps the usage
+  percentage as its headline and shows the available figure as a
+  secondary line. The value is an estimate rather than the kernel's
+  `MemAvailable`, which the `system_stats` extension has never
+  exposed; free memory alone reports `MemFree`, which counts only
+  memory that is entirely unused, whilst the estimate also counts
+  reclaimable page cache, and the estimate runs high on a host with
+  a large non-reclaimable slab or a largely dirty page cache. (#429)
 
 ### Changed
 

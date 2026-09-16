@@ -110,7 +110,7 @@ func TestStoreMetrics_BeginError(t *testing.T) {
 	}
 }
 
-// inFailedSQLTransaction is SQLSTATE 25P02, raised by any statement
+// inFailedSQLTxn is SQLSTATE 25P02, raised by any statement
 // issued on a connection whose transaction has already aborted.
 const inFailedSQLTxn = "25P02"
 

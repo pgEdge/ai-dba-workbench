@@ -1387,7 +1387,7 @@ func buildTopQueriesSQL(
 	//
 	// last_client attributes each queryid to the client most recently
 	// observed running it, through pg_stat_activity.query_id (collected
-	// since schema version 10; NULL before PostgreSQL 14 or with
+	// since schema version 12; NULL before PostgreSQL 14 or with
 	// compute_query_id off, so such servers simply resolve nothing). It is
 	// best-effort in the same way: only statements in flight at sample
 	// time are ever seen.

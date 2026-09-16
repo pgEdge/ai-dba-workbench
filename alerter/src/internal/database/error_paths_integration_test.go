@@ -175,7 +175,7 @@ func TestAnomalyQueriesReturnErrorOnClosedPool(t *testing.T) {
 	if _, err := ds.GetAnomalyCandidateByID(ctx, 1); err == nil {
 		t.Errorf("GetAnomalyCandidateByID should error on closed pool")
 	}
-	if _, err := ds.GetMetricBaselines(ctx, 1, "x"); err == nil {
+	if _, err := ds.GetMetricBaselines(ctx, 1, "x", nil); err == nil {
 		t.Errorf("GetMetricBaselines should error on closed pool")
 	}
 	if err := ds.UpsertMetricBaseline(ctx, &MetricBaseline{ConnectionID: 1, MetricName: "x", PeriodType: "all", LastCalculated: time.Now()}); err == nil {

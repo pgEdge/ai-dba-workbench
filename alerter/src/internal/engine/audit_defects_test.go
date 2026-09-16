@@ -11,11 +11,12 @@ package engine
 
 import (
 	"context"
-	"os"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
 	"github.com/pgedge/ai-workbench/pkg/worker"
 )
@@ -37,19 +38,11 @@ import (
 // behavior under its original name, and the cleaner's treatment of
 // missing data is covered in missing_data_integration_test.go.
 //
-// Tests whose name ends in "Demo" assert the CORRECT behavior instead
-// and therefore fail against the current code. They are skipped unless
-// ALERTER_DEFECT_DEMO=1 is set, so CI stays green while the defect can
-// still be demonstrated on demand.
-
-// engineDefectDemoEnabled skips the calling test unless
-// ALERTER_DEFECT_DEMO is set.
-func engineDefectDemoEnabled(t *testing.T) {
-	t.Helper()
-	if os.Getenv("ALERTER_DEFECT_DEMO") == "" {
-		t.Skip("set ALERTER_DEFECT_DEMO=1 to run the defect demonstration")
-	}
-}
+// Claims C6, C7 and C10 (baseline selection, metrics without a
+// historical query, and database scoping in detection) were fixed in
+// #408. Their tests below now assert the corrected behavior, and the
+// ALERTER_DEFECT_DEMO gate that used to hide the failing-by-design
+// "Demo" variants is gone from this package with them.
 
 // Seed and read-back statements used by the audit tests. They are
 // named constants so the Codacy/Semgrep go_sql_rule-concat-sqli rule
@@ -358,14 +351,8 @@ const (
         )
     `
 
-	selectBaselineRowSQL = `
-        SELECT sample_count, stddev, earliest_sample_at
-        FROM metric_baselines
-        WHERE connection_id = $1 AND metric_name = $2 AND period_type = 'all'
-    `
-
 	selectCandidateDatabaseSQL = `
-        SELECT database_name, metric_value
+        SELECT database_name, metric_value, context
         FROM anomaly_candidates
         WHERE connection_id = $1 AND metric_name = $2
         ORDER BY id
@@ -380,52 +367,137 @@ func seedAuditBaseline(t *testing.T, ds *database.Datastore, b *database.MetricB
 	}
 }
 
-// TestAuditC6DetectAnomaliesIgnoresTimeAwareBaselines verifies the
-// engine half of audit claim C6. detectAnomalies reads baselines[0]
-// from GetMetricBaselines, which orders by the TEXT column
-// period_type. 'all' sorts before 'daily' and 'hourly', so the global
-// baseline always wins and the hourly and daily baselines the
-// baseline calculator writes are never consulted.
-//
-// detectAnomalies SHOULD select the baseline matching the current hour
-// or weekday and fall back to 'all'.
-func TestAuditC6DetectAnomaliesIgnoresTimeAwareBaselines(t *testing.T) {
+// candidateSummary is one anomaly_candidates row as the audit tests
+// read it back.
+type candidateSummary struct {
+	dbName     *string
+	value      float64
+	periodType string
+}
+
+// readCandidates returns the candidates written for a connection and
+// metric, in insertion order, with the baseline period_type parsed out
+// of the JSON context so tests can assert which baseline was scored.
+func readCandidates(t *testing.T, pool *pgxpool.Pool, connID int, metric string) []candidateSummary {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), selectCandidateDatabaseSQL,
+		connID, metric)
+	if err != nil {
+		t.Fatalf("failed to read candidates: %v", err)
+	}
+	defer rows.Close()
+
+	var out []candidateSummary
+	for rows.Next() {
+		var c candidateSummary
+		var rawContext []byte
+		if err := rows.Scan(&c.dbName, &c.value, &rawContext); err != nil {
+			t.Fatalf("failed to scan candidate: %v", err)
+		}
+		var parsed struct {
+			PeriodType string `json:"period_type"`
+		}
+		if err := json.Unmarshal(rawContext, &parsed); err != nil {
+			t.Fatalf("failed to parse candidate context %q: %v", rawContext, err)
+		}
+		c.periodType = parsed.PeriodType
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("row iteration error: %v", err)
+	}
+	return out
+}
+
+// TestAuditC6DetectAnomaliesPrefersTimeAwareBaselines covers the engine
+// half of audit claim C6, fixed in #408. detectAnomalies used to read
+// baselines[0], which the alphabetical ORDER BY made the 'all' row, so
+// the hourly and daily baselines were written and never consulted. It
+// now scores against the hourly row for the current UTC hour, then the
+// daily row for the current UTC weekday, then 'all', taking the first
+// that is warm; a cold candidate is skipped rather than blocking a
+// warmer, less specific one.
+func TestAuditC6DetectAnomaliesPrefersTimeAwareBaselines(t *testing.T) {
 	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	now := time.Now().UTC()
+	const metric = "pg_settings.max_connections"
 
 	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
-		"audit_c6_rule", "pg_settings.max_connections"); err != nil {
+		"audit_c6_rule", metric); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
 
+	// The current value is 500. Baselines with mean 100 and stddev 1
+	// flag it instantly; mean 100 and stddev 1000 do not. Warm rows
+	// are aged well past every default min_span_hours; cold rows have
+	// too few samples.
+	hour, weekday := baselinePeriodKeys(now)
+	otherHour := (hour + 12) % 24
+	warm := now.Add(-20 * 24 * time.Hour)
+	cold := now.Add(-1 * time.Hour)
+
+	type row struct {
+		periodType string
+		hour       *int
+		weekday    *int
+		stddev     float64
+		samples    int64
+		earliest   time.Time
+	}
 	cases := []struct {
-		name string
-		// allSampleCount and allEarliest control whether the 'all'
-		// baseline passes the warmup gate.
-		allSampleCount int64
-		allEarliest    time.Time
-		allStdDev      float64
+		name       string
+		rows       []row
+		wantPeriod string // "" means no candidate expected
 	}{
 		{
-			// Both baselines are warm, but the 'all' baseline is so
-			// wide that the current value is unremarkable against it,
-			// while the hourly baseline would flag it instantly.
-			name:           "warm wide all baseline masks tight hourly baseline",
-			allSampleCount: 500,
-			allEarliest:    now.Add(-10 * 24 * time.Hour),
-			allStdDev:      1000,
+			name: "warm hourly beats warm wide all",
+			rows: []row{
+				{"all", nil, nil, 1000, 500, warm},
+				{"hourly", &hour, nil, 1, 500, warm},
+			},
+			wantPeriod: "hourly",
 		},
 		{
-			// The 'all' baseline has not warmed up, so detection is
-			// suppressed entirely even though the hourly baseline is
-			// mature.
-			name:           "cold all baseline suppresses warm hourly baseline",
-			allSampleCount: 5,
-			allEarliest:    now.Add(-1 * time.Hour),
-			allStdDev:      1,
+			name: "cold all does not block warm hourly",
+			rows: []row{
+				{"all", nil, nil, 1, 5, cold},
+				{"hourly", &hour, nil, 1, 500, warm},
+			},
+			wantPeriod: "hourly",
+		},
+		{
+			name: "cold hourly falls back to warm all",
+			rows: []row{
+				{"all", nil, nil, 1, 500, warm},
+				{"hourly", &hour, nil, 1, 2, cold},
+			},
+			wantPeriod: "all",
+		},
+		{
+			name: "hourly row for another hour is ignored",
+			rows: []row{
+				{"all", nil, nil, 1000, 500, warm},
+				{"hourly", &otherHour, nil, 1, 500, warm},
+			},
+			wantPeriod: "",
+		},
+		{
+			name: "warm daily beats warm wide all when no hourly row matches",
+			rows: []row{
+				{"all", nil, nil, 1000, 500, warm},
+				{"daily", nil, &weekday, 1, 500, warm},
+			},
+			wantPeriod: "daily",
+		},
+		{
+			name: "only a cold all row suppresses detection",
+			rows: []row{
+				{"all", nil, nil, 1, 5, cold},
+			},
+			wantPeriod: "",
 		},
 	}
 
@@ -455,162 +527,82 @@ func TestAuditC6DetectAnomaliesIgnoresTimeAwareBaselines(t *testing.T) {
 				t.Fatalf("failed to insert pg_settings sample: %v", err)
 			}
 
-			seedAuditBaseline(t, ds, &database.MetricBaseline{
-				ConnectionID:     connID,
-				MetricName:       "pg_settings.max_connections",
-				PeriodType:       "all",
-				Mean:             100,
-				StdDev:           tc.allStdDev,
-				Min:              0,
-				Max:              200,
-				SampleCount:      tc.allSampleCount,
-				LastCalculated:   now,
-				EarliestSampleAt: tc.allEarliest,
-			})
-
-			hour := time.Now().Hour()
-			seedAuditBaseline(t, ds, &database.MetricBaseline{
-				ConnectionID:     connID,
-				MetricName:       "pg_settings.max_connections",
-				PeriodType:       "hourly",
-				HourOfDay:        &hour,
-				Mean:             100,
-				StdDev:           1,
-				Min:              99,
-				Max:              101,
-				SampleCount:      500,
-				LastCalculated:   now,
-				EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
-			})
-
-			// Confirm the ordering assumption before relying on it.
-			baselines, err := ds.GetMetricBaselines(ctx, connID,
-				"pg_settings.max_connections")
-			if err != nil {
-				t.Fatalf("GetMetricBaselines failed: %v", err)
-			}
-			if len(baselines) != 2 {
-				t.Fatalf("expected 2 baselines, got %d", len(baselines))
-			}
-			if baselines[0].PeriodType != "all" {
-				t.Fatalf("baselines[0].PeriodType = %q, want \"all\"",
-					baselines[0].PeriodType)
+			for _, r := range tc.rows {
+				seedAuditBaseline(t, ds, &database.MetricBaseline{
+					ConnectionID:     connID,
+					MetricName:       metric,
+					PeriodType:       r.periodType,
+					HourOfDay:        r.hour,
+					DayOfWeek:        r.weekday,
+					Mean:             100,
+					StdDev:           r.stddev,
+					Min:              0,
+					Max:              200,
+					SampleCount:      r.samples,
+					LastCalculated:   now,
+					EarliestSampleAt: r.earliest,
+				})
 			}
 
 			engine.detectAnomalies(ctx)
 
-			var count int
-			if err := pool.QueryRow(ctx, selectAnomalyCountByConnSQL,
-				connID).Scan(&count); err != nil {
-				t.Fatalf("failed to count candidates: %v", err)
+			candidates := readCandidates(t, pool, connID, metric)
+			if tc.wantPeriod == "" {
+				if len(candidates) != 0 {
+					t.Fatalf("expected no candidates, got %d (period %q)",
+						len(candidates), candidates[0].periodType)
+				}
+				return
 			}
-
-			// Current (defective) behavior: no candidate, because only
-			// the 'all' baseline is consulted. A time-aware detector
-			// SHOULD emit one, since 500 is 400 standard deviations
-			// away from the hourly baseline.
-			if count != 0 {
-				t.Errorf("anomaly candidates = %d, want 0 "+
-					"(only the 'all' baseline is consulted)", count)
+			if len(candidates) != 1 {
+				t.Fatalf("expected one candidate, got %d", len(candidates))
+			}
+			if candidates[0].periodType != tc.wantPeriod {
+				t.Errorf("candidate scored against %q baseline, want %q",
+					candidates[0].periodType, tc.wantPeriod)
+			}
+			if candidates[0].dbName != nil {
+				t.Errorf("candidate database_name = %q, want NULL for a "+
+					"connection-wide metric", *candidates[0].dbName)
 			}
 		})
 	}
 }
 
-// TestAuditC6DetectAnomaliesIgnoresTimeAwareBaselinesDemo asserts the
-// behavior detection SHOULD have: a value that is wildly anomalous
-// against a mature hourly baseline must produce a candidate. It fails
-// against the current code, so it is skipped unless
-// ALERTER_DEFECT_DEMO=1.
-func TestAuditC6DetectAnomaliesIgnoresTimeAwareBaselinesDemo(t *testing.T) {
-	engineDefectDemoEnabled(t)
-
+// TestAuditC7UnsupportedMetricsAreExcluded covers audit claim C7, fixed
+// in #408. A metric whose registry entry has no historicalSQL used to be
+// routed through a fallback that built a baseline from the single
+// latest sample; that row had sample_count 1, stddev 0 and a NULL
+// earliest_sample_at, so isBaselineWarm rejected it forever while it
+// was rewritten every cycle. Such metrics are now skipped by both
+// calculateBaselines and detectAnomalies, and any rows the old fallback
+// left behind are deleted on the next baseline run.
+func TestAuditC7UnsupportedMetricsAreExcluded(t *testing.T) {
 	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-
-	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
-		"audit_c6_demo_rule", "pg_settings.max_connections"); err != nil {
-		t.Fatalf("failed to insert alert rule: %v", err)
-	}
-
-	var connID int
-	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
-		"audit-c6-demo").Scan(&connID); err != nil {
-		t.Fatalf("failed to insert connection: %v", err)
-	}
-	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
-		connID, "500"); err != nil {
-		t.Fatalf("failed to insert pg_settings sample: %v", err)
-	}
-
-	seedAuditBaseline(t, ds, &database.MetricBaseline{
-		ConnectionID:     connID,
-		MetricName:       "pg_settings.max_connections",
-		PeriodType:       "all",
-		Mean:             100,
-		StdDev:           1000,
-		Min:              0,
-		Max:              200,
-		SampleCount:      500,
-		LastCalculated:   now,
-		EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
-	})
-	hour := time.Now().Hour()
-	seedAuditBaseline(t, ds, &database.MetricBaseline{
-		ConnectionID:     connID,
-		MetricName:       "pg_settings.max_connections",
-		PeriodType:       "hourly",
-		HourOfDay:        &hour,
-		Mean:             100,
-		StdDev:           1,
-		Min:              99,
-		Max:              101,
-		SampleCount:      500,
-		LastCalculated:   now,
-		EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
-	})
-
-	engine.detectAnomalies(ctx)
-
-	var count int
-	if err := pool.QueryRow(ctx, selectAnomalyCountByConnSQL,
-		connID).Scan(&count); err != nil {
-		t.Fatalf("failed to count candidates: %v", err)
-	}
-	if count == 0 {
-		t.Fatal("expected an anomaly candidate from the mature hourly " +
-			"baseline, got none")
-	}
-}
-
-// TestAuditC7FallbackBaselineCanNeverWarm verifies audit claim C7.
-// Metrics whose registry entry has an empty historicalSQL make
-// GetHistoricalMetricValues fail, so calculateBaselines falls back to
-// calculateGlobalBaselinesFallback. That path derives a baseline from
-// the single current sample: sample_count is 1, stddev is 0, and
-// earliest_sample_at is left NULL. isBaselineWarm rejects such a row
-// under every default warmup profile, so anomaly detection is
-// permanently disabled for those metrics.
-//
-// The fallback SHOULD either populate a real sample history or be
-// skipped entirely rather than writing an unusable baseline.
-func TestAuditC7FallbackBaselineCanNeverWarm(t *testing.T) {
-	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
-	defer cleanup()
-
-	ctx := context.Background()
+	const unsupported = "pg_replication_slots.inactive"
+	const supported = "pg_settings.max_connections"
 
 	if _, err := pool.Exec(ctx, createSlotsTableSQL); err != nil {
 		t.Fatalf("failed to create metrics.pg_replication_slots: %v", err)
 	}
-	// pg_replication_slots.inactive is one of the registry entries
-	// with an empty historicalSQL.
-	if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL,
-		"audit_c7_rule", "pg_replication_slots.inactive"); err != nil {
-		t.Fatalf("failed to insert alert rule: %v", err)
+	for _, r := range []struct{ name, metric string }{
+		{"audit_c7_rule", unsupported},
+		// metric_staleness is not in the registry at all and is
+		// evaluated by its own code path; it must be skipped too.
+		{"audit_c7_staleness", "metric_staleness"},
+	} {
+		if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL,
+			r.name, r.metric); err != nil {
+			t.Fatalf("failed to insert alert rule %s: %v", r.name, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
+		"audit_c7_supported", supported); err != nil {
+		t.Fatalf("failed to insert supported alert rule: %v", err)
 	}
 
 	var connID int
@@ -625,95 +617,104 @@ func TestAuditC7FallbackBaselineCanNeverWarm(t *testing.T) {
     `, connID); err != nil {
 		t.Fatalf("failed to seed replication slot: %v", err)
 	}
+	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL,
+		connID, "500"); err != nil {
+		t.Fatalf("failed to insert pg_settings sample: %v", err)
+	}
 
-	// The historical query must fail; that is what routes the metric
-	// onto the fallback path.
-	if _, err := ds.GetHistoricalMetricValues(ctx,
-		"pg_replication_slots.inactive", 7); err == nil {
-		t.Fatal("expected GetHistoricalMetricValues to fail for a metric " +
-			"with no historical SQL")
+	if database.SupportsBaselines(unsupported) {
+		t.Fatalf("%s unexpectedly supports baselines", unsupported)
+	}
+
+	// Leftovers from the old fallback: a cold row for the unsupported
+	// metric and one for the unregistered metric_staleness. The
+	// supported metric's row is written by calculateBaselines itself
+	// from the pg_settings sample and must be the only one to survive.
+	for _, metric := range []string{unsupported, "metric_staleness"} {
+		seedAuditBaseline(t, ds, &database.MetricBaseline{
+			ConnectionID:   connID,
+			MetricName:     metric,
+			PeriodType:     "all",
+			Mean:           1,
+			SampleCount:    1,
+			LastCalculated: now,
+		})
 	}
 
 	engine.calculateBaselines(ctx)
 
-	var sampleCount int64
-	var stddev float64
-	var earliest *time.Time
-	if err := pool.QueryRow(ctx, selectBaselineRowSQL,
-		connID, "pg_replication_slots.inactive").Scan(
-		&sampleCount, &stddev, &earliest); err != nil {
-		t.Fatalf("failed to read fallback baseline: %v", err)
-	}
-
-	// Current (defective) behavior.
-	if sampleCount != 1 {
-		t.Errorf("fallback sample_count = %d, want 1", sampleCount)
-	}
-	if stddev != 0 {
-		t.Errorf("fallback stddev = %v, want 0", stddev)
-	}
-	if earliest != nil {
-		t.Errorf("fallback earliest_sample_at = %v, want NULL", *earliest)
-	}
-
-	baselines, err := ds.GetMetricBaselines(ctx, connID,
-		"pg_replication_slots.inactive")
+	var remaining []string
+	rows, err := pool.Query(ctx, `
+        SELECT DISTINCT metric_name FROM metric_baselines
+        WHERE connection_id = $1 ORDER BY metric_name
+    `, connID)
 	if err != nil {
-		t.Fatalf("GetMetricBaselines failed: %v", err)
+		t.Fatalf("failed to read baselines: %v", err)
 	}
-	if len(baselines) != 1 {
-		t.Fatalf("expected exactly one fallback baseline, got %d", len(baselines))
-	}
-	if !baselines[0].EarliestSampleAt.IsZero() {
-		t.Errorf("EarliestSampleAt = %v, want the zero time",
-			baselines[0].EarliestSampleAt)
-	}
-
-	// The warmup gate rejects the fallback row under every default
-	// profile, so no amount of waiting makes it usable.
-	warmup := engine.getConfig().Anomaly.Tier1.Warmup
-	for _, periodType := range []string{"all", "hourly", "daily"} {
-		b := *baselines[0]
-		b.PeriodType = periodType
-		if isBaselineWarm(b, warmup, time.Now().Add(365*24*time.Hour)) {
-			t.Errorf("isBaselineWarm(%s) = true for the fallback baseline, "+
-				"want false even a year later", periodType)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan failed: %v", err)
 		}
+		remaining = append(remaining, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("row iteration error: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0] != supported {
+		t.Fatalf("baseline metrics after calculateBaselines = %v, want [%s]",
+			remaining, supported)
 	}
 
-	// End to end: detection emits nothing for this metric.
+	// End to end: replace the single-sample row calculateBaselines just
+	// wrote with a warm one so the supported metric is scored (500
+	// against mean 100, stddev 1), and confirm the unsupported ones
+	// emit nothing.
+	seedAuditBaseline(t, ds, &database.MetricBaseline{
+		ConnectionID:     connID,
+		MetricName:       supported,
+		PeriodType:       "all",
+		Mean:             100,
+		StdDev:           1,
+		Min:              99,
+		Max:              101,
+		SampleCount:      500,
+		LastCalculated:   now,
+		EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
+	})
 	engine.detectAnomalies(ctx)
-	var count int
-	if err := pool.QueryRow(ctx, selectAnomalyCountByConnSQL,
-		connID).Scan(&count); err != nil {
-		t.Fatalf("failed to count candidates: %v", err)
+	if got := readCandidates(t, pool, connID, unsupported); len(got) != 0 {
+		t.Errorf("candidates for %s = %d, want 0", unsupported, len(got))
 	}
-	if count != 0 {
-		t.Errorf("anomaly candidates = %d, want 0", count)
+	if got := readCandidates(t, pool, connID, "metric_staleness"); len(got) != 0 {
+		t.Errorf("candidates for metric_staleness = %d, want 0", len(got))
+	}
+	if got := readCandidates(t, pool, connID, supported); len(got) != 1 {
+		t.Errorf("candidates for %s = %d, want 1", supported, len(got))
 	}
 }
 
-// TestAuditC10AnomalyCandidateDropsDatabaseName verifies audit claim
-// C10. For per-database metrics the baseline calculator writes one
-// baseline row per (connection, database), but detectAnomalies fetches
-// baselines by connection and metric only, picks the first metric
-// value whose connection matches regardless of database, and never
-// assigns DatabaseName on the candidate it creates.
-//
-// Detection SHOULD pair each per-database value with the baseline for
-// that database and record the database on the candidate.
-func TestAuditC10AnomalyCandidateDropsDatabaseName(t *testing.T) {
+// TestAuditC10AnomalyCandidateCarriesDatabaseName covers audit claim
+// C10, fixed in #408. For per-database metrics the baseline calculator
+// writes one baseline row per (connection, database); detectAnomalies
+// now scores every latest value for the connection against the
+// baseline for that value's database and records the database on the
+// candidate, so deduplication in createAnomalyAlert is per database
+// too.
+func TestAuditC10AnomalyCandidateCarriesDatabaseName(t *testing.T) {
 	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	now := time.Now().UTC()
+	const metric = "pg_stat_database.deadlocks_delta"
 
 	if _, err := pool.Exec(ctx, createStatDatabaseTableSQL); err != nil {
 		t.Fatalf("failed to create metrics.pg_stat_database: %v", err)
 	}
 	if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL,
-		"audit_c10_rule", "pg_stat_database.deadlocks_delta"); err != nil {
+		"audit_c10_rule", metric); err != nil {
 		t.Fatalf("failed to insert alert rule: %v", err)
 	}
 
@@ -723,14 +724,15 @@ func TestAuditC10AnomalyCandidateDropsDatabaseName(t *testing.T) {
 		t.Fatalf("failed to insert connection: %v", err)
 	}
 
-	// Two databases on one connection with very different deadlock
-	// deltas: alpha jumps by 900, beta by 1.
+	// Two databases on one connection: alpha's deadlocks jump by 900,
+	// which is normal for alpha, and beta's by 101, which is wildly
+	// abnormal for beta.
 	samples := []struct {
 		dbName    string
 		deadlocks []int64
 	}{
 		{"alpha", []int64{100, 1000}},
-		{"beta", []int64{5, 6}},
+		{"beta", []int64{5, 106}},
 	}
 	offsets := []string{"10 minutes", "1 minute"}
 	for _, s := range samples {
@@ -746,23 +748,16 @@ func TestAuditC10AnomalyCandidateDropsDatabaseName(t *testing.T) {
 		}
 	}
 
-	values, err := ds.GetLatestMetricValues(ctx,
-		"pg_stat_database.deadlocks_delta")
+	values, err := ds.GetLatestMetricValues(ctx, metric)
 	if err != nil {
 		t.Fatalf("GetLatestMetricValues failed: %v", err)
 	}
 	if len(values) != 2 {
 		t.Fatalf("expected one row per database, got %d", len(values))
 	}
-	firstDB := "<nil>"
-	if values[0].DatabaseName != nil {
-		firstDB = *values[0].DatabaseName
-	}
-	t.Logf("detection will use the first row: database=%s value=%v",
-		firstDB, values[0].Value)
 
-	// The baseline calculator does key its output on the database:
-	// running it over this data writes one 'all' baseline per database.
+	// The baseline calculator keys its output on the database: running
+	// it over this data writes one 'all' baseline per database.
 	engine.calculateBaselines(ctx)
 	var perDatabaseBaselines int
 	if err := pool.QueryRow(ctx, `
@@ -770,8 +765,7 @@ func TestAuditC10AnomalyCandidateDropsDatabaseName(t *testing.T) {
         FROM metric_baselines
         WHERE connection_id = $1 AND metric_name = $2
           AND database_name IS NOT NULL
-    `, connID, "pg_stat_database.deadlocks_delta").Scan(
-		&perDatabaseBaselines); err != nil {
+    `, connID, metric).Scan(&perDatabaseBaselines); err != nil {
 		t.Fatalf("failed to count per-database baselines: %v", err)
 	}
 	if perDatabaseBaselines != 2 {
@@ -779,69 +773,43 @@ func TestAuditC10AnomalyCandidateDropsDatabaseName(t *testing.T) {
 			perDatabaseBaselines)
 	}
 
-	// Replace them with a single warm baseline for database "beta"
-	// only, so the mismatch between the baseline's database and the
-	// value detection actually uses is unambiguous.
+	// Replace them with warm baselines that make alpha's 900 ordinary
+	// and beta's 101 anomalous.
 	if _, err := pool.Exec(ctx, `DELETE FROM metric_baselines`); err != nil {
 		t.Fatalf("failed to reset baselines: %v", err)
 	}
-	betaName := "beta"
-	seedAuditBaseline(t, ds, &database.MetricBaseline{
-		ConnectionID:     connID,
-		DatabaseName:     &betaName,
-		MetricName:       "pg_stat_database.deadlocks_delta",
-		PeriodType:       "all",
-		Mean:             1,
-		StdDev:           0.5,
-		Min:              0,
-		Max:              2,
-		SampleCount:      500,
-		LastCalculated:   now,
-		EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
-	})
+	for _, b := range []struct {
+		dbName string
+		mean   float64
+	}{{"alpha", 900}, {"beta", 1}} {
+		dbName := b.dbName
+		seedAuditBaseline(t, ds, &database.MetricBaseline{
+			ConnectionID:     connID,
+			DatabaseName:     &dbName,
+			MetricName:       metric,
+			PeriodType:       "all",
+			Mean:             b.mean,
+			StdDev:           0.5,
+			Min:              b.mean - 1,
+			Max:              b.mean + 1,
+			SampleCount:      500,
+			LastCalculated:   now,
+			EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
+		})
+	}
 
 	engine.detectAnomalies(ctx)
 
-	rows, err := pool.Query(ctx, selectCandidateDatabaseSQL,
-		connID, "pg_stat_database.deadlocks_delta")
-	if err != nil {
-		t.Fatalf("failed to read candidates: %v", err)
-	}
-	defer rows.Close()
-
-	type candidateRow struct {
-		dbName *string
-		value  float64
-	}
-	var candidates []candidateRow
-	for rows.Next() {
-		var c candidateRow
-		if err := rows.Scan(&c.dbName, &c.value); err != nil {
-			t.Fatalf("failed to scan candidate: %v", err)
-		}
-		candidates = append(candidates, c)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("row iteration error: %v", err)
-	}
-
+	candidates := readCandidates(t, pool, connID, metric)
 	if len(candidates) != 1 {
 		t.Fatalf("expected exactly one candidate, got %d", len(candidates))
 	}
-
-	// Current (defective) behavior: the candidate carries no database
-	// name even though the metric and the baseline are per-database.
-	// It SHOULD record the database the value came from.
-	if candidates[0].dbName != nil {
-		t.Errorf("candidate database_name = %q, want NULL "+
-			"(the field is never assigned)", *candidates[0].dbName)
+	if candidates[0].dbName == nil || *candidates[0].dbName != "beta" {
+		t.Errorf("candidate database_name = %v, want \"beta\"", candidates[0].dbName)
 	}
-
-	// The value is taken from whichever row the query returned first,
-	// not from the database the baseline describes.
-	if candidates[0].value != float32ish(values[0].Value) {
-		t.Errorf("candidate metric_value = %v, want %v (the first row)",
-			candidates[0].value, values[0].Value)
+	if candidates[0].value != float32ish(101) {
+		t.Errorf("candidate metric_value = %v, want 101 (beta's delta)",
+			candidates[0].value)
 	}
 }
 
@@ -849,54 +817,4 @@ func TestAuditC10AnomalyCandidateDropsDatabaseName(t *testing.T) {
 // column type used by anomaly_candidates.metric_value.
 func float32ish(v float64) float64 {
 	return float64(float32(v))
-}
-
-// TestAuditC7FallbackBaselineCanNeverWarmDemo asserts the behavior the
-// baseline calculator SHOULD have: any baseline it persists must carry
-// the timestamp of its earliest sample, so the warmup gate can
-// eventually admit it. It fails against the current code, so it is
-// skipped unless ALERTER_DEFECT_DEMO=1.
-func TestAuditC7FallbackBaselineCanNeverWarmDemo(t *testing.T) {
-	engineDefectDemoEnabled(t)
-
-	engine, _, pool, cleanup := newDetectAnomaliesEnv(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	if _, err := pool.Exec(ctx, createSlotsTableSQL); err != nil {
-		t.Fatalf("failed to create metrics.pg_replication_slots: %v", err)
-	}
-	if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL,
-		"audit_c7_demo_rule", "pg_replication_slots.inactive"); err != nil {
-		t.Fatalf("failed to insert alert rule: %v", err)
-	}
-
-	var connID int
-	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
-		"audit-c7-demo").Scan(&connID); err != nil {
-		t.Fatalf("failed to insert connection: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-        INSERT INTO metrics.pg_replication_slots
-            (connection_id, slot_name, active, retained_bytes, collected_at)
-        VALUES ($1, 'slot_a', FALSE, 0, NOW())
-    `, connID); err != nil {
-		t.Fatalf("failed to seed replication slot: %v", err)
-	}
-
-	engine.calculateBaselines(ctx)
-
-	var sampleCount int64
-	var stddev float64
-	var earliest *time.Time
-	if err := pool.QueryRow(ctx, selectBaselineRowSQL,
-		connID, "pg_replication_slots.inactive").Scan(
-		&sampleCount, &stddev, &earliest); err != nil {
-		t.Fatalf("failed to read fallback baseline: %v", err)
-	}
-	if earliest == nil {
-		t.Fatal("persisted baseline has a NULL earliest_sample_at, so the " +
-			"warmup gate can never admit it")
-	}
 }

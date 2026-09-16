@@ -90,6 +90,61 @@ func warmupThresholdFor(
 	}
 }
 
+// selectBaseline picks the baseline row to score a value against. The
+// preference order is the hourly row for the current UTC hour, then the
+// daily row for the current UTC weekday, then the 'all' row; the first
+// candidate in that order that passes isBaselineWarm is returned as
+// chosen. When no candidate is warm, chosen is nil and fallbackCold is
+// the most preferred candidate that exists (nil if none), so the caller
+// can log why detection was suppressed.
+//
+// Hourly and daily rows are preferred over 'all' because a metric with a
+// diurnal or weekly cycle has a much tighter spread within one period
+// than across the whole window; scoring against the grand mean inflates
+// the divisor and hides genuine within-cycle deviation. Warmth is
+// checked per candidate so a cold hourly row does not block a mature
+// 'all' row, and a cold 'all' row does not block a mature hourly one.
+// See GitHub issue #408.
+func selectBaseline(
+	baselines []*database.MetricBaseline,
+	now time.Time,
+	cfg config.WarmupConfig,
+) (chosen, fallbackCold *database.MetricBaseline) {
+	hour, weekday := baselinePeriodKeys(now)
+
+	var hourly, daily, all *database.MetricBaseline
+	for _, b := range baselines {
+		if b == nil {
+			continue
+		}
+		switch b.PeriodType {
+		case "hourly":
+			if b.HourOfDay != nil && *b.HourOfDay == hour {
+				hourly = b
+			}
+		case "daily":
+			if b.DayOfWeek != nil && *b.DayOfWeek == weekday {
+				daily = b
+			}
+		case "all":
+			all = b
+		}
+	}
+
+	for _, candidate := range []*database.MetricBaseline{hourly, daily, all} {
+		if candidate == nil {
+			continue
+		}
+		if isBaselineWarm(*candidate, cfg, now) {
+			return candidate, nil
+		}
+		if fallbackCold == nil {
+			fallbackCold = candidate
+		}
+	}
+	return nil, fallbackCold
+}
+
 // detectAnomalies runs the tiered anomaly detection
 func (e *Engine) detectAnomalies(ctx context.Context) {
 	e.debugLog("Running anomaly detection...")
@@ -114,107 +169,55 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 		return
 	}
 
-	sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
-
-	// For each connection and metric, check for anomalies
+	// Blackout status is per connection and does not change during a
+	// run, so resolve it once rather than once per rule.
+	blackedOut := make(map[int]bool, len(connections))
 	for _, connID := range connections {
-		if ctx.Err() != nil {
-			return
-		}
-
-		// Check if there's a blackout active for this connection
 		active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)
 		if err != nil {
 			e.debugLog("Error checking blackout for connection %d: %v", connID, err)
 		}
 		if active {
 			e.debugLog("Skipping anomaly detection for connection %d: blackout active", connID)
+			blackedOut[connID] = true
+		}
+	}
+
+	sensitivity := cfg.Anomaly.Tier1.DefaultSensitivity
+	now := time.Now()
+
+	// Rules are the outer loop so each metric's latest values are
+	// fetched once per run instead of once per connection.
+	for _, rule := range rules {
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Metrics without a historical query have no baselines to
+		// score against (see calculateBaselines), so skip them
+		// rather than querying for rows that cannot exist.
+		if !database.SupportsBaselines(rule.MetricName) {
 			continue
 		}
 
-		for _, rule := range rules {
-			// Get current metric value
-			values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
-			if err != nil {
+		values, err := e.datastore.GetLatestMetricValues(ctx, rule.MetricName)
+		if err != nil {
+			continue
+		}
+
+		for _, connID := range connections {
+			if ctx.Err() != nil {
+				return
+			}
+			if blackedOut[connID] {
 				continue
 			}
 
-			// Find value for this connection
-			var currentValue *database.MetricValue
-			for i := range values {
-				if values[i].ConnectionID == connID {
-					currentValue = &values[i]
-					break
-				}
-			}
-			if currentValue == nil {
-				continue
-			}
-
-			// Get baseline for this metric/connection
-			baselines, err := e.datastore.GetMetricBaselines(ctx, connID, rule.MetricName)
-			if err != nil || len(baselines) == 0 {
-				continue
-			}
-
-			baseline := baselines[0]
-
-			// Warmup gate: skip baselines that have not yet
-			// accumulated enough samples or wall-clock span to
-			// be trustworthy.
-			if !isBaselineWarm(*baseline, cfg.Anomaly.Tier1.Warmup, time.Now()) {
-				e.debugLog(
-					"Anomaly suppressed: baseline not warm "+
-						"(connection=%d metric=%s period=%s samples=%d earliest=%s)",
-					connID, rule.MetricName, baseline.PeriodType,
-					baseline.SampleCount, baseline.EarliestSampleAt,
-				)
-				continue
-			}
-
-			// Variance floor: never divide by a divisor smaller
-			// than the configured hybrid floor. This replaces
-			// the previous "stddev == 0" guard; if both floor
-			// knobs are zero the divisor can still be zero, so
-			// retain the degenerate-case skip.
-			stddev := effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor)
-			if stddev == 0 {
-				continue
-			}
-
-			// Calculate z-score using the floored divisor.
-			zScore := (currentValue.Value - baseline.Mean) / stddev
-
-			// Symmetric z-score cap: clamp |zScore| to MaxZScore
-			// when the cap is positive. A zero cap disables the
-			// clamp entirely.
-			if zCap := cfg.Anomaly.Tier1.MaxZScore; zCap > 0 {
-				if zScore > zCap {
-					zScore = zCap
-				} else if zScore < -zCap {
-					zScore = -zCap
-				}
-			}
-
-			// Check if z-score exceeds threshold
-			if zScore > sensitivity || zScore < -sensitivity {
-				e.debugLog("Tier 1 anomaly detected: %s on connection %d (z-score: %.2f)",
-					rule.MetricName, connID, zScore)
-
-				// Create anomaly candidate for further processing
-				candidate := &database.AnomalyCandidate{
-					ConnectionID: connID,
-					MetricName:   rule.MetricName,
-					MetricValue:  currentValue.Value,
-					ZScore:       zScore,
-					DetectedAt:   time.Now(),
-					Context:      fmt.Sprintf(`{"baseline_mean": %.2f, "baseline_stddev": %.2f, "period_type": "%s"}`, baseline.Mean, baseline.StdDev, baseline.PeriodType),
-					Tier1Pass:    true,
-				}
-
-				if err := e.datastore.CreateAnomalyCandidate(ctx, candidate); err != nil {
-					e.log("ERROR: Failed to create anomaly candidate: %v", err)
-				}
+			// Per-database metrics return one latest value per
+			// database on the connection; each is scored against the
+			// baseline written for that same database.
+			for _, value := range baselineableValues(values, connID) {
+				e.detectAnomalyForValue(ctx, rule.MetricName, value, cfg, sensitivity, now)
 			}
 		}
 	}
@@ -222,6 +225,107 @@ func (e *Engine) detectAnomalies(ctx context.Context) {
 	// Process tier 2 and tier 3 if enabled
 	if cfg.Anomaly.Tier2.Enabled || cfg.Anomaly.Tier3.Enabled {
 		e.processTier2And3(ctx)
+	}
+}
+
+// baselineableValues returns the latest values that belong to the
+// connection and can be paired with a baseline row. metric_baselines has
+// no object column, so a value scoped to a table or other object is left
+// out; no such metric currently has a historical query, and this guard
+// keeps that assumption explicit rather than scoring an object-scoped
+// value against a connection- or database-wide baseline.
+func baselineableValues(values []database.MetricValue, connID int) []*database.MetricValue {
+	var out []*database.MetricValue
+	for i := range values {
+		v := &values[i]
+		if v.ConnectionID != connID || v.ObjectName != nil {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// detectAnomalyForValue scores one latest metric value against the
+// baselines written for its connection and database and records a
+// tier-1 candidate when the z-score exceeds the sensitivity.
+func (e *Engine) detectAnomalyForValue(
+	ctx context.Context,
+	metricName string,
+	value *database.MetricValue,
+	cfg *config.Config,
+	sensitivity float64,
+	now time.Time,
+) {
+	connID := value.ConnectionID
+
+	baselines, err := e.datastore.GetMetricBaselines(ctx, connID, metricName, value.DatabaseName)
+	if err != nil || len(baselines) == 0 {
+		return
+	}
+
+	// Warmup gate: prefer the time-aware baselines, and skip
+	// entirely when no candidate has accumulated enough samples or
+	// wall-clock span to be trustworthy.
+	baseline, cold := selectBaseline(baselines, now, cfg.Anomaly.Tier1.Warmup)
+	if baseline == nil {
+		if cold != nil {
+			e.debugLog(
+				"Anomaly suppressed: baseline not warm "+
+					"(connection=%d metric=%s period=%s samples=%d earliest=%s)",
+				connID, metricName, cold.PeriodType,
+				cold.SampleCount, cold.EarliestSampleAt,
+			)
+		}
+		return
+	}
+
+	// Variance floor: never divide by a divisor smaller
+	// than the configured hybrid floor. This replaces
+	// the previous "stddev == 0" guard; if both floor
+	// knobs are zero the divisor can still be zero, so
+	// retain the degenerate-case skip.
+	stddev := effectiveStdDev(*baseline, cfg.Anomaly.Tier1.VarianceFloor)
+	if stddev == 0 {
+		return
+	}
+
+	// Calculate z-score using the floored divisor.
+	zScore := (value.Value - baseline.Mean) / stddev
+
+	// Symmetric z-score cap: clamp |zScore| to MaxZScore
+	// when the cap is positive. A zero cap disables the
+	// clamp entirely.
+	if zCap := cfg.Anomaly.Tier1.MaxZScore; zCap > 0 {
+		if zScore > zCap {
+			zScore = zCap
+		} else if zScore < -zCap {
+			zScore = -zCap
+		}
+	}
+
+	// Check if z-score exceeds threshold
+	if zScore <= sensitivity && zScore >= -sensitivity {
+		return
+	}
+
+	e.debugLog("Tier 1 anomaly detected: %s on connection %d (z-score: %.2f)",
+		metricName, connID, zScore)
+
+	// Create anomaly candidate for further processing
+	candidate := &database.AnomalyCandidate{
+		ConnectionID: connID,
+		DatabaseName: value.DatabaseName,
+		MetricName:   metricName,
+		MetricValue:  value.Value,
+		ZScore:       zScore,
+		DetectedAt:   time.Now(),
+		Context:      fmt.Sprintf(`{"baseline_mean": %.2f, "baseline_stddev": %.2f, "period_type": "%s"}`, baseline.Mean, baseline.StdDev, baseline.PeriodType),
+		Tier1Pass:    true,
+	}
+
+	if err := e.datastore.CreateAnomalyCandidate(ctx, candidate); err != nil {
+		e.log("ERROR: Failed to create anomaly candidate: %v", err)
 	}
 }
 

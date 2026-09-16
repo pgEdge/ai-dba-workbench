@@ -273,7 +273,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	connID := insertTestConnection(t, pool, "mb-conn")
 
 	// Empty initially.
-	baselines, err := ds.GetMetricBaselines(ctx, connID, "m_b")
+	baselines, err := ds.GetMetricBaselines(ctx, connID, "m_b", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 		t.Fatalf("UpsertMetricBaseline update: %v", err)
 	}
 
-	baselines, err = ds.GetMetricBaselines(ctx, connID, "m_b")
+	baselines, err = ds.GetMetricBaselines(ctx, connID, "m_b", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines after upsert: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	// Canceled context.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := ds.GetMetricBaselines(canceled, connID, "m_b"); err == nil {
+	if _, err := ds.GetMetricBaselines(canceled, connID, "m_b", nil); err == nil {
 		t.Errorf("expected cancel error")
 	}
 
@@ -337,7 +337,7 @@ func TestGetMetricBaselinesAndUpsert(t *testing.T) {
 	`, connID); err != nil {
 		t.Fatalf("setup scan-fail row: %v", err)
 	}
-	if _, err := ds.GetMetricBaselines(ctx, connID, "m_scan_fail"); err == nil {
+	if _, err := ds.GetMetricBaselines(ctx, connID, "m_scan_fail", nil); err == nil {
 		t.Errorf("expected scan failure for NULL mean column")
 	}
 }
@@ -366,7 +366,7 @@ func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
 		t.Fatalf("UpsertMetricBaseline insert: %v", err)
 	}
 
-	got, err := ds.GetMetricBaselines(ctx, connID, "m_earliest")
+	got, err := ds.GetMetricBaselines(ctx, connID, "m_earliest", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
 	if err := ds.UpsertMetricBaseline(ctx, in); err != nil {
 		t.Fatalf("UpsertMetricBaseline update: %v", err)
 	}
-	got, err = ds.GetMetricBaselines(ctx, connID, "m_earliest")
+	got, err = ds.GetMetricBaselines(ctx, connID, "m_earliest", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines after update: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestUpsertAndGetMetricBaselineRoundtripsEarliestSampleAt(t *testing.T) {
 	if err := ds.UpsertMetricBaseline(ctx, zero); err != nil {
 		t.Fatalf("UpsertMetricBaseline zero: %v", err)
 	}
-	gotZero, err := ds.GetMetricBaselines(ctx, connID, "m_earliest_zero")
+	gotZero, err := ds.GetMetricBaselines(ctx, connID, "m_earliest_zero", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines zero: %v", err)
 	}

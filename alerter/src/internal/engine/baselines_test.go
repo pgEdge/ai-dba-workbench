@@ -624,7 +624,7 @@ func TestBaselineBuildPersistsEarliestSampleAt(t *testing.T) {
 
 	engine.calculateBaselines(ctx)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestBaselineBuildSharesEarliestAcrossPeriodTypes(t *testing.T) {
 
 	engine.calculateBaselines(ctx)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -727,7 +727,7 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 	// Deliberately seed no samples.
 	engine.calculateBaselines(ctx)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -830,7 +830,7 @@ func TestBaselineSampleCountFollowsRawSamples(t *testing.T) {
 	engine.calculateHourlyBaselines(ctx, connID, nil, "bucketed_metric", values, 3, earliest)
 	engine.calculateDailyBaselines(ctx, connID, nil, "bucketed_metric", values, 3, earliest)
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "bucketed_metric")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "bucketed_metric", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -873,7 +873,7 @@ func TestBaselineSampleCountDefaultsToOnePerRow(t *testing.T) {
 	engine.calculateAllBaseline(ctx, connID, nil, "per_sample_metric", values,
 		earliestTimestamp(values))
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "per_sample_metric")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "per_sample_metric", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -898,7 +898,7 @@ func TestCalculateAllBaselineEdgeCases(t *testing.T) {
 	// No samples: the function returns before touching the datastore.
 	engine.calculateAllBaseline(ctx, connID, nil, "empty_metric", nil, time.Time{})
 
-	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "empty_metric")
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "empty_metric", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -911,4 +911,81 @@ func TestCalculateAllBaselineEdgeCases(t *testing.T) {
 	engine.calculateAllBaseline(ctx, -1, nil, "unknown_conn_metric",
 		[]database.HistoricalMetricValue{{Value: 1, CollectedAt: time.Now().UTC()}},
 		time.Now().UTC())
+}
+
+// TestCalculateBaselinesErrorBranches drives calculateBaselines through
+// the failure paths a healthy database never reaches: the sweep of
+// unsupported-metric rows failing, a supported metric whose historical
+// query fails (here because its metrics table does not exist in the
+// test schema) and a zero lookback falling back to the default. Each is
+// logged and the run carries on, so the assertion is that the good
+// metric's baseline is still written.
+func TestCalculateBaselinesErrorBranches(t *testing.T) {
+	engine, _, pool, cleanup := newDetectAnomaliesEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Reject deletes on metric_baselines so the unsupported-row sweep
+	// fails. The function is dropped before the environment cleanup
+	// closes the pool; the trigger goes with the table.
+	if _, err := pool.Exec(ctx, `
+        CREATE OR REPLACE FUNCTION reject_baseline_delete() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'baseline deletes are rejected by this test';
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER reject_baseline_delete
+            BEFORE DELETE ON metric_baselines
+            FOR EACH STATEMENT EXECUTE FUNCTION reject_baseline_delete();
+    `); err != nil {
+		t.Fatalf("failed to install delete trigger: %v", err)
+	}
+	defer func() {
+		if _, err := pool.Exec(context.Background(),
+			`DROP FUNCTION IF EXISTS reject_baseline_delete() CASCADE`); err != nil {
+			t.Errorf("failed to drop delete trigger function: %v", err)
+		}
+	}()
+
+	var connID int
+	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
+		"baseline-error-branches").Scan(&connID); err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL, connID, "100"); err != nil {
+		t.Fatalf("failed to insert pg_settings sample: %v", err)
+	}
+	// pg_stat_activity.count has a historical query, but the detection
+	// schema has no metrics.pg_stat_activity table, so the query fails.
+	for _, r := range []struct{ name, metric string }{
+		{"error_branch_missing_table", "pg_stat_activity.count"},
+		{"error_branch_good", "pg_settings.max_connections"},
+	} {
+		if _, err := pool.Exec(ctx, insertAnomalyRuleForMetricSQL, r.name, r.metric); err != nil {
+			t.Fatalf("failed to insert rule %s: %v", r.name, err)
+		}
+	}
+
+	cfg := engine.getConfig()
+	origLookback := cfg.Baselines.LookbackDays
+	cfg.Baselines.LookbackDays = 0
+	defer func() { cfg.Baselines.LookbackDays = origLookback }()
+
+	engine.calculateBaselines(ctx)
+
+	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_settings.max_connections", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines failed: %v", err)
+	}
+	if len(baselines) != 1 || baselines[0].Mean != 100 {
+		t.Fatalf("expected one max_connections baseline with mean 100, got %+v", baselines)
+	}
+	missing, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_stat_activity.count", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines(pg_stat_activity.count) failed: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("expected no baseline for the failed metric, got %d", len(missing))
+	}
 }

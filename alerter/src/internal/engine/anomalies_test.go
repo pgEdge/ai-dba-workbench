@@ -999,3 +999,84 @@ func TestDetectAnomaliesBranchCoverage(t *testing.T) {
 		}
 	})
 }
+
+// TestDetectionDatastoreErrorBranches drives detectAnomalies and
+// calculateBaselines through the datastore failures the loops tolerate
+// or abort on: a failing blackout lookup is logged and detection
+// proceeds for the connection, a failing alert-rule lookup ends the run
+// before any scoring, and a failing connection lookup ends it before
+// anything else. The tables are dropped in that order; the environment
+// recreates the schema for the next test.
+func TestDetectionDatastoreErrorBranches(t *testing.T) {
+	engine, ds, pool, cleanup := newDetectAnomaliesEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	const metric = "pg_settings.max_connections"
+
+	if _, err := pool.Exec(ctx, insertAnomalyAlertRuleSQL,
+		"datastore_error_rule", metric); err != nil {
+		t.Fatalf("failed to insert alert rule: %v", err)
+	}
+	var connID int
+	if err := pool.QueryRow(ctx, insertAnomalyConnectionSQL,
+		"datastore-errors").Scan(&connID); err != nil {
+		t.Fatalf("failed to insert connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, insertAnomalyPgSettingsSQL, connID, "500"); err != nil {
+		t.Fatalf("failed to insert pg_settings sample: %v", err)
+	}
+	if err := ds.UpsertMetricBaseline(ctx, &database.MetricBaseline{
+		ConnectionID:     connID,
+		MetricName:       metric,
+		PeriodType:       "all",
+		Mean:             100,
+		StdDev:           1,
+		Min:              99,
+		Max:              101,
+		SampleCount:      500,
+		LastCalculated:   now,
+		EarliestSampleAt: now.Add(-10 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertMetricBaseline failed: %v", err)
+	}
+
+	countCandidates := func(t *testing.T) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, selectAnomalyCountByConnSQL, connID).Scan(&n); err != nil {
+			t.Fatalf("failed to count candidates: %v", err)
+		}
+		return n
+	}
+
+	// A failed blackout lookup must not suppress detection.
+	if _, err := pool.Exec(ctx, `DROP TABLE blackouts CASCADE`); err != nil {
+		t.Fatalf("failed to drop blackouts: %v", err)
+	}
+	engine.detectAnomalies(ctx)
+	if got := countCandidates(t); got != 1 {
+		t.Errorf("candidates with blackout lookup failing = %d, want 1", got)
+	}
+
+	// Without alert rules neither loop has anything to do.
+	if _, err := pool.Exec(ctx, `TRUNCATE anomaly_candidates`); err != nil {
+		t.Fatalf("failed to truncate candidates: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE alert_rules CASCADE`); err != nil {
+		t.Fatalf("failed to drop alert_rules: %v", err)
+	}
+	engine.detectAnomalies(ctx)
+	engine.calculateBaselines(ctx)
+	if got := countCandidates(t); got != 0 {
+		t.Errorf("candidates with alert rules failing = %d, want 0", got)
+	}
+
+	// Without connections both return before touching anything else.
+	if _, err := pool.Exec(ctx, `DROP TABLE connections CASCADE`); err != nil {
+		t.Fatalf("failed to drop connections: %v", err)
+	}
+	engine.detectAnomalies(ctx)
+	engine.calculateBaselines(ctx)
+}

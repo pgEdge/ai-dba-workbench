@@ -245,16 +245,14 @@ func insertAuditConnection(t *testing.T, pool *pgxpool.Pool, name string) int {
 	return id
 }
 
-// TestAuditC6BaselineOrderingPrefersAll verifies audit claim C6:
-// GetMetricBaselines orders by period_type, which is TEXT. The three
-// period types sort alphabetically as 'all' < 'daily' < 'hourly', so
-// the first row is always the 'all' baseline whenever one exists.
-// detectAnomalies reads baselines[0] and therefore never uses the
-// time-aware baselines.
-//
-// The query SHOULD select the baseline matching the current hour or
-// weekday, falling back to 'all'.
-func TestAuditC6BaselineOrderingPrefersAll(t *testing.T) {
+// TestAuditC6BaselineOrderingCarriesNoPreference covers the query half
+// of audit claim C6, fixed in #408. GetMetricBaselines used to be read
+// through baselines[0], so its alphabetical ORDER BY on the TEXT column
+// period_type ('all' < 'daily' < 'hourly') silently chose the global
+// baseline every time. Selection now happens in the engine
+// (selectBaseline), and the query's only obligation is to return every
+// row for the (connection, metric, database) in a deterministic order.
+func TestAuditC6BaselineOrderingCarriesNoPreference(t *testing.T) {
 	ds, pool, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()
 
@@ -283,7 +281,7 @@ func TestAuditC6BaselineOrderingPrefersAll(t *testing.T) {
 	}
 
 	baselines, err := ds.GetMetricBaselines(ctx, connID,
-		"pg_stat_activity.count")
+		"pg_stat_activity.count", nil)
 	if err != nil {
 		t.Fatalf("GetMetricBaselines failed: %v", err)
 	}
@@ -291,83 +289,119 @@ func TestAuditC6BaselineOrderingPrefersAll(t *testing.T) {
 		t.Fatalf("expected 3 baselines, got %d", len(baselines))
 	}
 
+	// Every period type comes back, so the caller can choose; the
+	// order is deterministic (period_type, day_of_week, hour_of_day)
+	// but is not a preference and nothing may treat it as one.
 	got := make([]string, len(baselines))
 	for i, b := range baselines {
 		got[i] = b.PeriodType
 	}
-	// Current (defective) ordering: strictly alphabetical on the TEXT
-	// column, so 'all' always wins the baselines[0] selection made by
-	// detectAnomalies.
 	want := []string{"all", "daily", "hourly"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("period_type order = %v, want %v", got, want)
 		}
 	}
-	if baselines[0].PeriodType != "all" {
-		t.Errorf("baselines[0].PeriodType = %q, want \"all\"",
-			baselines[0].PeriodType)
+
+	again, err := ds.GetMetricBaselines(ctx, connID,
+		"pg_stat_activity.count", nil)
+	if err != nil {
+		t.Fatalf("GetMetricBaselines (second call) failed: %v", err)
+	}
+	for i := range again {
+		if again[i].ID != baselines[i].ID {
+			t.Fatalf("row order changed between calls: %d vs %d",
+				again[i].ID, baselines[i].ID)
+		}
 	}
 }
 
-// TestAuditC10BaselineLookupIgnoresDatabase verifies the query half of
-// audit claim C10: GetMetricBaselines filters on connection_id and
-// metric_name only. For a per-database metric it therefore returns one
-// row per database with no way for the caller to pick the right one,
-// and the ORDER BY cannot break the tie because every returned row
-// shares the same period_type, day_of_week, and hour_of_day.
-//
-// The lookup SHOULD accept a database name and filter on it.
-func TestAuditC10BaselineLookupIgnoresDatabase(t *testing.T) {
+// TestAuditC10BaselineLookupScopedByDatabase covers the query half of
+// audit claim C10, fixed in #408: GetMetricBaselines takes a database
+// name and matches it NULL-aware, exactly as GetActiveAnomalyAlert
+// does. A per-database metric's rows are therefore returned one
+// database at a time, and connection-wide rows (database_name IS NULL)
+// are only returned for a nil lookup.
+func TestAuditC10BaselineLookupScopedByDatabase(t *testing.T) {
 	ds, pool, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	connID := insertAuditConnection(t, pool, "audit-c10-query")
 
-	for _, dbName := range []string{"alpha", "beta"} {
+	for i, dbName := range []string{"alpha", "beta"} {
 		if _, err := pool.Exec(ctx, insertAuditBaselineSQL,
 			connID, dbName, "pg_stat_database.deadlocks_delta", "all",
-			nil, nil, 1.0, 0.5, 0.0, 2.0, int64(500), nil); err != nil {
+			nil, nil, float64(i+1), 0.5, 0.0, 2.0, int64(500), nil); err != nil {
 			t.Fatalf("failed to insert %s baseline: %v", dbName, err)
 		}
 	}
+	// A connection-wide row for the same metric, which a real run
+	// never writes but which must not leak into a per-database lookup.
+	if _, err := pool.Exec(ctx, insertAuditBaselineSQL,
+		connID, nil, "pg_stat_database.deadlocks_delta", "all",
+		nil, nil, 99.0, 0.5, 0.0, 2.0, int64(500), nil); err != nil {
+		t.Fatalf("failed to insert NULL-database baseline: %v", err)
+	}
 
+	cases := []struct {
+		name     string
+		dbName   *string
+		wantMean float64
+		wantDB   *string
+	}{
+		{"alpha", ptr("alpha"), 1, ptr("alpha")},
+		{"beta", ptr("beta"), 2, ptr("beta")},
+		{"nil matches only NULL rows", nil, 99, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			baselines, err := ds.GetMetricBaselines(ctx, connID,
+				"pg_stat_database.deadlocks_delta", tc.dbName)
+			if err != nil {
+				t.Fatalf("GetMetricBaselines failed: %v", err)
+			}
+			if len(baselines) != 1 {
+				t.Fatalf("expected exactly one baseline, got %d", len(baselines))
+			}
+			b := baselines[0]
+			if b.Mean != tc.wantMean {
+				t.Errorf("mean = %v, want %v", b.Mean, tc.wantMean)
+			}
+			switch {
+			case tc.wantDB == nil && b.DatabaseName != nil:
+				t.Errorf("database_name = %q, want NULL", *b.DatabaseName)
+			case tc.wantDB != nil && (b.DatabaseName == nil || *b.DatabaseName != *tc.wantDB):
+				t.Errorf("database_name = %v, want %q", b.DatabaseName, *tc.wantDB)
+			}
+		})
+	}
+
+	// An unknown database returns nothing rather than another
+	// database's rows.
 	baselines, err := ds.GetMetricBaselines(ctx, connID,
-		"pg_stat_database.deadlocks_delta")
+		"pg_stat_database.deadlocks_delta", ptr("gamma"))
 	if err != nil {
-		t.Fatalf("GetMetricBaselines failed: %v", err)
+		t.Fatalf("GetMetricBaselines(gamma) failed: %v", err)
 	}
-
-	// Current (defective) behavior: both per-database baselines come
-	// back from a call that had no way to name a database.
-	if len(baselines) != 2 {
-		t.Fatalf("expected both per-database baselines, got %d", len(baselines))
+	if len(baselines) != 0 {
+		t.Errorf("expected no baselines for an unknown database, got %d", len(baselines))
 	}
-	for _, b := range baselines {
-		if b.DatabaseName == nil {
-			t.Fatal("expected per-database baselines to carry a database name")
-		}
-		if b.PeriodType != "all" {
-			t.Fatalf("unexpected period_type %q", b.PeriodType)
-		}
-	}
-	// Every ordering key is identical across the two rows, so
-	// baselines[0] is whichever row the planner happened to emit first.
-	t.Logf("baselines[0] database = %q (arbitrary among %d equal-ranked rows)",
-		*baselines[0].DatabaseName, len(baselines))
 }
 
-// TestAuditC7HistoricalSQLCoverage verifies the counting half of audit
-// claim C7. The audit says "12 of 34 metrics" have an empty
-// historicalSQL; the registry actually holds a different number of
-// entries and a different number of empty ones. The test pins the
-// affected metrics by name so the discrepancy is explicit and any
-// future drift identifies the metric that moved.
-//
-// Metrics with an empty historicalSQL fall back to
-// calculateGlobalBaselinesFallback, which cannot produce a warm
-// baseline; see the engine-side test for that half of the claim.
+// ptr returns a pointer to its argument, for optional query parameters.
+func ptr[T any](v T) *T {
+	return &v
+}
+
+// TestAuditC7HistoricalSQLCoverage pins, by name, the registry metrics
+// that have no historicalSQL and therefore cannot be baselined. Since
+// #408 those metrics are excluded from baseline calculation and
+// detection through SupportsBaselines rather than routed through a
+// fallback that wrote permanently cold rows; giving them a historical
+// query is tracked separately. Listing every affected metric means
+// that adding, removing, or backfilling one produces a failure naming
+// the metric that changed, rather than an opaque count mismatch.
 func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 	var empty []string
 	for name, cfg := range metricRegistry {
@@ -379,16 +413,7 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 
 	t.Logf("registry entries: %d; empty historicalSQL: %d",
 		len(metricRegistry), len(empty))
-	for _, name := range empty {
-		t.Logf("  no historical SQL: %s", name)
-	}
 
-	// Pinned by name rather than by count. The audit's "12 of 34" is
-	// wrong on both numbers; 34 is the count of seeded alert_rules
-	// rows, not of registry metrics. Listing every affected metric
-	// means that adding, removing, or backfilling one produces a
-	// failure naming the metric that changed, rather than an opaque
-	// count mismatch that says nothing about which entry moved.
 	wantEmpty := []string{
 		"age_percent",
 		"pg_node_role.subscription_worker_down",
@@ -417,12 +442,41 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 		}
 	}
 
-	// Every empty-historicalSQL metric must in fact fail
-	// GetHistoricalMetricValues, because that is what pushes baseline
-	// calculation onto the fallback path. The exact message matters:
-	// it proves the registry guard rejected the call before any SQL
-	// ran, so removing the guard or hitting an unrelated query error
-	// both surface as failures here.
+	// SupportsBaselines must agree with the registry exactly: false
+	// for every empty entry, true for every other entry, and false
+	// for names that are not in the registry at all (metric_staleness
+	// is evaluated by its own code path and must not be baselined).
+	for _, name := range empty {
+		if SupportsBaselines(name) {
+			t.Errorf("SupportsBaselines(%s) = true, want false", name)
+		}
+	}
+	supported := BaselineSupportedMetrics()
+	if len(supported)+len(empty) != len(metricRegistry) {
+		t.Errorf("supported (%d) + empty (%d) != registry (%d)",
+			len(supported), len(empty), len(metricRegistry))
+	}
+	if !sort.StringsAreSorted(supported) {
+		t.Errorf("BaselineSupportedMetrics is not sorted: %v", supported)
+	}
+	for _, name := range supported {
+		if !SupportsBaselines(name) {
+			t.Errorf("SupportsBaselines(%s) = false for a listed metric", name)
+		}
+		if strings.TrimSpace(metricRegistry[name].historicalSQL) == "" {
+			t.Errorf("BaselineSupportedMetrics lists %s, which has no historicalSQL", name)
+		}
+	}
+	for _, name := range []string{"metric_staleness", "probe_staleness_ratio", ""} {
+		if SupportsBaselines(name) {
+			t.Errorf("SupportsBaselines(%q) = true for a name outside the registry", name)
+		}
+	}
+
+	// Every empty-historicalSQL metric must still fail
+	// GetHistoricalMetricValues with the registry guard's message, so
+	// a caller that skips the SupportsBaselines check gets an error
+	// before any SQL runs.
 	ds, _, cleanup := newAuditDefectsDatastore(t)
 	defer cleanup()
 
@@ -433,7 +487,7 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 	const notImplementedPrefix = "historical data not implemented for metric "
 
 	ctx := context.Background()
-	for _, name := range empty {
+	for _, name := range append(empty, "metric_staleness") {
 		_, err := ds.GetHistoricalMetricValues(ctx, name, 7)
 		if err == nil {
 			t.Errorf("GetHistoricalMetricValues(%s) unexpectedly succeeded", name)
@@ -444,6 +498,88 @@ func TestAuditC7HistoricalSQLCoverage(t *testing.T) {
 			t.Errorf("GetHistoricalMetricValues(%s) error = %q, want %q",
 				name, err.Error(), want)
 		}
+	}
+}
+
+// TestAuditC7DeleteBaselinesForUnsupportedMetrics verifies the sweep
+// that removes the permanently cold rows the pre-#408 fallback wrote:
+// rows for metrics outside BaselineSupportedMetrics go, rows for
+// supported metrics stay, and the count of deleted rows is reported.
+func TestAuditC7DeleteBaselinesForUnsupportedMetrics(t *testing.T) {
+	ds, pool, cleanup := newAuditDefectsDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertAuditConnection(t, pool, "audit-c7-sweep")
+
+	seed := []struct {
+		metric string
+		dbName any
+	}{
+		{"pg_replication_slots.inactive", nil},         // no historicalSQL
+		{"pg_stat_statements.slow_query_count", "app"}, // no historicalSQL
+		{"metric_staleness", nil},                      // not in the registry
+		{"pg_stat_activity.count", nil},                // supported
+		{"pg_stat_database.deadlocks_delta", "app"},    // supported
+	}
+	for _, r := range seed {
+		if _, err := pool.Exec(ctx, insertAuditBaselineSQL,
+			connID, r.dbName, r.metric, "all", nil, nil,
+			1.0, 0.0, 1.0, 1.0, int64(1), nil); err != nil {
+			t.Fatalf("failed to insert %s baseline: %v", r.metric, err)
+		}
+	}
+
+	deleted, err := ds.DeleteBaselinesForUnsupportedMetrics(ctx)
+	if err != nil {
+		t.Fatalf("DeleteBaselinesForUnsupportedMetrics failed: %v", err)
+	}
+	if deleted != 3 {
+		t.Errorf("deleted = %d, want 3", deleted)
+	}
+
+	rows, err := pool.Query(ctx,
+		`SELECT metric_name FROM metric_baselines WHERE connection_id = $1 ORDER BY metric_name`,
+		connID)
+	if err != nil {
+		t.Fatalf("failed to read remaining baselines: %v", err)
+	}
+	defer rows.Close()
+	var remaining []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		remaining = append(remaining, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("row iteration error: %v", err)
+	}
+	want := []string{"pg_stat_activity.count", "pg_stat_database.deadlocks_delta"}
+	if len(remaining) != len(want) {
+		t.Fatalf("remaining = %v, want %v", remaining, want)
+	}
+	for i := range want {
+		if remaining[i] != want[i] {
+			t.Errorf("remaining[%d] = %q, want %q", i, remaining[i], want[i])
+		}
+	}
+
+	// A second sweep finds nothing to do.
+	deleted, err = ds.DeleteBaselinesForUnsupportedMetrics(ctx)
+	if err != nil {
+		t.Fatalf("second DeleteBaselinesForUnsupportedMetrics failed: %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("second sweep deleted = %d, want 0", deleted)
+	}
+
+	// A canceled context is reported rather than swallowed.
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := ds.DeleteBaselinesForUnsupportedMetrics(canceled); err == nil {
+		t.Error("expected an error from a canceled context")
 	}
 }
 

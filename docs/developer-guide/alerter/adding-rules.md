@@ -224,17 +224,25 @@ GROUP BY connection_id;
 ## Registry Requirements
 
 Every metric in the alerter's registry
-(`internal/database/metric_registry.go`) must satisfy two further
+(`internal/database/metric_registry.go`) must satisfy three further
 requirements that govern how the alert cleaner reads its results.
 
 ### Freshness Cutoffs
 
 Each `latestSQL` query must bound `collected_at` with a
-`NOW() - INTERVAL` cutoff of roughly three probe intervals. Three
+`NOW() - INTERVAL` cutoff of at least three probe intervals. Three
 intervals leave room for two consecutive samples inside the window,
 so that a delta metric still has a predecessor, whilst one late
 collection cannot empty the window. A metric whose probe runs every
 300 seconds therefore uses a 15 minute cutoff.
+
+For a metric that clears on absent data the three intervals are a
+hard requirement rather than a guideline, and
+`TestMetricRegistryAbsenceWindowCoversProbeInterval` enforces it
+against the intervals the collector seeds into `probe_configs`. A
+window of one interval holds a single sample, so one collection
+arriving later than the probe's own runtime empties the query, and
+the cleaner reads that as a recovery.
 
 Without a cutoff, the query returns the newest row the table still
 holds, however old that row is. An alert then goes on firing on data
@@ -288,6 +296,21 @@ metric; add one alongside the field. A metric name that the registry
 does not know returns `false`, so a metric evaluated outside the
 registry never clears on absent data.
 
+### Declaring the Window
+
+Every entry that sets `clearWhenAbsent` to `true` also sets
+`absenceWindow` to the interval its latest query looks back over,
+written as a `time.Duration`: a query carrying a 15 minute cutoff
+declares `15 * time.Minute`. Where a query has more than one cutoff,
+the window is the shortest of them, since that is the bound which
+decides whether the result is empty.
+
+The cleaner reads the field through
+`Datastore.MetricAbsenceWindow`, and
+`TestMetricRegistryAbsenceWindowMatchesSQL` checks the declared value
+against the SQL literal, so the two cannot drift apart. Entries that
+do not clear on absent data leave the field unset.
+
 ### Naming the Collector Probe
 
 Every registry entry also sets `probeName` to the collector probe
@@ -303,13 +326,24 @@ The cleaner uses the probe name to tell a condition that ended from
 data that stopped arriving. Because every query bounds `collected_at`,
 a stopped collector empties the result set exactly as a recovered
 condition does, so an alert on a `clearWhenAbsent` metric clears only
-when that probe is currently collecting for the alert's connection,
-judged from the same probe staleness information the
-`metric_staleness` rule uses. A probe that has stalled, that an
-operator has disabled, or that belongs to a connection which is no
-longer monitored leaves the alert active until somebody clears or
+when that probe last collected for the alert's connection inside the
+metric's `absenceWindow`. A probe that has stalled, that an operator
+has disabled, or that belongs to a connection which is no longer
+monitored leaves the alert active until somebody clears or
 acknowledges it, which is the safe direction: the alternative is
 reporting a resolution that nobody observed.
+
+The window is the yardstick here, and not the probe's configured
+collection interval, because the two move independently: an operator
+may raise `probe_configs.collection_interval_seconds`, for every
+connection or for one, whilst the window stays where the query's SQL
+puts it. A check counted in intervals would then widen along with the
+interval and stay quiet exactly where ordinary collection starts
+emptying the query. Comparing the probe's last collection against the
+window holds at any interval, and needs to know nothing about how the
+probe is configured. The `metric_staleness` rule still works in
+ratios, because what counts as a late probe does depend on how often
+it is meant to run.
 
 ## Choosing Thresholds
 

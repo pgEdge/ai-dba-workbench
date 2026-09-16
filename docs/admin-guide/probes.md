@@ -212,6 +212,20 @@ WHERE name = 'pg_stat_activity'
 Changes take effect within 5 minutes through the
 automatic configuration reload.
 
+### Intervals and Alerting
+
+Keep an interval well inside the windows the alert
+rules read. Each alerting metric only considers samples
+collected in the last few minutes, commonly 5 or 15
+depending on the probe, so an interval raised beyond
+that window leaves the query with nothing to read most
+of the time: rules on that probe stop firing, and an
+alert that is already active stays active, because the
+alerter will not report a condition resolved on data it
+cannot see. As a rule of thumb, an interval of a third
+of the window or less is safe, which is what the
+shipped defaults are.
+
 ## Adjusting Retention
 
 In the following example, the query updates the global

@@ -70,21 +70,26 @@ Both URL variables must point at `127.0.0.1`. The suites create, drop
 and recreate tables including `connections`, `cluster_groups`,
 `alerts`, `blackouts`, `metrics.*` and `schema_version` on whatever
 they are pointed at. The alerter enforces this in both its
-database-backed packages: `requireLocalTestDSN` in
-`alerter/src/internal/database/test_dsn_guard_test.go` and its twin in
+database-backed packages: `testdsn.Require` in
+`alerter/src/internal/testdsn/testdsn.go` holds the only copy of the
+rule, and the three-line `requireLocalTestDSN` wrappers in
+`alerter/src/internal/database/test_dsn_guard_test.go` and
 `alerter/src/internal/engine/test_dsn_guard_test.go` are the only places
-either package reads `TEST_AI_WORKBENCH_SERVER`. Each skips when
+either package reads `TEST_AI_WORKBENCH_SERVER`. It skips when
 `SKIP_DB_TESTS` is set or the URL is empty, and fails hard, before
 connecting, on a non-loopback host and on a database name outside
-`ai_workbench`, `ai_workbench_<tag>` (the per-task databases that
-concurrent local sessions use so their schema resets do not collide,
-where the tag must be lower-case alphanumeric and hold at least one
-digit, as `pr407`, `issue407` and `sess2` all do) and `postgres` (the CI
-default); `TestAllowedTestDatabase` pins both directions, including the
-production-shaped names such as `ai_workbench_prod` that the digit
-requirement refuses. Route any new alerter integration entry point through the
-helper rather than reading the variable again. The server and collector
-suites still rely on the operator. Never derive a test URL from
+`ai_workbench`, `ai_workbench_pr<n>`, `ai_workbench_issue<n>`,
+`ai_workbench_sess<n>` (the per-task databases that concurrent local
+sessions use so their schema resets do not collide) and `postgres` (the
+CI default). The loopback check is the real safety net and the name
+check a convenience, so do not read more into the tag rule than that.
+`Require` takes a small `TB` interface rather than `*testing.T`, which
+is what lets `TestRequire` drive every skip and refusal through a
+recorder; `TestAllowedTestDatabase` pins the name rule in both
+directions, including numbered production-shaped names such as
+`ai_workbench_prod2`. Route any new alerter integration entry point
+through the helper rather than reading the variable again. The server
+and collector suites still rely on the operator. Never derive a test URL from
 `bin/ai-dba-server.yaml`.
 
 ## Getting a Database in a Test

@@ -422,14 +422,18 @@ project adheres to
   the probe that stopped; metrics that report only whilst the
   condition holds, or that describe an object an operator can
   legitimately drop, such as a replication slot or a standby, still
-  clear on absence, but only whilst the collector probe behind the
-  metric is still collecting for that connection. Every metric bounds
-  the age of the samples it reads, so a stopped collector empties a
-  query exactly as a recovered condition does; the cleaner now checks
-  the probe's freshness first, and a probe that has stalled, that an
-  operator has disabled, or that belongs to a connection which is no
-  longer monitored leaves the alert active until somebody clears or
-  acknowledges it. (#407)
+  clear on absence, but only when the collector probe behind the
+  metric last collected inside the window that metric's query reads.
+  Every metric bounds the age of the samples it reads, so a stopped
+  collector empties a query exactly as a recovered condition does; the
+  cleaner now checks that window first, and a probe that has stalled,
+  that an operator has disabled, or that belongs to a connection which
+  is no longer monitored leaves the alert active until somebody clears
+  or acknowledges it. The check is made against the metric's own
+  window rather than against a multiple of the probe's collection
+  interval, so raising `collection_interval_seconds`, for every
+  connection or for one, no longer leaves the cleaner quiet whilst
+  ordinary collection empties the query. (#407)
 
 - Fix the `slow_query_count` rule latching until a manual
   `pg_stat_statements_reset()`. The rule counted the queries whose
@@ -460,12 +464,15 @@ project adheres to
   previously had none, so `replication_slot_retention_warn` and
   `replication_slot_retention_high` no longer keep firing on
   days-old samples after a collector stops or a connection stops
-  being monitored. The window on `pg_replication_slots.inactive`
-  widened from five to fifteen minutes, because five minutes
-  equalled the probe interval and a single late collection emptied
-  the window and cleared the critical `replication_slot_inactive`
-  alert. A unit test now requires every metric in the registry to
-  bound `collected_at`, or to be allowlisted with a reason;
+  being monitored. The windows on `pg_replication_slots.inactive` and
+  `pg_node_role.subscription_worker_down` widened from five to
+  fifteen minutes, because five minutes equalled the probe interval
+  and a single late collection emptied the window, clearing the
+  critical `replication_slot_inactive` and `subscription_worker_down`
+  alerts. Unit tests now require every metric in the registry to
+  bound `collected_at`, or to be allowlisted with a reason, and
+  require every metric that clears on absent data to look back over
+  at least three of its probe's seeded collection intervals;
   `pg_settings.max_connections` is the one allowlisted exception,
   since its change-tracked probe stores nothing whilst the
   configuration is unchanged. (#407)

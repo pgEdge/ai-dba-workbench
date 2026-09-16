@@ -692,7 +692,9 @@ has stopped, and the flag stays false; each true entry carries a comment
 saying why, and `TestMetricClearsWhenAbsent` pins representative cases.
 Before the flag existed, any metric whose window could empty (a 5 minute
 window on a 300 second probe, say) cleared and re-fired on every late
-collection.
+collection. `pg_replication_slots.inactive` and
+`pg_node_role.subscription_worker_down` were both exactly that shape and
+now use 15 minute windows.
 
 `clearWhenAbsent` alone is not enough, because every one of those queries
 bounds `collected_at`, so a stopped collector empties them exactly as a
@@ -702,23 +704,52 @@ query reads (`pg_stat_activity`, `pg_replication_slots`,
 `pg_stat_database` and so on; `pg_stat_archiver.failed_count_delta` reads
 `metrics.pg_stat_wal`, `age_percent` reads `metrics.pg_database`, and
 `table_last_autovacuum_hours` reads `metrics.pg_stat_all_tables`),
-exposed through `Datastore.MetricProbeName`. `resolveAbsentMetric` reads
-`GetProbeStalenessByConnection`, the same source the staleness evaluator
-uses, and hands the classification to the pure `classifyAbsentMetric`:
-the alert clears only when that probe is listed for the alert's
-connection with a staleness ratio at or below
-`probeFreshnessRatioLimit` (3 intervals, matching the 15 minute windows
-at the 300 second default and the default `metric_staleness` threshold).
+exposed through `Datastore.MetricProbeName`, and every `clearWhenAbsent`
+entry carries `absenceWindow`, the interval its latest query looks back
+over as a `time.Duration`, exposed through
+`Datastore.MetricAbsenceWindow`. `resolveAbsentMetric` reads
+`GetProbeStalenessByConnection` and hands the classification to the pure
+`classifyAbsentMetric`: the alert clears only when that probe is listed
+for the alert's connection and its `SinceCollected` is at or inside the
+metric's `absenceWindow`.
+
+Gate on the window, never on the probe's configured collection interval.
+The gate was `StalenessRatio <= probeFreshnessRatioLimit` (3 intervals),
+which lined up with the 15 minute windows only at the collector's 300
+second default: an operator raising
+`probe_configs.collection_interval_seconds`, which
+`docs/admin-guide/probes.md` invites, widened the gate whilst the window
+stayed where the SQL put it, so ordinary collection emptied the query and
+the cleaner cleared a condition nobody had seen end. A per-connection
+override never reached the ratio at all, because
+`GetProbeStalenessByConnection` joins `probe_configs ... AND
+pc.connection_id IS NULL` (still true, and still correct for
+`metric_staleness`, which is a ratio question). Comparing the probe's
+last collection against the metric's own window holds at any interval.
+The query reports `SinceCollected` alongside `StalenessRatio` for this;
+`probeFreshnessRatioLimit` is gone.
+
 A stalled probe, a probe missing from the view (the query filters on
 `is_available`, `is_enabled`, `is_monitored` and a non-NULL
 `last_collected`, so a disabled or unmonitored one disappears entirely),
-an entry with no `probeName`, or a failed staleness read all leave the
-alert active and log at operator level rather than debug. The trade-off
-is deliberate: disabling a probe or unmonitoring a connection keeps the
-alert until someone clears or acknowledges it, which beats announcing a
-resolution nobody observed. `TestMetricRegistryProbeName` requires every
-entry to name a probe its latest SQL actually reads, and
-`TestClassifyAbsentMetric` pins the four verdicts.
+an entry with no `probeName` or no `absenceWindow`, or a failed staleness
+read all leave the alert active and log at operator level rather than
+debug. The trade-off is deliberate: disabling a probe or unmonitoring a
+connection keeps the alert until someone clears or acknowledges it, which
+beats announcing a resolution nobody observed.
+`TestMetricRegistryProbeName` requires every entry to name a probe its
+latest SQL actually reads, `TestMetricRegistryAbsenceWindowMatchesSQL`
+requires the declared window to equal the shortest `collected_at` cutoff
+in that SQL, `TestMetricRegistryAbsenceWindowCoversProbeInterval`
+requires it to span at least three of the probe's seeded intervals (the
+map of seeded intervals is itself checked against the collector's
+`schema.go` by `TestSeededProbeIntervalsMatchCollector`), and
+`TestClassifyAbsentMetric` pins the five verdicts.
+
+`cleanResolvedAlerts` resolves the probe staleness snapshot at most once
+per pass, lazily, through `probeStalenessSnapshot`; both
+`checkStalenessAlertResolved` and `resolveAbsentMetric` read it from
+there rather than querying per alert.
 
 Before the metric is queried, the cleaner applies the same
 `required_extension` gate the evaluator does. `cleanResolvedAlerts` calls
@@ -832,11 +863,14 @@ that follow from that, all learned the hard way in #406 and #407:
   exactly that. Repeat the cutoff in every CTE that reads the partitioned
   table, not just the `latest` one, so the planner can prune.
 
-- The window must be at least three probe intervals, and the query must
-  reduce to one row per connection (and database) that both the evaluator
-  and the cleaner read identically. `pg_replication_slots.inactive` used a
-  5 minute window on a 300 second probe and flapped on every late
-  collection; `pg_stat_database.cache_hit_ratio` returned every delta row
+- The window must be at least three probe intervals, which
+  `TestMetricRegistryAbsenceWindowCoversProbeInterval` enforces for every
+  `clearWhenAbsent` entry against the collector's seeded intervals, and
+  the query must reduce to one row per connection (and database) that
+  both the evaluator and the cleaner read identically.
+  `pg_replication_slots.inactive` and
+  `pg_node_role.subscription_worker_down` each used a 5 minute window on
+  a 300 second probe and flapped on every late collection; `pg_stat_database.cache_hit_ratio` returned every delta row
   in its window with no `ORDER BY`, so the evaluator (any row violating)
   and the cleaner (first row) disagreed on the same data. The fix is
   `DISTINCT ON (connection_id, database_name) ... ORDER BY collected_at
@@ -1248,9 +1282,12 @@ run.
   `pg_sys_disk_info.used_percent`, so a squashfs mount no longer pins the
   disk metric at 100%.
 - #407: Missing metric data treated as resolution; introduced the
-  `clearWhenAbsent` registry flag, the `probeName` field and its
-  probe-freshness gate on clearing, the freshness-cutoff test and the
-  latest-sample reductions for `cache_hit_ratio` and `slow_query_count`.
+  `clearWhenAbsent` registry flag, the `probeName` field, the
+  `absenceWindow` field and the window gate on clearing (which replaced
+  the interval-ratio gate and `probeFreshnessRatioLimit`), the
+  freshness-cutoff and window audits, the once-per-pass
+  `probeStalenessSnapshot`, and the latest-sample reductions for
+  `cache_hit_ratio` and `slow_query_count`.
 - #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
   `required_extension` enforced in evaluation and resolution,
   `table_bloat_ratio` retired from the registry; collector migration 11.

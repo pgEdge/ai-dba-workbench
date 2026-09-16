@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func newPgStatStatementsProbeForTest() *PgStatStatementsProbe {
@@ -171,7 +172,8 @@ func TestPgStatStatementsProbe_ExecuteWithoutStatsInfoView(t *testing.T) {
 	requirePgStatStatementsReadable(t, conn)
 
 	const connName = "stmts-no-info-view"
-	key := featureCacheKey{connectionName: connName,
+	scope := featureCacheScope(connName, conn.Conn().Config().Database)
+	key := featureCacheKey{connectionName: scope,
 		checkName: "pg_stat_statements_info_view"}
 	featureCache.Store(key, false)
 	defer featureCache.Delete(key)
@@ -220,17 +222,19 @@ func TestPgStatStatementsProbe_ExecuteTimingColumnVariants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			connName := "stmts-variant-" + tc.name
+			scope := featureCacheScope(connName,
+				conn.Conn().Config().Database)
 			seed := map[string]bool{
 				"pg_stat_statements_ext":             true,
 				"pg_stat_statements_shared_blk_time": tc.sharedBlkTime,
 				"pg_stat_statements_blk_read_time":   tc.blkReadTime,
 			}
 			for check, val := range seed {
-				key := featureCacheKey{connectionName: connName, checkName: check}
+				key := featureCacheKey{connectionName: scope, checkName: check}
 				featureCache.Store(key, val)
 				defer featureCache.Delete(key)
 			}
-			infoKey := featureCacheKey{connectionName: connName,
+			infoKey := featureCacheKey{connectionName: scope,
 				checkName: "pg_stat_statements_info_view"}
 			defer featureCache.Delete(infoKey)
 
@@ -528,4 +532,328 @@ func extensionVersionAtLeast(version string, major, minor int) bool {
 		return false
 	}
 	return gotMajor > major || (gotMajor == major && gotMinor >= minor)
+}
+
+// newSecondaryDatabase creates an extra database on the integration
+// server and returns a pool to it, dropping it when the test ends. It
+// exists so a test can drive two pools that differ only in database,
+// which is the shape the scheduler creates for a connection that
+// monitors more than one database.
+//
+// Administrative work goes through a single short-lived connection and
+// the returned pool is capped at one connection, because the shared
+// integration server is close to max_connections once every package has
+// opened its pools.
+func newSecondaryDatabase(t *testing.T, suffix string) *pgxpool.Pool {
+	t.Helper()
+
+	base, ok := integrationConnString()
+	if !ok {
+		t.Skip("TEST_AI_WORKBENCH_SERVER (or TEST_DB_CONN) not set; " +
+			"skipping integration test")
+	}
+
+	ctx := context.Background()
+	adminConnStr := replaceProbeDatabase(base, "postgres")
+	dbName := fmt.Sprintf("ai_workbench_probes_%s_%d", suffix,
+		time.Now().UnixNano())
+
+	// dbName is generated above from a fixed prefix and a timestamp, so
+	// the statement carries no caller-supplied text.
+	// Parsing through pgxpool drops any pool_* parameters the test DSN
+	// carries, which a plain pgx.Connect would reject.
+	adminCfg, err := pgxpool.ParseConfig(adminConnStr)
+	if err != nil {
+		t.Fatalf("parse admin config: %v", err)
+	}
+	adminExec := func(sql string) error {
+		adminConn, err := pgx.ConnectConfig(ctx, adminCfg.ConnConfig)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = adminConn.Close(ctx) }()
+		_, err = adminConn.Exec(ctx, sql)
+		return err
+	}
+
+	if err := adminExec(
+		fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
+		t.Fatalf("create secondary db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := adminExec(
+			fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName)); err != nil {
+			t.Logf("drop secondary db %s: %v", dbName, err)
+		}
+	})
+
+	cfg, parseErr := pgxpool.ParseConfig(replaceProbeDatabase(base, dbName))
+	if parseErr != nil {
+		t.Fatalf("parse secondary db config: %v", parseErr)
+	}
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect to secondary db: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// TestPgStatStatementsProbe_FeatureCacheIsPerDatabase drives Execute
+// through two pools that share one connection name and differ only in
+// database, which is exactly what the scheduler builds for a connection
+// monitoring several databases. Every cached check must be keyed by
+// database as well as connection, so a connection-only key on any one
+// of them is caught here: the first database's answer would decide the
+// query shape for the second.
+func TestPgStatStatementsProbe_FeatureCacheIsPerDatabase(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	requirePgStatStatementsReadable(t, conn)
+
+	p := newPgStatStatementsProbeForTest()
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+
+	otherPool := newSecondaryDatabase(t, "xdb")
+	otherConn := acquireConn(t, otherPool)
+
+	firstDB := conn.Conn().Config().Database
+	secondDB := otherConn.Conn().Config().Database
+	if firstDB == secondDB {
+		t.Fatalf("the two pools must differ by database, both are %q",
+			firstDB)
+	}
+
+	// The extension check: present in the first database and absent in
+	// the second, so a shared answer would have the second database run
+	// the pg_stat_statements query it cannot satisfy.
+	t.Run("extension availability", func(t *testing.T) {
+		const connName = "stmts-xdb-availability"
+		for _, db := range []string{firstDB, secondDB} {
+			key := featureCacheKey{
+				connectionName: featureCacheScope(connName, db),
+				checkName:      "pg_stat_statements_ext",
+			}
+			defer featureCache.Delete(key)
+		}
+
+		if _, err := p.Execute(ctx, connName, conn, pgVersion); err != nil {
+			t.Fatalf("Execute against %s: %v", firstDB, err)
+		}
+		metrics, err := p.Execute(ctx, connName, otherConn, pgVersion)
+		if err != nil {
+			t.Fatalf("Execute against %s (no extension): %v", secondDB, err)
+		}
+		if len(metrics) != 0 {
+			t.Errorf("Execute against %s returned %d rows; the first "+
+				"database's cached extension check decided for it",
+				secondDB, len(metrics))
+		}
+	})
+
+	// The pg_stat_statements_info check, which #457 added and which must
+	// be scoped like the rest. Seeding "view absent" for the first
+	// database must not suppress stats_reset in the second.
+	t.Run("stats info view", func(t *testing.T) {
+		if _, err := otherConn.Exec(ctx,
+			"CREATE EXTENSION IF NOT EXISTS pg_stat_statements"); err != nil {
+			t.Skipf("cannot install pg_stat_statements in %s: %v",
+				secondDB, err)
+		}
+		requirePgStatStatementsReadable(t, otherConn)
+
+		hasInfo, err := p.checkHasStatsInfoView(ctx, otherConn)
+		if err != nil {
+			t.Fatalf("checkHasStatsInfoView: %v", err)
+		}
+		if !hasInfo {
+			t.Skip("this server's pg_stat_statements has no info view")
+		}
+
+		const connName = "stmts-xdb-info-view"
+		for _, db := range []string{firstDB, secondDB} {
+			scope := featureCacheScope(connName, db)
+			for _, check := range []string{
+				"pg_stat_statements_ext",
+				"pg_stat_statements_shared_blk_time",
+				"pg_stat_statements_blk_read_time",
+				"pg_stat_statements_info_view",
+			} {
+				defer featureCache.Delete(featureCacheKey{
+					connectionName: scope, checkName: check})
+			}
+		}
+
+		// Say the info view is absent for the first database only.
+		featureCache.Store(featureCacheKey{
+			connectionName: featureCacheScope(connName, firstDB),
+			checkName:      "pg_stat_statements_info_view",
+		}, false)
+
+		first, err := p.Execute(ctx, connName, conn, pgVersion)
+		if err != nil {
+			t.Fatalf("Execute against %s: %v", firstDB, err)
+		}
+		if len(first) == 0 {
+			t.Fatalf("expected rows from %s", firstDB)
+		}
+		for _, m := range first {
+			if m["stats_reset"] != nil {
+				t.Fatalf("stats_reset = %v in %s, want NULL from the "+
+					"seeded check", m["stats_reset"], firstDB)
+			}
+		}
+
+		second, err := p.Execute(ctx, connName, otherConn, pgVersion)
+		if err != nil {
+			t.Fatalf("Execute against %s: %v", secondDB, err)
+		}
+		if len(second) == 0 {
+			t.Fatalf("expected rows from %s", secondDB)
+		}
+		for _, m := range second {
+			if _, isTime := m["stats_reset"].(time.Time); !isTime {
+				t.Fatalf("stats_reset = %v (%T) in %s; the first "+
+					"database's seeded info-view answer leaked across "+
+					"the connection name", m["stats_reset"],
+					m["stats_reset"], secondDB)
+			}
+		}
+
+		// Each database must have left its own info-view answer behind:
+		// a connection-only key would have stored just the one.
+		for db, want := range map[string]bool{firstDB: false, secondDB: true} {
+			got, ok := featureCache.Load(featureCacheKey{
+				connectionName: featureCacheScope(connName, db),
+				checkName:      "pg_stat_statements_info_view",
+			})
+			if !ok {
+				t.Errorf("no cached info-view answer for %s; the check "+
+					"is not keyed by database", db)
+				continue
+			}
+			if got != want {
+				t.Errorf("cached info-view answer for %s = %v, want %v",
+					db, got, want)
+			}
+		}
+	})
+}
+
+// TestPgStatStatementsProbe_ExecutePreThirteenFallback drives the query
+// shape used for PostgreSQL 12 and earlier, which has neither timing
+// column. The shared_blk_read_time answer is seeded false and the
+// blk_read_time check is left to run for real, so on a modern server,
+// where that column is also absent, Execute takes the oldest branch.
+func TestPgStatStatementsProbe_ExecutePreThirteenFallback(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	p := newPgStatStatementsProbeForTest()
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+	requirePgStatStatementsReadable(t, conn)
+
+	const connName = "stmts-pre-13"
+	scope := featureCacheScope(connName, conn.Conn().Config().Database)
+	for _, check := range []string{
+		"pg_stat_statements_ext",
+		"pg_stat_statements_shared_blk_time",
+		"pg_stat_statements_blk_read_time",
+		"pg_stat_statements_info_view",
+	} {
+		defer featureCache.Delete(featureCacheKey{
+			connectionName: scope, checkName: check})
+	}
+	featureCache.Store(featureCacheKey{connectionName: scope,
+		checkName: "pg_stat_statements_shared_blk_time"}, false)
+
+	if hasOld, err := p.checkHasBlkReadTime(ctx, conn); err != nil {
+		t.Fatalf("checkHasBlkReadTime: %v", err)
+	} else if hasOld {
+		t.Skip("this server still has blk_read_time; the pre-13 shape " +
+			"is unreachable here")
+	}
+
+	metrics, err := p.Execute(ctx, connName, conn, pgVersion)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(metrics) == 0 {
+		t.Fatal("expected at least one pg_stat_statements row")
+	}
+	for _, m := range metrics {
+		if m["toplevel"] != true {
+			t.Errorf("toplevel = %v, want true in the pre-13 shape",
+				m["toplevel"])
+		}
+		if m["shared_blk_read_time"] != nil {
+			t.Errorf("shared_blk_read_time = %v, want NULL in the "+
+				"pre-13 shape", m["shared_blk_read_time"])
+		}
+	}
+}
+
+// TestPgStatStatementsProbe_ExecuteCachedCheckErrors shows that a failure
+// from any of the cached feature checks aborts Execute rather than
+// falling through to a query chosen on a bad answer. A non-boolean cache
+// entry is the one failure that can be provoked deterministically,
+// cachedCheck rejecting it for every check in turn.
+func TestPgStatStatementsProbe_ExecuteCachedCheckErrors(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	p := newPgStatStatementsProbeForTest()
+	ctx := context.Background()
+	pgVersion := detectPgVersion(t, conn)
+	requirePgStatStatementsReadable(t, conn)
+
+	database := conn.Conn().Config().Database
+	cases := []struct {
+		name  string
+		check string
+		// seed holds the boolean answers the earlier checks need for
+		// Execute to reach the poisoned one.
+		seed map[string]bool
+	}{
+		{"extension", "pg_stat_statements_ext", nil},
+		{"shared_blk_time", "pg_stat_statements_shared_blk_time", nil},
+		{"blk_read_time", "pg_stat_statements_blk_read_time",
+			map[string]bool{"pg_stat_statements_shared_blk_time": false}},
+		{"info_view", "pg_stat_statements_info_view",
+			map[string]bool{"pg_stat_statements_shared_blk_time": true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			connName := "stmts-bad-cache-" + tc.name
+			scope := featureCacheScope(connName, database)
+			for _, check := range []string{
+				"pg_stat_statements_ext",
+				"pg_stat_statements_shared_blk_time",
+				"pg_stat_statements_blk_read_time",
+				"pg_stat_statements_info_view",
+			} {
+				defer featureCache.Delete(featureCacheKey{
+					connectionName: scope, checkName: check})
+			}
+			featureCache.Store(featureCacheKey{connectionName: scope,
+				checkName: "pg_stat_statements_ext"}, true)
+			for check, val := range tc.seed {
+				featureCache.Store(featureCacheKey{
+					connectionName: scope, checkName: check}, val)
+			}
+			featureCache.Store(featureCacheKey{connectionName: scope,
+				checkName: tc.check}, "not a bool")
+
+			metrics, err := p.Execute(ctx, connName, conn, pgVersion)
+			if err == nil {
+				t.Fatalf("Execute returned %d rows, want an error from "+
+					"the %s check", len(metrics), tc.check)
+			}
+			if !strings.Contains(err.Error(), tc.check) {
+				t.Errorf("Execute error = %v, want it to name %s", err,
+					tc.check)
+			}
+		})
+	}
 }

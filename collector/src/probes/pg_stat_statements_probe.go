@@ -151,15 +151,22 @@ func statsResetSelect(hasStatsInfo bool) string {
 	return "NULL::timestamptz AS stats_reset"
 }
 
+// featureCacheScope builds the feature-cache scope for a database-scoped
+// probe. The scheduler opens one pool per monitored database on the same
+// connection, so the cache must be keyed by database as well as by
+// connection: the extension may be installed, or installed into a schema
+// on the search path, in one database and not another, and a result
+// cached for one must never decide the query shape for the other. Every
+// cached check in Execute uses this scope, and the tests build their
+// seeded keys with it, so the two cannot drift apart.
+func featureCacheScope(connectionName, database string) string {
+	return connectionName + "/" + database
+}
+
 // Execute runs the probe against a monitored connection
 func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
-	// The probe is database-scoped, and the scheduler opens one pool per
-	// database on the same connection, so the feature cache is keyed by
-	// database as well as by connection: the extension may be installed,
-	// or installed into a schema on the search path, in one database and
-	// not another, and a result cached for one must not decide the query
-	// shape for the other.
-	cacheScope := connectionName + "/" + monitoredConn.Conn().Config().Database
+	cacheScope := featureCacheScope(connectionName,
+		monitoredConn.Conn().Config().Database)
 
 	// Check if extension is available (cached)
 	available, err := cachedCheck(cacheScope, "pg_stat_statements_ext", func() (bool, error) {
@@ -195,7 +202,7 @@ func (p *PgStatStatementsProbe) Execute(ctx context.Context, connectionName stri
 
 	// Check if the pg_stat_statements_info view exists (extension 1.9+,
 	// PostgreSQL 14+) so stats_reset can be captured (cached)
-	hasStatsInfo, err := cachedCheck(connectionName, "pg_stat_statements_info_view", func() (bool, error) {
+	hasStatsInfo, err := cachedCheck(cacheScope, "pg_stat_statements_info_view", func() (bool, error) {
 		return p.checkHasStatsInfoView(ctx, monitoredConn)
 	})
 	if err != nil {

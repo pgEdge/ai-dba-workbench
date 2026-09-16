@@ -279,12 +279,14 @@ func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
 	case absentMetricNotAbsenceDriven:
 		e.debugLog("Metric %s has no current value for alert %d (%s); leaving it active until data returns",
 			metric, alert.ID, reason)
-	case absentMetricNoProbe:
-		e.log("WARNING: Metric %s clears when absent but names no collector probe; "+
-			"leaving alert %d active", metric, alert.ID)
-	case absentMetricNoWindow:
-		e.log("WARNING: Metric %s clears when absent but declares no collection "+
-			"window; leaving alert %d active", metric, alert.ID)
+	case absentMetricNoProbe, absentMetricNoWindow:
+		// The registry audits keep this unreachable: an entry that
+		// clears when absent names a probe and declares the window its
+		// query reads. Both verdicts report the same operator problem,
+		// an entry the cleaner cannot judge, so they share a line.
+		e.log("WARNING: Metric %s clears when absent but its registry entry is "+
+			"incomplete (probe %q, window %s); leaving alert %d active",
+			metric, probe, window, alert.ID)
 	case absentMetricProbeNotReporting:
 		e.log("Alert %d on metric %s has no current value (%s) and probe %s has not "+
 			"collected for connection %d within the %s window its query reads; "+

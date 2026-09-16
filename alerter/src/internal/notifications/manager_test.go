@@ -11,8 +11,12 @@ package notifications
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -400,15 +404,20 @@ func TestManager_DecryptChannelSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncryptPassword() error: %v", err)
 	}
+	encTelegram, err := crypto.EncryptPassword("123456789:AAToken", testSecret)
+	if err != nil {
+		t.Fatalf("EncryptPassword() error: %v", err)
+	}
 
 	m := &Manager{
 		serverSecret: testSecret,
 	}
 
 	channel := &database.NotificationChannel{
-		WebhookURL:      &encWebhook,
-		AuthCredentials: &encAuth,
-		SMTPPassword:    &encSMTP,
+		WebhookURL:       &encWebhook,
+		AuthCredentials:  &encAuth,
+		SMTPPassword:     &encSMTP,
+		TelegramBotToken: &encTelegram,
 	}
 
 	m.decryptChannelSecrets(channel)
@@ -427,6 +436,32 @@ func TestManager_DecryptChannelSecrets(t *testing.T) {
 	if *channel.SMTPPassword != "smtp-secret" {
 		t.Errorf("SMTPPassword = %q, want %q", *channel.SMTPPassword, "smtp-secret")
 	}
+
+	// Verify the Telegram bot token was decrypted
+	if *channel.TelegramBotToken != "123456789:AAToken" {
+		t.Errorf("TelegramBotToken = %q, want %q", *channel.TelegramBotToken,
+			"123456789:AAToken")
+	}
+}
+
+// TestManager_DecryptChannelSecrets_TelegramTokenUndecryptable covers the
+// legacy/plaintext path: a value that will not decrypt is left as it is
+// rather than blanked, so an install that predates encryption keeps
+// working.
+func TestManager_DecryptChannelSecrets_TelegramTokenUndecryptable(t *testing.T) {
+	m := &Manager{serverSecret: "test-secret"}
+
+	plaintext := "123456789:AAPlaintextToken"
+	channel := &database.NotificationChannel{
+		TelegramBotToken: &plaintext,
+	}
+
+	m.decryptChannelSecrets(channel)
+
+	if *channel.TelegramBotToken != "123456789:AAPlaintextToken" {
+		t.Errorf("TelegramBotToken = %q, want it left unchanged",
+			*channel.TelegramBotToken)
+	}
 }
 
 func TestManager_DecryptChannelSecrets_EmptyFields(t *testing.T) {
@@ -436,9 +471,10 @@ func TestManager_DecryptChannelSecrets_EmptyFields(t *testing.T) {
 
 	emptyStr := ""
 	channel := &database.NotificationChannel{
-		WebhookURL:      nil,
-		AuthCredentials: &emptyStr,
-		SMTPPassword:    nil,
+		WebhookURL:       nil,
+		AuthCredentials:  &emptyStr,
+		SMTPPassword:     nil,
+		TelegramBotToken: &emptyStr,
 	}
 
 	// Should not panic for nil/empty values
@@ -510,5 +546,170 @@ func TestManager_NilManager(t *testing.T) {
 	err = m.ProcessReminders(ctx)
 	if err != nil {
 		t.Errorf("ProcessReminders on nil manager should return nil, got %v", err)
+	}
+}
+
+// TestManager_HTTPClientRefusesRedirects is the regression test for
+// VULN-001. The manager builds one http.Client and hands it to every
+// notifier, and with a nil CheckRedirect net/http follows up to ten
+// redirects, copying the previous request's full URL into the Referer
+// header of each one. For Telegram that URL is
+// https://api.telegram.org/bot<token>/sendMessage, so a single 3xx from
+// the endpoint would hand the live bot token to whatever host the
+// Location header names. Slack and Mattermost leak their whole webhook
+// URL, which is itself the secret, the same way.
+//
+// Every channel that goes through the shared client is exercised here:
+// the trap server must never be reached, and the delivery must fail
+// rather than silently succeed at the redirect target.
+func TestManager_HTTPClientRefusesRedirects(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "valid.secret")
+	if err := os.WriteFile(secretPath, []byte("server-secret-value\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, err := NewManager(nil, &config.NotificationsConfig{
+		Enabled:    true,
+		SecretFile: secretPath,
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("NewManager() unexpected error: %v", err)
+	}
+
+	var mu sync.Mutex
+	var trapHits int
+	var trapReferers []string
+	trap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		trapHits++
+		trapReferers = append(trapReferers, r.Referer())
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`)) //nolint:errcheck
+	}))
+	defer trap.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, trap.URL+"/hijacked", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	payload := createTestPayload()
+	webhookURL := redirector.URL + "/services/T000/B000/secret-webhook-path"
+
+	t.Run("telegram", func(t *testing.T) {
+		notifier, ok := m.notifiers[database.ChannelTypeTelegram].(*telegramNotifier)
+		if !ok {
+			t.Fatal("registered Telegram notifier has an unexpected type")
+		}
+		notifier.apiBaseURL = redirector.URL
+		err := notifier.Send(context.Background(), telegramTestChannel(), payload)
+		if err == nil {
+			t.Fatal("Send() followed a redirect and reported success")
+		}
+		assertNoToken(t, err.Error())
+	})
+
+	for _, channelType := range []database.NotificationChannelType{
+		database.ChannelTypeSlack,
+		database.ChannelTypeMattermost,
+	} {
+		t.Run(string(channelType), func(t *testing.T) {
+			channel := &database.NotificationChannel{
+				ChannelType: channelType,
+				WebhookURL:  strPtr(webhookURL),
+			}
+			err := m.notifiers[channelType].Send(context.Background(), channel, payload)
+			if err == nil {
+				t.Fatal("Send() followed a redirect and reported success")
+			}
+			if !strings.Contains(err.Error(), "302") {
+				t.Errorf("error = %v, want it to report the unfollowed 302", err)
+			}
+		})
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if trapHits != 0 {
+		t.Fatalf("the redirect target was reached %d time(s); Referer headers seen: %q",
+			trapHits, trapReferers)
+	}
+}
+
+// TestManager_RegistersNotifiers checks that every channel type the
+// alerter supports resolves to a notifier of the matching type, so a
+// channel row can never fall through processNotification's "unknown
+// channel type" branch.
+func TestManager_RegistersNotifiers(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "valid.secret")
+	if err := os.WriteFile(secretPath, []byte("server-secret-value\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m, err := NewManager(nil, &config.NotificationsConfig{
+		Enabled:    true,
+		SecretFile: secretPath,
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("NewManager() unexpected error: %v", err)
+	}
+	if m == nil {
+		t.Fatal("expected a manager instance")
+	}
+
+	wantTypes := []database.NotificationChannelType{
+		database.ChannelTypeSlack,
+		database.ChannelTypeMattermost,
+		database.ChannelTypeTelegram,
+		database.ChannelTypeWebhook,
+		database.ChannelTypeEmail,
+	}
+
+	if len(m.notifiers) != len(wantTypes) {
+		t.Errorf("registered %d notifiers, want %d", len(m.notifiers), len(wantTypes))
+	}
+
+	for _, want := range wantTypes {
+		notifier, ok := m.notifiers[want]
+		if !ok {
+			t.Errorf("no notifier registered for channel type %q", want)
+			continue
+		}
+		if got := notifier.Type(); got != want {
+			t.Errorf("notifier for %q reports Type() = %q", want, got)
+		}
+	}
+}
+
+// TestManager_TelegramNotifierUsesSharedHTTPClient checks the Telegram
+// notifier is built with the manager's configured client rather than
+// http.DefaultClient, so the notification timeout applies to it.
+func TestManager_TelegramNotifierUsesSharedHTTPClient(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "valid.secret")
+	if err := os.WriteFile(secretPath, []byte("server-secret-value\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m, err := NewManager(nil, &config.NotificationsConfig{
+		Enabled:            true,
+		SecretFile:         secretPath,
+		HTTPTimeoutSeconds: 7,
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("NewManager() unexpected error: %v", err)
+	}
+
+	notifier, ok := m.notifiers[database.ChannelTypeTelegram].(*telegramNotifier)
+	if !ok {
+		t.Fatal("registered Telegram notifier has an unexpected type")
+	}
+	if notifier.httpClient != m.httpClient {
+		t.Error("Telegram notifier does not use the manager's HTTP client")
+	}
+	if notifier.apiBaseURL != telegramAPIBaseURL {
+		t.Errorf("apiBaseURL = %q, want %q", notifier.apiBaseURL, telegramAPIBaseURL)
+	}
+	if notifier.renderer != m.renderer {
+		t.Error("Telegram notifier does not use the manager's renderer")
 	}
 }

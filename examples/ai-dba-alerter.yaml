@@ -453,7 +453,7 @@ llm:
 #=========================================================================
 #
 # Configure how the alerter delivers notifications through external
-# channels such as email, Slack, Mattermost, and webhooks.
+# channels such as email, Slack, Mattermost, Telegram, and webhooks.
 #
 
 notifications:
@@ -462,8 +462,9 @@ notifications:
   enabled: false
 
   # Path to file containing the server secret for decrypting
-  # notification channel credentials (webhook URLs, SMTP passwords,
-  # and authentication credentials stored by the Server component).
+  # notification channel credentials (webhook URLs, Telegram bot
+  # tokens, SMTP passwords, and authentication credentials stored by
+  # the Server component).
   #
   # This file must contain the same plain text secret used by the
   # Server and Collector components. You can point to the server's
@@ -490,7 +491,8 @@ notifications:
   # Default: [5, 15, 60]
   retry_backoff_minutes: [5, 15, 60]
 
-  # HTTP request timeout for webhooks, Slack, and Mattermost (in seconds)
+  # HTTP request timeout for webhooks, Slack, Mattermost, and
+  # Telegram (in seconds)
   # Default: 30
   http_timeout_seconds: 30
 

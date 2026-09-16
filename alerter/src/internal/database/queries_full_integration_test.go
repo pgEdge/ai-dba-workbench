@@ -280,6 +280,8 @@ CREATE TABLE notification_channels (
     smtp_use_tls BOOLEAN DEFAULT TRUE,
     from_address TEXT,
     from_name TEXT,
+    telegram_bot_token_encrypted TEXT,
+    telegram_chat_id TEXT,
     template_alert_fire TEXT,
     template_alert_clear TEXT,
     template_reminder TEXT,

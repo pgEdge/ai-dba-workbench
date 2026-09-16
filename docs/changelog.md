@@ -135,6 +135,27 @@ project adheres to
   extension is version 1.9 or later, as shipped with PostgreSQL 14;
   the column is added by collector schema migration 10. (#402)
 
+- Add Telegram as a notification channel type, alongside the
+  existing email, Slack, Mattermost and webhook channels. A
+  Telegram channel delivers through the Bot API rather than an
+  incoming webhook, so it stores a bot token, encrypted with the
+  server secret and never returned by the API, together with a
+  chat ID that is either a numeric ID or an `@channelusername`.
+  The create and update endpoints accept the `telegram_bot_token`
+  and `telegram_chat_id` fields, a response reports
+  `telegram_bot_token_set` in place of the token, and
+  `POST /api/v1/notification-channels/{id}/test` sends a test
+  message to the configured chat. Notifications are sent with the
+  `sendMessage` method in HTML parse mode, so a Telegram template
+  renders the message text rather than a JSON body. A message beyond
+  Telegram's 4096-character limit is truncated without cutting an HTML
+  entity or an opening tag in half, and a message Telegram refuses to
+  parse is sent once more with no parse mode, so a template with
+  broken markup delivers the alert as plain text rather than losing
+  it. The admin panel gains a Telegram Channels tab, and collector
+  schema migration 12 adds the `telegram_bot_token_encrypted` and
+  `telegram_chat_id` columns to `notification_channels`. (#475)
+
 ### Changed
 
 - Count deadlocks and temporary files per hour in the alerter. The
@@ -739,6 +760,30 @@ project adheres to
   removed helper supplied, so test behaviour is unchanged.
 
 ### Security
+
+- Stop following HTTP redirects when the alerter delivers a
+  notification. This changes the behaviour of every existing Slack,
+  Mattermost, Telegram and generic webhook channel: a provider that
+  answers a delivery with a 3xx response now fails that delivery,
+  where the redirect was previously followed without comment. Such a
+  delivery is retried on the usual backoff schedule and then recorded
+  as `failed`, with the 3xx status code named in the stored error.
+  The credential these channels use sits in the request URL, because
+  the Slack and Mattermost webhook URLs are secrets in themselves and
+  the Telegram URL carries the bot token in its path. Go copies the
+  previous request's full URL into the `Referer` header of a
+  redirected request, so following a redirect handed the credential to
+  the host named in the `Location` header. A generic webhook channel
+  gains a second protection: the server validates its endpoint host
+  when the channel is saved, and a redirect could previously bounce
+  the request past that check to a private or metadata host. The change is
+  preventive:
+  reaching the behaviour required a hostile or compromised endpoint
+  answering a delivery with a redirect, and no credential is known to
+  have been disclosed. The server's test-send path has always refused
+  redirects, so delivery now matches it. Where an endpoint relies on a
+  redirect, configure its final URL in the channel; email channels are
+  unaffected, because they deliver over SMTP. (#475)
 
 - Ignore a blank password when updating a database connection, so an
   empty or whitespace-only password can no longer overwrite the stored

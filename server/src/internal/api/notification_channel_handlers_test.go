@@ -14,8 +14,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -209,7 +211,7 @@ CREATE TABLE notification_channels (
     owner_username VARCHAR(255),
     owner_token VARCHAR(255),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'webhook', 'email')),
+    channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'telegram', 'webhook', 'email')),
     name TEXT NOT NULL,
     description TEXT,
     webhook_url_encrypted TEXT,
@@ -225,6 +227,8 @@ CREATE TABLE notification_channels (
     smtp_use_tls BOOLEAN DEFAULT TRUE,
     from_address TEXT,
     from_name TEXT,
+    telegram_bot_token_encrypted TEXT,
+    telegram_chat_id TEXT,
     template_alert_fire TEXT,
     template_alert_clear TEXT,
     template_reminder TEXT,
@@ -1188,7 +1192,7 @@ func TestCreateChannel_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid channel type",
 			body: `{"channel_type":"sms","name":"bad"}`,
-			want: "Invalid channel_type: must be one of email, slack, mattermost, webhook",
+			want: "Invalid channel_type: must be one of email, slack, mattermost, telegram, webhook",
 		},
 		{
 			name: "missing name",
@@ -1254,7 +1258,7 @@ func TestUpdateChannel_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid channel type",
 			body: `{"channel_type":"sms"}`,
-			want: "Invalid channel_type: must be one of email, slack, mattermost, webhook",
+			want: "Invalid channel_type: must be one of email, slack, mattermost, telegram, webhook",
 		},
 		{
 			name: "clear smtp_host on email channel",
@@ -1472,4 +1476,1113 @@ func newAuthStoreForChannelTests(t *testing.T) (*auth.AuthStore, func()) {
 		store.Close()
 		os.RemoveAll(tmpDir)
 	}
+}
+
+// =============================================================================
+// Telegram channels (issue #475)
+// =============================================================================
+
+// telegramHandlerToken is a syntactically valid but fictitious Bot API
+// token. Every assertion below treats it as a live credential.
+const telegramHandlerToken = "123456789:AAErq-leak-me-not-TEST-TOKEN"
+
+// telegramUndecryptableToken stands in for what
+// decryptNotificationSecret hands back when a stored token cannot be
+// decrypted because the server secret was rotated or lost: the raw
+// column value, which is base64 and can never match
+// telegramBotTokenPattern.
+const telegramUndecryptableToken = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="
+
+// createTelegramChannel inserts a telegram channel through the datastore
+// so the handler paths see a fully-populated, encrypted row.
+func createTelegramChannel(t *testing.T, ds *database.Datastore, name string,
+	botToken, chatID *string) int64 {
+	t.Helper()
+	owner := "channel_admin"
+	channel := &database.NotificationChannel{
+		OwnerUsername:         &owner,
+		Enabled:               true,
+		ChannelType:           database.ChannelTypeTelegram,
+		Name:                  name,
+		HTTPMethod:            "POST",
+		SMTPPort:              587,
+		TelegramBotToken:      botToken,
+		TelegramChatID:        chatID,
+		ReminderIntervalHours: 4,
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), channel); err != nil {
+		t.Fatalf("CreateNotificationChannel: %v", err)
+	}
+	return channel.ID
+}
+
+// TestCreateChannel_TelegramHappyPath creates a telegram channel and
+// asserts the response redacts the bot token, advertises it through
+// telegram_bot_token_set, and returns the chat ID in clear.
+func TestCreateChannel_TelegramHappyPath(t *testing.T) {
+	ds, pool, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	body := fmt.Sprintf(`{
+		"channel_type": "telegram",
+		"name": "tg-create",
+		"telegram_bot_token": %q,
+		"telegram_chat_id": "-1001234567890"
+	}`, telegramHandlerToken)
+
+	rec := postChannel(t, handler, userID, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Assert on the marshaled response body, not on the struct: the
+	// redaction contract is a JSON-serialization contract.
+	raw := rec.Body.String()
+	if strings.Contains(raw, telegramHandlerToken) {
+		t.Errorf("POST response leaked the bot token; body=%s", raw)
+	}
+	if strings.Contains(raw, `"telegram_bot_token"`) {
+		t.Errorf("POST response carries a telegram_bot_token key; body=%s", raw)
+	}
+
+	got := decodeRaw(t, rec.Body.Bytes())
+	if v, _ := got["telegram_bot_token_set"].(bool); !v {
+		t.Errorf("telegram_bot_token_set = %v, want true", got["telegram_bot_token_set"])
+	}
+	if v, _ := got["telegram_chat_id"].(string); v != "-1001234567890" {
+		t.Errorf("telegram_chat_id = %v, want -1001234567890", got["telegram_chat_id"])
+	}
+	if v, _ := got["channel_type"].(string); v != "telegram" {
+		t.Errorf("channel_type = %v, want telegram", got["channel_type"])
+	}
+
+	channelID := int64(got["id"].(float64))
+	stored, ok := readEncryptedColumn(t, pool, channelID, "telegram_bot_token_encrypted")
+	if !ok {
+		t.Fatal("telegram_bot_token_encrypted is NULL after create")
+	}
+	if stored == telegramHandlerToken {
+		t.Error("bot token was stored in plaintext")
+	}
+}
+
+// TestCreateChannel_TelegramValidationErrors covers the 400 branches
+// specific to telegram: each required field missing, and each supplied
+// with an unusable shape.
+func TestCreateChannel_TelegramValidationErrors(t *testing.T) {
+	authStore, cleanupStore := newAuthStoreForChannelTests(t)
+	defer cleanupStore()
+	userID := setupUserWithPermission(t, authStore, "tg_validator",
+		auth.PermManageNotificationChannels)
+	checker := auth.NewRBACChecker(authStore)
+	handler := NewNotificationChannelHandlerWithSecurity(nil, authStore, checker, false, nil, nil)
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "missing bot token",
+			body: `{"channel_type":"telegram","name":"t","telegram_chat_id":"-100123"}`,
+			want: "telegram_bot_token is required for telegram channels",
+		},
+		{
+			name: "empty bot token",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"","telegram_chat_id":"-100123"}`,
+			want: "telegram_bot_token is required for telegram channels",
+		},
+		{
+			name: "bot token with no body",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"123456789:","telegram_chat_id":"-100123"}`,
+			want: "telegram_bot_token must have the form <bot id>:<token>",
+		},
+		{
+			name: "bot token with no colon",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"nonsense","telegram_chat_id":"-100123"}`,
+			want: "telegram_bot_token must have the form <bot id>:<token>",
+		},
+		{
+			name: "bot token containing a path separator",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"1:a/b","telegram_chat_id":"-100123"}`,
+			want: "telegram_bot_token must have the form <bot id>:<token>",
+		},
+		{
+			name: "missing chat id",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"123456789:AAA"}`,
+			want: "telegram_chat_id is required for telegram channels",
+		},
+		{
+			name: "empty chat id",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"123456789:AAA","telegram_chat_id":""}`,
+			want: "telegram_chat_id is required for telegram channels",
+		},
+		{
+			name: "chat id is a pasted URL",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"123456789:AAA","telegram_chat_id":"https://t.me/alerts"}`,
+			want: "telegram_chat_id must be a numeric chat ID or an @channelusername",
+		},
+		{
+			name: "chat id is a bare at sign",
+			body: `{"channel_type":"telegram","name":"t","telegram_bot_token":"123456789:AAA","telegram_chat_id":"@"}`,
+			want: "telegram_chat_id must be a numeric chat ID or an @channelusername",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/notification-channels",
+				bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			req = withUser(req, userID)
+			req = withUsername(req, "tg_validator")
+			rec := httptest.NewRecorder()
+			handler.handleChannels(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			var resp ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Error != tc.want {
+				t.Errorf("Error = %q, want %q", resp.Error, tc.want)
+			}
+			if strings.Contains(rec.Body.String(), "leak-me-not") {
+				t.Errorf("validation error echoed the submitted token: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestCreateChannel_TelegramAcceptsChatIDShapes confirms the permissive
+// chat-ID check accepts every documented form rather than only the one
+// the UI happens to produce.
+func TestCreateChannel_TelegramAcceptsChatIDShapes(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	shapes := []string{"-1001234567890", "123456789", "@workbench_alerts", "@a_1"}
+	for i, chatID := range shapes {
+		t.Run(chatID, func(t *testing.T) {
+			body := fmt.Sprintf(`{
+				"channel_type": "telegram",
+				"name": "tg-shape-%d",
+				"telegram_bot_token": %q,
+				"telegram_chat_id": %q
+			}`, i, telegramHandlerToken, chatID)
+			rec := postChannel(t, handler, userID, body)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+			}
+			got := decodeRaw(t, rec.Body.Bytes())
+			if v, _ := got["telegram_chat_id"].(string); v != chatID {
+				t.Errorf("telegram_chat_id = %v, want %q", got["telegram_chat_id"], chatID)
+			}
+		})
+	}
+}
+
+// TestUpdateChannel_TelegramOmittedTokenPreserved is the regression test
+// for the fetch-then-edit round trip. The GET response never carries the
+// bot token, so a UI that PUTs back what it read omits the field; that
+// must keep the stored token rather than clearing it. The chat ID, which
+// the UI does see, changes in the same request.
+func TestUpdateChannel_TelegramOmittedTokenPreserved(t *testing.T) {
+	ds, pool, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+	channelID := createTelegramChannel(t, ds, "tg-update", &token, &chatID)
+	before, _ := readEncryptedColumn(t, pool, channelID, "telegram_bot_token_encrypted")
+
+	rec := putChannel(t, handler, userID, channelID,
+		`{"name":"tg-update-renamed","telegram_chat_id":"@workbench_alerts"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	got := decodeRaw(t, rec.Body.Bytes())
+	if v, _ := got["telegram_bot_token_set"].(bool); !v {
+		t.Errorf("telegram_bot_token_set = %v, want true (omitted token must be preserved)",
+			got["telegram_bot_token_set"])
+	}
+	if v, _ := got["telegram_chat_id"].(string); v != "@workbench_alerts" {
+		t.Errorf("telegram_chat_id = %v, want @workbench_alerts", got["telegram_chat_id"])
+	}
+	if strings.Contains(rec.Body.String(), telegramHandlerToken) {
+		t.Errorf("PUT response leaked the bot token; body=%s", rec.Body.String())
+	}
+
+	// The stored ciphertext is re-encrypted on every write, so compare
+	// the decrypted value rather than the column bytes.
+	after, ok := readEncryptedColumn(t, pool, channelID, "telegram_bot_token_encrypted")
+	if !ok || after == "" {
+		t.Fatal("bot token column was cleared by an update that omitted it")
+	}
+	if after == telegramHandlerToken {
+		t.Error("bot token was rewritten in plaintext")
+	}
+	if before == "" {
+		t.Fatal("bot token column was empty before the update")
+	}
+
+	reloaded, err := ds.GetNotificationChannel(context.Background(), channelID)
+	if err != nil {
+		t.Fatalf("GetNotificationChannel: %v", err)
+	}
+	assertSecretPointer(t, "TelegramBotToken", reloaded.TelegramBotToken, telegramHandlerToken)
+}
+
+// TestUpdateChannel_TelegramTokenReplaced covers the other two arms of
+// the three-way pointer semantics: a non-empty value replaces the stored
+// token, and an empty string clears it (which the validator then
+// rejects, because a telegram channel without a token cannot deliver).
+func TestUpdateChannel_TelegramTokenReplaced(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+	channelID := createTelegramChannel(t, ds, "tg-replace", &token, &chatID)
+
+	replacement := "987654321:BBBreplacement-token"
+	rec := putChannel(t, handler, userID, channelID,
+		fmt.Sprintf(`{"telegram_bot_token":%q}`, replacement))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), replacement) {
+		t.Errorf("PUT response leaked the replacement token; body=%s", rec.Body.String())
+	}
+
+	reloaded, err := ds.GetNotificationChannel(context.Background(), channelID)
+	if err != nil {
+		t.Fatalf("GetNotificationChannel: %v", err)
+	}
+	assertSecretPointer(t, "TelegramBotToken", reloaded.TelegramBotToken, replacement)
+}
+
+// TestUpdateChannel_TelegramValidationErrors covers the post-merge 400s:
+// clearing either required field, and supplying a malformed one.
+func TestUpdateChannel_TelegramValidationErrors(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+	channelID := createTelegramChannel(t, ds, "tg-validate", &token, &chatID)
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "clear bot token",
+			body: `{"telegram_bot_token":""}`,
+			want: "telegram_bot_token is required for telegram channels",
+		},
+		{
+			name: "clear chat id",
+			body: `{"telegram_chat_id":""}`,
+			want: "telegram_chat_id is required for telegram channels",
+		},
+		{
+			name: "malformed replacement token",
+			body: `{"telegram_bot_token":"not-a-token"}`,
+			want: "telegram_bot_token must have the form <bot id>:<token>",
+		},
+		{
+			name: "malformed replacement chat id",
+			body: `{"telegram_chat_id":"My Alerts Channel"}`,
+			want: "telegram_chat_id must be a numeric chat ID or an @channelusername",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := putChannel(t, handler, userID, channelID, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			var resp ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Error != tc.want {
+				t.Errorf("Error = %q, want %q", resp.Error, tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateChannel_TelegramUndecryptableStoredToken is the regression
+// test for the lock-out described on validateTelegramFields. When the
+// server secret has been rotated, decryptNotificationSecret returns the
+// stored ciphertext rather than a token, and shape-checking that value
+// would reject every PUT on the channel - including the UI's
+// enable/disable toggle, whose whole body is {"enabled": false}. An
+// operator who has lost the secret has to be able to switch the broken
+// channel off.
+func TestUpdateChannel_TelegramUndecryptableStoredToken(t *testing.T) {
+	ds, pool, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+	channelID := createTelegramChannel(t, ds, "tg-rotated-secret", &token, &chatID)
+
+	// Rotate the server secret out from under the stored row. Every
+	// later read of this channel now yields undecryptable ciphertext.
+	rotated := database.NewTestDatastoreWithSecret(pool, channelTestServerSecret+"-rotated")
+	handler, userID, cleanupAuth := setupChannelHandler(t, rotated)
+	defer cleanupAuth()
+
+	stored, err := rotated.GetNotificationChannel(context.Background(), channelID)
+	if err != nil {
+		t.Fatalf("GetNotificationChannel: %v", err)
+	}
+	if stored.TelegramBotToken == nil {
+		t.Fatal("stored bot token is nil; the fixture no longer exercises the lock-out")
+	}
+	if telegramBotTokenPattern.MatchString(*stored.TelegramBotToken) {
+		t.Fatal("stored value still looks like a token; the fixture no longer " +
+			"exercises the lock-out")
+	}
+
+	// The body the UI's disable toggle sends, and nothing else.
+	rec := putChannel(t, handler, userID, channelID, `{"enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeRaw(t, rec.Body.Bytes())
+	if v, ok := got["enabled"].(bool); !ok || v {
+		t.Errorf("enabled = %v, want false", got["enabled"])
+	}
+
+	// A rename must work too: nothing about the request touches the
+	// token, so nothing about the token may block it.
+	rec = putChannel(t, handler, userID, channelID, `{"name":"tg-rotated-renamed"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Supplying a bad token is still rejected: only the stored value is
+	// exempt from the shape check.
+	rec = putChannel(t, handler, userID, channelID, `{"telegram_bot_token":"not-a-token"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad replacement status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// And a good one repairs the channel.
+	rec = putChannel(t, handler, userID, channelID,
+		`{"telegram_bot_token":"987654321:BBBrepaired-token"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repair status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	repaired, err := rotated.GetNotificationChannel(context.Background(), channelID)
+	if err != nil {
+		t.Fatalf("GetNotificationChannel after repair: %v", err)
+	}
+	assertSecretPointer(t, "TelegramBotToken", repaired.TelegramBotToken,
+		"987654321:BBBrepaired-token")
+}
+
+// TestUpdateChannel_TelegramValidatesOnTypeSwitch confirms the telegram
+// requirements are enforced when an existing channel of another type is
+// converted to telegram, not only when it was created as one.
+func TestUpdateChannel_TelegramValidatesOnTypeSwitch(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	emailID := createTestChannel(t, ds, "tg-switch", nil, nil, nil, nil)
+
+	rec := putChannel(t, handler, userID, emailID, `{"channel_type":"telegram"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error != "telegram_bot_token is required for telegram channels" {
+		t.Errorf("Error = %q, want the bot token requirement", resp.Error)
+	}
+}
+
+// TestGetChannel_TelegramRedaction exercises the read path: the token is
+// gone from the body, the indicator is present, and the chat ID is
+// readable.
+func TestGetChannel_TelegramRedaction(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	token := telegramHandlerToken
+	chatID := "@workbench_alerts"
+	channelID := createTelegramChannel(t, ds, "tg-get", &token, &chatID)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/notification-channels/"+strconv.FormatInt(channelID, 10), nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, telegramHandlerToken) {
+		t.Errorf("GET response leaked the bot token; body=%s", body)
+	}
+	if strings.Contains(body, `"telegram_bot_token"`) {
+		t.Errorf("GET response carries a telegram_bot_token key; body=%s", body)
+	}
+	got := decodeRaw(t, rec.Body.Bytes())
+	if v, _ := got["telegram_bot_token_set"].(bool); !v {
+		t.Errorf("telegram_bot_token_set = %v, want true", got["telegram_bot_token_set"])
+	}
+	if v, _ := got["telegram_chat_id"].(string); v != chatID {
+		t.Errorf("telegram_chat_id = %v, want %q", got["telegram_chat_id"], chatID)
+	}
+}
+
+// TestGetChannel_TelegramFlagFalseWhenUnset is the inverse: a channel
+// with no bot token reports the indicator as false and omits the chat
+// ID entirely.
+func TestGetChannel_TelegramFlagFalseWhenUnset(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	channelID := createTestChannel(t, ds, "tg-unset", nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/notification-channels/"+strconv.FormatInt(channelID, 10), nil)
+	req = withUser(req, userID)
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeRaw(t, rec.Body.Bytes())
+	v, ok := got["telegram_bot_token_set"]
+	if !ok {
+		t.Fatalf("telegram_bot_token_set missing; body=%s", rec.Body.String())
+	}
+	if b, _ := v.(bool); b {
+		t.Errorf("telegram_bot_token_set = %v, want false", v)
+	}
+	if _, present := got["telegram_chat_id"]; present {
+		t.Errorf("telegram_chat_id should be omitted when unset; body=%s", rec.Body.String())
+	}
+}
+
+// TestTestChannel_TelegramSuccess drives POST
+// /notification-channels/{id}/test end to end against an httptest stand-in
+// for the Bot API.
+func TestTestChannel_TelegramSuccess(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1}}`)
+	}))
+	defer server.Close()
+	withTelegramBaseURL(t, server.URL)
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+	channelID := createTelegramChannel(t, ds, "tg-test-ok", &token, &chatID)
+
+	rec := postChannelTest(t, handler, userID, channelID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if want := "/bot" + telegramHandlerToken + "/sendMessage"; gotPath != want {
+		t.Errorf("path = %q, want %q", gotPath, want)
+	}
+}
+
+// TestTestChannel_TelegramAPIFailure covers the ok:false path: the
+// handler must answer 502 and must not echo the API detail (or the
+// token) to the client.
+func TestTestChannel_TelegramAPIFailure(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`)
+	}))
+	defer server.Close()
+	withTelegramBaseURL(t, server.URL)
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+	channelID := createTelegramChannel(t, ds, "tg-test-fail", &token, &chatID)
+
+	rec := postChannelTest(t, handler, userID, channelID)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), telegramHandlerToken) {
+		t.Errorf("test response leaked the bot token; body=%s", rec.Body.String())
+	}
+}
+
+// TestTestChannel_TelegramMissingConfiguration covers the two 400
+// branches that guard the send.
+func TestTestChannel_TelegramMissingConfiguration(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	token := telegramHandlerToken
+	chatID := "-1001234567890"
+
+	cases := []struct {
+		name     string
+		botToken *string
+		chatID   *string
+		want     string
+	}{
+		{
+			name:   "no bot token",
+			chatID: &chatID,
+			want:   "Telegram bot token is not configured for this channel",
+		},
+		{
+			name:     "no chat id",
+			botToken: &token,
+			want:     "Telegram chat ID is not configured for this channel",
+		},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			channelID := createTelegramChannel(t, ds,
+				fmt.Sprintf("tg-test-missing-%d", i), tc.botToken, tc.chatID)
+			rec := postChannelTest(t, handler, userID, channelID)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			var resp ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Error != tc.want {
+				t.Errorf("Error = %q, want %q", resp.Error, tc.want)
+			}
+		})
+	}
+}
+
+// postChannelTest issues POST /api/v1/notification-channels/{id}/test.
+func postChannelTest(t *testing.T, h *NotificationChannelHandler,
+	userID int64, channelID int64) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/notification-channels/"+strconv.FormatInt(channelID, 10)+"/test", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, userID)
+	req = withUsername(req, "channel_admin")
+	rec := httptest.NewRecorder()
+	h.handleChannelSubpath(rec, req)
+	return rec
+}
+
+// TestValidateTelegramFields exercises the validator directly so the
+// permissive-shape decisions are pinned by a test rather than only by a
+// comment.
+func TestValidateTelegramFields(t *testing.T) {
+	str := func(s string) *string { return &s }
+
+	cases := []struct {
+		name     string
+		botToken *string
+		chatID   *string
+		// fromStorage marks the cases where the token came from the
+		// database rather than from the request, which is the only
+		// difference the shape check makes.
+		fromStorage bool
+		want        string
+	}{
+		{name: "both valid numeric", botToken: str("1:AA"), chatID: str("-1001234567890")},
+		{name: "both valid username", botToken: str("123456789:AA-_bb"), chatID: str("@alerts_bot")},
+		{name: "positive chat id", botToken: str("1:AA"), chatID: str("42")},
+		{name: "nil token", chatID: str("42"),
+			want: "telegram_bot_token is required for telegram channels"},
+		{name: "empty token", botToken: str(""), chatID: str("42"),
+			want: "telegram_bot_token is required for telegram channels"},
+		{name: "nil chat id", botToken: str("1:AA"),
+			want: "telegram_chat_id is required for telegram channels"},
+		{name: "token with space", botToken: str("1:A A"), chatID: str("42"),
+			want: "telegram_bot_token must have the form <bot id>:<token>"},
+		{name: "token with query char", botToken: str("1:A?b"), chatID: str("42"),
+			want: "telegram_bot_token must have the form <bot id>:<token>"},
+		{name: "token with fragment char", botToken: str("1:A#b"), chatID: str("42"),
+			want: "telegram_bot_token must have the form <bot id>:<token>"},
+		{name: "token with path separator", botToken: str("1:A/b"), chatID: str("42"),
+			want: "telegram_bot_token must have the form <bot id>:<token>"},
+		{name: "non-numeric bot id", botToken: str("abc:AA"), chatID: str("42"),
+			want: "telegram_bot_token must have the form <bot id>:<token>"},
+		{name: "chat id with spaces", botToken: str("1:AA"), chatID: str("my chat"),
+			want: "telegram_chat_id must be a numeric chat ID or an @channelusername"},
+		{name: "chat id with trailing junk", botToken: str("1:AA"), chatID: str("42abc"),
+			want: "telegram_chat_id must be a numeric chat ID or an @channelusername"},
+		{name: "username with a dash", botToken: str("1:AA"), chatID: str("@alerts-bot"),
+			want: "telegram_chat_id must be a numeric chat ID or an @channelusername"},
+		{name: "stored ciphertext is accepted",
+			botToken: str(telegramUndecryptableToken), chatID: str("42"), fromStorage: true},
+		{name: "stored token is still required",
+			botToken: str(""), chatID: str("42"), fromStorage: true,
+			want: "telegram_bot_token is required for telegram channels"},
+		{name: "supplied ciphertext is rejected",
+			botToken: str(telegramUndecryptableToken), chatID: str("42"),
+			want: "telegram_bot_token must have the form <bot id>:<token>"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := validateTelegramFields(tc.botToken, tc.chatID, !tc.fromStorage)
+			if got != tc.want {
+				t.Errorf("validateTelegramFields() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTelegramBotTokenPatternExcludesRedactionTerminators pins the
+// invariant the redactor depends on: every character that ends a token
+// run in isTelegramTokenTerminator, and every character an error or a
+// log line wraps a URL in, must be rejected by the validator. If a
+// token could legally contain one of these, redaction would stop
+// part-way through the credential and print the rest of it.
+func TestTelegramBotTokenPatternExcludesRedactionTerminators(t *testing.T) {
+	excluded := []struct {
+		name string
+		c    byte
+	}{
+		{"space", ' '},
+		{"tab", '\t'},
+		{"newline", '\n'},
+		{"carriage return", '\r'},
+		{"nul", 0x00},
+		{"escape", 0x1b},
+		{"delete", 0x7f},
+		{"slash", '/'},
+		{"question mark", '?'},
+		{"hash", '#'},
+		{"double quote", '"'},
+		{"apostrophe", '\''},
+		{"backquote", '`'},
+		{"less than", '<'},
+		{"greater than", '>'},
+		{"closing paren", ')'},
+		{"closing bracket", ']'},
+		{"comma", ','},
+		{"semicolon", ';'},
+	}
+	for _, e := range excluded {
+		t.Run(e.name, func(t *testing.T) {
+			token := "123456789:AAFake" + string(e.c) + "TokenBody"
+			if telegramBotTokenPattern.MatchString(token) {
+				t.Errorf("telegramBotTokenPattern accepted a token containing %q; "+
+					"the redactor would leak everything after it", string(e.c))
+			}
+		})
+	}
+
+	// The alphabet real BotFather tokens use must still pass.
+	for _, ok := range []string{
+		"123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
+		"1:A",
+		"999999999999:aZ0-_",
+	} {
+		if !telegramBotTokenPattern.MatchString(ok) {
+			t.Errorf("telegramBotTokenPattern rejected the legitimate token %q", ok)
+		}
+	}
+}
+
+// =============================================================================
+// POST /notification-channels/{id}/test for the non-telegram channel types
+//
+// Adding the telegram case to testChannel made the whole switch a
+// modified unit, so the remaining arms are covered here rather than left
+// at zero.
+// =============================================================================
+
+// setupChannelHandlerAllowingInternal is setupChannelHandler with the
+// host validator configured to permit loopback addresses, which is what
+// an httptest server binds to. Without it every send below would stop at
+// the SSRF guard instead of reaching the sender.
+func setupChannelHandlerAllowingInternal(t *testing.T, ds *database.Datastore) (*NotificationChannelHandler, int64, func()) {
+	t.Helper()
+	authStore, cleanup := newAuthStoreForChannelTests(t)
+	userID := setupUserWithPermission(t, authStore, "channel_admin",
+		auth.PermManageNotificationChannels)
+	checker := auth.NewRBACChecker(authStore)
+	handler := NewNotificationChannelHandlerWithSecurity(ds, authStore, checker, true, nil, nil)
+	return handler, userID, cleanup
+}
+
+// createTypedTestChannel inserts a channel of an arbitrary type with the
+// URL-bearing fields the test needs, bypassing the request validation so
+// the handler-side guards can be exercised on stored state.
+func createTypedTestChannel(t *testing.T, ds *database.Datastore, name string,
+	channelType database.NotificationChannelType, webhookURL, endpointURL *string) int64 {
+	t.Helper()
+	owner := "channel_admin"
+	channel := &database.NotificationChannel{
+		OwnerUsername:         &owner,
+		Enabled:               true,
+		ChannelType:           channelType,
+		Name:                  name,
+		HTTPMethod:            "POST",
+		SMTPPort:              587,
+		WebhookURL:            webhookURL,
+		EndpointURL:           endpointURL,
+		ReminderIntervalHours: 4,
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), channel); err != nil {
+		t.Fatalf("CreateNotificationChannel: %v", err)
+	}
+	return channel.ID
+}
+
+// assertTestChannelError runs the test endpoint and checks the status and
+// message.
+func assertTestChannelError(t *testing.T, h *NotificationChannelHandler,
+	userID, channelID int64, wantStatus int, wantMsg string) {
+	t.Helper()
+	rec := postChannelTest(t, h, userID, channelID)
+	if rec.Code != wantStatus {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, wantStatus, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error != wantMsg {
+		t.Errorf("Error = %q, want %q", resp.Error, wantMsg)
+	}
+}
+
+// TestTestChannel_PermissionAndNotFound covers the two guards ahead of
+// the switch.
+func TestTestChannel_PermissionAndNotFound(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	// No user on the context: the permission gate answers 403 before
+	// anything else runs.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/notification-channels/1/test", nil)
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("without permission: status = %d, want 403", rec.Code)
+	}
+
+	assertTestChannelError(t, handler, userID, 999999,
+		http.StatusNotFound, "Notification channel not found")
+}
+
+// TestTestChannel_EmailValidationBranches covers every 400 the email arm
+// can produce.
+func TestTestChannel_EmailValidationBranches(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	// No SMTP host.
+	owner := "channel_admin"
+	bare := &database.NotificationChannel{
+		OwnerUsername: &owner, Enabled: true, ChannelType: database.ChannelTypeEmail,
+		Name: "email-no-host", HTTPMethod: "POST", SMTPPort: 587,
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), bare); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	assertTestChannelError(t, handler, userID, bare.ID,
+		http.StatusBadRequest, "SMTP host is not configured for this channel")
+
+	// SMTP host but no from address.
+	noFrom := &database.NotificationChannel{
+		OwnerUsername: &owner, Enabled: true, ChannelType: database.ChannelTypeEmail,
+		Name: "email-no-from", HTTPMethod: "POST", SMTPPort: 587,
+		SMTPHost: ptr("smtp.example.com"),
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), noFrom); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	assertTestChannelError(t, handler, userID, noFrom.ID,
+		http.StatusBadRequest, "From address is not configured for this channel")
+
+	// Fully configured but with no recipients at all.
+	full := createTestChannel(t, ds, "email-no-recipients", nil, nil, nil, nil)
+	assertTestChannelError(t, handler, userID, full,
+		http.StatusBadRequest,
+		"No recipients available. Provide a recipient_email or add enabled recipients to the channel.")
+
+	// A malformed request body is rejected before anything is sent.
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/notification-channels/"+strconv.FormatInt(full, 10)+"/test",
+		bytes.NewReader([]byte(`{not json`)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, userID)
+	req = withUsername(req, "channel_admin")
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body: status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTestChannel_EmailRecipientSources covers the two ways the arm
+// builds its recipient list, and the SSRF guard on the SMTP host.
+func TestTestChannel_EmailRecipientSources(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandler(t, ds)
+	defer cleanupAuth()
+
+	// createTestChannel stores smtp.example.com, which is a public name
+	// the validator lets through only if it resolves; use a loopback
+	// literal so the reject branch is deterministic.
+	owner := "channel_admin"
+	ch := &database.NotificationChannel{
+		OwnerUsername: &owner, Enabled: true, ChannelType: database.ChannelTypeEmail,
+		Name: "email-loopback", HTTPMethod: "POST", SMTPPort: 587,
+		SMTPHost: ptr("127.0.0.1"), FromAddress: ptr("alerts@example.com"),
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), ch); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Recipient supplied in the body: the handler must not need a
+	// stored recipient, and the loopback SMTP host must be refused.
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/notification-channels/"+strconv.FormatInt(ch.ID, 10)+"/test",
+		bytes.NewReader([]byte(`{"recipient_email":"probe@example.com"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req = withUser(req, userID)
+	req = withUsername(req, "channel_admin")
+	rec := httptest.NewRecorder()
+	handler.handleChannelSubpath(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error != "Invalid SMTP host" {
+		t.Errorf("Error = %q, want %q", resp.Error, "Invalid SMTP host")
+	}
+
+	// Stored, enabled recipients are used when the body names none.
+	// A disabled recipient must be ignored, so add one of each.
+	for _, r := range []*database.EmailRecipient{
+		{ChannelID: ch.ID, EmailAddress: "off@example.com", Enabled: false},
+		{ChannelID: ch.ID, EmailAddress: "on@example.com", Enabled: true},
+	} {
+		if err := ds.CreateEmailRecipient(context.Background(), r); err != nil {
+			t.Fatalf("CreateEmailRecipient: %v", err)
+		}
+	}
+	assertTestChannelError(t, handler, userID, ch.ID,
+		http.StatusBadRequest, "Invalid SMTP host")
+}
+
+// TestTestChannel_EmailSendFailure lets the SMTP host through the
+// validator and then fails to connect, covering the 502 arm.
+func TestTestChannel_EmailSendFailure(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	handler, userID, cleanupAuth := setupChannelHandlerAllowingInternal(t, ds)
+	defer cleanupAuth()
+
+	// Bind and release a port so the connection is refused immediately
+	// rather than hanging on a firewall drop.
+	closed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedURL, err := url.Parse(closed.URL)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	closed.Close()
+	port, err := strconv.Atoi(closedURL.Port())
+	if err != nil {
+		t.Fatalf("port: %v", err)
+	}
+
+	owner := "channel_admin"
+	ch := &database.NotificationChannel{
+		OwnerUsername: &owner, Enabled: true, ChannelType: database.ChannelTypeEmail,
+		Name: "email-send-fail", HTTPMethod: "POST", SMTPPort: port,
+		SMTPHost: ptr(closedURL.Hostname()), FromAddress: ptr("alerts@example.com"),
+		SMTPUsername: ptr("u"), SMTPPassword: ptr("p"), FromName: ptr("Alerts"),
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), ch); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := ds.CreateEmailRecipient(context.Background(),
+		&database.EmailRecipient{ChannelID: ch.ID, EmailAddress: "on@example.com", Enabled: true}); err != nil {
+		t.Fatalf("CreateEmailRecipient: %v", err)
+	}
+
+	assertTestChannelError(t, handler, userID, ch.ID,
+		http.StatusBadGateway, "Failed to send test email")
+}
+
+// TestTestChannel_SlackAndMattermost covers the shared webhook arm for
+// both display types, plus its guards.
+func TestTestChannel_SlackAndMattermost(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	strict, strictUser, cleanupStrict := setupChannelHandler(t, ds)
+	defer cleanupStrict()
+	permissive, permissiveUser, cleanupPermissive := setupChannelHandlerAllowingInternal(t, ds)
+	defer cleanupPermissive()
+
+	// No webhook URL configured.
+	noURL := createTypedTestChannel(t, ds, "slack-no-url", database.ChannelTypeSlack, nil, nil)
+	assertTestChannelError(t, strict, strictUser, noURL,
+		http.StatusBadRequest, "Webhook URL is not configured for this channel")
+
+	// A stored URL that url.Parse rejects outright.
+	badURL := createTypedTestChannel(t, ds, "slack-bad-url", database.ChannelTypeSlack,
+		ptr("http://hooks.example.com:not-a-port/x"), nil)
+	assertTestChannelError(t, strict, strictUser, badURL,
+		http.StatusBadRequest, "Invalid webhook URL")
+
+	// A loopback URL is refused by the SSRF guard.
+	loopback := createTypedTestChannel(t, ds, "slack-loopback", database.ChannelTypeSlack,
+		ptr("http://127.0.0.1:9/hook"), nil)
+	assertTestChannelError(t, strict, strictUser, loopback,
+		http.StatusBadRequest, "Invalid webhook host")
+
+	// Happy path, and the Mattermost display-type branch.
+	var gotBodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBodies = append(gotBodies, string(body))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	for _, tc := range []struct {
+		name        string
+		channelType database.NotificationChannelType
+		wantWord    string
+	}{
+		{"slack-ok", database.ChannelTypeSlack, "Slack"},
+		{"mattermost-ok", database.ChannelTypeMattermost, "Mattermost"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := createTypedTestChannel(t, ds, tc.name, tc.channelType, ptr(server.URL), nil)
+			rec := postChannelTest(t, permissive, permissiveUser, id)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+			last := gotBodies[len(gotBodies)-1]
+			if !strings.Contains(last, tc.wantWord) {
+				t.Errorf("delivered body = %q, want it to name %q", last, tc.wantWord)
+			}
+		})
+	}
+
+	// A send that fails answers 502.
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+	failID := createTypedTestChannel(t, ds, "slack-fail", database.ChannelTypeSlack,
+		ptr(failing.URL), nil)
+	assertTestChannelError(t, permissive, permissiveUser, failID,
+		http.StatusBadGateway, "Failed to send test webhook")
+}
+
+// TestTestChannel_GenericWebhook covers the generic webhook arm and its
+// guards. The success case also exercises derefStr, which the handler
+// uses only here.
+func TestTestChannel_GenericWebhook(t *testing.T) {
+	ds, _, cleanupDS := newChannelTestDatastore(t)
+	defer cleanupDS()
+	strict, strictUser, cleanupStrict := setupChannelHandler(t, ds)
+	defer cleanupStrict()
+	permissive, permissiveUser, cleanupPermissive := setupChannelHandlerAllowingInternal(t, ds)
+	defer cleanupPermissive()
+
+	noURL := createTypedTestChannel(t, ds, "wh-no-url", database.ChannelTypeWebhook, nil, nil)
+	assertTestChannelError(t, strict, strictUser, noURL,
+		http.StatusBadRequest, "Endpoint URL is not configured for this channel")
+
+	badURL := createTypedTestChannel(t, ds, "wh-bad-url", database.ChannelTypeWebhook,
+		nil, ptr("http://endpoint.example.com:not-a-port/x"))
+	assertTestChannelError(t, strict, strictUser, badURL,
+		http.StatusBadRequest, "Invalid endpoint URL")
+
+	loopback := createTypedTestChannel(t, ds, "wh-loopback", database.ChannelTypeWebhook,
+		nil, ptr("http://127.0.0.1:9/hook"))
+	assertTestChannelError(t, strict, strictUser, loopback,
+		http.StatusBadRequest, "Invalid endpoint host")
+
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	owner := "channel_admin"
+	ok := &database.NotificationChannel{
+		OwnerUsername: &owner, Enabled: true, ChannelType: database.ChannelTypeWebhook,
+		Name: "wh-ok", HTTPMethod: "POST", SMTPPort: 587,
+		EndpointURL: ptr(server.URL), AuthType: ptr("bearer"),
+		AuthCredentials: ptr("hunter2"), Headers: map[string]string{"X-Probe": "1"},
+	}
+	if err := ds.CreateNotificationChannel(context.Background(), ok); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	rec := postChannelTest(t, permissive, permissiveUser, ok.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if gotAuth != "Bearer hunter2" {
+		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer hunter2")
+	}
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+	failID := createTypedTestChannel(t, ds, "wh-fail", database.ChannelTypeWebhook,
+		nil, ptr(failing.URL))
+	assertTestChannelError(t, permissive, permissiveUser, failID,
+		http.StatusBadGateway, "Failed to send test webhook")
 }

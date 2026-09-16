@@ -2280,7 +2280,7 @@ func (sm *SchemaManager) registerMigrations() {
 					owner_username VARCHAR(255),
 					owner_token VARCHAR(255),
 					enabled BOOLEAN NOT NULL DEFAULT TRUE,
-					channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'webhook', 'email')),
+					channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'telegram', 'webhook', 'email')),
 					name TEXT NOT NULL,
 					description TEXT,
 					webhook_url_encrypted TEXT,
@@ -2296,6 +2296,8 @@ func (sm *SchemaManager) registerMigrations() {
 					smtp_use_tls BOOLEAN DEFAULT TRUE,
 					from_address TEXT,
 					from_name TEXT,
+					telegram_bot_token_encrypted TEXT,
+					telegram_chat_id TEXT,
 					template_alert_fire TEXT,
 					template_alert_clear TEXT,
 					template_reminder TEXT,
@@ -2311,9 +2313,13 @@ func (sm *SchemaManager) registerMigrations() {
 				);
 
 				COMMENT ON TABLE notification_channels IS
-					'Notification channels for delivering alerts (Slack, Mattermost, webhook, email)';
+					'Notification channels for delivering alerts (Slack, Mattermost, Telegram, webhook, email)';
 				COMMENT ON COLUMN notification_channels.is_estate_default IS
 					'When true, this channel is enabled by default for all servers in the estate';
+				COMMENT ON COLUMN notification_channels.telegram_bot_token_encrypted IS
+					'Telegram Bot API token, encrypted with the server secret. Used to build the sendMessage URL https://api.telegram.org/bot<token>/sendMessage; it is a bearer credential and must never be logged or returned to a client.';
+				COMMENT ON COLUMN notification_channels.telegram_chat_id IS
+					'Telegram chat the alerter posts to. Stored as text because the Bot API accepts either a numeric chat ID or an @channelusername.';
 
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_enabled ON notification_channels(enabled) WHERE enabled = TRUE;
 				CREATE INDEX IF NOT EXISTS idx_notification_channels_owner_username ON notification_channels(owner_username);
@@ -3263,6 +3269,72 @@ func (sm *SchemaManager) registerMigrations() {
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to realign deadlock and temporary file alert rules and retire table_bloat_ratio: %w", err)
+			}
+
+			return nil
+		},
+	})
+
+	// Migration #12: add Telegram as a notification channel type. See
+	// GitHub issue #475.
+	//
+	// Telegram delivers through the Bot API rather than an incoming
+	// webhook URL, so a channel needs two pieces of configuration: a bot
+	// token (a bearer credential, stored encrypted like every other
+	// channel secret) and the chat to post into.
+	//
+	// The channel_type CHECK has to be widened to accept 'telegram'. A
+	// CHECK constraint cannot be altered in place, so it is dropped and
+	// re-added. addConstraintIfMissing is deliberately not used here: it
+	// only adds a constraint that is absent and will leave an existing,
+	// narrower definition in place, which is exactly the case this
+	// migration has to fix. The original constraint was declared inline
+	// on the column, so PostgreSQL auto-named it
+	// notification_channels_channel_type_check; the widened one is added
+	// under an explicit name so future migrations need not guess. Both
+	// names are dropped IF EXISTS first, which makes the statement
+	// idempotent whichever of the two an install currently carries.
+	//
+	// Widening a CHECK is strictly more permissive: every row that
+	// satisfied the old predicate satisfies the new one. The migration
+	// runs inside a transaction that holds ACCESS EXCLUSIVE on the table
+	// from the first ALTER onwards, so no concurrent session can insert
+	// a row in the window between the DROP and the ADD, and the ADD's
+	// validation scan cannot fail on pre-existing data.
+	sm.migrations = append(sm.migrations, Migration{
+		Version:     12,
+		Description: "Add Telegram notification channel support",
+		Up: func(tx pgx.Tx) error {
+			ctx := context.Background()
+
+			_, err := tx.Exec(ctx, `
+				ALTER TABLE notification_channels
+					ADD COLUMN IF NOT EXISTS telegram_bot_token_encrypted TEXT;
+
+				ALTER TABLE notification_channels
+					ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT;
+
+				COMMENT ON COLUMN notification_channels.telegram_bot_token_encrypted IS
+					'Telegram Bot API token, encrypted with the server secret. Used to build the sendMessage URL https://api.telegram.org/bot<token>/sendMessage; it is a bearer credential and must never be logged or returned to a client.';
+
+				COMMENT ON COLUMN notification_channels.telegram_chat_id IS
+					'Telegram chat the alerter posts to. Stored as text because the Bot API accepts either a numeric chat ID or an @channelusername.';
+
+				COMMENT ON TABLE notification_channels IS
+					'Notification channels for delivering alerts (Slack, Mattermost, Telegram, webhook, email)';
+
+				ALTER TABLE notification_channels
+					DROP CONSTRAINT IF EXISTS notification_channels_channel_type_check;
+
+				ALTER TABLE notification_channels
+					DROP CONSTRAINT IF EXISTS chk_notification_channels_channel_type;
+
+				ALTER TABLE notification_channels
+					ADD CONSTRAINT chk_notification_channels_channel_type
+					CHECK (channel_type IN ('slack', 'mattermost', 'telegram', 'webhook', 'email'));
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add Telegram notification channel support: %w", err)
 			}
 
 			return nil

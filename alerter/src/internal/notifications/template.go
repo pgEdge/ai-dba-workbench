@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	htmltemplate "html/template"
 	"strings"
 	"sync"
@@ -29,6 +30,63 @@ const (
 	DefaultSlackAlertClearTemplate = `{"text":"✅ Resolved: {{.AlertTitle}}","attachments":[{"color":"#28a745","fields":[{"title":"Server","value":"{{.ServerName}}","short":true},{"title":"Duration","value":"{{.Duration}}","short":true}]}]}`
 
 	DefaultSlackReminderTemplate = `{"text":"⏰ Reminder: {{.AlertTitle}} is still active","attachments":[{"color":"{{.SeverityColor}}","fields":[{"title":"Server","value":"{{.ServerName}}","short":true},{"title":"Active Since","value":"{{.TriggeredAt.Format "2006-01-02 15:04 MST"}}","short":true},{"title":"Reminder #","value":"{{.ReminderCount}}","short":true}]}]}`
+)
+
+// Default Telegram templates.
+//
+// Unlike the Slack and Mattermost defaults, these render the *message
+// text* rather than a JSON envelope: the Bot API takes the text as one
+// field of a JSON body that telegramNotifier marshals itself. They are
+// rendered with TemplateRenderer.RenderHTML, which HTML-escapes the
+// payload values while leaving the literal markup below intact, and are
+// sent with parse_mode "HTML".
+//
+// Only the tags Telegram's HTML parse mode supports are used (<b>, <i>,
+// <u>, <s>, <code>, <pre>, <a href> and <blockquote>). HTML parse mode
+// is used in preference to MarkdownV2 because MarkdownV2 requires
+// escaping eighteen characters, among them '_', '.', '-', '(' and ')',
+// which occur constantly in PostgreSQL relation and index names.
+//
+// Render's isHTMLTemplate heuristic plays no part here. RenderHTML never
+// consults it: it always compiles with text/template and escapes the
+// payload values instead, so what a Telegram template happens to begin
+// with makes no difference to how it is escaped. That is deliberate -
+// the heuristic only matches a template starting with <!doctype html>,
+// <html>, <body> or <div>, and these templates start with none of those,
+// so routing them through Render would have escaped nothing at all.
+const (
+	DefaultTelegramAlertFireTemplate = `{{.SeverityEmoji}} <b>Alert: {{.AlertTitle}}</b>
+
+<b>Server:</b> {{.ServerName}} (<code>{{.ServerHost}}:{{.ServerPort}}</code>)
+<b>Severity:</b> {{.Severity}}
+{{if .DatabaseName}}<b>Database:</b> <code>{{.DatabaseName}}</code>
+{{end}}{{if .MetricName}}<b>Metric:</b> <code>{{.MetricName}}</code>{{if .MetricValue}} = {{.MetricValue}}{{end}}{{if .ThresholdValue}} (threshold {{.Operator}} {{.ThresholdValue}}){{end}}
+{{end}}<b>Triggered:</b> {{.TriggeredAt.Format "2006-01-02 15:04:05 MST"}}
+
+{{.AlertDescription}}`
+
+	DefaultTelegramAlertClearTemplate = `✅ <b>Resolved: {{.AlertTitle}}</b>
+
+<b>Server:</b> {{.ServerName}} (<code>{{.ServerHost}}:{{.ServerPort}}</code>)
+<b>Severity:</b> {{.Severity}}
+{{if .DatabaseName}}<b>Database:</b> <code>{{.DatabaseName}}</code>
+{{end}}{{if .MetricName}}<b>Metric:</b> <code>{{.MetricName}}</code>
+{{end}}<b>Duration:</b> {{.Duration}}
+<b>Triggered:</b> {{.TriggeredAt.Format "2006-01-02 15:04:05 MST"}}
+{{if .ClearedAt}}<b>Cleared:</b> {{.ClearedAt.Format "2006-01-02 15:04:05 MST"}}
+{{end}}
+{{.AlertDescription}}`
+
+	DefaultTelegramReminderTemplate = `⏰ <b>Reminder: {{.AlertTitle}}</b> is still active
+
+<b>Reminder:</b> #{{.ReminderCount}}
+<b>Server:</b> {{.ServerName}} (<code>{{.ServerHost}}:{{.ServerPort}}</code>)
+<b>Severity:</b> {{.Severity}}
+{{if .DatabaseName}}<b>Database:</b> <code>{{.DatabaseName}}</code>
+{{end}}{{if .MetricName}}<b>Metric:</b> <code>{{.MetricName}}</code>{{if .MetricValue}} = {{.MetricValue}}{{end}}
+{{end}}<b>Active since:</b> {{.TriggeredAt.Format "2006-01-02 15:04:05 MST"}}
+
+{{.AlertDescription}}`
 )
 
 // Default email templates (HTML)
@@ -306,6 +364,125 @@ func (r *templateRenderer) RenderJSON(templateStr string, payload *database.Noti
 	}
 
 	return result, nil
+}
+
+// RenderHTML implements TemplateRenderer.RenderHTML
+// It renders a template whose output is an HTML fragment - currently
+// Telegram message text sent with parse_mode "HTML".
+//
+// The template itself is compiled with text/template, not html/template,
+// and the escaping is applied to the *data* rather than to the rendered
+// output. That is deliberate. The literal markup in the template (for
+// example a <b> tag around the alert title) comes from the default
+// templates or from a channel override an administrator configured, and
+// must survive rendering as markup. The payload values, by contrast,
+// carry alert titles, descriptions and PostgreSQL object names that
+// routinely contain '<', '>' and '&' - a relation named "a<b", or a
+// description quoting an operator - and those must reach Telegram as
+// &lt;, &gt; and &amp; or the Bot API rejects the whole message with a
+// 400. Running html/template over the complete template would escape the
+// markup as well and emit visible tags instead of formatting.
+//
+// Escaping the data also means Render's isHTMLTemplate heuristic is
+// irrelevant here: these templates begin with an emoji rather than a
+// recognized HTML prefix, so Render would have applied no escaping at
+// all.
+func (r *templateRenderer) RenderHTML(templateStr string, payload *database.NotificationPayload, defaultTemplate string) (string, error) {
+	// Use defaultTemplate if templateStr is empty
+	tmplStr := templateStr
+	if tmplStr == "" {
+		tmplStr = defaultTemplate
+	}
+
+	if tmplStr == "" {
+		return "", fmt.Errorf("no template provided")
+	}
+
+	// Get or compile template from cache
+	tmpl, err := r.getOrCompileTemplate(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to compile template: %w", err)
+	}
+
+	// Create enhanced data map and HTML-escape all string values
+	data := r.enhancePayload(payload)
+	htmlEscapeStringValues(data)
+
+	// Execute template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// htmlEscapeStringValues replaces every string reachable from a
+// template data map with its HTML-escaped form, in place at the top
+// level and by copy inside any nested map or slice.
+//
+// Telegram's HTML parse mode requires that '<', '>' and '&' which are
+// not part of a tag be sent as &lt;, &gt; and &amp;; html.EscapeString
+// also replaces "'" and '"' with the numeric entities &#39; and &#34;,
+// which Telegram accepts because it supports all numeric HTML entities.
+//
+// It escapes inside nested containers rather than skipping them because
+// the alternative is a silent hole. Every non-string value the payload
+// currently produces is numeric or a time.Time, none of which can carry
+// markup, so leaving them alone happens to be safe today - but that is
+// an accident of the payload's shape, not a property of this function.
+// The first field of affected relations, map of labels or slice of
+// LLM-generated details added to NotificationPayload would otherwise
+// reach a parse_mode: HTML message unescaped.
+// TestNotificationPayloadFieldTypesAreEscapable is the tripwire that
+// forces whoever adds such a field to come back here.
+func htmlEscapeStringValues(data map[string]any) {
+	for k, v := range data {
+		data[k] = htmlEscapeValue(v)
+	}
+}
+
+// htmlEscapeValue returns v with every string it contains HTML-escaped,
+// recursing through the container types a template data map can hold.
+// Values of any other type are returned unchanged: they cannot carry
+// markup through fmt's rendering of a number, a bool or a time.Time.
+//
+// Nested containers are rebuilt rather than mutated. The map handed to
+// htmlEscapeStringValues is built fresh per render, but anything nested
+// inside it is shared with the payload the caller owns, and escaping
+// that in place would corrupt it for every other channel the same alert
+// fans out to.
+func htmlEscapeValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		return html.EscapeString(t)
+	case []string:
+		out := make([]string, len(t))
+		for i, s := range t {
+			out[i] = html.EscapeString(s)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = htmlEscapeValue(e)
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]string, len(t))
+		for k, s := range t {
+			out[k] = html.EscapeString(s)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = htmlEscapeValue(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // jsonEscapeStringValues iterates over a map and replaces every

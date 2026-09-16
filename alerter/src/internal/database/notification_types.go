@@ -17,6 +17,7 @@ type NotificationChannelType string
 const (
 	ChannelTypeSlack      NotificationChannelType = "slack"
 	ChannelTypeMattermost NotificationChannelType = "mattermost"
+	ChannelTypeTelegram   NotificationChannelType = "telegram"
 	ChannelTypeWebhook    NotificationChannelType = "webhook"
 	ChannelTypeEmail      NotificationChannelType = "email"
 )
@@ -52,6 +53,10 @@ type NotificationChannel struct {
 
 	// Slack/Mattermost (stored encrypted in DB)
 	WebhookURL *string `json:"webhook_url,omitempty"`
+
+	// Telegram specific (bot token stored encrypted in DB)
+	TelegramBotToken *string `json:"telegram_bot_token,omitempty"`
+	TelegramChatID   *string `json:"telegram_chat_id,omitempty"`
 
 	// Webhook specific
 	EndpointURL     *string           `json:"endpoint_url,omitempty"`

@@ -296,7 +296,8 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     );
     const memoryAvailableText = useMemo(() => {
         if (!hasSystemStats || availableMemory === null) { return undefined; }
-        return `${formatBytes(availableMemory)} available (est.)`;
+        return `${formatBytes(availableMemory)} `
+            + AVAILABLE_MEMORY_LABEL.toLowerCase();
     }, [availableMemory, hasSystemStats]);
 
     const usedSpace = extractLatestValue(diskKpi.data, 'used_space');

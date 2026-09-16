@@ -267,13 +267,18 @@ reasoning.
 
 ### Embedding Providers
 
-Configure the embedding provider in the `llm` section:
+Configure the embedding provider in the `llm` section. The following
+table shows the default embedding model for each provider and the
+dimensions that model produces:
 
-| Provider | Model | Dimensions |
+| Provider | Default model | Dimensions |
 |----------|-------|------------|
 | Ollama | `nomic-embed-text` | 768 (resized to 1536) |
 | OpenAI | `text-embedding-3-small` | 1536 |
 | Voyage | `voyage-3-lite` | 1024 (resized to 1536) |
+
+Any model name the chosen provider recognises can be configured in
+place of the default.
 
 ### Reasoning Providers
 

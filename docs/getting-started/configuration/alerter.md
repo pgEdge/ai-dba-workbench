@@ -310,6 +310,13 @@ across metrics.
 The `llm` section configures LLM providers for tier 3
 anomaly detection and embedding generation.
 
+Each provider section names its own embedding model, and the alerter
+accepts any model name the chosen provider recognises rather than
+checking the name against a fixed list. The defaults in the tables
+below apply when the configuration leaves the model empty, and an
+OpenAI-protocol-compatible local model server can supply embeddings
+under whatever model name that server uses.
+
 The configured embedding model must not produce vectors with more
 than 4000 dimensions. The alerter stores anomaly embeddings as
 `halfvec(4000)` and zero-pads each embedding to 4000 dimensions; 4000
@@ -391,8 +398,9 @@ provider.
 
 The `openai` provider works with any server that
 implements the OpenAI-compatible API. Set `base_url`
-to point at a local inference server. The API key is
-optional when using a custom base URL.
+to point at a local inference server and set
+`embedding_model` to the model that server provides.
+The API key is optional when using a custom base URL.
 
 The following local inference servers are compatible:
 

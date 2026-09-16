@@ -66,47 +66,6 @@ func TestNewLibProviderClientError(t *testing.T) {
 	}
 }
 
-func TestValidateEmbeddingModelMessages(t *testing.T) {
-	cases := []struct {
-		provider string
-		model    string
-		wantErr  string
-	}{
-		{
-			"openai", "bad-model",
-			"unsupported OpenAI model: bad-model (supported: text-embedding-3-large, text-embedding-3-small, text-embedding-ada-002)",
-		},
-		{
-			"voyage", "bad-model",
-			"unsupported Voyage AI model: bad-model (supported: voyage-3, voyage-3-lite, voyage-2, voyage-2-lite)",
-		},
-		{
-			"gemini", "text-embedding-004",
-			"unsupported Gemini model: text-embedding-004 (supported: gemini-embedding-001, gemini-embedding-2, gemini-embedding-2-preview)",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.provider, func(t *testing.T) {
-			err := validateEmbeddingModel(c.provider, c.model)
-			if err == nil {
-				t.Fatalf("expected error for %s/%s", c.provider, c.model)
-			}
-			if err.Error() != c.wantErr {
-				t.Fatalf("err = %q, want %q", err.Error(), c.wantErr)
-			}
-		})
-	}
-
-	// Guarded providers accept their supported models.
-	if err := validateEmbeddingModel("openai", "text-embedding-3-small"); err != nil {
-		t.Errorf("supported openai model rejected: %v", err)
-	}
-	// Unguarded providers accept any model.
-	if err := validateEmbeddingModel("ollama", "any-custom-model"); err != nil {
-		t.Errorf("ollama should not be validated: %v", err)
-	}
-}
-
 func TestNewProviderDispatch(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -115,14 +74,22 @@ func TestNewProviderDispatch(t *testing.T) {
 		wantPrv string
 	}{
 		{"openai ok", Config{Provider: "openai", OpenAIAPIKey: "k"}, false, "openai"},
+		{
+			"openai accepts a local model server's model name",
+			Config{
+				Provider:      "openai",
+				OpenAIBaseURL: "http://127.0.0.1:8080/v1",
+				Model:         "nomic-embed-text-v1.5",
+			},
+			false, "openai",
+		},
+		{"voyage any model accepted", Config{Provider: "voyage", VoyageAPIKey: "k", Model: "voyage-4-future"}, false, "voyage"},
+		{"gemini any model accepted", Config{Provider: "gemini", GeminiAPIKey: "k", Model: "text-embedding-004"}, false, "gemini"},
 		{"openai needs key or url", Config{Provider: "openai"}, true, ""},
-		{"openai bad model", Config{Provider: "openai", OpenAIAPIKey: "k", Model: "bad-model"}, true, ""},
 		{"voyage ok", Config{Provider: "voyage", VoyageAPIKey: "k"}, false, "voyage"},
 		{"voyage needs key", Config{Provider: "voyage"}, true, ""},
-		{"voyage bad model", Config{Provider: "voyage", VoyageAPIKey: "k", Model: "bad-model"}, true, ""},
 		{"gemini ok", Config{Provider: "gemini", GeminiAPIKey: "k"}, false, "gemini"},
 		{"gemini needs key", Config{Provider: "gemini"}, true, ""},
-		{"gemini bad model", Config{Provider: "gemini", GeminiAPIKey: "k", Model: "text-embedding-004"}, true, ""},
 		{"ollama ok", Config{Provider: "ollama"}, false, "ollama"},
 		{"ollama any custom model accepted", Config{Provider: "ollama", Model: "any-custom-model"}, false, "ollama"},
 		{"unknown", Config{Provider: "nope"}, true, ""},
@@ -141,6 +108,58 @@ func TestNewProviderDispatch(t *testing.T) {
 			}
 			if p.ProviderName() != c.wantPrv {
 				t.Fatalf("ProviderName = %q, want %q", p.ProviderName(), c.wantPrv)
+			}
+		})
+	}
+}
+
+// TestNewProviderModelSelection checks that a caller-supplied model name is
+// passed through unchanged, whatever it is, and that an empty model still
+// falls back to the provider default.
+func TestNewProviderModelSelection(t *testing.T) {
+	cases := []struct {
+		name      string
+		cfg       Config
+		wantModel string
+	}{
+		{
+			"custom openai-compatible model accepted",
+			Config{
+				Provider:      "openai",
+				OpenAIBaseURL: "http://127.0.0.1:8080/v1",
+				Model:         "nomic-embed-text-v1.5",
+			},
+			"nomic-embed-text-v1.5",
+		},
+		{
+			"openai default applied when model empty",
+			Config{Provider: "openai", OpenAIAPIKey: "k"},
+			defaultModels["openai"],
+		},
+		{
+			"voyage default applied when model empty",
+			Config{Provider: "voyage", VoyageAPIKey: "k"},
+			defaultModels["voyage"],
+		},
+		{
+			"gemini default applied when model empty",
+			Config{Provider: "gemini", GeminiAPIKey: "k"},
+			defaultModels["gemini"],
+		},
+		{
+			"ollama default applied when model empty",
+			Config{Provider: "ollama"},
+			defaultModels["ollama"],
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := NewProvider(c.cfg)
+			if err != nil {
+				t.Fatalf("NewProvider(%+v): %v", c.cfg, err)
+			}
+			if p.ModelName() != c.wantModel {
+				t.Fatalf("ModelName = %q, want %q", p.ModelName(), c.wantModel)
 			}
 		})
 	}

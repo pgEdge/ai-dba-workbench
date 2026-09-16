@@ -10,8 +10,7 @@ consistent API for generating vector representations of text.
 
 The package wraps `github.com/pgEdge/pgedge-go-llm-lib`, the shared pgEdge LLM
 library, and delegates the actual provider calls to its `llm.Client`. Only the
-Workbench `Config` mapping, the default models, and the model allow-list
-validation live in this package.
+Workbench `Config` mapping and the default models live in this package.
 
 The package includes the following features:
 
@@ -19,50 +18,71 @@ The package includes the following features:
 - OpenAI, Voyage AI, Gemini, and Ollama providers are available out of
   the box.
 - Configurable logging tracks API calls, performance, and errors.
-- Construction-time validation rejects unknown models for the OpenAI,
-  Voyage AI, and Gemini providers.
+- Any model name the configured provider accepts can be used.
+
+## Model Names
+
+The package does not check a configured model name against a fixed
+list; it passes the name straight to the provider, so any model the
+provider itself accepts can be used. New models therefore work as soon
+as the provider publishes them, and an OpenAI-protocol-compatible local
+model server such as llama.cpp or vLLM can serve embeddings: point
+`openai_base_url` at that server and name the model the server
+provides.
+
+The default model applies only when the configuration leaves the model
+empty. A model the provider does not recognise fails on the first
+embedding request rather than when the provider is constructed.
+
+The remaining constraint is the width of the vector. An embedding
+wider than 4000 dimensions is rejected when it is stored or used as a
+query vector, because 4000 is the width of the `halfvec` columns that
+hold embeddings and pgvector's HNSW index limit for that type. The
+rejection reports a dimension error rather than silently truncating
+the vector.
 
 ## Supported Providers
 
 ### OpenAI
 
-The OpenAI provider connects to OpenAI's embedding API.
+The OpenAI provider connects to OpenAI's embedding API, or to any
+service that implements the same protocol.
 
-The following models are supported:
+The following models are commonly used:
 
 - `text-embedding-3-large`
 - `text-embedding-3-small`
 - `text-embedding-ada-002`
 
-The default model is `text-embedding-3-small`. The provider rejects any
-model outside this set at construction time.
+The default model is `text-embedding-3-small`. Any other model name the
+endpoint accepts can be configured instead.
 
 ### Voyage AI
 
 The Voyage AI provider connects to Voyage AI's embedding API.
 
-The following models are supported:
+The following models are commonly used:
 
 - `voyage-3`
 - `voyage-3-lite`
 - `voyage-2`
 - `voyage-2-lite`
 
-The default model is `voyage-3-lite`. The provider rejects any model
-outside this set at construction time.
+The default model is `voyage-3-lite`. Any other model name Voyage AI
+accepts can be configured instead.
 
 ### Gemini
 
 The Gemini provider connects to Google's Generative Language
 embedding API.
 
-The following models are supported:
+Google publishes the following embedding models:
 
 - `gemini-embedding-001`
 - `gemini-embedding-2`
 - `gemini-embedding-2-preview`
 
-The provider rejects any model outside this set at construction time.
+Any other model name the Gemini API accepts can be configured instead.
 
 The default model is `gemini-embedding-001`, the model the KB Builder
 uses. When Gemini supplies knowledgebase embeddings, the configured
@@ -92,10 +112,8 @@ The following models are commonly used:
 - `mxbai-embed-large`
 - `all-minilm`
 
-The Ollama provider accepts any model name and discovers the model at
-runtime, so it does not validate the model against a fixed set. The
-default model is `nomic-embed-text` and the default URL is
-`http://localhost:11434`.
+The Ollama provider discovers the model at runtime. The default model
+is `nomic-embed-text` and the default URL is `http://localhost:11434`.
 
 ## Usage
 

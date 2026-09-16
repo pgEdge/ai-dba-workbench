@@ -884,6 +884,18 @@ project adheres to
 
 ### Removed
 
+- Remove the hard-coded allow-list of embedding model names, which
+  rejected any model the OpenAI, Voyage AI, or Gemini provider had
+  not been told about, whether the model was newly published by the
+  provider or served under its own name by a local model server. The
+  configured model name is now passed to the provider unchanged, so
+  any model the provider accepts can be used, including models served
+  by an OpenAI-protocol-compatible local server such as llama.cpp or
+  vLLM. The per-provider defaults still apply when the configuration
+  leaves the model empty, and an embedding wider than 4000 dimensions
+  is still rejected with a dimension error when it is stored or used
+  as a query vector. (#427)
+
 - Retire the `table_bloat_ratio` alert rule, which duplicated the
   `dead_tuple_ratio` rule with a different denominator and fired on
   the same tables at a different threshold. The built-in rule is now

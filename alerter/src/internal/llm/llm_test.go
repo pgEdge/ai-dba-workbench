@@ -222,12 +222,12 @@ func TestNewEmbeddingProvider_GeminiSuccess(t *testing.T) {
 	}
 }
 
-func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
-	// The library-backed Gemini provider enforces a construction-time
-	// allow-list of known-good embedding models. This guards knowledge-base
-	// vector compatibility by rejecting unknown models that might emit
-	// vectors of an unexpected dimension. An unsupported model such as
-	// "text-embedding-004" must therefore fail at construction.
+func TestNewEmbeddingProvider_GeminiCustomModel(t *testing.T) {
+	// Embedding model names are no longer checked at construction time, so a
+	// model outside the old allow-list, such as "text-embedding-004", is
+	// accepted and passed straight through to the provider. An embedding
+	// that is too wide for the knowledge-base vector column is caught later,
+	// at store and query time, by embedding.PadTo.
 	tmpDir := t.TempDir()
 	keyFile := tmpDir + "/gemini.key"
 	if err := os.WriteFile(keyFile, []byte("AIza-test-key-12345678\n"), 0600); err != nil {
@@ -242,12 +242,15 @@ func TestNewEmbeddingProvider_GeminiInvalidModel(t *testing.T) {
 		t.Fatalf("LoadAPIKeys: %v", err)
 	}
 
-	_, err := NewEmbeddingProvider(cfg)
-	if err == nil {
-		t.Fatal("expected error for unsupported Gemini embedding model")
+	p, err := NewEmbeddingProvider(cfg)
+	if err != nil {
+		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "unsupported Gemini model") {
-		t.Errorf("err = %v, want it to contain \"unsupported Gemini model\"", err)
+	if p == nil {
+		t.Fatal("provider nil")
+	}
+	if p.ModelName() != "text-embedding-004" {
+		t.Errorf("model = %q, want text-embedding-004", p.ModelName())
 	}
 }
 

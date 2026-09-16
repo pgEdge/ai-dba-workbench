@@ -65,6 +65,29 @@ const cpuBusyPercentExpr = `
 	        + COALESCE(servicing_softirq_percent, 0)
 	), 0), 100)::float`
 
+// pseudoFilesystemExclusion is the SQL predicate that keeps a
+// metrics.pg_sys_disk_info row only when the mount is a real volume.
+// Kernel-backed and image-backed filesystems are never something a DBA
+// provisions or can free space on, and a squashfs image is by
+// construction 100% used, so on any host with a snap installed the MAX
+// across mounts pinned pg_sys_disk_info.used_percent at 100% and the
+// disk alert fired permanently.
+//
+// The COALESCE is load-bearing: file_system_type is nullable, and a
+// bare NOT IN comparison against NULL yields NULL rather than true,
+// which would silently drop every row whose type the probe did not
+// record. The fragment is declared once and embedded in both the latest
+// and the historical query so the two cannot drift apart; the column
+// name is left unqualified so it can be embedded in either. See GitHub
+// issue #428.
+const pseudoFilesystemExclusion = `COALESCE(file_system_type, '') NOT IN (
+			      'tmpfs', 'devtmpfs', 'devfs', 'proc', 'sysfs', 'cgroup',
+			      'cgroup2', 'overlay', 'squashfs', 'ramfs', 'debugfs',
+			      'tracefs', 'securityfs', 'pstore', 'autofs', 'mqueue',
+			      'hugetlbfs', 'configfs', 'fusectl', 'binfmt_misc',
+			      'efivarfs', 'nsfs', 'bpf'
+			  )`
+
 // metricRegistry maps metric names to their query configurations.
 // Each entry contains the SQL for latest and historical queries, along with
 // the scan type that determines how to parse the result rows.
@@ -1073,6 +1096,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				FROM metrics.pg_sys_disk_info
 				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND total_space > 0
+				  AND ` + pseudoFilesystemExclusion + `
 			)
 			SELECT connection_id,
 			       MAX((used_space::float / total_space) * 100)::float as value,
@@ -1089,6 +1113,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				JOIN connections c ON c.id = m.connection_id
 				WHERE m.collected_at > NOW() - INTERVAL '1 day' * $1
 				  AND m.total_space > 0
+				  AND ` + pseudoFilesystemExclusion + `
 				GROUP BY m.connection_id, m.collected_at
 			)
 			SELECT connection_id, NULL::text as database_name,

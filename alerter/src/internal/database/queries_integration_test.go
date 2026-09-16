@@ -97,8 +97,17 @@ CREATE TABLE metrics.pg_sys_load_avg_info (
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- mount_point and file_system_type mirror the collector's table so the
+-- pseudo-filesystem exclusion in pg_sys_disk_info.used_percent can be
+-- exercised (GitHub issue #428). mount_point carries a default because
+-- the cases above predate the per-mount dimension and insert a single
+-- unnamed mount; file_system_type is nullable, exactly as in
+-- production, so a row whose type the probe never recorded is part of
+-- the fixture rather than a special case.
 CREATE TABLE metrics.pg_sys_disk_info (
     connection_id INTEGER NOT NULL,
+    mount_point TEXT NOT NULL DEFAULT '/',
+    file_system_type TEXT,
     used_space BIGINT,
     total_space BIGINT,
     collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

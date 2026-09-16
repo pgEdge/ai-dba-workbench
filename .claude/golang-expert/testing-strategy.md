@@ -201,6 +201,15 @@ golangci-lint; a false positive it raises is cleared with a
 with `//nolint` (see `metrics-queries.md` and
 `internal-query-markers.md`).
 
+CI installs the linter with `go install
+github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`, so the
+version is unpinned and moves with upstream releases. A locally
+installed older build can pass code that CI rejects: gosec's G7xx taint
+rules, G704 (SSRF) among them, are absent from the gosec v2.22.8 that
+golangci-lint v2.5.0 bundles and present in the gosec v2.28.0 that
+v2.13.2 bundles. Match the CI version before trusting a clean local
+`make lint` on new network or SQL code.
+
 ## Continuous Integration
 
 `ci-collector.yml`, `ci-server.yml` and `ci-alerter.yml` run the

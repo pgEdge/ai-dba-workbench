@@ -26,6 +26,8 @@ manage a Workbench deployment:
   notifications from the Workbench.
 - The `Mattermost Channels` tab manages the Mattermost destinations that
   receive alert notifications from the Workbench.
+- The `Telegram Channels` tab manages the Telegram bots that deliver alert
+  notifications from the Workbench to a chat, group, or channel.
 - The `Webhook Channels` tab manages the webhook endpoints that receive alert
   notifications from the Workbench.
 

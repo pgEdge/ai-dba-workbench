@@ -60,6 +60,33 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 			IdleConnTimeout:    30 * time.Second,
 			DisableCompression: true,
 		},
+		// Never follow a redirect. This is set on the one client every
+		// notifier shares, because each channel type it serves has its
+		// own reason to need it:
+		//
+		//   - Telegram: net/http copies the previous request's full
+		//     URL into the Referer header of the redirected request,
+		//     and that URL is
+		//     https://api.telegram.org/bot<token>/sendMessage. A 3xx
+		//     would hand the live bot token to whatever host the
+		//     Location header names.
+		//   - Slack and Mattermost: the whole webhook URL is the
+		//     secret, and it would travel in Referer in exactly the
+		//     same way.
+		//   - The generic webhook: the endpoint host is validated
+		//     before the channel is stored, so following a Location
+		//     header would let a hostile endpoint bounce the request
+		//     at a private or metadata host and bypass that check.
+		//
+		// The cost is that a provider answering a delivery with a 3xx
+		// now fails that delivery instead of following it. That is the
+		// intended trade, and it makes delivery behave like the
+		// test-send path in
+		// server/src/internal/api/webhook_test_sender.go, which has
+		// always refused redirects.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	// Set defaults
@@ -81,6 +108,7 @@ func NewManager(ds *database.Datastore, cfg *config.NotificationsConfig, debug b
 	// Register notifiers
 	m.notifiers[database.ChannelTypeSlack] = NewSlackNotifier(httpClient, renderer)
 	m.notifiers[database.ChannelTypeMattermost] = NewMattermostNotifier(httpClient, renderer)
+	m.notifiers[database.ChannelTypeTelegram] = NewTelegramNotifier(httpClient, renderer)
 	m.notifiers[database.ChannelTypeWebhook] = NewWebhookNotifier(httpClient, renderer)
 	m.notifiers[database.ChannelTypeEmail] = NewEmailNotifier(serverSecret, renderer)
 
@@ -366,15 +394,24 @@ func (m *Manager) buildPayload(alert *database.Alert, notifType database.Notific
 	return payload
 }
 
-// decryptChannelSecrets decrypts sensitive fields in the channel.
-// If decryption fails (e.g. plaintext or legacy data), the original
-// value is kept.
+// decryptChannelSecrets decrypts sensitive fields in the channel: the
+// Slack/Mattermost webhook URL, the webhook auth credentials, the SMTP
+// password and the Telegram bot token. If decryption fails (e.g.
+// plaintext or legacy data), the original value is kept.
 func (m *Manager) decryptChannelSecrets(channel *database.NotificationChannel) {
 	// Decrypt webhook URL for Slack/Mattermost
 	if channel.WebhookURL != nil && *channel.WebhookURL != "" {
 		decrypted, err := crypto.DecryptPassword(*channel.WebhookURL, m.serverSecret)
 		if err == nil {
 			channel.WebhookURL = &decrypted
+		}
+	}
+
+	// Decrypt bot token for Telegram
+	if channel.TelegramBotToken != nil && *channel.TelegramBotToken != "" {
+		decrypted, err := crypto.DecryptPassword(*channel.TelegramBotToken, m.serverSecret)
+		if err == nil {
+			channel.TelegramBotToken = &decrypted
 		}
 	}
 

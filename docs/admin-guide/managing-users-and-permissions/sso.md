@@ -43,9 +43,19 @@ in the `users.external_subject` column, and never on the username:
 matching on the username would let an identity whose username claim is
 `admin` take over the local `admin` account.
 
-A login that fails for any reason returns the browser to the login page
-with a generic marker, and the real reason goes to the server log.
-Nothing derived from the provider's response reaches the browser.
+A failed login takes one of two shapes, and which one an operator sees
+says where the failure happened. The callback answers `400` with a
+generic JSON error when the request never reached the provider
+successfully: no state cookie, a state cookie that does not open, a
+state parameter that does not match the sealed one, or no
+authorisation code. It redirects the browser back to the login page
+with a `login_error` query parameter when the request did come back
+from the provider: `login_error=provider` when the provider itself
+declined, which includes the person cancelling at the consent screen,
+and `login_error=login` when the code exchange or any later step
+refused the login. Either way the real reason goes to the server log
+only, and nothing derived from the provider's response reaches the
+browser.
 
 ## Configuring the Server
 
@@ -414,10 +424,11 @@ the server refuses to write a password onto a federated account, so
 nothing can have been set on it whilst it was linked, and the hash has
 been inert for the whole federated period. The password it holds may
 therefore be years old, will not have been rotated while the account was
-federated, and may be known to the person who has just left; the tokens have the same problem, and should be reviewed with
-`-list-tokens` and removed with `-remove-token` where they are no
-longer wanted. An account the provider originally created holds a hash
-of discarded random bytes, so `-restore-password` on one of those
+federated, and may be known to the person who has just left; the tokens
+have the same problem, and should be reviewed with `-list-tokens` and
+removed with `-remove-token` where they are no longer wanted. An
+account the provider originally created holds a hash of discarded
+random bytes, so `-restore-password` on one of those
 restores nothing usable.
 
 ### Offboarding a Federated User

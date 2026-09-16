@@ -34,15 +34,42 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 	// per alert.
 	gates := e.resolveExtensionGates(ctx, alerts)
 
+	// Probe staleness is a single snapshot of every reporting probe, and
+	// both the staleness alerts and the absent-metric gate read the same
+	// one. Resolve it at most once for the pass rather than once per
+	// alert, lazily so that a pass which needs it never reads it.
+	staleness := &probeStalenessSnapshot{}
+
 	for _, alert := range alerts {
 		if ctx.Err() != nil {
 			return
 		}
 
 		if alert.AlertType == "threshold" && alert.RuleID != nil {
-			e.checkAlertResolved(ctx, alert, gates[*alert.RuleID])
+			e.checkAlertResolved(ctx, alert, gates[*alert.RuleID], staleness)
 		}
 	}
+}
+
+// probeStalenessSnapshot holds one cleanup pass's view of which probes
+// are reporting, read on first use and reused for every alert after
+// that. A failed read is remembered too: retrying it once per alert
+// would hammer a datastore that is already unwell, and every caller
+// treats the failure the same way, by leaving the alert active.
+type probeStalenessSnapshot struct {
+	entries []database.ProbeStaleness
+	err     error
+	loaded  bool
+}
+
+// get returns the pass's probe staleness entries, reading them through
+// the engine's datastore the first time it is called.
+func (s *probeStalenessSnapshot) get(ctx context.Context, e *Engine) ([]database.ProbeStaleness, error) {
+	if !s.loaded {
+		s.entries, s.err = e.datastore.GetProbeStalenessByConnection(ctx)
+		s.loaded = true
+	}
+	return s.entries, s.err
 }
 
 // resolveExtensionGates maps the rule id of each active threshold alert
@@ -94,8 +121,14 @@ func (e *Engine) resolveExtensionGates(ctx context.Context, alerts []*database.A
 // checkAlertResolved checks if a threshold alert's condition has
 // resolved. withExtension is the set of connections on which the alert's
 // rule may be evaluated, as resolved by resolveExtensionGates, or nil
-// when no extension gate applies.
-func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, withExtension map[int]bool) {
+// when no extension gate applies. staleness carries the cleanup pass's
+// probe staleness snapshot, and may be nil for a caller checking a
+// single alert outside a pass.
+func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
+	withExtension map[int]bool, staleness *probeStalenessSnapshot) {
+	if staleness == nil {
+		staleness = &probeStalenessSnapshot{}
+	}
 	if alert.MetricName == nil || alert.ThresholdValue == nil || alert.Operator == nil {
 		return
 	}
@@ -104,7 +137,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	// evaluator and their metric has no registry entry, so they need a
 	// bespoke resolution check too.
 	if alert.ProbeName != nil {
-		e.checkStalenessAlertResolved(ctx, alert)
+		e.checkStalenessAlertResolved(ctx, alert, staleness)
 		return
 	}
 
@@ -126,7 +159,7 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	if err != nil {
 		if errors.Is(err, database.ErrNoMetricData) {
 			// The query ran and reported nothing for any connection.
-			e.resolveAbsentMetric(ctx, alert, "no connection reports it")
+			e.resolveAbsentMetric(ctx, alert, "no connection reports it", staleness)
 			return
 		}
 		// The metric could not be evaluated at all: either it has no
@@ -158,7 +191,8 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 	}
 
 	if !found {
-		e.resolveAbsentMetric(ctx, alert, "no row for this connection and database")
+		e.resolveAbsentMetric(ctx, alert,
+			"no row for this connection and database", staleness)
 		return
 	}
 
@@ -176,8 +210,9 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert, 
 // does. The alert clears when the probe's staleness ratio no longer violates
 // the threshold stored on the alert, or when the probe stops being reported
 // at all because it was disabled or its connection is no longer monitored.
-func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert) {
-	entries, err := e.datastore.GetProbeStalenessByConnection(ctx)
+func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert,
+	staleness *probeStalenessSnapshot) {
+	entries, err := staleness.get(ctx, e)
 	if err != nil {
 		e.log("ERROR: Failed to get probe staleness for alert %d: %v", alert.ID, err)
 		return
@@ -218,7 +253,8 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 // resolved. The clear is therefore gated on the registry's probe for the
 // metric having collected inside the very window that query reads. See
 // GitHub issue #407.
-func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert, reason string) {
+func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
+	reason string, staleness *probeStalenessSnapshot) {
 	metric := *alert.MetricName
 	clears := e.datastore.MetricClearsWhenAbsent(metric)
 	probe := e.datastore.MetricProbeName(metric)
@@ -229,7 +265,7 @@ func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
 	var entries []database.ProbeStaleness
 	if clears && probe != "" && window > 0 {
 		var err error
-		entries, err = e.datastore.GetProbeStalenessByConnection(ctx)
+		entries, err = staleness.get(ctx, e)
 		if err != nil {
 			e.log("ERROR: Cannot check whether probe %s is current for alert %d, "+
 				"leaving it active: %v", probe, alert.ID, err)

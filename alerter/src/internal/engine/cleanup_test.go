@@ -66,7 +66,7 @@ func TestCheckAlertResolvedMissingFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Should return early without panic when required fields are nil
-			engine.checkAlertResolved(context.TODO(), tt.alert, nil)
+			engine.checkAlertResolved(context.TODO(), tt.alert, nil, nil)
 		})
 	}
 }

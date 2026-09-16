@@ -425,6 +425,41 @@ func assertNoClearQueued(t *testing.T, capture *notificationCapture) {
 	}
 }
 
+// TestProbeStalenessSnapshotReadsOncePerPass proves the snapshot is a
+// snapshot: the second read is served from the first, so the whole
+// cleanup pass costs one GetProbeStalenessByConnection however many
+// absent alerts it examines. Dropping probe_availability between the two
+// reads is the demonstration, because a second read against the
+// datastore could only fail. See GitHub issue #407.
+func TestProbeStalenessSnapshotReadsOncePerPass(t *testing.T) {
+	engine, pool, connID, _, cleanup := slotInactiveEnv(t, "slot-staleness-snapshot")
+	defer cleanup()
+
+	ctx := context.Background()
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
+
+	snapshot := &probeStalenessSnapshot{}
+	first, err := snapshot.get(ctx, engine)
+	if err != nil {
+		t.Fatalf("first probe staleness read failed: %v", err)
+	}
+	if len(first) == 0 {
+		t.Fatal("test setup expects the seeded probe to be reporting")
+	}
+
+	if _, err := pool.Exec(ctx, dropProbeAvailabilityTableSQL); err != nil {
+		t.Fatalf("failed to drop probe_availability: %v", err)
+	}
+
+	second, err := snapshot.get(ctx, engine)
+	if err != nil {
+		t.Fatalf("second probe staleness read hit the datastore again: %v", err)
+	}
+	if len(second) != len(first) || &second[0] != &first[0] {
+		t.Error("the second read returned different entries; the snapshot was not reused")
+	}
+}
+
 // setProbeInterval rewrites the server-wide collection interval for one
 // probe, which is what an operator does through the probe configuration
 // page documented in docs/admin-guide/probes.md.

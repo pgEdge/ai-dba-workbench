@@ -240,7 +240,7 @@ func TestEngine_RequiredExtension_ResolutionRuleLookupError(t *testing.T) {
 		t.Errorf("gate for an unloadable rule = %v (present %v), want a nil gate",
 			gate, ok)
 	}
-	engine.checkAlertResolved(ctx, alert, gates[bogusRule])
+	engine.checkAlertResolved(ctx, alert, gates[bogusRule], nil)
 
 	if status := getAlertStatus(t, pool, alertID); status != "cleared" {
 		t.Errorf("alert status = %q, want cleared", status)

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -197,6 +198,17 @@ func (d *Datastore) MetricClearsWhenAbsent(metricName string) bool {
 // and GitHub issue #407.
 func (d *Datastore) MetricProbeName(metricName string) string {
 	return metricRegistry[metricName].probeName
+}
+
+// MetricAbsenceWindow returns how far back metricName's latest query
+// looks, or zero for a metric the registry does not know or that does
+// not clear when absent. The alert cleaner treats an absent row as a
+// recovery only when the metric's probe collected inside this window,
+// which is the only interval over which the query can report anything
+// at all. See the absenceWindow field on metricQueryConfig and GitHub
+// issue #407.
+func (d *Datastore) MetricAbsenceWindow(metricName string) time.Duration {
+	return metricRegistry[metricName].absenceWindow
 }
 
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with

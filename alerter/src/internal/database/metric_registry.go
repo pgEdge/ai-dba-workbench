@@ -9,6 +9,8 @@
  */
 package database
 
+import "time"
+
 // scanType identifies how to scan metric query results
 type scanType int
 
@@ -70,6 +72,27 @@ type metricQueryConfig struct {
 	// this probe is currently reporting for the alert's connection. See
 	// GitHub issue #407.
 	probeName string
+
+	// absenceWindow is how far back the latest query looks: the interval
+	// in its collected_at cutoff, and for a query with more than one
+	// cutoff the shortest of them, because that is the bound that
+	// decides whether the result is empty.
+	//
+	// Every clearWhenAbsent entry sets it, and the registry audit test
+	// checks the value against the SQL literal so the two cannot drift.
+	// The alert cleaner compares it against how long ago the probe last
+	// collected: an absent row only means recovery when the probe stored
+	// something inside the window the query reads, because outside it
+	// the query returns nothing whatever the server is doing.
+	//
+	// Gating on the window rather than on a multiple of the configured
+	// collection interval is what makes the check hold at any interval.
+	// An operator may raise probe_configs.collection_interval_seconds,
+	// globally or for one connection, and a gate counted in intervals
+	// then widens whilst the window stays where it is, leaving the
+	// cleaner quiet exactly where ordinary collection starts emptying
+	// the query. See GitHub issue #407.
+	absenceWindow time.Duration
 }
 
 // cpuBusyPercentExpr is the SQL expression that derives a portable CPU
@@ -260,6 +283,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		scan:            scanBasic,
 		historicalScan:  historicalScanBasic,
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_replication.lag_bytes": {
@@ -289,6 +313,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// Same reasoning as replay_lag_seconds: no row means no standby,
 		// so the lag alert clears. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_replication_slots.retained_bytes": {
@@ -322,6 +347,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// to store, so a missing row is the recovery signal. See GitHub
 		// issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// pg_replication_slots.inactive emits a single row per connection with
@@ -373,6 +399,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		scan:            scanBasic,
 		historicalScan:  historicalScanBasic,
 		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// pg_replication_slots.inactive_count counts replication slots that
@@ -421,6 +448,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		scan:            scanBasic,
 		historicalScan:  historicalScanBasic,
 		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// pg_replication_slots.max_retained_bytes returns the maximum
@@ -466,6 +494,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		scan:            scanBasic,
 		historicalScan:  historicalScanBasic,
 		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	// spock_exception_log.recent_count counts rows in the latest
@@ -518,6 +547,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// with no recent exceptions has no fresh sample and the query emits no
 		// row: absence is how the alert clears. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	// spock_resolutions.recent_count mirrors spock_exception_log.recent_count
@@ -564,6 +594,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// recent resolutions, so absence clears the alert. See GitHub issue
 		// #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_replication.standby_disconnected": {
@@ -592,6 +623,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// reconnected standby produces no row and the alert must clear on
 		// absence. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_node_role.subscription_worker_down": {
@@ -604,7 +636,7 @@ var metricRegistry = map[string]metricQueryConfig{
 				       collected_at,
 				       ROW_NUMBER() OVER (PARTITION BY connection_id ORDER BY collected_at DESC) as rn
 				FROM metrics.pg_node_role
-				WHERE collected_at > NOW() - INTERVAL '5 minutes'
+				WHERE collected_at > NOW() - INTERVAL '15 minutes'
 				  AND subscription_count > 0
 			)
 			SELECT connection_id,
@@ -618,8 +650,12 @@ var metricRegistry = map[string]metricQueryConfig{
 		scan:           scanBasic,
 		historicalScan: historicalScanBasic,
 		// The query emits a row only while a subscription worker is down, so
-		// absence is the recovery signal. See GitHub issue #407.
+		// absence is the recovery signal. The window is three times the
+		// probe's 300 second interval; at the five minutes it used to be
+		// it held a single sample, so one late collection emptied it and
+		// the cleaner read that as recovery. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 
 	"pg_stat_activity.blocked_count": {
@@ -655,6 +691,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// blocked backends emits no row; absence means nothing is blocked. See
 		// GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.idle_in_transaction_seconds": {
@@ -693,6 +730,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// connection with none emits no row and the alert clears on absence.
 		// See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.max_lock_wait_seconds": {
@@ -719,6 +757,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// Rows exist only while some backend waits on a lock, so absence means
 		// nothing is waiting and the alert clears. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.max_query_duration_seconds": {
@@ -757,6 +796,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// idle server emits no row; the long-running query has finished and
 		// the alert clears on absence. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_activity.max_xact_duration_seconds": {
@@ -793,6 +833,7 @@ var metricRegistry = map[string]metricQueryConfig{
 		// so absence means the long transaction has ended and the alert clears.
 		// See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   5 * time.Minute,
 	},
 
 	"pg_stat_all_tables.dead_tuple_percent": {
@@ -1507,5 +1548,6 @@ var metricRegistry = map[string]metricQueryConfig{
 		// autovacuum threshold, so once autovacuum has caught up the database
 		// emits no row; absence is the recovery signal. See GitHub issue #407.
 		clearWhenAbsent: true,
+		absenceWindow:   15 * time.Minute,
 	},
 }

@@ -11,8 +11,10 @@ package database
 
 import (
 	"context"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -750,13 +752,7 @@ func TestMetricRegistryLatestSQLFreshnessCutoff(t *testing.T) {
 	cutoff := regexp.MustCompile(
 		`collected_at > NOW\(\) - INTERVAL '\d+ (minute|minutes|hour|hours)'`)
 
-	names := make([]string, 0, len(metricRegistry))
-	for name := range metricRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
+	for _, name := range registryNames() {
 		cfg := metricRegistry[name]
 		if reason, ok := allowlist[name]; ok {
 			if cutoff.MatchString(cfg.latestSQL) {
@@ -820,13 +816,7 @@ func nowMinus(t *testing.T, pool *pgxpool.Pool, interval string) (ts any) {
 // clears or clears on the freshness of some other probe. See GitHub issue
 // #407.
 func TestMetricRegistryProbeName(t *testing.T) {
-	names := make([]string, 0, len(metricRegistry))
-	for name := range metricRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
+	for _, name := range registryNames() {
 		cfg := metricRegistry[name]
 		if cfg.probeName == "" {
 			t.Errorf("%s names no collector probe; set probeName to the probe "+
@@ -858,4 +848,170 @@ func TestMetricProbeName(t *testing.T) {
 			t.Errorf("MetricProbeName(%q) = %q, want %q", name, got, want)
 		}
 	}
+}
+
+// seededProbeIntervals is the collection interval, in seconds, that the
+// collector's schema seeds for each probe the registry names. It is the
+// yardstick for the window audit below, and
+// TestSeededProbeIntervalsMatchCollector checks it against the
+// collector's own seed so the two cannot drift apart.
+var seededProbeIntervals = map[string]int{
+	"pg_node_role":         300,
+	"pg_replication_slots": 300,
+	"pg_stat_activity":     60,
+	"pg_stat_all_tables":   300,
+	"pg_stat_replication":  30,
+	"spock_exception_log":  60,
+	"spock_resolutions":    60,
+}
+
+// collectorProbeSeedPath is the collector source file that seeds
+// probe_configs, read relative to this package's directory.
+const collectorProbeSeedPath = "../../../../collector/src/database/schema.go"
+
+// probeSeedRow matches one seeded probe_configs row in the collector's
+// schema: (NULL, TRUE, 'probe_name', 'description', interval, retention).
+var probeSeedRow = regexp.MustCompile(
+	`\(NULL, TRUE, '([a-z0-9_]+)', '[^']*', (\d+), \d+\)`)
+
+// cutoffLiteral matches a collected_at freshness cutoff in a registry
+// query, capturing the interval's magnitude and unit.
+var cutoffLiteral = regexp.MustCompile(
+	`collected_at > NOW\(\) - INTERVAL '(\d+) (minute|minutes|hour|hours)'`)
+
+// shortestCutoff returns the shortest collected_at cutoff in a query,
+// which is the bound that decides whether its result is empty, and
+// reports whether the query carries one at all.
+func shortestCutoff(sql string) (time.Duration, bool) {
+	var shortest time.Duration
+	for _, m := range cutoffLiteral.FindAllStringSubmatch(sql, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		d := time.Duration(n) * time.Minute
+		if strings.HasPrefix(m[2], "hour") {
+			d = time.Duration(n) * time.Hour
+		}
+		if shortest == 0 || d < shortest {
+			shortest = d
+		}
+	}
+	return shortest, shortest > 0
+}
+
+// TestMetricRegistryAbsenceWindowMatchesSQL asserts that every
+// clearWhenAbsent entry declares an absenceWindow, that the declared
+// value equals the shortest collected_at cutoff its latest query
+// actually uses, and that entries which do not clear on absence declare
+// no window. The cleaner reads the typed field rather than the SQL, so a
+// value that drifts from the literal would gate the clear on a window
+// the query does not use. See GitHub issue #407.
+func TestMetricRegistryAbsenceWindowMatchesSQL(t *testing.T) {
+	for _, name := range registryNames() {
+		cfg := metricRegistry[name]
+		if !cfg.clearWhenAbsent {
+			if cfg.absenceWindow != 0 {
+				t.Errorf("%s does not clear when absent but declares absenceWindow %s; "+
+					"the field is only meaningful for clearWhenAbsent entries",
+					name, cfg.absenceWindow)
+			}
+			continue
+		}
+		want, ok := shortestCutoff(cfg.latestSQL)
+		if !ok {
+			t.Errorf("%s clears when absent but its latest query has no collected_at "+
+				"cutoff, so the cleaner has no window to gate the clear on", name)
+			continue
+		}
+		if cfg.absenceWindow != want {
+			t.Errorf("%s declares absenceWindow %s but its latest query reads back %s; "+
+				"the two must agree", name, cfg.absenceWindow, want)
+		}
+	}
+}
+
+// TestMetricRegistryAbsenceWindowCoversProbeInterval asserts that every
+// clearWhenAbsent window spans at least three of its probe's seeded
+// collection intervals. A window of one interval holds a single sample,
+// so one collection landing later than the probe's own runtime empties
+// the query, the cleaner reads that as a recovery, and a critical alert
+// clears and re-fires on the next sample. pg_node_role's five minute
+// window over a 300 second probe was exactly that defect. See GitHub
+// issue #407.
+func TestMetricRegistryAbsenceWindowCoversProbeInterval(t *testing.T) {
+	const minIntervals = 3
+
+	for _, name := range registryNames() {
+		cfg := metricRegistry[name]
+		if !cfg.clearWhenAbsent {
+			continue
+		}
+		seconds, ok := seededProbeIntervals[cfg.probeName]
+		if !ok {
+			t.Errorf("%s names probe %q, whose seeded collection interval is not in "+
+				"seededProbeIntervals; add it so the window can be audited",
+				name, cfg.probeName)
+			continue
+		}
+		floor := minIntervals * time.Duration(seconds) * time.Second
+		if cfg.absenceWindow < floor {
+			t.Errorf("%s has a %s window over a %ds %s probe (%.1f intervals); "+
+				"widen it to at least %s, or %d intervals",
+				name, cfg.absenceWindow, seconds, cfg.probeName,
+				cfg.absenceWindow.Seconds()/float64(seconds), floor, minIntervals)
+		}
+	}
+}
+
+// TestSeededProbeIntervalsMatchCollector reads the collector's
+// probe_configs seed and checks every interval this package audits
+// against it, so a change to a probe's interval in the collector shows
+// up here rather than silently invalidating the window audit. The test
+// is skipped where the collector source is not present beside the
+// alerter, which is the only case in which the two are not checked out
+// together.
+func TestSeededProbeIntervalsMatchCollector(t *testing.T) {
+	source, err := os.ReadFile(collectorProbeSeedPath)
+	if err != nil {
+		t.Skipf("collector schema not readable beside the alerter: %v", err)
+	}
+
+	seeded := make(map[string]int)
+	for _, m := range probeSeedRow.FindAllStringSubmatch(string(source), -1) {
+		seconds, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		seeded[m[1]] = seconds
+	}
+	if len(seeded) == 0 {
+		t.Fatalf("no probe_configs seed rows found in %s; the seed's shape has "+
+			"changed and probeSeedRow needs updating", collectorProbeSeedPath)
+	}
+
+	for probe, want := range seededProbeIntervals {
+		got, ok := seeded[probe]
+		if !ok {
+			t.Errorf("probe %q is not seeded by the collector any more; update "+
+				"seededProbeIntervals and the registry entries naming it", probe)
+			continue
+		}
+		if got != want {
+			t.Errorf("probe %q is seeded at %ds, but seededProbeIntervals says %ds; "+
+				"update the map and re-check every window that depends on it",
+				probe, got, want)
+		}
+	}
+}
+
+// registryNames returns the registry's metric names in sorted order, so
+// the audits walk it deterministically.
+func registryNames() []string {
+	names := make([]string, 0, len(metricRegistry))
+	for name := range metricRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

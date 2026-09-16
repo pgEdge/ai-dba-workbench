@@ -217,6 +217,16 @@ type DatabaseConfig struct {
 	PoolMaxConns        int    `yaml:"pool_max_conns"`          // Maximum number of connections (default: 4)
 	PoolMinConns        int    `yaml:"pool_min_conns"`          // Minimum number of connections (default: 0)
 	PoolMaxConnIdleTime string `yaml:"pool_max_conn_idle_time"` // Max time a connection can be idle before being closed (default: 30m)
+
+	// StatementTimeout bounds how long a single statement may run on a
+	// datastore pool connection before Postgres cancels it server-side
+	// (default: 30s). The HTTP handlers already cancel their queries
+	// client-side, but a lost cancel, or a backend that is not at an
+	// interruptible point, leaves the query running and holding one of
+	// the pool's few slots; the server-side timeout is what actually
+	// frees the slot. Accepts any Go duration string; "0" disables the
+	// timeout, which is not recommended.
+	StatementTimeout string `yaml:"statement_timeout"`
 }
 
 // ConnectionSecurityConfig holds settings for user-created database connections (SSRF protection)
@@ -1049,6 +1059,7 @@ func applyCLIFlags(cfg *Config, flags CLIFlags) {
 			PoolMaxConns:        4,
 			PoolMinConns:        0,
 			PoolMaxConnIdleTime: "30m",
+			StatementTimeout:    "30s",
 		}
 	}
 

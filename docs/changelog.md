@@ -1105,6 +1105,20 @@ project adheres to
   redirect, configure its final URL in the channel; email channels are
   unaffected, because they deliver over SMTP. (#475)
 
+- Set a server-side `statement_timeout` on the server's datastore
+  connection pool, defaulting to 30 seconds and configurable with the
+  new `database.statement_timeout` option. The pool previously relied
+  entirely on the handlers cancelling their own queries, which is a
+  request sent over the connection: if it is lost, or the backend is
+  not at an interruptible point, the query keeps running and keeps
+  holding one of the pool's connections, and with `pool_max_conns`
+  defaulting to 4 a handful of those starve the whole API. The default
+  matches the longest deadline any handler grants a datastore query, so
+  nothing that completed before now fails; the collector owns the
+  schema migrations, including the partitioned-index build that can run
+  for much longer than this, and they run on the collector's own pool,
+  which is unaffected. (#387)
+
 - Ignore a blank password when updating a database connection, so an
   empty or whitespace-only password can no longer overwrite the stored
   credential. The datastore now enforces the "leave blank to keep

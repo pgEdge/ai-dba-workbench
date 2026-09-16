@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -204,6 +205,44 @@ func scanConnectionListItem(conn *ConnectionListItem, scanner interface{ Scan(..
 	)
 }
 
+// DefaultDatastoreStatementTimeout is the server-side statement timeout
+// applied to every connection in the datastore pool when the
+// configuration does not name one. It matches the longest context
+// deadline any handler grants a datastore query (30 seconds in the
+// performance summary handlers), so no query that completes today
+// starts failing; what it adds is a bound that survives a lost cancel
+// request, which a client-side context cancellation does not. Without
+// it a runaway query keeps holding one of the pool's connections
+// (PoolMaxConns defaults to 4) long after the HTTP request is gone.
+const DefaultDatastoreStatementTimeout = 30 * time.Second
+
+// resolveStatementTimeout turns the configured statement_timeout into
+// the value to send as a startup runtime parameter. An empty string
+// selects DefaultDatastoreStatementTimeout. The result is always a
+// plain integer count of milliseconds, which is the unit Postgres
+// assumes for a bare statement_timeout number, so neither the Go
+// duration syntax nor a locale-dependent unit suffix ever reaches the
+// server. A zero duration disables the timeout (Postgres treats 0 as
+// "no limit"); a negative duration is rejected because Postgres would
+// reject it at connection time, and failing here names the offending
+// configuration key instead.
+func resolveStatementTimeout(value string) (string, error) {
+	timeout := DefaultDatastoreStatementTimeout
+	if value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid statement_timeout: %w", err)
+		}
+		timeout = parsed
+	}
+
+	if timeout < 0 {
+		return "", fmt.Errorf("invalid statement_timeout: %s is negative", value)
+	}
+
+	return strconv.FormatInt(timeout.Milliseconds(), 10), nil
+}
+
 // NewDatastore creates a new datastore connection
 func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, error) {
 	if cfg == nil {
@@ -223,6 +262,15 @@ func NewDatastore(cfg *config.DatabaseConfig, serverSecret string) (*Datastore, 
 		poolConfig.ConnConfig.RuntimeParams = make(map[string]string)
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "pgEdge AI DBA Workbench - Server"
+
+	// Bound every statement server-side. See
+	// DefaultDatastoreStatementTimeout for why the handlers' own
+	// context deadlines are not enough on their own.
+	statementTimeout, err := resolveStatementTimeout(cfg.StatementTimeout)
+	if err != nil {
+		return nil, err
+	}
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = statementTimeout
 
 	// Apply pool settings with bounds checking to prevent overflow
 	if cfg.PoolMaxConns > 0 && cfg.PoolMaxConns <= math.MaxInt32 {

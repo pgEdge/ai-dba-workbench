@@ -16,6 +16,8 @@ import {
     buildXAxis,
     buildYAxis,
     buildDataZoom,
+    buildSeriesData,
+    buildFilledMarkArea,
 } from './common';
 
 export function buildLineOptions(
@@ -31,10 +33,18 @@ export function buildLineOptions(
         showTooltip?: boolean;
     }
 ): object {
-    const series = data.series.map((s) => ({
+    /*
+     * Stretches the server carried forward from an earlier observation
+     * are shaded once for the whole chart rather than once per series,
+     * so overlapping bands cannot compound; the band therefore hangs
+     * off the first series.
+     */
+    const markArea = buildFilledMarkArea(data.categories, data.series);
+
+    const series = data.series.map((s, idx) => ({
         type: 'line' as const,
         name: s.name,
-        data: s.data,
+        data: buildSeriesData(s.data, s.filled),
         smooth: options.smooth ?? false,
         stack: options.stacked ? 'total' : undefined,
         areaStyle: options.areaFill ? {} : undefined,
@@ -42,6 +52,7 @@ export function buildLineOptions(
             ? (options.markerSymbol ?? 'circle')
             : 'none',
         symbolSize: options.showMarkers ? 8 : 0,
+        markArea: idx === 0 ? markArea : undefined,
     }));
 
     return {

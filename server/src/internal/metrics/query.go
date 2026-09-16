@@ -110,6 +110,13 @@ var latestRowInternalColumns = map[string]bool{
 type MetricDataPoint struct {
 	Time  time.Time `json:"time"`
 	Value *float64  `json:"value"`
+	// Filled marks a bucket whose value was carried forward from an
+	// earlier observation rather than aggregated from a sample of its
+	// own, so a chart can draw carried-forward stretches distinctly from
+	// observed ones. It is omitted from the JSON when false, which is
+	// every point holding a real sample and every point whose Value is
+	// nil.
+	Filled bool `json:"filled,omitempty"`
 }
 
 // MaxElapsedIntervals bounds the sample spacing a counter-derived metric
@@ -197,6 +204,29 @@ const MaxCustomTimeSpan = 366 * 24 * time.Hour
 type TimeWindow struct {
 	Start time.Time
 	End   time.Time
+}
+
+// MinBucketWidth is the narrowest bucket a metrics query uses. A window
+// divided into more buckets than it holds seconds would otherwise ask
+// PostgreSQL for a sub-second date_bin interval, which reports far more
+// buckets than the collector can ever fill.
+const MinBucketWidth = time.Second
+
+// BucketWidth returns the width of a single bucket for a window divided
+// into buckets parts, floored at MinBucketWidth. It is the one place the
+// width is decided, so the SQL a query builder emits and the
+// bucket_seconds a response reports can never disagree. A bucket count
+// below one is treated as one, since a window is always at least one
+// bucket wide.
+func BucketWidth(timeStart, timeEnd time.Time, buckets int) time.Duration {
+	if buckets < 1 {
+		buckets = 1
+	}
+	width := timeEnd.Sub(timeStart) / time.Duration(buckets)
+	if width < MinBucketWidth {
+		width = MinBucketWidth
+	}
+	return width
 }
 
 // ResolveTimeWindow converts a time range selection into an absolute
@@ -609,12 +639,7 @@ func BuildMetricsQuery(
 		return "", nil, fmt.Errorf("invalid aggregation %q", aggregation)
 	}
 
-	// Calculate bucket width
-	duration := timeEnd.Sub(timeStart)
-	bucketWidth := duration / time.Duration(buckets)
-	if bucketWidth < time.Second {
-		bucketWidth = time.Second
-	}
+	bucketWidth := BucketWidth(timeStart, timeEnd, buckets)
 
 	whereSQL, queryArgs := metricQueryBase(
 		probeName, connectionID, timeStart, timeEnd, bucketWidth, filters)
@@ -987,11 +1012,7 @@ func BuildDerivedMetricsQuery(
 		return "", nil, fmt.Errorf("invalid aggregation %q", aggregation)
 	}
 
-	duration := timeEnd.Sub(timeStart)
-	bucketWidth := duration / time.Duration(buckets)
-	if bucketWidth < time.Second {
-		bucketWidth = time.Second
-	}
+	bucketWidth := BucketWidth(timeStart, timeEnd, buckets)
 
 	// counters holds every metric derived from the sample-to-sample change
 	// of a cumulative counter column, whichever kind it is; they share the
@@ -1517,6 +1538,32 @@ func needsEntityKeys(derived []DerivedMetric) bool {
 	return false
 }
 
+// MetricsQueryResult is the response envelope of a bucketed metrics
+// query. It describes the window that was actually queried alongside the
+// data, so a client can anchor a chart axis to the requested range rather
+// than infer it from whichever points came back.
+type MetricsQueryResult struct {
+	ProbeName     string `json:"probe_name"`
+	ConnectionIDs []int  `json:"connection_ids"`
+	// TimeRange echoes the range selection the caller asked for, such as
+	// "1h" or "custom". The query layer does not see the parameter, so
+	// the HTTP boundary sets it.
+	TimeRange string `json:"time_range"`
+	// TimeStart and TimeEnd are the resolved absolute window, so a preset
+	// range and a custom one are described identically.
+	TimeStart time.Time `json:"time_start"`
+	TimeEnd   time.Time `json:"time_end"`
+	// BucketSeconds is the width of one bucket in whole seconds, exactly
+	// as the SQL used it, including the one-second floor.
+	BucketSeconds int `json:"bucket_seconds"`
+	// Buckets is the number of buckets the window was divided into: the
+	// requested count, reduced when the probe's collection interval is
+	// too wide to fill that many.
+	Buckets     int            `json:"buckets"`
+	Aggregation string         `json:"aggregation"`
+	Series      []MetricSeries `json:"series"`
+}
+
 // QueryTimeSeries executes a metrics query and returns the results as
 // MetricSeries slices. Each numeric column becomes its own series. When
 // multiple connection IDs are provided, results are combined. The window
@@ -1532,7 +1579,7 @@ func QueryTimeSeries(
 	buckets int,
 	aggregation string,
 	requestedMetrics []string,
-) ([]MetricSeries, error) {
+) (*MetricsQueryResult, error) {
 	if !IsValidIdentifier(probeName) {
 		return nil, fmt.Errorf("invalid probe name %q", probeName)
 	}
@@ -1675,7 +1722,7 @@ func QueryTimeSeries(
 	}
 
 	// Build result series in the requested metric order.
-	var result []MetricSeries
+	result := make([]MetricSeries, 0, len(outputOrder)*len(connectionIDs))
 	for _, metric := range outputOrder {
 		for _, connID := range connectionIDs {
 			key := seriesKey{metric: metric, connectionID: connID}
@@ -1698,7 +1745,19 @@ func QueryTimeSeries(
 		}
 	}
 
-	return result, nil
+	// The reported width comes from the same helper, and the same
+	// (possibly clamped) bucket count, that built the SQL, so it is the
+	// width the buckets above actually have.
+	return &MetricsQueryResult{
+		ProbeName:     probeName,
+		ConnectionIDs: connectionIDs,
+		TimeStart:     timeStart,
+		TimeEnd:       timeEnd,
+		BucketSeconds: int(BucketWidth(timeStart, timeEnd, buckets).Seconds()),
+		Buckets:       buckets,
+		Aggregation:   aggregation,
+		Series:        result,
+	}, nil
 }
 
 // seriesKey identifies a metric series by name and connection.
@@ -1731,8 +1790,9 @@ type lastObservation struct {
 // bucket times. A NULL bucket, or one holding a non-finite sample, is
 // filled according to the series' fill policy in fills (parallel to
 // names): a fillGauge series repeats its last real value whilst that value
-// is at most MaxCarryIntervals probe intervals old, and a fillNone series,
-// or a gauge whose last value is older than that, emits a nil Value.
+// is at most MaxCarryIntervals probe intervals old, marking the point
+// Filled, and a fillNone series, or a gauge whose last value is older than
+// that, emits a nil Value.
 func scanSeriesRows(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -1777,6 +1837,7 @@ func scanSeriesRows(
 				fills[i] == fillGauge && bucketTime.Sub(prev.at) <= maxCarry {
 				carried := prev.value
 				point.Value = &carried
+				point.Filled = true
 			}
 			key := seriesKey{metric: name, connectionID: connID}
 			dataMap[key] = append(dataMap[key], point)

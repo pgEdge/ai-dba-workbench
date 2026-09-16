@@ -11,16 +11,64 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/useAuth';
 import { useDashboard } from '../contexts/useDashboard';
-import type { MetricQueryParams, MetricSeries, MetricBaseline } from '../components/Dashboard/types';
+import type {
+    MetricQueryParams,
+    MetricSeries,
+    MetricBaseline,
+    MetricsQueryResult,
+    MetricsWindow,
+} from '../components/Dashboard/types';
 import { apiGet } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 
 export interface UseMetricsReturn {
     data: MetricSeries[] | null;
+    /**
+     * The window the server reported having queried, or null when no
+     * response has arrived or the response carried no window. Charts
+     * anchor their x-axis to it so that the axis reflects the range
+     * that was asked for rather than the history that happens to
+     * exist.
+     */
+    window: MetricsWindow | null;
     loading: boolean;
     error: string | null;
     refetch: () => void;
 }
+
+/**
+ * Read the envelope returned by the metrics query endpoint.
+ *
+ * A bare array is still accepted so that the client degrades to its
+ * previous behaviour (a data-derived axis) against a server that
+ * predates the envelope, rather than rendering nothing at all.
+ */
+const parseMetricsResponse = (
+    result: MetricsQueryResult | MetricSeries[] | null,
+): { series: MetricSeries[] | null; window: MetricsWindow | null } => {
+    if (Array.isArray(result)) {
+        return { series: result, window: null };
+    }
+    if (!result || typeof result !== 'object') {
+        return { series: null, window: null };
+    }
+
+    const hasWindow = typeof result.time_start === 'string'
+        && typeof result.time_end === 'string'
+        && typeof result.bucket_seconds === 'number'
+        && result.bucket_seconds > 0;
+
+    return {
+        series: result.series ?? null,
+        window: hasWindow
+            ? {
+                start: result.time_start,
+                end: result.time_end,
+                bucketSeconds: result.bucket_seconds,
+            }
+            : null,
+    };
+};
 
 export interface UseBaselinesReturn {
     baselines: MetricBaseline[] | null;
@@ -109,6 +157,8 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
     const customStart = timeRange?.customStart;
     const customEnd = timeRange?.customEnd;
     const [data, setData] = useState<MetricSeries[] | null>(null);
+    const [metricsWindow, setMetricsWindow] =
+        useState<MetricsWindow | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const isMountedRef = useRef<boolean>(true);
@@ -134,10 +184,14 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         setError(null);
 
         try {
-            const result = await apiGet<MetricSeries[]>(url);
+            const result = await apiGet<MetricsQueryResult | MetricSeries[]>(
+                url,
+            );
 
             if (isMountedRef.current) {
-                setData(result);
+                const parsed = parseMetricsResponse(result);
+                setData(parsed.series);
+                setMetricsWindow(parsed.window);
                 initialLoadDoneRef.current = true;
             }
         } catch (err) {
@@ -145,6 +199,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
             if (isMountedRef.current) {
                 setError((err as Error).message || 'Failed to fetch metrics');
                 setData(null);
+                setMetricsWindow(null);
             }
         } finally {
             if (isMountedRef.current) {
@@ -188,7 +243,7 @@ export const useMetrics = (params: MetricQueryParams | null): UseMetricsReturn =
         };
     }, [user, params, fetchData, refreshTrigger, customStart, customEnd]);
 
-    return { data, loading, error, refetch };
+    return { data, window: metricsWindow, loading, error, refetch };
 };
 
 /**

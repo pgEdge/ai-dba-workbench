@@ -74,6 +74,7 @@ vi.mock('../../../../utils/logger', () => ({
 /** Build a mock UseMetricsReturn with loading state */
 const loadingMetrics = (): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: true,
     error: null,
     refetch: vi.fn(),
@@ -82,6 +83,7 @@ const loadingMetrics = (): UseMetricsReturn => ({
 /** Build a mock UseMetricsReturn with empty data (no system_stats) */
 const emptyMetrics = (): UseMetricsReturn => ({
     data: [],
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -99,6 +101,7 @@ const zeroMetrics = (): UseMetricsReturn => ({
             ],
         },
     ] as MetricSeries[],
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -124,6 +127,7 @@ const realMetrics = (): UseMetricsReturn => ({
             ],
         },
     ] as MetricSeries[],
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -441,6 +445,7 @@ describe('SystemResourcesSection', () => {
                 if (key === 'tx_bytes_per_sec,rx_bytes_per_sec') {
                     return {
                         data: null,
+                        window: null,
                         loading: false,
                         error: 'metric not found in probe',
                         refetch: vi.fn(),

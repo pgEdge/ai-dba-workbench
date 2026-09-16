@@ -144,11 +144,37 @@ The rules for new or modified charts are as follows:
   exception, and its legend says 'Cumulative Sessions' so that a
   reader does not mistake it for a rate.
 
-- Treat a `null` data point as a gap, never as 0. Every series in a
-  `/api/v1/metrics/query` response has the same bucket times, and a
-  bucket with no reading (a collector gap, a counter reset or a rate
-  that cannot be derived) carries `"value": null`; rates never carry
-  forward and gauges carry forward for at most three probe intervals.
+- Anchor a time-series chart's x-axis to the window the server says
+  it queried, never to the points that came back (issue #430).
+  `/api/v1/metrics/query` answers its time-series mode with an
+  envelope (`MetricsQueryResult` in
+  `client/src/components/Dashboard/types.ts`) carrying `probe_name`,
+  `connection_ids`, `time_range`, `time_start`, `time_end`,
+  `bucket_seconds`, `buckets`, `aggregation` and `series`; its
+  latest-rows mode (a request passing `limit` or `order_by`) still
+  answers with flat rows. `useMetrics` keeps `data` as the series
+  array and exposes the window separately as
+  `{ start, end, bucketSeconds }`. Build categories and align series
+  with `client/src/components/Dashboard/metricsChart.ts`
+  (`buildWindowCategories`, `alignPointsToWindow`,
+  `buildMetricChartData`, `buildDerivedChartData`) rather than
+  mapping `d.time` and `d.value` in the component, so that a range
+  the instance has no history for reads as missing history instead
+  of redrawing the same few hours on every range.
+
+- Treat a `null` data point as a gap, never as 0. Every bucket of the
+  window is present in a `/api/v1/metrics/query` response and every
+  series shares those bucket times, so a bucket with no reading (a
+  collector gap, a counter reset or a rate that cannot be derived)
+  carries `"value": null`; rates never carry forward and gauges carry
+  forward for at most three probe intervals. A point whose value is
+  the last observation carried forward rather than an observed sample
+  also carries `"filled": true`, which `buildMetricChartData` passes
+  to `ChartDataSeries.filled`: the option builders then draw those
+  points with a hollow marker, shade each contiguous carried-forward
+  stretch once with a `markArea` (from the first series only, so
+  bands cannot compound) and append '(carried forward)' in the
+  tooltip, so the distinction never rests on colour alone.
   `MetricDataPoint.value` and `ChartDataSeries.data` are therefore
   nullable, ECharts draws a null as a break in the line or a missing
   bar (leave `connectNulls` unset), and the shared tooltip labels it

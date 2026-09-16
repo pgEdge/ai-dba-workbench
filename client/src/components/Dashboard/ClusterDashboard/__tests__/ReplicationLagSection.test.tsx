@@ -35,11 +35,29 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
 }));
 
 vi.mock('../../../Chart', () => ({
-    Chart: ({ title, data }: {
+    Chart: ({ title, data, echartsOptions }: {
         title: string;
-        data: { series: { name: string; data: (number | null)[] }[] };
+        data: {
+            categories?: string[];
+            series: { name: string; data: (number | null)[] }[];
+        };
+        echartsOptions?: unknown;
     }) => (
-        <div data-testid="chart" data-title={title}>
+        <div
+            data-testid="chart"
+            data-title={title}
+            data-categories={(data.categories ?? []).join(',')}
+            data-axis-label={String(
+                (echartsOptions as {
+                    yAxis: { axisLabel: { formatter: (v: number) => string } };
+                }).yAxis.axisLabel.formatter(90),
+            )}
+            data-tooltip-value={String(
+                (echartsOptions as {
+                    tooltip: { valueFormatter: (v: number) => string };
+                }).tooltip.valueFormatter(1.5),
+            )}
+        >
             {data.series.map((s) => (
                 <span
                     key={s.name}
@@ -68,6 +86,7 @@ const series = (metric: string, values: (number | null)[]): MetricSeries => ({
 
 const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
     data,
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -75,6 +94,7 @@ const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
 
 const loading = (): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: true,
     error: null,
     refetch: vi.fn(),
@@ -82,6 +102,7 @@ const loading = (): UseMetricsReturn => ({
 
 const failed = (message: string): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: false,
     error: message,
     refetch: vi.fn(),
@@ -198,5 +219,45 @@ describe('ReplicationLagSection', () => {
         renderSection();
         expect(screen.getByText('Replay Lag')).toBeInTheDocument();
         expect(screen.getByText('--')).toBeInTheDocument();
+    });
+    it('formats the axis and tooltip values as lag durations', () => {
+        renderSection();
+        const chart = screen.getByTestId('chart');
+        expect(chart).toHaveAttribute('data-axis-label', '1.5 min');
+        expect(chart).toHaveAttribute('data-tooltip-value', '1.5 s');
+    });
+
+    it('anchors the axis to the queried window (issue #430)', () => {
+        mockUseMetrics.mockImplementation(() => ({
+            data: [{
+                name: 'replay_lag',
+                metric: 'replay_lag',
+                data: [
+                    { time: '2026-01-01T00:30:00.000Z', value: 4 },
+                    {
+                        time: '2026-01-01T00:45:00.000Z',
+                        value: 4,
+                        filled: true,
+                    },
+                ],
+            }],
+            window: {
+                start: '2026-01-01T00:00:00.000Z',
+                end: '2026-01-01T01:00:00.000Z',
+                bucketSeconds: 900,
+            },
+            loading: false,
+            error: null,
+            refetch: vi.fn(),
+        }));
+        renderSection();
+
+        expect(screen.getByTestId('chart'))
+            .toHaveAttribute(
+                'data-categories',
+                '2026-01-01T00:00:00.000Z,2026-01-01T00:15:00.000Z,'
+                + '2026-01-01T00:30:00.000Z,2026-01-01T00:45:00.000Z',
+            );
+        expect(seriesValues('Replay Lag')).toBe('[null,null,4,4]');
     });
 });

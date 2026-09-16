@@ -13,6 +13,7 @@
  */
 
 import type { MetricDataPoint, MetricSeries } from '../types';
+import { buildMetricChartData } from '../metricsChart';
 import { formatBytes, formatValue, formatNumber, formatTime } from '../../../utils/formatters';
 
 /** Props shared by all object detail components */
@@ -111,43 +112,13 @@ export const extractLatestValue = (
 };
 
 /**
- * Build chart data from metric series for the Chart component. Every
- * series in a metrics response shares the same bucket times, so the
- * categories come from the first requested metric that was returned;
- * null values pass straight through and ECharts draws them as gaps.
+ * Build chart data from metric series for the Chart component.
+ *
+ * Re-exported here so the object-level detail views keep importing it
+ * from their own types module; the behaviour lives in `metricsChart`,
+ * which anchors the x-axis to the queried window.
  */
-export const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) {
-        return null;
-    }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
+export const buildChartData = buildMetricChartData;
 
 export { formatBytes, formatValue, formatNumber, formatTime };
 

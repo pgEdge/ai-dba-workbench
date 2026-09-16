@@ -195,6 +195,7 @@ const series = (metric: string, values: number[]): MetricSeries => ({
 /** Wrap metric series in a resolved UseMetricsReturn. */
 const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
     data,
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -203,6 +204,7 @@ const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
 /** A UseMetricsReturn that is still loading with no data yet. */
 const loadingMetrics = (): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: true,
     error: null,
     refetch: vi.fn(),
@@ -211,6 +213,7 @@ const loadingMetrics = (): UseMetricsReturn => ({
 /** A failed UseMetricsReturn, as an older server would produce. */
 const failed = (message: string): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: false,
     error: message,
     refetch: vi.fn(),

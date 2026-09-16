@@ -383,6 +383,83 @@ presets alone, and `/api/v1/metrics/top-queries` has no
 time dimension; that endpoint always reports the latest
 collected sample.
 
+### Query Response Envelope
+
+The `/api/v1/metrics/query` endpoint returns an object that
+describes the window the server queried alongside the data
+the server found. The bucketed mode described above returns
+this envelope; the latest-rows mode, which a request selects
+by passing `limit` or `order_by`, is unchanged and still
+returns the matching rows.
+
+In the following example, the server answers a six-hour
+preset with a five-minute bucket width:
+
+```json
+{
+  "probe_name": "pg_stat_all_tables",
+  "connection_ids": [1],
+  "time_range": "6h",
+  "time_start": "2026-09-16T06:00:00Z",
+  "time_end": "2026-09-16T12:00:00Z",
+  "bucket_seconds": 300,
+  "buckets": 72,
+  "aggregation": "avg",
+  "series": [
+    {
+      "name": "n_live_tup",
+      "metric": "n_live_tup",
+      "unit": "",
+      "data": [
+        {"time": "2026-09-16T06:00:00Z", "value": null},
+        {"time": "2026-09-16T06:05:00Z", "value": 90},
+        {"time": "2026-09-16T06:10:00Z", "value": 90, "filled": true}
+      ]
+    }
+  ]
+}
+```
+
+The following table describes the fields of the envelope:
+
+| Field | Description |
+|-------|-------------|
+| `probe_name` | The probe the series were read from. |
+| `connection_ids` | The connections the query covered. |
+| `time_range` | The range selection the caller asked for. |
+| `time_start` | The resolved window start, as RFC 3339. |
+| `time_end` | The resolved window end, as RFC 3339. |
+| `bucket_seconds` | The bucket width the query binned by. |
+| `buckets` | The bucket count the query divided the window into. |
+| `aggregation` | The aggregate applied within each bucket. |
+| `series` | One entry per metric, per connection. |
+
+The server divides the window into the number of buckets the
+request asked for, then clamps that count to one bucket per
+probe collection interval, because a bucket narrower than the
+interval cannot hold a sample of its own; `buckets` and
+`bucket_seconds` report the count and the width the query
+actually used. The bucket times include both ends of the
+window, so a series normally holds one point more than
+`buckets` reports.
+
+Every point in a series carries a `time` and a `value`, and a
+point may also carry `filled`:
+
+- A `value` of null marks a bucket that collected no data and
+  had no earlier value to carry forward, so a chart draws a
+  gap rather than a line across the bucket.
+- A `filled` value of true marks a value carried forward from
+  an earlier sample rather than aggregated from a sample of
+  the bucket's own; the field is absent for every other point.
+
+Because the envelope reports the window back to the caller,
+a client can anchor a chart axis to the window the client
+requested rather than to the extent of the data that came
+back. An instance holding a few hours of history therefore
+draws a 30-day request as a mostly empty 30-day axis, rather
+than as the same chart a one-hour request produces.
+
 ## Error Responses
 
 All API errors return a consistent JSON format.

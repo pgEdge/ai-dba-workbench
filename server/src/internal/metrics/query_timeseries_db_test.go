@@ -252,6 +252,75 @@ func TestScanSeriesRows_Integration(t *testing.T) {
 		assertValues(t, valuesOf(dataMap[seriesKey{metric: "r", connectionID: 1}]),
 			[]*float64{f(4), nil})
 	})
+
+	t.Run("only carried-forward buckets are flagged filled", func(t *testing.T) {
+		// The same seven buckets as above: the first and last hold real
+		// samples and are unflagged, the three carried buckets are
+		// flagged, and the two that exceed the carry bound are null and
+		// so unflagged, since there is nothing carried forward to mark.
+		dataMap := map[seriesKey][]MetricDataPoint{}
+		err := scanSeriesRows(context.Background(), pool, sevenBuckets, nil,
+			[]string{"m"}, gauge, time.Minute, 1, dataMap)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		points := dataMap[seriesKey{metric: "m", connectionID: 1}]
+		want := []bool{false, true, true, true, false, false, false}
+		if len(points) != len(want) {
+			t.Fatalf("got %d points, want %d", len(points), len(want))
+		}
+		for i, w := range want {
+			if points[i].Filled != w {
+				t.Errorf("point[%d].Filled = %v, want %v (value %s)",
+					i, points[i].Filled, w, fmtValue(points[i].Value))
+			}
+		}
+		// A flagged point must still carry the value it repeats, and an
+		// unflagged one must be either observed or null.
+		for i, p := range points {
+			if p.Filled && p.Value == nil {
+				t.Errorf("point[%d] is flagged filled but null", i)
+			}
+		}
+	})
+
+	t.Run("a rate never flags a bucket filled", func(t *testing.T) {
+		// fillNone repeats nothing, so no point of a counter-derived
+		// series can ever claim to be carried forward.
+		dataMap := map[seriesKey][]MetricDataPoint{}
+		err := scanSeriesRows(context.Background(), pool, sevenBuckets, nil,
+			[]string{"m"}, none, time.Minute, 1, dataMap)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for i, p := range dataMap[seriesKey{metric: "m", connectionID: 1}] {
+			if p.Filled {
+				t.Errorf("point[%d] of a rate is flagged filled", i)
+			}
+		}
+	})
+}
+
+// queryTimeSeriesData calls QueryTimeSeries and returns only its series,
+// so the many tests that assert on the data alone stay unconcerned with
+// the response envelope; the envelope fields have their own tests.
+func queryTimeSeriesData(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	probeName string,
+	connectionIDs []int,
+	window TimeWindow,
+	filters MetricFilters,
+	buckets int,
+	aggregation string,
+	requestedMetrics []string,
+) ([]MetricSeries, error) {
+	result, err := QueryTimeSeries(ctx, pool, probeName, connectionIDs,
+		window, filters, buckets, aggregation, requestedMetrics)
+	if err != nil {
+		return nil, err
+	}
+	return result.Series, nil
 }
 
 // f returns a pointer to v, for building expected point values.
@@ -371,7 +440,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("raw column request", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"n_live_tup"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -402,7 +471,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("per_sec rate request", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_per_sec"})
 		if err != nil {
@@ -436,7 +505,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("per_sec rate with last aggregation", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "last",
 			[]string{"idx_scan_per_sec"})
 		if err != nil {
@@ -461,7 +530,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("dead_tuple_ratio request", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"dead_tuple_ratio"})
 		if err != nil {
@@ -494,7 +563,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 
 	t.Run("mixed raw and derived preserves request order", func(t *testing.T) {
 		requested := []string{"n_live_tup", "seq_scan_per_sec", "dead_tuple_ratio"}
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", requested)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -511,7 +580,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("empty request returns all numeric columns", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -525,7 +594,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("unknown metric rejected", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		_, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"not_a_real_metric"})
 		if err == nil {
@@ -534,7 +603,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("missing probe rejected", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, "does_not_exist_probe",
+		_, err := queryTimeSeriesData(ctx, pool, "does_not_exist_probe",
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error for missing probe")
@@ -542,7 +611,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("invalid probe name rejected", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, "bad-name",
+		_, err := queryTimeSeriesData(ctx, pool, "bad-name",
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error for invalid probe name")
@@ -552,7 +621,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	t.Run("canceled context surfaces probe-verify error", func(t *testing.T) {
 		cctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := QueryTimeSeries(cctx, pool, timeSeriesTestProbe,
+		_, err := queryTimeSeriesData(cctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"seq_scan"})
 		if err == nil {
 			t.Fatal("expected error from canceled context")
@@ -563,7 +632,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// Connection 2 has no fixture rows, but requesting more than one
 		// connection must still tag every series name with its connection
 		// and emit an empty series for the connection without data.
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1, 2}, lastHourWindow(), MetricFilters{}, 60, "avg", []string{"n_live_tup"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -600,7 +669,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		}
 		defer dropTable(ctx, pool, internalOnly)
 
-		_, err := QueryTimeSeries(ctx, pool, internalOnly,
+		_, err := queryTimeSeriesData(ctx, pool, internalOnly,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", nil)
 		if err == nil {
 			t.Fatal("expected error for probe with no numeric metrics")
@@ -617,7 +686,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	}
 
 	t.Run("raw query execution error propagates", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		_, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), missingColumn, 60, "avg",
 			[]string{"seq_scan"})
 		if err == nil {
@@ -626,7 +695,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("derived query execution error propagates", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		_, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), missingColumn, 60, "avg",
 			[]string{"seq_scan_per_sec"})
 		if err == nil {
@@ -635,7 +704,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("an invalid aggregation is refused before any query runs", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		_, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "no_such_agg",
 			[]string{"seq_scan"})
 		if err == nil {
@@ -647,7 +716,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	})
 
 	t.Run("database filter resolves and narrows", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{DatabaseName: "northwind"}, 60,
 			"avg", []string{"n_live_tup"})
 		if err != nil {
@@ -663,7 +732,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// This reproduces the fixed bug: the Index detail dashboard requests
 		// idx_scan_per_sec scoped to a single index. With IndexName plumbed
 		// through metricQueryBase, the matching index returns real rate data.
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(),
 			MetricFilters{SchemaName: "public", TableName: "orders", IndexName: "pk_orders"},
 			60, "avg", []string{"idx_scan_per_sec"})
@@ -693,7 +762,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// with every bucket null; this is what previously happened for
 		// every index because the filter was silently dropped and the
 		// wrong dimension was queried.
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(),
 			MetricFilters{IndexName: "some_other_index"},
 			60, "avg", []string{"idx_scan_per_sec"})
@@ -710,7 +779,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// back past the window start, that first sample had no LAG, its rate
 		// was NULL, and the increase was simply lost.
 		window := windowSince(base, 4)
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_per_sec"})
 		if err != nil {
@@ -735,7 +804,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 		// earlier to borrow, so that sample still has no LAG and its bucket
 		// is a null point; the second bucket carries the first real rate.
 		window := windowSince(base, 5)
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_per_sec"})
 		if err != nil {
@@ -762,7 +831,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	t.Run("lookback respects the dimension filters", func(t *testing.T) {
 		// A filter that matches no row must not let the lookback pull in
 		// another entity's sample; the series stays empty.
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, windowSince(base, 4),
 			MetricFilters{IndexName: "some_other_index"},
 			60, "avg", []string{"idx_scan_per_sec"})
@@ -775,7 +844,7 @@ func TestQueryTimeSeries_Integration(t *testing.T) {
 	t.Run("raw column request honors index_name filter", func(t *testing.T) {
 		// The raw-column path shares metricQueryBase, so IndexName must scope
 		// it too; a non-matching index yields an all-null raw series.
-		series, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeSeriesTestProbe,
 			[]int{1}, lastHourWindow(),
 			MetricFilters{IndexName: "no_such_index"},
 			60, "avg", []string{"idx_scan"})
@@ -872,7 +941,7 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("per-bucket deltas with zero fill and reset guard", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, deltaTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_delta"})
 		if err != nil {
@@ -955,7 +1024,7 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 
 	t.Run("delta and per_sec requested together", func(t *testing.T) {
 		requested := []string{"seq_scan_per_sec", "seq_scan_delta"}
-		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, deltaTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg", requested)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -990,7 +1059,7 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 		// are unchanged: 70 for the sample-less minute, nothing for the
 		// reset, then 20.
 		window := windowSince(base, 4)
-		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, deltaTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_delta"})
 		if err != nil {
@@ -1031,7 +1100,7 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 		// earlier sample to borrow and that first sample still contributes
 		// nothing: the totals are exactly what they were before the fix.
 		window := windowSince(base, 6)
-		series, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, deltaTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
 			[]string{"seq_scan_delta"})
 		if err != nil {
@@ -1062,7 +1131,7 @@ func TestQueryTimeSeriesDelta_Integration(t *testing.T) {
 	})
 
 	t.Run("unknown delta base rejected", func(t *testing.T) {
-		_, err := QueryTimeSeries(ctx, pool, deltaTestProbe,
+		_, err := queryTimeSeriesData(ctx, pool, deltaTestProbe,
 			[]int{1}, lastHourWindow(), MetricFilters{}, 60, "avg",
 			[]string{"no_such_column_delta"})
 		if err == nil {
@@ -1219,7 +1288,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 	})
 
 	t.Run("delta is differenced per interface before summing", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, networkTestProbe,
 			[]int{1}, windowSince(base, 60), MetricFilters{}, 60, "avg",
 			[]string{"tx_bytes_delta"})
 		if err != nil {
@@ -1257,7 +1326,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 	})
 
 	t.Run("rate is differenced per interface before summing", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, networkTestProbe,
 			[]int{1}, windowSince(base, 60), MetricFilters{}, 60, "avg",
 			[]string{"tx_bytes_per_sec"})
 		if err != nil {
@@ -1292,7 +1361,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 	t.Run("loopback rows are ignored by the raw path", func(t *testing.T) {
 		// Summing tx_bytes across interfaces at -2 min, when only eth0 and
 		// lo have rows, must give eth0's 8400 alone.
-		series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, networkTestProbe,
 			[]int{1}, windowSince(base, 60), MetricFilters{}, 60, "sum",
 			[]string{"tx_bytes"})
 		if err != nil {
@@ -1314,7 +1383,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 		// not as a confident flat zero: the delta's zero fill is gated on
 		// the window holding at least one sample.
 		for _, metric := range []string{"tx_bytes_delta", "tx_bytes_per_sec"} {
-			series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+			series, err := queryTimeSeriesData(ctx, pool, networkTestProbe,
 				[]int{99}, lastHourWindow(), MetricFilters{}, 150, "avg",
 				[]string{metric})
 			if err != nil {
@@ -1331,7 +1400,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 			Start: base.Add(-3 * time.Hour),
 			End:   base.Add(-2 * time.Hour),
 		}
-		series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, networkTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
 			[]string{"tx_bytes_delta"})
 		if err != nil {
@@ -1349,7 +1418,7 @@ func TestQueryTimeSeriesEntityKeyed_Integration(t *testing.T) {
 			Start: base.Add(-6*time.Minute - 30*time.Second),
 			End:   base.Add(-5*time.Minute - 30*time.Second),
 		}
-		series, err := QueryTimeSeries(ctx, pool, networkTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, networkTestProbe,
 			[]int{1}, window, MetricFilters{}, 60, "avg",
 			[]string{"tx_bytes_delta"})
 		if err != nil {
@@ -1491,7 +1560,7 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		// The borrowed -5 min sample (1000) is followed by the first
 		// in-window sample of 5: a reset, not a fall of 995 and not a rise
 		// of 5. The first bucket must read 0 and the rest 20 each.
-		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, lookbackTestProbe,
 			[]int{1}, windowSince(base, 4), MetricFilters{}, 4, "avg",
 			[]string{"wal_records_delta", "wal_records_per_sec"})
 		if err != nil {
@@ -1519,7 +1588,7 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		// floor; the -50 min sample is 47 minutes before the window start
 		// and must not inflate the first bucket with the 100 the counter
 		// rose across the whole gap.
-		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, lookbackTestProbe,
 			[]int{2}, windowSince(base, 3), MetricFilters{}, 3, "avg",
 			[]string{"wal_records_delta", "wal_records_per_sec"})
 		if err != nil {
@@ -1551,7 +1620,7 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		// collection gap. The first bucket is null for both the delta
 		// (a gap, not a zero) and the rate, rather than 100 spread over the
 		// outage; the "not borrowed" case above reads 0 instead.
-		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, lookbackTestProbe,
 			[]int{3}, windowSince(base, 3), MetricFilters{}, 3, "avg",
 			[]string{"wal_records_delta", "wal_records_per_sec"})
 		if err != nil {
@@ -1575,7 +1644,7 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		// -26 h sample is a day before the window start and would report
 		// 1000 records against 60 in every real bucket.
 		window := TimeWindow{Start: base.Add(-2 * time.Hour), End: base}
-		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, lookbackTestProbe,
 			[]int{4}, window, MetricFilters{}, 2, "avg",
 			[]string{"wal_records_delta"})
 		if err != nil {
@@ -1595,7 +1664,7 @@ func TestQueryTimeSeriesLookbackBound_Integration(t *testing.T) {
 		// half hours back is within the gap bound as well as the lookback
 		// bound, and the first bucket carries its 600 rise.
 		window := TimeWindow{Start: base.Add(-2 * time.Hour), End: base}
-		series, err := QueryTimeSeries(ctx, pool, lookbackTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, lookbackTestProbe,
 			[]int{5}, window, MetricFilters{}, 2, "avg",
 			[]string{"wal_records_delta"})
 		if err != nil {
@@ -1709,7 +1778,7 @@ func TestQueryTimeSeriesTimeShare_Integration(t *testing.T) {
 	window := windowSince(base, 4)
 
 	t.Run("pct and sessions values and units", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, timeShareTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, timeShareTestProbe,
 			[]int{1}, window, MetricFilters{}, 4, "avg",
 			[]string{
 				"blk_read_time_pct", "active_time_sessions",
@@ -1784,11 +1853,162 @@ func TestQueryTimeSeriesTimeShare_Integration(t *testing.T) {
 			{"xact_commit_pct", `not a cumulative time counter`},
 			{"blk_read_time_sessions", `not a session time counter`},
 		} {
-			_, err := QueryTimeSeries(ctx, pool, timeShareTestProbe,
+			_, err := queryTimeSeriesData(ctx, pool, timeShareTestProbe,
 				[]int{1}, window, MetricFilters{}, 4, "avg", []string{tc.metric})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("%s: got %v, want an error containing %q", tc.metric, err, tc.want)
 			}
+		}
+	})
+}
+
+// TestQueryTimeSeries_Envelope covers the response envelope: the window
+// the query ran against, the bucket width the SQL actually used, and the
+// per-point flags a client needs to tell observed data from carried-forward.
+func TestQueryTimeSeries_Envelope(t *testing.T) {
+	pool, closePool := newLatestRowsTestPool(t)
+	defer closePool()
+	base, cleanup := setupTimeSeriesFixture(t, pool)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	t.Run("preset range reports the resolved window", func(t *testing.T) {
+		// The window a preset resolves to is absolute by the time it
+		// reaches the query layer, so the envelope describes it exactly
+		// as it does a custom one.
+		window := lastHourWindow()
+		result, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, window, MetricFilters{}, 150, "avg",
+			[]string{"n_live_tup"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.ProbeName != timeSeriesTestProbe {
+			t.Errorf("probe_name = %q, want %q",
+				result.ProbeName, timeSeriesTestProbe)
+		}
+		if len(result.ConnectionIDs) != 1 || result.ConnectionIDs[0] != 1 {
+			t.Errorf("connection_ids = %v, want [1]", result.ConnectionIDs)
+		}
+		if !result.TimeStart.Equal(window.Start) ||
+			!result.TimeEnd.Equal(window.End) {
+			t.Errorf("window = %s..%s, want %s..%s",
+				result.TimeStart, result.TimeEnd, window.Start, window.End)
+		}
+		if result.Aggregation != "avg" {
+			t.Errorf("aggregation = %q, want \"avg\"", result.Aggregation)
+		}
+		// The fixture probe collects every 60 seconds, so 150 buckets
+		// over an hour are clamped to one per interval and the width
+		// follows the clamped count rather than the requested one.
+		if result.Buckets != 60 {
+			t.Errorf("buckets = %d, want 60 (clamped to the interval)",
+				result.Buckets)
+		}
+		if result.BucketSeconds != 60 {
+			t.Errorf("bucket_seconds = %d, want 60", result.BucketSeconds)
+		}
+		if len(result.Series) != 1 {
+			t.Fatalf("got %d series, want 1", len(result.Series))
+		}
+		// The query layer never sees the range parameter; the HTTP
+		// boundary fills it in.
+		if result.TimeRange != "" {
+			t.Errorf("time_range = %q, want it left to the handler",
+				result.TimeRange)
+		}
+	})
+
+	t.Run("custom window reports its own bucket width", func(t *testing.T) {
+		// A ten-minute window in five buckets bins by two minutes, which
+		// is the number the client needs to lay out its axis.
+		window := windowSince(base, 10)
+		result, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, window, MetricFilters{}, 5, "avg",
+			[]string{"n_live_tup"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.TimeStart.Equal(window.Start) ||
+			!result.TimeEnd.Equal(window.End) {
+			t.Errorf("window = %s..%s, want %s..%s",
+				result.TimeStart, result.TimeEnd, window.Start, window.End)
+		}
+		if result.Buckets != 5 {
+			t.Errorf("buckets = %d, want 5", result.Buckets)
+		}
+		if result.BucketSeconds != 120 {
+			t.Errorf("bucket_seconds = %d, want 120", result.BucketSeconds)
+		}
+		// Every reported bucket really is that wide: consecutive points
+		// are one bucket_seconds apart.
+		data := result.Series[0].Data
+		if len(data) < 2 {
+			t.Fatalf("got %d points, want at least 2", len(data))
+		}
+		gap := data[1].Time.Sub(data[0].Time)
+		if gap != time.Duration(result.BucketSeconds)*time.Second {
+			t.Errorf("bucket spacing = %v, want %d seconds",
+				gap, result.BucketSeconds)
+		}
+	})
+
+	t.Run("a bucket before the first sample is null and unflagged",
+		func(t *testing.T) {
+			// The fixture's earliest sample is five minutes before base,
+			// so an hour-long window opens with a long stretch of history
+			// that does not exist. Those buckets are emitted as null
+			// rather than dropped, which is what lets the client show the
+			// requested range honestly.
+			result, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+				[]int{1}, windowSince(base, 60), MetricFilters{}, 60, "avg",
+				[]string{"n_live_tup"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			data := result.Series[0].Data
+			if len(data) == 0 {
+				t.Fatal("expected the empty leading buckets to be emitted")
+			}
+			if data[0].Value != nil {
+				t.Errorf("first bucket = %v, want null", *data[0].Value)
+			}
+			if data[0].Filled {
+				t.Error("a bucket with no earlier value must not be flagged filled")
+			}
+		})
+
+	t.Run("observed and carried buckets are distinguishable", func(t *testing.T) {
+		// n_live_tup is a constant 90 across five minute-spaced samples,
+		// so the buckets holding a sample are unflagged and the buckets
+		// after the last one, whilst still inside the carry bound, repeat
+		// it flagged.
+		result, err := QueryTimeSeries(ctx, pool, timeSeriesTestProbe,
+			[]int{1}, windowSince(base, 60), MetricFilters{}, 60, "avg",
+			[]string{"n_live_tup"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var observed, filled int
+		for _, p := range result.Series[0].Data {
+			if p.Value == nil {
+				continue
+			}
+			if p.Filled {
+				filled++
+				if *p.Value != 90 {
+					t.Errorf("carried value = %v, want 90", *p.Value)
+				}
+			} else {
+				observed++
+			}
+		}
+		if observed == 0 {
+			t.Error("no observed points; every point claims to be carried")
+		}
+		if filled == 0 {
+			t.Error("no carried points; the carry-forward flag is never set")
 		}
 	})
 }

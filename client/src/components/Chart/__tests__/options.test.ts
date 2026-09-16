@@ -357,3 +357,52 @@ describe('buildPieOptions', () => {
         expect(result.series[0].label.formatter).not.toContain('{d}%');
     });
 });
+
+describe('carried-forward stretches', () => {
+    const filledData: ChartData = {
+        categories: ['Jan', 'Feb', 'Mar'],
+        series: [
+            { name: 'Sales', data: [1, 1, 3], filled: [false, true, false] },
+            { name: 'Profit', data: [4, 5, 6], filled: [false, false, false] },
+        ],
+    };
+
+    it('marks the carried-forward point of a line series', () => {
+        const result = buildLineOptions(filledData, {}) as any;
+        expect(result.series[0].data[0]).toBe(1);
+        expect(result.series[0].data[1]).toMatchObject({
+            value: 1,
+            filled: true,
+            symbol: 'emptyCircle',
+        });
+    });
+
+    it('shades the stretch once, from the first series only', () => {
+        const result = buildLineOptions(filledData, {}) as any;
+        expect(result.series[0].markArea.data).toEqual([
+            [{ xAxis: 'Feb' }, { xAxis: 'Feb' }],
+        ]);
+        expect(result.series[1].markArea).toBeUndefined();
+    });
+
+    it('leaves a chart with no carried-forward data unshaded', () => {
+        const result = buildLineOptions(sampleData, {}) as any;
+        expect(result.series[0].markArea).toBeUndefined();
+        expect(result.series[0].data).toEqual([100, 200, 300]);
+    });
+
+    it('marks carried-forward bars the same way', () => {
+        const result = buildBarOptions(filledData, {}) as any;
+        expect(result.series[0].data[1]).toMatchObject({ filled: true });
+        expect(result.series[1].data).toEqual([4, 5, 6]);
+    });
+
+    it('still sizes the y-axis from the raw values', () => {
+        const result = buildLineOptions({
+            categories: ['Jan', 'Feb'],
+            series: [{ name: 'Flat', data: [5, 5], filled: [false, true] }],
+        }, {}) as any;
+        expect(result.yAxis.min).toBeCloseTo(4.5);
+        expect(result.yAxis.max).toBeCloseTo(5.5);
+    });
+});

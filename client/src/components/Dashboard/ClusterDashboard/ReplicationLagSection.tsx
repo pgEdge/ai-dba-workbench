@@ -15,6 +15,10 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
+import {
+    alignPointsToWindow,
+    buildWindowCategories,
+} from '../metricsChart';
 import type { MetricQueryParams } from '../types';
 import { formatLag } from '../../../utils/formatters';
 import KpiTile from '../KpiTile';
@@ -114,7 +118,12 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
         };
     }, [primaryServerId, timeRange.range]);
 
-    const { data: metricsData, loading, error } = useMetrics(metricsParams);
+    const {
+        data: metricsData,
+        window: metricsWindow,
+        loading,
+        error,
+    } = useMetrics(metricsParams);
 
     /* Build KPI values from the latest data point of each series. */
     const kpiItems = useMemo(() => {
@@ -148,13 +157,32 @@ const ReplicationLagSection: React.FC<ReplicationLagSectionProps> = ({
         );
         if (withData.length === 0) { return null; }
 
-        const categories = withData[0].data.map(d => d.time);
-        const series = withData.map(s => ({
-            name: formatMetricLabel(s.metric || s.name),
-            data: s.data.map(d => d.value),
-        }));
+        /*
+         * Each standby contributes its own series, identified by name
+         * rather than by metric, so the series are aligned here rather
+         * than through buildMetricChartData's metric lookup. The axis
+         * is anchored to the queried window where the server reported
+         * one, falling back to the first standby's bucket times.
+         */
+        const windowCategories = buildWindowCategories(metricsWindow);
+        const categories = windowCategories.length > 0
+            ? windowCategories
+            : withData[0].data.map(d => d.time);
+
+        const series = withData.map(s => {
+            const aligned = alignPointsToWindow(
+                s.data,
+                categories,
+                windowCategories.length > 0 ? metricsWindow : null,
+            );
+            return {
+                name: formatMetricLabel(s.metric || s.name),
+                data: aligned.data,
+                filled: aligned.filled,
+            };
+        });
         return { categories, series };
-    }, [metricsData]);
+    }, [metricsData, metricsWindow]);
 
     if (primaryServerId === null && !loading) {
         return (

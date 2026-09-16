@@ -17,6 +17,15 @@ export interface ChartDataSeries {
     name: string;
     /** A `null` entry is a gap: ECharts breaks the line or omits the bar. */
     data: (number | null)[];
+    /**
+     * Parallel to `data`: true where the value is the last observation
+     * carried forward by the server rather than a sample collected in
+     * that bucket. Carried-forward stretches are drawn distinctly from
+     * observed ones (hollow markers, a shaded band and a tooltip note)
+     * so a synthesised plateau cannot be mistaken for a measured one.
+     * Omit it for data that has no such notion.
+     */
+    filled?: boolean[];
 }
 
 export interface ChartData {

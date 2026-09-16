@@ -246,8 +246,9 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
                 'n_tup_hot_upd_per_sec',
             ],
             ['Inserts/s', 'Updates/s', 'Deletes/s', 'HOT Updates/s'],
+            tupleChart.window,
         ),
-        [tupleChart.data]
+        [tupleChart.data, tupleChart.window]
     );
 
     const scanChartData = useMemo(
@@ -255,8 +256,9 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
             scanChart.data,
             ['seq_scan_per_sec', 'idx_scan_per_sec'],
             ['Sequential Scans/s', 'Index Scans/s'],
+            scanChart.window,
         ),
-        [scanChart.data]
+        [scanChart.data, scanChart.window]
     );
 
     const deadTupleChartData = useMemo(
@@ -264,8 +266,9 @@ const TableDetail: React.FC<ObjectDetailProps> = ({
             deadTupleChart.data,
             ['dead_tuple_ratio'],
             ['Dead Tuple Ratio %'],
+            deadTupleChart.window,
         ),
-        [deadTupleChart.data]
+        [deadTupleChart.data, deadTupleChart.window]
     );
 
     // Compute KPI values from the snapshot data

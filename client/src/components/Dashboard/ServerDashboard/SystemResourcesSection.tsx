@@ -345,6 +345,25 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         [memoryChart.data, memoryChart.window]
     );
 
+    /**
+     * Whether the memory chart actually carries an available_memory
+     * series with a reading. `buildChartData` returns data whenever any
+     * one requested metric came back, so a collector predating the
+     * available_memory column still yields a chart, and gating the
+     * caption on the chart alone would explain a series that is not
+     * drawn. `hasNonZeroData` is the wrong test here: it treats 0 as
+     * missing, which suits the extension-installed heuristic it was
+     * written for but not a gauge where only null marks a missing
+     * bucket and a zero reading is real.
+     */
+    const hasAvailableMemoryChartData = useMemo(
+        () => memoryChart.data?.some(
+            s => s.metric === 'available_memory'
+                && s.data.some(d => d.value !== null)
+        ) ?? false,
+        [memoryChart.data]
+    );
+
     const diskChartData = useMemo(
         () => buildChartData(
             diskChart.data,
@@ -540,7 +559,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                             />
                         )}
                     </ChartPanel>
-                    {hasSystemStats && memoryChartData && (
+                    {hasSystemStats && hasAvailableMemoryChartData && (
                         <Typography variant="caption" sx={CHART_CAPTION_SX}>
                             Available (est.) is an estimate of free memory
                             plus reclaimable page cache rather than the

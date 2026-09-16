@@ -225,6 +225,18 @@ const mockMemory = (available: 'absent' | 'null' | number[]): void => {
     }));
 };
 
+/**
+ * Wording unique to the chart caption. The tile's secondary line also
+ * ends in 'available (est.)', so the caption must never be asserted on
+ * that substring; these two matchers are deliberately disjoint, and
+ * both are case-insensitive so that nothing rests on the caption
+ * capitalising the label and the tile lower-casing it.
+ */
+const CAPTION_TEXT = /estimate of free memory plus reclaimable page cache/i;
+
+/** Wording unique to the memory tile's secondary line */
+const TILE_SECONDARY_TEXT = /^[\d.]+ [KMGT]?B available \(est\.\)$/i;
+
 /** The memory chart node, identified by its title text */
 const memoryChart = (): HTMLElement => screen
     .getAllByTestId('chart')
@@ -574,9 +586,7 @@ describe('SystemResourcesSection', () => {
             await waitFor(() => {
                 expect(memoryChart()).toBeInTheDocument();
             });
-            expect(
-                screen.getByText(/estimate of free memory plus reclaimable/i),
-            ).toBeInTheDocument();
+            expect(screen.getByText(CAPTION_TEXT)).toBeInTheDocument();
         });
 
         it('shows the available figure as the memory tile secondary line', async () => {
@@ -593,6 +603,8 @@ describe('SystemResourcesSection', () => {
                 expect(screen.getByText('Memory Usage')).toBeInTheDocument();
             });
             expect(screen.getByText('12.4 GB available (est.)'))
+                .toBeInTheDocument();
+            expect(screen.getByText(TILE_SECONDARY_TEXT))
                 .toBeInTheDocument();
             expect(
                 screen.getByLabelText(/12\.4 GB available \(est\.\)/),
@@ -612,8 +624,10 @@ describe('SystemResourcesSection', () => {
             await waitFor(() => {
                 expect(screen.getByText('Memory Usage')).toBeInTheDocument();
             });
-            expect(screen.queryByText(/available \(est\.\)/))
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
                 .not.toBeInTheDocument();
+            // No reading means nothing to explain, so no caption either.
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
             // The series is still charted, as a gap rather than a zero.
             expect(memoryChart()).toHaveAttribute(
                 'data-series',
@@ -621,7 +635,7 @@ describe('SystemResourcesSection', () => {
             );
         });
 
-        it('omits the secondary line when the collector sends no available_memory', async () => {
+        it('omits both the secondary line and the caption when the collector sends no available_memory', async () => {
             mockMemory('absent');
 
             render(
@@ -634,8 +648,13 @@ describe('SystemResourcesSection', () => {
             await waitFor(() => {
                 expect(screen.getByText('Memory Usage')).toBeInTheDocument();
             });
-            expect(screen.queryByText(/available \(est\.\)/))
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
                 .not.toBeInTheDocument();
+            // The other three series still yield a chart, so the caption
+            // cannot be gated on the chart having data: it would explain
+            // an Available (est.) line that was never drawn.
+            expect(memoryChart()).toBeInTheDocument();
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
         });
 
         it('shows neither the secondary line nor the caption without system_stats', async () => {
@@ -661,11 +680,9 @@ describe('SystemResourcesSection', () => {
                 }),
             );
 
-            expect(screen.queryByText(/available \(est\.\)/))
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
                 .not.toBeInTheDocument();
-            expect(
-                screen.queryByText(/estimate of free memory plus reclaimable/i),
-            ).not.toBeInTheDocument();
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
         });
     });
 

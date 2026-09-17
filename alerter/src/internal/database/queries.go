@@ -355,7 +355,8 @@ func (d *Datastore) GetActiveConnections(ctx context.Context) ([]int, error) {
 func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeStaleness, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT c.id, c.name, pa.probe_name, pc.collection_interval_seconds,
-		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) / pc.collection_interval_seconds AS staleness_ratio,
+		       EXTRACT(EPOCH FROM (NOW() - pa.last_collected)) AS seconds_since_collected
 		FROM probe_availability pa
 		JOIN probe_configs pc ON pc.name = pa.probe_name AND pc.connection_id IS NULL
 		JOIN connections c ON c.id = pa.connection_id
@@ -372,10 +373,12 @@ func (d *Datastore) GetProbeStalenessByConnection(ctx context.Context) ([]ProbeS
 	var results []ProbeStaleness
 	for rows.Next() {
 		var ps ProbeStaleness
+		var sinceCollected float64
 		if err := rows.Scan(&ps.ConnectionID, &ps.ConnectionName, &ps.ProbeName,
-			&ps.CollectionInterval, &ps.StalenessRatio); err != nil {
+			&ps.CollectionInterval, &ps.StalenessRatio, &sinceCollected); err != nil {
 			return nil, fmt.Errorf("failed to scan probe staleness: %w", err)
 		}
+		ps.SinceCollected = time.Duration(sinceCollected * float64(time.Second))
 		results = append(results, ps)
 	}
 

@@ -343,7 +343,10 @@ func TestStalenessAlertIgnoresOtherProbesInTheView(t *testing.T) {
 // TestCheckAlertResolvedClearsWhenConnectionOrDatabaseHasNoValue covers the
 // registry-backed matching loop: values reported for a different connection,
 // or for a row with no database name when the alert is database-scoped, do
-// not count as the alert's own value, so the alert resolves.
+// not count as the alert's own value, so the alert resolves. The metric is
+// clearWhenAbsent, so both connections need their slots probe reporting
+// before the cleaner accepts the missing value as a recovery (GitHub issue
+// #407).
 func TestCheckAlertResolvedClearsWhenConnectionOrDatabaseHasNoValue(t *testing.T) {
 	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()
@@ -353,6 +356,8 @@ func TestCheckAlertResolvedClearsWhenConnectionOrDatabaseHasNoValue(t *testing.T
 	ruleID := seedStalenessRule(t, pool)
 	alertConnID := insertTestConnection(t, pool, "resolve-alert-conn")
 	dataConnID := insertTestConnection(t, pool, "resolve-data-conn")
+	seedFreshProbe(t, pool, alertConnID, "pg_replication_slots")
+	seedFreshProbe(t, pool, dataConnID, "pg_replication_slots")
 
 	// The only slot sample belongs to a different connection.
 	if _, err := pool.Exec(ctx, stalenessSlotSampleInsertSQL, dataConnID, "slot_a"); err != nil {

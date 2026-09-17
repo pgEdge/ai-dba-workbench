@@ -42,6 +42,17 @@ moved.
 - Monitored-database credentials are encrypted at rest with a
   server-side secret and only decrypted in the collector when a pool
   is opened.
+- Clearing an alert is a security-relevant decision, because a false
+  resolution hides a live problem: the `clearWhenAbsent` flag on each
+  `metricRegistry` entry in
+  `alerter/src/internal/database/metric_registry.go` decides whether a
+  metric that returns no row may clear its alert, and its default must
+  stay `false` (a metric the registry does not know clears nothing).
+  Clearing on absence is additionally gated on probe freshness: the
+  entry's `probeName` must be reporting for the alert's connection, per
+  `GetProbeStalenessByConnection`, before `resolveAbsentMetric` clears,
+  so a stopped collector, a stalled probe or a disabled one leaves the
+  alert active (issue #407).
 - Visibility is per user: connections are scoped to their owner or to
   groups the user belongs to. Handlers do not hide existence: a caller
   without access to a connection gets 403, and several of them echo the

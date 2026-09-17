@@ -32,7 +32,10 @@ import (
 // with that fix as the header above prescribes. The behavior is now
 // covered against the corrected code in
 // staleness_alerts_integration_test.go and
-// staleness_alerts_errors_integration_test.go.
+// staleness_alerts_errors_integration_test.go. Claim C8 (cache_hit_ratio
+// flapping) was fixed in #407; its test below now asserts the corrected
+// behavior under its original name, and the cleaner's treatment of
+// missing data is covered in missing_data_integration_test.go.
 //
 // Tests whose name ends in "Demo" assert the CORRECT behavior instead
 // and therefore fail against the current code. They are skipped unless
@@ -213,17 +216,26 @@ func TestAuditC2ArchiverRuleErrorIsSwallowed(t *testing.T) {
 	}
 }
 
-// TestAuditC8CacheHitRatioFiresAndClearsOnSameData verifies the engine
-// half of audit claim C8. The cache_hit_ratio metric returns one row
-// per delta interval in the 15 minute window with no ordering
-// guarantee. evaluateRuleForAllConnections fires when ANY row breaches
-// the threshold, while checkAlertResolved inspects only the first
-// matching row. When the breaching interval is not the first row, the
-// evaluator and the cleaner disagree on identical data and the alert
-// flaps once per cleaner tick.
+// insertStatDatabaseSampleSQL seeds one metrics.pg_stat_database row at
+// NOW() minus the given interval.
+const insertStatDatabaseSampleSQL = `
+        INSERT INTO metrics.pg_stat_database
+            (connection_id, database_name, datname, blks_hit, blks_read,
+             collected_at)
+        VALUES ($1, $2::text, $2::text, $3, $4, NOW() - $5::interval)
+    `
+
+// TestAuditC8CacheHitRatioFiresAndClearsOnSameData covers the engine half
+// of audit claim C8, fixed in #407. cache_hit_ratio used to return one
+// row per delta interval with no ordering, so the evaluator (any row
+// violating) and the cleaner (first matching row) disagreed on identical
+// data and the alert flapped once per cycle: two cycles produced two fire
+// and two clear notifications.
 //
-// The metric SHOULD reduce to the latest interval so both sides read
-// the same value.
+// The metric now reduces to the newest interval, so a stable cold cache
+// produces one alert that stays active across cycles and exactly one fire
+// notification. The alert then clears once a newer, healthy interval
+// arrives.
 func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 	engine, ds, pool, cleanup := newEngineSpockTestEnv(t)
 	defer cleanup()
@@ -241,9 +253,9 @@ func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 	}
 	connID := insertTestConnection(t, pool, "audit-c8-engine")
 
-	// Two healthy intervals followed by a cold one. The healthy rows
-	// sort first, so the cleaner sees 100% while the evaluator sees
-	// the 0% row.
+	// Two healthy intervals followed by a cold one. Before the fix the
+	// healthy rows sorted first, so the cleaner saw 100% while the
+	// evaluator saw the 0% row.
 	samples := []struct {
 		offset string
 		hits   int64
@@ -255,12 +267,8 @@ func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 		{"1 minute", 60_000, 30_000},
 	}
 	for _, s := range samples {
-		if _, err := pool.Exec(ctx, `
-            INSERT INTO metrics.pg_stat_database
-                (connection_id, database_name, datname, blks_hit, blks_read,
-                 collected_at)
-            VALUES ($1, 'appdb', 'appdb', $2, $3, NOW() - $4::interval)
-        `, connID, s.hits, s.reads, s.offset); err != nil {
+		if _, err := pool.Exec(ctx, insertStatDatabaseSampleSQL,
+			connID, "appdb", s.hits, s.reads, s.offset); err != nil {
 			t.Fatalf("failed to seed pg_stat_database: %v", err)
 		}
 	}
@@ -270,16 +278,15 @@ func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLatestMetricValues failed: %v", err)
 	}
-	if len(values) < 2 {
-		t.Fatalf("expected several unreduced rows, got %d", len(values))
-	}
-	if values[0].Value < 80 {
-		t.Fatalf("test setup expects the first row to be healthy, got %v",
-			values[0].Value)
+	if len(values) != 1 || values[0].Value != 0 {
+		t.Fatalf("expected one reduced row carrying the cold newest "+
+			"interval (0%%), got %+v", values)
 	}
 
-	// Cycle the evaluator and the cleaner over unchanged data.
+	// Cycle the evaluator and the cleaner over unchanged data: the
+	// alert must be raised once and stay active.
 	const cycles = 2
+	var alertID int64
 	for i := 0; i < cycles; i++ {
 		engine.evaluateThresholds(ctx)
 
@@ -288,41 +295,47 @@ func TestAuditC8CacheHitRatioFiresAndClearsOnSameData(t *testing.T) {
 			t.Fatalf("GetActiveThresholdAlert failed: %v", err)
 		}
 		if alert == nil {
-			t.Fatalf("cycle %d: expected the evaluator to fire on the "+
-				"violating row", i)
+			t.Fatalf("cycle %d: expected an active alert on the cold interval", i)
+		}
+		if i == 0 {
+			alertID = alert.ID
+		} else if alert.ID != alertID {
+			t.Fatalf("cycle %d: alert id changed from %d to %d; the alert was re-raised",
+				i, alertID, alert.ID)
 		}
 
 		engine.cleanResolvedAlerts(ctx)
 
 		var status string
-		if err := pool.QueryRow(ctx, selectAlertStatusSQL,
-			alert.ID).Scan(&status); err != nil {
+		if err := pool.QueryRow(ctx, selectAlertStatusSQL, alertID).Scan(&status); err != nil {
 			t.Fatalf("failed to read alert status: %v", err)
 		}
-		// Current (defective) behavior: the cleaner clears the alert
-		// the evaluator just raised, on byte-identical data. The
-		// alert SHOULD stay active while the latest interval is cold.
-		if status != "cleared" {
-			t.Fatalf("cycle %d: alert status = %q, want \"cleared\" "+
-				"(evaluator and cleaner disagree)", i, status)
-		}
-
-		// The cooldown guard on triggerThresholdAlert bounds the flap
-		// rate but not the flap itself, so advance the cleared_at
-		// timestamp to model the next cycle outside the cooldown.
-		if _, err := pool.Exec(ctx, `
-            UPDATE alerts SET cleared_at = NOW() - $1::interval WHERE id = $2
-        `, "1 hour", alert.ID); err != nil {
-			t.Fatalf("failed to age cleared_at: %v", err)
+		if status != "active" {
+			t.Fatalf("cycle %d: alert status = %q, want \"active\" on unchanged cold data",
+				i, status)
 		}
 	}
 
-	jobs := capture.await(t, 2*cycles)
+	// A newer, healthy interval (30000 hits, no reads) resolves it.
+	if _, err := pool.Exec(ctx, insertStatDatabaseSampleSQL,
+		connID, "appdb", int64(90_000), int64(30_000), "10 seconds"); err != nil {
+		t.Fatalf("failed to seed the recovery sample: %v", err)
+	}
+	engine.cleanResolvedAlerts(ctx)
+
+	var status string
+	if err := pool.QueryRow(ctx, selectAlertStatusSQL, alertID).Scan(&status); err != nil {
+		t.Fatalf("failed to read alert status: %v", err)
+	}
+	if status != "cleared" {
+		t.Fatalf("alert status after a healthy interval = %q, want \"cleared\"", status)
+	}
+
+	jobs := capture.await(t, 2)
 	counts := countTypes(jobs)
-	if counts[database.NotificationTypeAlertFire] != cycles ||
-		counts[database.NotificationTypeAlertClear] != cycles {
-		t.Errorf("notifications = %v, want %d fire and %d clear",
-			counts, cycles, cycles)
+	if counts[database.NotificationTypeAlertFire] != 1 ||
+		counts[database.NotificationTypeAlertClear] != 1 {
+		t.Errorf("notifications = %v, want exactly 1 fire and 1 clear", counts)
 	}
 }
 

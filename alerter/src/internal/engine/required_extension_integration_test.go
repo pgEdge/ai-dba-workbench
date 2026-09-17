@@ -173,6 +173,14 @@ func TestEngine_RequiredExtension_ResolutionGate(t *testing.T) {
 	insertExtensionSnapshot(t, pool, connID, now.Add(-24*time.Hour), "plpgsql", extGateExtension)
 	insertReplicationSlotRow(t, pool, connID, now.Add(-3*time.Minute), "slot_a", true, 2*extGateOneGiB)
 
+	// The metric clears when absent, and the cleaner only believes an
+	// absent row while the probe behind it is still reporting, so this
+	// connection has to look like one a collector is running against.
+	// It is seeded from the start deliberately: the first assertion
+	// below then proves the extension gate is what holds the alert open,
+	// not a stalled probe. See GitHub issue #407.
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
+
 	engine.evaluateThresholds(ctx)
 	alert := assertAlertFired(t, ds, ruleID, connID, "warning")
 
@@ -222,14 +230,17 @@ func TestEngine_RequiredExtension_ResolutionRuleLookupError(t *testing.T) {
 		Title:          "orphaned rule",
 	}
 
-	// No slot rows exist, so the metric reports no data and the alert
-	// clears once the gate has been skipped.
+	// No slot rows exist, so the metric reports no data; with the probe
+	// behind it still reporting (GitHub issue #407) that absence is a
+	// recovery, and the alert clears once the gate has been skipped.
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
+
 	gates := engine.resolveExtensionGates(ctx, []*database.Alert{alert})
 	if gate, ok := gates[bogusRule]; !ok || gate != nil {
 		t.Errorf("gate for an unloadable rule = %v (present %v), want a nil gate",
 			gate, ok)
 	}
-	engine.checkAlertResolved(ctx, alert, gates[bogusRule])
+	engine.checkAlertResolved(ctx, alert, gates[bogusRule], nil)
 
 	if status := getAlertStatus(t, pool, alertID); status != "cleared" {
 		t.Errorf("alert status = %q, want cleared", status)

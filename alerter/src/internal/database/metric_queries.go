@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -176,6 +177,38 @@ func (d *Datastore) GetLatestMetricValues(ctx context.Context, metricName string
 	}
 
 	return results, nil
+}
+
+// MetricClearsWhenAbsent reports whether an active alert on metricName
+// should be cleared when the latest query returns no row for the alert's
+// connection and database (or no rows at all). It is false for metrics
+// whose query emits a row for every healthy connection, where a missing
+// row means the data has stopped arriving rather than that the condition
+// has resolved, and false for any metric the registry does not know. See
+// the clearWhenAbsent field on metricQueryConfig and GitHub issue #407.
+func (d *Datastore) MetricClearsWhenAbsent(metricName string) bool {
+	return metricRegistry[metricName].clearWhenAbsent
+}
+
+// MetricProbeName returns the collector probe that fills the metrics table
+// metricName's latest query reads, or the empty string for a metric the
+// registry does not know. The alert cleaner uses it to check that the data
+// feeding a clearWhenAbsent metric is still current before it treats an
+// absent row as a recovery. See the probeName field on metricQueryConfig
+// and GitHub issue #407.
+func (d *Datastore) MetricProbeName(metricName string) string {
+	return metricRegistry[metricName].probeName
+}
+
+// MetricAbsenceWindow returns how far back metricName's latest query
+// looks, or zero for a metric the registry does not know or that does
+// not clear when absent. The alert cleaner treats an absent row as a
+// recovery only when the metric's probe collected inside this window,
+// which is the only interval over which the query can report anything
+// at all. See the absenceWindow field on metricQueryConfig and GitHub
+// issue #407.
+func (d *Datastore) MetricAbsenceWindow(metricName string) time.Duration {
+	return metricRegistry[metricName].absenceWindow
 }
 
 // queryHistoricalMetricValuesBasic executes a historical SQL query that returns rows with

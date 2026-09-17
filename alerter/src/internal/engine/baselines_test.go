@@ -12,8 +12,6 @@ package engine
 import (
 	"context"
 	"math"
-	"os"
-	"regexp"
 	"testing"
 	"time"
 
@@ -525,20 +523,7 @@ const (
 func newBaselinesIntegrationEnv(t *testing.T) (*Engine, *database.Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping baselines integration test")
-	}
-
-	// Safety guard: refuse to run destructive DDL on anything other
-	// than the local test database. CLAUDE.local.md is explicit that
-	// regression tests must target 127.0.0.1/ai_workbench only;
-	// accidentally pointing TEST_AI_WORKBENCH_SERVER at any shared
-	// instance would have these tests wipe its schema.
-	assertLocalTestDSN(t, connStr)
+	connStr := requireLocalTestDSN(t, "the baselines integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -748,91 +733,6 @@ func TestBaselineBuildNullSafeForEmptyMetric(t *testing.T) {
 	}
 	if len(baselines) != 0 {
 		t.Errorf("Expected 0 baselines for empty metric, got %d", len(baselines))
-	}
-}
-
-// allowedTestDatabase matches the database names the integration tests
-// may target: "ai_workbench" for local development, the per-task
-// "ai_workbench_<tag>" databases that concurrent local sessions use so
-// their schema resets do not collide, and "postgres" for CI, which is
-// the default database the postgres Docker image creates.
-//
-// The tag must be lower-case alphanumeric and must contain at least one
-// digit, because every tag a session actually generates is derived from
-// an issue, pull request or session number ("pr455", "issue409",
-// "sess2"), whilst the production-shaped names this guard exists to
-// refuse are words: "ai_workbench_prod", "ai_workbench_live",
-// "ai_workbench_staging" and "ai_workbench_demo" all fail the digit
-// requirement. The expression is copied verbatim from the shared
-// requireLocalTestDSN helper on the #407 branch so the two reconcile
-// when that lands.
-var allowedTestDatabase = regexp.MustCompile(
-	`^(ai_workbench(_[a-z0-9]*[0-9][a-z0-9]*)?|postgres)$`)
-
-// TestAllowedTestDatabase pins the allowlist. It matters that plausible
-// real database names are refused, because the loopback host check alone
-// would happily let a test wipe a production schema reached over an SSH
-// tunnel or a local port forward; "ai_workbench_prod" is the example
-// production name in the getting-started configuration pages and in
-// every file under examples/.
-func TestAllowedTestDatabase(t *testing.T) {
-	allowed := []string{
-		"ai_workbench", "ai_workbench_pr455", "ai_workbench_issue409",
-		"ai_workbench_sess2", "postgres",
-	}
-	refused := []string{
-		"ai_workbench_prod", "ai_workbench_live", "ai_workbench_staging",
-		"ai_workbench_demo", "ai_workbench_", "ai_workbench_PR455",
-		"workbench", "postgres_prod", "",
-	}
-	for _, name := range allowed {
-		if !allowedTestDatabase.MatchString(name) {
-			t.Errorf("database %q should be allowed", name)
-		}
-	}
-	for _, name := range refused {
-		if allowedTestDatabase.MatchString(name) {
-			t.Errorf("database %q should be refused", name)
-		}
-	}
-}
-
-// assertLocalTestDSN fails the test fast if the supplied DSN points
-// at anything other than a local loopback host and one of the known
-// safe test database names. CLAUDE.local.md is explicit that the
-// alerter integration tests must only target a local loopback
-// Postgres; the destructive DDL embedded in the integration schemas
-// would wipe any other instance the env var resolved to. The
-// loopback-only host check is the primary safety net. The database
-// allowlist is intentionally narrow: allowedTestDatabase above, which
-// accepts "ai_workbench" and its numbered per-task variants for local
-// development and "postgres" for CI, and refuses the word-shaped
-// production names. Shared across integration helpers in the engine
-// package.
-func assertLocalTestDSN(t *testing.T, dsn string) {
-	t.Helper()
-	allowedHosts := map[string]struct{}{
-		"127.0.0.1": {},
-		"localhost": {},
-		"":          {}, // unix socket; only reachable on this host
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatalf("parse test DSN: %v", err)
-	}
-	host := cfg.ConnConfig.Host
-	if _, ok := allowedHosts[host]; !ok {
-		t.Fatalf("refusing to run destructive integration tests "+
-			"against non-loopback host %q; set "+
-			"TEST_AI_WORKBENCH_SERVER to a "+
-			"postgresql://...@127.0.0.1 DSN", host)
-	}
-	if !allowedTestDatabase.MatchString(cfg.ConnConfig.Database) {
-		t.Fatalf("refusing to run destructive integration tests "+
-			"against database %q; expected ai_workbench, "+
-			"ai_workbench_<tag> where the tag is lower-case "+
-			"alphanumeric and holds at least one digit, or postgres",
-			cfg.ConnConfig.Database)
 	}
 }
 

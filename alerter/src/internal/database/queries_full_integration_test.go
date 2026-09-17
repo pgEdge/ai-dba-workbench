@@ -12,7 +12,6 @@ package database
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -426,13 +425,7 @@ func createAnomalyEmbeddingsTable(ctx context.Context, pool *pgxpool.Pool) error
 func newFullTestDatastore(t *testing.T) (*Datastore, *pgxpool.Pool, func()) {
 	t.Helper()
 
-	if os.Getenv("SKIP_DB_TESTS") != "" {
-		t.Skip("Skipping database test (SKIP_DB_TESTS is set)")
-	}
-	connStr := os.Getenv("TEST_AI_WORKBENCH_SERVER")
-	if connStr == "" {
-		t.Skip("TEST_AI_WORKBENCH_SERVER not set, skipping integration test")
-	}
+	connStr := requireLocalTestDSN(t, "the queries integration test")
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connStr)
@@ -950,6 +943,80 @@ func TestGetProbeStalenessByConnection(t *testing.T) {
 	if results[0].StalenessRatio < 1.5 {
 		t.Errorf("ratio = %v, want >= 1.5", results[0].StalenessRatio)
 	}
+	// The alert cleaner gates on the elapsed time rather than the ratio,
+	// so the query must report it alongside: the probe last collected
+	// 120 seconds ago. See GitHub issue #407.
+	if results[0].SinceCollected < 120*time.Second ||
+		results[0].SinceCollected > 150*time.Second {
+		t.Errorf("SinceCollected = %s, want about 120s", results[0].SinceCollected)
+	}
+}
+
+// TestGetProbeStalenessByConnectionScanError covers the scan branch of
+// GetProbeStalenessByConnection. Retyping connections.name to a text
+// array leaves the query valid but its second column unscannable into a
+// Go string, which is the shape of a schema that has drifted from the
+// query.
+func TestGetProbeStalenessByConnectionScanError(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	seedProbeStalenessRow(t, pool, "scan-error-conn", 60)
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE connections ALTER COLUMN name TYPE text[] USING ARRAY[name]`); err != nil {
+		t.Fatalf("failed to retype connections.name: %v", err)
+	}
+
+	results, err := ds.GetProbeStalenessByConnection(ctx)
+	if err == nil {
+		t.Fatalf("expected a scan error, got %d rows", len(results))
+	}
+	if results != nil {
+		t.Errorf("results = %v, want nil alongside the error", results)
+	}
+}
+
+// TestGetProbeStalenessByConnectionRowError covers the row iteration
+// branch. A zero collection interval divides by zero in the staleness
+// ratio, and PostgreSQL only raises that whilst the rows are being
+// read, so the failure arrives through rows.Err() rather than from the
+// query itself.
+func TestGetProbeStalenessByConnectionRowError(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	seedProbeStalenessRow(t, pool, "row-error-conn", 0)
+
+	results, err := ds.GetProbeStalenessByConnection(context.Background())
+	if err == nil {
+		t.Fatalf("expected a division by zero, got %d rows", len(results))
+	}
+	if results != nil {
+		t.Errorf("results = %v, want nil alongside the error", results)
+	}
+}
+
+// seedProbeStalenessRow gives one connection a reporting probe with the
+// given collection interval, which is the minimum the staleness query
+// needs to return a row.
+func seedProbeStalenessRow(t *testing.T, pool *pgxpool.Pool, name string, interval int) int {
+	t.Helper()
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, name)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_configs (name, collection_interval_seconds, is_enabled, connection_id)
+		VALUES ('probe_x', $1, TRUE, NULL)
+	`, interval); err != nil {
+		t.Fatalf("failed to seed probe_configs: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO probe_availability (connection_id, probe_name, is_available, last_collected)
+		VALUES ($1, 'probe_x', TRUE, NOW() - INTERVAL '120 seconds')
+	`, connID); err != nil {
+		t.Fatalf("failed to seed probe_availability: %v", err)
+	}
+	return connID
 }
 
 func TestGetAlertRuleByName(t *testing.T) {

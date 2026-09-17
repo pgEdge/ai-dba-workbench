@@ -2480,3 +2480,197 @@ func TestAuthenticateUserRejectsFederatedAccount(t *testing.T) {
 		t.Fatalf("error = %q, want %q", err.Error(), wantErr)
 	}
 }
+
+// TestMigrateV3ToV4ReportsFailures covers the migration's error paths,
+// which every existing installation runs through on its first start after
+// upgrading and which the happy-path test above cannot reach. Each case
+// breaks the schema in a way that fails exactly one statement of the
+// migration and checks that the failure is reported rather than
+// swallowed, since a migration that reports success without having
+// recorded its version would run again on every start.
+func TestMigrateV3ToV4ReportsFailures(t *testing.T) {
+	cases := map[string]struct {
+		sabotage string
+		wantErr  string
+	}{
+		"users table missing": {
+			sabotage: "DROP TABLE users",
+			wantErr:  "migrating auth schema to v4",
+		},
+		"schema_version table missing": {
+			sabotage: "DROP TABLE schema_version",
+			wantErr:  "clearing schema version",
+		},
+		"schema_version refuses the new version": {
+			// A CHECK constraint that admits the old version but not the
+			// new one fails only the INSERT, leaving the DELETE working.
+			sabotage: `DROP TABLE schema_version;
+				CREATE TABLE schema_version (version INTEGER PRIMARY KEY CHECK (version < 4));
+				INSERT INTO schema_version (version) VALUES (3)`,
+			wantErr: "recording schema version 4",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newTestStoreAtVersion(t, 3)
+			if _, err := store.db.Exec(tc.sabotage); err != nil {
+				t.Fatalf("sabotaging the schema: %v", err)
+			}
+
+			err := store.migrateV3ToV4()
+			if err == nil {
+				t.Fatal("migrateV3ToV4 reported success against a broken schema")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestMigrateV3ToV4IsRunByInitSchemaAndItsFailureStopsStartup checks
+// the dispatcher: a v3 database whose migration fails must make
+// initSchema fail, so that the server does not start against a schema it
+// cannot use.
+func TestMigrateV3ToV4IsRunByInitSchemaAndItsFailureStopsStartup(t *testing.T) {
+	store := newTestStoreAtVersion(t, 3)
+	if _, err := store.db.Exec("DROP TABLE users"); err != nil {
+		t.Fatalf("dropping the users table: %v", err)
+	}
+	if err := store.initSchema(); err == nil {
+		t.Fatal("initSchema reported success although the v3 to v4 migration failed")
+	}
+}
+
+// TestUpdateUserReportsDatabaseFailures covers the write failures in
+// UpdateUser. With the users table renamed, every statement against it
+// fails, and each path must report the failure rather than return
+// success; an invalid password is refused before anything is touched.
+func TestUpdateUserReportsDatabaseFailures(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	if err := store.UpdateUser("anyone", "short", "", "", ""); err == nil {
+		t.Error("an invalid new password was accepted")
+	}
+
+	if _, err := store.db.Exec("ALTER TABLE users RENAME TO users_gone"); err != nil {
+		t.Fatalf("renaming the users table: %v", err)
+	}
+
+	err := store.UpdateUser("anyone", "", "note", "Name", "name@example.com")
+	if err == nil || !strings.Contains(err.Error(), "failed to update user") {
+		t.Errorf("metadata write against a missing table: err = %v, want 'failed to update user'", err)
+	}
+	err = store.UpdateUser("anyone", "An0ther-Str0ng-Pass!", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "failed to update password") {
+		t.Errorf("password write against a missing table: err = %v, want 'failed to update password'", err)
+	}
+}
+
+// TestUpdateUserAtomicReportsDatabaseFailures is the transactional
+// counterpart: every UPDATE and the SELECT that precedes the metadata
+// write must report a failure, the transaction must be rolled back, and
+// an invalid password or a closed database must be refused before any of
+// them run.
+func TestUpdateUserAtomicReportsDatabaseFailures(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	short := "short"
+	if err := store.UpdateUserAtomic("anyone", UserUpdate{Password: &short}); err == nil {
+		t.Error("an invalid new password was accepted")
+	}
+
+	// A password write that matches no row is not an error, on either
+	// path: the account is simply absent.
+	strong := "An0ther-Str0ng-Pass!"
+	if err := store.UpdateUserAtomic("nobody", UserUpdate{Password: &strong}); err != nil {
+		t.Errorf("password for a missing user: %v, want no error", err)
+	}
+
+	if _, err := store.db.Exec("ALTER TABLE users RENAME TO users_gone"); err != nil {
+		t.Fatalf("renaming the users table: %v", err)
+	}
+
+	note, enabled, superuser := "note", true, true
+	cases := map[string]struct {
+		update  UserUpdate
+		wantErr string
+	}{
+		"password":   {UserUpdate{Password: &strong}, "failed to update password"},
+		"metadata":   {UserUpdate{Annotation: &note}, "failed to get current user values"},
+		"enabled":    {UserUpdate{Enabled: &enabled}, "failed to update enabled status"},
+		"superuser":  {UserUpdate{IsSuperuser: &superuser}, "failed to update superuser status"},
+		"everything": {UserUpdate{Password: &strong, Annotation: &note, Enabled: &enabled}, "failed to update password"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := store.UpdateUserAtomic("anyone", tc.update)
+			if err == nil {
+				t.Fatal("UpdateUserAtomic reported success against a missing table")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	// A closed database cannot even begin the transaction.
+	if err := store.db.Close(); err != nil {
+		t.Fatalf("closing the database: %v", err)
+	}
+	err := store.UpdateUserAtomic("anyone", UserUpdate{Enabled: &enabled})
+	if err == nil || !strings.Contains(err.Error(), "failed to begin transaction") {
+		t.Errorf("closed database: err = %v, want 'failed to begin transaction'", err)
+	}
+}
+
+// TestUpdateUserReportsHashAndWriteFailures covers the two failures the
+// missing-table test above cannot reach: bcrypt refusing the configured
+// cost, which fails both update paths before any write, and the metadata
+// UPDATE in UpdateUserAtomic failing after the SELECT that precedes it
+// succeeded, which a trigger arranges.
+func TestUpdateUserReportsHashAndWriteFailures(t *testing.T) {
+	store, cleanup := createTestAuthStoreForStore(t)
+	defer cleanup()
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	if err := store.CreateUser("hashed", "Sup3r-Str0ng-Pass!", "", "", ""); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	// A cost outside bcrypt's range is refused by GenerateFromPassword.
+	store.bcryptCost = bcrypt.MaxCost + 1
+	strong := "An0ther-Str0ng-Pass!"
+	err := store.UpdateUser("hashed", strong, "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "failed to hash password") {
+		t.Errorf("UpdateUser with an unusable cost: err = %v, want 'failed to hash password'", err)
+	}
+	err = store.UpdateUserAtomic("hashed", UserUpdate{Password: &strong})
+	if err == nil || !strings.Contains(err.Error(), "failed to hash password") {
+		t.Errorf("UpdateUserAtomic with an unusable cost: err = %v, want 'failed to hash password'", err)
+	}
+	store.bcryptCost = bcrypt.MinCost
+
+	// The metadata write fails while the read before it succeeds.
+	if _, err := store.db.Exec(`CREATE TRIGGER refuse_annotation BEFORE UPDATE OF annotation ON users
+		BEGIN SELECT RAISE(ABORT, 'annotation writes refused'); END`); err != nil {
+		t.Fatalf("creating the trigger: %v", err)
+	}
+	note := "note"
+	err = store.UpdateUserAtomic("hashed", UserUpdate{Annotation: &note})
+	if err == nil || !strings.Contains(err.Error(), "failed to update user fields") {
+		t.Errorf("metadata write refused by a trigger: err = %v, want 'failed to update user fields'", err)
+	}
+	user, getErr := store.GetUser("hashed")
+	if getErr != nil || user == nil {
+		t.Fatalf("GetUser: %v", getErr)
+	}
+	if user.Annotation != "" {
+		t.Error("the refused annotation write was committed")
+	}
+}

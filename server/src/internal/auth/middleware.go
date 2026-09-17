@@ -195,14 +195,14 @@ func (e *IPExtractor) isTrustedProxy(ip net.IP) bool {
 // mean anything.
 //
 // It exists so that callers which read a forwarded header other than
-// X-Forwarded-For (X-Forwarded-Proto, in particular, which decides a
-// cookie's Secure attribute and hence which state cookie name is
-// written) make exactly the decision ExtractIP makes, rather than an
-// approximation of it. Approximating it is a real hazard: an extractor
-// is built on every deployment and is therefore never nil, so "an
-// extractor exists" is not the same question as "this request came
-// through a proxy we trust", and answering the former lets any client
-// set the header and choose the answer.
+// X-Forwarded-For (X-Forwarded-Proto, in particular, where it decides
+// whether the OIDC state cookie may use the "__Host-" name prefix) make
+// exactly the decision ExtractIP makes, rather than an approximation of
+// it. Approximating it is a real hazard: an extractor is built on every
+// deployment and is therefore never nil, so "an extractor exists" is
+// not the same question as "this request came through a proxy we
+// trust", and answering the former lets any client set the header and
+// choose the answer.
 //
 // It returns false whenever no trusted proxies are configured, which is
 // the same safe default ExtractIP applies.

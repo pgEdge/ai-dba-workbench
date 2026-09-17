@@ -151,7 +151,7 @@ type federationStore interface {
 
 // NewOIDCHandler creates the federated login handler.
 //
-// provider may be nil, and cfg.Enabled may be false; either makes both
+// provider may be nil, and cfg.IsEnabled may be false; either makes both
 // endpoints answer 404, so that a Workbench with OIDC switched off is
 // indistinguishable from one built without it. stateKey must be the
 // 32-byte key the state cookie is sealed with; a wrong-length key is not
@@ -160,9 +160,10 @@ type federationStore interface {
 //
 // The ipExtractor parameter is optional, matching NewAuthHandler: when
 // it is nil, RemoteAddr is used directly and no forwarded header is
-// trusted. Whether X-Forwarded-Proto is honored is decided per request
-// against the extractor's trusted proxy list, not by the extractor
-// merely existing.
+// trusted. With an extractor, X-Forwarded-Proto decides the Secure
+// attribute of every cookie set here; whether it may also select the
+// "__Host-" state cookie name is decided per request against the
+// extractor's trusted proxy list, not by the extractor merely existing.
 func NewOIDCHandler(authStore *auth.AuthStore, provider *oidc.Provider,
 	cfg config.OIDCConfig, stateKey []byte, tlsEnabled bool,
 	ipExtractor *auth.IPExtractor) *OIDCHandler {
@@ -239,7 +240,7 @@ func (h *OIDCHandler) Close() {
 // conditions matter: an operator can switch OIDC off in the
 // configuration, and a handler can be constructed without a provider.
 func (h *OIDCHandler) enabled() bool {
-	return h.cfg.Enabled && h.provider != nil && h.authStore != nil
+	return h.cfg.IsEnabled() && h.provider != nil && h.authStore != nil
 }
 
 // handleStart handles GET /api/v1/auth/oidc/start, the endpoint the
@@ -289,20 +290,23 @@ func (h *OIDCHandler) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secure := h.isSecureRequest(r)
-	// #nosec G124 -- Secure is conditional on isSecureRequest so that
+	attrs := h.stateCookieAttributes(r)
+	// #nosec G124 -- Secure is conditional on requestIsSecure so that
 	// local HTTP development still works; in production behind TLS
-	// (direct or via a trusted proxy supplying X-Forwarded-Proto) it
-	// evaluates to true, and the cookie name then gains the "__Host-"
-	// prefix, which a browser refuses to set without Secure. HttpOnly
-	// and SameSite are unconditional.
+	// (direct, or via a proxy supplying X-Forwarded-Proto) it evaluates
+	// to true. The "__Host-" name prefix is the stricter decision: it is
+	// used only when the request provably came over HTTPS, either
+	// terminated here or reported by a proxy on the configured trusted
+	// list, because a browser refuses the prefix without Secure and the
+	// prefix is what stops a sibling subdomain overwriting the cookie.
+	// HttpOnly and SameSite are unconditional.
 	http.SetCookie(w, &http.Cookie{
-		Name:     oidc.StateCookieNameFor(secure),
+		Name:     attrs.name(),
 		Value:    sealed,
 		Path:     "/",
 		MaxAge:   int(oidc.StateTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   attrs.secure,
 		// SameSite=Lax, not Strict: the callback arrives as a top-level
 		// navigation from the identity provider's origin, and Strict
 		// would suppress the cookie on exactly that request, making
@@ -336,24 +340,31 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear the state cookie before anything else can fail, the rate
-	// limit included, so that it is gone on every path out of this
-	// function: a state that has been presented once must never be
-	// usable again, whether it was accepted, refused or never looked at.
-	secure := h.isSecureRequest(r)
-	h.clearStateCookie(w, secure)
+	// Clear the state cookie before anything else can fail, so that it
+	// is gone on every path out of this function: a state that has been
+	// presented once must never be usable again, whether it was
+	// accepted, refused or never looked at.
+	attrs := h.stateCookieAttributes(r)
+	h.clearStateCookie(w, attrs)
 
-	ipAddress := h.extractIPFromRequest(r)
-	if !h.allowRequest(w, ipAddress) {
-		return
-	}
-
-	state, ok := h.openPresentedState(w, r, secure)
+	state, ok := h.openPresentedState(w, r, attrs)
 	if !ok {
 		return
 	}
 
-	identity, ok := h.exchange(w, r, state)
+	// The rate limit is applied inside exchange, immediately before the
+	// call to the identity provider, and nowhere earlier. A request that
+	// fails the checks above never reaches it, so an unauthenticated
+	// caller sending bare callbacks with no cookie, no state and no code
+	// spends nothing: every such request is refused by openPresentedState
+	// at the cost of one HMAC at most, and the allowance is charged only
+	// for what the limiter exists to bound, which is calls out to the
+	// provider. Charging earlier would let those free failures exhaust
+	// the allowance, which without a trusted proxy list is shared by
+	// everyone behind the reverse proxy, and lock federated login for
+	// the whole deployment.
+	ipAddress := h.extractIPFromRequest(r)
+	identity, ok := h.exchange(w, r, state, ipAddress)
 	if !ok {
 		return
 	}
@@ -367,7 +378,7 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 // server's key and has not expired, and that the state query parameter
 // matches the one sealed inside it.
 func (h *OIDCHandler) openPresentedState(w http.ResponseWriter, r *http.Request,
-	secure bool) (*oidc.LoginState, bool) {
+	attrs stateCookieAttributes) (*oidc.LoginState, bool) {
 
 	query := r.URL.Query()
 
@@ -383,7 +394,7 @@ func (h *OIDCHandler) openPresentedState(w http.ResponseWriter, r *http.Request,
 		return nil, false
 	}
 
-	cookie, err := r.Cookie(oidc.StateCookieNameFor(secure))
+	cookie, err := r.Cookie(attrs.name())
 	if err != nil || cookie.Value == "" {
 		log.Printf("[OIDC] Callback carried no login state cookie")
 		RespondError(w, http.StatusBadRequest, genericCallbackError)
@@ -418,14 +429,21 @@ func (h *OIDCHandler) openPresentedState(w http.ResponseWriter, r *http.Request,
 }
 
 // exchange redeems the authorization code and returns the verified
-// identity, having reported any failure to the browser itself.
+// identity, having reported any failure to the browser itself. It is
+// also where the per-client rate limit is charged, immediately before
+// the call to the provider, so that the limit bounds exactly what it
+// claims to bound; see the comment in handleCallback.
 func (h *OIDCHandler) exchange(w http.ResponseWriter, r *http.Request,
-	state *oidc.LoginState) (*oidc.Identity, bool) {
+	state *oidc.LoginState, ipAddress string) (*oidc.Identity, bool) {
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		log.Printf("[OIDC] Callback carried no authorization code")
 		RespondError(w, http.StatusBadRequest, genericCallbackError)
+		return nil, false
+	}
+
+	if !h.allowRequest(w, ipAddress) {
 		return nil, false
 	}
 
@@ -502,8 +520,8 @@ func (h *OIDCHandler) completeLogin(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	secure := h.isSecureRequest(r)
-	// #nosec G124 -- Secure is conditional on isSecureRequest for the
+	secure := requestIsSecure(r, h.tlsEnabled, h.ipExtractor)
+	// #nosec G124 -- Secure is conditional on requestIsSecure for the
 	// same reason as in handleLogin, whose cookie attributes this
 	// deliberately matches exactly so that a federated session is
 	// indistinguishable from a local one to the browser.
@@ -636,26 +654,30 @@ func federatedIdentity(identity *oidc.Identity) auth.FederatedIdentity {
 // because a browser matches on name, domain and path when deciding
 // whether one Set-Cookie replaces another, and a mismatch leaves the
 // original in place.
-func (h *OIDCHandler) clearStateCookie(w http.ResponseWriter, secure bool) {
+func (h *OIDCHandler) clearStateCookie(w http.ResponseWriter, attrs stateCookieAttributes) {
 	// #nosec G124 -- mirrors the flags handleStart set the cookie with;
 	// a clear-cookie whose flags differ does not clear anything.
 	http.SetCookie(w, &http.Cookie{
-		Name:     oidc.StateCookieNameFor(secure),
+		Name:     attrs.name(),
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   attrs.secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-// allowRequest applies the per-IP rate limit, answering 429 and
-// returning false when the caller has run out of allowance.
+// allowRequest spends one unit of the caller's per-IP allowance,
+// answering 429 and returning false when none is left.
 //
-// Every call that gets this far is counted, because the point is to
-// bound how often this endpoint can be made to call out to the identity
-// provider. A login that completes hands its allowance back again, in
+// It is called from exchange, immediately before the call to the
+// identity provider, and from nowhere else, because the point is to
+// bound how often this endpoint can be made to call out to the provider
+// and nothing that fails before that call costs anything worth bounding.
+// The check and the record are one operation under one lock, so
+// concurrent callers cannot all pass the check and then all record. A
+// login that completes hands its allowance back again, in
 // completeLogin, so that working logins do not spend a budget that,
 // without a trusted proxy list, is shared by everyone behind the
 // reverse proxy.
@@ -664,12 +686,11 @@ func (h *OIDCHandler) allowRequest(w http.ResponseWriter, ipAddress string) bool
 		return true
 	}
 
-	if !h.rateLimiter.IsAllowed(ipAddress) {
+	if !h.rateLimiter.CheckAndRecord(ipAddress) {
 		RespondError(w, http.StatusTooManyRequests,
 			"Too many login requests, please try again later")
 		return false
 	}
-	h.rateLimiter.RecordFailedAttempt(ipAddress)
 	return true
 }
 
@@ -683,11 +704,33 @@ func (h *OIDCHandler) extractIPFromRequest(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// isSecureRequest reports whether the request arrived over HTTPS, using
-// the shared rule so that the X-Forwarded-Proto trust decision matches
-// AuthHandler's exactly.
-func (h *OIDCHandler) isSecureRequest(r *http.Request) bool {
-	return requestIsSecure(r, h.tlsEnabled, h.ipExtractor)
+// stateCookieAttributes holds the two per-request decisions the state
+// cookie depends on. They are made by two different rules, in
+// request_security.go: the Secure attribute follows requestIsSecure,
+// which believes X-Forwarded-Proto from any proxy, and the "__Host-"
+// name prefix follows requestIsProvablySecure, which believes it only
+// from a proxy on the configured trusted list. The second implies the
+// first, so a prefixed cookie always carries the attribute the prefix
+// requires. The two are read together and carried together so that the
+// cookie is set, read and cleared under one name with one set of flags.
+type stateCookieAttributes struct {
+	secure   bool
+	prefixed bool
+}
+
+// name returns the cookie name the attributes select.
+func (a stateCookieAttributes) name() string {
+	return oidc.StateCookieNameFor(a.prefixed)
+}
+
+// stateCookieAttributes decides the state cookie's name and Secure
+// attribute for this request, using the shared rules so that the
+// X-Forwarded-Proto trust decision matches AuthHandler's exactly.
+func (h *OIDCHandler) stateCookieAttributes(r *http.Request) stateCookieAttributes {
+	return stateCookieAttributes{
+		secure:   requestIsSecure(r, h.tlsEnabled, h.ipExtractor),
+		prefixed: requestIsProvablySecure(r, h.tlsEnabled, h.ipExtractor),
+	}
 }
 
 // methodIsGET rejects anything but GET, which is all either endpoint

@@ -229,3 +229,76 @@ func TestRateLimiter_ConcurrentAccess(t *testing.T) {
 
 	// Should not panic or deadlock
 }
+
+// TestRateLimiter_CheckAndRecord covers the combined operation: it spends
+// allowance while any is left, refuses once none is, and never records
+// a refused attempt.
+func TestRateLimiter_CheckAndRecord(t *testing.T) {
+	rl := NewRateLimiter(1, 3)
+	defer rl.Stop()
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if !rl.CheckAndRecord("192.0.2.1") {
+			t.Fatalf("attempt %d was refused before the allowance ran out", attempt)
+		}
+	}
+	if rl.CheckAndRecord("192.0.2.1") {
+		t.Fatal("a fourth attempt was allowed against a ceiling of three")
+	}
+	if got := rl.GetRemainingAttempts("192.0.2.1"); got != 0 {
+		t.Errorf("remaining attempts = %d, want 0", got)
+	}
+	if len(rl.attempts["192.0.2.1"]) != 3 {
+		t.Errorf("recorded %d attempts, want 3: a refused attempt must not be recorded",
+			len(rl.attempts["192.0.2.1"]))
+	}
+
+	// Another address has its own allowance.
+	if !rl.CheckAndRecord("192.0.2.2") {
+		t.Error("a different address was refused by the first one's attempts")
+	}
+}
+
+// TestRateLimiter_CheckAndRecordDoesNotOvershootConcurrently is the
+// reason the operation exists: separate IsAllowed and RecordFailedAttempt
+// calls let every request in flight pass the check before any of them
+// recorded, so the ceiling could be exceeded by the concurrency. Under
+// one lock, exactly maxAttempts of the concurrent calls may succeed.
+func TestRateLimiter_CheckAndRecordDoesNotOvershootConcurrently(t *testing.T) {
+	const ceiling = 25
+	rl := NewRateLimiter(1, ceiling)
+	defer rl.Stop()
+
+	results := make(chan bool, 200)
+	for range 200 {
+		go func() { results <- rl.CheckAndRecord("192.0.2.3") }()
+	}
+	allowed := 0
+	for range 200 {
+		if <-results {
+			allowed++
+		}
+	}
+	if allowed != ceiling {
+		t.Errorf("%d concurrent attempts were allowed, want exactly %d", allowed, ceiling)
+	}
+}
+
+// TestRateLimiter_CheckAndRecordIgnoresExpiredAttempts confirms the
+// window applies: attempts older than the window do not count against
+// the ceiling.
+func TestRateLimiter_CheckAndRecordIgnoresExpiredAttempts(t *testing.T) {
+	rl := newRateLimiterForTest(50*time.Millisecond, time.Hour, 1)
+	defer rl.Stop()
+
+	if !rl.CheckAndRecord("192.0.2.4") {
+		t.Fatal("the first attempt was refused")
+	}
+	if rl.CheckAndRecord("192.0.2.4") {
+		t.Fatal("a second attempt inside the window was allowed against a ceiling of one")
+	}
+	time.Sleep(60 * time.Millisecond)
+	if !rl.CheckAndRecord("192.0.2.4") {
+		t.Error("an attempt after the window expired was refused")
+	}
+}

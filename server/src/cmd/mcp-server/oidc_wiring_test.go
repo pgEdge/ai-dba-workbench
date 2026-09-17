@@ -28,7 +28,7 @@ import (
 func newOIDCEnabledConfig(idp *oidctest.FakeIDP) *config.Config {
 	cfg := &config.Config{}
 	cfg.HTTP.Auth.OIDC = config.OIDCConfig{
-		Enabled:      true,
+		Enabled:      config.BoolPtr(true),
 		Issuer:       idp.Issuer(),
 		ClientID:     idp.ClientID(),
 		ClientSecret: "test-client-secret",
@@ -97,7 +97,7 @@ func TestInitOIDCFailsWhenDiscoveryFails(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.HTTP.Auth.OIDC = config.OIDCConfig{
-		Enabled: true, Issuer: unreachable.URL, ClientID: "workbench",
+		Enabled: config.BoolPtr(true), Issuer: unreachable.URL, ClientID: "workbench",
 	}
 	server := &Server{cfg: cfg, ctx: context.Background()}
 
@@ -339,4 +339,103 @@ func TestInitOIDCWarnsWhenNoTrustedProxiesAreConfigured(t *testing.T) {
 			t.Errorf("warned despite a configured proxy list:\n%s", out)
 		}
 	})
+}
+
+// TestLogOIDCStartupWarnings covers each of the start-up notices for a
+// configuration with federated login enabled: the host the identity
+// provider will deliver authorization codes to, which is how a typo in
+// redirect_url is caught before the first login fails; the empty trusted
+// proxy list; and superuser_group, which hands the superuser flag, and
+// with it every token scope bypass, to the provider's group
+// administrators.
+func TestLogOIDCStartupWarnings(t *testing.T) {
+	base := func() *config.Config {
+		cfg := &config.Config{}
+		cfg.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
+		cfg.HTTP.Auth.OIDC = config.OIDCConfig{
+			Enabled:     config.BoolPtr(true),
+			RedirectURL: "https://workbench.example.com/api/v1/auth/oidc/callback",
+		}
+		return cfg
+	}
+
+	cases := map[string]struct {
+		mutate  func(*config.Config)
+		want    []string
+		notWant []string
+	}{
+		"complete configuration": {
+			mutate: func(*config.Config) {},
+			want:   []string{"deliver authorization codes to workbench.example.com"},
+			notWant: []string{
+				"http.trusted_proxies is empty",
+				"superuser_group is set",
+			},
+		},
+		"no trusted proxies": {
+			mutate: func(cfg *config.Config) { cfg.HTTP.TrustedProxies = nil },
+			want: []string{
+				"http.trusted_proxies is empty",
+				"cannot use the __Host- prefix",
+			},
+		},
+		"superuser group": {
+			mutate: func(cfg *config.Config) { cfg.HTTP.Auth.OIDC.SuperuserGroup = "workbench-admins" },
+			want: []string{
+				`superuser_group is set ("workbench-admins")`,
+				"bypasses all group grants",
+				"API token connection scopes",
+				"next login",
+			},
+		},
+		"redirect with a port and a prefix": {
+			mutate: func(cfg *config.Config) {
+				cfg.HTTP.Auth.OIDC.RedirectURL = "https://proxy.example.net:8443/workbench/api/v1/auth/oidc/callback"
+			},
+			want: []string{"deliver authorization codes to proxy.example.net:8443"},
+		},
+		"unparseable redirect says nothing about the host": {
+			// Validation refuses this before start-up gets here; the
+			// notice must simply not panic or print an empty host.
+			mutate:  func(cfg *config.Config) { cfg.HTTP.Auth.OIDC.RedirectURL = "://nowhere" },
+			notWant: []string{"deliver authorization codes"},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := base()
+			tc.mutate(cfg)
+			var out strings.Builder
+			logOIDCStartupWarnings(&out, cfg)
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("start-up output lacks %q:\n%s", want, out.String())
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(out.String(), notWant) {
+					t.Errorf("start-up output unexpectedly contains %q:\n%s", notWant, out.String())
+				}
+			}
+		})
+	}
+}
+
+// TestInitOIDCWarnsAboutTheSuperuserGroup checks the wiring: initOIDC
+// prints the superuser_group notice when the setting is configured.
+func TestInitOIDCWarnsAboutTheSuperuserGroup(t *testing.T) {
+	idp := oidctest.NewFakeIDP(t)
+	cfg := newOIDCEnabledConfig(idp)
+	cfg.HTTP.Auth.OIDC.SuperuserGroup = "workbench-admins"
+	server := &Server{cfg: cfg, ctx: context.Background()}
+
+	out := captureStderr(t, func() {
+		if err := server.initOIDC("a-server-secret"); err != nil {
+			t.Fatalf("initOIDC: %v", err)
+		}
+	})
+	if !strings.Contains(out, "superuser_group is set") {
+		t.Errorf("start-up said nothing about superuser_group:\n%s", out)
+	}
 }

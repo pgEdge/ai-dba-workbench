@@ -223,7 +223,14 @@ const (
 // later task can serialize this struct (or an embedding AuthConfig)
 // directly instead of hand-building a DTO and forgetting a field.
 type OIDCConfig struct {
-	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	// Enabled is a pointer for the same reason Local.Enabled and
+	// ProvisionUsers are: mergeConfig cannot tell an explicit "false"
+	// from an unset field, so a plain bool could be switched on by one
+	// configuration source and never switched off again by a later one.
+	// A nil pointer means "not set in this config source"; read the
+	// effective value through OIDCConfig.IsEnabled rather than this
+	// field.
+	Enabled  *bool  `yaml:"enabled" json:"enabled"`
 	Issuer   string `yaml:"issuer" json:"issuer"`
 	ClientID string `yaml:"client_id" json:"client_id"`
 
@@ -280,6 +287,13 @@ func (o OIDCConfig) EffectiveClientSecret() string {
 		return o.ClientSecret
 	}
 	return o.resolvedClientSecret
+}
+
+// IsEnabled returns the effective value of Enabled, defaulting to false
+// when the pointer is nil (omitted from every config source): federated
+// login is opt-in.
+func (o OIDCConfig) IsEnabled() bool {
+	return o.Enabled != nil && *o.Enabled
 }
 
 // ProvisionUsersEnabled returns the effective value of ProvisionUsers,
@@ -603,9 +617,17 @@ func (m MemoryConfig) IsEnabled() bool {
 	return *m.Enabled
 }
 
-// boolPtr returns a pointer to the given bool value.
-func boolPtr(b bool) *bool {
+// BoolPtr returns a pointer to the given bool value. It exists for the
+// pointer-typed Enabled fields, which distinguish "not set" from an
+// explicit false, so that callers building a configuration in code (tests
+// in other packages, mostly) do not each declare a throwaway variable.
+func BoolPtr(b bool) *bool {
 	return &b
+}
+
+// boolPtr is the package-local spelling of BoolPtr.
+func boolPtr(b bool) *bool {
+	return BoolPtr(b)
 }
 
 // LoadConfig loads configuration with proper priority:
@@ -828,7 +850,7 @@ func mergeConfig(dest, src *Config) {
 	}
 
 	// OIDC - each field merges independently when non-zero/non-empty
-	if src.HTTP.Auth.OIDC.Enabled {
+	if src.HTTP.Auth.OIDC.Enabled != nil {
 		dest.HTTP.Auth.OIDC.Enabled = src.HTTP.Auth.OIDC.Enabled
 	}
 	if src.HTTP.Auth.OIDC.Issuer != "" {
@@ -1293,7 +1315,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// OIDC configuration validation
-	if cfg.HTTP.Auth.OIDC.Enabled {
+	if cfg.HTTP.Auth.OIDC.IsEnabled() {
 		oidc := cfg.HTTP.Auth.OIDC
 		if oidc.Issuer == "" {
 			return fmt.Errorf("http.auth.oidc.issuer is required when OIDC is enabled")
@@ -1319,7 +1341,7 @@ func validateConfig(cfg *Config) error {
 	// Refuse a configuration that leaves no way to log into the Workbench
 	// at all. A bare configuration with no http.auth block still passes:
 	// local login defaults to enabled (see AuthConfig.LocalEnabled).
-	if !cfg.HTTP.Auth.LocalEnabled() && !cfg.HTTP.Auth.OIDC.Enabled {
+	if !cfg.HTTP.Auth.LocalEnabled() && !cfg.HTTP.Auth.OIDC.IsEnabled() {
 		return fmt.Errorf("no authentication method is available: enable http.auth.local or http.auth.oidc")
 	}
 

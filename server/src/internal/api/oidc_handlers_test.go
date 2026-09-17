@@ -71,7 +71,7 @@ func newTestOIDCEnv(t *testing.T, mutators ...func(*config.OIDCConfig)) *oidcTes
 	idp := oidctest.NewFakeIDP(t)
 
 	cfg := config.OIDCConfig{
-		Enabled:        true,
+		Enabled:        config.BoolPtr(true),
 		Issuer:         idp.Issuer(),
 		ClientID:       idp.ClientID(),
 		ClientSecret:   "test-client-secret",
@@ -319,7 +319,7 @@ func TestStartSanitisesAHostileReturnPath(t *testing.T) {
 
 func TestStartRedirectsToTheLoginScreenWhenOIDCIsDisabled(t *testing.T) {
 	env := newTestOIDCEnv(t, func(cfg *config.OIDCConfig) {
-		cfg.Enabled = false
+		cfg.Enabled = config.BoolPtr(false)
 	})
 
 	rec := httptest.NewRecorder()
@@ -344,7 +344,7 @@ func TestStartRedirectsToTheLoginScreenWhenOIDCIsDisabled(t *testing.T) {
 
 func TestStartRedirectsWhenNoProviderWasDiscovered(t *testing.T) {
 	env := newTestOIDCEnv(t)
-	handler := NewOIDCHandler(env.store, nil, config.OIDCConfig{Enabled: true},
+	handler := NewOIDCHandler(env.store, nil, config.OIDCConfig{Enabled: config.BoolPtr(true)},
 		testStateKey, false, nil)
 	defer handler.Close()
 
@@ -476,16 +476,24 @@ func TestSecureRequestDerivationMatchesTheAuthHandler(t *testing.T) {
 			wantSecure: true,
 		},
 		"forwarded header from a client that is not the proxy": {
-			extractor: trusted,
-			request:   fromElsewhere(),
+			// The Secure attribute follows the header whenever an
+			// extractor exists: a forged header can only cost the forger
+			// their own cookie. The "__Host-" prefix does not follow it,
+			// because the request has not been shown to come from a
+			// proxy worth believing.
+			extractor:  trusted,
+			request:    fromElsewhere(),
+			wantSecure: true,
 		},
 		"forwarded header with an extractor that trusts nothing": {
-			// The regression this case exists for: an extractor is built
-			// unconditionally at start-up, so before the per-request
-			// check any client could set this header and choose both the
-			// Secure attribute and the state cookie name.
-			extractor: untrusted,
-			request:   fromProxy("X-Forwarded-Proto", "https"),
+			// The shipped default: a TLS-terminating proxy in front and
+			// http.trusted_proxies empty. Secure must survive, or the
+			// session cookie would travel in clear on any plain-HTTP
+			// request to the host; the prefix is withheld, since any
+			// client could have set the header.
+			extractor:  untrusted,
+			request:    fromProxy("X-Forwarded-Proto", "https"),
+			wantSecure: true,
 		},
 		"forwarded header with no extractor at all": {
 			request: fromProxy("X-Forwarded-Proto", "https"),
@@ -496,10 +504,26 @@ func TestSecureRequestDerivationMatchesTheAuthHandler(t *testing.T) {
 		},
 	}
 
+	// The prefix rule agrees with the attribute rule except where the
+	// forwarded header is the only evidence and the request did not come
+	// from a listed proxy.
+	wantPrefixed := map[string]bool{
+		"server terminates TLS":                               true,
+		"connection Go itself terminated":                     true,
+		"forwarded header from a trusted proxy":               true,
+		"forwarded header in upper case from a trusted proxy": true,
+	}
+
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			if got := requestIsSecure(tc.request, tc.tlsEnabled, tc.extractor); got != tc.wantSecure {
 				t.Errorf("requestIsSecure = %v, want %v", got, tc.wantSecure)
+			}
+			if got := requestIsProvablySecure(tc.request, tc.tlsEnabled, tc.extractor); got != wantPrefixed[name] {
+				t.Errorf("requestIsProvablySecure = %v, want %v", got, wantPrefixed[name])
+			}
+			if wantPrefixed[name] && !tc.wantSecure {
+				t.Error("the test table is inconsistent: a prefixed cookie must also be Secure")
 			}
 			// The AuthHandler must agree, since the two handlers set
 			// cookies the browser is expected to treat alike.
@@ -1037,30 +1061,96 @@ func TestCallbackRefusesWhenGroupReconciliationFails(t *testing.T) {
 // Rate limiting and logging
 // =============================================================================
 
+// sendFailingExchange drives a callback that passes every check up to
+// the code exchange and then fails at the fake provider, which has no
+// ID token staged and so answers invalid_grant. It is the cheapest
+// request that spends rate-limit allowance, because the allowance is
+// charged immediately before the call to the provider and nowhere
+// earlier.
+func (e *oidcTestEnv) sendFailingExchange(t *testing.T, remoteAddr string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	cookie := e.startLogin(t, "/dashboard")
+	state := e.openState(t, cookie)
+	req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?"+url.Values{
+		"code": {"unredeemable-code"}, "state": {state.State},
+	}.Encode(), nil)
+	req.RemoteAddr = remoteAddr
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	e.handler.handleCallback(rec, req)
+	return rec
+}
+
 func TestCallbackIsRateLimitedPerClientIP(t *testing.T) {
 	_, env := newTestOIDCHandler(t)
 
-	send := func(remoteAddr string) int {
-		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
-		req.RemoteAddr = remoteAddr
-		rec := httptest.NewRecorder()
-		env.handler.handleCallback(rec, req)
-		return rec.Code
-	}
-
 	for attempt := range callbackRateMaxAttempts {
-		if code := send("192.0.2.10:4000"); code == http.StatusTooManyRequests {
+		if code := env.sendFailingExchange(t, "192.0.2.10:4000").Code; code == http.StatusTooManyRequests {
 			t.Fatalf("attempt %d was rate limited before the allowance ran out", attempt+1)
 		}
 	}
-	if code := send("192.0.2.10:4000"); code != http.StatusTooManyRequests {
+	if code := env.sendFailingExchange(t, "192.0.2.10:4000").Code; code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d after the allowance ran out, want %d",
 			code, http.StatusTooManyRequests)
 	}
 
 	// The limit is per IP, so another client is unaffected.
-	if code := send("192.0.2.11:4000"); code == http.StatusTooManyRequests {
+	if code := env.sendFailingExchange(t, "192.0.2.11:4000").Code; code == http.StatusTooManyRequests {
 		t.Error("a different client IP was rate limited by the first one's attempts")
+	}
+}
+
+// TestCallbackDoesNotChargeTheRateLimitBeforeTheStateIsValidated is the
+// regression test for the callback charging its rate limiter before it
+// had validated anything. A request with no cookie, no state and no code
+// costs the sender nothing and used to cost the deployment one unit of an
+// allowance that, without a trusted proxy list, is shared by everyone
+// behind the reverse proxy, so 240 such requests in a minute locked
+// federated login for the whole deployment. Nothing that fails before
+// the call to the provider may spend the allowance.
+func TestCallbackDoesNotChargeTheRateLimitBeforeTheStateIsValidated(t *testing.T) {
+	_, env := newTestOIDCHandler(t)
+	const client = "192.0.2.14:4000"
+
+	bare := func(target string, cookie *http.Cookie) int {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.RemoteAddr = client
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rec := httptest.NewRecorder()
+		env.handler.handleCallback(rec, req)
+		return rec.Code
+	}
+
+	// Every kind of request that fails before the exchange, each sent
+	// more times than the whole allowance.
+	cookie := env.startLogin(t, "/dashboard")
+	for range callbackRateMaxAttempts + 1 {
+		if code := bare(OIDCCallbackPath, nil); code != http.StatusBadRequest {
+			t.Fatalf("no cookie, no state, no code: status = %d, want 400", code)
+		}
+		if code := bare(OIDCCallbackPath+"?code=c&state=s", nil); code != http.StatusBadRequest {
+			t.Fatalf("no cookie: status = %d, want 400", code)
+		}
+		if code := bare(OIDCCallbackPath+"?code=c&state=wrong", cookie); code != http.StatusBadRequest {
+			t.Fatalf("mismatched state: status = %d, want 400", code)
+		}
+		if code := bare(OIDCCallbackPath+"?error=access_denied", nil); code != http.StatusFound {
+			t.Fatalf("provider error: status = %d, want 302", code)
+		}
+	}
+	state := env.openState(t, cookie)
+	for range callbackRateMaxAttempts + 1 {
+		if code := bare(OIDCCallbackPath+"?state="+state.State, cookie); code != http.StatusBadRequest {
+			t.Fatalf("valid state but no code: status = %d, want 400", code)
+		}
+	}
+
+	// A login from the same client must still reach the provider.
+	if code := env.sendFailingExchange(t, client).Code; code == http.StatusTooManyRequests {
+		t.Fatal("requests that never reached the provider spent the rate-limit allowance")
 	}
 }
 
@@ -1074,9 +1164,7 @@ func TestCallbackRateLimitIsReturnedByASuccessfulLogin(t *testing.T) {
 	// Spend all but one of the allowance, then log in, which must hand
 	// the whole allowance back rather than exhaust it.
 	for range callbackRateMaxAttempts - 1 {
-		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
-		req.RemoteAddr = "192.0.2.12:4000"
-		env.handler.handleCallback(httptest.NewRecorder(), req)
+		env.sendFailingExchange(t, "192.0.2.12:4000")
 	}
 
 	cookie := env.startLogin(t, "/dashboard")
@@ -1098,11 +1186,7 @@ func TestCallbackRateLimitIsReturnedByASuccessfulLogin(t *testing.T) {
 
 	// The next request must still be allowed, which it would not be if
 	// the successful login had spent the last of the allowance.
-	next := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
-	next.RemoteAddr = "192.0.2.12:4000"
-	nextRec := httptest.NewRecorder()
-	env.handler.handleCallback(nextRec, next)
-	if nextRec.Code == http.StatusTooManyRequests {
+	if code := env.sendFailingExchange(t, "192.0.2.12:4000").Code; code == http.StatusTooManyRequests {
 		t.Error("a successful login did not return its rate-limit allowance")
 	}
 }
@@ -1113,14 +1197,9 @@ func TestCallbackRateLimitIsReturnedByASuccessfulLogin(t *testing.T) {
 func TestCallbackClearsTheStateCookieWhenRateLimited(t *testing.T) {
 	_, env := newTestOIDCHandler(t)
 
-	cookie := env.startLogin(t, "/dashboard")
 	var rec *httptest.ResponseRecorder
 	for range callbackRateMaxAttempts + 1 {
-		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=s", nil)
-		req.RemoteAddr = "192.0.2.13:4000"
-		req.AddCookie(cookie)
-		rec = httptest.NewRecorder()
-		env.handler.handleCallback(rec, req)
+		rec = env.sendFailingExchange(t, "192.0.2.13:4000")
 	}
 
 	if rec.Code != http.StatusTooManyRequests {
@@ -1392,8 +1471,9 @@ func TestExtractIPUsesTheConfiguredExtractor(t *testing.T) {
 	}
 
 	req.Header.Set("X-Forwarded-Proto", "https")
-	if !handler.isSecureRequest(req) {
-		t.Error("a forwarded https scheme from a trusted proxy must count as secure")
+	attrs := handler.stateCookieAttributes(req)
+	if !attrs.secure || !attrs.prefixed {
+		t.Errorf("stateCookieAttributes = %+v from a trusted proxy, want both true", attrs)
 	}
 
 	// And the cookie name must follow, since the "__Host-" prefix is
@@ -1402,6 +1482,57 @@ func TestExtractIPUsesTheConfiguredExtractor(t *testing.T) {
 	handler.handleStart(rec, req)
 	if findCookie(rec, oidc.SecureStateCookieName) == nil {
 		t.Errorf("no %s cookie behind a TLS-terminating proxy", oidc.SecureStateCookieName)
+	}
+}
+
+// TestStateCookieIsSecureButUnprefixedFromAnUnlistedProxy pins the split
+// between the two rules on the shipped default configuration, where a
+// TLS-terminating proxy sits in front of the server but
+// http.trusted_proxies is empty. The Secure attribute follows the
+// forwarded header, because losing it would send the cookie in clear on
+// any plain-HTTP request to the host, but the "__Host-" prefix does not,
+// because the header has not been shown to come from a proxy worth
+// believing. The callback must then read the cookie back under the same
+// name, or every login on such a deployment would fail.
+func TestStateCookieIsSecureButUnprefixedFromAnUnlistedProxy(t *testing.T) {
+	env := newTestOIDCEnv(t)
+	handler := NewOIDCHandler(env.store, env.handler.provider, env.handler.cfg,
+		testStateKey, false, auth.NewIPExtractor(nil))
+	defer handler.Close()
+
+	req := httptest.NewRequest(http.MethodGet, OIDCStartPath, nil)
+	req.RemoteAddr = "192.0.2.30:5000"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	attrs := handler.stateCookieAttributes(req)
+	if !attrs.secure || attrs.prefixed {
+		t.Fatalf("stateCookieAttributes = %+v, want secure and not prefixed", attrs)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.handleStart(rec, req)
+	if findCookie(rec, oidc.SecureStateCookieName) != nil {
+		t.Errorf("a %s cookie was set on a request from an unlisted proxy", oidc.SecureStateCookieName)
+	}
+	cookie := findCookie(rec, oidc.StateCookieName)
+	if cookie == nil {
+		t.Fatalf("no %s cookie was set", oidc.StateCookieName)
+	}
+	if !cookie.Secure {
+		t.Error("the state cookie lost its Secure attribute behind a TLS-terminating proxy")
+	}
+
+	// The callback reads the same name, and clears it with the same
+	// flags.
+	callback := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?error=access_denied", nil)
+	callback.RemoteAddr = req.RemoteAddr
+	callback.Header.Set("X-Forwarded-Proto", "https")
+	callback.AddCookie(cookie)
+	callbackRec := httptest.NewRecorder()
+	handler.handleCallback(callbackRec, callback)
+	cleared := findCookie(callbackRec, oidc.StateCookieName)
+	if cleared == nil || cleared.MaxAge != -1 || !cleared.Secure {
+		t.Errorf("the state cookie was not cleared with matching flags: %+v", cleared)
 	}
 }
 

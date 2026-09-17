@@ -71,6 +71,32 @@ func (rl *RateLimiter) IsAllowed(ipAddress string) bool {
 	return validAttempts < rl.maxAttempts
 }
 
+// CheckAndRecord spends one unit of an IP address's allowance if any is
+// left, reporting whether it was. The check and the record happen under
+// one write lock, so concurrent callers cannot all pass an IsAllowed
+// check and then all record, overshooting the ceiling by the number of
+// requests in flight. Callers that want the request counted only once
+// they are about to do the expensive thing, such as calling out to an
+// identity provider, call this immediately before that call.
+func (rl *RateLimiter) CheckAndRecord(ipAddress string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	cutoff := time.Now().Add(-rl.windowDuration)
+	validAttempts := 0
+	for _, timestamp := range rl.attempts[ipAddress] {
+		if timestamp.After(cutoff) {
+			validAttempts++
+		}
+	}
+	if validAttempts >= rl.maxAttempts {
+		return false
+	}
+
+	rl.attempts[ipAddress] = append(rl.attempts[ipAddress], time.Now())
+	return true
+}
+
 // RecordFailedAttempt records a failed authentication attempt for an IP address
 func (rl *RateLimiter) RecordFailedAttempt(ipAddress string) {
 	rl.mu.Lock()

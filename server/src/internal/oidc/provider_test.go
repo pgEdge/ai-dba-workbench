@@ -34,7 +34,7 @@ import (
 func newTestProvider(t *testing.T, idp *oidctest.FakeIDP, cfg config.OIDCConfig) *Provider {
 	t.Helper()
 
-	cfg.Enabled = true
+	cfg.Enabled = config.BoolPtr(true)
 	cfg.Issuer = idp.Issuer()
 	cfg.ClientID = idp.ClientID()
 	if cfg.ClientSecret == "" {

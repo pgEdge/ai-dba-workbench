@@ -33,7 +33,17 @@ project adheres to
   configuration, provider registration and the operational
   limits, including the need for `http.trusted_proxies`, the
   username rule the chosen claim has to satisfy, and why a
-  local break-glass administrator should be kept. (#261)
+  local break-glass administrator should be kept. The server
+  warns at start-up when federated login is enabled without a
+  trusted proxy list, when `superuser_group` is set, and it
+  names the host that `redirect_url` sends authorisation codes
+  to, so that a typo there is caught before the first login
+  fails. The authentication database schema moves to version
+  4 on the first start after upgrading, adding an
+  `auth_source` and an `external_subject` column to `users`;
+  every existing installation runs that migration, and the
+  database cannot afterwards be opened by an older server.
+  (#261)
 
 - Add `-link-oidc-user` and `-unlink-oidc-user` commands to
   the server, which attach an existing account to an identity
@@ -285,8 +295,14 @@ project adheres to
   an ungrouped connection outside its scope, or reaching one
   at `read_write` whilst scoped to `read`, will now be
   refused or capped. Review the scope of every token that
-  touches a connection with no group before upgrading.
-  (#261)
+  touches a connection with no group before upgrading. The
+  change does not reach a token owned by a superuser: the
+  superuser check returns before the scope is consulted, so
+  such a token still reaches every connection at `read_write`
+  whatever its scope says, which is the pre-existing bypass
+  tracked in #482. A narrow automation credential should
+  therefore be minted from a service account or an ordinary
+  user, not from an administrator. (#261)
 
 - Log sessions out when the authentication database cannot be
   read. A session whose user record failed to load previously
@@ -295,7 +311,21 @@ project adheres to
   session could do whilst still authenticating it. Such a
   session is now rejected outright, so a database blip ends
   sessions rather than silently changing their privileges.
+  The failure is logged with the database error, and is told
+  apart from a deleted account and from a plainly bad token,
+  so a run of refused requests can be traced to its cause.
   (#261)
+
+- Require a restart for every change under `http.auth`. The
+  settings in that block, `local.enabled` and the whole `oidc`
+  section included, are read once at start-up and held for the
+  life of the process, so sending `SIGHUP` re-reads the file
+  and reports each changed authentication setting as needing a
+  restart but leaves the running server on the values it
+  started with. An operator narrowing `allowed_email_domains`,
+  removing an entry from `group_map` or switching local login
+  off whilst containing an incident has to restart the server
+  for the change to take effect. (#261)
 
 - Count deadlocks and temporary files per hour in the alerter. The
   `deadlocks_detected` and `temp_files_created` rules compared the

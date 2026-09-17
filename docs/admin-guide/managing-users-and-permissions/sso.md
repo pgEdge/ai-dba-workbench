@@ -162,14 +162,26 @@ Set `http.trusted_proxies` to the reverse proxy's address ranges
 whenever the Workbench sits behind a proxy, which in a supported
 deployment it always does.
 
-The callback endpoint is rate limited per client address. Behind a
-proxy, every request carries the proxy's address unless
-`http.trusted_proxies` names it, so the limit collapses to a single
-allowance shared by the whole deployment, which any unauthenticated
-party can spend deliberately to deny everyone else a login. On a
-deployment where local login is switched off, that is the only way in.
-The server prints a warning at start-up when the list is empty and
-federated login is enabled.
+The callback endpoint is rate limited per client address, and the
+allowance is spent only by requests that reach the identity provider,
+so a request refused before that point, one with no login state cookie
+or a mismatched state, costs nothing. Behind a proxy, every request
+carries the proxy's address unless `http.trusted_proxies` names it, so
+the limit collapses to a single allowance shared by the whole
+deployment, which any party holding a valid login state can spend
+deliberately to deny everyone else a login. On a deployment where local
+login is switched off, that is the only way in.
+
+The same list decides how far the server believes the
+`X-Forwarded-Proto` header. Every cookie the server sets carries the
+`Secure` attribute whenever the header says `https`, whichever address
+the request came from, because a forged header can only cost the forger
+their own cookie. The login state cookie additionally uses the
+`__Host-` name prefix, which stops a compromised sibling subdomain
+overwriting it, but only when the header arrived from an address on
+`http.trusted_proxies`; without the list the cookie is written under
+its plain name. The server prints a warning at start-up when the list
+is empty and federated login is enabled.
 
 ## Registering the Workbench at the Provider
 
@@ -202,9 +214,11 @@ It checks that the value is an absolute URL, that the scheme is `https`
 (or `http` for a loopback host), that the path ends with the callback
 path, and that there is no query string or fragment; a reverse proxy
 prefix before the callback path is accepted. It does not and cannot
-check the origin. The control that stops an authorisation code being
-sent somewhere else is the provider's own list of registered redirect
-URIs, so keep that list tight.
+check the origin, so at start-up it prints the host the identity
+provider will deliver authorisation codes to, which is where a typo
+shows up. The control that stops an authorisation code being sent
+somewhere else is the provider's own list of registered redirect URIs,
+so keep that list tight.
 
 ## Choosing the Username Claim
 
@@ -544,6 +558,21 @@ group administrators.
 The revocation is committed before any grant, so a reconciliation that
 fails part way through can only leave a user holding fewer privileges
 than the provider asserts, never more.
+
+Setting `superuser_group` hands out more than the flag's name suggests,
+and the server prints a warning at start-up whenever it is configured.
+A superuser bypasses every group grant, and also every API token
+connection scope: the superuser check in the access path returns before
+a token's scope is consulted, so an API token minted from a superuser
+account reaches every connection at `read_write` whatever scope it was
+given. That short-circuit predates federated login and is tracked
+separately, but `superuser_group` changes who can trigger it, from a
+Workbench administrator to anyone able to add a member to one provider
+group. Revocation is no faster than any other mapped group: the flag is
+withdrawn at the person's next login, and a browser session or an API
+token they already hold keeps full privilege until then, so disable the
+account to revoke it sooner. Leave the option empty unless the
+provider's group administrators are trusted to that extent.
 
 ### Keeping Mapped Groups Flat
 

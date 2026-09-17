@@ -472,11 +472,14 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 
-	// X-Forwarded-Proto is honored only on a request that actually came
-	// from a configured trusted proxy, decided per request. An
-	// IPExtractor existing is not the same question: one is constructed
-	// on every deployment, so treating its presence as the answer would
-	// let any client set the header and pick the Secure attribute.
+	// X-Forwarded-Proto decides the Secure attribute whenever an
+	// IPExtractor exists, which SetupHandlers makes true on every
+	// deployment, whether or not the request came from a proxy on the
+	// configured trusted list. Over-applying Secure costs a forger only
+	// their own cookie, whereas demanding a trusted proxy list would
+	// silently drop the attribute on every TLS-terminating deployment
+	// that has left http.trusted_proxies unset, which the shipped example
+	// configuration does.
 	const trustedProxyCIDR = "10.0.0.0/8"
 	const fromTrustedProxy = "10.1.2.3:4000"
 	const fromElsewhere = "203.0.113.9:4000"
@@ -520,12 +523,12 @@ func TestAuthHandler_SecureCookieAutoDetect(t *testing.T) {
 			expectSecure:   true,
 		},
 		{
-			name:           "TLS disabled, https header from somewhere else - not secure",
+			name:           "TLS disabled, https header from somewhere else - secure",
 			tlsEnabled:     false,
 			useIPExtractor: true,
 			remoteAddr:     fromElsewhere,
 			forwardedProto: "https",
-			expectSecure:   false,
+			expectSecure:   true,
 		},
 		{
 			name:           "TLS disabled, from the trusted proxy, http header - not secure",

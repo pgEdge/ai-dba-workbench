@@ -975,31 +975,61 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	return user, nil
 }
 
-// assertPasswordWritableLocked refuses a password write to an account whose
-// identity is not managed by this store. Without it a chosen hash can be
-// written onto a federated account, where it lies dormant until
-// UnlinkFederatedIdentity with -restore-password puts auth_source back to
-// local and makes it live. The invariant that only a local account has a
-// usable password already governs AuthenticateUser, so it belongs at the
-// store boundary rather than in each caller.
+// writePasswordHashLocked stores a new password hash, refusing the write
+// to an account whose identity is not managed by this store. Without the
+// refusal a chosen hash can be written onto a federated account, where it
+// lies dormant until UnlinkFederatedIdentity with -restore-password puts
+// auth_source back to local and makes it live. The invariant that only a
+// local account has a usable password already governs AuthenticateUser,
+// so it belongs at the store boundary rather than in each caller.
 //
-// A missing user is not an error here: the update statements that follow
-// simply match no row, which is the behavior callers already rely on.
+// The auth_source condition is on the UPDATE itself, not on a SELECT that
+// ran beforehand, which is the technique LinkFederatedIdentity uses. The
+// alternative, checking first and writing afterwards, leaves a window
+// spanning the bcrypt computation at cost 12, which is hundreds of
+// milliseconds, during which the CLI in another process sharing auth.db
+// can link the account; the hash would then land on a federated account
+// after all. s.mu does not help, because the CLI is another process.
+//
+// A missing user is not an error here: the update matches no row, which
+// is the behavior callers already rely on. A reason for a refused write
+// is therefore looked up only after the write has matched nothing.
 //
 // s.mu must be held by the caller.
-func (s *AuthStore) assertPasswordWritableLocked(username string) error {
+func (s *AuthStore) writePasswordHashLocked(exec sqlExecer, username string, hash []byte) error {
+	result, err := exec.Exec(
+		"UPDATE users SET password_hash = ? WHERE username = ? AND auth_source = ?",
+		string(hash), username, AuthSourceLocal)
+	if err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm the password update for %s: %w", username, err)
+	}
+	if affected > 0 {
+		return nil
+	}
+
+	// Nothing matched: either there is no such user, which callers treat
+	// as no change rather than an error, or the account is not local.
 	var authSource string
-	err := s.db.QueryRow("SELECT auth_source FROM users WHERE username = ?", username).Scan(&authSource)
+	err = exec.QueryRow("SELECT auth_source FROM users WHERE username = ?", username).Scan(&authSource)
 	if err == sql.ErrNoRows {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("failed to check authentication source: %w", err)
 	}
-	if authSource != AuthSourceLocal {
-		return fmt.Errorf("cannot set a password for %s: identity is managed by %s", username, authSource)
-	}
-	return nil
+	return fmt.Errorf("cannot set a password for %s: identity is managed by %s", username, authSource)
+}
+
+// sqlExecer is the slice of *sql.DB and *sql.Tx that writePasswordHashLocked
+// needs, so the same guarded write serves both the plain and the
+// transactional update paths.
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // UpdateUser updates a user's password, annotation, display name, and/or email
@@ -1014,16 +1044,12 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayN
 	defer s.mu.Unlock()
 
 	if newPassword != "" {
-		if err := s.assertPasswordWritableLocked(username); err != nil {
-			return err
-		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.bcryptCost)
 		if err != nil {
 			return fmt.Errorf("failed to hash password: %w", err)
 		}
-		_, err = s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
-		if err != nil {
-			return fmt.Errorf("failed to update password: %w", err)
+		if err := s.writePasswordHashLocked(s.db, username, hash); err != nil {
+			return err
 		}
 	}
 
@@ -1078,18 +1104,13 @@ func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
 			err = valErr
 			return err
 		}
-		if srcErr := s.assertPasswordWritableLocked(username); srcErr != nil {
-			err = srcErr
-			return err
-		}
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), s.bcryptCost)
 		if hashErr != nil {
 			err = fmt.Errorf("failed to hash password: %w", hashErr)
 			return err
 		}
-		_, execErr := tx.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
-		if execErr != nil {
-			err = fmt.Errorf("failed to update password: %w", execErr)
+		if writeErr := s.writePasswordHashLocked(tx, username, hash); writeErr != nil {
+			err = writeErr
 			return err
 		}
 	}
@@ -1496,9 +1517,23 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 		return "", fmt.Errorf("invalid session token")
 	}
 
-	// Verify user is still enabled
+	// Verify user is still enabled. The session is dropped on either
+	// failure below, so that a caller whose privileges cannot be verified
+	// is refused; the two are logged differently, because an account that
+	// has gone is expected and a database that cannot be read is an
+	// incident, and the latter also carries ErrAuthStoreUnavailable.
 	user, err := s.GetUser(session.Username)
-	if err != nil || user == nil {
+	if err != nil {
+		//nolint:gosec // G706: both values passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Session validation failed for user %s: the authentication database could not be read: %s",
+			logging.SanitizeForLog(session.Username), logging.SanitizeForLog(err.Error()))
+		s.sessions.Delete(tokenHash)
+		return "", fmt.Errorf("invalid session token: %w", ErrAuthStoreUnavailable)
+	}
+	if user == nil {
+		//nolint:gosec // G706: username passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Session validation failed for user %s: account no longer exists",
+			logging.SanitizeForLog(session.Username))
 		s.sessions.Delete(tokenHash)
 		return "", fmt.Errorf("invalid session token")
 	}
@@ -1750,7 +1785,15 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 		return nil, fmt.Errorf("invalid token")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("token validation error: %w", err)
+		// A database failure is not a bad token. It is logged, because
+		// every caller answers 401 either way and a run of refused
+		// requests needs something to correlate with, and it carries
+		// ErrAuthStoreUnavailable so that AuthenticateRequest can tell
+		// the two apart.
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Token validation failed: the authentication database could not be read: %s",
+			logging.SanitizeForLog(err.Error()))
+		return nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
 	}
 	if annotation.Valid {
 		token.Annotation = annotation.String
@@ -1764,9 +1807,17 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 		return nil, fmt.Errorf("token has expired")
 	}
 
-	// Verify the owning user is still enabled
+	// Verify the owning user is still enabled. An owner row that cannot
+	// be read is a database failure, reported and logged as such; an
+	// owner that is missing or disabled is a refused token.
 	var enabled bool
 	err = s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", token.OwnerID).Scan(&enabled)
+	if err != nil && err != sql.ErrNoRows {
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Token validation failed: the token owner could not be read: %s",
+			logging.SanitizeForLog(err.Error()))
+		return nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
+	}
 	if err != nil || !enabled {
 		return nil, fmt.Errorf("token owner is disabled")
 	}

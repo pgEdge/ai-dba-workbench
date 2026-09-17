@@ -132,7 +132,7 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 	// OIDC changes require restart: the provider is constructed once at
 	// startup from these settings, so a running server and a reloaded
 	// configuration would otherwise silently disagree.
-	if old.HTTP.Auth.OIDC.Enabled != newConfig.HTTP.Auth.OIDC.Enabled {
+	if old.HTTP.Auth.OIDC.IsEnabled() != newConfig.HTTP.Auth.OIDC.IsEnabled() {
 		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.enabled changed - requires restart\n")
 	}
 	if old.HTTP.Auth.OIDC.Issuer != newConfig.HTTP.Auth.OIDC.Issuer {

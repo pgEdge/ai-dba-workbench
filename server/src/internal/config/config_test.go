@@ -1612,12 +1612,12 @@ http:
 
 func TestValidateConfigRejectsIncompleteOIDC(t *testing.T) {
 	cases := map[string]OIDCConfig{
-		"no issuer":         {Enabled: true, ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
-		"no client id":      {Enabled: true, Issuer: "https://i.example.com", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
-		"no secret":         {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", RedirectURL: "https://w.example.com/cb"},
-		"no redirect":       {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s"},
-		"plaintext issuer":  {Enabled: true, Issuer: "http://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
-		"relative redirect": {Enabled: true, Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "/callback"},
+		"no issuer":         {Enabled: boolPtr(true), ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no client id":      {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"no secret":         {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientID: "w", RedirectURL: "https://w.example.com/cb"},
+		"no redirect":       {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s"},
+		"plaintext issuer":  {Enabled: boolPtr(true), Issuer: "http://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "https://w.example.com/cb"},
+		"relative redirect": {Enabled: boolPtr(true), Issuer: "https://i.example.com", ClientID: "w", ClientSecret: "s", RedirectURL: "/callback"},
 	}
 	for name, oidc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1633,7 +1633,7 @@ func TestValidateConfigRejectsIncompleteOIDC(t *testing.T) {
 func TestValidateConfigAcceptsCompleteOIDC(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.HTTP.Auth.OIDC = OIDCConfig{
-		Enabled:      true,
+		Enabled:      boolPtr(true),
 		Issuer:       "https://idp.example.com",
 		ClientID:     "workbench",
 		ClientSecret: "s3cret",
@@ -1672,7 +1672,7 @@ func TestValidateConfigAllowsOIDCOnly(t *testing.T) {
 	disabled := false
 	cfg.HTTP.Auth.Local.Enabled = &disabled
 	cfg.HTTP.Auth.OIDC = OIDCConfig{
-		Enabled:      true,
+		Enabled:      boolPtr(true),
 		Issuer:       "https://idp.example.com",
 		ClientID:     "workbench",
 		ClientSecret: "s3cret",
@@ -1693,7 +1693,7 @@ func TestMergeConfigOIDCFields(t *testing.T) {
 		HTTP: HTTPConfig{
 			Auth: AuthConfig{
 				OIDC: OIDCConfig{
-					Enabled:             true,
+					Enabled:             boolPtr(true),
 					Issuer:              "https://idp.example.com",
 					ClientID:            "workbench",
 					ClientSecret:        "s3cret",
@@ -1717,7 +1717,7 @@ func TestMergeConfigOIDCFields(t *testing.T) {
 
 	got := dest.HTTP.Auth.OIDC
 	want := src.HTTP.Auth.OIDC
-	if got.Enabled != want.Enabled ||
+	if got.IsEnabled() != want.IsEnabled() ||
 		got.Issuer != want.Issuer ||
 		got.ClientID != want.ClientID ||
 		got.ClientSecret != want.ClientSecret ||
@@ -1785,7 +1785,7 @@ func TestReloadWarnsOnOIDCChanges(t *testing.T) {
 	provisionUsersReload := true
 	oldCfg := defaultConfig()
 	newCfg := defaultConfig()
-	newCfg.HTTP.Auth.OIDC.Enabled = true
+	newCfg.HTTP.Auth.OIDC.Enabled = boolPtr(true)
 	newCfg.HTTP.Auth.OIDC.Issuer = "https://idp.example.com"
 	newCfg.HTTP.Auth.OIDC.ClientID = "workbench"
 	newCfg.HTTP.Auth.OIDC.ClientSecret = "s3cret"
@@ -1866,4 +1866,36 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatalf("reading captured stderr: %v", err)
 	}
 	return string(data)
+}
+
+// TestOIDCEnabledMergesExplicitFalse is the reason OIDCConfig.Enabled is
+// a pointer: a later configuration source saying "enabled: false" must
+// switch federated login off, which a plain bool merged with the
+// guarded-assignment idiom could never do, since false is its zero value
+// and so reads as "not set".
+func TestOIDCEnabledMergesExplicitFalse(t *testing.T) {
+	dest := defaultConfig()
+	dest.HTTP.Auth.OIDC.Enabled = boolPtr(true)
+
+	mergeConfig(dest, &Config{})
+	if !dest.HTTP.Auth.OIDC.IsEnabled() {
+		t.Fatal("a source with no OIDC block switched federated login off")
+	}
+
+	src := &Config{}
+	src.HTTP.Auth.OIDC.Enabled = boolPtr(false)
+	mergeConfig(dest, src)
+	if dest.HTTP.Auth.OIDC.IsEnabled() {
+		t.Fatal("an explicit enabled: false in a later source did not switch federated login off")
+	}
+
+	if (OIDCConfig{}).IsEnabled() {
+		t.Error("IsEnabled must default to false when the field is unset")
+	}
+	if got := BoolPtr(true); got == nil || !*got {
+		t.Error("BoolPtr(true) must point at true")
+	}
+	if got := BoolPtr(false); got == nil || *got {
+		t.Error("BoolPtr(false) must point at false")
+	}
 }

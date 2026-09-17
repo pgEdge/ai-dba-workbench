@@ -86,6 +86,20 @@ with the CIDR ranges of the reverse proxies that send
 [server configuration reference](../getting-started/configuration/server.md#http-server-http)
 for details.
 
+The two forwarded headers are believed to different
+degrees. `X-Forwarded-For` is read only from an
+address on `http.trusted_proxies`, because it decides
+which client a rate limit or a log line is attributed
+to. `X-Forwarded-Proto` marks every cookie the server
+sets as `Secure` whenever it says `https`, from any
+address, since a client forging it can only lose its
+own cookie, whereas ignoring a genuine proxy's header
+would send the session cookie in clear on any
+plain-HTTP request to the same host. The list still
+matters to that header for one thing: the federated
+login state cookie uses the `__Host-` name prefix only
+when the header came from a listed proxy.
+
 ## Direct TLS on the Server
 
 The Go server can terminate TLS directly when an

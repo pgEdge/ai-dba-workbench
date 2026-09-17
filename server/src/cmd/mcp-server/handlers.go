@@ -406,7 +406,7 @@ func authCapabilities(deps *HandlerDependencies) authCapabilitiesInfo {
 	}
 
 	info.LocalEnabled = deps.Config.HTTP.Auth.LocalEnabled()
-	info.OIDCEnabled = deps.Config.HTTP.Auth.OIDC.Enabled && deps.OIDCProvider != nil
+	info.OIDCEnabled = deps.Config.HTTP.Auth.OIDC.IsEnabled() && deps.OIDCProvider != nil
 	if info.OIDCEnabled {
 		info.OIDCLabel = deps.Config.HTTP.Auth.OIDC.ButtonLabel
 		if info.OIDCLabel == "" {

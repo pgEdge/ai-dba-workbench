@@ -225,13 +225,16 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Set httpOnly cookie for secure session management.
 	// This prevents XSS attacks from accessing the session token.
-	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)
 	// #nosec G124 -- Secure is intentionally conditional on
-	// isSecureRequest so local HTTP development still works;
-	// in production behind TLS (direct or via a trusted proxy
-	// supplying X-Forwarded-Proto) the flag evaluates to true.
-	// HttpOnly and SameSite are unconditional.
+	// isSecureRequest so local HTTP development still works. It
+	// evaluates to true when this server terminates TLS, when Go
+	// reports the connection as TLS, or when any request carries
+	// X-Forwarded-Proto: https and an IP extractor exists, which
+	// SetupHandlers makes true on every deployment; the proxy does
+	// not have to be on http.trusted_proxies for this, because a
+	// forged header can only cost the forger their own cookie (see
+	// requestIsSecure). HttpOnly and SameSite are unconditional.
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,

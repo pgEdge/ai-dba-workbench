@@ -11,6 +11,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 )
 
@@ -402,6 +403,7 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	tokenID := GetTokenIDFromContext(ctx)
 	if tokenID > 0 {
 		scope, err := rc.authStore.GetTokenScope(tokenID)
+		result.TokenScopeError = err
 		if err == nil && scope != nil {
 			result.TokenScope = scope
 
@@ -611,16 +613,22 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 	// The owner and shared branches above admit connections on identity
 	// alone, so a scoped token has to be intersected against its scope
 	// after them; otherwise a token issued for one connection enumerates
-	// every connection its owner happens to have.
+	// every connection its owner happens to have. The scope was already
+	// read by GetEffectivePrivileges, so it is intersected from there
+	// rather than with one query per visible connection. A token whose
+	// scope could not be read is shown nothing, for the same reason
+	// CanAccessConnection denies it; a token with no scope at all
+	// (privs.TokenScope nil, no error) is unrestricted.
 	if tokenID := GetTokenIDFromContext(ctx); tokenID > 0 {
-		for connID := range seen {
-			inScope, _, scopeErr := rc.authStore.IsConnectionInTokenScope(tokenID, connID)
-			if scopeErr != nil {
-				// On error, deny visibility for safety.
-				return nil, false, scopeErr
-			}
-			if !inScope {
-				delete(seen, connID)
+		if privs.TokenScopeError != nil {
+			return nil, false, fmt.Errorf("token %d: connection scope could not be read: %w",
+				tokenID, privs.TokenScopeError)
+		}
+		if privs.TokenScope != nil {
+			for connID := range seen {
+				if !privs.TokenScope.InScope(connID) {
+					delete(seen, connID)
+				}
 			}
 		}
 	}

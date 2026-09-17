@@ -200,6 +200,17 @@ project adheres to
 
 ### Changed
 
+- Change the alerter's default Gemini reasoning model from
+  `gemini-2.5-flash` to `gemini-3.6-flash`. Google no longer offers
+  `gemini-2.5-flash` to new API keys, answering every request with a
+  404 that points at `gemini-3.6-flash`, so a fresh deployment that
+  left `llm.gemini.reasoning_model` unset failed on every reasoning
+  call. This is a behaviour change for existing deployments: one that
+  leaves `reasoning_model` unset now uses `gemini-3.6-flash`, and an
+  operator who needs to stay on `gemini-2.5-flash` should set it
+  explicitly. The example configuration and the walkthrough script
+  are updated to match. (#459)
+
 - Report the queried time window in the `/api/v1/metrics/query`
   response. The endpoint returned a bare array of series and said
   nothing about the window behind the series, so charts derived

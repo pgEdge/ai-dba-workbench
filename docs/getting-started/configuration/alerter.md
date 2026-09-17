@@ -469,7 +469,7 @@ key can access.
 |--------|------|---------|-------------|
 | `api_key_file` | string | None | Path to API key file |
 | `base_url` | string | `https://generativelanguage.googleapis.com` | Gemini base URL |
-| `reasoning_model` | string | `gemini-2.5-flash` | Reasoning model |
+| `reasoning_model` | string | `gemini-3.6-flash` | Reasoning model |
 | `embedding_model` | string | `gemini-embedding-001` | Embedding model |
 
 When Gemini is the embedding provider, the

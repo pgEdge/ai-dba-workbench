@@ -64,7 +64,11 @@ The server enforces the following limits on a custom
 window:
 
 - The start must fall before the present moment.
-- The span must not exceed 366 days.
+- The span must not exceed 366 days. The Top Queries
+  panel and the query detail overlay accept at most 30
+  days, the longest preset, and report `span must not
+  exceed 30 days` for a longer window whilst the charts
+  continue to draw.
 - An end time in the future is clamped to the present
   moment rather than rejected.
 

@@ -405,6 +405,16 @@ sample. The behaviour that follows from that is:
 - A statement that the collector sampled but that ran no
   calls inside the window is left out of the response
   altogether.
+- A custom window may span at most 30 days, which is the
+  longest preset; the endpoint rejects a longer span with
+  `span must not exceed 30 days`, whereas the other
+  windowed endpoints accept up to 366 days.
+- On a server with `pg_stat_statements` installed in more
+  than one database, the collector stores each counter
+  once per such database. The endpoint counts each
+  counter once, and a `database_name` filter sums only
+  the counters of the statements that ran in that
+  database.
 
 ### Query Response Envelope
 

@@ -170,7 +170,7 @@ const MonitoringPage: React.FC<MonitoringPageProps> = ({ aiEnabled }) => (
             />
             <FeatureItem
                 title="Custom Time Range"
-                description="The Custom option opens a picker with From and To fields for an arbitrary window, so you can line the charts up with a known incident. The span must not exceed 366 days and the start must be in the past. A custom window is not saved, so a reload returns to the last preset. The Top Queries panel and the query detail overlay follow a custom window; the table and index leaderboards and the summary tiles do not."
+                description="The Custom option opens a picker with From and To fields for an arbitrary window, so you can line the charts up with a known incident. The span must not exceed 366 days and the start must be in the past. A custom window is not saved, so a reload returns to the last preset. The Top Queries panel and the query detail overlay follow a custom window, but accept at most 30 days, the longest preset, and report an error for a longer span whilst the charts continue to draw; the table and index leaderboards and the summary tiles do not follow a custom window."
             />
             <FeatureItem
                 title="Drill-Down Navigation"

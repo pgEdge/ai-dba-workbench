@@ -79,8 +79,20 @@ func (ps *ProbeScheduler) Start(
 ## Probe Scheduling
 
 Each probe runs in its own goroutine with an
-independent timer. The following code shows the
-scheduling loop:
+independent timer. The scheduler first asks
+`calculateInitialDelay` how long remains of the
+probe's interval since the last recorded collection.
+A positive delay means the probe ran recently, so
+the goroutine waits out the remainder. A delay that
+is zero or negative means the probe is past due, has
+never run, or its last collection time could not be
+determined, and the goroutine instead waits out a
+random startup jitter so that a restart does not
+fire every probe at once. The jitter is drawn with
+`crypto/rand` from zero up to the smaller of the
+probe's interval and `scheduler.startup_jitter_seconds`,
+falling back to half that window if the draw fails.
+The following code shows the scheduling loop:
 
 ```go
 func (ps *ProbeScheduler) scheduleProbe(
@@ -94,8 +106,29 @@ func (ps *ProbeScheduler) scheduleProbe(
     ticker := time.NewTicker(interval)
     defer ticker.Stop()
 
-    // Execute immediately on startup
+    // A probe collected recently waits out the
+    // remainder of its interval; one that is past
+    // due, has never run, or whose last collection
+    // time could not be determined instead waits
+    // out a random startup jitter
+    delay := ps.calculateInitialDelay(probe, config)
+    if delay <= 0 {
+        delay = ps.initialStartupJitter(interval)
+    }
+    if delay > 0 {
+        select {
+        case <-ps.shutdownChan:
+            return
+        case <-ps.ctx.Done():
+            return
+        case <-time.After(delay):
+        }
+    }
     ps.executeProbe(ps.ctx, probe)
+
+    // Realign the ticker, which was created before
+    // the wait and may hold a buffered tick
+    restartTicker(ticker, interval)
 
     // Then execute on timer
     for {
@@ -388,7 +421,43 @@ goroutine per connection. These goroutines are
 short-lived and last only for the duration of probe
 execution. With 10 monitored servers, the system
 can produce up to 340 concurrent goroutines during
-probe execution.
+probe execution, although only
+`scheduler.max_concurrent_probes` of those goroutines
+execute a probe at a time, and no more than
+`scheduler.max_concurrent_probes_per_connection` of
+them for any one connection; the rest wait for a slot.
+
+### Global Probe Concurrency Limit
+
+Every probe execution holds a slot in a counting
+semaphore shared by the whole scheduler, sized from
+`scheduler.max_concurrent_probes` and defaulting to
+8 slots. The limit bounds peak memory and connection
+demand so that neither scales with the number of
+monitored connections. A goroutine waiting for a
+slot abandons the wait when the scheduler shuts
+down, so a backlog of queued probes cannot delay
+`Stop`.
+
+Each monitored connection also holds a permit from
+its own counting semaphore, sized from
+`scheduler.max_concurrent_probes_per_connection` and
+defaulting to 2 permits, which caps how many of the
+global slots that connection may hold at once. The
+ceiling matters because a probe holds its slot until
+the execution finishes or reaches
+`pool.monitored_max_wait_seconds`: a server that
+accepts connections but answers slowly demands the
+sum of `monitored_max_wait_seconds / interval` over
+its enabled probes, roughly 17.7 slots of the default
+8 for the seeded probe set, and would otherwise queue
+the probes of healthy connections behind its own. The
+scheduler clamps a configured ceiling greater than
+`scheduler.max_concurrent_probes` to that cap, since
+a higher ceiling can never bind, and it takes the
+per-connection permit before the global slot, so that
+no goroutine waits for a permit whilst holding a
+slot.
 
 ### Connection Pool Limits
 

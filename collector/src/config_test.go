@@ -45,6 +45,19 @@ func TestNewConfig(t *testing.T) {
 	if config.Pool.MaxConnectionsPerServer != 3 {
 		t.Errorf("Expected default Pool.MaxConnectionsPerServer to be 3, got %d", config.Pool.MaxConnectionsPerServer)
 	}
+
+	if config.Scheduler.MaxConcurrentProbes != 8 {
+		t.Errorf("Expected default Scheduler.MaxConcurrentProbes to be 8, got %d", config.Scheduler.MaxConcurrentProbes)
+	}
+
+	if config.Scheduler.MaxConcurrentProbesPerConnection != 2 {
+		t.Errorf("Expected default Scheduler.MaxConcurrentProbesPerConnection to be 2, got %d",
+			config.Scheduler.MaxConcurrentProbesPerConnection)
+	}
+
+	if config.Scheduler.StartupJitterSeconds != 60 {
+		t.Errorf("Expected default Scheduler.StartupJitterSeconds to be 60, got %d", config.Scheduler.StartupJitterSeconds)
+	}
 }
 
 func TestConfigLoadFromFile(t *testing.T) {
@@ -119,6 +132,11 @@ func TestConfigValidate(t *testing.T) {
 					DatastoreMaxWaitSeconds: 60,
 					MaxConnectionsPerServer: 3,
 					MonitoredMaxWaitSeconds: 60,
+				},
+				Scheduler: SchedulerConfig{
+					MaxConcurrentProbes:              8,
+					MaxConcurrentProbesPerConnection: 2,
+					StartupJitterSeconds:             60,
 				},
 			},
 			wantErr: false,
@@ -372,6 +390,11 @@ func TestConfigGetters(t *testing.T) {
 			DatastoreMaxWaitSeconds: 30,
 			MonitoredMaxWaitSeconds: 45,
 		},
+		Scheduler: SchedulerConfig{
+			MaxConcurrentProbes:              6,
+			MaxConcurrentProbesPerConnection: 3,
+			StartupJitterSeconds:             15,
+		},
 	}
 
 	if config.GetPgHost() != "testhost" {
@@ -415,6 +438,16 @@ func TestConfigGetters(t *testing.T) {
 	}
 	if config.GetMonitoredPoolMaxWaitSeconds() != 45 {
 		t.Errorf("GetMonitoredPoolMaxWaitSeconds() = %d, want 45", config.GetMonitoredPoolMaxWaitSeconds())
+	}
+	if config.GetMaxConcurrentProbes() != 6 {
+		t.Errorf("GetMaxConcurrentProbes() = %d, want 6", config.GetMaxConcurrentProbes())
+	}
+	if config.GetMaxConcurrentProbesPerConnection() != 3 {
+		t.Errorf("GetMaxConcurrentProbesPerConnection() = %d, want 3",
+			config.GetMaxConcurrentProbesPerConnection())
+	}
+	if config.GetStartupJitterSeconds() != 15 {
+		t.Errorf("GetStartupJitterSeconds() = %d, want 15", config.GetStartupJitterSeconds())
 	}
 }
 
@@ -872,6 +905,11 @@ func TestConfigValidate_AllBranches(t *testing.T) {
 				MonitoredMaxIdleSeconds: 30,
 				MonitoredMaxWaitSeconds: 30,
 			},
+			Scheduler: SchedulerConfig{
+				MaxConcurrentProbes:              8,
+				MaxConcurrentProbesPerConnection: 2,
+				StartupJitterSeconds:             60,
+			},
 		}
 	}
 
@@ -882,6 +920,15 @@ func TestConfigValidate_AllBranches(t *testing.T) {
 		{"port too high", func(c *Config) { c.Datastore.Port = 70000 }},
 		{"missing username", func(c *Config) { c.Datastore.Username = "" }},
 		{"negative monitored idle seconds", func(c *Config) { c.Pool.MonitoredMaxIdleSeconds = -5 }},
+		{"zero max concurrent probes", func(c *Config) { c.Scheduler.MaxConcurrentProbes = 0 }},
+		{"negative max concurrent probes", func(c *Config) { c.Scheduler.MaxConcurrentProbes = -1 }},
+		{"zero max concurrent probes per connection", func(c *Config) {
+			c.Scheduler.MaxConcurrentProbesPerConnection = 0
+		}},
+		{"negative max concurrent probes per connection", func(c *Config) {
+			c.Scheduler.MaxConcurrentProbesPerConnection = -1
+		}},
+		{"negative startup jitter", func(c *Config) { c.Scheduler.StartupJitterSeconds = -1 }},
 	}
 
 	for _, tc := range tests {
@@ -1043,5 +1090,75 @@ func TestGetServerSecret(t *testing.T) {
 
 	if config.GetServerSecret() != testSecret {
 		t.Errorf("Expected secret to be '%s', got '%s'", testSecret, config.GetServerSecret())
+	}
+}
+
+// TestConfigLoadFromFile_SchedulerSection confirms the scheduler block
+// added for issue #441 round-trips from YAML.
+func TestConfigLoadFromFile_SchedulerSection(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "scheduler.yaml")
+
+	content := `datastore:
+  host: localhost
+  database: ai_workbench
+  username: postgres
+  port: 5432
+scheduler:
+  max_concurrent_probes: 4
+  max_concurrent_probes_per_connection: 3
+  startup_jitter_seconds: 5
+`
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	config := NewConfig()
+	if err := config.LoadFromFile(configPath); err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+
+	if config.GetMaxConcurrentProbes() != 4 {
+		t.Errorf("GetMaxConcurrentProbes() = %d, want 4", config.GetMaxConcurrentProbes())
+	}
+	if config.GetMaxConcurrentProbesPerConnection() != 3 {
+		t.Errorf("GetMaxConcurrentProbesPerConnection() = %d, want 3",
+			config.GetMaxConcurrentProbesPerConnection())
+	}
+	if config.GetStartupJitterSeconds() != 5 {
+		t.Errorf("GetStartupJitterSeconds() = %d, want 5", config.GetStartupJitterSeconds())
+	}
+}
+
+// TestConfigLoadFromFile_SchedulerDefaultsSurvive confirms a config file
+// with no scheduler block keeps the defaults from NewConfig.
+func TestConfigLoadFromFile_SchedulerDefaultsSurvive(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "no-scheduler.yaml")
+
+	content := `datastore:
+  host: localhost
+  database: ai_workbench
+  username: postgres
+  port: 5432
+`
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	config := NewConfig()
+	if err := config.LoadFromFile(configPath); err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+
+	if config.GetMaxConcurrentProbes() != 8 {
+		t.Errorf("GetMaxConcurrentProbes() = %d, want 8", config.GetMaxConcurrentProbes())
+	}
+	if config.GetMaxConcurrentProbesPerConnection() != 2 {
+		t.Errorf("GetMaxConcurrentProbesPerConnection() = %d, want 2",
+			config.GetMaxConcurrentProbesPerConnection())
+	}
+	if config.GetStartupJitterSeconds() != 60 {
+		t.Errorf("GetStartupJitterSeconds() = %d, want 60", config.GetStartupJitterSeconds())
 	}
 }

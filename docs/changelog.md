@@ -771,6 +771,35 @@ project adheres to
   by construction fully used; the metric now ignores pseudo
   filesystems, matching the dashboard. (#428)
 
+- Fix the collector running every past-due probe immediately at
+  startup, with no stagger and no limit on how many ran at once. On a
+  restart, every probe whose interval is shorter than the outage is
+  past due, so concurrency scaled with the number of monitored
+  connections multiplied by their probes; that burst exhausted a
+  modest memory limit, and because the resulting restart put every
+  probe back in the past-due state, the collector never recovered on
+  its own. A probe that is past due or has never run now waits out a
+  random delay, drawn from zero up to the smaller of its collection
+  interval and the new `scheduler.startup_jitter_seconds` setting
+  (60 seconds by default, with 0 disabling the stagger), and its timer
+  is realigned afterwards so the offset also spreads out steady-state
+  collection. Every probe execution now holds a slot in a global
+  semaphore bounded by the new `scheduler.max_concurrent_probes`
+  setting (8 by default), so the memory and connection demand of
+  active probe execution is capped by that setting rather than
+  growing with the number of monitored connections multiplied by
+  their probes; the scheduler still runs one goroutine per
+  connection and probe pair, so that baseline continues to scale
+  with the number of monitored connections. A probe holds its slot
+  until the execution finishes or reaches
+  `pool.monitored_max_wait_seconds`, so the new
+  `scheduler.max_concurrent_probes_per_connection` setting (2 by
+  default, and clamped to `scheduler.max_concurrent_probes`) caps how
+  many of those slots a single monitored connection may hold at once;
+  without the ceiling, one server that accepts connections but answers
+  slowly demands more slots than the cap provides and queues the
+  probes of healthy connections behind its own. (#441)
+
 ### Removed
 
 - Retire the `table_bloat_ratio` alert rule, which duplicated the

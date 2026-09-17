@@ -158,9 +158,11 @@ The pattern to follow instead:
   towards collecting slightly early is harmless; failing towards not
   collecting is what fills a disk.
 - Keep the startup grace period short, and only long enough to stay
-  clear of the probe burst the scheduler runs at startup. A long
-  grace period reintroduces the original bug for any process that
-  does not live that long.
+  clear of the probes the scheduler runs at startup, which since
+  issue #441 are spread over a jitter window and capped in
+  concurrency (see `probe-scheduling.md`). A long grace period
+  reintroduces the original bug for any process that does not live
+  that long.
 - Back a failed pass off rather than retrying immediately, so an
   unreachable datastore does not produce a tight error loop.
 

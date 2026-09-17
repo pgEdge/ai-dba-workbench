@@ -57,6 +57,7 @@ const sparklineToChartData = (
 
 const TREND_ICON_SX = { fontSize: 16 };
 const TREND_TEXT_SX = { fontSize: '0.75rem', fontWeight: 500 };
+const KPI_SECONDARY_TEXT_SX = { display: 'block', mt: 0.5, color: 'text.secondary' };
 const SPARKLINE_CONTAINER_SX = { mt: 1, flex: 1, minHeight: 0 };
 const ANALYZE_BUTTON_SX = {
     position: 'absolute',
@@ -111,6 +112,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
     unit,
     trend,
     trendValue,
+    secondaryText,
     sparklineData,
     status,
     onClick,
@@ -153,6 +155,11 @@ const KpiTile: React.FC<KpiTileProps> = ({
         setAnalysisOpen(false);
     }, []);
 
+    // The secondary line carries a real figure, so it belongs in
+    // the accessible name rather than being left as sighted-only text.
+    const ariaLabel = `${label}: ${value}${unit ? ` ${unit}` : ''}`
+        + `${secondaryText ? `, ${secondaryText}` : ''}`;
+
     const TrendIcon = useMemo(() => {
         switch (trend) {
             case 'up':
@@ -180,7 +187,7 @@ const KpiTile: React.FC<KpiTileProps> = ({
             onKeyDown={handleKeyDown}
             tabIndex={onClick ? 0 : undefined}
             role={onClick ? 'button' : undefined}
-            aria-label={`${label}: ${value}${unit ? ` ${unit}` : ''}`}
+            aria-label={ariaLabel}
         >
             <Typography sx={KPI_LABEL_SX}>
                 {label}
@@ -213,6 +220,11 @@ const KpiTile: React.FC<KpiTileProps> = ({
                         {trendValue}
                     </Typography>
                 </Box>
+            )}
+            {secondaryText && (
+                <Typography variant="caption" sx={KPI_SECONDARY_TEXT_SX}>
+                    {secondaryText}
+                </Typography>
             )}
             {sparklineData && sparklineData.length > 0 && (
                 <Box sx={SPARKLINE_CONTAINER_SX}>

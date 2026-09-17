@@ -43,10 +43,22 @@ vi.mock('../../../../contexts/useAICapabilities', () => ({
     }),
 }));
 
-// Mock the Chart component to avoid ApexCharts dependencies
+// Mock the Chart component to avoid ApexCharts dependencies. The
+// series names and the analysis description are exposed as attributes
+// so the tests can assert on what the section actually charts.
 vi.mock('../../../Chart', () => ({
-    Chart: ({ title }: { title: string }) => (
-        <div data-testid="chart">{title}</div>
+    Chart: ({ title, data, analysisContext }: {
+        title: string;
+        data: { series: { name: string }[] };
+        analysisContext?: { metricDescription: string };
+    }) => (
+        <div
+            data-testid="chart"
+            data-series={data.series.map(s => s.name).join('|')}
+            data-description={analysisContext?.metricDescription ?? ''}
+        >
+            {title}
+        </div>
     ),
 }));
 
@@ -132,6 +144,103 @@ const realMetrics = (): UseMetricsReturn => ({
     error: null,
     refetch: vi.fn(),
 });
+
+/** Bucket times shared by every fixture series */
+const T0 = '2024-01-01T00:00:00Z';
+const T1 = '2024-01-01T00:01:00Z';
+
+/** CPU series with real values, which is what hasSystemStats keys off */
+const cpuSeries = (): MetricSeries[] => ([
+    {
+        name: 'idle_mode_percent',
+        metric: 'idle_mode_percent',
+        data: [{ time: T0, value: 85.5 }, { time: T1, value: 90.2 }],
+    },
+    {
+        name: 'usermode_normal_process_percent',
+        metric: 'usermode_normal_process_percent',
+        data: [{ time: T0, value: 10.2 }, { time: T1, value: 8.5 }],
+    },
+] as MetricSeries[]);
+
+/**
+ * Memory series. `available` selects the available_memory shape:
+ * 'absent' omits the series entirely, as an older collector would,
+ * 'null' returns it with only null buckets, and an array supplies
+ * real values.
+ */
+const memorySeries = (
+    available: 'absent' | 'null' | number[],
+): MetricSeries[] => {
+    const series: MetricSeries[] = [
+        {
+            name: 'used_memory',
+            metric: 'used_memory',
+            data: [{ time: T0, value: 4e9 }, { time: T1, value: 5e9 }],
+        },
+        {
+            name: 'total_memory',
+            metric: 'total_memory',
+            data: [{ time: T0, value: 16e9 }, { time: T1, value: 16e9 }],
+        },
+        {
+            name: 'free_memory',
+            metric: 'free_memory',
+            data: [{ time: T0, value: 2e9 }, { time: T1, value: 1e9 }],
+        },
+        {
+            name: 'cache_total',
+            metric: 'cache_total',
+            data: [{ time: T0, value: 9e9 }, { time: T1, value: 1e10 }],
+        },
+    ] as MetricSeries[];
+
+    if (available !== 'absent') {
+        const values = available === 'null' ? [null, null] : available;
+        series.push({
+            name: 'available_memory',
+            metric: 'available_memory',
+            data: [
+                { time: T0, value: values[0] },
+                { time: T1, value: values[1] },
+            ],
+        } as MetricSeries);
+    }
+
+    return series;
+};
+
+/**
+ * Drive useMetrics so memory probes get the memory fixture and every
+ * other probe gets the CPU fixture, which keeps hasSystemStats true.
+ */
+const mockMemory = (available: 'absent' | 'null' | number[]): void => {
+    mockUseMetrics.mockImplementation((params) => ({
+        data: params?.probeName === 'pg_sys_memory_info'
+            ? memorySeries(available)
+            : cpuSeries(),
+        loading: false,
+        error: null,
+        refetch: vi.fn(),
+    }));
+};
+
+/**
+ * Wording unique to the chart caption. The tile's secondary line also
+ * ends in 'available (est.)', so the caption must never be asserted on
+ * that substring; these two matchers are deliberately disjoint, and
+ * both are case-insensitive so that nothing rests on the caption
+ * capitalising the label and the tile lower-casing it.
+ */
+const CAPTION_TEXT = /estimate of free memory plus reclaimable page cache/i;
+
+/** Wording unique to the memory tile's secondary line */
+const TILE_SECONDARY_TEXT = /^[\d.]+ [KMGT]?B available \(est\.\)$/i;
+
+/** The memory chart node, identified by its title text */
+const memoryChart = (): HTMLElement => screen
+    .getAllByTestId('chart')
+    .find(el => el.textContent === 'Memory Usage Over Time') as HTMLElement;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -417,6 +526,166 @@ describe('SystemResourcesSection', () => {
             expect(screen.getByText('Load Average')).toBeInTheDocument();
             // Three placeholders: Memory, Disk, Load all show '--'.
             expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(3);
+        });
+    });
+
+    describe('available memory', () => {
+        it('requests available_memory for both the KPI and the chart', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(mockUseMetrics).toHaveBeenCalled();
+            });
+            // The section re-renders as the disk mount selector settles,
+            // so the hook is called more than once per query; compare the
+            // distinct memory queries rather than the call count.
+            const requested = new Set(mockUseMetrics.mock.calls
+                .filter(([params]) => params?.probeName === 'pg_sys_memory_info')
+                .map(([params]) => (params?.metrics ?? []).join(',')));
+            expect(requested.size).toBe(2);
+            requested.forEach(metrics => {
+                expect(metrics.split(',')).toContain('available_memory');
+            });
+        });
+
+        it('charts a fourth Available (est.) series and says so in the analysis context', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(memoryChart()).toBeInTheDocument();
+            });
+            expect(memoryChart()).toHaveAttribute(
+                'data-series',
+                'Used|Free|Cached|Available (est.)',
+            );
+            expect(memoryChart().getAttribute('data-description'))
+                .toMatch(/estimated available/i);
+        });
+
+        it('explains the estimate in a caption beneath the memory chart', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(memoryChart()).toBeInTheDocument();
+            });
+            expect(screen.getByText(CAPTION_TEXT)).toBeInTheDocument();
+        });
+
+        it('shows the available figure as the memory tile secondary line', async () => {
+            mockMemory([13.3e9, 13.3e9]);
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+            });
+            expect(screen.getByText('12.4 GB available (est.)'))
+                .toBeInTheDocument();
+            expect(screen.getByText(TILE_SECONDARY_TEXT))
+                .toBeInTheDocument();
+            expect(
+                screen.getByLabelText(/12\.4 GB available \(est\.\)/),
+            ).toBeInTheDocument();
+        });
+
+        it('omits the secondary line when available_memory is all null', async () => {
+            mockMemory('null');
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+            });
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
+                .not.toBeInTheDocument();
+            // No reading means nothing to explain, so no caption either.
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
+            // The series is still charted, as a gap rather than a zero.
+            expect(memoryChart()).toHaveAttribute(
+                'data-series',
+                'Used|Free|Cached|Available (est.)',
+            );
+        });
+
+        it('omits both the secondary line and the caption when the collector sends no available_memory', async () => {
+            mockMemory('absent');
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('Memory Usage')).toBeInTheDocument();
+            });
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
+                .not.toBeInTheDocument();
+            // The other three series still yield a chart, so the caption
+            // cannot be gated on the chart having data: it would explain
+            // an Available (est.) line that was never drawn.
+            expect(memoryChart()).toBeInTheDocument();
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
+        });
+
+        it('shows neither the secondary line nor the caption without system_stats', async () => {
+            mockUseMetrics.mockReturnValue(emptyMetrics());
+
+            render(
+                <SystemResourcesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText(/No data available.*system_stats/i),
+                ).toBeInTheDocument();
+            });
+
+            // Expand manually so the tiles and chart panels render.
+            fireEvent.click(
+                screen.getByRole('button', {
+                    name: /expand system resources section/i,
+                }),
+            );
+
+            expect(screen.queryByText(TILE_SECONDARY_TEXT))
+                .not.toBeInTheDocument();
+            expect(screen.queryByText(CAPTION_TEXT)).not.toBeInTheDocument();
         });
     });
 

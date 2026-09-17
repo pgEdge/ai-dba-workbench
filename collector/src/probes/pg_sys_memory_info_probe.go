@@ -12,6 +12,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,6 +97,7 @@ func (p *PgSysMemoryInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool
 		"swap_total", "swap_used", "swap_free",
 		"cache_total", "kernel_total", "kernel_paged",
 		"kernel_non_paged", "total_page_file", "avail_page_file",
+		"available_memory",
 	}
 
 	// Build values array
@@ -116,6 +118,7 @@ func (p *PgSysMemoryInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool
 			metric["kernel_non_paged"],
 			metric["total_page_file"],
 			metric["avail_page_file"],
+			estimateAvailableMemory(metric),
 		}
 		values = append(values, row)
 	}
@@ -126,4 +129,67 @@ func (p *PgSysMemoryInfoProbe) Store(ctx context.Context, datastoreConn *pgxpool
 	}
 
 	return nil
+}
+
+// estimateAvailableMemory estimates the memory available for new
+// workloads without swapping, as the sum of the free memory and the page
+// cache reported by pg_sys_memory_info().
+//
+// The estimate exists because the system_stats extension does not expose
+// the kernel's MemAvailable, and the collector reaches the monitored host
+// only over SQL, so /proc/meminfo is unreachable. It overestimates
+// availability where non-reclaimable slab is large or where much of the
+// page cache is dirty. Should system_stats gain a real MemAvailable
+// column, only this function and the probe's query need to change; the
+// stored column keeps its meaning.
+//
+// It returns nil, and so stores SQL NULL, whenever either input is
+// absent, is NULL on the monitored server, or is not an integer value.
+// A missing input must never be read as zero, because zero is itself a
+// meaningful reading.
+func estimateAvailableMemory(metric map[string]any) any {
+	free, ok := metricInt64(metric["free_memory"])
+	if !ok {
+		return nil
+	}
+	cache, ok := metricInt64(metric["cache_total"])
+	if !ok {
+		return nil
+	}
+
+	// Guard the addition: both operands come from the monitored server,
+	// so a nonsensical pair must not wrap around into a negative figure.
+	if (cache > 0 && free > math.MaxInt64-cache) ||
+		(cache < 0 && free < math.MinInt64-cache) {
+		return nil
+	}
+
+	return free + cache
+}
+
+// metricInt64 converts a value scanned out of a metrics row into an
+// int64. The rows arrive as map[string]any from utils.ScanRowsToMaps,
+// which fills the map from pgx's rows.Values(), so the concrete type is
+// whatever codec pgx picked for the column's PostgreSQL type rather
+// than anything the caller chose.
+//
+// For the integer types pgx v5 decodes BIGINT to int64, INTEGER to
+// int32 and SMALLINT to int16, and a SQL NULL to an untyped nil. All
+// three signed widths are accepted so that a system_stats build
+// declaring one of these columns narrower than BIGINT still yields a
+// reading. No unsigned width is accepted: the only unsigned type pgx
+// produces is uint32 for an OID, which no column here can be. Floats,
+// pgtype.Numeric, strings, nil and anything else report false rather
+// than being coerced, so the caller stores NULL.
+func metricInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int32:
+		return int64(n), true
+	case int16:
+		return int64(n), true
+	default:
+		return 0, false
+	}
 }

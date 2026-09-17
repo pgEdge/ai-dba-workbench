@@ -99,6 +99,48 @@ describe('KpiTile', () => {
         expect(screen.getByLabelText('Count: 99')).toBeInTheDocument();
     });
 
+    it('renders the secondary line and folds it into the aria-label', () => {
+        renderKpiTile({
+            label: 'Memory Usage',
+            value: '62.5',
+            unit: '%',
+            secondaryText: '12.4 GB available (est.)',
+        });
+
+        expect(screen.getByText('12.4 GB available (est.)'))
+            .toBeInTheDocument();
+        expect(
+            screen.getByLabelText(
+                'Memory Usage: 62.5 %, 12.4 GB available (est.)',
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it('renders no secondary line and a plain aria-label when omitted', () => {
+        const { container } = renderKpiTile({
+            label: 'Memory Usage',
+            value: '62.5',
+            unit: '%',
+        });
+
+        expect(container.textContent).not.toContain('available');
+        expect(screen.getByLabelText('Memory Usage: 62.5 %'))
+            .toBeInTheDocument();
+    });
+
+    it('renders the secondary line alongside a trend without a trend colour', () => {
+        renderKpiTile({
+            trend: 'up',
+            trendValue: '+5%',
+            secondaryText: '1.0 GB available (est.)',
+        });
+
+        expect(screen.getByText('+5%')).toBeInTheDocument();
+        const secondary = screen.getByText('1.0 GB available (est.)');
+        expect(secondary).toBeInTheDocument();
+        expect(secondary).not.toHaveStyle({ color: theme.palette.success.main });
+    });
+
     it('renders trend indicator when trend and trendValue are provided', () => {
         renderKpiTile({ trend: 'up', trendValue: '+5%' });
 

@@ -17,6 +17,7 @@ import InputLabel from '@mui/material/InputLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import type { SelectChangeEvent } from '@mui/material/Select';
+import Typography from '@mui/material/Typography';
 import { Computer as ComputerIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
@@ -56,6 +57,14 @@ const MOUNT_SELECT_SX = {
     '& .MuiInputBase-root': DASHBOARD_CONTROL_TEXT_SX,
     '& .MuiInputLabel-root': DASHBOARD_CONTROL_TEXT_SX,
 };
+/** Explanatory caption rendered beneath the memory chart */
+const CHART_CAPTION_SX = { display: 'block', mt: 0.5, color: 'text.secondary' };
+
+/**
+ * Wording shared by the memory chart series and the KPI tile's
+ * secondary line, so the two cannot drift apart.
+ */
+const AVAILABLE_MEMORY_LABEL = 'Available (est.)';
 
 /**
  * Determine a status level from a percentage value.
@@ -148,7 +157,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: KPI_BUCKETS,
         aggregation: 'avg',
-        metrics: ['used_memory', 'total_memory'],
+        metrics: ['used_memory', 'total_memory', 'available_memory'],
     }), [connectionId, timeRange.range]);
 
     const diskKpiParams = useMemo((): MetricQueryParams | null => (
@@ -193,7 +202,8 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         timeRange: timeRange.range,
         buckets: CHART_BUCKETS,
         aggregation: 'avg',
-        metrics: ['used_memory', 'free_memory', 'cache_total'],
+        metrics: ['used_memory', 'free_memory', 'cache_total',
+            'available_memory'],
     }), [connectionId, timeRange.range]);
 
     const diskChartParams = useMemo((): MetricQueryParams | null => (
@@ -277,6 +287,19 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
         return null;
     }, [usedMemory, totalMemory, hasSystemStats]);
 
+    // The collector estimates available memory as free plus cached, and
+    // stores NULL whenever either input is missing, so this is null both
+    // when system_stats is absent and when the estimate could not be
+    // derived. Either way the tile shows no secondary line at all.
+    const availableMemory = extractLatestValue(
+        memoryKpi.data, 'available_memory'
+    );
+    const memoryAvailableText = useMemo(() => {
+        if (!hasSystemStats || availableMemory === null) { return undefined; }
+        return `${formatBytes(availableMemory)} `
+            + AVAILABLE_MEMORY_LABEL.toLowerCase();
+    }, [availableMemory, hasSystemStats]);
+
     const usedSpace = extractLatestValue(diskKpi.data, 'used_space');
     const totalSpace = extractLatestValue(diskKpi.data, 'total_space');
 
@@ -315,11 +338,30 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
     const memoryChartData = useMemo(
         () => buildChartData(
             memoryChart.data,
-            ['used_memory', 'free_memory', 'cache_total'],
-            ['Used', 'Free', 'Cached'],
+            ['used_memory', 'free_memory', 'cache_total', 'available_memory'],
+            ['Used', 'Free', 'Cached', AVAILABLE_MEMORY_LABEL],
             memoryChart.window,
         ),
         [memoryChart.data, memoryChart.window]
+    );
+
+    /**
+     * Whether the memory chart actually carries an available_memory
+     * series with a reading. `buildChartData` returns data whenever any
+     * one requested metric came back, so a collector predating the
+     * available_memory column still yields a chart, and gating the
+     * caption on the chart alone would explain a series that is not
+     * drawn. `hasNonZeroData` is the wrong test here: it treats 0 as
+     * missing, which suits the extension-installed heuristic it was
+     * written for but not a gauge where only null marks a missing
+     * bucket and a zero reading is real.
+     */
+    const hasAvailableMemoryChartData = useMemo(
+        () => memoryChart.data?.some(
+            s => s.metric === 'available_memory'
+                && s.data.some(d => d.value !== null)
+        ) ?? false,
+        [memoryChart.data]
     );
 
     const diskChartData = useMemo(
@@ -409,6 +451,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                         : memoryUsagePercent !== null ? '%' : undefined}
                     status={!hasSystemStats ? undefined
                         : getPercentageStatus(memoryUsagePercent)}
+                    secondaryText={memoryAvailableText}
                     sparklineData={extractSparklineData(
                         memoryKpi.data, 'used_memory'
                     )}
@@ -508,7 +551,7 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                                 showTooltip
                                 enableExport={false}
                                 analysisContext={{
-                                    metricDescription: 'Memory usage showing used, free, and cached memory',
+                                    metricDescription: 'Memory usage showing used, free, and cached memory, plus an estimated available figure derived as free plus cached rather than read from the kernel, which overstates availability when the page cache is dirty or non-reclaimable slab is large',
                                     connectionId,
                                     connectionName,
                                     timeRange: timeRange.range,
@@ -516,6 +559,13 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                             />
                         )}
                     </ChartPanel>
+                    {hasSystemStats && hasAvailableMemoryChartData && (
+                        <Typography variant="caption" sx={CHART_CAPTION_SX}>
+                            Available (est.) is an estimate of free memory
+                            plus reclaimable page cache rather than the
+                            kernel&apos;s own available-memory figure.
+                        </Typography>
+                    )}
                 </Box>
 
                 <Box>

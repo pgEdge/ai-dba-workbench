@@ -590,7 +590,7 @@ func applyMetricsSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			swap_total BIGINT, swap_used BIGINT, swap_free BIGINT,
 			cache_total BIGINT, kernel_total BIGINT, kernel_paged BIGINT,
 			kernel_non_paged BIGINT, total_page_file BIGINT,
-			avail_page_file BIGINT
+			avail_page_file BIGINT, available_memory BIGINT
 		) PARTITION BY RANGE (collected_at)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics.pg_sys_disk_info (

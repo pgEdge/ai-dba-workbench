@@ -198,6 +198,27 @@ The rules for new or modified charts are as follows:
   cumulative total whilst the tile plots a rate, or the reverse, is
   a bug: the AI analysis reads it.
 
+- Label a derived or estimated series as one, everywhere it appears.
+  `available_memory` on `pg_sys_memory_info` is the worked example: the
+  `system_stats` extension exposes no equivalent of the kernel's
+  `MemAvailable`, so the collector stores `free_memory + cache_total`
+  and NULL when either input is missing, which overstates availability
+  when the page cache is dirty or non-reclaimable slab is large. The
+  client charts it as 'Available (est.)', says the same in the
+  `metricDescription` the AI analysis reads, and carries a
+  `Typography variant="caption"` line beneath the `ChartPanel` (there
+  is no subtitle or description slot on `Chart` or `ChartPanel`)
+  separating it from 'Free', which is `MemFree` and counts only wholly
+  unused memory.
+
+- Show a supporting figure on a KPI tile through `KpiTile`'s optional
+  `secondaryText`, not through `trend`/`trendValue`, which mean a
+  direction and carry a trend colour and icon. It renders as a
+  `caption` line beneath the headline value and is appended to the
+  tile's `aria-label`. Pass `undefined` when the figure is
+  unavailable so no line renders at all; never a '0 B', 'NaN' or '--'
+  placeholder in that slot.
+
 - Report a failed metrics query rather than letting it read as an
   absence of data. `ChartPanel` takes an optional `errorMessage`,
   rendered in `color="error"` in place of `emptyMessage` whenever it

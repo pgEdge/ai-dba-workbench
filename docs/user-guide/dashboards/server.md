@@ -10,11 +10,24 @@ The system resources section displays the following
 metrics:
 
 - CPU usage percentage with a time-series chart.
-- Memory usage percentage with a time-series chart.
+- Memory usage percentage with a time-series chart,
+  and an estimated available memory figure beneath the
+  percentage.
 - Disk usage percentage with a time-series chart.
 - Load average values with a time-series chart.
 - Network I/O throughput as bytes transmitted and
   received per second, with a time-series chart.
+
+The memory chart plots four series: used, free, cached,
+and Available (est.). The available series is an
+estimate of how much memory a new workload could claim,
+calculated as free memory plus cached memory, because
+the kernel's own `MemAvailable` figure is not available
+to the collector. The estimate runs high on a host with
+a large non-reclaimable slab or a largely dirty page
+cache, so read the series as a guide when sizing
+`shared_buffers` or `work_mem` rather than as an exact
+figure.
 
 ## PostgreSQL Overview
 

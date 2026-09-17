@@ -94,8 +94,9 @@ per monitored connection:
   configuration information.
 - `pg_sys_cpu_usage_info` collects CPU utilisation
   statistics across all cores.
-- `pg_sys_memory_info` collects total, used, and free
-  memory statistics for the host.
+- `pg_sys_memory_info` collects total, used, free, and
+  cached memory statistics for the host, along with an
+  estimated available memory figure.
 - `pg_sys_io_analysis_info` collects per-device read
   and write I/O statistics.
 - `pg_sys_disk_info` collects disk capacity and used
@@ -108,6 +109,24 @@ per monitored connection:
   send and receive statistics.
 - `pg_sys_cpu_memory_by_process` collects CPU and
   memory consumption for the top processes.
+
+The available memory figure that `pg_sys_memory_info`
+records is an estimate rather than a reading taken from
+the host. The free memory figure reports `MemFree` from
+`/proc/meminfo`, which counts only memory that is
+entirely unused, whereas the figure that matters when
+sizing `shared_buffers` or `work_mem` is the kernel's
+`MemAvailable`, which also counts reclaimable page cache
+and slab; on a busy PostgreSQL host the two differ by
+most of the machine's memory. The collector reads host
+metrics only through the `system_stats` extension over
+SQL, and that extension has never exposed
+`MemAvailable`, so the collector approximates the value
+as free memory plus cached memory. The approximation
+overestimates availability on a host with a large
+non-reclaimable slab or a largely dirty page cache, so
+treat the value as a guide rather than as the kernel's
+own figure.
 
 ## Default Collection Intervals
 

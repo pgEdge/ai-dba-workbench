@@ -117,13 +117,17 @@ type schedulerConfig struct {
 	datastoreMaxWait    int
 	monitoredMaxWait    int
 	maxConcurrentProbes int
+	maxProbesPerConn    int
 	startupJitter       int
 }
 
 func (c schedulerConfig) GetDatastorePoolMaxWaitSeconds() int { return c.datastoreMaxWait }
 func (c schedulerConfig) GetMonitoredPoolMaxWaitSeconds() int { return c.monitoredMaxWait }
 func (c schedulerConfig) GetMaxConcurrentProbes() int         { return c.maxConcurrentProbes }
-func (c schedulerConfig) GetStartupJitterSeconds() int        { return c.startupJitter }
+func (c schedulerConfig) GetMaxConcurrentProbesPerConnection() int {
+	return c.maxProbesPerConn
+}
+func (c schedulerConfig) GetStartupJitterSeconds() int { return c.startupJitter }
 
 // integrationTestConfig builds a schedulerConfig with sane test defaults.
 func integrationTestConfig() schedulerConfig {
@@ -134,6 +138,7 @@ func integrationTestConfig() schedulerConfig {
 		datastoreMaxWait:    10,
 		monitoredMaxWait:    10,
 		maxConcurrentProbes: 4,
+		maxProbesPerConn:    2,
 	}
 }
 
@@ -1484,6 +1489,50 @@ func TestSchedulerLoadConfigs_RemovesStaleProbes(t *testing.T) {
 	ps.probesMutex.RUnlock()
 	if stillThere {
 		t.Errorf("expected stale probes for connection %d to be removed", staleID)
+	}
+}
+
+// TestSchedulerLoadConfigs_RemovesStaleConnSlots confirms the
+// per-connection concurrency semaphores are pruned along with the
+// probes, so a collector that has been running for months does not
+// retain an entry for every connection ever monitored.
+func TestSchedulerLoadConfigs_RemovesStaleConnSlots(t *testing.T) {
+	f := setupIntegration(t)
+	ps := NewProbeScheduler(f.ds, f.pool, integrationTestConfig(), testServerSecret)
+	defer ps.Stop()
+
+	staleID := 99_998
+	ps.probesMutex.Lock()
+	ps.probesByConn[staleID] = map[string]probes.MetricsProbe{
+		"stub": probes.NewPgConnectivityProbe(&probes.ProbeConfig{
+			Name: probes.ProbeNamePgConnectivity, CollectionIntervalSeconds: 60,
+		}),
+	}
+	ps.probesMutex.Unlock()
+
+	// Take and give back a permit so the semaphore exists.
+	release, ok := ps.acquireProbeSlot(staleID)
+	if !ok {
+		t.Fatal("failed to acquire a slot for the stale connection")
+	}
+	release()
+
+	ps.connSlotsMutex.Lock()
+	_, created := ps.connSlots[staleID]
+	ps.connSlotsMutex.Unlock()
+	if !created {
+		t.Fatal("expected a per-connection semaphore to be created on first use")
+	}
+
+	if err := ps.loadConfigs(context.Background()); err != nil {
+		t.Fatalf("loadConfigs: %v", err)
+	}
+
+	ps.connSlotsMutex.Lock()
+	_, stillHeld := ps.connSlots[staleID]
+	ps.connSlotsMutex.Unlock()
+	if stillHeld {
+		t.Errorf("expected the per-connection semaphore for %d to be removed", staleID)
 	}
 }
 

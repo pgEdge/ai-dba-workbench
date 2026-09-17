@@ -50,6 +50,11 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("Expected default Scheduler.MaxConcurrentProbes to be 8, got %d", config.Scheduler.MaxConcurrentProbes)
 	}
 
+	if config.Scheduler.MaxConcurrentProbesPerConnection != 2 {
+		t.Errorf("Expected default Scheduler.MaxConcurrentProbesPerConnection to be 2, got %d",
+			config.Scheduler.MaxConcurrentProbesPerConnection)
+	}
+
 	if config.Scheduler.StartupJitterSeconds != 60 {
 		t.Errorf("Expected default Scheduler.StartupJitterSeconds to be 60, got %d", config.Scheduler.StartupJitterSeconds)
 	}
@@ -129,8 +134,9 @@ func TestConfigValidate(t *testing.T) {
 					MonitoredMaxWaitSeconds: 60,
 				},
 				Scheduler: SchedulerConfig{
-					MaxConcurrentProbes:  8,
-					StartupJitterSeconds: 60,
+					MaxConcurrentProbes:              8,
+					MaxConcurrentProbesPerConnection: 2,
+					StartupJitterSeconds:             60,
 				},
 			},
 			wantErr: false,
@@ -385,8 +391,9 @@ func TestConfigGetters(t *testing.T) {
 			MonitoredMaxWaitSeconds: 45,
 		},
 		Scheduler: SchedulerConfig{
-			MaxConcurrentProbes:  6,
-			StartupJitterSeconds: 15,
+			MaxConcurrentProbes:              6,
+			MaxConcurrentProbesPerConnection: 3,
+			StartupJitterSeconds:             15,
 		},
 	}
 
@@ -434,6 +441,10 @@ func TestConfigGetters(t *testing.T) {
 	}
 	if config.GetMaxConcurrentProbes() != 6 {
 		t.Errorf("GetMaxConcurrentProbes() = %d, want 6", config.GetMaxConcurrentProbes())
+	}
+	if config.GetMaxConcurrentProbesPerConnection() != 3 {
+		t.Errorf("GetMaxConcurrentProbesPerConnection() = %d, want 3",
+			config.GetMaxConcurrentProbesPerConnection())
 	}
 	if config.GetStartupJitterSeconds() != 15 {
 		t.Errorf("GetStartupJitterSeconds() = %d, want 15", config.GetStartupJitterSeconds())
@@ -895,8 +906,9 @@ func TestConfigValidate_AllBranches(t *testing.T) {
 				MonitoredMaxWaitSeconds: 30,
 			},
 			Scheduler: SchedulerConfig{
-				MaxConcurrentProbes:  8,
-				StartupJitterSeconds: 60,
+				MaxConcurrentProbes:              8,
+				MaxConcurrentProbesPerConnection: 2,
+				StartupJitterSeconds:             60,
 			},
 		}
 	}
@@ -910,6 +922,12 @@ func TestConfigValidate_AllBranches(t *testing.T) {
 		{"negative monitored idle seconds", func(c *Config) { c.Pool.MonitoredMaxIdleSeconds = -5 }},
 		{"zero max concurrent probes", func(c *Config) { c.Scheduler.MaxConcurrentProbes = 0 }},
 		{"negative max concurrent probes", func(c *Config) { c.Scheduler.MaxConcurrentProbes = -1 }},
+		{"zero max concurrent probes per connection", func(c *Config) {
+			c.Scheduler.MaxConcurrentProbesPerConnection = 0
+		}},
+		{"negative max concurrent probes per connection", func(c *Config) {
+			c.Scheduler.MaxConcurrentProbesPerConnection = -1
+		}},
 		{"negative startup jitter", func(c *Config) { c.Scheduler.StartupJitterSeconds = -1 }},
 	}
 
@@ -1088,6 +1106,7 @@ func TestConfigLoadFromFile_SchedulerSection(t *testing.T) {
   port: 5432
 scheduler:
   max_concurrent_probes: 4
+  max_concurrent_probes_per_connection: 3
   startup_jitter_seconds: 5
 `
 	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
@@ -1101,6 +1120,10 @@ scheduler:
 
 	if config.GetMaxConcurrentProbes() != 4 {
 		t.Errorf("GetMaxConcurrentProbes() = %d, want 4", config.GetMaxConcurrentProbes())
+	}
+	if config.GetMaxConcurrentProbesPerConnection() != 3 {
+		t.Errorf("GetMaxConcurrentProbesPerConnection() = %d, want 3",
+			config.GetMaxConcurrentProbesPerConnection())
 	}
 	if config.GetStartupJitterSeconds() != 5 {
 		t.Errorf("GetStartupJitterSeconds() = %d, want 5", config.GetStartupJitterSeconds())
@@ -1130,6 +1153,10 @@ func TestConfigLoadFromFile_SchedulerDefaultsSurvive(t *testing.T) {
 
 	if config.GetMaxConcurrentProbes() != 8 {
 		t.Errorf("GetMaxConcurrentProbes() = %d, want 8", config.GetMaxConcurrentProbes())
+	}
+	if config.GetMaxConcurrentProbesPerConnection() != 2 {
+		t.Errorf("GetMaxConcurrentProbesPerConnection() = %d, want 2",
+			config.GetMaxConcurrentProbesPerConnection())
 	}
 	if config.GetStartupJitterSeconds() != 60 {
 		t.Errorf("GetStartupJitterSeconds() = %d, want 60", config.GetStartupJitterSeconds())

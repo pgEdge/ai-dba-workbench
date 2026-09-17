@@ -49,6 +49,18 @@ type ProbeScheduler struct {
 	// monitored connections multiplied by their probes.
 	probeSlots chan struct{}
 
+	// connSlots holds a per-connection counting semaphore bounding how
+	// many of the global slots a single monitored connection may hold
+	// at once, keyed by connection ID and created on first use. It is
+	// pruned alongside probesByConn when a connection stops being
+	// monitored.
+	connSlots      map[int]chan struct{}
+	connSlotsMutex sync.Mutex
+
+	// maxProbesPerConn is the capacity given to each per-connection
+	// semaphore.
+	maxProbesPerConn int
+
 	// startupJitter bounds the random delay applied before the first
 	// execution of a past-due probe.
 	startupJitter time.Duration
@@ -59,11 +71,16 @@ type ProbeScheduler struct {
 // probe on a zero-capacity semaphore.
 const defaultMaxConcurrentProbes = 8
 
+// defaultMaxConcurrentProbesPerConnection is used when the supplied
+// configuration reports a non-positive per-connection ceiling.
+const defaultMaxConcurrentProbesPerConnection = 2
+
 // Config interface defines the minimal configuration needed by ProbeScheduler
 type Config interface {
 	GetDatastorePoolMaxWaitSeconds() int
 	GetMonitoredPoolMaxWaitSeconds() int
 	GetMaxConcurrentProbes() int
+	GetMaxConcurrentProbesPerConnection() int
 	GetStartupJitterSeconds() int
 }
 
@@ -74,6 +91,17 @@ func NewProbeScheduler(datastore *database.Datastore, poolManager *database.Moni
 	maxConcurrent := config.GetMaxConcurrentProbes()
 	if maxConcurrent <= 0 {
 		maxConcurrent = defaultMaxConcurrentProbes
+	}
+
+	perConn := config.GetMaxConcurrentProbesPerConnection()
+	if perConn <= 0 {
+		perConn = defaultMaxConcurrentProbesPerConnection
+	}
+	// A ceiling above the global cap can never bind, so clamp it: the
+	// per-connection semaphore then degenerates to the global one
+	// rather than pretending to offer capacity that does not exist.
+	if perConn > maxConcurrent {
+		perConn = maxConcurrent
 	}
 
 	jitter := time.Duration(config.GetStartupJitterSeconds()) * time.Second
@@ -91,54 +119,117 @@ func NewProbeScheduler(datastore *database.Datastore, poolManager *database.Moni
 		ctx:          ctx,
 		cancel:       cancel,
 
-		probeSlots:    make(chan struct{}, maxConcurrent),
-		startupJitter: jitter,
+		probeSlots:       make(chan struct{}, maxConcurrent),
+		connSlots:        make(map[int]chan struct{}),
+		maxProbesPerConn: perConn,
+		startupJitter:    jitter,
 	}
 }
 
-// acquireProbeSlot takes a slot from the concurrency semaphore,
-// returning false if the scheduler is shutting down before one becomes
-// free so that Stop is never delayed by a queued probe.
-func (ps *ProbeScheduler) acquireProbeSlot() bool {
-	// Prefer shutdown over an immediately available slot, so a probe
-	// queued at shutdown does not start a fresh execution.
+// stopping reports whether the scheduler has begun shutting down.
+func (ps *ProbeScheduler) stopping() bool {
 	select {
 	case <-ps.shutdownChan:
-		return false
+		return true
 	case <-ps.ctx.Done():
-		return false
+		return true
 	default:
+		return false
+	}
+}
+
+// connSlotsFor returns the per-connection semaphore for connectionID,
+// creating it on first use. Callers keep the returned channel for the
+// matching release, so that pruning the map whilst a probe is in flight
+// cannot strand its permit.
+func (ps *ProbeScheduler) connSlotsFor(connectionID int) chan struct{} {
+	ps.connSlotsMutex.Lock()
+	defer ps.connSlotsMutex.Unlock()
+
+	slots, exists := ps.connSlots[connectionID]
+	if !exists {
+		slots = make(chan struct{}, ps.maxProbesPerConn)
+		ps.connSlots[connectionID] = slots
+	}
+	return slots
+}
+
+// acquireProbeSlot takes both a per-connection permit and a global
+// concurrency slot for a probe on connectionID, returning a release
+// function that gives both back. It returns false if the scheduler is
+// shutting down before acquisition completes, so that Stop is never
+// delayed by a queued probe; nothing is held in that case.
+//
+// The two are always taken in the same order, the per-connection permit
+// first and the global slot second, so no goroutine ever waits for a
+// per-connection permit whilst holding a global slot and the pair
+// cannot deadlock.
+func (ps *ProbeScheduler) acquireProbeSlot(connectionID int) (func(), bool) {
+	// Prefer shutdown over an immediately available slot, so a probe
+	// queued at shutdown does not start a fresh execution.
+	if ps.stopping() {
+		return nil, false
+	}
+
+	connSlots := ps.connSlotsFor(connectionID)
+
+	select {
+	case connSlots <- struct{}{}:
+	case <-ps.shutdownChan:
+		return nil, false
+	case <-ps.ctx.Done():
+		return nil, false
+	}
+
+	// A ready permit and a ready shutdown are chosen between at random,
+	// so recheck before queueing for the global slot.
+	if ps.stopping() {
+		releaseSlot(connSlots)
+		return nil, false
 	}
 
 	select {
 	case ps.probeSlots <- struct{}{}:
 	case <-ps.shutdownChan:
-		return false
+		releaseSlot(connSlots)
+		return nil, false
 	case <-ps.ctx.Done():
-		return false
+		releaseSlot(connSlots)
+		return nil, false
 	}
 
-	// A ready slot and a ready shutdown are chosen between at random, so
-	// recheck once the slot is held: starting an execution here would
-	// let CheckConnectionUpdated close a pool and block Stop on a
-	// borrowed connection, outside any timeout.
-	select {
-	case <-ps.shutdownChan:
-		ps.releaseProbeSlot()
-		return false
-	case <-ps.ctx.Done():
-		ps.releaseProbeSlot()
-		return false
-	default:
+	// Recheck once both are held: starting an execution here would let
+	// CheckConnectionUpdated close a pool and block Stop on a borrowed
+	// connection, outside any timeout.
+	if ps.stopping() {
+		releaseSlot(ps.probeSlots)
+		releaseSlot(connSlots)
+		return nil, false
 	}
 
-	return true
+	return func() {
+		releaseSlot(ps.probeSlots)
+		releaseSlot(connSlots)
+	}, true
 }
 
-// releaseProbeSlot returns a slot to the concurrency semaphore.
-func (ps *ProbeScheduler) releaseProbeSlot() {
+// removeConnSlots drops the per-connection semaphore for a connection
+// that is no longer monitored, so that a long-running collector does
+// not retain an entry for every connection it has ever seen. Probes
+// still in flight hold the channel they acquired from, so they release
+// their permits normally and the discarded channel is then collected.
+func (ps *ProbeScheduler) removeConnSlots(connectionID int) {
+	ps.connSlotsMutex.Lock()
+	defer ps.connSlotsMutex.Unlock()
+	delete(ps.connSlots, connectionID)
+}
+
+// releaseSlot returns a permit to a counting semaphore. The receive is
+// non-blocking so that a release without a matching acquisition cannot
+// wedge the caller.
+func releaseSlot(slots chan struct{}) {
 	select {
-	case <-ps.probeSlots:
+	case <-slots:
 	default:
 	}
 }
@@ -170,17 +261,16 @@ func (ps *ProbeScheduler) initialStartupJitter(interval time.Duration) time.Dura
 	return time.Duration(n.Int64())
 }
 
-// restartTicker stops, drains and restarts a ticker so that a tick
-// buffered whilst the goroutine waited out its initial delay cannot
-// fire immediately after the first execution. Without this the phase
-// offset gained from the startup jitter would be lost straight away and
-// the probes would re-cluster.
+// restartTicker stops and restarts a ticker so that a tick which came
+// due whilst the goroutine waited out its initial delay cannot fire
+// immediately after the first execution. Without this the phase offset
+// gained from the startup jitter would be lost straight away and the
+// probes would re-cluster. Since Go 1.23 a pending tick is held inside
+// the timer rather than buffered in the channel, so Stop followed by
+// Reset is what discards it and the next tick arrives a full interval
+// later; there is nothing to receive from the channel.
 func restartTicker(ticker *time.Ticker, interval time.Duration) {
 	ticker.Stop()
-	select {
-	case <-ticker.C:
-	default:
-	}
 	ticker.Reset(interval)
 }
 
@@ -247,6 +337,7 @@ func (ps *ProbeScheduler) loadConfigs(ctx context.Context) error {
 	}
 	for _, connID := range connectionsToRemove {
 		delete(ps.probesByConn, connID)
+		ps.removeConnSlots(connID)
 		logger.Infof("Removed probes for connection %d (no longer monitored)", connID)
 	}
 
@@ -523,11 +614,12 @@ func (ps *ProbeScheduler) executeProbeForConnection(ctx context.Context, probe p
 
 	// Bound overall probe concurrency. Acquisition respects shutdown, so
 	// a backlog of queued probes cannot hold up Stop.
-	if !ps.acquireProbeSlot() {
+	releaseSlots, acquired := ps.acquireProbeSlot(conn.ID)
+	if !acquired {
 		logger.Infof("Skipping probe %s on %s: scheduler is shutting down", config.Name, conn.Name)
 		return
 	}
-	defer ps.releaseProbeSlot()
+	defer releaseSlots()
 	// Check if connection details have been updated since the pool was created
 	if ps.poolManager.CheckConnectionUpdated(conn.ID, conn.UpdatedAt) {
 		logger.Infof("Connection %d (%s) was updated, invalidated cached pool", conn.ID, conn.Name)

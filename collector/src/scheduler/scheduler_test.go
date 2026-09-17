@@ -26,13 +26,17 @@ type testConfig struct {
 	datastoreMaxWait    int
 	monitoredMaxWait    int
 	maxConcurrentProbes int
+	maxProbesPerConn    int
 	startupJitter       int
 }
 
 func (c testConfig) GetDatastorePoolMaxWaitSeconds() int { return c.datastoreMaxWait }
 func (c testConfig) GetMonitoredPoolMaxWaitSeconds() int { return c.monitoredMaxWait }
 func (c testConfig) GetMaxConcurrentProbes() int         { return c.maxConcurrentProbes }
-func (c testConfig) GetStartupJitterSeconds() int        { return c.startupJitter }
+func (c testConfig) GetMaxConcurrentProbesPerConnection() int {
+	return c.maxProbesPerConn
+}
+func (c testConfig) GetStartupJitterSeconds() int { return c.startupJitter }
 
 func TestIsClosedPoolError(t *testing.T) {
 	tests := []struct {
@@ -368,19 +372,109 @@ func TestProbeSlots_DefaultCapacity(t *testing.T) {
 	}
 }
 
-// TestAcquireProbeSlot_CapEnforced confirms the semaphore blocks once
-// the cap is reached, and admits the next waiter after a release.
-func TestAcquireProbeSlot_CapEnforced(t *testing.T) {
-	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2}, "")
-
-	for i := 0; i < 2; i++ {
-		if !ps.acquireProbeSlot() {
-			t.Fatalf("acquisition %d should have succeeded", i+1)
-		}
+// TestPerConnectionSlots_Capacity covers the per-connection ceiling's
+// defaulting and its clamp: a ceiling above the global cap can never
+// bind, and a global cap of 1 must not produce a wider per-connection
+// semaphore than the global cap can ever admit.
+func TestPerConnectionSlots_Capacity(t *testing.T) {
+	tests := []struct {
+		name       string
+		global     int
+		perConn    int
+		wantGlobal int
+		want       int
+	}{
+		{"configured", 8, 3, 8, 3},
+		{"zero defaults", 8, 0, 8, defaultMaxConcurrentProbesPerConnection},
+		{"negative defaults", 8, -1, 8, defaultMaxConcurrentProbesPerConnection},
+		{"clamped to the global cap", 2, 5, 2, 2},
+		{"global cap of one", 1, 4, 1, 1},
+		{"default global, default per connection", 0, 0, defaultMaxConcurrentProbes, defaultMaxConcurrentProbesPerConnection},
 	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := NewProbeScheduler(nil, nil, testConfig{
+				maxConcurrentProbes: tt.global,
+				maxProbesPerConn:    tt.perConn,
+			}, "")
+
+			if got := cap(ps.probeSlots); got != tt.wantGlobal {
+				t.Errorf("global cap: got %d, want %d", got, tt.wantGlobal)
+			}
+			if ps.maxProbesPerConn != tt.want {
+				t.Errorf("maxProbesPerConn: got %d, want %d", ps.maxProbesPerConn, tt.want)
+			}
+			if got := cap(ps.connSlotsFor(1)); got != tt.want {
+				t.Errorf("per-connection cap: got %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAcquireProbeSlot_GlobalCapOfOne confirms the degenerate case is
+// still serial rather than deadlocked: one probe runs, the next waits,
+// and each release admits exactly one more.
+func TestAcquireProbeSlot_GlobalCapOfOne(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1, maxProbesPerConn: 4}, "")
+
+	release := mustAcquire(t, ps, 1)
+
+	acquired := make(chan func(), 1)
+	go func() {
+		next, ok := ps.acquireProbeSlot(1)
+		if ok {
+			acquired <- next
+		} else {
+			close(acquired)
+		}
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("second acquisition should have blocked behind the single slot")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+
+	select {
+	case next, ok := <-acquired:
+		if !ok {
+			t.Fatal("second acquisition was refused")
+		}
+		next()
+	case <-time.After(time.Second):
+		t.Fatal("second acquisition did not proceed after the slot was released")
+	}
+}
+
+// mustAcquire takes both permits for connectionID, failing the test if
+// acquisition is refused, and returns the release function.
+func mustAcquire(t *testing.T, ps *ProbeScheduler, connectionID int) func() {
+	t.Helper()
+	release, ok := ps.acquireProbeSlot(connectionID)
+	if !ok {
+		t.Fatalf("acquisition for connection %d should have succeeded", connectionID)
+	}
+	return release
+}
+
+// TestAcquireProbeSlot_CapEnforced confirms the global semaphore blocks
+// once the cap is reached, and admits the next waiter after a release.
+// Distinct connection IDs keep the per-connection ceiling out of the
+// way so that the global cap is what binds.
+func TestAcquireProbeSlot_CapEnforced(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2, maxProbesPerConn: 2}, "")
+
+	mustAcquire(t, ps, 1)
+	release := mustAcquire(t, ps, 2)
+
 	acquired := make(chan bool, 1)
-	go func() { acquired <- ps.acquireProbeSlot() }()
+	go func() {
+		_, ok := ps.acquireProbeSlot(3)
+		acquired <- ok
+	}()
 
 	select {
 	case <-acquired:
@@ -388,7 +482,7 @@ func TestAcquireProbeSlot_CapEnforced(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	ps.releaseProbeSlot()
+	release()
 
 	select {
 	case ok := <-acquired:
@@ -400,6 +494,115 @@ func TestAcquireProbeSlot_CapEnforced(t *testing.T) {
 	}
 }
 
+// TestAcquireProbeSlot_PerConnectionCeiling is the regression test for
+// the reason the ceiling exists: a probe holds its slot for the whole
+// monitored pool timeout, so without a per-connection limit one slow
+// but reachable server can occupy the entire global budget and queue
+// every healthy connection behind it.
+func TestAcquireProbeSlot_PerConnectionCeiling(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 8, maxProbesPerConn: 2}, "")
+
+	mustAcquire(t, ps, 1)
+	release := mustAcquire(t, ps, 1)
+
+	blocked := make(chan bool, 1)
+	go func() {
+		_, ok := ps.acquireProbeSlot(1)
+		blocked <- ok
+	}()
+
+	select {
+	case <-blocked:
+		t.Fatal("third probe on one connection should have blocked at the ceiling")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// A different connection is unaffected whilst the slow one waits,
+	// which is the whole point of the ceiling.
+	healthy := make(chan bool, 1)
+	go func() {
+		_, ok := ps.acquireProbeSlot(2)
+		healthy <- ok
+	}()
+
+	select {
+	case ok := <-healthy:
+		if !ok {
+			t.Fatal("healthy connection was refused a slot")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("healthy connection was queued behind the saturated one")
+	}
+
+	release()
+
+	select {
+	case ok := <-blocked:
+		if !ok {
+			t.Fatal("acquisition after release returned false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not proceed after a per-connection permit was released")
+	}
+}
+
+// TestAcquireProbeSlot_ReleasesBothPermits confirms the release
+// function gives back the global slot and the per-connection permit,
+// so neither leaks across executions.
+func TestAcquireProbeSlot_ReleasesBothPermits(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 4, maxProbesPerConn: 2}, "")
+
+	release := mustAcquire(t, ps, 7)
+	if got := len(ps.probeSlots); got != 1 {
+		t.Errorf("global depth whilst held: got %d, want 1", got)
+	}
+	if got := len(ps.connSlotsFor(7)); got != 1 {
+		t.Errorf("per-connection depth whilst held: got %d, want 1", got)
+	}
+
+	release()
+	if got := len(ps.probeSlots); got != 0 {
+		t.Errorf("global depth after release: got %d, want 0", got)
+	}
+	if got := len(ps.connSlotsFor(7)); got != 0 {
+		t.Errorf("per-connection depth after release: got %d, want 0", got)
+	}
+}
+
+// TestConnSlots_LazyCreationAndPruning confirms per-connection state is
+// created on first use and dropped when the connection stops being
+// monitored, so a long-running collector does not retain an entry for
+// every connection it has ever seen.
+func TestConnSlots_LazyCreationAndPruning(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 4, maxProbesPerConn: 2}, "")
+
+	if len(ps.connSlots) != 0 {
+		t.Fatalf("per-connection state at construction: got %d entries, want 0", len(ps.connSlots))
+	}
+
+	release := mustAcquire(t, ps, 11)
+	if len(ps.connSlots) != 1 {
+		t.Fatalf("per-connection state after acquisition: got %d entries, want 1", len(ps.connSlots))
+	}
+
+	// Pruning whilst a probe is still in flight must not strand the
+	// holder: it releases into the channel it acquired from.
+	ps.removeConnSlots(11)
+	if len(ps.connSlots) != 0 {
+		t.Fatalf("per-connection state after pruning: got %d entries, want 0", len(ps.connSlots))
+	}
+	release()
+	if len(ps.probeSlots) != 0 {
+		t.Errorf("global slot retained after releasing a pruned connection: got %d", len(ps.probeSlots))
+	}
+	if len(ps.connSlots) != 0 {
+		t.Errorf("release recreated per-connection state: got %d entries, want 0", len(ps.connSlots))
+	}
+
+	// Pruning an unknown connection is a no-op.
+	ps.removeConnSlots(999)
+}
+
 // TestAcquireProbeSlot_ShutdownWins covers both shutdown paths: a
 // scheduler already stopping refuses a free slot, and a goroutine
 // queued behind a full semaphore is released by shutdown rather than
@@ -408,7 +611,7 @@ func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
 	t.Run("already shut down", func(t *testing.T) {
 		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2}, "")
 		close(ps.shutdownChan)
-		if ps.acquireProbeSlot() {
+		if _, ok := ps.acquireProbeSlot(1); ok {
 			t.Error("acquired a slot after shutdown")
 		}
 	})
@@ -416,19 +619,20 @@ func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
 	t.Run("context canceled", func(t *testing.T) {
 		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 2}, "")
 		ps.cancel()
-		if ps.acquireProbeSlot() {
+		if _, ok := ps.acquireProbeSlot(1); ok {
 			t.Error("acquired a slot after context cancellation")
 		}
 	})
 
 	t.Run("queued waiter released by shutdown", func(t *testing.T) {
-		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
-		if !ps.acquireProbeSlot() {
-			t.Fatal("first acquisition failed")
-		}
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1, maxProbesPerConn: 1}, "")
+		mustAcquire(t, ps, 1)
 
 		acquired := make(chan bool, 1)
-		go func() { acquired <- ps.acquireProbeSlot() }()
+		go func() {
+			_, ok := ps.acquireProbeSlot(2)
+			acquired <- ok
+		}()
 
 		time.Sleep(20 * time.Millisecond)
 		close(ps.shutdownChan)
@@ -443,27 +647,77 @@ func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
 		}
 	})
 
-	// A waiter can win the semaphore send at the same moment shutdown
-	// arrives, since select chooses at random between two ready cases.
-	// Whichever way it falls, the scheduler must not be left holding a
-	// slot it never uses. Repeated to give the race a chance to occur.
-	t.Run("slot released when shutdown races acquisition", func(t *testing.T) {
-		for i := 0; i < 200; i++ {
-			ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
-			if !ps.acquireProbeSlot() {
-				t.Fatal("first acquisition failed")
+	t.Run("waiter on the per-connection ceiling released by shutdown", func(t *testing.T) {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 4, maxProbesPerConn: 1}, "")
+		mustAcquire(t, ps, 1)
+
+		acquired := make(chan bool, 1)
+		go func() {
+			_, ok := ps.acquireProbeSlot(1)
+			acquired <- ok
+		}()
+
+		time.Sleep(20 * time.Millisecond)
+		close(ps.shutdownChan)
+
+		select {
+		case ok := <-acquired:
+			if ok {
+				t.Error("queued waiter acquired a permit during shutdown")
 			}
+		case <-time.After(time.Second):
+			t.Fatal("waiter on the per-connection ceiling was not released by shutdown")
+		}
+	})
+
+	t.Run("waiter on the per-connection ceiling released by cancel", func(t *testing.T) {
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 4, maxProbesPerConn: 1}, "")
+		mustAcquire(t, ps, 1)
+
+		acquired := make(chan bool, 1)
+		go func() {
+			_, ok := ps.acquireProbeSlot(1)
+			acquired <- ok
+		}()
+
+		time.Sleep(20 * time.Millisecond)
+		ps.cancel()
+
+		select {
+		case ok := <-acquired:
+			if ok {
+				t.Error("queued waiter acquired a permit during cancellation")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("waiter on the per-connection ceiling was not released by cancellation")
+		}
+	})
+
+	// A waiter can win a semaphore send at the same moment shutdown
+	// arrives, since select chooses at random between two ready cases.
+	// Whichever way it falls, the scheduler must not be left holding
+	// either permit. Repeated to give the race a chance to occur.
+	t.Run("permits released when shutdown races acquisition", func(t *testing.T) {
+		for i := 0; i < 200; i++ {
+			ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1, maxProbesPerConn: 1}, "")
+			release := mustAcquire(t, ps, 1)
 
 			acquired := make(chan bool, 1)
-			go func() { acquired <- ps.acquireProbeSlot() }()
+			go func() {
+				_, ok := ps.acquireProbeSlot(2)
+				acquired <- ok
+			}()
 
 			go close(ps.shutdownChan)
-			ps.releaseProbeSlot()
+			release()
 
 			select {
 			case ok := <-acquired:
 				if !ok && len(ps.probeSlots) != 0 {
-					t.Fatalf("slot retained after a refused acquisition (iteration %d)", i)
+					t.Fatalf("global slot retained after a refused acquisition (iteration %d)", i)
+				}
+				if !ok && len(ps.connSlotsFor(2)) != 0 {
+					t.Fatalf("per-connection permit retained after a refused acquisition (iteration %d)", i)
 				}
 			case <-time.After(time.Second):
 				t.Fatal("waiter never returned")
@@ -472,13 +726,14 @@ func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
 	})
 
 	t.Run("queued waiter released by context cancel", func(t *testing.T) {
-		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
-		if !ps.acquireProbeSlot() {
-			t.Fatal("first acquisition failed")
-		}
+		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1, maxProbesPerConn: 1}, "")
+		mustAcquire(t, ps, 1)
 
 		acquired := make(chan bool, 1)
-		go func() { acquired <- ps.acquireProbeSlot() }()
+		go func() {
+			_, ok := ps.acquireProbeSlot(2)
+			acquired <- ok
+		}()
 
 		time.Sleep(20 * time.Millisecond)
 		ps.cancel()
@@ -494,15 +749,16 @@ func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
 	})
 }
 
-// TestReleaseProbeSlot_NoUnderflow confirms releasing an unheld slot is
-// a no-op rather than a block or a panic.
-func TestReleaseProbeSlot_NoUnderflow(t *testing.T) {
-	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
-	ps.releaseProbeSlot()
+// TestReleaseSlot_NoUnderflow confirms releasing an unheld permit is a
+// no-op rather than a block or a panic.
+func TestReleaseSlot_NoUnderflow(t *testing.T) {
+	ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1, maxProbesPerConn: 1}, "")
+	releaseSlot(ps.probeSlots)
+	releaseSlot(ps.connSlotsFor(1))
 	if len(ps.probeSlots) != 0 {
 		t.Errorf("semaphore depth: got %d, want 0", len(ps.probeSlots))
 	}
-	if !ps.acquireProbeSlot() {
+	if _, ok := ps.acquireProbeSlot(1); !ok {
 		t.Error("expected to acquire a slot after a spurious release")
 	}
 }
@@ -551,9 +807,7 @@ func TestExecuteProbeForConnection_CapAndShutdown(t *testing.T) {
 	})
 	conn := database.MonitoredConnection{ID: 1, Name: "test-connection"}
 
-	if !ps.acquireProbeSlot() {
-		t.Fatal("failed to take the only slot")
-	}
+	mustAcquire(t, ps, conn.ID)
 
 	done := make(chan struct{})
 	go func() {

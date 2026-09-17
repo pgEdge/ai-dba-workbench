@@ -61,6 +61,14 @@ type SchedulerConfig struct {
 	// case does not scale with the number of connections.
 	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
 
+	// MaxConcurrentProbesPerConnection caps how many of those
+	// concurrent executions a single monitored connection may hold at
+	// the same time. A probe holds its slot for as long as it runs, up
+	// to pool.monitored_max_wait_seconds, so without this ceiling one
+	// slow but reachable server can occupy the whole global budget and
+	// queue healthy connections behind it.
+	MaxConcurrentProbesPerConnection int `yaml:"max_concurrent_probes_per_connection"`
+
 	// StartupJitterSeconds bounds the random delay applied before the
 	// first execution of a probe that is past due, has never run, or
 	// whose last collection time could not be determined, so that a
@@ -93,8 +101,9 @@ func NewConfig() *Config {
 			MonitoredMaxWaitSeconds: 120,
 		},
 		Scheduler: SchedulerConfig{
-			MaxConcurrentProbes:  8,
-			StartupJitterSeconds: 60,
+			MaxConcurrentProbes:              8,
+			MaxConcurrentProbesPerConnection: 2,
+			StartupJitterSeconds:             60,
 		},
 	}
 }
@@ -254,6 +263,9 @@ func (c *Config) Validate() error {
 	if c.Scheduler.MaxConcurrentProbes <= 0 {
 		return fmt.Errorf("scheduler.max_concurrent_probes must be greater than 0")
 	}
+	if c.Scheduler.MaxConcurrentProbesPerConnection <= 0 {
+		return fmt.Errorf("scheduler.max_concurrent_probes_per_connection must be greater than 0")
+	}
 	if c.Scheduler.StartupJitterSeconds < 0 {
 		return fmt.Errorf("scheduler.startup_jitter_seconds must be non-negative")
 	}
@@ -277,6 +289,9 @@ func (c *Config) GetDatastorePoolMaxWaitSeconds() int { return c.Pool.DatastoreM
 func (c *Config) GetMonitoredPoolMaxWaitSeconds() int { return c.Pool.MonitoredMaxWaitSeconds }
 func (c *Config) GetMaxConcurrentProbes() int         { return c.Scheduler.MaxConcurrentProbes }
 func (c *Config) GetStartupJitterSeconds() int        { return c.Scheduler.StartupJitterSeconds }
+func (c *Config) GetMaxConcurrentProbesPerConnection() int {
+	return c.Scheduler.MaxConcurrentProbesPerConnection
+}
 
 // GetDefaultConfigPath returns the path to an existing default
 // config file, or "" if none was found. Searches the per-user

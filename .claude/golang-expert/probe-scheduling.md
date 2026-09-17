@@ -1,9 +1,9 @@
-# Probe Scheduling: Startup Jitter and the Concurrency Cap
+# Probe Scheduling: Startup Jitter and the Concurrency Caps
 
 `collector/src/scheduler/scheduler.go` runs one goroutine per
 (connection, probe) pair in `scheduleProbeForConnection`. Two
-admission-control rules govern when those goroutines actually run a
-probe, and both exist because of issue #441, where a restart fired
+admission-control mechanisms govern when those goroutines actually run
+a probe, and both exist because of issue #441, where a restart fired
 every probe on every connection at once and OOMKilled the process,
 which restarted it into the same state: a self-sustaining loop.
 
@@ -34,9 +34,15 @@ the same starting line.
 The ticker is created before the initial wait, so a tick can come due
 whilst the goroutine waits out its jitter and would then fire
 immediately after the first execution, re-clustering everything that
-the jitter just spread out. `restartTicker` stops, drains and resets
-the ticker after the first execution so the phase offset survives into
+the jitter just spread out. `restartTicker` stops and resets the
+ticker after the first execution so the phase offset survives into
 steady state. `TestRestartTicker_RealignsPhase` locks this in.
+
+There is nothing to drain from the channel: since Go 1.23 a pending
+tick is held inside the timer rather than buffered in `ticker.C`, so
+`cap(ticker.C)` is 0 and a non-blocking receive always takes its
+`default` branch. `Stop` followed by `Reset` is what discards the
+pending tick, and the next tick then arrives a full interval later.
 
 ## Cap total probe concurrency
 
@@ -54,14 +60,61 @@ Apply the cap to every execution, not just the startup burst: the
 steady-state worst case is the same thundering herd once intervals
 align.
 
+## Cap what one connection may hold of that budget
+
+A slot is held for the whole probe execution, which for a server that
+accepts connections but answers slowly means the full
+`pool.monitored_max_wait_seconds` timeout, 120 seconds by default.
+Summed over the seeded probe set, one such server demands roughly
+`sum(120 / interval)` = 17.7 slots against a default global cap of 8,
+so it can own the entire semaphore and queue healthy connections
+behind it; before the cap existed, a slow server could not delay a
+healthy one at all. (A wholly unreachable server is far cheaper,
+around 1.5 to 2 slots, because `connect_timeout=10` fails its connect
+in ten seconds.)
+
+`scheduler.max_concurrent_probes_per_connection` (default 2) is the
+answer: each connection gets its own counting semaphore in
+`ps.connSlots`, created lazily by `connSlotsFor` on first acquisition.
+A ceiling above the global cap can never bind, so `NewProbeScheduler`
+clamps it to the global cap; a non-positive value falls back to
+`defaultMaxConcurrentProbesPerConnection`.
+
+Three rules keep `acquireProbeSlot` honest, and the tests in
+`scheduler_test.go` cover each:
+
+- **Order.** The per-connection permit is always taken first and the
+  global slot second, so no goroutine ever waits for a per-connection
+  permit whilst holding a global slot, and the pair cannot deadlock.
+
+- **Shutdown.** Every waiting point selects on `ps.shutdownChan` and
+  `ps.ctx.Done()`, and both a ready permit and a ready shutdown being
+  selectable at random means `stopping()` is rechecked after each
+  acquisition; anything already held is released before returning
+  false, so acquisition either holds both permits or neither.
+
+- **Release.** Acquisition returns a release function closing over the
+  channel it acquired from, and `executeProbeForConnection` defers it,
+  so both permits come back on every exit path including the early
+  `DeadlineExceeded` return. Closing over the channel rather than
+  looking it up again matters because `loadConfigs` may prune the map
+  entry whilst the probe is still in flight.
+
+Per-connection state is pruned in `loadConfigs` by `removeConnSlots`,
+in the same loop that drops `probesByConn` entries for connections
+that are no longer monitored, so a long-running collector does not
+leak an entry per connection ever monitored.
+
 ## Config plumbing
 
-Both settings live in the `scheduler` section of
+All three settings live in the `scheduler` section of
 `collector/src/config.go` (`SchedulerConfig`), are validated alongside
-the pool settings, and reach the scheduler through the two getters
-`GetMaxConcurrentProbes` and `GetStartupJitterSeconds` on the
-`scheduler.Config` interface. Adding a getter to that interface means
-updating `testConfig` in `scheduler_test.go` and `schedulerConfig` in
+the pool settings (both caps must be greater than zero, the jitter
+non-negative), and reach the scheduler through the getters
+`GetMaxConcurrentProbes`, `GetMaxConcurrentProbesPerConnection` and
+`GetStartupJitterSeconds` on the `scheduler.Config` interface. Adding
+a getter to that interface means updating `testConfig` in
+`scheduler_test.go` and `schedulerConfig` in
 `scheduler_integration_test.go`; the integration fake deliberately
 leaves the jitter at zero so the existing timing-sensitive tests still
 see a prompt first execution.

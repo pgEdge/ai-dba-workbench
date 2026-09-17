@@ -63,7 +63,7 @@ genuinely absent one as `extension '<name>' not installed` in the
 unqualified `probe_availability` table.
 
 Probes that still return `(nil, nil)` when their extension is missing,
-the `system_stats`, Spock and `pg_stat_io` probes, produce no
+the nine `system_stats` probes and the two Spock probes, produce no
 observation (`extensionUnknown`) and fall through to the same "not
 installed" reason as before, because the switch still tests
 `allMetrics == nil` for that case. The cost is that a probe whose

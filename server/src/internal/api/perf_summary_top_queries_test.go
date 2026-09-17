@@ -1200,7 +1200,10 @@ func seedLastClientKeyFixture(
 	// and role alice (usesysid 10). Query 2001 is nonetheless observed in
 	// flight under both alpha/alice and beta/bob, the latter more
 	// recently: keying last_client on the queryid alone would report the
-	// beta client against an alpha statement.
+	// beta client against an alpha statement. Each statement is seeded
+	// twice, with a zeroed baseline five minutes earlier, so that the
+	// windowed aggregation has a pair to difference and the statement
+	// appears at all.
 	exec(`INSERT INTO metrics.pg_stat_statements
         (connection_id, collected_at, queryid, userid, dbid, database_name,
          query, calls, total_exec_time, mean_exec_time,
@@ -1212,8 +1215,14 @@ func seedLastClientKeyFixture(
         ($1, $2, 2002, 10, 100, 'alpha', 'SELECT socket', 20, 200, 10,
          1, 40, 20, 200, 2),
         ($1, $2, 2003, 10, 100, 'alpha', 'SELECT unseen', 30, 100, 3,
-         1, 30, 30, 300, 3)`,
-		topQueriesConnID, latest)
+         1, 30, 30, 300, 3),
+        ($1, $3, 2001, 10, 100, 'alpha', 'SELECT shared', 0, 0, 0,
+         0, 0, 0, 0, 0),
+        ($1, $3, 2002, 10, 100, 'alpha', 'SELECT socket', 0, 0, 0,
+         0, 0, 0, 0, 0),
+        ($1, $3, 2003, 10, 100, 'alpha', 'SELECT unseen', 0, 0, 0,
+         0, 0, 0, 0, 0)`,
+		topQueriesConnID, latest, latest.Add(-5*time.Minute))
 
 	// OID-to-name samples, then the activity samples themselves. The
 	// duplicate alpha sample for 2001 also proves DISTINCT ON still

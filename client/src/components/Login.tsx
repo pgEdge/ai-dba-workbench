@@ -365,6 +365,17 @@ const PROVIDER_ERROR_MESSAGE =
     'Please try again, or contact your administrator.';
 
 /*
+ * Shown when the server has local login disabled and no OpenID
+ * Connect provider enabled, which leaves nothing on the page to sign
+ * in with. Only a configuration change can fix it, so say so plainly.
+ */
+const NO_SIGN_IN_METHOD_MESSAGE =
+    'No sign-in method is available: local login is disabled and no ' +
+    'identity provider is enabled, so nobody can sign in. Set ' +
+    'auth.local.enabled or auth.oidc.enabled to true in the server ' +
+    'configuration and restart the server.';
+
+/*
  * The label to write on the federated sign-in button when the operator
  * configured none and the server sent an empty string.
  */
@@ -518,6 +529,16 @@ const Login = () => {
                                     aria-label="Loading sign-in options"
                                 />
                             </Box>
+                        )}
+
+                        {!capabilitiesLoading && !localEnabled && !oidcEnabled && (
+                            <Alert
+                                severity="error"
+                                sx={alertSx}
+                                data-testid="login-no-methods"
+                            >
+                                {NO_SIGN_IN_METHOD_MESSAGE}
+                            </Alert>
                         )}
 
                         {!capabilitiesLoading && oidcEnabled && (

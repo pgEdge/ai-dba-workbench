@@ -163,6 +163,24 @@ describe('Login Component', () => {
             expect(screen.queryByText('or')).not.toBeInTheDocument();
         });
 
+        it('explains the misconfiguration when no sign-in method is enabled', async () => {
+            renderLogin({ localEnabled: false, oidcEnabled: false, oidcLabel: '' });
+
+            const alert = await screen.findByTestId('login-no-methods');
+            expect(alert).toHaveTextContent(/no sign-in method is available/i);
+            expect(alert).toHaveTextContent(/auth\.local\.enabled or auth\.oidc\.enabled/);
+            expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
+            expect(screen.queryByTestId('login-oidc-button')).not.toBeInTheDocument();
+            expect(screen.queryByText(/contact your administrator/i)).not.toBeInTheDocument();
+        });
+
+        it('does not show the misconfiguration message whilst the capabilities load', () => {
+            renderLogin({ localEnabled: false, oidcEnabled: false, oidcLabel: '' }, true);
+
+            expect(screen.getByTestId('login-capabilities-loading')).toBeInTheDocument();
+            expect(screen.queryByTestId('login-no-methods')).not.toBeInTheDocument();
+        });
+
         it('shows a labelled progress indicator whilst the capabilities load', () => {
             renderLogin(
                 { localEnabled: true, oidcEnabled: true, oidcLabel: 'Sign in with Okta' },

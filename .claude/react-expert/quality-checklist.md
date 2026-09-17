@@ -572,6 +572,12 @@ Reference implementations:
 
 - `client/src/components/AdminPanel/index.tsx` filters whole nav
   sections by `hasPermission(item.permission)`.
+- A `NavItem` in that file may instead set `superuserOnly: true`,
+  which is checked before every other rule and shows the item only
+  when `user?.isSuperuser` is true. Use it for screens whose
+  endpoint the server restricts to superusers rather than to a
+  named permission, as the Audit Log tab does; such items carry an
+  empty `permission` string because no permission grants them.
 - `client/src/components/AddMenu.tsx` hides Add Server, Add Cluster,
   and Add Cluster Group when the user lacks `manage_connections`.
 

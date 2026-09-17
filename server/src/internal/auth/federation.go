@@ -1030,7 +1030,11 @@ func (s *AuthStore) revokeAccountTokensLocked(username string) (int, error) {
 	if count == 0 {
 		return 0, nil
 	}
-	if err := s.deleteTokensByFilter(ownedByUser, []any{username}, ""); err != nil {
+	// The revocation is a consequence of the unlink the operator asked
+	// for at the command line, so its token.delete events are attributed
+	// to the system actor rather than to a request principal.
+	if err := s.deleteTokensByFilter(systemActor, ownedByUser, []any{username},
+		"", nil); err != nil {
 		return 0, err
 	}
 	return count, nil

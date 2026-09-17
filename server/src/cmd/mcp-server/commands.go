@@ -295,6 +295,25 @@ func RunCLICommands(f *Flags, dataDir string) bool {
 		}
 	}
 
+	// Handle audit log commands
+	if f.HasAuditCommand() {
+		if f.ListAuditCmd {
+			if err := listAuditCommand(dataDir, f); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
+
+		if f.VerifyAuditCmd {
+			if err := verifyAuditLogCommand(dataDir); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+			return true
+		}
+	}
+
 	return false
 }
 

@@ -2419,8 +2419,10 @@ func TestMigrateV3ToV4AddsFederationColumns(t *testing.T) {
 		"SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version); err != nil {
 		t.Fatalf("schema_version: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("schema version = %d, want 4", version)
+	// The dispatcher runs every later migration too, so the store lands
+	// on the current version rather than on 4.
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 
 	var source string
@@ -2445,7 +2447,7 @@ func TestMigrateV3ToV4AddsFederationColumns(t *testing.T) {
 	}
 
 	// A second initSchema() call must be a no-op: currentVersion is
-	// already 4, so migrateV3ToV4 is not invoked again by the
+	// already current, so migrateV3ToV4 is not invoked again by the
 	// dispatcher. Exercise migrateV3ToV4 directly a second time as well,
 	// to cover its duplicate-column tolerance branch (the crash-recovery
 	// path where a previous run added the columns but failed before
@@ -2547,6 +2549,8 @@ func TestMigrateV3ToV4IsRunByInitSchemaAndItsFailureStopsStartup(t *testing.T) {
 // UpdateUser. With the users table renamed, every statement against it
 // fails, and each path must report the failure rather than return
 // success; an invalid password is refused before anything is touched.
+// The audited update snapshots the account before writing, so the
+// failure surfaces from that lookup.
 func TestUpdateUserReportsDatabaseFailures(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
@@ -2561,12 +2565,12 @@ func TestUpdateUserReportsDatabaseFailures(t *testing.T) {
 	}
 
 	err := store.UpdateUser("anyone", "", "note", "Name", "name@example.com")
-	if err == nil || !strings.Contains(err.Error(), "failed to update user") {
-		t.Errorf("metadata write against a missing table: err = %v, want 'failed to update user'", err)
+	if err == nil || !strings.Contains(err.Error(), "failed to look up user") {
+		t.Errorf("metadata write against a missing table: err = %v, want 'failed to look up user'", err)
 	}
 	err = store.UpdateUser("anyone", "An0ther-Str0ng-Pass!", "", "", "")
-	if err == nil || !strings.Contains(err.Error(), "failed to update password") {
-		t.Errorf("password write against a missing table: err = %v, want 'failed to update password'", err)
+	if err == nil || !strings.Contains(err.Error(), "failed to look up user") {
+		t.Errorf("password write against a missing table: err = %v, want 'failed to look up user'", err)
 	}
 }
 
@@ -2585,11 +2589,12 @@ func TestUpdateUserAtomicReportsDatabaseFailures(t *testing.T) {
 		t.Error("an invalid new password was accepted")
 	}
 
-	// A password write that matches no row is not an error, on either
-	// path: the account is simply absent.
+	// The audited update snapshots the account first, so an absent
+	// account is reported as not found rather than silently skipped.
 	strong := "An0ther-Str0ng-Pass!"
-	if err := store.UpdateUserAtomic("nobody", UserUpdate{Password: &strong}); err != nil {
-		t.Errorf("password for a missing user: %v, want no error", err)
+	err := store.UpdateUserAtomic("nobody", UserUpdate{Password: &strong})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("password for a missing user: err = %v, want not found", err)
 	}
 
 	if _, err := store.db.Exec("ALTER TABLE users RENAME TO users_gone"); err != nil {
@@ -2601,11 +2606,11 @@ func TestUpdateUserAtomicReportsDatabaseFailures(t *testing.T) {
 		update  UserUpdate
 		wantErr string
 	}{
-		"password":   {UserUpdate{Password: &strong}, "failed to update password"},
-		"metadata":   {UserUpdate{Annotation: &note}, "failed to get current user values"},
-		"enabled":    {UserUpdate{Enabled: &enabled}, "failed to update enabled status"},
-		"superuser":  {UserUpdate{IsSuperuser: &superuser}, "failed to update superuser status"},
-		"everything": {UserUpdate{Password: &strong, Annotation: &note, Enabled: &enabled}, "failed to update password"},
+		"password":   {UserUpdate{Password: &strong}, "failed to look up user"},
+		"metadata":   {UserUpdate{Annotation: &note}, "failed to look up user"},
+		"enabled":    {UserUpdate{Enabled: &enabled}, "failed to look up user"},
+		"superuser":  {UserUpdate{IsSuperuser: &superuser}, "failed to look up user"},
+		"everything": {UserUpdate{Password: &strong, Annotation: &note, Enabled: &enabled}, "failed to look up user"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -2623,7 +2628,7 @@ func TestUpdateUserAtomicReportsDatabaseFailures(t *testing.T) {
 	if err := store.db.Close(); err != nil {
 		t.Fatalf("closing the database: %v", err)
 	}
-	err := store.UpdateUserAtomic("anyone", UserUpdate{Enabled: &enabled})
+	err = store.UpdateUserAtomic("anyone", UserUpdate{Enabled: &enabled})
 	if err == nil || !strings.Contains(err.Error(), "failed to begin transaction") {
 		t.Errorf("closed database: err = %v, want 'failed to begin transaction'", err)
 	}

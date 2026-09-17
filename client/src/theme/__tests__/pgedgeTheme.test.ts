@@ -11,6 +11,11 @@
 import { describe, it, expect } from 'vitest';
 
 import { createPgedgeTheme, loginTheme } from '../pgedgeTheme';
+import {
+    compositeOver,
+    contrastRatio,
+    WCAG_AA_NORMAL_TEXT,
+} from '../../test/contrast';
 
 describe('createPgedgeTheme', () => {
     it('builds a light theme by default', () => {
@@ -48,6 +53,66 @@ describe('createPgedgeTheme', () => {
             expect(theme.typography.caption.fontSize).toBe('0.875rem');
             expect(theme.typography.overline.fontSize).toBe('0.875rem');
         });
+    });
+});
+
+/**
+ * Status chips across the client paint their label on an
+ * `alpha(<status>.main, 0.15)` background. The label colour therefore
+ * has to be measured against that composited background rather than
+ * against the paper colour alone, and it must not simply be the status
+ * colour itself, which leaves text and background sharing a hue at
+ * roughly 2:1.
+ */
+describe('status chip contrast', () => {
+    const CHIP_BACKGROUND_OPACITY = 0.15;
+
+    const statuses = [
+        ['success', '#22C55E'],
+        ['error', '#EF4444'],
+        ['warning', '#F59E0B'],
+    ] as const;
+
+    describe.each(['light', 'dark'] as const)('in %s mode', (mode) => {
+        const theme = createPgedgeTheme(mode);
+        const paper = theme.palette.background.paper;
+
+        it.each(statuses)(
+            'clears WCAG AA for the %s chip label',
+            (status, mainColour) => {
+                const background = compositeOver(
+                    mainColour,
+                    CHIP_BACKGROUND_OPACITY,
+                    paper,
+                );
+                const ratio = contrastRatio(
+                    theme.palette.custom.chipText[status],
+                    background,
+                );
+                expect(ratio).toBeGreaterThanOrEqual(WCAG_AA_NORMAL_TEXT);
+            },
+        );
+
+        it.each(statuses)(
+            'uses the same %s label colour for MuiChip overrides',
+            (status) => {
+                const filled = theme.components?.MuiChip?.styleOverrides
+                    ?.filled as Record<string, { color: string }>;
+                const key = `&.MuiChip-color${status.charAt(0).toUpperCase()}${status.slice(1)}`;
+                expect(filled[key].color).toBe(
+                    theme.palette.custom.chipText[status],
+                );
+            },
+        );
+
+        it.each(statuses)(
+            'does not reuse the %s status colour as its own label',
+            (status, mainColour) => {
+                expect(theme.palette.custom.chipText[status]).not.toBe(
+                    mainColour,
+                );
+            },
+        );
     });
 });
 

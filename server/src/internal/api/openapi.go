@@ -1690,6 +1690,31 @@ func buildSchemas() map[string]*OpenAPISchema {
 				"annotation":         {Type: "string", Description: "User annotation"},
 			},
 		},
+		"AuditEvent": {
+			Type:        "object",
+			Description: "One row of the RBAC audit log",
+			Properties: map[string]*OpenAPISchema{
+				"id":          {Type: "integer", Format: "int64", Description: "Event ID"},
+				"occurred_at": {Type: "string", Format: "date-time", Description: "When the event was recorded"},
+				"actor_type": {Type: "string", Description: "Kind of principal responsible",
+					Enum: []string{"user", "token", "cli", "system"}},
+				"actor_id":    {Type: "integer", Format: "int64", Nullable: true, Description: "Actor ID, null for cli and system actors"},
+				"actor_name":  {Type: "string", Description: "Name of the actor"},
+				"actor_ip":    {Type: "string", Description: "Client address of the actor, when known"},
+				"action":      {Type: "string", Description: "Audited action, such as user.create"},
+				"target_type": {Type: "string", Description: "Kind of object acted upon"},
+				"target_id":   {Type: "integer", Format: "int64", Nullable: true, Description: "Target ID, null when the target has none"},
+				"target_name": {Type: "string", Description: "Name of the object acted upon"},
+				"outcome": {Type: "string", Description: "Result of the audited operation",
+					Enum: []string{"success", "failure", "denied"}},
+				"error":     {Type: "string", Description: "Error message for a failed or denied operation"},
+				"details":   {Type: "object", Description: "Action-specific details"},
+				"prev_hash": {Type: "string", Description: "Hash of the preceding event"},
+				"hash":      {Type: "string", Description: "Hash chaining this event to its predecessor"},
+				"hash_version": {Type: "integer", Description: "Version of the rendering the hash was " +
+					"computed under, so that rows written before a format change stay verifiable"},
+			},
+		},
 		"UserCreateRequest": {
 			Type:     "object",
 			Required: []string{"username"},
@@ -4490,6 +4515,50 @@ func buildPaths() map[string]OpenAPIPathItem {
 						},
 					},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+				},
+			},
+		},
+
+		// RBAC Audit
+		"/rbac/audit": {
+			Get: &OpenAPIOperation{
+				Summary: "List RBAC audit events",
+				Description: "Returns audit-log events, newest first. " +
+					"Requires superuser privileges. A request authenticated " +
+					"with an API token whose admin scope has been narrowed " +
+					"is refused, because no admin permission grants audit " +
+					"access; a token with no admin scope, or one holding " +
+					"the * wildcard, is accepted.",
+				OperationID: "listAuditEvents",
+				Tags:        []string{"RBAC Audit"},
+				Security:    bearerAuth,
+				Parameters: []OpenAPIParameter{
+					queryParamString("actor", "Filter by actor name"),
+					queryParamString("actor_type",
+						"Filter by actor type: user, token, cli or system"),
+					queryParamString("action", "Filter by action, such as user.create"),
+					queryParamString("target_type", "Filter by target type"),
+					queryParamInt("target_id", "Filter by target ID"),
+					queryParamString("outcome",
+						"Filter by outcome: success, failure or denied"),
+					queryParamString("since",
+						"Only events at or after this RFC 3339 timestamp"),
+					queryParamString("until",
+						"Only events at or before this RFC 3339 timestamp"),
+					queryParamInt("limit",
+						"Maximum events to return (default 50, capped at 500)"),
+					queryParamInt("offset", "Number of events to skip"),
+				},
+				Responses: map[string]OpenAPIResponse{
+					"200": jsonArrayResponseWithHeaders("AuditEvent",
+						"Audit events, newest first",
+						totalCountHeader("Total events matching the filters, "+
+							"ignoring limit and offset")),
+					"400": jsonResponse("ErrorResponse", "Invalid query parameter"),
+					"401": jsonResponse("ErrorResponse", "Unauthorized"),
+					"403": jsonResponse("ErrorResponse",
+						"Requires superuser privileges, and an unrestricted "+
+							"admin scope when authenticated by API token"),
 				},
 			},
 		},

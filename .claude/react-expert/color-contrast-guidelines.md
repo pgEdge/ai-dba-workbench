@@ -73,3 +73,24 @@ client; they are a known debt, not a precedent to follow.
   or darker fails for text on dark backgrounds.
 - Reserve `text.disabled` for genuinely disabled controls; never use
   it for content the user needs to read.
+
+## Status Chip Labels
+
+Status chips across the client paint their label on an
+`alpha(<status>.main, 0.15)` background. Never reuse the status colour
+itself, nor its `.dark` shade, as the label colour: text and background
+then share a hue and land between 1.9:1 and 4.0:1 in light mode, well
+under 4.5:1.
+
+Take the label colour from `theme.palette.custom.chipText` instead,
+which carries a per-mode shade (a deep 800-level shade in light mode,
+the `.light` shade in dark mode) chosen so that every status clears
+4.5:1 against that background on `background.paper`. The theme's own
+`MuiChip` `filled` overrides use the same shades, so a chip given
+`color="success"`, `"error"` or `"warning"` is already correct and
+needs no `sx` colour at all.
+
+Measure rather than eyeball: `client/src/test/contrast.ts` provides
+`compositeOver` and `contrastRatio`, and the tests in
+`client/src/theme/__tests__/pgedgeTheme.test.ts` assert the ratio for
+every status in both modes.

@@ -25,6 +25,11 @@ declare module '@mui/material/styles' {
                 purpleLight: string;
                 cyan: string;
             };
+            chipText: {
+                success: string;
+                error: string;
+                warning: string;
+            };
             accent: string;
             accentHover: string;
             accentLight: string;
@@ -41,6 +46,11 @@ declare module '@mui/material/styles' {
                 purple?: string;
                 purpleLight?: string;
                 cyan?: string;
+            };
+            chipText?: {
+                success?: string;
+                error?: string;
+                warning?: string;
             };
             accent?: string;
             accentHover?: string;
@@ -139,6 +149,16 @@ const lightPalette = {
             purpleLight: '#A78BFA',
             cyan: '#06B6D4',
         },
+        // Text colours for status chips drawn on an
+        // `alpha(<status>.main, 0.15)` background. The palette's own
+        // `main` and `dark` shades are too light to reach the WCAG AA
+        // 4.5:1 ratio on that background in light mode, so these match
+        // the deeper shades already used for standard Alert text.
+        chipText: {
+            success: '#166534',
+            error: '#991B1B',
+            warning: '#92400E',
+        },
         accent: '#15AABF',
         accentHover: '#0C8599',
         accentLight: '#22B8CF',
@@ -192,6 +212,13 @@ const darkPalette = {
             purple: '#A78BFA',
             purpleLight: '#C4B5FD',
             cyan: '#22D3EE',
+        },
+        // Light shades clear 4.5:1 against the same chip background on
+        // the dark paper colour, where the `main` shades do not.
+        chipText: {
+            success: '#4ADE80',
+            error: '#F87171',
+            warning: '#FBBF24',
         },
         accent: '#22B8CF',
         accentHover: '#15AABF',
@@ -328,18 +355,21 @@ const getComponents = (mode: PaletteMode) => ({
                 borderRadius: 6,
                 fontWeight: 500,
             },
+            // Text shades here mirror `palette.custom.chipText`; the
+            // lighter `dark` shades previously used fell below the
+            // WCAG AA 4.5:1 ratio on the translucent background.
             filled: {
                 '&.MuiChip-colorSuccess': {
                     backgroundColor: alpha('#22C55E', 0.15),
-                    color: mode === 'dark' ? '#4ADE80' : '#16A34A',
+                    color: mode === 'dark' ? '#4ADE80' : '#166534',
                 },
                 '&.MuiChip-colorError': {
                     backgroundColor: alpha('#EF4444', 0.15),
-                    color: mode === 'dark' ? '#F87171' : '#DC2626',
+                    color: mode === 'dark' ? '#F87171' : '#991B1B',
                 },
                 '&.MuiChip-colorWarning': {
                     backgroundColor: alpha('#F59E0B', 0.15),
-                    color: mode === 'dark' ? '#FBBF24' : '#D97706',
+                    color: mode === 'dark' ? '#FBBF24' : '#92400E',
                 },
             },
         },

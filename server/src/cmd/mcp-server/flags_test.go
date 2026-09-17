@@ -237,6 +237,28 @@ func TestHasTokenScopeCommand(t *testing.T) {
 	}
 }
 
+func TestHasAuditCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		flags    Flags
+		expected bool
+	}{
+		{"no commands", Flags{}, false},
+		{"list audit", Flags{ListAuditCmd: true}, true},
+		{"verify audit log", Flags{VerifyAuditCmd: true}, true},
+		{"audit filter without a command", Flags{AuditActor: "dave"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.flags.HasAuditCommand()
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestHasCLICommand(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -249,6 +271,7 @@ func TestHasCLICommand(t *testing.T) {
 		{"group command", Flags{AddGroupCmd: true}, true},
 		{"privilege command", Flags{GrantPrivilegeCmd: true}, true},
 		{"token scope command", Flags{ScopeTokenConnCmd: true}, true},
+		{"audit command", Flags{ListAuditCmd: true}, true},
 	}
 
 	for _, tt := range tests {

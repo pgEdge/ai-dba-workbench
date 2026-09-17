@@ -15,12 +15,14 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/mail"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,7 +68,7 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 4
+	schemaVersion = 6
 )
 
 // Authentication sources recorded in users.auth_source. A local account
@@ -167,7 +169,18 @@ func NewAuthStore(dataDir string, maxUserTokenDays, maxFailedAttempts int) (*Aut
 	// driver applies each "_pragma=NAME(VALUE)" parameter as a PRAGMA
 	// statement on every new connection in the pool, so the setting is
 	// applied consistently regardless of connection churn.
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	//
+	// _txlock=immediate makes every transaction begin with BEGIN
+	// IMMEDIATE, taking the write lock up front rather than on the
+	// first write. The audit chain depends on it: recordAudit reads the
+	// newest row's hash and then inserts the row that links to it, and
+	// under the default deferred locking two processes sharing the data
+	// directory can both take that read before either writes, so the
+	// second insert links to a row that is no longer the newest and the
+	// chain forks. s.mu serializes writers within one process only, so
+	// the DSN option is what makes the chain safe across processes.
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(1)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open auth database: %w", err)
@@ -495,6 +508,94 @@ func (s *AuthStore) migrateV3ToV4() error {
 	return nil
 }
 
+// ensureAuditSchema creates whatever part of the audit schema is
+// missing: the table with its lookup indexes and append-only trigger,
+// then the unique index that keeps the chain linear. Every statement is
+// IF NOT EXISTS, and it runs on every open regardless of the recorded
+// schema version, because the version gate alone left a gap: a database
+// stamped with the current version but created before one of these
+// objects existed, or one from which an object has since been dropped,
+// would otherwise run without it for good, and the chain's guarantees
+// rest on those objects rather than on the version number.
+//
+// The unique index runs as its own statement because it is the one
+// part of this schema that existing rows can refuse: a database written
+// by a pre-merge build of the audit log may already hold two events
+// claiming the same predecessor, and an operator who hits that needs to
+// be told which index failed and why rather than being shown a bare
+// constraint violation.
+func (s *AuthStore) ensureAuditSchema() error {
+	if _, err := s.db.Exec(auditTableDDL); err != nil {
+		return fmt.Errorf("failed to create audit_events table: %w", err)
+	}
+
+	if _, err := s.db.Exec(auditChainIndexDDL); err != nil {
+		return fmt.Errorf(
+			"failed to create the unique index idx_audit_prev_hash on "+
+				"audit_events(prev_hash): the existing audit log holds more "+
+				"than one event with the same prev_hash, so its chain has "+
+				"forked and cannot be made linear automatically; inspect the "+
+				"duplicates with SELECT prev_hash, COUNT(*) FROM audit_events "+
+				"GROUP BY prev_hash HAVING COUNT(*) > 1 before retrying: %w",
+			err)
+	}
+
+	return nil
+}
+
+// setSchemaVersion records version as the only row of schema_version.
+func (s *AuthStore) setSchemaVersion(version int) error {
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("failed to clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO schema_version (version) VALUES (?)", version); err != nil {
+		return fmt.Errorf("failed to set schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV4ToV5 adds the append-only audit_events table, its indexes
+// and the trigger that rejects updates. The DDL is shared with the
+// fresh-install schema below and is idempotent, so a partially applied
+// migration is safe to re-run.
+func (s *AuthStore) migrateV4ToV5() error {
+	if err := s.ensureAuditSchema(); err != nil {
+		return err
+	}
+
+	return s.setSchemaVersion(5)
+}
+
+// migrateV5ToV6 adds the hash_version column to audit_events, which
+// records the rendering each row's hash was computed under so that a
+// later change to the format leaves older rows verifiable. Every row
+// written before the column existed used the version 1 rendering, which
+// the column's default records. The column is added only when the table
+// exists without it, so a migration interrupted after the ALTER is safe
+// to re-run, and a v5 database that somehow lacks the table altogether
+// is given it, column included, by ensureAuditSchema.
+func (s *AuthStore) migrateV5ToV6() error {
+	var columns, present int
+	if err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(name = 'hash_version'), 0)
+         FROM pragma_table_info('audit_events')`).Scan(&columns, &present); err != nil {
+		return fmt.Errorf("failed to inspect audit_events columns: %w", err)
+	}
+	if columns > 0 && present == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE audit_events
+             ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("failed to add audit_events.hash_version: %w", err)
+		}
+	}
+
+	if err := s.ensureAuditSchema(); err != nil {
+		return err
+	}
+
+	return s.setSchemaVersion(6)
+}
+
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
@@ -520,9 +621,21 @@ func (s *AuthStore) initSchema() error {
 	}
 	if currentVersion == 3 {
 		if err := s.migrateV3ToV4(); err != nil {
-			return err
+			return fmt.Errorf("failed to migrate from v3 to v4: %w", err)
 		}
 		currentVersion = 4
+	}
+	if currentVersion == 4 {
+		if err := s.migrateV4ToV5(); err != nil {
+			return fmt.Errorf("failed to migrate from v4 to v5: %w", err)
+		}
+		currentVersion = 5
+	}
+	if currentVersion == 5 {
+		if err := s.migrateV5ToV6(); err != nil {
+			return fmt.Errorf("failed to migrate from v5 to v6: %w", err)
+		}
+		currentVersion = 6
 	}
 
 	if currentVersion < schemaVersion {
@@ -702,7 +815,7 @@ func (s *AuthStore) initSchema() error {
     );
     CREATE INDEX IF NOT EXISTS idx_admin_perms_group ON group_admin_permissions(group_id);
     CREATE INDEX IF NOT EXISTS idx_admin_perms_perm ON group_admin_permissions(permission);
-    `
+    ` + auditSchemaDDL
 
 		_, err = s.db.Exec(schema)
 		if err != nil {
@@ -720,7 +833,11 @@ func (s *AuthStore) initSchema() error {
 		}
 	}
 
-	return nil
+	// The audit schema is re-asserted on every open, not only when the
+	// version moves: the chain's anti-fork index and append-only
+	// trigger have to be present on every database this store runs
+	// against, including one already stamped with the current version.
+	return s.ensureAuditSchema()
 }
 
 // Close stops the session cleanup goroutine (if running) and closes
@@ -904,35 +1021,6 @@ func scanUser(row scannable) (*StoredUser, error) {
 	return &user, nil
 }
 
-// CreateUser creates a new user
-func (s *AuthStore) CreateUser(username, password, annotation, displayName, email string) error {
-	if err := ValidateUsername(username); err != nil {
-		return err
-	}
-
-	if err := ValidatePassword(password); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), s.bcryptCost)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	_, err = s.db.Exec(
-		"INSERT INTO users (username, password_hash, annotation, display_name, email) VALUES (?, ?, ?, ?, ?)",
-		username, string(hash), annotation, displayName, email,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
-	}
-
-	return nil
-}
-
 // GetUser retrieves a user by username
 func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 	s.mu.RLock()
@@ -1032,41 +1120,6 @@ type sqlExecer interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// UpdateUser updates a user's password, annotation, display name, and/or email
-func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayName, newEmail string) error {
-	if newPassword != "" {
-		if err := ValidatePassword(newPassword); err != nil {
-			return err
-		}
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if newPassword != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.bcryptCost)
-		if err != nil {
-			return fmt.Errorf("failed to hash password: %w", err)
-		}
-		if err := s.writePasswordHashLocked(s.db, username, hash); err != nil {
-			return err
-		}
-	}
-
-	_, err := s.db.Exec("UPDATE users SET annotation = ?, display_name = ?, email = ? WHERE username = ?",
-		newAnnotation, newDisplayName, newEmail, username)
-	if err != nil {
-		return fmt.Errorf("failed to update user: %w", err)
-	}
-
-	// Invalidate all active sessions when the password changes
-	if newPassword != "" {
-		s.InvalidateUserSessions(username)
-	}
-
-	return nil
-}
-
 // UserUpdate contains all fields that can be updated atomically for a user.
 // Pointer fields are used to distinguish between "not provided" (nil) and
 // "set to empty/zero value".
@@ -1077,306 +1130,6 @@ type UserUpdate struct {
 	Email       *string // New email, nil = no change
 	Enabled     *bool   // New enabled status, nil = no change
 	IsSuperuser *bool   // New superuser status, nil = no change
-}
-
-// UpdateUserAtomic updates multiple user fields in a single atomic transaction.
-// This ensures that either all changes are applied or none are, preventing
-// partial updates that could leave the user in an inconsistent state.
-func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Start transaction
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			//nolint:errcheck // Rollback error is not critical, transaction already failed
-			tx.Rollback()
-		}
-	}()
-
-	// Validate and update password if provided
-	if update.Password != nil && *update.Password != "" {
-		if valErr := ValidatePassword(*update.Password); valErr != nil {
-			err = valErr
-			return err
-		}
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(*update.Password), s.bcryptCost)
-		if hashErr != nil {
-			err = fmt.Errorf("failed to hash password: %w", hashErr)
-			return err
-		}
-		if writeErr := s.writePasswordHashLocked(tx, username, hash); writeErr != nil {
-			err = writeErr
-			return err
-		}
-	}
-
-	// Update annotation, display name, and email if any are provided
-	if update.Annotation != nil || update.DisplayName != nil || update.Email != nil {
-		// Get current values to preserve unchanged fields
-		var currentAnnotation, currentDisplayName, currentEmail sql.NullString
-		queryErr := tx.QueryRow(
-			"SELECT annotation, display_name, email FROM users WHERE username = ?",
-			username,
-		).Scan(&currentAnnotation, &currentDisplayName, &currentEmail)
-		if queryErr != nil {
-			err = fmt.Errorf("failed to get current user values: %w", queryErr)
-			return err
-		}
-
-		newAnnotation := currentAnnotation.String
-		if update.Annotation != nil {
-			newAnnotation = *update.Annotation
-		}
-		newDisplayName := currentDisplayName.String
-		if update.DisplayName != nil {
-			newDisplayName = *update.DisplayName
-		}
-		newEmail := currentEmail.String
-		if update.Email != nil {
-			newEmail = *update.Email
-		}
-
-		_, execErr := tx.Exec(
-			"UPDATE users SET annotation = ?, display_name = ?, email = ? WHERE username = ?",
-			newAnnotation, newDisplayName, newEmail, username,
-		)
-		if execErr != nil {
-			err = fmt.Errorf("failed to update user fields: %w", execErr)
-			return err
-		}
-	}
-
-	// Update enabled status if provided
-	if update.Enabled != nil {
-		_, execErr := tx.Exec("UPDATE users SET enabled = ? WHERE username = ?", *update.Enabled, username)
-		if execErr != nil {
-			err = fmt.Errorf("failed to update enabled status: %w", execErr)
-			return err
-		}
-	}
-
-	// Update superuser status if provided
-	if update.IsSuperuser != nil {
-		_, execErr := tx.Exec("UPDATE users SET is_superuser = ? WHERE username = ?", *update.IsSuperuser, username)
-		if execErr != nil {
-			err = fmt.Errorf("failed to update superuser status: %w", execErr)
-			return err
-		}
-	}
-
-	// Commit transaction
-	if commitErr := tx.Commit(); commitErr != nil {
-		err = fmt.Errorf("failed to commit transaction: %w", commitErr)
-		return err
-	}
-
-	// Invalidate all active sessions when the password changes
-	if update.Password != nil && *update.Password != "" {
-		s.InvalidateUserSessions(username)
-	}
-
-	return nil
-}
-
-// UpdateUserDisplayName updates a user's display name
-func (s *AuthStore) UpdateUserDisplayName(username, displayName string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec("UPDATE users SET display_name = ? WHERE username = ?", displayName, username)
-	if err != nil {
-		return fmt.Errorf("failed to update display name: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("user '%s' not found", username)
-	}
-
-	return nil
-}
-
-// UpdateUserEmail updates a user's email address
-func (s *AuthStore) UpdateUserEmail(username, email string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec("UPDATE users SET email = ? WHERE username = ?", email, username)
-	if err != nil {
-		return fmt.Errorf("failed to update email: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("user '%s' not found", username)
-	}
-
-	return nil
-}
-
-// DeleteUser removes a user and all of its dependent rows in a single
-// atomic transaction. This removes every row that references the user:
-// tokens (and their scope rows via the token delete cascade), group
-// memberships, and connection_sessions rows for any of the user's
-// tokens.
-//
-// With PRAGMA foreign_keys = ON enabled in NewAuthStore, the ON DELETE
-// CASCADE foreign keys declared in the schema would remove most of
-// these rows automatically. These explicit deletes are intentionally
-// kept as defense in depth: they document exactly which tables are
-// touched, survive accidental pragma regression, and clean up
-// connection_sessions rows which reference token_hash without an FK.
-func (s *AuthStore) DeleteUser(username string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			//nolint:errcheck // Rollback error is not critical; the
-			// outer error is already being returned to the caller.
-			tx.Rollback()
-		}
-	}()
-
-	// Look up the user ID first so we can fail fast on "not found" and
-	// drive the dependent deletes by id rather than by username.
-	var userID int64
-	if err = tx.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&userID); err != nil {
-		if err == sql.ErrNoRows {
-			err = fmt.Errorf("user '%s' not found", username)
-			return err
-		}
-		return fmt.Errorf("failed to look up user: %w", err)
-	}
-
-	// Remove connection_sessions rows for every token owned by this
-	// user. connection_sessions references tokens.token_hash but has
-	// no declared FK, so SQLite will never cascade-delete these even
-	// with foreign_keys pragma on.
-	if _, err = tx.Exec(
-		`DELETE FROM connection_sessions
-         WHERE token_hash IN (SELECT token_hash FROM tokens WHERE owner_id = ?)`,
-		userID,
-	); err != nil {
-		return fmt.Errorf("failed to delete user's connection sessions: %w", err)
-	}
-
-	// Remove per-token scope rows for every token owned by this user.
-	// These would cascade via tokens' ON DELETE CASCADE, but we delete
-	// them explicitly so a pragma regression cannot leave them behind.
-	scopeTables := []string{
-		"token_connection_scope",
-		"token_mcp_scope",
-		"token_admin_scope",
-	}
-	for _, table := range scopeTables {
-		//nolint:gosec // table name is from a static allow-list above
-		stmt := "DELETE FROM " + table + " WHERE token_id IN (SELECT id FROM tokens WHERE owner_id = ?)"
-		if _, err = tx.Exec(stmt, userID); err != nil {
-			return fmt.Errorf("failed to delete %s rows: %w", table, err)
-		}
-	}
-
-	// Remove the user's tokens. tokens.owner_id has ON DELETE CASCADE
-	// so the user-row delete below would take these out anyway; we
-	// delete them first so the scope-row cleanup above has a stable
-	// set to operate on and so the behavior is obvious to readers.
-	if _, err = tx.Exec("DELETE FROM tokens WHERE owner_id = ?", userID); err != nil {
-		return fmt.Errorf("failed to delete user's tokens: %w", err)
-	}
-
-	// Remove group memberships that reference this user directly.
-	if _, err = tx.Exec(
-		"DELETE FROM group_memberships WHERE member_user_id = ?", userID,
-	); err != nil {
-		return fmt.Errorf("failed to delete user's group memberships: %w", err)
-	}
-
-	// Finally, delete the user row itself.
-	result, execErr := tx.Exec("DELETE FROM users WHERE id = ?", userID)
-	if execErr != nil {
-		err = fmt.Errorf("failed to delete user: %w", execErr)
-		return err
-	}
-	rows, rowsErr := result.RowsAffected()
-	if rowsErr != nil {
-		err = fmt.Errorf("failed to get rows affected: %w", rowsErr)
-		return err
-	}
-	if rows == 0 {
-		// This should be unreachable because we already looked the
-		// user up above, but guard against races anyway.
-		err = fmt.Errorf("user '%s' not found", username)
-		return err
-	}
-
-	if commitErr := tx.Commit(); commitErr != nil {
-		err = fmt.Errorf("failed to commit user deletion: %w", commitErr)
-		return err
-	}
-
-	s.InvalidateUserSessions(username)
-
-	return nil
-}
-
-// EnableUser enables a user account
-func (s *AuthStore) EnableUser(username string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec("UPDATE users SET enabled = TRUE WHERE username = ?", username)
-	if err != nil {
-		return fmt.Errorf("failed to enable user: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("user '%s' not found", username)
-	}
-
-	return nil
-}
-
-// DisableUser disables a user account
-func (s *AuthStore) DisableUser(username string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	result, err := s.db.Exec("UPDATE users SET enabled = FALSE WHERE username = ?", username)
-	if err != nil {
-		return fmt.Errorf("failed to disable user: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("user '%s' not found", username)
-	}
-
-	s.InvalidateUserSessions(username)
-
-	return nil
 }
 
 // ListUsers returns all users
@@ -1484,10 +1237,10 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 		// Lock account if threshold reached
 		if s.maxFailedAttempts > 0 && user.FailedAttempts >= s.maxFailedAttempts {
-			//nolint:errcheck // Best effort update, authentication already failed
-			s.db.Exec("UPDATE users SET enabled = FALSE WHERE id = ?", user.ID)
-			log.Printf("[AUTH] Account locked for user %s after %d failed attempts; invalidating sessions", username, user.FailedAttempts)
-			s.InvalidateUserSessions(username)
+			if s.disableForLockout(user.ID, username) {
+				log.Printf("[AUTH] Account locked for user %s after %d failed attempts; invalidating sessions", username, user.FailedAttempts)
+				s.InvalidateUserSessions(username)
+			}
 		}
 
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
@@ -1628,23 +1381,52 @@ func (s *AuthStore) StopSessionCleanup() {
 // CreateToken creates a new token owned by the specified user.
 // Returns the raw token (only shown once) and the stored token info.
 // If requestedExpiry is nil, superusers get no expiry while non-superusers
-// are subject to the configured maxUserTokenDays limit.
+// are subject to the configured maxUserTokenDays limit. The change is
+// attributed to the system actor.
 func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpiry *time.Time) (string, *StoredToken, error) {
+	return s.createToken(systemActor, ownerUsername, annotation, requestedExpiry)
+}
+
+// createToken creates a token and records the token.create event in the
+// same transaction. The event names the owner, the expiry and the
+// annotation; it never carries the raw token, its hash or any prefix of
+// either, because the audit log is readable by anyone who can read the
+// log and a token is a bearer credential.
+func (s *AuthStore) createToken(actor Actor, ownerUsername, annotation string,
+	requestedExpiry *time.Time) (raw string, stored *StoredToken, err error) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	target := &auditTarget{
+		action:     "token.create",
+		targetType: "token",
+		targetName: annotation,
+	}
+	defer func() {
+		if err != nil {
+			s.failAudit(tx, actor, target, err)
+		}
+	}()
 
 	// Look up the user to get their ID and superuser status
 	var userID int64
 	var isSuperuser bool
-	err := s.db.QueryRow(
+	lookupErr := tx.QueryRow(
 		"SELECT id, is_superuser FROM users WHERE username = ?",
 		ownerUsername,
 	).Scan(&userID, &isSuperuser)
-	if err == sql.ErrNoRows {
-		return "", nil, fmt.Errorf("user '%s' not found", ownerUsername)
+	if errors.Is(lookupErr, sql.ErrNoRows) {
+		err = fmt.Errorf("user '%s' not found", ownerUsername)
+		return "", nil, err
 	}
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to get user: %w", err)
+	if lookupErr != nil {
+		err = fmt.Errorf("failed to get user: %w", lookupErr)
+		return "", nil, err
 	}
 
 	// Calculate expiry
@@ -1660,8 +1442,9 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 
 	// Generate random token
 	tokenBytes := make([]byte, sessionTokenBytes)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", nil, fmt.Errorf("failed to generate token: %w", err)
+	if _, randErr := rand.Read(tokenBytes); randErr != nil {
+		err = fmt.Errorf("failed to generate token: %w", randErr)
+		return "", nil, err
 	}
 	rawToken := base64.URLEncoding.EncodeToString(tokenBytes)
 
@@ -1670,17 +1453,35 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 	tokenHash := hex.EncodeToString(hash[:])
 
 	// Insert into database
-	result, err := s.db.Exec(
+	result, execErr := tx.Exec(
 		`INSERT INTO tokens (token_hash, owner_id, expires_at, annotation)
          VALUES (?, ?, ?, ?)`,
 		tokenHash, userID, expiry, annotation,
 	)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create token: %w", err)
+	if execErr != nil {
+		err = fmt.Errorf("failed to create token: %w", execErr)
+		return "", nil, err
 	}
 
 	//nolint:errcheck // SQLite always supports LastInsertId
 	id, _ := result.LastInsertId()
+	target.targetID = &id
+
+	if auditErr := s.recordAudit(tx, newEvent(actor, "token.create", "token",
+		&id, annotation, map[string]any{
+			"owner":      ownerUsername,
+			"expires_at": expiry,
+			"annotation": annotation,
+		})); auditErr != nil {
+		err = auditErr
+		return "", nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		err = fmt.Errorf("failed to commit transaction: %w", err)
+		return "", nil, err
+	}
+
 	token := &StoredToken{
 		ID:         id,
 		TokenHash:  tokenHash,
@@ -1691,28 +1492,6 @@ func (s *AuthStore) CreateToken(ownerUsername, annotation string, requestedExpir
 	}
 
 	return rawToken, token, nil
-}
-
-// CreateServiceAccount creates a new service account user.
-// Service accounts have no password and cannot authenticate via login.
-// They can only be used via API tokens.
-func (s *AuthStore) CreateServiceAccount(username, annotation, displayName, email string) error {
-	if err := ValidateUsername(username); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	_, err := s.db.Exec(
-		"INSERT INTO users (username, password_hash, annotation, display_name, email, is_service_account, enabled) VALUES (?, '', ?, ?, ?, TRUE, TRUE)",
-		username, annotation, displayName, email,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create service account: %w", err)
-	}
-
-	return nil
 }
 
 // ListUserTokens lists all tokens owned by a user
@@ -1745,15 +1524,33 @@ func (s *AuthStore) ListUserTokens(username string) ([]*StoredToken, error) {
 // would cascade via ON DELETE CASCADE. These explicit deletes are
 // intentionally kept as defense in depth and also clean up
 // connection_sessions, which references token_hash without an FK.
+//
+// The change is attributed to the system actor.
 func (s *AuthStore) DeleteUserToken(username string, tokenID int64) error {
+	return s.deleteUserToken(systemActor, username, tokenID)
+}
+
+func (s *AuthStore) deleteUserToken(actor Actor, username string,
+	tokenID int64) error {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// The caller named a token, so a failure is recorded against that
+	// id even when no row matches it.
+	id := tokenID
+
 	return s.deleteTokensByFilter(
+		actor,
 		// Filter to token IDs owned by the named user.
 		"id = ? AND owner_id = (SELECT id FROM users WHERE username = ?)",
 		[]any{tokenID, username},
 		"token not found or not owned by user",
+		&auditTarget{
+			action:     "token.delete",
+			targetType: "token",
+			targetID:   &id,
+		},
 	)
 }
 
@@ -1855,7 +1652,13 @@ func (s *AuthStore) ListAllTokens() ([]*StoredToken, error) {
 // would cascade via ON DELETE CASCADE. These explicit deletes are
 // intentionally kept as defense in depth and also clean up
 // connection_sessions, which references token_hash without an FK.
+//
+// The change is attributed to the system actor.
 func (s *AuthStore) DeleteToken(identifier string) error {
+	return s.deleteToken(systemActor, identifier)
+}
+
+func (s *AuthStore) deleteToken(actor Actor, identifier string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1863,7 +1666,8 @@ func (s *AuthStore) DeleteToken(identifier string) error {
 	// table id column is INTEGER, so SQLite will coerce the string
 	// safely. A non-numeric identifier matches nothing here and falls
 	// through to the hash-prefix branch below.
-	if err := s.deleteTokensByFilter("id = ?", []any{identifier}, ""); err == nil {
+	if err := s.deleteTokensByFilter(actor, "id = ?", []any{identifier},
+		"", nil); err == nil {
 		return nil
 	}
 
@@ -1871,77 +1675,197 @@ func (s *AuthStore) DeleteToken(identifier string) error {
 	// matching a huge swath of tokens on short inputs.
 	if len(identifier) >= 8 {
 		if err := s.deleteTokensByFilter(
-			"token_hash LIKE ?", []any{identifier + "%"}, "",
+			actor, "token_hash LIKE ?", []any{identifier + "%"}, "", nil,
 		); err == nil {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("token not found")
+	// Both probes missed. A numeric identifier names a token id the
+	// caller believed in, so the miss is recorded against that id; a
+	// hash-prefix identifier names no id to attribute the failure to
+	// and so leaves no event, exactly as deleteUserToken's fallback
+	// target does for the id it was given.
+	err := fmt.Errorf("token not found")
+	if id, parseErr := strconv.ParseInt(identifier, 10, 64); parseErr == nil {
+		s.recordFailure(actor, "token.delete", "token", &id, "", err)
+	}
+
+	return err
 }
 
 // deleteTokensByFilter deletes every token matched by the supplied
 // WHERE clause along with every row that references those tokens,
-// atomically. The whereClause is embedded in "SELECT id FROM tokens
-// WHERE <clause>", so it must not contain user-supplied text; all
-// dynamic values belong in the args slice. notFoundMsg, when non-empty,
-// is returned (wrapped in an error) if the filter matches no rows.
-// When empty, a zero-rows-affected outcome returns a generic
-// "token not found" error so callers can chain filters.
-func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoundMsg string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+// atomically, recording one token.delete event per matched token in the
+// same transaction. The whereClause is embedded in "SELECT id FROM
+// tokens WHERE <clause>", so it must not contain user-supplied text;
+// all dynamic values belong in the args slice. notFoundMsg, when
+// non-empty, is returned (wrapped in an error) if the filter matches no
+// rows. When empty, a zero-rows-affected outcome returns a generic
+// "token not found" error so callers can chain filters. fallback, when
+// non-nil, is the target a failure is recorded against before any
+// token matches, so that a caller who knows which token it asked for
+// leaves a failure event behind; DeleteToken passes nil, because it
+// chains two filters of which the first routinely matches nothing and
+// a failure event for each probe would be noise.
+func (s *AuthStore) deleteTokensByFilter(actor Actor, whereClause string,
+	args []any, notFoundMsg string, fallback *auditTarget) (err error) {
+
+	tx, beginErr := s.db.Begin()
+	if beginErr != nil {
+		return fmt.Errorf("failed to begin transaction: %w", beginErr)
 	}
+
+	// Until a token matches, failures are attributed to the caller's
+	// fallback target, which is nil for a filter probe that is expected
+	// to match nothing.
+	target := fallback
 	defer func() {
 		if err != nil {
-			//nolint:errcheck // Rollback error is not critical; the
-			// outer error is already being returned to the caller.
-			tx.Rollback()
+			s.failAudit(tx, actor, target, err)
 		}
 	}()
 
-	// Collect the set of (id, token_hash) pairs that match. We need
-	// token_hash so we can clean up connection_sessions rows, which
-	// are keyed on the raw hash and have no declared FK.
+	matches, matchErr := matchedTokenRefsTx(tx, whereClause, args)
+	if matchErr != nil {
+		err = matchErr
+		return err
+	}
+
+	if len(matches) == 0 {
+		err = tokenFilterNotFound(notFoundMsg)
+		return err
+	}
+
+	// Attribute any failure from here on to the first matched token.
+	target = firstMatchTarget(tx, matches[0].id)
+
+	// Capture the before state of every matched token, scopes included,
+	// while the rows are still there to read.
+	snapshots, snapErr := tokenDeleteSnapshotsTx(tx, matches)
+	if snapErr != nil {
+		err = snapErr
+		return err
+	}
+
+	if depErr := deleteTokenDependentsTx(tx, matches); depErr != nil {
+		err = depErr
+		return err
+	}
+
+	// Delete the token rows themselves.
+	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
+	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
+	if _, execErr := tx.Exec(deleteStmt, args...); execErr != nil {
+		err = fmt.Errorf("failed to delete tokens: %w", execErr)
+		return err
+	}
+
+	if auditErr := s.recordTokenDeletions(tx, actor, snapshots); auditErr != nil {
+		err = auditErr
+		return err
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = fmt.Errorf("failed to commit token deletion: %w", commitErr)
+		return err
+	}
+
+	return nil
+}
+
+// tokenRef identifies one matched token by id and by the raw hash the
+// connection_sessions rows are keyed on.
+type tokenRef struct {
+	id   int64
+	hash string
+}
+
+// matchedTokenRefsTx collects the set of (id, token_hash) pairs matched
+// by the filter. We need token_hash so we can clean up
+// connection_sessions rows, which are keyed on the raw hash and have no
+// declared FK. The whereClause carries the same no-user-text contract
+// as deleteTokensByFilter's.
+func matchedTokenRefsTx(tx *sql.Tx, whereClause string, args []any) ([]tokenRef,
+	error) {
+
 	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
 	selectStmt := "SELECT id, token_hash FROM tokens WHERE " + whereClause
-	rows, err := tx.Query(selectStmt, args...)
-	if err != nil {
-		return fmt.Errorf("failed to query tokens: %w", err)
+	rows, queryErr := tx.Query(selectStmt, args...)
+	if queryErr != nil {
+		return nil, fmt.Errorf("failed to query tokens: %w", queryErr)
 	}
-	type tokenRef struct {
-		id   int64
-		hash string
-	}
+	defer rows.Close()
+
 	var matches []tokenRef
 	for rows.Next() {
 		var ref tokenRef
 		if scanErr := rows.Scan(&ref.id, &ref.hash); scanErr != nil {
-			rows.Close()
-			err = fmt.Errorf("failed to scan token row: %w", scanErr)
-			return err
+			return nil, fmt.Errorf("failed to scan token row: %w", scanErr)
 		}
 		matches = append(matches, ref)
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
-		rows.Close()
-		err = fmt.Errorf("error iterating tokens: %w", rowsErr)
-		return err
+		return nil, fmt.Errorf("error iterating tokens: %w", rowsErr)
 	}
-	rows.Close()
 
-	if len(matches) == 0 {
-		if notFoundMsg != "" {
-			err = fmt.Errorf("%s", notFoundMsg)
-		} else {
-			err = fmt.Errorf("token not found")
+	return matches, nil
+}
+
+// tokenFilterNotFound builds the error returned when a filter matches
+// no rows: the caller's message when it supplied one, and a generic
+// "token not found" otherwise so callers can chain filters.
+func tokenFilterNotFound(notFoundMsg string) error {
+	if notFoundMsg != "" {
+		return fmt.Errorf("%s", notFoundMsg)
+	}
+
+	return fmt.Errorf("token not found")
+}
+
+// firstMatchTarget builds the audit target a failure is attributed to
+// once at least one token has matched the filter.
+func firstMatchTarget(tx *sql.Tx, id int64) *auditTarget {
+	target := &auditTarget{
+		action:     "token.delete",
+		targetType: "token",
+		targetID:   &id,
+	}
+	if annotation, ok := tokenAnnotationTx(tx, id); ok {
+		target.targetName = annotation
+	}
+
+	return target
+}
+
+// tokenDeleteSnapshotsTx captures the before state of every matched
+// token, scopes included, while the rows are still there to read.
+func tokenDeleteSnapshotsTx(tx *sql.Tx, matches []tokenRef) (
+	[]tokenDeleteSnapshot, error) {
+
+	snapshots := make([]tokenDeleteSnapshot, 0, len(matches))
+	for _, ref := range matches {
+		snap, snapErr := tokenSnapshotTx(tx, ref.id)
+		if snapErr != nil {
+			return nil, fmt.Errorf("failed to read token: %w", snapErr)
 		}
-		return err
+		scopes, scopeErr := tokenScopesTx(tx, ref.id)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		snapshots = append(snapshots, tokenDeleteSnapshot{
+			tokenSnapshot: snap,
+			tokenScopes:   scopes,
+		})
 	}
 
-	// Delete the per-token scope rows explicitly (defense in depth;
-	// FK cascades would handle this when the pragma is on).
+	return snapshots, nil
+}
+
+// deleteTokenDependentsTx removes the per-token scope rows explicitly
+// (defense in depth; FK cascades would handle this when the pragma is
+// on) along with the connection_sessions row keyed on each token hash.
+func deleteTokenDependentsTx(tx *sql.Tx, matches []tokenRef) error {
 	scopeTables := []string{
 		"token_connection_scope",
 		"token_mcp_scope",
@@ -1951,28 +1875,34 @@ func (s *AuthStore) deleteTokensByFilter(whereClause string, args []any, notFoun
 		for _, table := range scopeTables {
 			//nolint:gosec // table name is from a static allow-list above
 			stmt := "DELETE FROM " + table + " WHERE token_id = ?"
-			if _, err = tx.Exec(stmt, ref.id); err != nil {
+			if _, err := tx.Exec(stmt, ref.id); err != nil {
 				return fmt.Errorf("failed to delete %s rows: %w", table, err)
 			}
 		}
 		// Clear the connection_sessions row keyed on this hash.
-		if _, err = tx.Exec(
+		if _, err := tx.Exec(
 			"DELETE FROM connection_sessions WHERE token_hash = ?", ref.hash,
 		); err != nil {
 			return fmt.Errorf("failed to delete connection session: %w", err)
 		}
 	}
 
-	// Delete the token rows themselves.
-	//nolint:gosec // whereClause is a static SQL fragment from callers in this package
-	deleteStmt := "DELETE FROM tokens WHERE " + whereClause
-	if _, err = tx.Exec(deleteStmt, args...); err != nil {
-		return fmt.Errorf("failed to delete tokens: %w", err)
-	}
+	return nil
+}
 
-	if commitErr := tx.Commit(); commitErr != nil {
-		err = fmt.Errorf("failed to commit token deletion: %w", commitErr)
-		return err
+// recordTokenDeletions records one event per deleted token, so that a
+// hash-prefix filter matching several tokens leaves a row for each of
+// them.
+func (s *AuthStore) recordTokenDeletions(tx *sql.Tx, actor Actor,
+	snapshots []tokenDeleteSnapshot) error {
+
+	for i := range snapshots {
+		snap := snapshots[i]
+		if auditErr := s.recordAudit(tx, newEvent(actor, "token.delete", "token",
+			&snap.ID, snap.Annotation,
+			map[string]any{"before": snap})); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil

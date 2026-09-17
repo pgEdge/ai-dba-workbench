@@ -108,6 +108,19 @@ type Flags struct {
 	TokenID            int64
 	ScopeConnections   string
 	ScopeTools         string
+
+	// Audit log commands
+	ListAuditCmd    bool
+	VerifyAuditCmd  bool
+	AuditActor      string
+	AuditAction     string
+	AuditTargetType string
+	AuditTargetID   int64
+	AuditOutcome    string
+	AuditSince      string
+	AuditUntil      string
+	AuditLimit      int
+	JSONOutput      bool
 }
 
 // ParseFlags parses command-line flags and returns a Flags struct
@@ -207,6 +220,19 @@ func ParseFlags(defaultConfigPath string) *Flags {
 	flag.Int64Var(&f.TokenID, "token-id", 0, "Token ID for token scope commands")
 	flag.StringVar(&f.ScopeConnections, "scope-connections", "", "Comma-separated list of connection IDs")
 	flag.StringVar(&f.ScopeTools, "scope-tools", "", "Comma-separated list of tool names")
+
+	// Audit log commands
+	flag.BoolVar(&f.ListAuditCmd, "list-audit", false, "List RBAC audit log events")
+	flag.BoolVar(&f.VerifyAuditCmd, "verify-audit-log", false, "Verify the audit log hash chain")
+	flag.StringVar(&f.AuditActor, "audit-actor", "", "Filter audit events by actor name")
+	flag.StringVar(&f.AuditAction, "audit-action", "", "Filter audit events by action (e.g. group.create)")
+	flag.StringVar(&f.AuditTargetType, "audit-target-type", "", "Filter audit events by target type (user, group, token)")
+	flag.Int64Var(&f.AuditTargetID, "audit-target-id", 0, "Filter audit events by target ID")
+	flag.StringVar(&f.AuditOutcome, "audit-outcome", "", "Filter audit events by outcome (success, failure, denied)")
+	flag.StringVar(&f.AuditSince, "audit-since", "", "Only show audit events at or after this time (RFC 3339 or YYYY-MM-DD)")
+	flag.StringVar(&f.AuditUntil, "audit-until", "", "Only show audit events at or before this time (RFC 3339 or YYYY-MM-DD)")
+	flag.IntVar(&f.AuditLimit, "audit-limit", 50, "Maximum number of audit events to show")
+	flag.BoolVar(&f.JSONOutput, "json", false, "Emit output as one JSON object per line")
 
 	flag.Parse()
 	return f
@@ -326,11 +352,16 @@ func (f *Flags) HasTokenScopeCommand() bool {
 		f.ClearTokenScopeCmd || f.ShowTokenScopeCmd
 }
 
+// HasAuditCommand returns true if any audit log command was specified
+func (f *Flags) HasAuditCommand() bool {
+	return f.ListAuditCmd || f.VerifyAuditCmd
+}
+
 // HasCLICommand returns true if any CLI command (not server mode) was specified
 func (f *Flags) HasCLICommand() bool {
 	return f.HasTokenCommand() || f.HasUserCommand() ||
 		f.HasGroupCommand() || f.HasPrivilegeCommand() ||
-		f.HasTokenScopeCommand()
+		f.HasTokenScopeCommand() || f.HasAuditCommand()
 }
 
 // isFlagSet returns true if the named flag was explicitly set on the command line.

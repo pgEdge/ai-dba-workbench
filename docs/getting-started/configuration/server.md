@@ -87,6 +87,7 @@ http:
     #   client_id: "pgedge-workbench"
     #   client_secret_file: "/etc/pgedge/oidc-client-secret.txt"
     #   redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
+    audit_retention_days: 90
 
 #=====================================================
 # CONNECTION SECURITY
@@ -302,6 +303,29 @@ builtins:
 | `-scope-connections string` | Connection ID list |
 | `-scope-tools string` | Tool name list |
 
+### Audit Log Options
+
+The audit log records every change to users,
+groups, tokens and privileges; the
+[Audit Log](../../admin-guide/managing-users-and-permissions/audit-log.md)
+document describes the events and how to read
+them. The following table describes the flags
+that read and verify the log:
+
+| Flag | Description |
+|------|-------------|
+| `-list-audit` | List RBAC audit log events |
+| `-verify-audit-log` | Verify the audit log hash chain |
+| `-audit-actor string` | Filter events by actor name |
+| `-audit-action string` | Filter events by action |
+| `-audit-target-type string` | Filter events by target type |
+| `-audit-target-id int` | Filter events by target ID |
+| `-audit-outcome string` | Filter events by outcome |
+| `-audit-since string` | Earliest event time to show |
+| `-audit-until string` | Latest event time to show |
+| `-audit-limit int` | Maximum events to show (default: 50) |
+| `-json` | Emit output as one JSON object per line |
+
 ## Configuration Sections
 
 ### HTTP Server (`http`)
@@ -352,6 +376,7 @@ login is disabled. The
 describes each option in full, along with registering
 the Workbench at an identity provider and mapping
 provider groups onto Workbench groups.
+| `auth.audit_retention_days` | int | `90` | Days to keep RBAC audit events (0 keeps forever) |
 
 #### CORS Origin (`cors_origin`)
 
@@ -990,6 +1015,22 @@ memory:
 
 ```bash
 export PGEDGE_MEMORY_ENABLED=false
+```
+
+### `PGEDGE_AUDIT_RETENTION_DAYS`
+
+The `PGEDGE_AUDIT_RETENTION_DAYS` variable controls
+how many days of RBAC audit events the server keeps.
+The server reads this variable at startup and applies
+the value as an override to the
+`http.auth.audit_retention_days` configuration
+option. A value of `0` keeps audit events forever.
+
+In the following example, the variable keeps a year
+of audit events:
+
+```bash
+export PGEDGE_AUDIT_RETENTION_DAYS=365
 ```
 
 ## Configuration Reload

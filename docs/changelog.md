@@ -375,7 +375,8 @@ project adheres to
   `metrics.pg_stat_statements` through collector schema migration
   13. The index keys the statement identity that the
   `pg_stat_statements` counters are cumulative within, followed by
-  `collected_at`, and includes every counter the windowed
+  `collected_at` and the probing database name, and includes every
+  counter the windowed
   aggregation reads, so the top queries query runs as an index-only
   scan in the order it needs instead of sorting a whole window of
   samples to disk. The index is not free: it costs roughly 17% more

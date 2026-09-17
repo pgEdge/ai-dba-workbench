@@ -722,6 +722,18 @@ func (sm *SchemaManager) registerMigrations() {
 				-- #4 drops it; fresh installs skip the creation.
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_object
 					ON metrics.pg_stat_statements(connection_id, database_name, queryid, collected_at DESC);
+				-- Serves the windowed delta aggregation behind
+				-- /api/v1/metrics/top-queries; migration #15 adds it to
+				-- installations created before it existed and carries the
+				-- reasoning behind the column order.
+				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_identity_time
+					ON metrics.pg_stat_statements(connection_id, queryid, userid, dbid,
+						toplevel, collected_at, database_name)
+					INCLUDE (calls, total_exec_time, rows, shared_blks_hit,
+						shared_blks_read, min_exec_time, max_exec_time);
+
+				COMMENT ON INDEX metrics.idx_pg_stat_statements_identity_time IS
+					'Covers the windowed delta aggregation behind /api/v1/metrics/top-queries. The key columns are the statement identity that pg_stat_statements counters are cumulative within (queryid, userid, dbid, toplevel), then collected_at, then database_name: that is the order the aggregation needs both to keep one copy of a counter sampled through several databases and to LAG over each identity, so it reads the rows already sorted instead of sorting them. The INCLUDE columns are every counter the aggregation reads, which makes the scan index-only; the query text is deliberately excluded because it would roughly triple the size of the index.';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create pg_stat_statements table: %w", err)
@@ -3412,24 +3424,26 @@ func (sm *SchemaManager) registerMigrations() {
 	//
 	// /api/v1/metrics/top-queries now differences the cumulative
 	// pg_stat_statements counters across a requested window, with a LAG
-	// partitioned by the statement identity (queryid, database_name,
-	// userid, dbid, toplevel) and ordered by collected_at. Neither existing
-	// index offers that order: idx_pg_stat_statements_conn_time leads with
-	// collected_at after the connection, and both the primary key and
-	// idx_pg_stat_statements_object put database_name ahead of queryid and
-	// collected_at ahead of the rest of the identity. The aggregation
-	// therefore had to sort every row in the window, which on a 30-day
-	// window of 1.3 million samples spilled several hundred megabytes to
-	// temporary files.
+	// partitioned by the statement identity (queryid, userid, dbid,
+	// toplevel) and ordered by collected_at, after first keeping one copy
+	// per identity and collected_at of a counter the probe sampled through
+	// several databases. Neither existing index offers that order:
+	// idx_pg_stat_statements_conn_time leads with collected_at after the
+	// connection, and both the primary key and idx_pg_stat_statements_object
+	// put database_name ahead of queryid and collected_at ahead of the rest
+	// of the identity. The aggregation therefore had to sort every row in
+	// the window, which on a 30-day window of 1.3 million samples spilled
+	// several hundred megabytes to temporary files.
 	//
 	// The key columns are the connection, then the identity in the order
-	// the window declares it, then collected_at last, which is what lets
-	// the planner satisfy the whole window specification from the index:
-	// connection_id is an equality, the identity columns give the
-	// partitioning, and the trailing collected_at gives the ordering within
-	// each partition. Because the table is partitioned by collected_at, the
-	// per-partition scans are combined with a Merge Append, which preserves
-	// that order across partitions.
+	// the window declares it, then collected_at, then database_name, which
+	// is what lets the planner satisfy the whole ORDER BY of the sample scan
+	// from the index: connection_id is an equality, the identity columns
+	// give the partitioning, collected_at gives the ordering within each
+	// partition, and the trailing database_name makes the copy the DISTINCT
+	// ON keeps a stable choice. Because the table is partitioned by
+	// collected_at, the per-partition scans are combined with a Merge
+	// Append, which preserves that order across partitions.
 	//
 	// The INCLUDE list is every counter the aggregation reads. Without it
 	// the scan has to visit the heap for each of those million-odd rows in
@@ -3462,13 +3476,13 @@ func (sm *SchemaManager) registerMigrations() {
 
 			_, err := tx.Exec(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_pg_stat_statements_identity_time
-					ON metrics.pg_stat_statements(connection_id, queryid, database_name,
-						userid, dbid, toplevel, collected_at)
+					ON metrics.pg_stat_statements(connection_id, queryid, userid, dbid,
+						toplevel, collected_at, database_name)
 					INCLUDE (calls, total_exec_time, rows, shared_blks_hit,
 						shared_blks_read, min_exec_time, max_exec_time);
 
 				COMMENT ON INDEX metrics.idx_pg_stat_statements_identity_time IS
-					'Covers the windowed delta aggregation behind /api/v1/metrics/top-queries. The key columns are the statement identity that pg_stat_statements counters are cumulative within, followed by collected_at, which is the order the LAG over that identity needs, so the aggregation reads the rows already sorted instead of sorting them. The INCLUDE columns are every counter the aggregation reads, which makes the scan index-only; the query text is deliberately excluded because it would roughly triple the size of the index.';
+					'Covers the windowed delta aggregation behind /api/v1/metrics/top-queries. The key columns are the statement identity that pg_stat_statements counters are cumulative within (queryid, userid, dbid, toplevel), then collected_at, then database_name: that is the order the aggregation needs both to keep one copy of a counter sampled through several databases and to LAG over each identity, so it reads the rows already sorted instead of sorting them. The INCLUDE columns are every counter the aggregation reads, which makes the scan index-only; the query text is deliberately excluded because it would roughly triple the size of the index.';
 			`)
 			if err != nil {
 				return fmt.Errorf("failed to create idx_pg_stat_statements_identity_time: %w", err)

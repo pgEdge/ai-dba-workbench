@@ -58,8 +58,8 @@ func identityIndexDefinition(
 func assertIdentityIndexShape(def string, t *testing.T) {
 	t.Helper()
 
-	const wantKeys = "(connection_id, queryid, database_name, userid, " +
-		"dbid, toplevel, collected_at)"
+	const wantKeys = "(connection_id, queryid, userid, dbid, toplevel, " +
+		"collected_at, database_name)"
 	if !strings.Contains(def, wantKeys) {
 		t.Errorf("index key columns = %q, want them to contain %q",
 			def, wantKeys)

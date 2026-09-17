@@ -1086,10 +1086,14 @@ whose cost is linear in the window. `/metrics/top-queries` therefore
 applies its own `maxTopQueriesTimeSpan` of 30 days, in
 `checkTopQueriesTimeSpan` (`perf_summary_handlers.go`), immediately
 after `ResolveTimeWindow` returns and before any SQL is built, because
-the aggregation runs twice per request and has no statement timeout
-behind it. Thirty days is the longest preset in `ValidTimeRanges` and
-the window shape `idx_pg_stat_statements_object` was benchmarked
-against, so raising it means re-measuring, in particular the
+the aggregation runs twice per request and the only backstop behind it
+is the datastore pool's `statement_timeout`
+(`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
+`database.statement_timeout` setting says otherwise), which the cap is
+meant to keep an ordinary request well inside. Thirty days is the
+longest preset in `ValidTimeRanges` and the window shape
+`idx_pg_stat_statements_identity_time` (collector migration 13) was
+benchmarked against, so raising it means re-measuring, in particular the
 `exclude_collector=true` path that cannot use the index-only scan. Add
 such a cap per endpoint rather than by tightening `MaxCustomTimeSpan`,
 which the other endpoints legitimately need at 366 days.
@@ -1154,12 +1158,14 @@ measuring, and do not drop any of these:
   page statement. It cannot be replaced by the identity index below:
   that index puts `queryid` ahead of `database_name`, so it cannot
   return one statement's samples in `collected_at` order.
-- `idx_pg_stat_statements_identity_time (connection_id, queryid,
-  database_name, userid, dbid, toplevel, collected_at) INCLUDE (calls,
+- `idx_pg_stat_statements_identity_time (connection_id, queryid, userid,
+  dbid, toplevel, collected_at, database_name) INCLUDE (calls,
   total_exec_time, rows, shared_blks_hit, shared_blks_read,
   min_exec_time, max_exec_time)` is migration #14, added for issue #387.
-  Its key order is exactly the identity window in `buildTopQueriesSQL`
-  (partition columns, then the ordering column), so the aggregation
+  Its key order is exactly the `ORDER BY` of the `readings` CTE in
+  `buildTopQueriesSQL` (identity columns, then `collected_at`, then the
+  probing `database_name` as the tiebreaker), which serves both the
+  `DISTINCT ON` and the identity window, so the aggregation
   reads the rows already sorted, with a Merge Append combining the
   partitions; the INCLUDE list makes the scan index-only.
 
@@ -1186,16 +1192,37 @@ counter-delta query over `metrics.pg_stat_statements` should follow the
 same shape.
 
 Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
-`queryid` at once: its `samples` CTE `LAG`s over
-`(queryid, database_name, userid, dbid, toplevel)` inside the resolved
-window, `totals` drops the pairs whose call or time delta is negative,
-floors the row and block deltas at zero, sums per `queryid` and keeps
-only statements with calls in the window, and `latest_sample` supplies
-the OIDs and the two lifetime columns `min_exec_time` and
-`max_exec_time`, which cannot be differenced. `mean_exec_time` is
-derived as `SUM(delta_time) / SUM(delta_calls)`. A statement present in
-the snapshot but not executed in the window therefore does not appear at
+`queryid` at once, with one refinement that the review of PR #481
+forced. `database_name` is **not** part of the identity there: the probe
+runs in every database with the extension and each run reads the same
+cluster-wide view, so one counter lands once per such database at the
+same `collected_at`, differing only in the probing `database_name`. Its
+`readings` CTE therefore keeps one copy per
+`(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
+(lowest `database_name` wins, for a stable choice), resolves each row's
+own database through `db_names`, and applies the optional
+`database_name` filter to that resolved name; `samples` then `LAG`s over
+`(queryid, userid, dbid, toplevel)`, `totals` drops the pairs whose
+call or time delta is negative, floors the row and block deltas at
+zero, sums per `queryid` and keeps only statements with calls in the
+window, and `latest_sample` supplies the OIDs, the resolved name and the
+two lifetime columns `min_exec_time` and `max_exec_time`, which cannot
+be differenced. `mean_exec_time` is derived as
+`SUM(delta_time) / SUM(delta_calls)`. A statement present in the
+snapshot but not executed in the window therefore does not appear at
 all, which is a deliberate behaviour change from the pre-#387 endpoint.
+
+Two consequences follow, each pinned by a test. Partitioning on
+`database_name` as well would count every call once per database with
+the extension (`TestTopQueries_OneCounterStoredUnderSeveralDatabases`,
+which stores one counter under two names and expects it summed once);
+and the database filter has to select which counters are summed rather
+than filter the summed row, because `totals` sums every `dbid` of a
+`queryid` (`TestTopQueries_DatabaseFilterSumsOneDatabase`, 1,200 calls
+in one database and 12 in another). `queryStatsSQLTemplate` still keys
+its identity on `database_name`; it is safe only because the drill-down
+always binds one database, and it should adopt the same shape if that
+ever changes.
 
 `totals` and `latest_sample` must stay `MATERIALIZED`. The planner
 cannot see through the `samples` CTE, estimates both at one row, and
@@ -1241,7 +1268,8 @@ external sort to 8 ms in memory. Any new lookup over
 The third CTE in the same statement, `last_client`, follows that rule:
 it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
 ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
-`pss.queryid`, `pss.dbid` and `pss.userid` to fill the `client_addr`
+`latest_sample`'s `queryid`, `dbid` and `userid` (the identity of each
+statement's most recent sample in the window) to fill the `client_addr`
 (via `host(client_addr)`, the repo's convention for rendering `inet`),
 `client_hostname` and `client_observed_at` columns of `TopQueryRow`.
 

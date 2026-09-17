@@ -72,34 +72,49 @@ const topQueriesCTEHead = "WITH latest AS ( " +
 // queryid predicate and the sample scan's own optional filters.
 const topQueriesCTEBody = "ORDER BY query_id, datid, usesysid, " +
 	"collected_at DESC " +
-	"), samples AS ( " +
-	"SELECT " +
-	"pss.queryid, pss.collected_at, " +
-	"pss.database_name, pss.dbid, pss.userid, " +
-	"pss.min_exec_time, pss.max_exec_time, " +
-	"pss.calls - LAG(pss.calls) OVER identity AS delta_calls, " +
-	"pss.total_exec_time " +
-	"- LAG(pss.total_exec_time) OVER identity AS delta_time, " +
-	"pss.rows - LAG(pss.rows) OVER identity AS delta_rows, " +
-	"pss.shared_blks_hit " +
-	"- LAG(pss.shared_blks_hit) OVER identity AS delta_hit, " +
-	"pss.shared_blks_read " +
-	"- LAG(pss.shared_blks_read) OVER identity AS delta_read " +
+	"), readings AS ( " +
+	"SELECT DISTINCT ON (pss.queryid, pss.userid, pss.dbid, " +
+	"pss.toplevel, pss.collected_at) " +
+	"pss.queryid, pss.userid, pss.dbid, pss.toplevel, " +
+	"pss.collected_at, " +
+	"pss.database_name AS sample_database_name, " +
+	"COALESCE(dn.datname, pss.database_name) AS database_name, " +
+	"pss.calls, pss.total_exec_time, pss.rows, " +
+	"pss.shared_blks_hit, pss.shared_blks_read, " +
+	"pss.min_exec_time, pss.max_exec_time " +
 	"FROM metrics.pg_stat_statements pss " +
+	"LEFT JOIN db_names dn ON pss.dbid = dn.datid " +
 	"WHERE pss.connection_id = $1 " +
 	"AND pss.collected_at >= $2 " +
 	"AND pss.collected_at <= $3"
 
-// topQueriesCTETail is the rest of the CTE: the identity window that the
-// LAG runs over, the per-queryid delta aggregation, the latest sample each
-// statement was seen in, and the joins that resolve the OIDs to names and
-// attach the last observed client. Splitting the golden copy lets the
-// optional filter clauses sit between the sample predicate and the window
-// definition, which is where the builder puts them.
-const topQueriesCTETail = "WINDOW identity AS ( " +
-	"PARTITION BY pss.queryid, pss.database_name, pss.userid, " +
-	"pss.dbid, pss.toplevel " +
-	"ORDER BY pss.collected_at " +
+// topQueriesCTETail is the rest of the CTE: the ORDER BY that the DISTINCT
+// ON in readings keys on, the identity window that the LAG runs over, the
+// per-queryid delta aggregation, the latest sample each statement was seen
+// in, and the joins that resolve the role OID to a name and attach the last
+// observed client. Splitting the golden copy lets the optional filter
+// clauses sit between the sample predicate and that ORDER BY, which is
+// where the builder puts them.
+const topQueriesCTETail = "ORDER BY pss.queryid, pss.userid, pss.dbid, " +
+	"pss.toplevel, " +
+	"pss.collected_at, pss.database_name " +
+	"), samples AS ( " +
+	"SELECT " +
+	"r.queryid, r.collected_at, " +
+	"r.database_name, r.sample_database_name, r.dbid, r.userid, " +
+	"r.min_exec_time, r.max_exec_time, " +
+	"r.calls - LAG(r.calls) OVER identity AS delta_calls, " +
+	"r.total_exec_time " +
+	"- LAG(r.total_exec_time) OVER identity AS delta_time, " +
+	"r.rows - LAG(r.rows) OVER identity AS delta_rows, " +
+	"r.shared_blks_hit " +
+	"- LAG(r.shared_blks_hit) OVER identity AS delta_hit, " +
+	"r.shared_blks_read " +
+	"- LAG(r.shared_blks_read) OVER identity AS delta_read " +
+	"FROM readings r " +
+	"WINDOW identity AS ( " +
+	"PARTITION BY r.queryid, r.userid, r.dbid, r.toplevel " +
+	"ORDER BY r.collected_at " +
 	") " +
 	"), totals AS MATERIALIZED ( " +
 	"SELECT " +
@@ -116,16 +131,16 @@ const topQueriesCTETail = "WINDOW identity AS ( " +
 	"HAVING SUM(delta_calls) > 0 " +
 	"), latest_sample AS MATERIALIZED ( " +
 	"SELECT DISTINCT ON (queryid) " +
-	"queryid, database_name, dbid, userid, " +
+	"queryid, database_name, sample_database_name, dbid, userid, " +
 	"min_exec_time, max_exec_time " +
 	"FROM samples " +
-	"ORDER BY queryid, collected_at DESC " +
+	"ORDER BY queryid, collected_at DESC, dbid, userid " +
 	"), deduped AS ( " +
 	"SELECT " +
 	"t.queryid::text, " +
 	"t.queryid AS sample_queryid, " +
-	"ls.database_name AS sample_database_name, " +
-	"COALESCE(dn.datname, ls.database_name) AS database_name, " +
+	"ls.sample_database_name, " +
+	"ls.database_name, " +
 	"COALESCE(un.usename, '') AS username, " +
 	"t.calls, t.total_exec_time, " +
 	"CASE WHEN t.calls > 0 " +
@@ -138,7 +153,6 @@ const topQueriesCTETail = "WINDOW identity AS ( " +
 	"lc.collected_at AS client_observed_at " +
 	"FROM totals t " +
 	"JOIN latest_sample ls ON ls.queryid = t.queryid " +
-	"LEFT JOIN db_names dn ON ls.dbid = dn.datid " +
 	"LEFT JOIN user_names un ON ls.userid = un.usesysid " +
 	"LEFT JOIN last_client lc ON ls.queryid = lc.query_id " +
 	"AND ls.dbid = lc.datid AND ls.userid = lc.usesysid )"
@@ -226,6 +240,9 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		// pin down.
 		wantLastClient string
 		wantFilters    string
+		// wantDBClause is the optional database predicate. Since #387's
+		// review it sits inside readings, after the other sample filters,
+		// so that a filtered request sums only that database's counters.
 		wantDBClause   string
 		wantTail       string
 		wantFilterArgs []any
@@ -248,7 +265,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 		{
 			name:           "database name only",
 			databaseName:   databaseName,
-			wantDBClause:   "WHERE database_name = $4",
+			wantDBClause:   "AND COALESCE(dn.datname, pss.database_name) = $4",
 			wantTail:       "LIMIT $5 OFFSET $6",
 			wantFilterArgs: []any{connID, start, end, databaseName},
 			wantPageArgs: []any{
@@ -259,7 +276,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			databaseName:     databaseName,
 			excludeCollector: true,
 			wantFilters:      excludeSQL,
-			wantDBClause:     "WHERE database_name = $4",
+			wantDBClause:     "AND COALESCE(dn.datname, pss.database_name) = $4",
 			wantTail:         "LIMIT $5 OFFSET $6",
 			wantFilterArgs:   []any{connID, start, end, databaseName},
 			wantPageArgs: []any{
@@ -292,7 +309,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			databaseName:   databaseName,
 			wantLastClient: "AND query_id = $4",
 			wantFilters:    "AND pss.queryid = $4",
-			wantDBClause:   "WHERE database_name = $5",
+			wantDBClause:   "AND COALESCE(dn.datname, pss.database_name) = $5",
 			wantTail:       "LIMIT $6 OFFSET $7",
 			wantFilterArgs: []any{connID, start, end, queryID, databaseName},
 			wantPageArgs: []any{
@@ -305,7 +322,7 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 			excludeCollector: true,
 			wantLastClient:   "AND query_id = $4",
 			wantFilters:      "AND pss.queryid = $4 " + excludeSQL,
-			wantDBClause:     "WHERE database_name = $5",
+			wantDBClause:     "AND COALESCE(dn.datname, pss.database_name) = $5",
 			wantTail:         "LIMIT $6 OFFSET $7",
 			wantFilterArgs:   []any{connID, start, end, queryID, databaseName},
 			wantPageArgs: []any{
@@ -321,11 +338,11 @@ func TestBuildTopQueriesSQL_ClauseCombinations(t *testing.T) {
 				offset)
 
 			wantCTE := joinSQL(topQueriesCTEHead, tc.wantLastClient,
-				topQueriesCTEBody, tc.wantFilters, topQueriesCTETail)
-			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped",
-				tc.wantDBClause)
+				topQueriesCTEBody, tc.wantFilters, tc.wantDBClause,
+				topQueriesCTETail)
+			wantCount := joinSQL(wantCTE, "SELECT COUNT(*) FROM deduped")
 			wantPage := joinSQL(wantCTE, topQueriesPageSelect,
-				tc.wantDBClause, "ORDER BY total_exec_time DESC, queryid",
+				"ORDER BY total_exec_time DESC, queryid",
 				tc.wantTail, topQueriesPageLateral)
 
 			if got := normaliseSQL(countSQL); got != wantCount {

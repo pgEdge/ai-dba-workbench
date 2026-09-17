@@ -1725,3 +1725,160 @@ func TestTopQueries_PresetWindowExcludesOlderSamples(t *testing.T) {
 		}
 	})
 }
+
+// seedMultiDatabaseProbeFixture reproduces what the collector stores on a
+// server with pg_stat_statements installed in more than one database. The
+// probe runs in every such database and reads the same cluster-wide view
+// each time, so one counter, identified by (queryid, userid, dbid,
+// toplevel), lands once per probing database at the same collected_at,
+// differing only in database_name. Here queryid 5001 grows by ten calls and
+// 100 ms per five-minute sample and is stored under both "alpha" and
+// "postgres" on each of three samples. It also seeds one statement whose
+// counters genuinely differ per database: queryid 5002 runs in dbid 100
+// ("alpha", 1,200 calls in the window) and in dbid 200 ("beta", 12 calls),
+// each identity again stored under both probing databases.
+func seedMultiDatabaseProbeFixture(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+
+	latest := time.Now().UTC().Add(-1 * time.Minute)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	exec(`INSERT INTO metrics.pg_stat_activity
+        (connection_id, collected_at, datid, datname, usesysid, usename)
+        VALUES ($1, $2, 100, 'alpha', 10, 'alice'),
+               ($1, $2, 200, 'beta', 10, 'alice')`,
+		topQueriesConnID, latest)
+
+	for i, minutesBefore := range []int{10, 5, 0} {
+		at := latest.Add(-time.Duration(minutesBefore) * time.Minute)
+		calls := int64(100 + 10*i)
+		for _, probeDB := range []string{"alpha", "postgres"} {
+			exec(`INSERT INTO metrics.pg_stat_statements
+                (connection_id, collected_at, queryid, userid, dbid,
+                 database_name, query, calls, total_exec_time,
+                 mean_exec_time, min_exec_time, max_exec_time, rows,
+                 shared_blks_hit, shared_blks_read)
+                VALUES ($1, $2, 5001, 10, 100, $3, 'SELECT shared', $4, $5,
+                        10, 1, 20, $4, $4, $4),
+                       ($1, $2, 5002, 10, 100, $3, 'SELECT per db', $6, $7,
+                        1, 1, 2, $6, $6, $6),
+                       ($1, $2, 5002, 10, 200, $3, 'SELECT per db', $8, $9,
+                        1, 1, 2, $8, $8, $8)`,
+				topQueriesConnID, at, probeDB,
+				calls, float64(calls)*10,
+				int64(600*i), float64(600*i),
+				int64(6*i), float64(6*i))
+		}
+	}
+}
+
+// TestTopQueries_OneCounterStoredUnderSeveralDatabases covers the first
+// blocking finding on the #387 review: a counter the probe sampled through
+// two databases must be counted once, not once per database. Two pairs of
+// ten calls and 100 ms give 20 calls and 200 ms; partitioning the LAG on
+// database_name as well would have reported 40 and 400.
+func TestTopQueries_OneCounterStoredUnderSeveralDatabases(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedMultiDatabaseProbeFixture(t, pool)
+
+	rows, total := decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&time_range=1h&queryid=5001"))
+	if total != "1" || len(rows) != 1 {
+		t.Fatalf("total = %s, rows = %d, want 1 and 1: %#v", total,
+			len(rows), rows)
+	}
+	row := rows[0]
+	if row.Calls != 20 {
+		t.Errorf("calls = %d, want 20 (one copy per sample, two pairs)",
+			row.Calls)
+	}
+	if row.TotalExecTime != 200 {
+		t.Errorf("total_exec_time = %v, want 200", row.TotalExecTime)
+	}
+	if row.Rows != 20 || row.SharedBlksHit != 20 || row.SharedBlksRead != 20 {
+		t.Errorf("rows/hit/read = %d/%d/%d, want 20 each", row.Rows,
+			row.SharedBlksHit, row.SharedBlksRead)
+	}
+	if row.MeanExecTime != 10 {
+		t.Errorf("mean_exec_time = %v, want 10", row.MeanExecTime)
+	}
+	if row.DatabaseName != "alpha" {
+		t.Errorf("database_name = %q, want alpha (resolved from dbid 100)",
+			row.DatabaseName)
+	}
+	if row.Query != "SELECT shared" {
+		t.Errorf("query = %q, want the sampled text", row.Query)
+	}
+}
+
+// TestTopQueries_DatabaseFilterSumsOneDatabase covers the second blocking
+// finding on the #387 review: the database filter must select which
+// counters are summed rather than filter the summed row. queryid 5002 runs
+// 1,200 calls in alpha and 12 in beta; asking for alpha must return 1,200,
+// asking for beta must return 12, and asking for neither returns the sum.
+func TestTopQueries_DatabaseFilterSumsOneDatabase(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedMultiDatabaseProbeFixture(t, pool)
+
+	tests := []struct {
+		name         string
+		query        string
+		wantCalls    int64
+		wantTime     float64
+		wantDatabase string
+	}{
+		{"alpha only", "&database_name=alpha", 1200, 1200, "alpha"},
+		{"beta only", "&database_name=beta", 12, 12, "beta"},
+		{"unfiltered sums both", "", 1212, 1212, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, total := decodeTopQueries(t, callTopQueries(t, h,
+				"connection_id=4242&time_range=1h&queryid=5002"+tc.query))
+			if total != "1" || len(rows) != 1 {
+				t.Fatalf("total = %s, rows = %d, want 1 and 1: %#v",
+					total, len(rows), rows)
+			}
+			if rows[0].Calls != tc.wantCalls {
+				t.Errorf("calls = %d, want %d", rows[0].Calls, tc.wantCalls)
+			}
+			if rows[0].TotalExecTime != tc.wantTime {
+				t.Errorf("total_exec_time = %v, want %v",
+					rows[0].TotalExecTime, tc.wantTime)
+			}
+			if tc.wantDatabase != "" && rows[0].DatabaseName != tc.wantDatabase {
+				t.Errorf("database_name = %q, want %q", rows[0].DatabaseName,
+					tc.wantDatabase)
+			}
+		})
+	}
+
+	// The probing database is not a statement database: filtering on it
+	// must match nothing even though every sample row was stored under it.
+	rows, total := decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&time_range=1h&database_name=postgres"))
+	if total != "0" || len(rows) != 0 {
+		t.Errorf("database_name=postgres: total = %s, rows = %#v; want none",
+			total, rows)
+	}
+
+	// Without a queryid, the leaderboard for beta holds only the beta
+	// identity of 5002, and the count agrees with the page.
+	rows, total = decodeTopQueries(t, callTopQueries(t, h,
+		"connection_id=4242&time_range=1h&database_name=beta"))
+	if total != "1" || len(rows) != 1 || rows[0].QueryID != "5002" {
+		t.Fatalf("beta leaderboard: total = %s, rows = %#v; want 5002 only",
+			total, rows)
+	}
+	if rows[0].Calls != 12 {
+		t.Errorf("beta leaderboard calls = %d, want 12", rows[0].Calls)
+	}
+}

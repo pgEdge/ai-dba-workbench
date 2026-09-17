@@ -78,7 +78,7 @@ func (p *PgStatConnectionSecurityProbe) checkCredentialsDelegatedColumn(ctx cont
 // Execute runs the probe against a monitored connection
 func (p *PgStatConnectionSecurityProbe) Execute(ctx context.Context, connectionName string, monitoredConn *pgxpool.Conn, pgVersion int) ([]map[string]any, error) {
 	// Check if GSSAPI view is available
-	gssapiAvailable, err := cachedCheck(connectionName, "gssapi_available", func() (bool, error) {
+	gssapiAvailable, err := cachedCheck(connectionName, monitoredConn, "gssapi_available", func() (bool, error) {
 		return p.checkGSSAPIAvailable(ctx, monitoredConn)
 	})
 	if err != nil {
@@ -88,7 +88,7 @@ func (p *PgStatConnectionSecurityProbe) Execute(ctx context.Context, connectionN
 	var query string
 	if gssapiAvailable {
 		// Check for credentials_delegated column (PG 16+)
-		hasCredentialsDelegated, err := cachedCheck(connectionName, "credentials_delegated_column", func() (bool, error) {
+		hasCredentialsDelegated, err := cachedCheck(connectionName, monitoredConn, "credentials_delegated_column", func() (bool, error) {
 			return p.checkCredentialsDelegatedColumn(ctx, monitoredConn)
 		})
 		if err != nil {

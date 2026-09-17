@@ -100,7 +100,9 @@ func TestCheckHelpers_ErrorPath(t *testing.T) {
 				"pg_stat_statements_ext",
 				"pg_stat_statements_shared_blk_time",
 			} {
-				key := featureCacheKey{connectionName: connName, checkName: check}
+				key := featureCacheKey{connectionName: connName,
+					databaseName: connectionDatabaseName(c),
+					checkName:    check}
 				featureCache.Store(key, true)
 				defer featureCache.Delete(key)
 			}

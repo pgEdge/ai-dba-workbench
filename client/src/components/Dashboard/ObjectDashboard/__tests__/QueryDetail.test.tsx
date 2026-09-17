@@ -406,6 +406,63 @@ describe('QueryDetail', () => {
             expect(lastTopQueryParams().get('time_range')).toBe('24h');
         });
 
+        it('ignores a stale response that resolves after a newer one', async () => {
+            // Hold each range's response open so they can be resolved
+            // out of order, which is what happens when the user moves
+            // the selector from 30d to 1h before the 30d row arrives.
+            const resolvers: Record<string, (rows: QueryDetailData[]) => void> = {};
+            mockApiFetch.mockImplementation((url: string) => {
+                const range = new URLSearchParams(url.split('?')[1] ?? '')
+                    .get('time_range') ?? '';
+                return new Promise(resolve => {
+                    resolvers[range] = (rows: QueryDetailData[]) =>
+                        resolve(okResponse(rows));
+                });
+            });
+
+            mockTimeRange = '30d';
+            const { rerender } = renderDetail();
+            await waitFor(() => {
+                expect(resolvers['30d']).toBeDefined();
+            });
+
+            mockTimeRange = '1h';
+            rerender(
+                <ThemeProvider theme={theme}>
+                    <QueryDetail
+                        connectionId={4}
+                        databaseName="testdb"
+                        objectName={QUERY_ID}
+                    />
+                </ThemeProvider>,
+            );
+            await waitFor(() => {
+                expect(resolvers['1h']).toBeDefined();
+            });
+
+            // The newer request (1h) lands first, then the older one
+            // (30d) arrives late. The late response must be dropped.
+            resolvers['1h']([makeQueryRow({ calls: 7 })]);
+            await waitFor(() => {
+                expect(screen.getByLabelText('Total Calls (Last 1h): 7'))
+                    .toBeInTheDocument();
+            });
+
+            resolvers['30d']([makeQueryRow({ calls: 900000 })]);
+
+            // Give the stale response a chance to be applied before
+            // asserting that it was not.
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(2);
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(screen.getByLabelText('Total Calls (Last 1h): 7'))
+                .toBeInTheDocument();
+            expect(screen.queryByLabelText(/Total Calls .*: 900/)).toBeNull();
+        });
+
         it('does not query metrics before the query row arrives', () => {
             mockApiFetch.mockReturnValue(new Promise(() => {}));
 
@@ -529,7 +586,7 @@ describe('QueryDetail', () => {
             renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Total Calls')).toBeInTheDocument();
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
             });
             expect(screen.getByText('500')).toBeInTheDocument();
             expect(screen.getByText('Avg Rows/Call')).toBeInTheDocument();
@@ -575,7 +632,7 @@ describe('QueryDetail', () => {
             renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Total Calls')).toBeInTheDocument();
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
             });
             expect(screen.getAllByText('--').length)
                 .toBeGreaterThanOrEqual(4);
@@ -588,7 +645,7 @@ describe('QueryDetail', () => {
             renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Total Calls')).toBeInTheDocument();
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
             });
             expect(screen.getAllByText('--').length).toBeGreaterThan(0);
         });
@@ -598,13 +655,39 @@ describe('QueryDetail', () => {
             renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Total Calls')).toBeInTheDocument();
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
             });
             expect(mockApiFetch).not.toHaveBeenCalled();
         });
     });
 
     describe('windowed statistics', () => {
+        it('qualifies the windowed totals with the selected range', async () => {
+            mockTimeRange = '7d';
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Total Calls (Last 7d): 500'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByLabelText(/^Total Time \(Last 7d\): /))
+                .toBeInTheDocument();
+        });
+
+        it('qualifies the windowed totals for a custom range', async () => {
+            mockTimeRange = 'custom';
+            mockCustomStart = '2026-01-01T00:00:00Z';
+            mockCustomEnd = '2026-01-02T00:00:00Z';
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByLabelText('Total Calls (Custom Range): 500'))
+                    .toBeInTheDocument();
+            });
+            expect(screen.getByText('Total Time (Custom Range)'))
+                .toBeInTheDocument();
+        });
+
         it('renders the min and max execution time tiles', async () => {
             renderDetail();
 
@@ -658,9 +741,9 @@ describe('QueryDetail', () => {
                         screen.getByLabelText('Mean Time: --'),
                     ).toBeInTheDocument();
                 });
-                expect(screen.getByLabelText('Total Calls: --'))
+                expect(screen.getByLabelText('Total Calls (Last 1h): --'))
                     .toBeInTheDocument();
-                expect(screen.getByLabelText('Total Time: --'))
+                expect(screen.getByLabelText('Total Time (Last 1h): --'))
                     .toBeInTheDocument();
                 expect(screen.queryByLabelText(/Mean Time: (0|NaN)/))
                     .not.toBeInTheDocument();
@@ -1073,7 +1156,7 @@ describe('QueryDetail', () => {
             renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByText('Total Calls')).toBeInTheDocument();
+                expect(screen.getByText('Total Calls (Last 1h)')).toBeInTheDocument();
             });
             expect(screen.queryByText('AI Overview'))
                 .not.toBeInTheDocument();

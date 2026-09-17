@@ -198,6 +198,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const [insightsCollapsed, setInsightsCollapsed] =
         useState<boolean>(false);
     const isMountedRef = useRef<boolean>(true);
+    // Each fetch takes a sequence number so that a response from an
+    // earlier request is dropped once a later one has started. The
+    // effect cleanup alone cannot do this: it clears isMountedRef, but
+    // the next run sets it straight back, so a slow 30d response could
+    // still land after a quick 1h one and overwrite it.
+    const requestIdRef = useRef<number>(0);
     const initialLoadDoneRef = useRef<boolean>(false);
 
     // AI query overview (brief plain-text summary)
@@ -223,6 +229,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     );
 
     const connectionName = currentOverlay?.connectionName;
+
+    // Qualifier for the tiles that follow the time range selector, so
+    // that they read as windowed beside the lifetime min and max.
+    const windowLabel = selectedRange === 'custom'
+        ? 'Custom Range'
+        : `Last ${selectedRange}`;
 
     // objectName may be queryid or query text
     const fetchQueryData = useCallback(async (): Promise<void> => {
@@ -255,6 +267,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
         }
         setError(null);
 
+        const requestId = ++requestIdRef.current;
+        // A response is only applied if the component is still mounted
+        // and no newer request has been started since.
+        const isCurrent = (): boolean =>
+            isMountedRef.current && requestIdRef.current === requestId;
+
         try {
             const response = await apiFetch(url);
 
@@ -269,8 +287,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 );
             }
 
-            if (isMountedRef.current) {
-                const result = await response.json() as QueryDetailData[];
+            const result = await response.json() as QueryDetailData[];
+
+            if (isCurrent()) {
                 setQueryData(
                     result.length > 0 ? result[0] : null
                 );
@@ -278,7 +297,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             }
         } catch (err) {
             logger.error('Error fetching query detail:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError(
                     (err as Error).message
                     || 'Failed to fetch query data'
@@ -286,7 +305,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 setQueryData(null);
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }
@@ -761,18 +780,18 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                   * leaves every tile showing a dash rather than a
                   * misleading zero. Min and max cannot be
                   * delta-aggregated, so pg_stat_statements reports
-                  * them for the life of the statement and the tiles
-                  * say so.
+                  * them for the life of the statement; the labels
+                  * say which window each tile covers.
                   */}
                 <Box sx={KPI_GRID_SX}>
                     <KpiTile
-                        label="Total Calls"
+                        label={`Total Calls (${windowLabel})`}
                         value={queryData
                             ? formatNumber(queryData.calls)
                             : '--'}
                     />
                     <KpiTile
-                        label="Total Time"
+                        label={`Total Time (${windowLabel})`}
                         value={queryData
                             ? formatTime(
                                 queryData.total_exec_time

@@ -362,6 +362,15 @@ yet, so each call site repeats the same two-part pattern that
 - Put `range`, `customStart` and `customEnd` in the fetch callback's
   dependency list, so that moving the selector refetches.
 
+- Guard the fetch against out-of-order responses with a request
+  sequence number, as `TopQueriesSection` and `QueryDetail` do: take
+  `++requestIdRef.current` at the start of each fetch and apply the
+  response only when the ref still holds that number (and the
+  component is still mounted). An `isMountedRef` cleared in the
+  effect cleanup is not enough on its own, because the next effect
+  run sets it straight back to `true`, so a slow `30d` response can
+  land after a quick `1h` one and overwrite it.
+
 - Where the view is paged, treat the window as a filter that changes
   the size of the result set and reset the offset when it moves, or
   narrowing the window strands the user on a page that no longer
@@ -384,9 +393,12 @@ and the block counters as sums of non-negative deltas, and derives
 `max_exec_time` cannot be delta-aggregated and remain lifetime
 `pg_stat_statements` values. The two `QueryDetail` tiles that show
 them are therefore labelled `Min Time (All Time)` and `Max Time
-(All Time)`, whilst the mean tile is plain `Mean Time` because it
-now follows the selector. Any new tile reading a windowed endpoint
-must say in its label which of the two it is.
+(All Time)`, whilst `Total Calls` and `Total Time` carry the
+selected window in their labels, `(Last 1h)` and so on, or `(Custom
+Range)`, so that they cannot be read as lifetime figures beside the
+min and max. The mean tile is plain `Mean Time` because it is the
+ratio of the two windowed totals. Any new tile reading a windowed
+endpoint must say in its label which of the two it is.
 
 `QueryDetail` used to carry a second average tile, `Avg Time (Last
 1h)` or `Avg Time (Custom Range)`, fed by `useQueryStats`. Once

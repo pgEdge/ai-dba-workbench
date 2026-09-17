@@ -10,7 +10,8 @@
  *-------------------------------------------------------------------------
  */
 
-import { createTheme, alpha, type Theme, type PaletteMode } from '@mui/material/styles';
+import { createTheme, alpha, type Theme } from '@mui/material/styles';
+import type { PaletteMode } from '@mui/material';
 
 declare module '@mui/material/styles' {
     interface Palette {

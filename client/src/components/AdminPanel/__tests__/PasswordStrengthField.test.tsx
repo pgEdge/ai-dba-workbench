@@ -358,7 +358,8 @@ describe('PasswordStrengthField', () => {
         expect(
             screen.getByText(/password is 6 of 12 minimum characters/i)
         ).toBeInTheDocument();
-        const last = onValidityChange.mock.calls.at(-1)?.[0];
+        const calls = onValidityChange.mock.calls;
+        const last = calls[calls.length - 1]?.[0];
         expect(last).toMatchObject({
             meetsMinimum: false,
             isEmpty: false,
@@ -390,7 +391,8 @@ describe('PasswordStrengthField', () => {
         ).toBeInTheDocument();
         const root = getInput().closest('.MuiFormControl-root');
         expect(root?.querySelector('.Mui-error')).not.toBeNull();
-        const last = onValidityChange.mock.calls.at(-1)?.[0];
+        const calls = onValidityChange.mock.calls;
+        const last = calls[calls.length - 1]?.[0];
         expect(last).toMatchObject({
             meetsMinimum: true,
             isEmpty: false,
@@ -420,7 +422,8 @@ describe('PasswordStrengthField', () => {
         expect(
             screen.queryByText(/exceeds the 72-byte server limit/i)
         ).not.toBeInTheDocument();
-        const last = onValidityChange.mock.calls.at(-1)?.[0];
+        const calls = onValidityChange.mock.calls;
+        const last = calls[calls.length - 1]?.[0];
         expect(last).toMatchObject({
             meetsMinimum: true,
             isEmpty: false,

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, memo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import {
     Box,
     Typography,
@@ -20,6 +20,24 @@ import {
     ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import { formatFullTime } from './utils';
+import type {
+    AlertDetailsProps,
+    BlackoutDetailsProps,
+    ConfigChangeDetailsPayload,
+    ConfigChangeDetailsProps,
+    EventDetailsProps,
+    ExpandableListProps,
+    ExtensionChangeDetailsPayload,
+    ExtensionChangeDetailsProps,
+    HbaChangeDetailsPayload,
+    HbaChangeDetailsProps,
+    IdentChangeDetailsPayload,
+    IdentChangeDetailsProps,
+    AlertDetailsPayload,
+    BlackoutDetailsPayload,
+    RestartDetailsPayload,
+    RestartDetailsProps,
+} from './types';
 import {
     sectionLabelSx,
     sectionLabelShortSx,
@@ -51,11 +69,13 @@ import {
 /**
  * ExpandableList - A list that can be expanded to show all items
  */
-export const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText }) => {
+const ExpandableListComponent = <T,>({
+    items,
+    initialLimit,
+    renderItem,
+    emptyText,
+}: ExpandableListProps<T>) => {
     const [showAll, setShowAll] = useState(false);
-    const totalCount = items?.length || 0;
-    const hasMore = totalCount > initialLimit;
-    const displayItems = showAll ? items : items?.slice(0, initialLimit);
 
     if (!items || items.length === 0) {
         return (
@@ -64,6 +84,10 @@ export const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText
             </Typography>
         );
     }
+
+    const totalCount = items.length;
+    const hasMore = totalCount > initialLimit;
+    const displayItems = showAll ? items : items.slice(0, initialLimit);
 
     return (
         <>
@@ -88,15 +112,24 @@ export const ExpandableList = memo(({ items, initialLimit, renderItem, emptyText
             )}
         </>
     );
-});
+};
 
-ExpandableList.displayName = 'ExpandableList';
+const MemoisedExpandableList = memo(ExpandableListComponent);
+MemoisedExpandableList.displayName = 'ExpandableList';
+
+/*
+ * memo() erases the component's type parameter, so the memoised value is
+ * re-typed as the generic function it wraps. Only the type changes; the
+ * value handed to React is the memoised component itself.
+ */
+export const ExpandableList =
+    MemoisedExpandableList as unknown as typeof ExpandableListComponent;
 
 /**
  * ConfigChangeDetails - Shows configuration change details with expandable list.
  * Supports both diff format (details.changes) and snapshot format (details.settings).
  */
-export const ConfigChangeDetails = memo(({ details }) => {
+export const ConfigChangeDetails = memo(({ details }: ConfigChangeDetailsProps) => {
     const theme = useTheme();
     const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
 
@@ -253,7 +286,7 @@ ConfigChangeDetails.displayName = 'ConfigChangeDetails';
  * ExtensionChangeDetails - Shows extension change details.
  * Supports both diff format (details.changes) and snapshot format (details.extensions).
  */
-export const ExtensionChangeDetails = memo(({ details }) => {
+export const ExtensionChangeDetails = memo(({ details }: ExtensionChangeDetailsProps) => {
     const theme = useTheme();
     const codeBlockSx = useMemo(() => getCodeBlockSx(theme), [theme]);
 
@@ -439,7 +472,7 @@ ExtensionChangeDetails.displayName = 'ExtensionChangeDetails';
  * HbaChangeDetails - Shows HBA rule change details with expandable list.
  * Supports both diff format (details.changes) and snapshot format (details.rules).
  */
-export const HbaChangeDetails = memo(({ details }) => {
+export const HbaChangeDetails = memo(({ details }: HbaChangeDetailsProps) => {
     const theme = useTheme();
     const codeBlockSx = useMemo(() => getCodeBlockSmallSx(theme), [theme]);
 
@@ -577,7 +610,7 @@ HbaChangeDetails.displayName = 'HbaChangeDetails';
 /**
  * IdentChangeDetails - Shows ident mapping change details with expandable list
  */
-export const IdentChangeDetails = memo(({ details }) => {
+export const IdentChangeDetails = memo(({ details }: IdentChangeDetailsProps) => {
     const theme = useTheme();
     const mappings = details?.mappings || [];
     const count = details?.mapping_count || mappings.length || 0;
@@ -612,7 +645,7 @@ IdentChangeDetails.displayName = 'IdentChangeDetails';
 /**
  * AlertDetails - Shows alert fired/cleared/acknowledged details
  */
-export const AlertDetails = memo(({ details, config }) => {
+export const AlertDetails = memo(({ details, config }: AlertDetailsProps) => {
     const theme = useTheme();
 
     const dbNameSx = useMemo(() => databaseNameSx(theme), [theme]);
@@ -704,7 +737,7 @@ AlertDetails.displayName = 'AlertDetails';
 /**
  * RestartDetails - Shows server restart details
  */
-export const RestartDetails = memo(({ details }) => {
+export const RestartDetails = memo(({ details }: RestartDetailsProps) => {
     const theme = useTheme();
     const codeBlockSx = useMemo(() => restartCodeBlockSx(theme), [theme]);
 
@@ -719,7 +752,7 @@ export const RestartDetails = memo(({ details }) => {
                     Timeline ID
                 </Typography>
                 <Typography sx={{ fontFamily: 'inherit', fontSize: 'inherit' }}>
-                    {details.previous_timeline || details.old_timeline_id} {'->'} {details.new_timeline || details.new_timeline_id}
+                    {details?.previous_timeline || details?.old_timeline_id} {'->'} {details?.new_timeline || details?.new_timeline_id}
                 </Typography>
             </Box>
         </Box>
@@ -731,7 +764,7 @@ RestartDetails.displayName = 'RestartDetails';
 /**
  * BlackoutDetails - Shows blackout started/ended details
  */
-export const BlackoutDetails = memo(({ details, eventType }) => {
+export const BlackoutDetails = memo(({ details, eventType }: BlackoutDetailsProps) => {
     return (
         <Box sx={{ mt: 1 }}>
             {details?.scope && (
@@ -783,27 +816,39 @@ BlackoutDetails.displayName = 'BlackoutDetails';
 /**
  * EventDetails - Renders the appropriate details component based on event type
  */
-export const EventDetails = memo(({ event, config }) => {
+export const EventDetails = memo(({ event, config }: EventDetailsProps) => {
     if (!event.details) {return null;}
+
+    /*
+     * The API attaches a free-form details object whose contents depend
+     * on the event type, so each branch narrows the payload to the shape
+     * that type implies before rendering it.
+     */
+    const details = event.details;
 
     switch (event.event_type) {
         case 'config_change':
-            return <ConfigChangeDetails details={event.details} />;
+            return <ConfigChangeDetails details={details as ConfigChangeDetailsPayload} />;
         case 'extension_change':
-            return <ExtensionChangeDetails details={event.details} />;
+            return <ExtensionChangeDetails details={details as ExtensionChangeDetailsPayload} />;
         case 'hba_change':
-            return <HbaChangeDetails details={event.details} />;
+            return <HbaChangeDetails details={details as HbaChangeDetailsPayload} />;
         case 'ident_change':
-            return <IdentChangeDetails details={event.details} />;
+            return <IdentChangeDetails details={details as IdentChangeDetailsPayload} />;
         case 'alert_fired':
         case 'alert_cleared':
         case 'alert_acknowledged':
-            return <AlertDetails details={event.details} config={config} />;
+            return <AlertDetails details={details as AlertDetailsPayload} config={config} />;
         case 'restart':
-            return <RestartDetails details={event.details} />;
+            return <RestartDetails details={details as RestartDetailsPayload} />;
         case 'blackout_started':
         case 'blackout_ended':
-            return <BlackoutDetails details={event.details} eventType={event.event_type} />;
+            return (
+                <BlackoutDetails
+                    details={details as BlackoutDetailsPayload}
+                    eventType={event.event_type}
+                />
+            );
         default:
             return null;
     }

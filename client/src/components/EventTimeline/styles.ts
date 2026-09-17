@@ -124,7 +124,7 @@ export const thresholdSx = {
     fontSize: '0.875rem',
 };
 
-export const severityChipSx = (color) => ({
+export const severityChipSx = (color: string) => ({
     height: 18,
     fontSize: '0.875rem',
     fontWeight: 600,
@@ -406,7 +406,7 @@ export const getToggleGroupSx = (theme: Theme) => ({
     },
 });
 
-export const getEventCountChipSx = (theme, eventCount) => ({
+export const getEventCountChipSx = (theme: Theme, eventCount: number) => ({
     height: 18,
     fontSize: '0.875rem',
     fontWeight: 600,
@@ -417,7 +417,7 @@ export const getEventCountChipSx = (theme, eventCount) => ({
     '& .MuiChip-label': { px: 0.5 },
 });
 
-export const getFilterChipSx = (theme, isSelected, color) => ({
+export const getFilterChipSx = (theme: Theme, isSelected: boolean, color: string) => ({
     height: 20,
     fontSize: '0.875rem',
     fontWeight: 500,

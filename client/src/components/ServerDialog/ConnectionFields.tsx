@@ -15,7 +15,7 @@ import { sectionLabelSx } from './ServerDialog.styles';
 import { getSelectFieldSx } from '../shared/formStyles';
 import { MAX_FIELD_LENGTH } from '../../utils/formLimits';
 
-interface ConnectionFieldsProps {
+export interface ConnectionFieldsProps {
     formData: ServerFormData;
     errors: FormErrors;
     isEditMode: boolean;

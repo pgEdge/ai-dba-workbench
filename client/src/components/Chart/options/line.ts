@@ -8,6 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
+import type { EChartsOption } from 'echarts';
+
 import type { ChartData } from '../types';
 import {
     buildTooltip,
@@ -32,7 +34,7 @@ export function buildLineOptions(
         showLegend?: boolean;
         showTooltip?: boolean;
     }
-): object {
+): EChartsOption {
     /*
      * Stretches the server carried forward from an earlier observation
      * are shaded once for the whole chart rather than once per series,

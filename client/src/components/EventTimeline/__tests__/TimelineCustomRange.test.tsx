@@ -15,6 +15,7 @@ import renderWithTheme from '../../../test/renderWithTheme';
 import EventTimeline from '../index';
 import { TIME_RANGE_STORAGE_KEY } from '../config';
 import * as useTimelineEventsModule from '../../../hooks/useTimelineEvents';
+import type { ServerSelection } from '../../../types/selection';
 
 vi.mock('../../../hooks/useTimelineEvents', () => ({
     useTimelineEvents: vi.fn(),
@@ -54,11 +55,20 @@ vi.mock('@mui/x-date-pickers/DateTimePicker', () => ({
 const START = '2026-02-01T09:00:00.000Z';
 const END = '2026-02-01T17:30:00.000Z';
 
-const selection = {
-    type: 'server' as const,
+const selection: ServerSelection = {
+    type: 'server',
     id: 1,
     name: 'Test Server',
-    serverIds: [1],
+    status: 'connected',
+    description: 'Test server',
+    host: '192.0.2.10',
+    port: 5432,
+    role: 'primary',
+    version: '18.0',
+    database: 'postgres',
+    username: 'postgres',
+    os: 'Linux',
+    platform: 'x86_64',
 };
 
 const mockedHook = useTimelineEventsModule.useTimelineEvents as ReturnType<typeof vi.fn>;

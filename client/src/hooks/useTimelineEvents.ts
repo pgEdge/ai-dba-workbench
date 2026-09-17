@@ -18,17 +18,14 @@ import {
     resolveTimeRangeBounds,
     type TimelineTimeRange,
 } from '../utils/timelineRange';
+import type { TimelineEvent } from '../components/EventTimeline/types';
 
-export interface TimelineEvent {
-    id: number;
-    event_type: string;
-    connection_id: number;
-    title: string;
-    description?: string;
-    severity?: string;
-    timestamp: string;
-    [key: string]: unknown;
-}
+/*
+ * The event payload type lives with the timeline's own types, next to
+ * the components that render it; it is re-exported here because this
+ * hook is what fetches it and existing callers import it from here.
+ */
+export type { TimelineEvent } from '../components/EventTimeline/types';
 
 /*
  * The range types live in utils/timelineRange.ts alongside the bounds

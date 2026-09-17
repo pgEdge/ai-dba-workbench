@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import renderWithTheme from '../../../test/renderWithTheme';
@@ -59,7 +58,7 @@ const mockUser = {
     isSuperuser: true,
 };
 
-const mockHasPermission = vi.fn(() => true);
+const mockHasPermission = vi.fn<(permission: string) => boolean>(() => true);
 
 vi.mock('../../../contexts/useAuth', () => ({
     useAuth: () => ({

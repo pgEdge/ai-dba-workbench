@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SystemResourcesSection from '../SystemResourcesSection';
@@ -219,6 +218,7 @@ const mockMemory = (available: 'absent' | 'null' | number[]): void => {
         data: params?.probeName === 'pg_sys_memory_info'
             ? memorySeries(available)
             : cpuSeries(),
+        window: null,
         loading: false,
         error: null,
         refetch: vi.fn(),
@@ -949,6 +949,7 @@ describe('SystemResourcesSection', () => {
                                 data: [{ time: 't', value: 1000 }],
                             },
                         ] as MetricSeries[],
+                        window: null,
                         loading: false,
                         error: null,
                         refetch: vi.fn(),

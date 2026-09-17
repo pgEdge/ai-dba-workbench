@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderWithTheme } from '../../../test/renderWithTheme';
@@ -322,12 +321,6 @@ describe('ServerInfoDialog sections', () => {
             },
         ];
 
-        const baseExtensions: ExtensionInfoItem[] = [
-            { name: 'pgcrypto', version: '1.3', schema: 'public', database: 'appdb' },
-            { name: 'uuid-ossp', version: '1.1', schema: 'public', database: 'appdb' },
-            { name: 'pg_stat_statements', version: '1.10', schema: 'public', database: 'analytics' },
-        ];
-
         const baseExtsByDb: Record<string, ExtensionInfoItem[]> = {
             appdb: [
                 { name: 'pgcrypto', version: '1.3', schema: 'public', database: 'appdb' },
@@ -552,13 +545,6 @@ describe('ServerInfoDialog sections', () => {
     // -----------------------------------------------------------------------
 
     describe('ConfigurationSection', () => {
-        const baseSettings: SettingInfoItem[] = [
-            { name: 'shared_buffers', setting: '4096', unit: 'MB', category: 'Resource Usage / Memory' },
-            { name: 'work_mem', setting: '64', unit: 'MB', category: 'Resource Usage / Memory' },
-            { name: 'wal_level', setting: 'replica', unit: null, category: 'Write-Ahead Log' },
-            { name: 'max_connections', setting: '100', unit: null, category: 'Connections and Authentication' },
-        ];
-
         const settingsByCategory: Record<string, SettingInfoItem[]> = {
             'Resource Usage / Memory': [
                 { name: 'shared_buffers', setting: '4096', unit: 'MB', category: 'Resource Usage / Memory' },

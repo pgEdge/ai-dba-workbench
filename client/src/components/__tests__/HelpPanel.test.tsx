@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import HelpPanel from '../HelpPanel';
@@ -163,6 +162,9 @@ describe('HelpPanel Component', () => {
         const backButton = backButtons.find(btn =>
             btn.querySelector('svg[data-testid="ArrowBackIcon"]')
         );
+        if (!backButton) {
+            throw new Error('Back button not found');
+        }
         fireEvent.click(backButton);
 
         // Should be back on Overview

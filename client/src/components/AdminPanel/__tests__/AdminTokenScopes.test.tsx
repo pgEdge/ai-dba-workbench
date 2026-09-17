@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import {
     render,
     screen,
@@ -1913,13 +1912,13 @@ describe('AdminTokenScopes - additional coverage', () => {
         const originalSetTimeout = window.setTimeout;
         const setTimeoutSpy = vi
             .spyOn(window, 'setTimeout')
-            .mockImplementation((fn: TimerHandler, ms?: number) => {
+            .mockImplementation(((fn: TimerHandler, ms?: number) => {
                 if (ms === 2000 && typeof fn === 'function') {
                     capturedCallback = fn as () => void;
                     return 12345 as unknown as ReturnType<typeof setTimeout>;
                 }
                 return originalSetTimeout(fn, ms);
-            });
+            }) as typeof window.setTimeout);
 
         try {
             const writeText = vi.fn().mockResolvedValue(undefined);

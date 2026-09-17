@@ -17,7 +17,6 @@
 // scrollable wrapper so wide MCP-tool tables no longer clip the right
 // side of the surrounding surface.
 
-import React from 'react';
 import { screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MarkdownContent } from '../MarkdownContent';

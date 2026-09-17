@@ -128,6 +128,9 @@ describe('ClusterContext', () => {
             });
 
             const initialRefresh = result.current.lastRefresh;
+            if (initialRefresh === null) {
+                throw new Error('lastRefresh was not set after the initial load');
+            }
 
             // Wait a bit to ensure time difference
             await new Promise(resolve => setTimeout(resolve, 10));
@@ -138,7 +141,11 @@ describe('ClusterContext', () => {
             });
 
             // lastRefresh should be updated
-            expect(result.current.lastRefresh.getTime()).toBeGreaterThanOrEqual(
+            const updatedRefresh = result.current.lastRefresh;
+            if (updatedRefresh === null) {
+                throw new Error('lastRefresh was cleared by the second fetch');
+            }
+            expect(updatedRefresh.getTime()).toBeGreaterThanOrEqual(
                 initialRefresh.getTime()
             );
         });
@@ -323,7 +330,11 @@ describe('ClusterContext', () => {
             // re-sync effect cannot find a match and cannot replace the
             // stub. This isolates the pure-setter behaviour of
             // selectCluster from the re-sync effect.
-            const testCluster = { id: 'cluster-nonexistent', name: 'Test Cluster' };
+            const testCluster = {
+                id: 'cluster-nonexistent',
+                name: 'Test Cluster',
+                servers: [],
+            };
 
             act(() => {
                 result.current.selectCluster(testCluster);

@@ -37,7 +37,9 @@ import {
     Dns as ClusterIcon,
     Storage as ServerIcon,
 } from '@mui/icons-material';
+import type { SvgIconComponent } from '@mui/icons-material';
 import { useBlackouts } from '../contexts/useBlackouts';
+import type { CreateScheduleRequest } from '../contexts/BlackoutContext';
 import type { Selection } from '../types/selection';
 import { SELECT_FIELD_SX } from './shared/formStyles';
 
@@ -128,12 +130,27 @@ const DURATION_PRESETS = [
     { label: '4h', minutes: 240 },
 ];
 
-const SCOPE_OPTIONS = [
+type BlackoutScope = CreateScheduleRequest['scope'];
+
+interface ScopeOption {
+    value: BlackoutScope;
+    label: string;
+    icon: SvgIconComponent;
+}
+
+const SCOPE_OPTIONS: ScopeOption[] = [
     { value: 'estate', label: 'Estate', icon: EstateIcon },
     { value: 'group', label: 'Group', icon: GroupIcon },
     { value: 'cluster', label: 'Cluster', icon: ClusterIcon },
     { value: 'server', label: 'Server', icon: ServerIcon },
 ];
+
+/**
+ * Narrow an arbitrary scope string to a known blackout scope,
+ * falling back to 'server'.
+ */
+const toBlackoutScope = (value: string | undefined | null): BlackoutScope =>
+    SCOPE_OPTIONS.find((opt) => opt.value === value)?.value ?? 'server';
 
 const DB_BACKED_GROUP = /^group-\d+$/;
 const DB_BACKED_CLUSTER = /^cluster-\d+$/;
@@ -320,7 +337,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
     const { createSchedule, updateSchedule } = useBlackouts();
     const isEdit = !!schedule?.id;
 
-    const [scope, setScope] = useState('server');
+    const [scope, setScope] = useState<BlackoutScope>('server');
     const [name, setName] = useState('');
     const [selectedPreset, setSelectedPreset] = useState<string | null>('Daily');
     const [customCron, setCustomCron] = useState('');
@@ -343,7 +360,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
     useEffect(() => {
         if (open && !prevOpenRef.current) {
             if (isEdit && schedule) {
-                setScope(schedule.scope || 'server');
+                setScope(toBlackoutScope(schedule.scope));
                 setName(schedule.name || '');
                 setReason(schedule.reason || '');
                 setEnabled(schedule.enabled !== false);
@@ -369,7 +386,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                     ? selType
                     : ['server', 'cluster', 'group', 'estate']
                         .find(s => isScopeAvailable(s, selection)) || 'estate';
-                setScope(preferred);
+                setScope(toBlackoutScope(preferred));
                 setName('');
                 setSelectedPreset('Daily');
                 setIsCustom(false);
@@ -447,7 +464,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
         setIsSaving(true);
 
         try {
-            const payload: Record<string, unknown> = {
+            const payload: CreateScheduleRequest & { enabled: boolean } = {
                 scope,
                 name: name.trim(),
                 cron_expression: cronExpression.trim(),
@@ -545,7 +562,7 @@ const BlackoutScheduleDialog: React.FC<BlackoutScheduleDialogProps> = ({
                 </Typography>
                 <RadioGroup
                     value={scope}
-                    onChange={(e) => { setScope(e.target.value); }}
+                    onChange={(e) => { setScope(toBlackoutScope(e.target.value)); }}
                 >
                     {SCOPE_OPTIONS.map((opt) => {
                         const Icon = opt.icon;

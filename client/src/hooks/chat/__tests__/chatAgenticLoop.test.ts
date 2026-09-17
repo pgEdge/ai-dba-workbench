@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
     runAgenticLoop,
     type AgenticLoopParams,
@@ -120,21 +120,34 @@ function createToolCallResponse(
  * Create a mock fetch function that returns different responses
  * based on the URL.
  */
+/*
+ * The chat modules read only `ok`, `json()` and `text()` from the fetch
+ * result, so the stubs below are partial `Response` objects. Widening
+ * happens once, here, rather than at every call site.
+ */
+function stubResponse(parts: {
+    ok: boolean;
+    json: () => Promise<unknown>;
+    text: () => Promise<string>;
+}): Response {
+    return parts as unknown as Response;
+}
+
 function createMockFetch(
     llmResponses: LLMResponse[],
     toolResponses = new Map<string, ToolCallResponse>(),
-): FetchFunction {
+): Mock<FetchFunction> {
     let llmCallIndex = 0;
 
-    return vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+    return vi.fn<FetchFunction>().mockImplementation(async (url: string, init?: RequestInit) => {
         if (url === '/api/v1/llm/chat') {
             const response = llmResponses[llmCallIndex] ?? createTextResponse('');
             llmCallIndex++;
-            return {
+            return stubResponse({
                 ok: true,
                 json: () => Promise.resolve(response),
                 text: () => Promise.resolve(''),
-            };
+            });
         }
 
         if (url === '/api/v1/mcp/tools/call') {
@@ -142,18 +155,18 @@ function createMockFetch(
             const toolResponse =
                 toolResponses.get(body.name) ??
                 createToolCallResponse('Tool result');
-            return {
+            return stubResponse({
                 ok: true,
                 json: () => Promise.resolve(toolResponse),
                 text: () => Promise.resolve(''),
-            };
+            });
         }
 
-        return {
+        return stubResponse({
             ok: false,
             json: () => Promise.reject(new Error('Unknown endpoint')),
             text: () => Promise.resolve('Unknown endpoint'),
-        };
+        });
     });
 }
 

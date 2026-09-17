@@ -86,12 +86,12 @@ const getHeaderSx = (theme: Theme, isSelected: boolean) => ({
     },
 });
 
-const getClusterIconSx = (isSelected) => ({
+const getClusterIconSx = (isSelected: boolean) => ({
     fontSize: 18,
     color: isSelected ? 'primary.main' : 'text.secondary',
 });
 
-const getClusterNameSx = (_isSelected) => ({
+const getClusterNameSx = (_isSelected: boolean) => ({
     ...clusterNameBase,
     fontWeight: 600,
     color: 'text.primary',
@@ -123,12 +123,12 @@ const getCountChipSx = (theme: Theme) => ({
  * Entire cluster (header + servers) is wrapped in a container
  * Memoized to prevent unnecessary re-renders during data refresh
  */
-interface UserInfo {
+export interface UserInfo {
     isSuperuser?: boolean;
     username?: string;
 }
 
-interface ClusterItemProps {
+export interface ClusterItemProps {
     cluster: Cluster;
     groupId: string;
     isExpanded: boolean;
@@ -214,7 +214,8 @@ const ClusterItem = memo<ClusterItemProps>(({
 
     const handleClusterClick = (e: React.MouseEvent<HTMLDivElement>) => {
         // Don't select if clicking on expand button or inline edit
-        if (e.target.closest('.MuiIconButton-root') || e.target.closest('.inline-edit-input')) {
+        const target = e.target as HTMLElement;
+        if (target.closest('.MuiIconButton-root') || target.closest('.inline-edit-input')) {
             return;
         }
         if (onSelectCluster) {

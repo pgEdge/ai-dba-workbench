@@ -22,6 +22,7 @@ import {
     Info as InfoIcon,
 } from '@mui/icons-material';
 import { useAlertAnalysis } from '../hooks/useAlertAnalysis';
+import type { AlertInput } from '../hooks/useAlertAnalysis';
 import { getIconColorSx, sxMonoFont } from './shared/MarkdownExports';
 import {
     getServerBadgeSx,
@@ -100,12 +101,61 @@ const sxThresholdText = {
 /**
  * AlertAnalysisDialog - Dialog for displaying AI-powered alert analysis
  */
-interface AlertAnalysisDialogProps {
+/**
+ * The alert shape this dialog renders. It is a superset of the hook's
+ * AlertInput: it also carries the presentational fields (server name,
+ * database name, metric unit) shown in the header, and tolerates the
+ * string ids that the alert list can produce.
+ */
+export interface AlertAnalysisAlert {
+    id?: number | string;
+    severity?: string;
+    title?: string;
+    description?: string;
+    alertType?: string;
+    metricName?: string;
+    metricValue?: number | string | null;
+    metricUnit?: string;
+    operator?: string;
+    thresholdValue?: number | string | null;
+    connectionId?: number;
+    databaseName?: string;
+    server?: string;
+    time?: string;
+    triggeredAt?: string;
+    aiAnalysis?: string | null;
+    aiAnalysisMetricValue?: number | string | null;
+}
+
+export interface AlertAnalysisDialogProps {
     open: boolean;
-    alert: Record<string, unknown> | null;
+    alert: AlertAnalysisAlert | null;
     onClose: () => void;
     onAnalysisComplete?: (alertId: number, analysis: string) => void;
 }
+
+/**
+ * Map the dialog's alert onto the input the analysis hook expects,
+ * supplying defaults for the fields the hook requires.
+ */
+const toAlertInput = (alert: AlertAnalysisAlert): AlertInput => ({
+    id: typeof alert.id === 'string' ? Number(alert.id) : alert.id,
+    aiAnalysis: alert.aiAnalysis,
+    aiAnalysisMetricValue: typeof alert.aiAnalysisMetricValue === 'string'
+        ? Number(alert.aiAnalysisMetricValue)
+        : alert.aiAnalysisMetricValue,
+    alertType: alert.alertType,
+    severity: alert.severity ?? '',
+    title: alert.title ?? '',
+    description: alert.description,
+    metricName: alert.metricName,
+    metricValue: alert.metricValue,
+    operator: alert.operator,
+    thresholdValue: alert.thresholdValue,
+    connectionId: alert.connectionId ?? 0,
+    triggeredAt: alert.triggeredAt,
+    time: alert.time,
+});
 
 const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({
     open,
@@ -128,7 +178,7 @@ const AlertAnalysisDialog: React.FC<AlertAnalysisDialogProps> = ({
     // Trigger analysis when dialog opens with an alert
     useEffect(() => {
         if (open && alert) {
-            void analyze(alert);
+            void analyze(toAlertInput(alert));
         }
     }, [open, alert, analyze]);
 
@@ -183,10 +233,10 @@ ${analysis}
     };
 
     const severityColor = getSeverityColor(
-        alert?.severity as string | undefined,
+        alert?.severity,
         theme
     );
-    const SeverityIcon = getSeverityIcon(alert?.severity as string | undefined);
+    const SeverityIcon = getSeverityIcon(alert?.severity);
 
     // Build icon with severity dot
     const iconElement = (
@@ -209,20 +259,20 @@ ${analysis}
                         textTransform: 'capitalize',
                     }}
                 >
-                    {(alert?.severity as string) || 'Unknown'}
+                    {alert?.severity || 'Unknown'}
                 </Typography>
             </Box>
 
             {/* Alert title */}
             <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                {(alert?.title as string) || 'Alert'}
+                {alert?.title || 'Alert'}
             </Typography>
 
             {/* Server pill */}
             {alert?.server && (
                 <Box sx={getServerBadgeSx(theme)}>
                     <Typography sx={sxMonoSmall}>
-                        {alert.server as string}
+                        {alert.server}
                     </Typography>
                 </Box>
             )}
@@ -231,7 +281,7 @@ ${analysis}
             {alert?.databaseName && (
                 <Box sx={getDatabaseBadgeSx(theme)}>
                     <Typography sx={getDatabaseTextSx(theme)}>
-                        {alert.databaseName as string}
+                        {alert.databaseName}
                     </Typography>
                 </Box>
             )}
@@ -246,7 +296,7 @@ ${analysis}
                         })
                         : alert.metricValue}
                     {alert.metricUnit && ` ${alert.metricUnit}`}
-                    {' '}{alert.operator as string}{' '}
+                    {' '}{alert.operator}{' '}
                     {typeof alert.thresholdValue === 'number'
                         ? alert.thresholdValue.toLocaleString(undefined, {
                             maximumFractionDigits: 2,
@@ -259,7 +309,7 @@ ${analysis}
             {/* Time text */}
             {alert?.time && (
                 <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-                    {alert.time as string}
+                    {alert.time}
                 </Typography>
             )}
         </>
@@ -282,14 +332,14 @@ ${analysis}
             toolbarContent={toolbarContent}
             markdownContent={
                 analysis
-                    ? `# Alert Analysis: ${(alert?.title as string) || 'Alert'}\n\n${analysis}`
+                    ? `# Alert Analysis: ${alert?.title || 'Alert'}\n\n${analysis}`
                     : undefined
             }
             markdownContentProps={{
                 isDark,
-                connectionId: alert?.connectionId as number | undefined,
-                databaseName: alert?.databaseName as string | undefined,
-                serverName: alert?.server as string | undefined,
+                connectionId: alert?.connectionId,
+                databaseName: alert?.databaseName,
+                serverName: alert?.server,
             }}
         />
     );

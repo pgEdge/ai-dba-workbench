@@ -8,7 +8,6 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import AnalysisSkeleton from '../AnalysisSkeleton';
 import { renderWithTheme } from '../../../test/renderWithTheme';

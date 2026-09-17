@@ -59,7 +59,18 @@ const EmptyState = () => (
     </Typography>
 );
 
-interface EffectivePermissionsPanelProps {
+/**
+ * One connection privilege as rendered by the panel. The array form of
+ * `connectionPrivileges` carries a single access level per connection,
+ * whilst the map form carries the list of levels granted for that
+ * connection id.
+ */
+interface ConnectionPrivilegeEntry {
+    connection_id: string | number;
+    access_level: string | string[];
+}
+
+export interface EffectivePermissionsPanelProps {
     connectionPrivileges?:
         | Record<string, string[]>
         | { connection_id: string | number; access_level: string }[];
@@ -91,7 +102,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
     };
 
     // Normalize connectionPrivileges to array format
-    let connArray = [];
+    let connArray: ConnectionPrivilegeEntry[] = [];
     if (connectionPrivileges) {
         if (Array.isArray(connectionPrivileges)) {
             connArray = connectionPrivileges;
@@ -102,7 +113,7 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({
         }
     }
 
-    const getConnectionName = (id) => {
+    const getConnectionName = (id: string | number) => {
         if (id === 0 || id === '0' || String(id) === '0') {return 'All Connections';}
         if (connections) {
             const conn = connections.find((c) => String(c.id) === String(id));

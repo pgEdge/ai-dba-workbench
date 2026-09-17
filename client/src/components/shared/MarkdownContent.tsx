@@ -19,6 +19,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import CopyCodeButton from './CopyCodeButton';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import RunnableCodeBlock from './RunnableCodeBlock';
@@ -72,7 +73,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     const theme = useTheme();
 
     // Memoize markdown components to avoid re-creating on each render
-    const components = useMemo(() => ({
+    const components = useMemo<Components>(() => ({
         h1: ({ children }) => (
             <Typography variant="h5" sx={sxH1(theme)}>
                 {children}
@@ -104,7 +105,11 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
             </Box>
         ),
         li: ({ children }) => <li>{children}</li>,
-        code: ({ className, children, ...props }) => {
+        code: ({ className, children, ...rest }) => {
+            /* The remaining hast/JSX attributes are forwarded verbatim to
+               the highlighter and the runnable block, both of which accept
+               an untyped passthrough bag. */
+            const props = rest as Record<string, unknown>;
             const language = extractLanguage(className);
             const codeString = String(children).replace(/\n$/, '');
 
@@ -239,7 +244,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
                     {children}
                 </Box>
             ) : (
-                children
+                <>{children}</>
             );
         },
         blockquote: ({ children }) => (

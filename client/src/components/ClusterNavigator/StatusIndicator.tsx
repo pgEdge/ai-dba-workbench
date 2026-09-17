@@ -104,7 +104,7 @@ const getHealthyIconSx = (theme: Theme) => ({
  * - Yellow warning icon with count for nodes with alerts
  * - Green checkmark for healthy nodes
  */
-interface StatusIndicatorProps {
+export interface StatusIndicatorProps {
     status?: string;
     alertCount?: number;
     connectionError?: string;

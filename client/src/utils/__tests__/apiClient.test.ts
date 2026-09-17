@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import {
     apiGet,
     apiPost,
@@ -46,12 +46,45 @@ function mockResponse(
 // ---------------------------------------------------------------------------
 
 describe('apiClient', () => {
-    let fetchSpy: ReturnType<typeof vi.fn>;
+    let fetchSpy: Mock<typeof globalThis.fetch>;
 
     beforeEach(() => {
-        fetchSpy = vi.fn();
+        fetchSpy = vi.fn<typeof globalThis.fetch>();
         globalThis.fetch = fetchSpy;
     });
+
+    /*
+     * Read one recorded `fetch` call, narrowing the arguments to the
+     * shapes `apiClient` actually sends: a string URL, and an init
+     * object whose headers are the plain record built by
+     * `buildHeaders`. Anything else is a genuine regression, so the
+     * helper throws rather than widening the type.
+     */
+    function fetchCall(index: number): {
+        url: string;
+        opts: RequestInit & { headers: Record<string, string> };
+    } {
+        const call = fetchSpy.mock.calls[index];
+        if (!call) {
+            throw new Error(`fetch was not called ${index + 1} time(s)`);
+        }
+        const [url, opts] = call;
+        if (typeof url !== 'string') {
+            throw new Error('expected fetch to be called with a string URL');
+        }
+        if (!opts) {
+            throw new Error('expected fetch to be called with init options');
+        }
+        const { headers } = opts;
+        if (
+            headers === undefined ||
+            headers instanceof Headers ||
+            Array.isArray(headers)
+        ) {
+            throw new Error('expected a plain headers record');
+        }
+        return { url, opts: { ...opts, headers } };
+    }
 
     // ----- apiGet ----------------------------------------------------------
 
@@ -62,7 +95,7 @@ describe('apiClient', () => {
             const result = await apiGet<{ items: number[] }>('/api/v1/items');
 
             expect(fetchSpy).toHaveBeenCalledOnce();
-            const [url, opts] = fetchSpy.mock.calls[0];
+            const { url, opts } = fetchCall(0);
             expect(url).toBe('/api/v1/items');
             expect(opts.method).toBe('GET');
             expect(opts.credentials).toBe('include');
@@ -73,7 +106,8 @@ describe('apiClient', () => {
             fetchSpy.mockResolvedValueOnce(mockResponse({}));
             await apiGet('/api/v1/items');
 
-            const headers = fetchSpy.mock.calls[0][1].headers;
+            const { opts } = fetchCall(0);
+            const headers = opts.headers;
             expect(headers['Content-Type']).toBeUndefined();
         });
 
@@ -83,7 +117,8 @@ describe('apiClient', () => {
                 headers: { 'X-Custom': 'value' },
             });
 
-            const headers = fetchSpy.mock.calls[0][1].headers;
+            const { opts } = fetchCall(0);
+            const headers = opts.headers;
             expect(headers['X-Custom']).toBe('value');
         });
     });
@@ -97,7 +132,7 @@ describe('apiClient', () => {
 
             const result = await apiPost<{ id: number }>('/api/v1/items', payload);
 
-            const [url, opts] = fetchSpy.mock.calls[0];
+            const { url, opts } = fetchCall(0);
             expect(url).toBe('/api/v1/items');
             expect(opts.method).toBe('POST');
             expect(opts.credentials).toBe('include');
@@ -111,7 +146,7 @@ describe('apiClient', () => {
 
             await apiPost('/api/v1/items/1/stop');
 
-            const opts = fetchSpy.mock.calls[0][1];
+            const { opts } = fetchCall(0);
             expect(opts.body).toBeUndefined();
             expect(opts.headers['Content-Type']).toBeUndefined();
         });
@@ -126,7 +161,7 @@ describe('apiClient', () => {
 
             await apiPut('/api/v1/items/1', payload);
 
-            const [url, opts] = fetchSpy.mock.calls[0];
+            const { url, opts } = fetchCall(0);
             expect(url).toBe('/api/v1/items/1');
             expect(opts.method).toBe('PUT');
             expect(opts.headers['Content-Type']).toBe('application/json');
@@ -144,7 +179,7 @@ describe('apiClient', () => {
 
             const result = await apiDelete('/api/v1/items/1');
 
-            const [url, opts] = fetchSpy.mock.calls[0];
+            const { url, opts } = fetchCall(0);
             expect(url).toBe('/api/v1/items/1');
             expect(opts.method).toBe('DELETE');
             expect(opts.credentials).toBe('include');

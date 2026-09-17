@@ -8,11 +8,11 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ServerDialog from '../ServerDialog';
+import type { ServerDialogProps } from '../ServerDialog';
 import { renderWithTheme } from '../../test/renderWithTheme';
 
 // Mock AlertOverridesPanel to avoid fetch calls during ServerDialog tests
@@ -51,12 +51,12 @@ const getPasswordField = () => screen.getByLabelText(/^password/i);
 describe('ServerDialog', () => {
     const defaultProps = {
         open: true,
-        onClose: vi.fn(),
-        onSave: vi.fn(),
+        onClose: vi.fn<ServerDialogProps['onClose']>(),
+        onSave: vi.fn<ServerDialogProps['onSave']>(),
         mode: 'create',
         server: null,
         isSuperuser: false,
-    };
+    } satisfies ServerDialogProps;
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -265,7 +265,7 @@ describe('ServerDialog', () => {
 
         it('does not require password in edit mode', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             const existingServer = {
                 name: 'Test Server',
                 host: 'localhost',
@@ -308,7 +308,7 @@ describe('ServerDialog', () => {
 
         it('shows an error and blocks save when the name has disallowed characters', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             fireEvent.change(getNameField(), { target: { value: '<>!@#$%' } });
@@ -327,7 +327,7 @@ describe('ServerDialog', () => {
 
         it('allows a name with permitted special characters to save', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             fireEvent.change(getNameField(), {
@@ -353,7 +353,7 @@ describe('ServerDialog', () => {
     describe('form submission', () => {
         it('calls onSave with trimmed form data', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Use fireEvent.change instead of user.type for performance.
@@ -383,7 +383,7 @@ describe('ServerDialog', () => {
 
         it('shows success message after successful save', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Use fireEvent.change instead of user.type for performance.
@@ -404,7 +404,7 @@ describe('ServerDialog', () => {
 
         it('shows error alert when save fails', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockRejectedValue(new Error('Connection refused'));
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockRejectedValue(new Error('Connection refused'));
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Use fireEvent.change instead of user.type for performance.
@@ -425,7 +425,7 @@ describe('ServerDialog', () => {
 
         it('does not call onClose when save fails', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockRejectedValue(new Error('Failed'));
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockRejectedValue(new Error('Failed'));
             const onClose = vi.fn();
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} onClose={onClose} />);
 
@@ -455,7 +455,7 @@ describe('ServerDialog', () => {
             const savePromise = new Promise((resolve) => {
                 resolvePromise = resolve;
             });
-            const onSave = vi.fn().mockReturnValue(savePromise);
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockReturnValue(savePromise);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Use fireEvent.change instead of user.type for performance.
@@ -533,7 +533,7 @@ describe('ServerDialog', () => {
 
         it('includes SSL settings in save data', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Use fireEvent.change instead of user.type for performance.
@@ -570,7 +570,7 @@ describe('ServerDialog', () => {
     describe('checkbox options', () => {
         it('includes is_monitored in save data', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} />);
 
             // Fill required fields. Use fireEvent.change instead of
@@ -599,7 +599,7 @@ describe('ServerDialog', () => {
 
         it('includes is_shared in save data when superuser', async () => {
             const user = userEvent.setup({ delay: null });
-            const onSave = vi.fn().mockResolvedValue();
+            const onSave = vi.fn<ServerDialogProps['onSave']>().mockResolvedValue(undefined);
             renderWithTheme(<ServerDialog {...defaultProps} onSave={onSave} isSuperuser={true} />);
 
             // Fill required fields. Use fireEvent.change instead of

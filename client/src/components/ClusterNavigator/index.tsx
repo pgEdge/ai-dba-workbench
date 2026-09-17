@@ -251,7 +251,7 @@ const getSpinnerSx = (loading: boolean) => ({
 /**
  * ClusterNavigator - Main navigation panel component
  */
-interface GroupData {
+export interface GroupData {
     id: string;
     name: string;
     // The server may emit `clusters: null` for an empty group (Go
@@ -261,7 +261,7 @@ interface GroupData {
     [key: string]: unknown;
 }
 
-interface ClusterNavigatorProps {
+export interface ClusterNavigatorProps {
     data?: GroupData[];
     selectedServerId?: number;
     selectedClusterId?: string;

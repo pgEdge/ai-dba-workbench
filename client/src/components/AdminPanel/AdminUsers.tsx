@@ -44,6 +44,7 @@ import {
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog';
 import { SELECT_FIELD_SX } from '../shared/formStyles';
 import EffectivePermissionsPanel from './EffectivePermissionsPanel';
+import type { EffectivePermissionsPanelProps } from './EffectivePermissionsPanel';
 import PasswordStrengthField from './PasswordStrengthField';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, codePointLength, utf8ByteLength } from './passwordStrength';
 import {
@@ -80,10 +81,10 @@ interface RbacUser {
 }
 
 interface UserPermissions {
-    connection_privileges?: unknown[];
-    admin_permissions?: unknown[];
-    mcp_privileges?: unknown[];
-    groups?: unknown[];
+    connection_privileges?: EffectivePermissionsPanelProps['connectionPrivileges'];
+    admin_permissions?: EffectivePermissionsPanelProps['adminPermissions'];
+    mcp_privileges?: EffectivePermissionsPanelProps['mcpPrivileges'];
+    groups?: EffectivePermissionsPanelProps['groups'];
 }
 
 interface CreateUserBody {

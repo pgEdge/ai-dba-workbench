@@ -444,8 +444,8 @@ committed lockfile resolves that to `5.18.0`, where `slotProps` is
 accepted by some components but not all: `Dialog`
 (`ConnectionLostOverlay.tsx`) and `FormControlLabel`
 (`TopQueriesSection.tsx`) take it, whereas `TextField` gained it only
-in MUI v6 and both ignores it at runtime and rejects it at compile
-time in v5. Use `InputProps` (or `inputProps`) on `TextField`, as
+in MUI v6, so in v5 it is both ignored at runtime and rejected at
+compile time. Use `InputProps` (or `inputProps`) on `TextField`, as
 `ClusterFields.tsx` now does for its read-only replication type
 field, and do not spread `slotProps` further unless the declared
 minimum is raised to v6. The convention

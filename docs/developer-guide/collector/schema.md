@@ -347,7 +347,7 @@ Each index serves a different access pattern:
 - `idx_pg_stat_statements_identity_time` serves the
   windowed aggregation behind
   `/api/v1/metrics/top-queries`, which was added by
-  migration 13.
+  migration 15.
 
 The third index repays a closer look, because the column
 order is not arbitrary. The `pg_stat_statements` counters

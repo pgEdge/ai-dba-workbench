@@ -1283,7 +1283,7 @@ const (
 //
 // Thirty days is the largest preset in metrics.ValidTimeRanges, so it is
 // the longest window the web client can ask for, and it is the shape
-// idx_pg_stat_statements_identity_time (collector migration 13) was
+// idx_pg_stat_statements_identity_time (collector migration 15) was
 // benchmarked against. Anyone raising this figure needs to re-measure the
 // aggregation at the new span, including the exclude_collector=true case,
 // which cannot use the index-only scan and so carries the query text

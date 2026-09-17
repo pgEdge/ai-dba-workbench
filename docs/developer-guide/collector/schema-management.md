@@ -126,7 +126,7 @@ queries. The migration creates
 probes and `idx_probes_name` for fast lookups by
 probe name.
 
-### Migration 13: Add the top-queries covering index
+### Migration 15: Add the top-queries covering index
 
 This migration adds
 `idx_pg_stat_statements_identity_time` to

@@ -373,7 +373,7 @@ project adheres to
 
 - Add `idx_pg_stat_statements_identity_time` to
   `metrics.pg_stat_statements` through collector schema migration
-  13. The index keys the statement identity that the
+  15. The index keys the statement identity that the
   `pg_stat_statements` counters are cumulative within, followed by
   `collected_at` and the probing database name, and includes every
   counter the windowed

@@ -1092,7 +1092,7 @@ is the datastore pool's `statement_timeout`
 `database.statement_timeout` setting says otherwise), which the cap is
 meant to keep an ordinary request well inside. Thirty days is the
 longest preset in `ValidTimeRanges` and the window shape
-`idx_pg_stat_statements_identity_time` (collector migration 13) was
+`idx_pg_stat_statements_identity_time` (collector migration 15) was
 benchmarked against, so raising it means re-measuring, in particular the
 `exclude_collector=true` path that cannot use the index-only scan. Add
 such a cap per endpoint rather than by tightening `MaxCustomTimeSpan`,
@@ -1161,7 +1161,7 @@ measuring, and do not drop any of these:
 - `idx_pg_stat_statements_identity_time (connection_id, queryid, userid,
   dbid, toplevel, collected_at, database_name) INCLUDE (calls,
   total_exec_time, rows, shared_blks_hit, shared_blks_read,
-  min_exec_time, max_exec_time)` is migration #14, added for issue #387.
+  min_exec_time, max_exec_time)` is migration #15, added for issue #387.
   Its key order is exactly the `ORDER BY` of the `readings` CTE in
   `buildTopQueriesSQL` (identity columns, then `collected_at`, then the
   probing `database_name` as the tiebreaker), which serves both the

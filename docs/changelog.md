@@ -785,9 +785,12 @@ project adheres to
   is realigned afterwards so the offset also spreads out steady-state
   collection. Every probe execution now holds a slot in a global
   semaphore bounded by the new `scheduler.max_concurrent_probes`
-  setting (8 by default), so the collector's peak memory and
-  connection demand no longer scale with the number of monitored
-  connections. (#441)
+  setting (8 by default), so the memory and connection demand of
+  active probe execution is capped by that setting rather than
+  growing with the number of monitored connections multiplied by
+  their probes; the scheduler still runs one goroutine per
+  connection and probe pair, so that baseline continues to scale
+  with the number of monitored connections. (#441)
 
 ### Removed
 

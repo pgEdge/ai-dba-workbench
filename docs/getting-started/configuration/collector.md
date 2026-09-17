@@ -300,7 +300,9 @@ connection.
 
 The `startup_jitter_seconds` option specifies the upper bound, in
 seconds, on the random delay the collector applies before the first
-execution of a probe that is past due or has never run.
+execution of a probe that is past due, has never run, or whose last
+collection time could not be determined because the query against the
+datastore failed.
 
 - Type: integer
 - Default: `60`

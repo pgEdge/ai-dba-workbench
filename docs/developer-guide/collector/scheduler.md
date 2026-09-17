@@ -79,8 +79,20 @@ func (ps *ProbeScheduler) Start(
 ## Probe Scheduling
 
 Each probe runs in its own goroutine with an
-independent timer. The following code shows the
-scheduling loop:
+independent timer. The scheduler first asks
+`calculateInitialDelay` how long remains of the
+probe's interval since the last recorded collection.
+A positive delay means the probe ran recently, so
+the goroutine waits out the remainder. A delay that
+is zero or negative means the probe is past due, has
+never run, or its last collection time could not be
+determined, and the goroutine instead waits out a
+random startup jitter so that a restart does not
+fire every probe at once. The jitter is drawn with
+`crypto/rand` from zero up to the smaller of the
+probe's interval and `scheduler.startup_jitter_seconds`,
+falling back to half that window if the draw fails.
+The following code shows the scheduling loop:
 
 ```go
 func (ps *ProbeScheduler) scheduleProbe(
@@ -94,20 +106,28 @@ func (ps *ProbeScheduler) scheduleProbe(
     ticker := time.NewTicker(interval)
     defer ticker.Stop()
 
-    // Stagger the first execution of a probe that
-    // is past due or has never run, then realign
-    // the ticker
-    jitter := ps.initialStartupJitter(interval)
-    if jitter > 0 {
+    // A probe collected recently waits out the
+    // remainder of its interval; one that is past
+    // due, has never run, or whose last collection
+    // time could not be determined instead waits
+    // out a random startup jitter
+    delay := ps.calculateInitialDelay(probe, config)
+    if delay <= 0 {
+        delay = ps.initialStartupJitter(interval)
+    }
+    if delay > 0 {
         select {
         case <-ps.shutdownChan:
             return
         case <-ps.ctx.Done():
             return
-        case <-time.After(jitter):
+        case <-time.After(delay):
         }
     }
     ps.executeProbe(ps.ctx, probe)
+
+    // Realign the ticker, which was created before
+    // the wait and may hold a buffered tick
     restartTicker(ticker, interval)
 
     // Then execute on timer

@@ -15,7 +15,13 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { Sync as SyncIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricDataPoint, MetricQueryParams, MetricSeries } from '../types';
+import type {
+    MetricDataPoint,
+    MetricQueryParams,
+    MetricSeries,
+    MetricsWindow,
+} from '../types';
+import { buildMetricChartData as buildChartData } from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -49,76 +55,21 @@ const getLagStatus = (
 };
 
 /**
- * Build chart data from metric series for the Chart component. Every
- * series in a metrics response shares the same bucket times, so the
- * categories come from the first requested metric that was returned;
- * null values pass straight through and ECharts draws them as gaps.
- */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
-
-/**
  * Build chart data for replication lag where each standby produces
- * its own series, identified by the series name field.
+ * its own series, identified by the series name field. It differs from
+ * `buildChartData` only in requiring a display name per metric, the
+ * names being derived from the standbys rather than fixed.
  */
 const buildReplicationLagChartData = (
     series: MetricSeries[] | null,
     metricNames: string[],
     displayNames: string[],
-) => {
-    if (!series || series.length === 0) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames[idx],
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
+    window?: MetricsWindow | null,
+) => (
+    !series || series.length === 0
+        ? null
+        : buildChartData(series, metricNames, displayNames, window)
+);
 
 /**
  * WAL and Replication section displays WAL generation rates,
@@ -275,8 +226,9 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             walChart.data,
             ['wal_bytes_per_sec', 'wal_records_per_sec'],
             ['WAL Bytes/s', 'WAL Records/s'],
+            walChart.window,
         ),
-        [walChart.data]
+        [walChart.data, walChart.window]
     );
 
     const replLagChartData = useMemo(
@@ -284,8 +236,9 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             replLagChart.data,
             ['write_lag', 'flush_lag', 'replay_lag'],
             ['Write Lag', 'Flush Lag', 'Replay Lag'],
+            replLagChart.window,
         ),
-        [replLagChart.data]
+        [replLagChart.data, replLagChart.window]
     );
 
     const checkpointChartData = useMemo(
@@ -293,8 +246,9 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             checkpointChart.data,
             ['num_timed_delta', 'num_requested_delta'],
             ['Timed', 'Requested'],
+            checkpointChart.window,
         ),
-        [checkpointChart.data]
+        [checkpointChart.data, checkpointChart.window]
     );
 
     const checkpointBuffersChartData = useMemo(
@@ -302,8 +256,9 @@ const WalReplicationSection: React.FC<ServerSectionProps> = ({
             checkpointChart.data,
             ['buffers_written_per_sec'],
             ['Buffers Written/s'],
+            checkpointChart.window,
         ),
-        [checkpointChart.data]
+        [checkpointChart.data, checkpointChart.window]
     );
 
     const isKpiLoading = walKpi.loading || replLagKpi.loading

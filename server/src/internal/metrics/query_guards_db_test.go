@@ -113,7 +113,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 	minutes := func(n int) time.Time { return base.Add(-time.Duration(n) * time.Minute) }
 
 	t.Run("reset marker change nulls the rate and zeroes the delta", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 			[]int{1}, windowSince(base, 4), MetricFilters{}, 4, "avg",
 			[]string{"xact_commit_per_sec", "xact_commit_delta"})
 		if err != nil {
@@ -149,7 +149,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 	})
 
 	t.Run("gap wider than three intervals is rejected, two intervals accepted", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 			[]int{2}, windowSince(base, 10), MetricFilters{}, 10, "avg",
 			[]string{"xact_commit_per_sec", "xact_commit_delta"})
 		if err != nil {
@@ -201,7 +201,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 	})
 
 	t.Run("gauge carries for three intervals then goes null", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 			[]int{3}, windowSince(base, 10), MetricFilters{}, 10, "avg",
 			[]string{"numbackends"})
 		if err != nil {
@@ -219,7 +219,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 	})
 
 	t.Run("every series has one point per bucket", func(t *testing.T) {
-		series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 			[]int{2, 3}, windowSince(base, 10), MetricFilters{}, 10, "avg",
 			[]string{"numbackends", "xact_commit_per_sec", "xact_commit_delta"})
 		if err != nil {
@@ -248,7 +248,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 		// holds at most 12 buckets however many are requested: 13 points
 		// (the inclusive end) spaced 300 s apart.
 		window := windowSince(base, 60)
-		series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 			[]int{4}, window, MetricFilters{}, 150, "avg",
 			[]string{"numbackends", "xact_commit_per_sec"})
 		if err != nil {
@@ -281,7 +281,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 		window := windowSince(base, 4)
 		query := func(t *testing.T, metrics ...string) []MetricSeries {
 			t.Helper()
-			series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+			series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 				[]int{1}, window, MetricFilters{}, 4, "avg", metrics)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -348,7 +348,7 @@ func TestQueryTimeSeriesGuards_Integration(t *testing.T) {
 
 	t.Run("a window shorter than the interval keeps one bucket", func(t *testing.T) {
 		window := TimeWindow{Start: base.Add(-2 * time.Minute), End: base}
-		series, err := QueryTimeSeries(ctx, pool, guardTestProbe,
+		series, err := queryTimeSeriesData(ctx, pool, guardTestProbe,
 			[]int{4}, window, MetricFilters{}, 150, "avg",
 			[]string{"numbackends"})
 		if err != nil {

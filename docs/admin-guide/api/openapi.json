@@ -11934,6 +11934,10 @@
       "MetricDataPoint": {
         "type": "object",
         "properties": {
+          "filled": {
+            "type": "boolean",
+            "description": "True when the value was carried forward from an earlier observation rather than aggregated from a sample of this bucket; omitted otherwise"
+          },
           "time": {
             "type": "string",
             "format": "date-time",
@@ -11981,11 +11985,65 @@
         ]
       },
       "MetricsQueryResult": {
-        "type": "array",
-        "description": "Time series in the order the metrics were requested (or column order when no metrics were named), one per metric per connection",
-        "items": {
-          "$ref": "#/components/schemas/MetricSeries"
-        }
+        "type": "object",
+        "description": "A bucketed metrics query, describing the window that was queried alongside the data, so a chart axis can be anchored to the requested range rather than inferred from the points that came back",
+        "properties": {
+          "aggregation": {
+            "type": "string",
+            "description": "Aggregation applied within each bucket"
+          },
+          "bucket_seconds": {
+            "type": "integer",
+            "description": "Width of one bucket in whole seconds, as the query used it, with a one second floor"
+          },
+          "buckets": {
+            "type": "integer",
+            "description": "Number of buckets the window was divided into: the requested count, reduced when the probe's collection interval is too wide to fill that many"
+          },
+          "connection_ids": {
+            "type": "array",
+            "description": "Connections the series were read from",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "probe_name": {
+            "type": "string",
+            "description": "Probe the series were read from"
+          },
+          "series": {
+            "type": "array",
+            "description": "Time series in the order the metrics were requested (or column order when no metrics were named), one per metric per connection",
+            "items": {
+              "$ref": "#/components/schemas/MetricSeries"
+            }
+          },
+          "time_end": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of the resolved window"
+          },
+          "time_range": {
+            "type": "string",
+            "description": "Range selection as requested, such as \"1h\" or \"custom\"; \"1h\" when the parameter was omitted"
+          },
+          "time_start": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of the resolved window"
+          }
+        },
+        "required": [
+          "probe_name",
+          "connection_ids",
+          "time_range",
+          "time_start",
+          "time_end",
+          "bucket_seconds",
+          "buckets",
+          "aggregation",
+          "series"
+        ]
       },
       "ModelInfo": {
         "type": "object",

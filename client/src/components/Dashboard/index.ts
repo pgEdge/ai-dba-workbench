@@ -30,6 +30,8 @@ export type {
     MetricDataPoint,
     SparklinePoint,
     MetricSeries,
+    MetricsWindow,
+    MetricsQueryResult,
     MetricBaseline,
     SparklineProps,
     BaseDashboardProps,

@@ -37,7 +37,7 @@ type timeSeriesQueryFunc func(
 	buckets int,
 	aggregation string,
 	requestedMetrics []string,
-) ([]metrics.MetricSeries, error)
+) (*metrics.MetricsQueryResult, error)
 
 // MetricsHandler handles REST API endpoints for monitoring dashboard
 // metric queries and baselines.
@@ -250,6 +250,14 @@ func (h *MetricsHandler) handleMetricsQuery(
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// The query layer resolves the window it was handed but never sees
+	// the range parameter, so the envelope's time_range is echoed here,
+	// exactly as received and carrying the same "1h" default that was
+	// resolved above.
+	if result != nil {
+		result.TimeRange = timeRange
 	}
 
 	RespondJSON(w, http.StatusOK, result)

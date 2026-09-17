@@ -20,7 +20,8 @@ import type { SelectChangeEvent } from '@mui/material/Select';
 import { Computer as ComputerIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries } from '../types';
+import type { MetricQueryParams } from '../types';
+import { buildMetricChartData as buildChartData } from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import { DASHBOARD_CONTROL_TEXT_SX } from '../../../theme/tokens';
 import KpiTile from '../KpiTile';
@@ -66,41 +67,6 @@ const getPercentageStatus = (
     if (value >= 90) { return 'critical'; }
     if (value >= 75) { return 'warning'; }
     return 'good';
-};
-
-/**
- * Build chart data from metric series for the Chart component. Every
- * series in a metrics response shares the same bucket times, so the
- * categories come from the first requested metric that was returned;
- * null values pass straight through and ECharts draws them as gaps.
- */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(s => s.categories.length > 0)?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
 };
 
 /**
@@ -341,8 +307,9 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                 'idle_mode_percent',
             ],
             ['User', 'System', 'I/O Wait', 'Idle'],
+            cpuChart.window,
         ),
-        [cpuChart.data]
+        [cpuChart.data, cpuChart.window]
     );
 
     const memoryChartData = useMemo(
@@ -350,8 +317,9 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
             memoryChart.data,
             ['used_memory', 'free_memory', 'cache_total'],
             ['Used', 'Free', 'Cached'],
+            memoryChart.window,
         ),
-        [memoryChart.data]
+        [memoryChart.data, memoryChart.window]
     );
 
     const diskChartData = useMemo(
@@ -359,8 +327,9 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
             diskChart.data,
             ['used_space', 'free_space'],
             ['Used', 'Free'],
+            diskChart.window,
         ),
-        [diskChart.data]
+        [diskChart.data, diskChart.window]
     );
 
     const loadChartData = useMemo(
@@ -373,8 +342,9 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
                 'load_avg_fifteen_minutes',
             ],
             ['1 min', '5 min', '10 min', '15 min'],
+            loadChart.window,
         ),
-        [loadChart.data]
+        [loadChart.data, loadChart.window]
     );
 
     const networkChartData = useMemo(
@@ -382,8 +352,9 @@ const SystemResourcesSection: React.FC<ServerSectionProps> = ({
             networkChart.data,
             ['tx_bytes_per_sec', 'rx_bytes_per_sec'],
             ['TX Bytes/s', 'RX Bytes/s'],
+            networkChart.window,
         ),
-        [networkChart.data]
+        [networkChart.data, networkChart.window]
     );
 
     const isKpiLoading = cpuKpi.loading || memoryKpi.loading

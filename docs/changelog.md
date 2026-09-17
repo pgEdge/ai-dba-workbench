@@ -164,6 +164,23 @@ project adheres to
 
 ### Changed
 
+- Report the queried time window in the `/api/v1/metrics/query`
+  response. The endpoint returned a bare array of series and said
+  nothing about the window behind the series, so charts derived
+  their x-axis from the points that came back and every time range
+  rendered identically on an instance holding little history. The
+  bucketed response is now an object carrying `probe_name`,
+  `connection_ids`, `time_range`, `time_start`, `time_end`,
+  `bucket_seconds`, `buckets` and `aggregation` alongside the
+  `series` array. A bucket that collected no data, and that has no
+  earlier value to carry forward, now reports a null `value`
+  instead of dropping the point, and a point carried forward from
+  an earlier sample is marked `filled`. The latest-rows mode of
+  the same endpoint, which a request selects by passing `limit` or
+  `order_by`, is unchanged. The dashboard charts now anchor their
+  x-axis to the returned window, draw null buckets as gaps, and
+  mark carried-forward stretches distinctly. (#430)
+
 - Count deadlocks and temporary files per hour in the alerter. The
   `deadlocks_detected` and `temp_files_created` rules compared the
   change in `pg_stat_database` between two consecutive samples

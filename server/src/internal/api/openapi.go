@@ -1355,6 +1355,11 @@ func buildSchemas() map[string]*OpenAPISchema {
 						"spanned a counter reset or a collection gap of " +
 						"more than three collection intervals. Rates are " +
 						"never carried forward across a gap."},
+				"filled": {Type: "boolean",
+					Description: "True when the value was carried forward " +
+						"from an earlier observation rather than " +
+						"aggregated from a sample of this bucket; omitted " +
+						"otherwise"},
 			},
 		},
 		"MetricSeries": {
@@ -1381,11 +1386,44 @@ func buildSchemas() map[string]*OpenAPISchema {
 			},
 		},
 		"MetricsQueryResult": {
-			Type:  "array",
-			Items: &OpenAPISchema{Ref: "#/components/schemas/MetricSeries"},
-			Description: "Time series in the order the metrics were " +
-				"requested (or column order when no metrics were named), " +
-				"one per metric per connection",
+			Type: "object",
+			Required: []string{"probe_name", "connection_ids", "time_range",
+				"time_start", "time_end", "bucket_seconds", "buckets",
+				"aggregation", "series"},
+			Description: "A bucketed metrics query, describing the window " +
+				"that was queried alongside the data, so a chart axis can " +
+				"be anchored to the requested range rather than inferred " +
+				"from the points that came back",
+			Properties: map[string]*OpenAPISchema{
+				"probe_name": {Type: "string",
+					Description: "Probe the series were read from"},
+				"connection_ids": {Type: "array",
+					Items:       &OpenAPISchema{Type: "integer"},
+					Description: "Connections the series were read from"},
+				"time_range": {Type: "string",
+					Description: "Range selection as requested, such as " +
+						"\"1h\" or \"custom\"; \"1h\" when the parameter " +
+						"was omitted"},
+				"time_start": {Type: "string", Format: "date-time",
+					Description: "Start of the resolved window"},
+				"time_end": {Type: "string", Format: "date-time",
+					Description: "End of the resolved window"},
+				"bucket_seconds": {Type: "integer",
+					Description: "Width of one bucket in whole seconds, as " +
+						"the query used it, with a one second floor"},
+				"buckets": {Type: "integer",
+					Description: "Number of buckets the window was divided " +
+						"into: the requested count, reduced when the " +
+						"probe's collection interval is too wide to fill " +
+						"that many"},
+				"aggregation": {Type: "string",
+					Description: "Aggregation applied within each bucket"},
+				"series": {Type: "array",
+					Items: &OpenAPISchema{Ref: "#/components/schemas/MetricSeries"},
+					Description: "Time series in the order the metrics were " +
+						"requested (or column order when no metrics were " +
+						"named), one per metric per connection"},
+			},
 		},
 		"BaselinesResult": {
 			Type: "object",

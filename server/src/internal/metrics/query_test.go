@@ -12,6 +12,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/big"
 	"strings"
@@ -3027,13 +3028,69 @@ func TestProbeEntityExclusionInQueries(t *testing.T) {
 func TestMetricDataPointJSON(t *testing.T) {
 	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	v := 1.5
-	got, err := json.Marshal([]MetricDataPoint{{Time: ts}, {Time: ts, Value: &v}})
+	carried := 2.5
+	// A null bucket, an observed sample and a carried-forward one: only
+	// the last carries "filled", so a client can tell a carried-forward
+	// value from an observed one without a flag on every point.
+	got, err := json.Marshal([]MetricDataPoint{
+		{Time: ts},
+		{Time: ts, Value: &v},
+		{Time: ts, Value: &carried, Filled: true},
+	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `[{"time":"2025-01-01T00:00:00Z","value":null},{"time":"2025-01-01T00:00:00Z","value":1.5}]`
+	want := `[{"time":"2025-01-01T00:00:00Z","value":null},` +
+		`{"time":"2025-01-01T00:00:00Z","value":1.5},` +
+		`{"time":"2025-01-01T00:00:00Z","value":2.5,"filled":true}]`
 	if string(got) != want {
 		t.Errorf("json = %s, want %s", got, want)
+	}
+}
+
+func TestBucketWidth(t *testing.T) {
+	// The width the SQL bins by and the width a response reports both
+	// come from here, so the floor and the clamp are pinned in one place.
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		span    time.Duration
+		buckets int
+		want    time.Duration
+	}{
+		{"an hour in sixty buckets", time.Hour, 60, time.Minute},
+		{"a day in 150 buckets", 24 * time.Hour, 150, 576 * time.Second},
+		{"floored at one second", time.Minute, 150, time.Second},
+		{"a zero bucket count is one bucket", time.Hour, 0, time.Hour},
+		{"a negative bucket count is one bucket", time.Hour, -5, time.Hour},
+		{"an empty window still has a floor", 0, 10, time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BucketWidth(start, start.Add(tt.span), tt.buckets)
+			if got != tt.want {
+				t.Errorf("BucketWidth(%v, %d) = %v, want %v",
+					tt.span, tt.buckets, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBucketWidthMatchesTheQueryInterval(t *testing.T) {
+	// The reported bucket_seconds is only trustworthy whilst the builder
+	// binds the same width, so assert the built SQL carries it.
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	_, args, err := BuildMetricsQuery("pg_stat_database", []string{"xact_commit"},
+		map[string]string{"xact_commit": "bigint"}, 1, start, end, 90, "avg",
+		MetricFilters{})
+	if err != nil {
+		t.Fatalf("BuildMetricsQuery: %v", err)
+	}
+	want := fmt.Sprintf("%d seconds",
+		int(BucketWidth(start, end, 90).Seconds()))
+	if args[0] != want {
+		t.Errorf("bucket interval argument = %v, want %q", args[0], want)
 	}
 }
 

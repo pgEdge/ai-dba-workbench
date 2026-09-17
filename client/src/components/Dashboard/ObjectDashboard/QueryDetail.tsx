@@ -383,8 +383,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             execTimeChart.data,
             ['mean_exec_time', 'min_exec_time', 'max_exec_time'],
             ['Mean Time (ms)', 'Min Time (ms)', 'Max Time (ms)'],
+            execTimeChart.window,
         ),
-        [execTimeChart.data]
+        [execTimeChart.data, execTimeChart.window]
     );
 
     const callsChartData = useMemo(
@@ -392,8 +393,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             callsChart.data,
             ['calls_per_sec'],
             ['Calls/s'],
+            callsChart.window,
         ),
-        [callsChart.data]
+        [callsChart.data, callsChart.window]
     );
 
     const handleToggleExpand = useCallback((): void => {

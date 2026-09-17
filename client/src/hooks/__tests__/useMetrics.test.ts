@@ -681,7 +681,143 @@ describe('useMetrics with a custom time range', () => {
         expect(mockApiGet).toHaveBeenCalledTimes(1);
         expect(result.current.data).toEqual(makeMetricSeries());
         expect(result.current.error).toBeNull();
+
     });
+    // -----------------------------------------------------------------
+    // The envelope returned by the metrics query endpoint
+    // -----------------------------------------------------------------
+
+    describe('envelope', () => {
+        const params: MetricQueryParams = {
+            probeName: 'pg_sys_cpu',
+            timeRange: '7d',
+            connectionId: 1,
+        };
+
+        const envelope = (
+            overrides: Record<string, unknown> = {},
+        ): Record<string, unknown> => ({
+            probe_name: 'pg_sys_cpu',
+            connection_ids: [1],
+            time_range: '7d',
+            time_start: '2026-09-09T10:00:00Z',
+            time_end: '2026-09-16T10:00:00Z',
+            bucket_seconds: 4032,
+            buckets: 150,
+            aggregation: 'avg',
+            series: [
+                {
+                    name: 'cpu',
+                    metric: 'cpu',
+                    unit: '',
+                    data: [
+                        { time: '2026-09-09T10:00:00Z', value: 42.1 },
+                        { time: '2026-09-09T11:07:12Z', value: null },
+                        {
+                            time: '2026-09-09T12:14:24Z',
+                            value: 42.1,
+                            filled: true,
+                        },
+                    ],
+                },
+            ],
+            ...overrides,
+        });
+
+        it('exposes the series and the queried window', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope());
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(result.current.data).not.toBeNull();
+            });
+
+            expect(result.current.data).toHaveLength(1);
+            expect(result.current.data?.[0].data[1].value).toBeNull();
+            expect(result.current.data?.[0].data[2].filled).toBe(true);
+            expect(result.current.window).toEqual({
+                start: '2026-09-09T10:00:00Z',
+                end: '2026-09-16T10:00:00Z',
+                bucketSeconds: 4032,
+            });
+        });
+
+        it('reports no window when the envelope omits one', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope({
+                time_start: undefined,
+                bucket_seconds: 0,
+            }));
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(result.current.data).not.toBeNull();
+            });
+
+            expect(result.current.window).toBeNull();
+        });
+
+        it('treats a null series list as no data', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope({ series: null }));
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(result.current.window).not.toBeNull();
+            });
+
+            expect(result.current.data).toBeNull();
+        });
+
+        it('accepts a bare array from a server without the envelope',
+            async () => {
+                mockApiGet.mockResolvedValueOnce(makeMetricSeries());
+
+                const { result } = renderHook(() => useMetrics(params));
+
+                await waitFor(() => {
+                    expect(result.current.data).not.toBeNull();
+                });
+
+                expect(result.current.window).toBeNull();
+            });
+
+        it('yields no data for an empty response body', async () => {
+            mockApiGet.mockResolvedValueOnce(null);
+
+            const { result } = renderHook(() => useMetrics(params));
+
+            await waitFor(() => {
+                expect(mockApiGet).toHaveBeenCalledTimes(1);
+            });
+
+            expect(result.current.data).toBeNull();
+            expect(result.current.window).toBeNull();
+        });
+
+        it('clears the window when the request fails', async () => {
+            mockApiGet.mockResolvedValueOnce(envelope());
+            const { result, rerender } = renderHook(
+                () => useMetrics(params),
+            );
+
+            await waitFor(() => {
+                expect(result.current.window).not.toBeNull();
+            });
+
+            mockApiGet.mockRejectedValueOnce(new Error('boom'));
+            mockRefreshTrigger = 1;
+            rerender();
+
+            await waitFor(() => {
+                expect(result.current.error).toBe('boom');
+            });
+
+            expect(result.current.window).toBeNull();
+        });
+    });
+
 });
 
 // ---------------------------------------------------------------------------

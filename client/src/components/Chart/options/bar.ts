@@ -16,6 +16,7 @@ import {
     buildXAxis,
     buildYAxis,
     buildDataZoom,
+    buildSeriesData,
 } from './common';
 
 export function buildBarOptions(
@@ -31,7 +32,7 @@ export function buildBarOptions(
     const series = data.series.map((s) => ({
         type: 'bar' as const,
         name: s.name,
-        data: s.data,
+        data: buildSeriesData(s.data, s.filled),
         stack: options.stacked ? 'total' : undefined,
         barMaxWidth: 50,
     }));

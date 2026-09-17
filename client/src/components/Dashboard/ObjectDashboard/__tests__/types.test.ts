@@ -131,8 +131,16 @@ describe('ObjectDashboard types helpers', () => {
             expect(result).toEqual({
                 categories: ['2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z'],
                 series: [
-                    { name: 'Alpha', data: [1, 2] },
-                    { name: 'Beta', data: [3, 4] },
+                    {
+                        name: 'Alpha',
+                        data: [1, 2],
+                        filled: [false, false],
+                    },
+                    {
+                        name: 'Beta',
+                        data: [3, 4],
+                        filled: [false, false],
+                    },
                 ],
             });
         });
@@ -168,7 +176,10 @@ describe('ObjectDashboard types helpers', () => {
                 [series('b', [5, 6])],
                 ['a', 'b'],
             );
-            expect(result?.series[0].data).toEqual([]);
+            // A metric the response did not carry is aligned onto the
+            // same axis as the others, every bucket a gap, rather than
+            // being left ragged and shorter than the categories.
+            expect(result?.series[0].data).toEqual([null, null]);
             expect(result?.series[1].data).toEqual([5, 6]);
             expect(result?.categories).toEqual([
                 '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z',

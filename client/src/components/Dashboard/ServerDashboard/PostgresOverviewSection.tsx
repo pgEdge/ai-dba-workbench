@@ -16,7 +16,8 @@ import { Storage as StorageIcon } from '@mui/icons-material';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useServerCacheHit } from '../../../hooks/useServerCacheHit';
-import type { MetricQueryParams, MetricSeries } from '../types';
+import type { MetricQueryParams } from '../types';
+import { buildMetricChartData as buildChartData } from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -52,43 +53,6 @@ const SESSIONS_CHART_TITLE = 'Sessions Established (Monitored Database)';
 const CACHE_HIT_DESCRIPTION =
     'Buffer cache hit ratio per interval (null buckets had no block '
     + `access). ${CACHE_HIT_CAVEAT}`;
-
-/**
- * Build chart data from metric series for the Chart component. Every
- * series in a metrics response shares the same bucket times, so the
- * categories come from the first requested metric that was returned;
- * null values pass straight through and ECharts draws them as gaps.
- */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
-};
 
 /** Shape of the latest pg_server_info row used for max_connections. */
 interface ServerInfoRow {
@@ -289,6 +253,7 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
             connectionChart.data,
             ['numbackends'],
             ['Backends'],
+            connectionChart.window,
         );
         if (!base || maxConnections === null) { return base; }
         return {
@@ -297,19 +262,22 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 ...base.series,
                 {
                     name: 'Max Connections',
-                    data: base.categories.map(() => maxConnections),
+                    data: (base.categories ?? []).map(
+                        () => maxConnections,
+                    ),
                 },
             ],
         };
-    }, [connectionChart.data, maxConnections]);
+    }, [connectionChart.data, connectionChart.window, maxConnections]);
 
     const sessionChartData = useMemo(
         () => buildChartData(
             connectionChart.data,
             ['sessions'],
             ['Cumulative Sessions'],
+            connectionChart.window,
         ),
-        [connectionChart.data]
+        [connectionChart.data, connectionChart.window]
     );
 
     const txnChartData = useMemo(
@@ -317,8 +285,9 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
             txnChart.data,
             ['xact_commit_per_sec', 'xact_rollback_per_sec'],
             ['Commits/s', 'Rollbacks/s'],
+            txnChart.window,
         ),
-        [txnChart.data]
+        [txnChart.data, txnChart.window]
     );
 
     const blockIoChartData = useMemo(
@@ -326,8 +295,9 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
             blockIoChart.data,
             ['blks_hit_per_sec', 'blks_read_per_sec'],
             ['Blocks Hit/s', 'Blocks Read/s'],
+            blockIoChart.window,
         ),
-        [blockIoChart.data]
+        [blockIoChart.data, blockIoChart.window]
     );
 
     const tupleChartData = useMemo(
@@ -340,8 +310,9 @@ const PostgresOverviewSection: React.FC<ServerSectionProps> = ({
                 'tup_deleted_per_sec',
             ],
             ['Fetched/s', 'Inserted/s', 'Updated/s', 'Deleted/s'],
+            tupleChart.window,
         ),
-        [tupleChart.data]
+        [tupleChart.data, tupleChart.window]
     );
 
     const isKpiLoading = connectionsKpi.loading || txnKpi.loading

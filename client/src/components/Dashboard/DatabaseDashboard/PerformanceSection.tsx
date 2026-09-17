@@ -14,7 +14,11 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
-import type { MetricQueryParams, MetricSeries, MetricDataPoint } from '../types';
+import type { MetricQueryParams, MetricDataPoint } from '../types';
+import {
+    buildMetricChartData as buildChartData,
+    buildDerivedChartData,
+} from '../metricsChart';
 import { KPI_GRID_SX, CHART_SECTION_SX } from '../styles';
 import KpiTile from '../KpiTile';
 import CollapsibleSection from '../CollapsibleSection';
@@ -104,43 +108,6 @@ const latestNonNull = (points: MetricDataPoint[]): number | null => {
         if (points[i].value !== null) { return points[i].value; }
     }
     return null;
-};
-
-/**
- * Build chart data from metric series for the Chart component. Every
- * series in a metrics response shares the same bucket times, so the
- * categories come from the first requested metric that was returned;
- * null values pass straight through and ECharts draws them as gaps.
- */
-const buildChartData = (
-    series: MetricSeries[] | null,
-    metricNames: string[],
-    displayNames?: string[],
-) => {
-    if (!series) { return null; }
-
-    const matchedSeries = metricNames.map((metric, idx) => {
-        const found = series.find(s => s.metric === metric);
-        return {
-            name: displayNames?.[idx] ?? metric,
-            data: found?.data.map(d => d.value) ?? [],
-            categories: found?.data.map(d => d.time) ?? [],
-        };
-    });
-
-    if (matchedSeries.every(s => s.data.length === 0)) { return null; }
-
-    const categories = matchedSeries.find(
-        s => s.categories.length > 0
-    )?.categories ?? [];
-
-    return {
-        categories,
-        series: matchedSeries.map(s => ({
-            name: s.name,
-            data: s.data,
-        })),
-    };
 };
 
 /**
@@ -320,23 +287,19 @@ const PerformanceSection: React.FC<DatabaseSectionProps> = ({
             txnChart.data,
             ['xact_commit_per_sec', 'xact_rollback_per_sec'],
             ['Commits/s', 'Rollbacks/s'],
+            txnChart.window,
         ),
-        [txnChart.data]
+        [txnChart.data, txnChart.window]
     );
 
     // Build the cache hit ratio chart from the per-bucket ratio; null
     // buckets are passed through so ECharts draws them as gaps.
     const cacheChartData = useMemo(() => {
         const points = buildCacheHitRatioPoints(cacheChart.data);
-        if (points.length === 0) { return null; }
-        return {
-            categories: points.map(p => p.time),
-            series: [{
-                name: 'Cache Hit Ratio %',
-                data: points.map(p => p.value),
-            }],
-        };
-    }, [cacheChart.data]);
+        return buildDerivedChartData(
+            points, 'Cache Hit Ratio %', cacheChart.window,
+        );
+    }, [cacheChart.data, cacheChart.window]);
 
     const isKpiLoading = sizeKpi.loading || cacheKpi.loading
         || txnKpi.loading || deadTupleKpi.loading;

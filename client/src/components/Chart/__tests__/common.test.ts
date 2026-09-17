@@ -25,6 +25,8 @@ import {
     buildXAxis,
     buildYAxis,
     buildDataZoom,
+    buildSeriesData,
+    buildFilledMarkArea,
 } from '../options/common';
 
 const isoMinusHours = (h: number) =>
@@ -653,5 +655,106 @@ describe('buildYAxis null handling', () => {
         ], true, true) as unknown as YAxisOpts;
         expect(yAxis.min).toBe(0);
         expect(yAxis.max).toBeCloseTo(11);
+    });
+});
+
+describe('buildSeriesData', () => {
+    it('leaves values untouched when no filled flags are given', () => {
+        expect(buildSeriesData([1, null, 3])).toEqual([1, null, 3]);
+    });
+
+    it('wraps carried-forward points so they can be told apart', () => {
+        const data = buildSeriesData([1, 2, 3], [false, true, false]);
+        expect(data[0]).toBe(1);
+        expect(data[2]).toBe(3);
+        expect(data[1]).toEqual({
+            value: 2,
+            filled: true,
+            symbol: 'emptyCircle',
+            symbolSize: 6,
+            itemStyle: { opacity: 0.55 },
+        });
+    });
+
+    it('leaves a gap as a plain null even when flagged', () => {
+        expect(buildSeriesData([null], [true])).toEqual([null]);
+    });
+});
+
+describe('buildFilledMarkArea', () => {
+    const cats = ['a', 'b', 'c', 'd', 'e'];
+
+    it('returns nothing when no bucket was carried forward', () => {
+        expect(buildFilledMarkArea(cats, [
+            { filled: [false, false, false, false, false] },
+            {},
+        ])).toBeUndefined();
+        expect(buildFilledMarkArea(undefined, [])).toBeUndefined();
+        expect(buildFilledMarkArea([], [{ filled: [true] }]))
+            .toBeUndefined();
+    });
+
+    it('bands each contiguous carried-forward stretch', () => {
+        const area = buildFilledMarkArea(cats, [
+            { filled: [true, true, false, false, true] },
+        ]) as { data: { xAxis: string }[][]; silent: boolean };
+
+        expect(area.silent).toBe(true);
+        expect(area.data).toEqual([
+            [{ xAxis: 'a' }, { xAxis: 'b' }],
+            [{ xAxis: 'e' }, { xAxis: 'e' }],
+        ]);
+    });
+
+    it('unions the flags of every series so bands cannot compound', () => {
+        const area = buildFilledMarkArea(cats, [
+            { filled: [true, false, false, false, false] },
+            { filled: [false, true, false, false, false] },
+        ]) as { data: { xAxis: string }[][] };
+
+        expect(area.data).toEqual([[{ xAxis: 'a' }, { xAxis: 'b' }]]);
+    });
+});
+
+describe('buildTooltip with carried-forward points', () => {
+    const format = (params: unknown) => (
+        (buildTooltip(true) as {
+            formatter: (p: unknown) => string;
+        }).formatter(params)
+    );
+
+    it('says so when a value was carried forward', () => {
+        const html = format([{
+            axisValue: '2026-09-16T09:00:00.000Z',
+            marker: 'M',
+            seriesName: 'CPU',
+            value: 42,
+            data: { value: 42, filled: true },
+        }]);
+        expect(html).toContain('CPU: 42 (carried forward)');
+    });
+
+    it('says nothing extra for an observed value', () => {
+        const html = format([{
+            axisValue: '2026-09-16T09:00:00.000Z',
+            marker: 'M',
+            seriesName: 'CPU',
+            value: 42,
+            data: 42,
+        }]);
+        expect(html).toContain('CPU: 42');
+        expect(html).not.toContain('carried forward');
+    });
+
+    it('reports a gap as no data rather than carried forward', () => {
+        const html = format([{
+            axisValue: '2026-09-16T09:00:00.000Z',
+            marker: 'M',
+            seriesName: 'CPU',
+            value: null,
+            data: { value: null, filled: true },
+        }]);
+        expect(html).toContain('CPU: no data');
+        expect(html).not.toContain('carried forward');
     });
 });

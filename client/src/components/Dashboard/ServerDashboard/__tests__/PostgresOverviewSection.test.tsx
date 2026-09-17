@@ -85,7 +85,11 @@ vi.mock('../../../../utils/logger', () => ({
  */
 vi.mock('../../../Chart', () => ({
     Chart: ({ title, data }: { title: string; data: ChartData }) => (
-        <div data-testid="chart" data-title={title}>
+        <div
+            data-testid="chart"
+            data-title={title}
+            data-categories={(data.categories ?? []).join(',')}
+        >
             <span>{title}</span>
             {data.series.map((s) => (
                 <span
@@ -95,6 +99,7 @@ vi.mock('../../../Chart', () => ({
                     data-series={s.name}
                     data-values={s.data.join(',')}
                     data-json={JSON.stringify(s.data)}
+                    data-filled={(s.filled ?? []).join(',')}
                 >
                     {s.name}
                 </span>
@@ -143,6 +148,7 @@ const series = (
 /** Wrap metric series in a resolved UseMetricsReturn. */
 const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
     data,
+    window: null,
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -151,6 +157,7 @@ const ready = (data: MetricSeries[] | null): UseMetricsReturn => ({
 /** A UseMetricsReturn that is still loading with no data yet. */
 const loading = (): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: true,
     error: null,
     refetch: vi.fn(),
@@ -159,6 +166,7 @@ const loading = (): UseMetricsReturn => ({
 /** A UseMetricsReturn that failed, as an older server would. */
 const failed = (message: string): UseMetricsReturn => ({
     data: null,
+    window: null,
     loading: false,
     error: message,
     refetch: vi.fn(),
@@ -732,5 +740,109 @@ describe('PostgresOverviewSection', () => {
             expect(screen.getAllByText('--').length)
                 .toBeGreaterThanOrEqual(1);
         });
+    });
+    describe('window-anchored axis (issue #430)', () => {
+        /**
+         * The server reports a six-bucket window whilst the probe has
+         * only the last two buckets of history, which is the state an
+         * instance younger than the selected range is in.
+         */
+        const WINDOW = {
+            start: '2026-09-16T09:00:00.000Z',
+            end: '2026-09-16T09:30:00.000Z',
+            bucketSeconds: 300,
+        };
+
+        const lateSeries = (metric: string): MetricSeries => ({
+            name: metric,
+            metric,
+            data: [
+                { time: '2026-09-16T09:20:00.000Z', value: 10 },
+                {
+                    time: '2026-09-16T09:25:00.000Z',
+                    value: 10,
+                    filled: true,
+                },
+            ],
+        });
+
+        const readyInWindow = (
+            data: MetricSeries[],
+        ): UseMetricsReturn => ({
+            data,
+            window: WINDOW,
+            loading: false,
+            error: null,
+            refetch: vi.fn(),
+        });
+
+        const chartFor = (title: string): HTMLElement =>
+            screen.getAllByTestId('chart')
+                .filter(el => el.getAttribute('data-title') === title)[0];
+
+        const seriesFor = (title: string, name: string): HTMLElement =>
+            screen.getAllByTestId('chart-series')
+                .filter(el => el.getAttribute('data-chart') === title
+                    && el.getAttribute('data-series') === name)[0];
+
+        it('spans the queried window rather than the data', async () => {
+            routeMetrics({
+                'numbackends,sessions': readyInWindow([
+                    lateSeries('numbackends'),
+                    lateSeries('sessions'),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(chartFor(CONNECTIONS_TITLE)).toBeInTheDocument();
+            });
+
+            const categories = chartFor(CONNECTIONS_TITLE)
+                .getAttribute('data-categories')?.split(',') ?? [];
+            expect(categories).toHaveLength(6);
+            expect(categories[0]).toBe('2026-09-16T09:00:00.000Z');
+            expect(categories[5]).toBe('2026-09-16T09:25:00.000Z');
+        });
+
+        it('draws the missing history as gaps, not as zeroes', async () => {
+            routeMetrics({
+                'numbackends,sessions': readyInWindow([
+                    lateSeries('numbackends'),
+                    lateSeries('sessions'),
+                ]),
+            });
+            renderSection();
+
+            await waitFor(() => {
+                expect(chartFor(CONNECTIONS_TITLE)).toBeInTheDocument();
+            });
+
+            const values = JSON.parse(
+                seriesFor(CONNECTIONS_TITLE, 'Backends')
+                    .getAttribute('data-json') ?? '[]',
+            ) as (number | null)[];
+            expect(values).toEqual([null, null, null, null, 10, 10]);
+        });
+
+        it('flags the carried-forward bucket for the chart to shade',
+            async () => {
+                routeMetrics({
+                    'numbackends,sessions': readyInWindow([
+                        lateSeries('numbackends'),
+                        lateSeries('sessions'),
+                    ]),
+                });
+                renderSection();
+
+                await waitFor(() => {
+                    expect(chartFor(CONNECTIONS_TITLE)).toBeInTheDocument();
+                });
+
+                expect(
+                    seriesFor(CONNECTIONS_TITLE, 'Backends')
+                        .getAttribute('data-filled'),
+                ).toBe('false,false,false,false,false,true');
+            });
     });
 });

@@ -109,10 +109,10 @@ func TestHandleMetricsQuery_TimeSeriesMode_ParsesMountPointFilter(t *testing.T) 
 			_ int,
 			_ string,
 			_ []string,
-		) ([]metrics.MetricSeries, error) {
+		) (*metrics.MetricsQueryResult, error) {
 			called = true
 			gotFilters = filters
-			return []metrics.MetricSeries{}, nil
+			return &metrics.MetricsQueryResult{Series: []metrics.MetricSeries{}}, nil
 		},
 	}
 

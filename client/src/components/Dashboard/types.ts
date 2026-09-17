@@ -67,6 +67,12 @@ export interface AutoRefreshConfig {
 export interface MetricDataPoint {
     time: string;
     value: number | null;
+    /**
+     * True when the value is the last observation carried forward
+     * rather than a sample collected in this bucket. Omitted when the
+     * point is an observed reading.
+     */
+    filled?: boolean;
 }
 
 /**
@@ -85,6 +91,38 @@ export interface MetricSeries {
     metric: string;
     data: MetricDataPoint[];
     unit?: string;
+}
+
+/**
+ * The window a metrics query actually covered, as reported by the
+ * server. Charts anchor their x-axis to this rather than to the data,
+ * so that changing the range changes the axis even on an instance whose
+ * history is shorter than the range asked for.
+ */
+export interface MetricsWindow {
+    /** Inclusive start of the window (RFC 3339). */
+    start: string;
+    /** Exclusive end of the window (RFC 3339). */
+    end: string;
+    /** Width of one bucket in seconds, as used by the server's SQL. */
+    bucketSeconds: number;
+}
+
+/**
+ * Envelope returned by GET /api/v1/metrics/query in time-series mode.
+ * The latest-rows mode of the same endpoint (a request carrying `limit`
+ * or `order_by`) still returns flat rows and is unaffected.
+ */
+export interface MetricsQueryResult {
+    probe_name: string;
+    connection_ids: number[];
+    time_range: string;
+    time_start: string;
+    time_end: string;
+    bucket_seconds: number;
+    buckets: number;
+    aggregation: string;
+    series: MetricSeries[] | null;
 }
 
 /** Baseline data from get_metric_baselines */

@@ -550,7 +550,10 @@ key to satisfy either.
   last real value whilst `bucketTime - lastSeenTime <= MaxCarryIntervals
   * effective interval` (`MaxCarryIntervals = 3`) and emits nil beyond
   that; `fillNone` (`_per_sec`, `_delta`, `_pct`, `_sessions`) never
-  repeats.
+  repeats. A carried point is marked `Filled: true` (JSON
+  `"filled": true`, `omitempty`, so it is absent on observed and null
+  points), which is how a chart tells a carried stretch from an observed
+  one; `fillNone` never sets it.
   Every bucket is emitted for every series, nulls included, so all series
   in a response have identical length and bucket times; a series whose
   query matched no rows is all nulls rather than empty, and the client
@@ -833,7 +836,38 @@ window is resolved exactly once, at the HTTP boundary. The types live in
   string, and does no window validation of its own. The
   `timeSeriesQueryFunc` seam in
   `server/src/internal/api/metrics_handlers.go` mirrors that signature,
-  so test fakes must accept a `metrics.TimeWindow`.
+  so test fakes must accept a `metrics.TimeWindow` and return a
+  `*metrics.MetricsQueryResult`.
+
+### The metrics/query response envelope (#430)
+
+`QueryTimeSeries` returns `*MetricsQueryResult`, not a bare
+`[]MetricSeries`, and `GET /api/v1/metrics/query` serves it as the JSON
+object `{probe_name, connection_ids, time_range, time_start, time_end,
+bucket_seconds, buckets, aggregation, series}`. The window fields let a
+chart anchor its axis to the range that was requested rather than to
+whichever points came back, which on a young instance is what made every
+range render identically.
+
+- `time_start`/`time_end` are the resolved absolute window, so a preset
+  and a custom range are described identically.
+- `time_range` is the range parameter as received, defaulted to `1h`.
+  The query layer never sees it, so `handleMetricsQuery` sets it on the
+  returned struct after the query; a fake query function may leave it
+  empty.
+- `bucket_seconds` is `BucketWidth(timeStart, timeEnd, buckets)` in whole
+  seconds, computed from the bucket count *after* the interval clamp, and
+  `buckets` is that clamped count.
+- `BucketWidth(timeStart, timeEnd time.Time, buckets int) time.Duration`
+  in `query.go` is the one place the width is decided: span / buckets,
+  floored at `MinBucketWidth` (one second), with a bucket count below one
+  treated as one. `BuildMetricsQuery`, `BuildDerivedMetricsQuery` and the
+  envelope all call it, so the reported width is always the width the SQL
+  binned by. Never re-inline the division.
+
+The latest-row mode (`handleLatestRows`, reached when `limit` or
+`order_by` is present) is a different response shape and is deliberately
+untouched by this envelope.
 
 The custom-path validation order matters, because the error message is
 returned to API clients verbatim: missing timestamp, unparsable
@@ -1127,6 +1161,10 @@ run.
   the loopback exclusion in `metricQueryClauses`, and the per-series fill
   policy with nullable points (`MetricDataPoint.Value *float64`,
   `MaxCarryIntervals`) replacing uniform LOCF.
+- #430: The `/api/v1/metrics/query` response envelope
+  (`MetricsQueryResult`) carrying the resolved window and
+  `bucket_seconds`, the exported `BucketWidth` helper, and the `filled`
+  flag on carried-forward points.
 - #428: Pseudo filesystems excluded from
   `pg_sys_disk_info.used_percent`, so a squashfs mount no longer pins the
   disk metric at 100%.

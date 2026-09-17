@@ -43,8 +43,14 @@ moved.
   server-side secret and only decrypted in the collector when a pool
   is opened.
 - Visibility is per user: connections are scoped to their owner or to
-  groups the user belongs to, and GET handlers return 404 rather than
-  403 for resources the caller cannot see.
+  groups the user belongs to. Handlers do not hide existence: a caller
+  without access to a connection gets 403, and several of them echo the
+  requested connection ID in the message (see `handleTopQueries` and its
+  neighbours in `internal/api/perf_summary_handlers.go`, and
+  `getConnection` in `internal/api/connection_handlers.go`). 404 is
+  reserved for resources that genuinely do not exist. Judge any
+  enumeration concern against that convention rather than assuming a
+  404-for-everything model.
 
 ## Reporting
 

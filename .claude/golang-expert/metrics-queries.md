@@ -903,7 +903,7 @@ subtracted from the post-reset one. `queryStatsSQLTemplate` in
 counter-delta query over `metrics.pg_stat_statements` should follow the
 same shape.
 
-## Bounded Name Lookups (server)
+## Bounded Activity Lookups (server)
 
 `buildTopQueriesSQL` resolves `dbid` and `userid` OIDs to names through
 `DISTINCT ON (...) ... ORDER BY oid, collected_at DESC` over
@@ -914,8 +914,46 @@ page (count and page statements). Both CTEs are therefore anchored to
 the latest `pg_stat_statements` snapshot and read only the preceding
 `nameLookupWindowSQL` (one hour) of activity samples; on a fixture of
 500,000 activity rows that took the page from 1.6 s and a 29 MB
-external sort to 8 ms in memory. Any new OID-to-name lookup over
+external sort to 8 ms in memory. Any new lookup over
 `pg_stat_activity` needs the same bound.
+
+The third CTE in the same statement, `last_client`, follows that rule:
+it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
+ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
+`pss.queryid`, `pss.dbid` and `pss.userid` to fill the `client_addr`
+(via `host(client_addr)`, the repo's convention for rendering `inet`),
+`client_hostname` and `client_observed_at` columns of `TopQueryRow`.
+
+The three-way key is not optional. `pg_stat_statements` is keyed on
+`(userid, dbid, queryid, toplevel)`, so one `queryid` can appear once per
+database and role that ran the statement; keying `last_client` on the
+identifier alone picks whichever backend was seen most recently across
+every database and role, and a caller filtering on one database can then
+be shown a client that only ever connected to another. `DISTINCT ON`
+runs over the same tuple the join matches on, so the CTE holds at most
+one row per tuple and the join cannot fan out `deduped` or the count.
+
+`metrics.pg_stat_activity.query_id` is collected from schema version 12
+(issue #384) and is NULL before PostgreSQL 14, with `compute_query_id`
+off, and on idle backends, so the join resolves nothing on such servers.
+Because `pg_stat_activity` is sampled, the attribution is the most
+recently observed client, not the only one; keep any UI wording to
+"last observed client". `client_addr` is rendered
+`COALESCE(host(client_addr), 'local')`, so it is non-null for every
+observed row and a statement never caught in flight is signaled solely
+by a null `client_observed_at`; both the `TopQueryRow` doc comment and
+the OpenAPI descriptions say so, and any UI logic must test
+`client_observed_at` rather than the address.
+
+The optional `queryid` filter is applied inside `last_client` as well as
+inside `deduped`, bound to the same placeholder rather than to a second
+parameter, because the query drill-down always supplies one and would
+otherwise sort the whole one-hour window twice per request to retrieve a
+single row. `metrics.pg_stat_activity` carries no index on `query_id`;
+an index on `(connection_id, query_id, collected_at DESC) WHERE query_id
+IS NOT NULL` may be worth profiling, bearing in mind that the table is a
+partitioned parent and a partitioned parent cannot take `CREATE INDEX
+CONCURRENTLY` in a single statement.
 
 ## Latest-Snapshot Aggregations (server)
 
@@ -1095,6 +1133,10 @@ run.
 - #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
   `required_extension` enforced in evaluation and resolution,
   `table_bloat_ratio` retired from the registry; collector migration 11.
+- #384: Last observed client attributed to a query on the top-queries
+  endpoint; the `last_client` `DISTINCT ON` CTE keyed on `(query_id,
+  datid, usesysid)`, fed by `metrics.pg_stat_activity.query_id` which
+  collector migration 12 adds.
 - #400: `_delta` (`DerivedDelta`) added alongside `_per_sec` so dashboard
   charts plot per-bucket counter increases instead of cumulative totals.
 - #342: Derived metrics (`_per_sec` rates and `dead_tuple_ratio`) added to

@@ -13220,6 +13220,22 @@
             "format": "int64",
             "description": "Total call count"
           },
+          "client_addr": {
+            "type": "string",
+            "description": "Address of the client most recently observed running the query in pg_stat_activity, or \"local\" when that backend connected over a Unix-domain socket; null only when the query was never observed in flight. Best-effort: only statements in flight when a sample was taken are captured, and this is the most recent client for the query's own database and role, not the only one",
+            "nullable": true
+          },
+          "client_hostname": {
+            "type": "string",
+            "description": "Resolved hostname of that client; null when unknown, including whenever log_hostname is off on the monitored server, and whenever the query was never observed in flight",
+            "nullable": true
+          },
+          "client_observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time of the pg_stat_activity sample that observed the client; null when the query was never observed in flight, which is the only reliable signal of that since client_addr reports \"local\" for Unix-domain-socket backends",
+            "nullable": true
+          },
           "database_name": {
             "type": "string",
             "description": "Database name where the query was executed"

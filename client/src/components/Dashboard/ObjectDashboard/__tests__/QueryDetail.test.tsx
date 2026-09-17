@@ -8,11 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import QueryDetail from '../QueryDetail';
 import type { QueryDetailData } from '../types';
+import { formatTimestamp } from '../types';
 import type { UseMetricsReturn } from '../../../../hooks/useMetrics';
 import type { MetricQueryParams, MetricSeries, TimeRange } from '../../types';
 import type { ChartData } from '../../../Chart/types';
@@ -179,6 +180,9 @@ const makeQueryRow = (
     shared_blks_hit: 900,
     shared_blks_read: 100,
     username: 'app_user',
+    client_addr: null,
+    client_hostname: null,
+    client_observed_at: null,
     ...overrides,
 });
 
@@ -728,6 +732,172 @@ describe('QueryDetail', () => {
                 expect(screen.getByTestId('query-username'))
                     .toHaveTextContent('Unknown');
             });
+        });
+
+        it('shows Not observed when no client was ever seen', async () => {
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('Not observed');
+            });
+            expect(
+                screen.getByText('Last Observed Client'),
+            ).toBeInTheDocument();
+        });
+
+        it('shows the client address when no hostname resolved', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: null,
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('192.0.2.10');
+            });
+            expect(screen.getByTestId('query-client'))
+                .not.toHaveTextContent('(');
+        });
+
+        it('shows local for a Unix-domain-socket backend', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: 'local',
+                    client_hostname: null,
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('local');
+            });
+            expect(screen.getByTestId('query-client'))
+                .not.toHaveTextContent('Not observed');
+        });
+
+        it('says Not observed when no snapshot time is recorded, even '
+            + 'with an address', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: 'app-01.example.com',
+                    client_observed_at: null,
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('Not observed');
+            });
+            expect(screen.getByTestId('query-client'))
+                .not.toHaveTextContent('192.0.2.10');
+        });
+
+        it('shows Unknown when observed without an address', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: null,
+                    client_hostname: null,
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('Unknown');
+            });
+        });
+
+        it('shows hostname and address when both are known', async () => {
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: 'app-01.example.com',
+                    client_observed_at: '2026-01-01T00:05:00Z',
+                })]),
+            );
+            renderDetail();
+
+            await waitFor(() => {
+                expect(screen.getByTestId('query-client'))
+                    .toHaveTextContent('app-01.example.com (192.0.2.10)');
+            });
+        });
+
+        it('explains the best-effort client match in a tooltip', async () => {
+            const observedAt = '2026-01-01T00:05:00Z';
+            mockApiFetch.mockResolvedValue(
+                okResponse([makeQueryRow({
+                    client_addr: '192.0.2.10',
+                    client_hostname: 'app-01.example.com',
+                    client_observed_at: observedAt,
+                })]),
+            );
+            renderDetail();
+
+            const value = await screen.findByTestId('query-client');
+            await act(async () => {
+                fireEvent.mouseOver(value);
+            });
+
+            const tooltip = await screen.findByRole('tooltip');
+            expect(tooltip).toHaveTextContent(
+                /pg_stat_activity is sampled periodically/,
+            );
+            expect(tooltip).toHaveTextContent(
+                /Other clients may also have run it/,
+            );
+            expect(tooltip).toHaveTextContent(
+                `Last seen ${formatTimestamp(observedAt)}.`,
+            );
+        });
+
+        it('notes the Unix-domain socket in the tooltip for local',
+            async () => {
+                const observedAt = '2026-01-01T00:05:00Z';
+                mockApiFetch.mockResolvedValue(
+                    okResponse([makeQueryRow({
+                        client_addr: 'local',
+                        client_hostname: null,
+                        client_observed_at: observedAt,
+                    })]),
+                );
+                renderDetail();
+
+                const value = await screen.findByTestId('query-client');
+                await act(async () => {
+                    fireEvent.mouseOver(value);
+                });
+
+                const tooltip = await screen.findByRole('tooltip');
+                expect(tooltip).toHaveTextContent(
+                    /connected over a Unix-domain socket/,
+                );
+                expect(tooltip).toHaveTextContent(
+                    `Last seen ${formatTimestamp(observedAt)}.`,
+                );
+            });
+
+        it('says no snapshot has caught the query when unobserved', async () => {
+            renderDetail();
+
+            const value = await screen.findByTestId('query-client');
+            await act(async () => {
+                fireEvent.mouseOver(value);
+            });
+
+            expect(await screen.findByRole('tooltip')).toHaveTextContent(
+                /No pg_stat_activity snapshot has caught this query/,
+            );
         });
 
         it('scopes the period stats to the selected query id', async () => {

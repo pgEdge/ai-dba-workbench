@@ -55,12 +55,15 @@ CREATE TABLE metrics.pg_stat_statements (
 );
 
 CREATE TABLE metrics.pg_stat_activity (
-    connection_id  integer     NOT NULL,
-    collected_at   timestamptz NOT NULL,
-    datid          bigint,
-    datname        text,
-    usesysid       bigint,
-    usename        text
+    connection_id    integer     NOT NULL,
+    collected_at     timestamptz NOT NULL,
+    datid            bigint,
+    datname          text,
+    usesysid         bigint,
+    usename          text,
+    client_addr      inet,
+    client_hostname  text,
+    query_id         bigint
 );
 `
 
@@ -371,6 +374,122 @@ func TestTopQueries_NameLookupWindow(t *testing.T) {
 		got.DatabaseName != "beta-probe" {
 		t.Errorf("outside window: username = %q, database = %q, "+
 			"want \"\" / beta-probe", got.Username, got.DatabaseName)
+	}
+}
+
+// TestTopQueries_LastClientAttribution covers the client columns added for
+// issue #384: a queryid is attributed to the client most recently seen
+// running it in pg_stat_activity, samples outside the lookup window are
+// ignored, a queryid never observed yields JSON nulls, and several activity
+// samples for one queryid still produce a single result row so the total
+// count is unaffected by the join.
+func TestTopQueries_LastClientAttribution(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	seedTopQueriesFixture(t, pool)
+	ctx := context.Background()
+
+	var latest time.Time
+	if err := pool.QueryRow(ctx, `SELECT MAX(collected_at)
+        FROM metrics.pg_stat_statements WHERE connection_id = $1`,
+		topQueriesConnID).Scan(&latest); err != nil {
+		t.Fatalf("read latest snapshot: %v", err)
+	}
+	newest := latest.Add(-5 * time.Minute)
+	older := latest.Add(-30 * time.Minute)
+	outsideWindow := latest.Add(-90 * time.Minute)
+
+	// Query 1001 was seen twice inside the window, from two different
+	// clients, so the newer sample must win. Query 1002 was only seen
+	// before the window opened. Query 1005 was seen once, with no
+	// resolved hostname, as happens when log_hostname is off. Query 1003
+	// never appears with a query_id at all. The other connection's
+	// sample for 1003 must not leak in.
+	if _, err := pool.Exec(ctx, `INSERT INTO metrics.pg_stat_activity
+        (connection_id, collected_at, datid, datname, usesysid, usename,
+         client_addr, client_hostname, query_id)
+        VALUES ($1, $3, 100, 'alpha', 10, 'alice', '192.0.2.10', 'app-old.example.com', 1001),
+               ($1, $2, 100, 'alpha', 10, 'alice', '192.0.2.20', 'app-new.example.com', 1001),
+               ($1, $4, 100, 'alpha', 10, 'alice', '192.0.2.30', 'stale.example.com', 1002),
+               ($1, $2, 200, 'beta', 20, 'bob', '198.51.100.7', NULL, 1005),
+               ($5, $2, 100, 'alpha', 10, 'alice', '203.0.113.9', 'other.example.com', 1003)`,
+		topQueriesConnID, newest, older, outsideWindow,
+		topQueriesConnID+1); err != nil {
+		t.Fatalf("seed activity: %v", err)
+	}
+
+	rec := callTopQueries(t, h, "connection_id=4242")
+	rows, total := decodeTopQueries(t, rec)
+	if total != "6" || len(rows) != 6 {
+		t.Fatalf("total = %s, rows = %d, want 6 and 6: %#v",
+			total, len(rows), rows)
+	}
+	byQueryID := make(map[string]TopQueryRow, len(rows))
+	for _, row := range rows {
+		if _, dup := byQueryID[row.QueryID]; dup {
+			t.Errorf("queryid %s returned more than once", row.QueryID)
+		}
+		byQueryID[row.QueryID] = row
+	}
+
+	strPtr := func(v string) *string { return &v }
+	tests := []struct {
+		queryID        string
+		wantAddr       *string
+		wantHostname   *string
+		wantObservedAt *time.Time
+	}{
+		{"1001", strPtr("192.0.2.20"), strPtr("app-new.example.com"), &newest},
+		{"1002", nil, nil, nil},
+		{"1003", nil, nil, nil},
+		{"1005", strPtr("198.51.100.7"), nil, &newest},
+	}
+	for _, tc := range tests {
+		t.Run("queryid_"+tc.queryID, func(t *testing.T) {
+			row, ok := byQueryID[tc.queryID]
+			if !ok {
+				t.Fatalf("queryid %s missing from results", tc.queryID)
+			}
+			assertOptionalString(t, "client_addr", row.ClientAddr, tc.wantAddr)
+			assertOptionalString(t, "client_hostname", row.ClientHostname,
+				tc.wantHostname)
+			switch {
+			case tc.wantObservedAt == nil && row.ClientObservedAt != nil:
+				t.Errorf("client_observed_at = %v, want null", *row.ClientObservedAt)
+			case tc.wantObservedAt != nil && row.ClientObservedAt == nil:
+				t.Errorf("client_observed_at = null, want %v", *tc.wantObservedAt)
+			case tc.wantObservedAt != nil &&
+				!row.ClientObservedAt.Equal(*tc.wantObservedAt):
+				t.Errorf("client_observed_at = %v, want %v",
+					*row.ClientObservedAt, *tc.wantObservedAt)
+			}
+		})
+	}
+
+	// The wire format must carry explicit nulls, not omit the keys, so the
+	// client can distinguish "never observed" without a schema lookup.
+	body := rec.Body.String()
+	for _, key := range []string{
+		`"client_addr":null`, `"client_hostname":null`,
+		`"client_observed_at":null`,
+	} {
+		if !strings.Contains(body, key) {
+			t.Errorf("response body lacks %s", key)
+		}
+	}
+}
+
+// assertOptionalString compares two nullable strings, reporting a mismatch
+// in either nullness or value.
+func assertOptionalString(t *testing.T, field string, got, want *string) {
+	t.Helper()
+	switch {
+	case want == nil && got != nil:
+		t.Errorf("%s = %q, want null", field, *got)
+	case want != nil && got == nil:
+		t.Errorf("%s = null, want %q", field, *want)
+	case want != nil && got != nil && *got != *want:
+		t.Errorf("%s = %q, want %q", field, *got, *want)
 	}
 }
 
@@ -994,4 +1113,193 @@ func TestTopQueries_NullQueryRowIsRetained(t *testing.T) {
 	if total != "6" {
 		t.Errorf("X-Total-Count = %q, want \"6\"", total)
 	}
+}
+
+// seedLastClientKeyFixture seeds a snapshot in which one queryid was
+// observed running under two different (database, role) pairs, alongside a
+// backend that connected over a Unix-domain socket and a statement that was
+// never caught in flight. It returns the snapshot time and the two activity
+// sample times.
+func seedLastClientKeyFixture(
+	t *testing.T,
+	pool *pgxpool.Pool,
+) (latest, alphaSeen, localSeen time.Time) {
+	t.Helper()
+	ctx := context.Background()
+
+	latest = time.Now().UTC().Add(-1 * time.Minute).Truncate(time.Microsecond)
+	alphaSeen = latest.Add(-20 * time.Minute)
+	localSeen = latest.Add(-3 * time.Minute)
+	betaSeen := latest.Add(-2 * time.Minute)
+
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("seed exec failed: %v\nSQL: %s", err, sql)
+		}
+	}
+
+	// Every statement in the snapshot belongs to database alpha (dbid 100)
+	// and role alice (usesysid 10). Query 2001 is nonetheless observed in
+	// flight under both alpha/alice and beta/bob, the latter more
+	// recently: keying last_client on the queryid alone would report the
+	// beta client against an alpha statement.
+	exec(`INSERT INTO metrics.pg_stat_statements
+        (connection_id, collected_at, queryid, userid, dbid, database_name,
+         query, calls, total_exec_time, mean_exec_time,
+         min_exec_time, max_exec_time, rows,
+         shared_blks_hit, shared_blks_read)
+        VALUES
+        ($1, $2, 2001, 10, 100, 'alpha', 'SELECT shared', 10, 300, 30,
+         1, 50, 10, 100, 1),
+        ($1, $2, 2002, 10, 100, 'alpha', 'SELECT socket', 20, 200, 10,
+         1, 40, 20, 200, 2),
+        ($1, $2, 2003, 10, 100, 'alpha', 'SELECT unseen', 30, 100, 3,
+         1, 30, 30, 300, 3)`,
+		topQueriesConnID, latest)
+
+	// OID-to-name samples, then the activity samples themselves. The
+	// duplicate alpha sample for 2001 also proves DISTINCT ON still
+	// collapses the CTE to one row per (query_id, datid, usesysid), so the
+	// join cannot fan deduped out.
+	exec(`INSERT INTO metrics.pg_stat_activity
+        (connection_id, collected_at, datid, datname, usesysid, usename,
+         client_addr, client_hostname, query_id)
+        VALUES
+        ($1, $2, 100, 'alpha', 10, 'alice', NULL, NULL, NULL),
+        ($1, $2, 200, 'beta', 20, 'bob', NULL, NULL, NULL),
+        ($1, $3, 100, 'alpha', 10, 'alice',
+         '192.0.2.10', 'alpha-client.example.com', 2001),
+        ($1, $6, 100, 'alpha', 10, 'alice',
+         '192.0.2.11', 'alpha-older.example.com', 2001),
+        ($1, $5, 200, 'beta', 20, 'bob',
+         '198.51.100.7', 'beta-client.example.com', 2001),
+        ($1, $4, 100, 'alpha', 10, 'alice', NULL, NULL, 2002)`,
+		topQueriesConnID, latest, alphaSeen, localSeen, betaSeen,
+		alphaSeen.Add(-1*time.Minute))
+
+	return latest, alphaSeen, localSeen
+}
+
+// TestTopQueries_LastClientKeyedOnDatabaseAndRole covers the three-way key
+// on last_client. pg_stat_statements is keyed on (userid, dbid, queryid,
+// toplevel), so one queryid can be in flight under several databases and
+// roles at once; the client reported for a statement must be the one seen
+// under that statement's own database and role, not simply the most recent
+// backend to run the queryid anywhere. It also pins the two null cases
+// apart: a Unix-domain-socket backend reports "local" with a non-null
+// observation time, whereas a statement never caught in flight reports
+// nulls throughout.
+func TestTopQueries_LastClientKeyedOnDatabaseAndRole(t *testing.T) {
+	h, pool, cleanup := newTopQueriesTestHandler(t)
+	defer cleanup()
+	_, alphaSeen, localSeen := seedLastClientKeyFixture(t, pool)
+
+	strPtr := func(v string) *string { return &v }
+	tests := []struct {
+		queryID        string
+		wantAddr       *string
+		wantHostname   *string
+		wantObservedAt *time.Time
+	}{
+		{
+			queryID:        "2001",
+			wantAddr:       strPtr("192.0.2.10"),
+			wantHostname:   strPtr("alpha-client.example.com"),
+			wantObservedAt: &alphaSeen,
+		},
+		{
+			queryID:        "2002",
+			wantAddr:       strPtr("local"),
+			wantObservedAt: &localSeen,
+		},
+		{queryID: "2003"},
+	}
+
+	assertRows := func(t *testing.T, rows []TopQueryRow, want []string) {
+		t.Helper()
+		byQueryID := make(map[string]TopQueryRow, len(rows))
+		for _, row := range rows {
+			if _, dup := byQueryID[row.QueryID]; dup {
+				t.Fatalf("queryid %s returned more than once", row.QueryID)
+			}
+			byQueryID[row.QueryID] = row
+		}
+		for _, tc := range tests {
+			wanted := false
+			for _, id := range want {
+				if id == tc.queryID {
+					wanted = true
+				}
+			}
+			if !wanted {
+				continue
+			}
+			row, ok := byQueryID[tc.queryID]
+			if !ok {
+				t.Fatalf("queryid %s missing from results", tc.queryID)
+			}
+			if row.DatabaseName != "alpha" {
+				t.Errorf("queryid %s database_name = %q, want alpha",
+					tc.queryID, row.DatabaseName)
+			}
+			assertOptionalString(t, "client_addr", row.ClientAddr,
+				tc.wantAddr)
+			assertOptionalString(t, "client_hostname", row.ClientHostname,
+				tc.wantHostname)
+			switch {
+			case tc.wantObservedAt == nil && row.ClientObservedAt != nil:
+				t.Errorf("queryid %s client_observed_at = %v, want null",
+					tc.queryID, *row.ClientObservedAt)
+			case tc.wantObservedAt != nil && row.ClientObservedAt == nil:
+				t.Errorf("queryid %s client_observed_at = null, want %v",
+					tc.queryID, *tc.wantObservedAt)
+			case tc.wantObservedAt != nil &&
+				!row.ClientObservedAt.Equal(*tc.wantObservedAt):
+				t.Errorf("queryid %s client_observed_at = %v, want %v",
+					tc.queryID, *row.ClientObservedAt, *tc.wantObservedAt)
+			}
+		}
+	}
+
+	t.Run("unfiltered", func(t *testing.T) {
+		rows, total := decodeTopQueries(t,
+			callTopQueries(t, h, "connection_id=4242"))
+		if total != "3" || len(rows) != 3 {
+			t.Fatalf("total = %s, rows = %d, want 3 and 3: %#v",
+				total, len(rows), rows)
+		}
+		assertRows(t, rows, []string{"2001", "2002", "2003"})
+	})
+
+	// The drill-down path, which pushes the queryid predicate into
+	// last_client as well as into deduped. The attribution must be
+	// identical to the unfiltered read.
+	t.Run("queryid_filter", func(t *testing.T) {
+		rows, total := decodeTopQueries(t,
+			callTopQueries(t, h, "connection_id=4242&queryid=2001"))
+		if total != "1" || len(rows) != 1 {
+			t.Fatalf("total = %s, rows = %d, want 1 and 1: %#v",
+				total, len(rows), rows)
+		}
+		assertRows(t, rows, []string{"2001"})
+	})
+
+	// A statement never caught in flight is signaled by a null
+	// client_observed_at, since client_addr is now non-null for every
+	// observed row.
+	t.Run("unobserved_queryid_filter", func(t *testing.T) {
+		rows, _ := decodeTopQueries(t,
+			callTopQueries(t, h, "connection_id=4242&queryid=2003"))
+		if len(rows) != 1 {
+			t.Fatalf("rows = %d, want 1: %#v", len(rows), rows)
+		}
+		if rows[0].ClientObservedAt != nil {
+			t.Errorf("client_observed_at = %v, want null",
+				*rows[0].ClientObservedAt)
+		}
+		if rows[0].ClientAddr != nil {
+			t.Errorf("client_addr = %q, want null", *rows[0].ClientAddr)
+		}
+	})
 }

@@ -369,6 +369,58 @@ error message that names the metric and the probe, and
 the dashboards display that message in the affected
 chart panel rather than an empty chart.
 
+## Top Query Client Attribution
+
+The top queries endpoint of the REST API,
+`GET /api/v1/metrics/top-queries`, names the client
+last seen running each statement alongside the
+`pg_stat_statements` counters. The collector records
+`pg_stat_activity.query_id` with every activity
+sample, and the server resolves the client by joining
+that identifier to the samples taken in the hour
+before the most recent `pg_stat_statements` snapshot.
+
+The following table describes the client fields on
+each row of the response:
+
+| Field | Description |
+|-------|-------------|
+| `client_addr` | The address of the client most recently observed running the query, reported as `local` when that client connected over a Unix-domain socket, or null when no sample ever caught the query in flight. |
+| `client_hostname` | The hostname of that client, or null when the monitored server resolved no hostname, which includes every server that runs with `log_hostname` off. |
+| `client_observed_at` | The RFC 3339 time of the activity sample that observed the client, or null when no sample ever caught the query in flight. |
+
+The `client_observed_at` field is the one to test for
+a query that was never observed. The field is null
+exactly when no activity sample caught the query in
+flight, and whenever the field carries a time,
+`client_addr` carries a value as well. A backend that
+connected over a Unix-domain socket has no address in
+`pg_stat_activity`, so the server reports the string
+`local` for such a client, matching the convention the
+connection groups endpoint already uses.
+
+The server keys the attribution on the database and
+the role as well as on the query identifier, because
+`pg_stat_statements` records one row per combination
+of the three. The client named for a query in one
+database is therefore never a client that only ever
+connected to another.
+
+The attribution is best effort. The collector samples
+`pg_stat_activity` at intervals rather than watching
+every statement, so the endpoint credits a client only
+to statements that were in flight when a sample was
+taken, and the fields describe the client observed
+most recently rather than the only client that ever
+ran the query.
+
+All three fields are null on PostgreSQL releases
+before 14, where `pg_stat_activity` has no `query_id`
+column, and on any server that runs with
+`compute_query_id` off. Operators who want this
+attribution should enable `compute_query_id` on each
+monitored server.
+
 ## Common Probes
 
 ### Server-Wide Probes

@@ -93,6 +93,16 @@ describe('ObjectDashboard types helpers', () => {
             expect(formatted).toContain('2026');
         });
 
+        it('formats a valid timestamp with date and time parts', () => {
+            // A UTC midday fixture, so the rendered local date stays on
+            // the same day, and the year on the same year, from
+            // Pacific/Midway (UTC-11) through to Pacific/Kiritimati
+            // (UTC+14).
+            const formatted = formatTimestamp('2026-06-15T12:05:00Z');
+            expect(formatted).toMatch(/2026/);
+            expect(formatted).toMatch(/\d{1,2}:\d{2}:\d{2}/);
+        });
+
         it('reports a missing timestamp as Never', () => {
             expect(formatTimestamp(undefined)).toBe('Never');
             expect(formatTimestamp('')).toBe('Never');

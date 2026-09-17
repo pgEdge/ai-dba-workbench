@@ -210,6 +210,26 @@ type TopQueryRow struct {
 	Rows           int64   `json:"rows"`
 	SharedBlksHit  int64   `json:"shared_blks_hit"`
 	SharedBlksRead int64   `json:"shared_blks_read"`
+	// ClientAddr, ClientHostname and ClientObservedAt describe the
+	// client most recently seen running this query, resolved by joining
+	// metrics.pg_stat_activity.query_id to the queryid. The association
+	// is best-effort: pg_stat_activity is a point-in-time view, so a
+	// client is only captured for statements that were in flight when
+	// the collector took a sample, and this is the most recently
+	// observed client rather than the only one that ever ran the query.
+	// ClientObservedAt is null exactly when no sample in the lookup
+	// window carried the queryid for this query's database and role,
+	// which is also the case on servers before PostgreSQL 14 or with
+	// compute_query_id off, and it is the only reliable signal that
+	// the query was never observed in flight. ClientAddr is null in
+	// that same case and never otherwise, because a backend that
+	// arrived over a Unix-domain socket is reported as "local" rather
+	// than as a null address. ClientHostname is additionally null
+	// whenever the client's hostname was not resolved, including
+	// whenever log_hostname is off on the monitored server.
+	ClientAddr       *string    `json:"client_addr"`
+	ClientHostname   *string    `json:"client_hostname"`
+	ClientObservedAt *time.Time `json:"client_observed_at"`
 }
 
 // QueryStatsResponse is the response for the period-scoped query statistics
@@ -1313,11 +1333,21 @@ func buildTopQueriesSQL(
 	// bound as a bigint rather than compared through a text cast so that
 	// the queryid index remains usable; the handler has already rejected
 	// anything that does not parse as a 64-bit integer.
+	// The same predicate is applied inside last_client as well, against
+	// that CTE's unaliased query_id column and bound to the same
+	// placeholder, so the drill-down (which always passes a queryid) sorts
+	// one queryid's activity rows rather than the whole window. Both
+	// clauses read the identifier from the same position in filterArgs; no
+	// extra parameter is bound.
 	queryIDClause := ""
+	lastClientQueryIDClause := ""
 	filterArgs = []any{connID}
 	if queryID != nil {
+		queryIDPos := len(filterArgs) + 1
 		queryIDClause = fmt.Sprintf(
-			"AND pss.queryid = $%d", len(filterArgs)+1)
+			"AND pss.queryid = $%d", queryIDPos)
+		lastClientQueryIDClause = fmt.Sprintf(
+			"AND query_id = $%d", queryIDPos)
 		filterArgs = append(filterArgs, *queryID)
 	}
 
@@ -1340,8 +1370,8 @@ func buildTopQueriesSQL(
 	}
 
 	// latest is the most recent pg_stat_statements snapshot for the
-	// connection; deduped reads exactly that snapshot, and the two name
-	// lookups below are anchored to it.
+	// connection; deduped reads exactly that snapshot, and the three
+	// activity lookups below are anchored to it.
 	//
 	// db_names and user_names resolve the OIDs recorded in
 	// pg_stat_statements to human-readable names using what
@@ -1355,13 +1385,44 @@ func buildTopQueriesSQL(
 	// resolves to its current name rather than to whichever of the two
 	// names the planner happened to reach first.
 	//
-	// The window bound matters: pg_stat_activity has no index on datid or
-	// usesysid, so DISTINCT ON has to sort every row it reads, and without
-	// the bound that is every activity row in retention for the connection,
-	// twice per page (once each for the count and the page). Restricting
-	// the read to the last hour lets the (connection_id, collected_at)
-	// index return a few thousand rows that sort in memory instead of an
-	// external merge over hundreds of thousands.
+	// last_client attributes each queryid to the client most recently
+	// observed running it, through pg_stat_activity.query_id (collected
+	// since schema version 12; NULL before PostgreSQL 14 or with
+	// compute_query_id off, so such servers simply resolve nothing). It is
+	// best-effort in the same way: only statements in flight at sample
+	// time are ever seen.
+	//
+	// The key is the three-way tuple (query_id, datid, usesysid), not the
+	// queryid alone, because pg_stat_statements is itself keyed on
+	// (userid, dbid, queryid, toplevel): one queryid can appear once per
+	// database and role that ran the statement. Keying on the queryid
+	// alone would pick whichever backend was seen most recently across
+	// every database and role, so a caller filtering on one database could
+	// be shown a client that only ever connected to another. DISTINCT ON
+	// runs over the same tuple the join matches on, so last_client holds
+	// at most one row per tuple and the LEFT JOIN still cannot fan deduped
+	// out.
+	//
+	// A NULL client_addr means the backend arrived over a Unix-domain
+	// socket rather than that the client is unknown, so it is reported as
+	// "local", matching connectionGroupsQueryByClient. client_addr is
+	// therefore non-null for every row last_client observed, and a query
+	// never caught in flight is distinguished solely by a null
+	// client_observed_at.
+	//
+	// The window bound matters: pg_stat_activity has no index on datid,
+	// usesysid or query_id, so DISTINCT ON has to sort every row it reads,
+	// and without the bound that is every activity row in retention for
+	// the connection, twice per page (once each for the count and the
+	// page). Restricting the read to the last hour lets the
+	// (connection_id, collected_at) index return a few thousand rows that
+	// sort in memory instead of an external merge over hundreds of
+	// thousands. The optional queryid predicate is pushed into last_client
+	// for the same reason, since the query drill-down always supplies one.
+	// An index on (connection_id, query_id, collected_at DESC) WHERE
+	// query_id IS NOT NULL may be worth profiling later; note that
+	// metrics.pg_stat_activity is a partitioned parent, and a partitioned
+	// parent cannot take CREATE INDEX CONCURRENTLY in a single statement.
 	cte := fmt.Sprintf(`
         WITH latest AS (
             SELECT MAX(collected_at) AS collected_at
@@ -1388,6 +1449,19 @@ func buildTopQueriesSQL(
               AND usename IS NOT NULL
             ORDER BY usesysid, collected_at DESC
         ),
+        last_client AS (
+            SELECT DISTINCT ON (query_id, datid, usesysid)
+                query_id, datid, usesysid,
+                COALESCE(host(client_addr), 'local') AS client_addr,
+                client_hostname, collected_at
+            FROM metrics.pg_stat_activity
+            WHERE connection_id = $1
+              AND collected_at >= (SELECT collected_at FROM latest)
+                  - INTERVAL '%s'
+              AND query_id IS NOT NULL
+              %s
+            ORDER BY query_id, datid, usesysid, collected_at DESC
+        ),
         deduped AS (
             SELECT DISTINCT ON (pss.queryid)
                 pss.queryid::text,
@@ -1396,17 +1470,23 @@ func buildTopQueriesSQL(
                 pss.query, pss.calls, pss.total_exec_time,
                 pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time,
                 pss.rows,
-                pss.shared_blks_hit, pss.shared_blks_read
+                pss.shared_blks_hit, pss.shared_blks_read,
+                lc.client_addr, lc.client_hostname,
+                lc.collected_at AS client_observed_at
             FROM metrics.pg_stat_statements pss
             LEFT JOIN db_names dn ON pss.dbid = dn.datid
             LEFT JOIN user_names un ON pss.userid = un.usesysid
+            LEFT JOIN last_client lc
+                ON pss.queryid = lc.query_id
+               AND pss.dbid = lc.datid
+               AND pss.userid = lc.usesysid
             WHERE pss.connection_id = $1
               AND pss.collected_at = (SELECT collected_at FROM latest)
               %s
               %s
             ORDER BY pss.queryid
-        )`, nameLookupWindowSQL, nameLookupWindowSQL,
-		queryIDClause, excludeCollectorClause)
+        )`, nameLookupWindowSQL, nameLookupWindowSQL, nameLookupWindowSQL,
+		lastClientQueryIDClause, queryIDClause, excludeCollectorClause)
 
 	// The total is obtained with a separate COUNT(*) over the same CTE
 	// rather than a COUNT(*) OVER () window on the page query. A window
@@ -1586,6 +1666,7 @@ func (h *PerfSummaryHandler) handleTopQueries(
 			&row.Calls, &row.TotalExecTime, &row.MeanExecTime,
 			&row.MinExecTime, &row.MaxExecTime, &row.Rows,
 			&row.SharedBlksHit, &row.SharedBlksRead,
+			&row.ClientAddr, &row.ClientHostname, &row.ClientObservedAt,
 		); err != nil {
 			log.Printf("[DEBUG] Error scanning top query row: %v", err)
 			continue
@@ -1618,9 +1699,9 @@ const headerTotalCount = "X-Total-Count"
 // nameLookupWindowSQL is the interval literal, spliced into
 // buildTopQueriesSQL as a constant rather than bound as a parameter, that
 // bounds how far before the latest pg_stat_statements snapshot the
-// db_names and user_names CTEs look for pg_stat_activity samples. It is a
-// Go constant with no caller-supplied content, so interpolating it into the
-// statement text is safe.
+// db_names, user_names and last_client CTEs look for pg_stat_activity
+// samples. It is a Go constant with no caller-supplied content, so
+// interpolating it into the statement text is safe.
 const nameLookupWindowSQL = "1 hour"
 
 // respondEmptyTopQueries returns the empty top-queries result used when the

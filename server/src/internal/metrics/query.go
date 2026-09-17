@@ -75,6 +75,10 @@ type MetricFilters struct {
 	SchemaName     string
 	TableName      string
 	IndexName      string
+	// MountPoint restricts results to a single filesystem mount, so that
+	// per-mount probes such as pg_sys_disk_info report one real volume
+	// rather than an average across every mounted filesystem.
+	MountPoint string
 	// QueryID restricts results to a single pg_stat_statements query
 	// identifier. Clients carry identifiers as decimal strings because
 	// they are 64-bit values JavaScript cannot represent exactly; the
@@ -811,6 +815,18 @@ func metricQueryClauses(
 		parts.filterClauses = append(parts.filterClauses,
 			fmt.Sprintf("indexrelname = $%d", argNum))
 		parts.args = append(parts.args, filters.IndexName)
+		argNum++
+	}
+
+	// MountPoint filters on mount_point, mirroring the dimension filters
+	// above. Like those, it applies no probe-column-existence check: if the
+	// probe table has no mount_point column the query simply fails at
+	// execution time, keeping the validation semantics identical across
+	// dimensions.
+	if filters.MountPoint != "" {
+		parts.filterClauses = append(parts.filterClauses,
+			fmt.Sprintf("mount_point = $%d", argNum))
+		parts.args = append(parts.args, filters.MountPoint)
 		argNum++
 	}
 
@@ -2042,6 +2058,12 @@ func buildLatestRowsQuery(
 	if filters.IndexName != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("indexrelname = $%d", argNum))
 		args = append(args, filters.IndexName)
+		argNum++
+	}
+
+	if filters.MountPoint != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("mount_point = $%d", argNum))
+		args = append(args, filters.MountPoint)
 		argNum++
 	}
 

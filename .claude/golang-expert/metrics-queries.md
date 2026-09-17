@@ -444,7 +444,23 @@ than differences, so an out-of-window row would simply be wrong.
 `metricQueryParts` holding the dimension filter clauses and the argument
 list separately; `where()` reassembles the standard clause and
 `lookbackWhere()` the widened one. Add a new dimension filter in
-`metricQueryClauses` only, and both clauses pick it up.
+`metricQueryClauses` and both of those clauses pick it up, so the
+bucketed, rate and delta builders all scope alike; the latest-row path is
+the exception, because `buildLatestRowsQuery` assembles its own WHERE
+clause from the same `MetricFilters` value and needs the clause adding
+there too, or the filter scopes the chart but not the KPI tile behind it.
+
+Two ordering rules govern `metricQueryClauses`. Every clause increments
+`argNum` except the last one, and the `QueryID` clause is deliberately
+last and deliberately omits the increment, with a comment saying so; a new
+filter therefore goes above it and carries its own `argNum++`, leaving
+that comment attached to whichever clause is genuinely last. And the
+dimension filters apply no probe-column-existence check: `SchemaName`,
+`TableName`, `IndexName` and `MountPoint` (issue #428, `mount_point`, so
+the Disk Space chart can scope to one real filesystem rather than
+averaging every mounted one) all fail at execution time against a probe
+lacking the column, which keeps the validation semantics identical across
+dimensions.
 
 ### Reset guard, gap rejection, bucket clamp and fill policy
 
@@ -762,6 +778,24 @@ that follow from that, all learned the hard way in #406:
   shared `cpuBusyPercentExpr` rather than coalescing a platform-specific
   column to zero, which reads as an idle host.
 
+- A MAX across the mounts of `metrics.pg_sys_disk_info` has to exclude
+  pseudo filesystems. `pg_sys_disk_info.used_percent` takes the fullest
+  mount, which is the right threshold semantics, but a squashfs image is
+  by construction 100% used, so on any host with a snap installed the
+  metric was pinned at 100% and the disk alert fired permanently (#428).
+  The `pseudoFilesystemExclusion` constant in `metric_registry.go` holds
+  the predicate and both the `latestSQL` and the `historicalSQL` embed
+  it, so the two cannot drift. It is
+  `COALESCE(file_system_type, '') NOT IN (...)` and the COALESCE is
+  load-bearing: the column is nullable and a bare `NOT IN` against NULL
+  yields NULL rather than true, which would drop every mount whose type
+  the probe did not record.
+  `metric_registry_disk_mounts_integration_test.go` pins the exclusion,
+  the NULL-type retention and the fragment's presence in both queries;
+  the shared fixture in `queries_integration_test.go` therefore carries
+  `mount_point` (defaulted, since the older cases insert one unnamed
+  mount) and a nullable `file_system_type`.
+
 Changing a seeded rule's threshold or unit needs a collector migration as
 well as the registry edit, because migration 1 only seeds a fresh install.
 Migration 8 is the worked example: it rewrites descriptions and units
@@ -1055,6 +1089,9 @@ run.
   the loopback exclusion in `metricQueryClauses`, and the per-series fill
   policy with nullable points (`MetricDataPoint.Value *float64`,
   `MaxCarryIntervals`) replacing uniform LOCF.
+- #428: Pseudo filesystems excluded from
+  `pg_sys_disk_info.used_percent`, so a squashfs mount no longer pins the
+  disk metric at 100%.
 - #409: `deadlocks_delta` and `temp_files_delta` moved to hourly sums,
   `required_extension` enforced in evaluation and resolution,
   `table_bloat_ratio` retired from the registry; collector migration 11.

@@ -103,6 +103,31 @@ func parseQueryIDFilter(w http.ResponseWriter, r *http.Request) (*int64, bool) {
 	return &queryID, true
 }
 
+// parseMetricFilters reads the optional dimension filters shared by the
+// time-series and latest-row variants of GET /api/v1/metrics/query. Keeping
+// the two paths on one parser guarantees a newly added dimension, such as
+// mount_point, reaches both rather than only the one it was written for. It
+// returns false after sending a 400 response for a malformed queryid; the
+// string dimensions cannot fail to parse and are forwarded verbatim for the
+// query layer to bind as arguments.
+func parseMetricFilters(
+	w http.ResponseWriter,
+	r *http.Request,
+) (metrics.MetricFilters, bool) {
+	queryID, ok := parseQueryIDFilter(w, r)
+	if !ok {
+		return metrics.MetricFilters{}, false // error already sent
+	}
+	return metrics.MetricFilters{
+		DatabaseName: ParseQueryString(r, "database_name"),
+		SchemaName:   ParseQueryString(r, "schema_name"),
+		TableName:    ParseQueryString(r, "table_name"),
+		IndexName:    ParseQueryString(r, "index_name"),
+		MountPoint:   ParseQueryString(r, "mount_point"),
+		QueryID:      queryID,
+	}, true
+}
+
 // handleMetricsQuery handles GET /api/v1/metrics/query.
 func (h *MetricsHandler) handleMetricsQuery(
 	w http.ResponseWriter,
@@ -169,16 +194,9 @@ func (h *MetricsHandler) handleMetricsQuery(
 	}
 
 	// Parse optional filters
-	queryID, ok := parseQueryIDFilter(w, r)
+	filters, ok := parseMetricFilters(w, r)
 	if !ok {
 		return // error already sent
-	}
-	filters := metrics.MetricFilters{
-		DatabaseName: ParseQueryString(r, "database_name"),
-		SchemaName:   ParseQueryString(r, "schema_name"),
-		TableName:    ParseQueryString(r, "table_name"),
-		IndexName:    ParseQueryString(r, "index_name"),
-		QueryID:      queryID,
 	}
 
 	// Parse buckets (default 150)
@@ -281,16 +299,9 @@ func (h *MetricsHandler) handleLatestRows(
 		return
 	}
 
-	queryID, ok := parseQueryIDFilter(w, r)
+	filters, ok := parseMetricFilters(w, r)
 	if !ok {
 		return // error already sent
-	}
-	filters := metrics.MetricFilters{
-		DatabaseName: ParseQueryString(r, "database_name"),
-		SchemaName:   ParseQueryString(r, "schema_name"),
-		TableName:    ParseQueryString(r, "table_name"),
-		IndexName:    ParseQueryString(r, "index_name"),
-		QueryID:      queryID,
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

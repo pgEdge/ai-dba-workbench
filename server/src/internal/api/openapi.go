@@ -3496,6 +3496,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 					queryParamString("schema_name", "Filter by schema name"),
 					queryParamString("table_name", "Filter by table name"),
 					queryParamString("index_name", "Filter by index name"),
+					queryParamString("mount_point", "Filter by filesystem mount point"),
 					queryParamString("queryid", "Filter by pg_stat_statements query ID"),
 					queryParamInt("buckets", "Number of time buckets, "+
 						"1 to 500 (default 150). The count is clamped so "+

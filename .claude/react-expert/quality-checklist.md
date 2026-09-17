@@ -180,6 +180,48 @@ The rules for new or modified charts are as follows:
   an unknown derived metric with HTTP 400 'metric not found in
   probe', which would otherwise show as a bare 'No data' message.
 
+- Never average a probe that records one row per entity without
+  filtering to a single entity first. `pg_sys_disk_info` stores a row
+  per mounted filesystem, so an unfiltered `aggregation: 'avg'` blends
+  the data volume, the WAL volume and every pseudo filesystem into a
+  figure that matches no real volume (issue #428).
+  `MetricQueryParams.mountPoint` emits the `mount_point` filter, and
+  `client/src/components/Dashboard/ServerDashboard/diskMounts.ts`
+  discovers the real mounts: `PSEUDO_FILESYSTEM_TYPES` lists the
+  kernel-backed and image-backed types to exclude (kept in step with
+  the alerter's SQL fragment in
+  `alerter/src/internal/database/metric_registry.go`),
+  `selectRealMounts` orders the rest fullest first so that the default
+  selection matches what the alerter's disk threshold reports, and
+  `useDiskMounts` reads them from the latest-row mode of
+  `/api/v1/metrics/query`, which applies `DISTINCT ON` over the
+  probe's entity keys and so returns one current row per mount. One
+  piece of selection state drives both the tile and the chart, both
+  name the mount in their label, and the selector is hidden on a
+  single-disk host. `pg_sys_network_info` and
+  `pg_sys_io_analysis_info` have the same shape and are still
+  unfiltered; that is issue #400.
+
+- Skip the query outright rather than sending an empty dimension.
+  `buildMetricsUrl` omits a falsy filter, so params carrying
+  `mountPoint: ''` ask for the averaged figure the filter exists to
+  remove, both on first paint and for good on a host with no real
+  filesystem. `useMetrics` takes `MetricQueryParams | null` and does
+  not fetch on null, so pass null until the dimension is known.
+  `useDiskMounts` returns `{ mounts, settled }` for the same reason:
+  an in-flight lookup and a host with no real filesystem both carry
+  an empty list but want different things on screen, so the panel
+  shows its loading state until `settled` and only then the empty
+  state, whose message names the real problem ('No real filesystem
+  reported for this server.') rather than blaming `system_stats`,
+  which is plainly working.
+
+- Take a usage percentage from the reported total rather than from
+  used plus free wherever the probe records one. A filesystem with
+  reserved blocks holds back space counted in neither, so the two
+  figures disagree; the Disk Usage tile therefore asks for
+  `total_space` alongside `used_space`.
+
 The reference implementation is
 `client/src/components/Dashboard/ServerDashboard/PostgresOverviewSection.tsx`,
 which draws backends with a `max_connections` reference series,

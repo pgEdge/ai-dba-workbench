@@ -82,6 +82,14 @@ func rejectFailedValidation(validationErr error) error {
 //     whose identity does not resolve to a username is rejected as
 //     ErrInvalidToken rather than returned as an anonymous context)
 //
+// TokenIDContextKey is set here, on every path that authenticates an
+// API token, so that a scoped token is confined to its scope wherever
+// this function is mounted and not only behind AuthMiddleware. The
+// audit log reads the same key for attribution rather than a second,
+// attribution-only key: two keys for one fact invite a request that
+// carries one and not the other, and a token whose id is known for the
+// log but withheld from the scope check would be exactly that request.
+//
 // Validation order is API token first, then session token, matching the
 // historical createAuthWrapper behavior exactly. A missing credential
 // yields ErrMissingCredentials; a credential that validates as neither

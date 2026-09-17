@@ -301,3 +301,117 @@ above. When you add a gate, add at minimum:
 
 The denial test plus the gate body (5 statements) covers the new
 lines; the admin-allowed test covers the not-taken branch.
+
+## Denial Auditing in the RBAC Management Handlers
+
+The `/api/v1/rbac/*` handlers do not inline the gate. They call the
+shared helpers `requirePermission` and `requireSuperuser` in
+`server/src/internal/api/rbac_handlers.go`. Since GitHub issue `#65`
+these helpers also write a `denied` row to the audit log before
+responding 403.
+The action name comes from `deniedAction(r)`, which maps the request
+method and path to the same dotted action the change would have
+recorded had it been allowed (`group.delete`, `token.scope.set`,
+`permission.admin.grant` and so on), falling back to
+`rbac.<lowercase method>` for an unrecognised route shape. A recording
+failure is logged with `[ERROR]` and never changes the response.
+
+Denials are coalesced before they reach the store. `recordDenial`
+consults `admitDenial`, which keeps an in-memory map on `RBACHandler`
+keyed by `denialKey` (actor type, actor id, actor name, client IP,
+action and reason) under `denialMu`, so that two tokens of one user,
+or one token used from two addresses, never suppress each other's
+denials. The first denial for a key is written at once, identical
+denials within `denialCoalesceWindow` (60s) are counted instead of
+written, and the first denial after the window closes is written
+through `auth.RecordDeniedWithDetails` carrying
+`details.repeat_count`. The map evicts expired entries on every call
+and is capped at `maxDenialKeys` (10 000); an evicted entry that still
+held suppressed repeats is returned from `evictDenials` as a
+`denialSummary` and written by `recordDenialSummaries` once `denialMu`
+is released, as a row carrying `repeat_count` and `window_closed`, so
+a burst that stops before its window closes is still counted. Any new
+denial path must go through `recordDenial` rather than calling
+`RecordDenied` directly, or it loses the bound on how many rows one
+client can append.
+
+Mutations in these handlers go through `h.actorStore(r)` rather than
+`h.authStore`, so the audit row names the acting user or token:
+`actorStore` wraps `auth.ActorFromContext(r.Context())`, which reads
+the username, user or token id and client IP that
+`auth.AuthenticateRequest` and `createAuthWrapper` place in the
+request context. The token id is `auth.TokenIDContextKey`, the same
+key `RBACChecker` reads to enforce token scope; there is deliberately
+no attribution-only key, so a token is named in the log exactly when
+its scope is enforced, and `requireUnscopedTokenForAudit` refuses an
+API-token context that carries no id rather than passing it. The
+composition is pinned by
+`server/src/internal/api/rbac_token_scope_regression_test.go`.
+Read-only calls stay on `h.authStore`. When adding a
+new mutating RBAC endpoint, use `h.actorStore(r)` and extend the
+`deniedAction` mapping in the same change; the wiring is locked in by
+`server/src/internal/api/rbac_audit_wiring_test.go`.
+
+## Audit Writes Are Fail-Closed, With One Exception
+
+Every audited mutation in `server/src/internal/auth` writes its event
+in the same transaction as the change, so a failure to record leaves
+the change unapplied: `insertUserAudited`, `setUserSuperuser` and the
+group, token and privilege mutations all call `recordAudit(tx, ev)`
+before their `tx.Commit()`, and roll back through `failAudit` when
+anything on the way fails. Keep new mutations on that shape.
+
+The sole exception is `disableForLockout` in `actor_store_users.go`.
+That change is the server locking an account against repeated failed
+sign-ins rather than a change an operator asked for, so refusing it on
+an audit failure would hand the attacker a working account. It calls
+`commitLockout`, which commits the `UPDATE users SET enabled = FALSE`
+on its own, and only then writes the `user.disable` event through
+`recordAuditInOwnTx`, logging a failure rather than returning it.
+`TestLockoutSurvivesAuditFailure` in `audit_users_test.go` and the
+`NoAuditTable` case of `TestAuditTokensLockoutHelperErrorPaths` pin
+both halves. Do not "fix" this back into one transaction.
+
+Two schema-level invariants back the chain, both in `auditSchemaDDL`
+in `audit.go`. `idx_audit_prev_hash` is a unique index, so no two
+events can name the same predecessor and only one event can be the
+genesis row with an empty `prev_hash`; a test fixture that inserts
+`audit_events` rows by hand must chain them rather than reuse a
+placeholder. And `auditHashV1` length-prefixes each field rather than
+joining with a separator, so a value containing the separator cannot
+render identically to a different pair of columns.
+
+The audit DDL is not gated on the schema version. `initSchema` in
+`store.go` ends by calling `ensureAuditSchema`, which re-runs the
+`IF NOT EXISTS` table, trigger and unique-index statements on every
+open; the version gate alone left a database stamped with the current
+version but created before the index existed without it for good.
+`VerifyAuditChain` asserts through `verifyAuditSchema` that the index
+(and its uniqueness, via `pragma_index_list`) and the trigger are
+present before it reads a row. `TestReopenRestoresAuditSchemaObjects`
+and `TestReopenRefusesForkedChain` in `audit_test.go` go through
+`NewAuthStore` rather than calling a migration directly; keep any new
+schema test on that path, because a test that calls the migration
+skips the gate it is meant to check.
+
+Each row stores the rendering its hash was computed under in
+`hash_version` (schema v6, `migrateV5ToV6`; the audit table itself
+arrived in v5, after the federation columns of v4), and `auditHash`
+dispatches on `ev.HashVersion`, returning `errUnknownAuditHashVersion`
+for a version it has no case for. To change the rendering, bump
+`auditHashVersion`, add a case, and keep the old one: rows are
+verified under the version they carry, so older rows keep verifying
+and a row naming an unknown version is reported by row and version
+rather than as a broken chain.
+
+Tail truncation is caught by `verifyAuditTail`, which compares
+`MAX(id)` against the `sqlite_sequence` row. Deleting that row whilst
+events remain is itself reported, because SQLite writes it with the
+first insert and never removes it, and so is a database with no
+`sqlite_sequence` table at all, since every table this store creates
+is `AUTOINCREMENT`. `MAX(id)` and the sequence are read by a single
+statement, which SQLite evaluates against one snapshot, so a server
+insert whilst the CLI (which opens its own store on the same file) is
+verifying cannot leave the sequence a step ahead of the newest id; the
+pure comparison is `checkAuditTail`. Any other query error is returned
+rather than swallowed.

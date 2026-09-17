@@ -467,6 +467,40 @@ func TestIPExtractor_ExtractIP(t *testing.T) {
 		}
 	})
 
+	// A proxy that sends something other than an IP address must not
+	// have it stored as one; the direct connection IP is used instead.
+	t.Run("trusted proxy rejects a malformed X-Real-IP", func(t *testing.T) {
+		for _, value := range []string{
+			"not-an-ip",
+			"proxy.example.com",
+			"203.0.113.50, 198.51.100.1",
+			"  ",
+			"203.0.113.999",
+		} {
+			extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = "10.0.0.1:12345"
+			req.Header.Set("X-Real-IP", value)
+
+			if ip := extractor.ExtractIP(req); ip != "10.0.0.1" {
+				t.Errorf("X-Real-IP %q: expected the direct IP 10.0.0.1, got %q",
+					value, ip)
+			}
+		}
+	})
+
+	// A padded but otherwise valid value is still accepted, trimmed.
+	t.Run("trusted proxy trims a valid X-Real-IP", func(t *testing.T) {
+		extractor := NewIPExtractor([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Real-IP", "  2001:db8::1  ")
+
+		if ip := extractor.ExtractIP(req); ip != "2001:db8::1" {
+			t.Errorf("Expected the trimmed IPv6 address, got %q", ip)
+		}
+	})
+
 	// Test case: trusted proxy with no forwarding headers
 	t.Run("trusted proxy no headers", func(t *testing.T) {
 		extractor := NewIPExtractor([]string{"10.0.0.0/8"})

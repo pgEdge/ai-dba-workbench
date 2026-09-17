@@ -1899,3 +1899,118 @@ func TestOIDCEnabledMergesExplicitFalse(t *testing.T) {
 		t.Error("BoolPtr(false) must point at false")
 	}
 }
+
+func TestAuditRetentionDaysDefault(t *testing.T) {
+	cfg := defaultConfig()
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention of 90 days, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysYAMLOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        audit_retention_days: 30
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 30 {
+		t.Errorf("expected audit retention of 30 days from YAML, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysYAMLZeroKeepsForever(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `
+http:
+    auth:
+        audit_retention_days: 0
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath, CLIFlags{ConfigFileSet: true, ConfigFile: configPath})
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 0 {
+		t.Errorf("expected explicit audit_retention_days: 0 to be kept as 0, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysEnvVarOverride(t *testing.T) {
+	origVal, origSet := os.LookupEnv("PGEDGE_AUDIT_RETENTION_DAYS")
+	defer func() {
+		if origSet {
+			os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", origVal)
+		} else {
+			os.Unsetenv("PGEDGE_AUDIT_RETENTION_DAYS")
+		}
+	}()
+
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "45")
+	cfg, err := LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 45 {
+		t.Errorf("expected audit retention of 45 days from env var, got %d", got)
+	}
+
+	// An explicit 0 via env var must also keep events forever.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "0")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 0 {
+		t.Errorf("expected audit retention of 0 from env var, got %d", got)
+	}
+
+	// Invalid values are ignored, leaving the default in place.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "not-a-number")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention when env var is invalid, got %d", got)
+	}
+
+	// A negative retention period is as invalid as a non-numeric one.
+	os.Setenv("PGEDGE_AUDIT_RETENTION_DAYS", "-1")
+	cfg, err = LoadConfig("", CLIFlags{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.HTTP.Auth.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected default audit retention when env var is negative, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysNegativeDefaultsTo90(t *testing.T) {
+	a := AuthConfig{AuditRetentionDaysPtr: intPtr(-7)}
+	if got := a.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected 90 when AuditRetentionDaysPtr is negative, got %d", got)
+	}
+}
+
+func TestAuditRetentionDaysNilPointerDefaultsTo90(t *testing.T) {
+	var a AuthConfig
+	if got := a.AuditRetentionDays(); got != 90 {
+		t.Errorf("expected 90 when AuditRetentionDaysPtr is nil, got %d", got)
+	}
+}

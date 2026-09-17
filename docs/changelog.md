@@ -262,6 +262,35 @@ project adheres to
   it. The admin panel gains a Telegram Channels tab, and collector
   schema migration 14 adds the `telegram_bot_token_encrypted` and
   `telegram_chat_id` columns to `notification_channels`. (#475)
+- Add an audit log for RBAC changes. Every create, update, delete,
+  enable, disable, grant, revoke and scope change on users, tokens,
+  groups and permissions is recorded in the auth store with the
+  acting user, token or CLI user, the client address, before and
+  after state and a tamper-evident hash chain, and authorisation
+  denials on RBAC endpoints are recorded too. Superusers can read
+  the log from the new Audit Log tab in the admin panel, from
+  `GET /api/v1/rbac/audit`, or with the `-list-audit` server flag;
+  `-verify-audit-log` checks the chain and also reports events
+  deleted from the newest end of the log. Repeated denials are
+  coalesced into one event per minute carrying a
+  `details.repeat_count`, so a client retrying a refused request
+  cannot flood the log. Retention is controlled by the new
+  `http.auth.audit_retention_days` setting, which defaults to 90
+  days, and each purge records an `audit.purge` event naming the
+  cutoff it applied and the number of events it removed. Each
+  event's hash length-prefixes every field it covers, so a value
+  containing a separator character cannot be made to stand for a
+  different pair of columns, and records the version of that encoding
+  in a `hash_version` field so that a later format change leaves
+  earlier events verifiable. `prev_hash` carries a unique index, so no
+  two events can claim the same predecessor and the chain cannot fork;
+  the server re-creates that index and the append-only trigger every
+  time it opens the store, and `-verify-audit-log` refuses to pass a
+  log missing either. An account locked out after repeated failed logins
+  stays locked even when the audit write fails, because that event
+  is recorded after the lockout commits rather than alongside it;
+  every other audited change is still rolled back when its event
+  cannot be written. (#65)
 
 ### Changed
 

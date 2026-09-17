@@ -128,21 +128,25 @@ func TestUpdateUserAllowsPasswordOnLocalAccount(t *testing.T) {
 	}
 }
 
-// TestUpdateUserPasswordForMissingUserIsNotAnError preserves the existing
-// behavior of both update paths, where a username that matches no row
-// simply updates nothing: the guard must not turn that into a failure.
-func TestUpdateUserPasswordForMissingUserIsNotAnError(t *testing.T) {
+// TestUpdateUserPasswordForMissingUserIsReported pins how the two update
+// paths treat a username that matches no row. Both are audited, so they
+// snapshot the account before touching it and report an absent account
+// as not found rather than updating nothing; the guard's own tolerance
+// of a missing row, which those paths therefore never reach, is covered
+// by TestPasswordWriteGuardIsAConditionOnTheUpdate calling it directly.
+func TestUpdateUserPasswordForMissingUserIsReported(t *testing.T) {
 	store, cleanup := createTestAuthStoreForStore(t)
 	defer cleanup()
 
-	if err := store.UpdateUser("nobody", "An0ther-Str0ng-Pass!", "", "", ""); err != nil {
-		t.Errorf("UpdateUser for a missing user: %v", err)
+	err := store.UpdateUser("nobody", "An0ther-Str0ng-Pass!", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("UpdateUser for a missing user: err = %v, want not found", err)
 	}
 
 	password := "An0ther-Str0ng-Pass!"
-	err := store.UpdateUserAtomic("nobody", UserUpdate{Password: &password})
-	if err != nil {
-		t.Errorf("UpdateUserAtomic for a missing user: %v", err)
+	err = store.UpdateUserAtomic("nobody", UserUpdate{Password: &password})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("UpdateUserAtomic for a missing user: err = %v, want not found", err)
 	}
 }
 
@@ -161,12 +165,20 @@ func TestPasswordWriteGuardReportsQueryFailure(t *testing.T) {
 		t.Fatalf("dropping the users table: %v", err)
 	}
 
-	err := store.UpdateUser("doomed", "An0ther-Str0ng-Pass!", "", "", "")
+	// The audited update paths snapshot the account first and so fail
+	// before reaching the guard; the guard's own failure is exercised
+	// directly.
+	err := store.writePasswordHashLocked(store.db, "doomed", []byte("hash"))
 	if err == nil {
 		t.Fatal("expected the password write to fail when the database does")
 	}
 	if !strings.Contains(err.Error(), "failed to update password") {
 		t.Errorf("expected the write failure to be reported, got: %v", err)
+	}
+
+	err = store.UpdateUser("doomed", "An0ther-Str0ng-Pass!", "", "", "")
+	if err == nil {
+		t.Fatal("expected the audited update to fail when the database does")
 	}
 }
 

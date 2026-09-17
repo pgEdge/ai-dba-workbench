@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"os/signal"
@@ -498,6 +499,7 @@ func (s *Server) startTokenCleanup() {
 	if removed, _ := s.authStore.CleanupExpiredTokens(); removed > 0 {
 		fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
 	}
+	s.purgeAuditEvents()
 
 	// Start periodic cleanup goroutine
 	go func() {
@@ -512,9 +514,32 @@ func (s *Server) startTokenCleanup() {
 					fmt.Fprintf(os.Stderr, "Removed %d expired token(s)\n", removed)
 					s.cleanupExpiredConnections(hashes)
 				}
+				s.purgeAuditEvents()
 			}
 		}
 	}()
+}
+
+// purgeAuditEvents deletes RBAC audit events older than the
+// configured retention period (http.auth.audit_retention_days). It
+// runs once at startup and again on every token cleanup tick. A
+// retention of zero disables the purge, keeping audit events forever.
+func (s *Server) purgeAuditEvents() {
+	if s.authStore == nil {
+		return
+	}
+
+	days := s.cfg.HTTP.Auth.AuditRetentionDays()
+	if days <= 0 {
+		return
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	if removed, err := s.authStore.PurgeAuditEvents(cutoff); err != nil {
+		log.Printf("[ERROR] Failed to purge audit events: %v", err)
+	} else if removed > 0 {
+		fmt.Fprintf(os.Stderr, "Removed %d audit event(s) older than %d days\n", removed, days)
+	}
 }
 
 // hasValidLLMConfig returns true when the configured LLM provider has the

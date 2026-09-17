@@ -45,7 +45,7 @@ func scopeTokenConnectionsCommand(dataDir string, tokenID int64, connectionIDs s
 	}
 
 	// Set token connection scope
-	if err := store.SetTokenConnectionScope(tokenID, conns); err != nil {
+	if err := cliStore(store).SetTokenConnectionScope(tokenID, conns); err != nil {
 		return fmt.Errorf("failed to set token connection scope: %w", err)
 	}
 
@@ -83,7 +83,7 @@ func scopeTokenToolsCommand(dataDir string, tokenID int64, tools string) error {
 	}
 
 	// Set token MCP scope by names
-	if err := store.SetTokenMCPScopeByNames(tokenID, toolNames); err != nil {
+	if err := cliStore(store).SetTokenMCPScopeByNames(tokenID, toolNames); err != nil {
 		return fmt.Errorf("failed to set token MCP scope: %w", err)
 	}
 
@@ -110,7 +110,7 @@ func clearTokenScopeCommand(dataDir string, tokenID int64) error {
 	defer store.Close()
 
 	// Clear token scope
-	if err := store.ClearTokenScope(tokenID); err != nil {
+	if err := cliStore(store).ClearTokenScope(tokenID); err != nil {
 		return fmt.Errorf("failed to clear token scope: %w", err)
 	}
 

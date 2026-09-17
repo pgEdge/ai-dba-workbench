@@ -121,6 +121,64 @@ moved.
   must check the length itself; `internal/oidc/state.go` does, in
   `SealState` and `OpenState`, against its own `keySize` constant.
 
+## The RBAC Audit Log
+
+Administrative changes to users, tokens, groups and permissions are
+recorded in the `audit_events` table of the SQLite auth store
+(`server/src/internal/auth/audit.go`), with the acting principal, the
+client address, before and after snapshots and a hash chain.
+
+- Each row's hash covers the previous row's hash and every audited
+  column except `id` and `hash_version`. Each row stores the rendering
+  version it was hashed under in `hash_version`, and `auditHash`
+  dispatches on it, so a format change adds a case rather than
+  invalidating older rows, and an unknown version is reported as such
+  and not as a broken chain. The version 1 rendering length-prefixes
+  each field, so text cannot be shifted between two columns without
+  changing the digest.
+- `prev_hash` carries a unique index, so no two events can name the
+  same predecessor and only one event can be the genesis row with an
+  empty `prev_hash`. A forked chain is refused by the schema.
+- A `BEFORE UPDATE` trigger makes rows immutable. It does not cover
+  `DELETE`, which the retention purge needs.
+- `ensureAuditSchema` re-runs the `IF NOT EXISTS` audit DDL on every
+  open regardless of the recorded schema version, and
+  `VerifyAuditChain` first asserts through `verifyAuditSchema` that the
+  unique index and the trigger exist. Without both, a database stamped
+  with the current version could run without either for good: an
+  earlier draft did exactly that, and a store created between the
+  commit that set the version and the one that added the index was
+  never given it.
+- `verifyAuditTail` compares `MAX(id)` with the `sqlite_sequence`
+  entry and reports any disagreement: missing, above or below, and a
+  missing `sqlite_sequence` table as well. `MAX(id)` and the sequence
+  are read by one statement, so a server insert whilst the CLI, which
+  opens its own store, is verifying cannot separate them.
+- Snapshots never carry `password_hash`, and no token material reaches
+  a row, a log line or a response.
+
+Know the limits before crediting the chain in a report. It is an
+unkeyed SHA-256 computed by the same server that stores it, and
+`sqlite_sequence` is an ordinary writable table, so anyone with write
+access to `auth.db` can alter the log and make both checks agree
+again. The chain and the tail check raise the cost of careless or
+accidental deletion; they are not a defence against a deliberate
+attacker with filesystem access, and only an independent copy of the
+events is. A verification that passes is not evidence that nothing
+happened. Adding a key the server does not hold, or an anchor outside
+the file, is an open design question rather than an oversight.
+
+The audit write is fail-closed everywhere but one place: a mutation
+whose event cannot be recorded is rolled back. The exception is
+`disableForLockout` in `actor_store_users.go`, which commits the
+failed-login lockout first and records `user.disable` afterwards in a
+transaction of its own, logging rather than returning a failure. This
+is deliberate. Sharing one transaction let an audit failure, a full
+disk or a lock held past the busy timeout roll the lockout back and
+hand a password-guessing attacker an account that stayed enabled. Do
+not report the best-effort event as a missing fail-closed path; report
+any *new* audited mutation that copies the pattern.
+
 ## Reporting
 
 Findings go in the audit report returned to the primary agent, with

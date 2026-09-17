@@ -283,3 +283,7 @@ number of failed login attempts:
 # Re-enable a locked account (also resets failed attempts)
 ./bin/ai-dba-server -enable-user -username alice
 ```
+
+The server records every account change in the audit log, naming the
+user, token or command-line operator that made it; for details, see
+[Audit Log](audit-log.md).

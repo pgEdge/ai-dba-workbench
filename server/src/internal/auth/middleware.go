@@ -255,9 +255,15 @@ func (e *IPExtractor) ExtractIP(r *http.Request) string {
 	// Format: X-Forwarded-For: client, proxy1, proxy2
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff == "" {
-		// No X-Forwarded-For header, try X-Real-IP
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
+		// No X-Forwarded-For header, try X-Real-IP. The value is only
+		// used when it parses as an IP address: it reaches the audit
+		// log and the session records, so a proxy sending a hostname,
+		// an empty value or arbitrary text must not be stored as
+		// though it were a client address.
+		if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+			if net.ParseIP(xri) != nil {
+				return xri
+			}
 		}
 		return directIP
 	}

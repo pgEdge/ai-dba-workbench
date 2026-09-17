@@ -187,6 +187,14 @@ type AuthConfig struct {
 	RateLimitWindowMinutes         int `yaml:"rate_limit_window_minutes"`          // Time window in minutes for rate limiting (default: 15)
 	RateLimitMaxAttempts           int `yaml:"rate_limit_max_attempts"`            // Maximum failed attempts per IP in the time window (default: 10)
 
+	// AuditRetentionDaysPtr is the raw configured value for how many
+	// days of RBAC audit events to keep; nil means the setting was
+	// omitted from both the config file and the environment. An
+	// explicit 0 disables the purge and keeps audit events forever.
+	// Use AuditRetentionDays() to read the effective value, which
+	// applies the 90-day default when this is nil.
+	AuditRetentionDaysPtr *int `yaml:"audit_retention_days"`
+
 	// Local holds settings for local username/password authentication.
 	Local LocalAuthConfig `yaml:"local"`
 
@@ -314,6 +322,17 @@ func (a AuthConfig) LocalEnabled() bool {
 		return true
 	}
 	return *a.Local.Enabled
+}
+
+// AuditRetentionDays returns the effective number of days to keep
+// RBAC audit events, defaulting to 90 when the setting was not
+// configured or was given a negative value, which no retention period
+// can mean. An explicit 0 means audit events are kept forever.
+func (a AuthConfig) AuditRetentionDays() int {
+	if a.AuditRetentionDaysPtr == nil || *a.AuditRetentionDaysPtr < 0 {
+		return 90
+	}
+	return *a.AuditRetentionDaysPtr
 }
 
 // TLSConfig holds TLS/HTTPS settings
@@ -640,6 +659,11 @@ func boolPtr(b bool) *bool {
 	return BoolPtr(b)
 }
 
+// intPtr returns a pointer to the given int value.
+func intPtr(i int) *int {
+	return &i
+}
+
 // LoadConfig loads configuration with proper priority:
 // 1. Command line flags (highest priority)
 // 2. Environment variables
@@ -749,6 +773,7 @@ func defaultConfig() *Config {
 					GroupsClaim:      "groups",
 					ButtonLabel:      "Sign in with your identity provider",
 				},
+				AuditRetentionDaysPtr: intPtr(90), // Keep audit events for 90 days by default
 			},
 		},
 		Database: nil, // No database configured by default
@@ -850,6 +875,9 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.HTTP.Auth.RateLimitMaxAttempts > 0 {
 		dest.HTTP.Auth.RateLimitMaxAttempts = src.HTTP.Auth.RateLimitMaxAttempts
+	}
+	if src.HTTP.Auth.AuditRetentionDaysPtr != nil {
+		dest.HTTP.Auth.AuditRetentionDaysPtr = src.HTTP.Auth.AuditRetentionDaysPtr
 	}
 
 	// Local login - only override when explicitly set in the source
@@ -1236,6 +1264,13 @@ func applyEnvOverrides(cfg *Config) {
 	if val := os.Getenv("PGEDGE_MEMORY_ENABLED"); val != "" {
 		if b, err := strconv.ParseBool(val); err == nil {
 			cfg.Memory.Enabled = boolPtr(b)
+		}
+	}
+	if val := os.Getenv("PGEDGE_AUDIT_RETENTION_DAYS"); val != "" {
+		// A negative retention period is as meaningless as a
+		// non-numeric one, so both leave the configured value alone.
+		if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+			cfg.HTTP.Auth.AuditRetentionDaysPtr = intPtr(n)
 		}
 	}
 }

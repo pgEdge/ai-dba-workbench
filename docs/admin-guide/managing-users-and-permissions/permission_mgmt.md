@@ -269,3 +269,6 @@ To review the privileges already assigned to a group, use the
 `-show-group-privileges` command described in
 [Group Management](groups.md#managing-group-membership).
 
+The server records every privilege and permission grant or revocation in
+the audit log, naming the user, token or command-line operator that made
+it; for details, see [Audit Log](audit-log.md).

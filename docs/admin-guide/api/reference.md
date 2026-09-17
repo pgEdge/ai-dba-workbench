@@ -314,6 +314,7 @@ end in the future is clamped to the present moment.
 | PUT | `/api/v1/rbac/tokens/{id}/scope` | Set a token scope. |
 | DELETE | `/api/v1/rbac/tokens/{id}/scope` | Clear a token scope. |
 | GET | `/api/v1/rbac/privileges/mcp` | List all MCP privilege identifiers. |
+| GET | `/api/v1/rbac/audit` | List RBAC audit events (superuser only). |
 
 ### Utilities
 

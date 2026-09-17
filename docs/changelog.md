@@ -1164,6 +1164,28 @@ project adheres to
   second alert alongside such a row, which should be cleared by
   hand as anomaly alerts are not resolved automatically. (#408)
 
+- Fix a probe staleness alert clearing itself at the moment collection
+  on that probe stopped, which left an operator with no active alert
+  for a server that had gone quiet. The alerter's cleanup pass read a
+  staleness view that omits any probe which is unavailable, disabled,
+  attached to a connection that is no longer monitored, or has never
+  collected, and it treated absence from that view as proof that
+  nothing was left to be stale about, so a probe that went unavailable
+  (a monitored server losing an extension, the collector losing its
+  privileges, or a connection error) cleared the `metric_staleness`
+  alert silently at debug log level. A probe that has gone unavailable
+  now keeps its staleness alert active, and the alert's description is
+  rewritten to say that collection has stopped and to give the recorded
+  reason; the title is unchanged, so the alert stays recognisable in
+  notification history. A probe that is absent because an operator
+  disabled it, or because its connection is no longer monitored, still
+  clears the alert, since both are deliberate actions. Both outcomes
+  are now logged at the normal log level rather than at debug level.
+  The staleness evaluator is unchanged and still skips unavailable
+  probes, because an unavailable probe is a normal steady state for a
+  server without the extension a probe needs, and raising a new alert
+  for one would leave a permanent alert on every such probe. (#465)
+
 ### Removed
 
 - Remove the hard-coded allow-list of embedding model names, which

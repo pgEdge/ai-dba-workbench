@@ -294,6 +294,27 @@ condition holds, such as an inactive replication slot or a
 blocked session, the absence of a value is the recovery
 signal and the alerter clears the alert.
 
+The `metric_staleness` rule is cleared on the same basis.
+A probe that has become unavailable, whether because the
+monitored server no longer offers the extension the probe
+reads, because the collector no longer holds the required
+privileges, or because the connection is failing, keeps
+its staleness alert active; the alerter rewrites the alert
+description to report that collection has stopped and to
+name the recorded reason, and leaves the alert title
+alone so that the alert stays recognisable in notification
+history. A probe that an operator has disabled, and a
+probe on a connection that is no longer monitored, both
+clear the alert, because each represents a deliberate
+change rather than a fault. The alerter logs whichever
+decision it takes at the normal log level.
+
+The staleness rule itself does not fire for a probe that
+is already unavailable. An unavailable probe is a normal
+steady state on a server that lacks the extension a probe
+reads, so raising staleness alerts for such probes would
+leave a permanent alert against every one of them.
+
 ## Blackout Interaction
 
 During an active blackout period, the alerter

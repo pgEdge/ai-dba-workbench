@@ -97,8 +97,7 @@ func (d *Datastore) CreateConnectionAlert(ctx context.Context, connectionID int,
 // last_updated, leaving every other column alone, and the title in
 // particular, so that anyone following the alert through notification
 // history still sees the same alert rather than what looks like a new
-// one. It
-// applies to any alert, whatever its type; callers that rewrite a
+// one. It applies to any alert, whatever its type; callers that rewrite a
 // description repeatedly should only call it when the text has actually
 // changed, so that an unchanged alert does not have its last_updated
 // bumped on every pass.

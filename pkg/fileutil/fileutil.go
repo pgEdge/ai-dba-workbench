@@ -144,9 +144,10 @@ func ExpandTildePath(path string) (string, error) {
 	// "~\\..." is an unsupported named-user-style form and must not be
 	// silently remapped onto the current user's home.
 	if len(path) > 1 && path[1] != '/' &&
-		!(runtime.GOOS == "windows" && path[1] == '\\') {
+		(runtime.GOOS != "windows" || path[1] != '\\') {
 		return "", fmt.Errorf(
-			"unsupported tilde path %q: use ~ or ~/..., not ~user/...", path)
+			"unsupported tilde path %q: use ~ or ~/... rather than a "+
+				"~user/... path", path)
 	}
 
 	homeDir, err := os.UserHomeDir()

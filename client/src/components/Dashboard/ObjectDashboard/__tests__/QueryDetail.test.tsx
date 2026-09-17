@@ -706,7 +706,7 @@ describe('QueryDetail', () => {
                 renderDetail();
 
                 await waitFor(() => {
-                    expect(screen.getByText('Mean Time'))
+                    expect(screen.getByText('Mean Time (Last 1h)'))
                         .toBeInTheDocument();
                 });
                 expect(screen.getByText('2.0 ms')).toBeInTheDocument();
@@ -720,7 +720,7 @@ describe('QueryDetail', () => {
 
                 await waitFor(() => {
                     expect(
-                        screen.getByLabelText('Mean Time: 2.0 ms'),
+                        screen.getByLabelText('Mean Time (Last 1h): 2.0 ms'),
                     ).toBeInTheDocument();
                 });
             });
@@ -738,14 +738,14 @@ describe('QueryDetail', () => {
 
                 await waitFor(() => {
                     expect(
-                        screen.getByLabelText('Mean Time: --'),
+                        screen.getByLabelText('Mean Time (Last 1h): --'),
                     ).toBeInTheDocument();
                 });
                 expect(screen.getByLabelText('Total Calls (Last 1h): --'))
                     .toBeInTheDocument();
                 expect(screen.getByLabelText('Total Time (Last 1h): --'))
                     .toBeInTheDocument();
-                expect(screen.queryByLabelText(/Mean Time: (0|NaN)/))
+                expect(screen.queryByLabelText(/Mean Time \(Last 1h\): (0|NaN)/))
                     .not.toBeInTheDocument();
             });
 
@@ -753,7 +753,7 @@ describe('QueryDetail', () => {
             const { rerender } = renderDetail();
 
             await waitFor(() => {
-                expect(screen.getByLabelText('Mean Time: 2.0 ms'))
+                expect(screen.getByLabelText('Mean Time (Last 1h): 2.0 ms'))
                     .toBeInTheDocument();
             });
 
@@ -772,7 +772,7 @@ describe('QueryDetail', () => {
             await waitFor(() => {
                 expect(topQueryUrls()).toHaveLength(2);
             });
-            expect(screen.getByLabelText('Mean Time: 2.0 ms'))
+            expect(screen.getByLabelText('Mean Time (Last 24h): 2.0 ms'))
                 .toBeInTheDocument();
         });
 

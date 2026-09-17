@@ -799,7 +799,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label="Mean Time"
+                        label={`Mean Time (${windowLabel})`}
                         value={queryData
                             ? formatTime(
                                 queryData.mean_exec_time

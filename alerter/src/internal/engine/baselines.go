@@ -39,11 +39,17 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 		return
 	}
 
-	// Get lookback days from config (default to 7 if not set)
 	cfg := e.getConfig()
-	lookbackDays := cfg.Baselines.LookbackDays
-	if lookbackDays <= 0 {
-		lookbackDays = 7
+	lookbackDays := cfg.EffectiveLookbackDays()
+
+	// A warmup tier whose span exceeds the lookback can never be
+	// selected, and selectBaseline would fall through to the next
+	// tier without a word (#408). Say so at normal log level, once per
+	// cycle, so the misconfiguration is visible without debug logging.
+	for _, period := range cfg.UnreachableWarmupPeriods() {
+		e.log("WARNING: anomaly.tier1.warmup.%s.min_span_hours exceeds "+
+			"baselines.lookback_days (%d days); %s baselines can never "+
+			"become warm and will always be skipped", period, lookbackDays, period)
 	}
 
 	// Minimum samples required to create a time-period baseline
@@ -52,18 +58,35 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 	e.log("Calculating baselines for %d connections, %d rules (lookback: %d days)",
 		len(connections), len(rules), lookbackDays)
 
+	// Rows written for metrics that no longer support baselines (the
+	// fallback path removed in #408 wrote one per connection every
+	// cycle) would otherwise sit in metric_baselines forever, cold and
+	// visible to the server's get_metric_baselines tool.
+	deleted, err := e.datastore.DeleteBaselinesForUnsupportedMetrics(ctx)
+	if err != nil {
+		e.log("ERROR: Failed to delete baselines for unsupported metrics: %v", err)
+	} else if deleted > 0 {
+		e.log("Deleted %d baseline rows for metrics without historical data", deleted)
+	}
+
 	// For each metric, fetch historical data and calculate baselines
 	for _, rule := range rules {
 		if ctx.Err() != nil {
 			return
 		}
 
+		// A metric without a historical query cannot be baselined;
+		// building one from the latest sample instead would produce a
+		// row the warmup gate can never admit.
+		if !database.SupportsBaselines(rule.MetricName) {
+			e.debugLog("Skipping baselines for metric %s: no historical data query", rule.MetricName)
+			continue
+		}
+
 		// Get historical metric values for all connections
 		histValues, err := e.datastore.GetHistoricalMetricValues(ctx, rule.MetricName, lookbackDays)
 		if err != nil {
-			e.debugLog("No historical data for metric %s: %v", rule.MetricName, err)
-			// Fall back to current values for 'all' baseline only
-			e.calculateGlobalBaselinesFallback(ctx, connections, rule.MetricName)
+			e.log("ERROR: Failed to get historical data for metric %s: %v", rule.MetricName, err)
 			continue
 		}
 
@@ -168,7 +191,7 @@ func (e *Engine) calculateHourlyBaselines(ctx context.Context, connID int, dbNam
 	// Group values by hour of day
 	hourlyValues := make(map[int][]database.HistoricalMetricValue)
 	for _, v := range values {
-		hour := v.CollectedAt.Hour()
+		hour, _ := baselinePeriodKeys(v.CollectedAt)
 		hourlyValues[hour] = append(hourlyValues[hour], v)
 	}
 
@@ -213,8 +236,7 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 	// Group values by day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
 	dailyValues := make(map[int][]database.HistoricalMetricValue)
 	for _, v := range values {
-		// Go's time.Weekday() returns 0=Sunday, 1=Monday, etc.
-		dayOfWeek := int(v.CollectedAt.Weekday())
+		_, dayOfWeek := baselinePeriodKeys(v.CollectedAt)
 		dailyValues[dayOfWeek] = append(dailyValues[dayOfWeek], v)
 	}
 
@@ -250,47 +272,21 @@ func (e *Engine) calculateDailyBaselines(ctx context.Context, connID int, dbName
 	}
 }
 
-// calculateGlobalBaselinesFallback calculates only 'all' baselines when historical data
-// is not available. This uses the current metric values as a fallback.
-func (e *Engine) calculateGlobalBaselinesFallback(ctx context.Context, connections []int, metricName string) {
-	// Get current metric values
-	values, err := e.datastore.GetLatestMetricValues(ctx, metricName)
-	if err != nil {
-		return
-	}
-
-	// Group by connection
-	for _, connID := range connections {
-		var connValues []float64
-		for _, v := range values {
-			if v.ConnectionID == connID {
-				connValues = append(connValues, v.Value)
-			}
-		}
-
-		if len(connValues) == 0 {
-			continue
-		}
-
-		mean, stddev := calculateStats(connValues)
-
-		baseline := &database.MetricBaseline{
-			ConnectionID:   connID,
-			MetricName:     metricName,
-			PeriodType:     "all",
-			Mean:           mean,
-			StdDev:         stddev,
-			Min:            minValue(connValues),
-			Max:            maxValue(connValues),
-			SampleCount:    int64(len(connValues)),
-			LastCalculated: time.Now(),
-		}
-
-		if err := e.datastore.UpsertMetricBaseline(ctx, baseline); err != nil {
-			e.log("ERROR: Failed to upsert fallback baseline for %s on connection %d: %v",
-				metricName, connID, err)
-		}
-	}
+// baselinePeriodKeys returns the hour_of_day (0-23) and day_of_week
+// (0=Sunday to 6=Saturday) bucket keys for a timestamp. It is the single
+// definition used both when hourly and daily baselines are written and
+// when selectBaseline looks one up, so the two sides cannot drift.
+//
+// The timestamp is normalised to UTC first. pgx scans timestamptz
+// columns into the process's local zone unless a ScanLocation is
+// configured, and time.Now() is local too, so without this a collector
+// and an alerter in different zones, or one alerter restarted under a
+// different TZ, would bucket the same instant under different keys. The
+// keys are therefore UTC hours and UTC weekdays; a metric's diurnal
+// cycle is still captured, just keyed in UTC.
+func baselinePeriodKeys(t time.Time) (hourOfDay, dayOfWeek int) {
+	u := t.UTC()
+	return u.Hour(), int(u.Weekday())
 }
 
 // metricValues extracts the plain float values from historical samples,

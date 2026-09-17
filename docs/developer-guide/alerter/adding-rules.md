@@ -134,7 +134,7 @@ The alerter supports the following metric name patterns.
 
 ### Other Metrics
 
-- `pg_stat_wal.failed_count_delta` - Failed archive attempts.
+- `pg_stat_archiver.failed_count_delta` - Failed archive attempts.
 - `pg_stat_checkpointer.checkpoints_req_delta` - Requested
   checkpoints.
 - `pg_stat_statements.slow_query_count` - Slow queries per
@@ -147,59 +147,74 @@ support in the alerter code before creating a rule.
 
 ### Step 1: Add the Metric Query
 
-Edit `internal/database/queries.go` and add a case to the
-`GetLatestMetricValues` function.
+Edit `internal/database/metric_registry.go` and add an entry to
+the `metricRegistry` map. The `latestSQL` field holds the query
+that `GetLatestMetricValues` runs to fetch the current value for
+each connection, and the `scan` field names the column layout the
+query returns: `scanBasic` for `(connection_id, value,
+collected_at)`, `scanWithDB` when a database name column follows
+`connection_id`, and `scanWithDBObject` when an object name column
+follows the database name.
 
-In the following example, a new metric query retrieves values from
-a custom table:
+In the following example, a new registry entry retrieves values
+from a custom table:
 
 ```go
-case "your_new_metric_name":
-    rows, err := d.pool.Query(ctx, `
+"your_new_metric_name": {
+    latestSQL: `
         SELECT connection_id, your_value::float,
             collected_at
         FROM metrics.your_table
         WHERE collected_at > NOW()
             - INTERVAL '5 minutes'
-    `)
-    if err != nil {
-        return nil, fmt.Errorf(
-            "failed to query %s: %w",
-            metricName, err)
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var mv MetricValue
-        if err := rows.Scan(
-            &mv.ConnectionID, &mv.Value,
-            &mv.CollectedAt); err != nil {
-            return nil, fmt.Errorf(
-                "failed to scan metric: %w", err)
-        }
-        results = append(results, mv)
-    }
+    `,
+    scan: scanBasic,
+},
 ```
 
-### Step 2: Add Historical Query
+### Step 2: Add the Historical Query
 
-If the metric should support anomaly detection, add a case to the
-`GetHistoricalMetricValues` function.
+Set the `historicalSQL` field on the same registry entry if the
+metric should support anomaly detection. The baseline calculator
+builds the `all`, `hourly` and `daily` baselines from this query,
+and the `historicalScan` field names its column layout:
+`historicalScanBasic` when the database name column is always
+`NULL`, `historicalScanWithDB` when the column carries a database
+name, and `historicalScanWithDBAndSamples` when the query returns
+pre-aggregated rows with a trailing `sample_count` column.
+
+A metric without a historical query is skipped by both baseline
+calculation and anomaly detection; the alerter does not build a
+baseline from the current value in its place. Threshold rules for
+the metric still work. See the
+[Anomaly Detection](anomaly-detection.md) page for the list of
+built-in metrics that are excluded on this basis.
+
+The historical query must join `connections` as shown below.
+Metric rows can outlive the connection that produced them, and
+`metric_baselines.connection_id` references `connections(id)`, so
+a query that reads `metrics.*` alone would have the calculator
+write a baseline for a deleted connection and fail on the foreign
+key.
 
 In the following example, a historical query retrieves data for
 baseline calculations:
 
 ```go
-case "your_new_metric_name":
-    rows, err := d.pool.Query(ctx, `
-        SELECT connection_id, NULL::text,
-            your_value::float, collected_at
-        FROM metrics.your_table
-        WHERE collected_at > NOW()
+"your_new_metric_name": {
+    latestSQL: `...`,
+    historicalSQL: `
+        SELECT m.connection_id, NULL::text AS database_name,
+            m.your_value::float, m.collected_at
+        FROM metrics.your_table m
+        JOIN connections c ON c.id = m.connection_id
+        WHERE m.collected_at > NOW()
             - INTERVAL '1 day' * $1
-        ORDER BY connection_id, collected_at
-    `, lookbackDays)
-    // ... handle rows
+        ORDER BY m.connection_id, m.collected_at
+    `,
+    scan:           scanBasic,
+    historicalScan: historicalScanBasic,
+},
 ```
 
 ### Step 3: Test the Metric

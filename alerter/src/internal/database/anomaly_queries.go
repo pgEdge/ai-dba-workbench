@@ -225,18 +225,32 @@ func (d *Datastore) GetAnomalyCandidateByID(ctx context.Context, id int64) (*Ano
 	return &c, nil
 }
 
-// GetMetricBaselines retrieves baselines for a metric on a connection.
+// GetMetricBaselines retrieves the baselines for a metric on a connection,
+// scoped to one database. A nil dbName matches only rows whose
+// database_name is NULL, which is what connection-wide metrics write;
+// per-database metrics write one row set per database and must be read
+// back with that database's name, otherwise the caller receives every
+// database's rows with no way to tell which applies. The NULL-aware
+// predicate mirrors GetActiveAnomalyAlert.
+//
+// The ORDER BY exists only so the result is deterministic across calls;
+// it carries no preference between period types. Choosing which row to
+// score against is the engine's job (see selectBaseline), because the
+// right row depends on the current hour and weekday, which the query
+// does not know.
+//
 // A NULL earliest_sample_at column maps to a Go zero time on the
 // returned MetricBaseline, which callers can test with .IsZero().
-func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, metricName string) ([]*MetricBaseline, error) {
+func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, metricName string, dbName *string) ([]*MetricBaseline, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, connection_id, database_name, metric_name, period_type,
 		       day_of_week, hour_of_day, mean, stddev, min, max,
 		       sample_count, last_calculated, earliest_sample_at
 		FROM metric_baselines
 		WHERE connection_id = $1 AND metric_name = $2
+		  AND (database_name = $3 OR ($3 IS NULL AND database_name IS NULL))
 		ORDER BY period_type, day_of_week, hour_of_day
-	`, connectionID, metricName)
+	`, connectionID, metricName, dbName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metric baselines: %w", err)
 	}
@@ -263,6 +277,24 @@ func (d *Datastore) GetMetricBaselines(ctx context.Context, connectionID int, me
 	}
 
 	return baselines, nil
+}
+
+// DeleteBaselinesForUnsupportedMetrics removes every metric_baselines
+// row whose metric is not in BaselineSupportedMetrics and returns the
+// number deleted. Before #408 the engine wrote a permanently cold
+// fallback row for each metric without a historical query; those rows
+// are never refreshed now, so this sweep clears them and keeps the
+// server's get_metric_baselines tool from reporting them. The list is
+// bound as a text[] parameter rather than interpolated.
+func (d *Datastore) DeleteBaselinesForUnsupportedMetrics(ctx context.Context) (int64, error) {
+	tag, err := d.pool.Exec(ctx, `
+		DELETE FROM metric_baselines
+		WHERE metric_name <> ALL($1::text[])
+	`, BaselineSupportedMetrics())
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete baselines for unsupported metrics: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // UpsertMetricBaseline inserts or updates a metric baseline. A zero

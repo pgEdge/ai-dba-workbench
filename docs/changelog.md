@@ -882,6 +882,50 @@ project adheres to
   slowly demands more slots than the cap provides and queues the
   probes of healthy connections behind its own. (#441)
 
+- Fix anomaly detection ignoring the hourly and daily baselines the
+  alerter had been writing. Baseline selection took the first row
+  returned by a query ordered alphabetically by `period_type`, which
+  was always the global `all` row, so seasonality was never applied
+  and the per-period warmup thresholds were unreachable. The engine
+  now prefers the hourly baseline for the current hour, then the
+  daily baseline for the current weekday, then the global baseline,
+  and uses the first of those that passes its warmup gate; when none
+  is warm, detection is suppressed for that value. Hour and weekday
+  are derived in UTC both when baselines are written and when one is
+  selected. The default `baselines.lookback_days` rises from 7 to 15:
+  a baseline's span can never exceed the lookback, so at 7 days the
+  daily tier's 336 hour warmup span could never be met and the daily
+  step was silently skipped. The alerter now logs a warning on each
+  baseline cycle for any warmup tier whose `min_span_hours` exceeds
+  the lookback. Operators who set `lookback_days` explicitly should
+  raise it to at least 15, or shorten `warmup.daily.min_span_hours`
+  to match. (#408)
+
+- Fix anomaly detection being permanently disabled for the 13 of 31
+  registry metrics that have no historical query. The alerter built a
+  fallback baseline for those metrics from a single current sample,
+  which could never pass the warmup gate, and rewrote it every
+  baseline cycle. The fallback path is removed; such metrics are now
+  skipped by baseline calculation and detection, and leftover
+  baseline rows for them are deleted on each baseline cycle. (#408)
+
+- Fix anomaly detection mixing up databases on multi-database
+  connections. Baseline lookup ignored the database name, the current
+  value was taken from whichever database happened to be listed
+  first, and the anomaly candidate was written without a database
+  name, so alert deduplication collapsed every database on the
+  connection. Baseline lookup, value selection and candidate creation
+  are now all scoped to the database, so per-database metrics such
+  as `cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta` are
+  scored against their own database's baseline and deduplicated per
+  database. Each metric's latest values are also fetched once per
+  rule rather than once per rule per connection. Active anomaly
+  alerts for these three metrics raised before the upgrade carry no
+  database name and so no longer match the per-database
+  deduplication; the first detection after upgrading may add a
+  second alert alongside such a row, which should be cleared by
+  hand as anomaly alerts are not resolved automatically. (#408)
+
 ### Removed
 
 - Remove the hard-coded allow-list of embedding model names, which

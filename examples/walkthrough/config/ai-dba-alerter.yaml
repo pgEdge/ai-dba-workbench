@@ -58,22 +58,23 @@ anomaly:
                 # Default: 24
                 min_span_hours: 24
 
-            # Hourly baselines: each hour-of-day bucket fills once
-            # per day, so 120 hours of span = at least five days of
-            # operation.
+            # The walkthrough keeps a one-day baseline lookback
+            # (below), and a baseline's span can never exceed the
+            # lookback, so the hourly and daily spans are cut to
+            # 24 hours here; at the shipped 120 and 336 those tiers
+            # could never be used and the alerter would warn on
+            # every baseline cycle.
             hourly:
                 # Default: 5
                 min_samples: 5
                 # Default: 120
-                min_span_hours: 120
+                min_span_hours: 24
 
-            # Daily baselines: each day-of-week bucket fills once
-            # per week, so 336 hours = two weeks of operation.
             daily:
                 # Default: 3
                 min_samples: 3
                 # Default: 336
-                min_span_hours: 336
+                min_span_hours: 24
     tier2:
         enabled: false
     tier3:

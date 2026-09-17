@@ -72,18 +72,106 @@ Tier 1 settings are configured in the `anomaly.tier1` section:
 | `default_sensitivity` | `3.0` | Z-score threshold |
 | `evaluation_interval_seconds` | `60` | Evaluation interval |
 
+### Supported Metrics
+
+Tier 1 scores a metric only when the metric's entry in the query
+registry (`alerter/src/internal/database/metric_registry.go`)
+carries a historical query, because the baseline calculator has
+nothing else to build a baseline from. The `SupportsBaselines`
+helper in the `database` package makes that check, and both the
+baseline calculator and the detector skip any rule whose metric
+fails the check. Of the 31 registry metrics, 18 carry a historical
+query and 13 do not. The following metrics have no historical
+query and are therefore never baselined or scored:
+
+- `age_percent`
+- `pg_node_role.subscription_worker_down`
+- `pg_replication_slots.inactive`
+- `pg_replication_slots.retained_bytes`
+- `pg_stat_activity.max_lock_wait_seconds`
+- `pg_stat_all_tables.dead_tuple_percent`
+- `pg_stat_archiver.failed_count_delta`
+- `pg_stat_checkpointer.checkpoints_req_delta`
+- `pg_stat_replication.lag_bytes`
+- `pg_stat_replication.replay_lag_seconds`
+- `pg_stat_replication.standby_disconnected`
+- `pg_stat_statements.slow_query_count`
+- `table_last_autovacuum_hours`
+
+Threshold-based rules for these metrics are unaffected. Earlier
+releases built a baseline for such metrics from the single most
+recent sample; that baseline held one sample and no earliest sample
+timestamp, so the warmup gate rejected the row on every cycle and
+the metric was silently never scored. The fallback path has been
+removed, and the baseline calculator deletes any leftover
+`metric_baselines` rows for unsupported metrics at the start of
+each cycle so that the `get_metric_baselines` MCP tool does not
+report them.
+
+### Database Scoping
+
+Baselines are stored per connection and, for metrics whose
+historical query returns a database name (for example
+`cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta`), per
+database. Tier 1 reads back the baselines for the same database as
+the value being scored, so a value from one database is never
+compared with another database's baseline. A metric whose latest
+value is scoped to a table or other object is skipped, because the
+`metric_baselines` table has no object column to pair the value
+with; no such metric currently has a historical query.
+
+The anomaly candidate records the database name alongside the
+connection, so the active-alert check in `GetActiveAnomalyAlert`
+deduplicates per database rather than collapsing every database
+on the connection into one alert.
+
 ### Baseline Selection
 
-The alerter selects the most appropriate baseline for each
-evaluation:
+The `selectBaseline` helper in
+[`alerter/src/internal/engine/anomalies.go`][anomalies-go] picks
+the row to score a value against from the baselines for that
+connection, database and metric. The helper considers the
+candidates in this order of preference:
 
-1. If an hourly baseline exists for the current hour, the alerter
-   uses the hourly baseline.
-2. If a daily baseline exists for the current day, the alerter
-   uses the daily baseline.
-3. Otherwise, the alerter uses the global baseline.
+1. The `hourly` baseline whose `hour_of_day` matches the current
+   hour.
+2. The `daily` baseline whose `day_of_week` matches the current
+   weekday.
+3. The `all` baseline.
 
-This approach accounts for time-based patterns in metric values.
+The first candidate that passes the warmup gate described below is
+used; a cold hourly row does not block a warm daily or `all` row,
+and a cold `all` row does not block a warm hourly one. When a
+cold row is passed over in favour of a less specific warm one, a
+debug log line names both rows. When no candidate is warm,
+detection is suppressed for that value and a debug log line
+reports the period type, sample count and earliest sample time of
+the most preferred row that exists.
+
+Whether a tier can ever be selected depends on the baseline
+lookback as well as on its warmup thresholds. The historical
+queries read only samples inside `baselines.lookback_days`, and
+each refresh rewrites `earliest_sample_at` from those samples, so
+no baseline's span can exceed the lookback. A tier whose
+`min_span_hours` is longer than the lookback in hours is dead
+configuration: the selector skips it every time and falls
+through to the next tier. `calculateBaselines` calls
+`Config.UnreachableWarmupPeriods` on each cycle and logs a
+warning naming any such tier. The shipped defaults (a 15 day
+lookback against 24, 120 and 336 hour spans) leave every tier
+reachable, and `TestShippedWarmupTiersReachable` pins that.
+
+The current hour and weekday are taken in UTC, and the baseline
+calculator buckets samples by UTC hour and weekday when writing
+the `hourly` and `daily` rows, so the two sides agree however the
+alerter's process time zone is set. A metric's diurnal or weekly
+cycle is still captured; the buckets are simply keyed in UTC.
+
+Time-aware rows are preferred over the `all` row because a metric
+with a daily or weekly cycle has a much tighter spread within one
+period than across the whole lookback window. Scoring against the
+grand mean inflates the divisor and hides genuine within-cycle
+deviation.
 
 ### Variance Floor and Warmup Gate
 
@@ -140,15 +228,17 @@ wall-clock span between the earliest recorded sample and now.
 Both must hold for the baseline to be considered warm. Each of
 the three `period_type` values (`all`, `hourly`, and `daily`)
 carries its own threshold pair, configured under
-`anomaly.tier1.warmup` in the alerter YAML.
+`anomaly.tier1.warmup` in the alerter YAML. The gate is applied
+to each candidate row in turn during baseline selection, so the
+`hourly` thresholds decide whether the hourly row is used and the
+`all` thresholds decide whether the `all` row is used.
 
 The gate fails closed in two distinct ways. When
 `SampleCount` falls below `MinSamples`, the gate reports the
 baseline cold and detection is skipped. When `MinSpanHours` is
 greater than zero and `EarliestSampleAt` is the zero value,
 the gate also reports cold; this covers rows written before
-the `metric_baselines.earliest_sample_at` column was added and
-fallback baselines that lack raw sample timestamps. Setting
+the `metric_baselines.earliest_sample_at` column was added. Setting
 both `min_samples: 0` and `min_span_hours: 0` for a
 `period_type` disables warmup suppression for that type; the
 zero value on `MinSpanHours` also skips the
@@ -157,7 +247,7 @@ spuriously fail closed when the operator has explicitly opted
 out.
 
 An unrecognised `period_type` falls back to the daily
-thresholds, which are the strictest of the three defaults.
+thresholds, which require the longest span of the three defaults.
 This is defensive only; the column is enum-constrained at
 write time.
 
@@ -337,8 +427,15 @@ historical data.
 The alerter calculates three baseline types:
 
 - `all` baselines aggregate all historical values.
-- `hourly` baselines group values by hour of day (0-23).
-- `daily` baselines group values by day of week (0-6).
+- `hourly` baselines group values by UTC hour of day (0-23).
+- `daily` baselines group values by UTC day of week (0-6, with 0
+  being Sunday).
+
+Each type is written per connection and, when the metric's
+historical query returns a database name, per database. The
+calculator only processes metrics that carry a historical query;
+see the Supported Metrics section above for the list of metrics
+that are skipped and for the clean-up of their leftover rows.
 
 ### Baseline Statistics
 
@@ -353,9 +450,12 @@ Each baseline stores the following values:
 ### Lookback Period
 
 The baseline calculator uses a configurable lookback period to
-gather historical data. The default is 7 days. A longer lookback
+gather historical data. The default is 15 days, which gives every
+weekday at least two occurrences in the window and lets the daily
+tier's default 336 hour warmup span be reached. A longer lookback
 period provides more stable baselines but may not reflect recent
-changes in workload.
+changes in workload; a shorter one must be paired with shorter
+warmup spans, as described under Baseline Selection.
 
 ## Enabling and Disabling
 

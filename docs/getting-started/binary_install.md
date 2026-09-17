@@ -442,7 +442,7 @@ Starting alerter engine...
 [alerter] Threshold evaluator started (interval: 1m0s)
 [alerter] Baseline calculator started (interval: 1h0m0s)
 [alerter] Connection error evaluator started (interval: 30s)
-[alerter] Calculating baselines for 0 connections, 28 rules (lookback: 7 days)
+[alerter] Calculating baselines for 0 connections, 28 rules (lookback: 15 days)
 [alerter] Baseline calculation complete
 ```
 

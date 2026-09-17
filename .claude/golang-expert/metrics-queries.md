@@ -855,7 +855,7 @@ that follow from that, all learned the hard way in #406 and #407:
   `calculateAllBaseline` persists the sum of that field as the
   baseline's `sample_count` and `anomaly.tier1.warmup.*.min_samples` is
   counted in samples: one row per hour would leave these baselines short
-  of the default `all` threshold of 100 at the shipped seven day
+  of the default `all` threshold of 100 at the shipped fifteen day
   lookback, and unable to warm at all at a lookback of four days or
   fewer. No counter delta entry reports a per-probe-interval count any
   more (#409); the per-interval derivations that remain are a ratio and
@@ -936,6 +936,82 @@ starting `Retired:`, and its `active` and `acknowledged` alerts are set to
 `status = 'cleared', cleared_at = NOW()`, matching the alerter's
 `ClearAlert`. Each such migration has a `migration_vN_test.go` covering
 registration, the fresh-install seed values and the upgrade path.
+
+## Alerter Baselines and Anomaly Detection (alerter)
+
+The baseline calculator (`alerter/src/internal/engine/baselines.go`) and
+the tier-1 detector (`anomalies.go`) were reworked in #408, and four
+conventions from that change hold across both:
+
+- Only metrics with a `historicalSQL` are baselined or scored.
+  `database.SupportsBaselines(name)` (`baseline_support.go`) is the one
+  test for that, and it is false for names outside the registry too, so
+  `metric_staleness` is excluded without a special case.
+  `calculateBaselines` and `detectAnomalies` both skip on it; there is no
+  fallback path that builds a baseline from the latest sample, because
+  such a row (one sample, zero stddev, NULL `earliest_sample_at`) can
+  never pass `isBaselineWarm`. `DeleteBaselinesForUnsupportedMetrics`
+  runs once per `calculateBaselines` cycle, binding
+  `BaselineSupportedMetrics()` as a `text[]` and deleting
+  `metric_name <> ALL($1)`, so rows the old fallback wrote disappear.
+  `TestAuditC7HistoricalSQLCoverage` pins by name the thirteen registry
+  entries that still have no historical query; giving them one is a
+  follow-up, and any entry gaining one must be removed from that list.
+
+- `GetMetricBaselines(ctx, connID, metric, dbName *string)` is scoped to
+  one database with the same NULL-aware predicate as
+  `GetActiveAnomalyAlert`: `(database_name = $3 OR ($3 IS NULL AND
+  database_name IS NULL))`. Its `ORDER BY period_type, day_of_week,
+  hour_of_day` only makes the result deterministic; nothing may read
+  `baselines[0]` as a preference. The server's `get_metric_baselines`
+  tool is a separate implementation over the pool and is unaffected.
+
+- Selection is in Go. `selectBaseline` prefers the `hourly` row for the
+  current hour, then the `daily` row for the current weekday, then
+  `all`, and returns the first candidate that is warm; a cold candidate
+  falls through rather than blocking a warmer, less specific one. Its
+  second result is the most preferred cold row that was passed over,
+  whether or not something was chosen, and `detectAnomalyForValue`
+  debug-logs it in both cases (suppression, or a fall-through to a
+  less specific tier).
+
+- A tier is only reachable if its `min_span_hours` is at most
+  `lookback_days * 24`. Every `historicalSQL` filters `collected_at >
+  NOW() - INTERVAL '1 day' * $1` and `UpsertMetricBaseline` rewrites
+  `earliest_sample_at` on every refresh, so a baseline's span never
+  exceeds the lookback. At the original 7-day default the daily tier's
+  336-hour span was unreachable and the documented three-step order was
+  silently two steps (PR #489 review). `DefaultLookbackDays` is now 15,
+  `Config.EffectiveLookbackDays` substitutes it for a non-positive
+  setting, and `Config.UnreachableWarmupPeriods` names any tier whose
+  span exceeds the window; `calculateBaselines` logs a `WARNING` for
+  each on every cycle. `TestShippedWarmupTiersReachable` and
+  `TestExampleConfigsParse` pin the shipped defaults and all three
+  example YAML files to a reachable configuration, and
+  `TestSelectBaseline` derives its warm `earliest_sample_at` from the
+  shipped lookback so it cannot pass against a row the calculator
+  cannot write. The walkthrough config keeps `lookback_days: 1` and
+  shortens its hourly and daily spans to 24 to match.
+
+- Hour and weekday keys come from `baselinePeriodKeys`, used both when
+  hourly and daily rows are written and when `selectBaseline` matches
+  them, and it normalises to UTC first. pgx scans `timestamptz` into the
+  process's local zone unless `ScanLocation` is set, and `time.Now()` is
+  local too, so without the shared helper an alerter in a non-UTC zone
+  would write rows under one key and look them up under another.
+
+`detectAnomalies` loops rules on the outside so `GetLatestMetricValues`
+runs once per rule, resolves the blacked-out connection set once per
+run, and scores every latest value for a connection (one per database
+for `scanWithDB` metrics) against the baselines for that value's
+`DatabaseName`, setting `candidate.DatabaseName` so the active-alert
+deduplication in `createAnomalyAlert` is per database as well.
+`baselineableValues` drops object-scoped values, since `metric_baselines`
+has no object column. The audit tests
+(`engine/audit_defects_test.go`, `database/audit_defects_test.go`, C6,
+C7 and C10) assert this behaviour end to end, and
+`engine/baseline_selection_test.go` covers the selector and the key
+helper.
 
 ## Time-Window Resolution (server)
 
@@ -1295,6 +1371,10 @@ run.
 - #428: Pseudo filesystems excluded from
   `pg_sys_disk_info.used_percent`, so a squashfs mount no longer pins the
   disk metric at 100%.
+- #408: Baseline selection prefers the current hour's and weekday's
+  rows; metrics without `historicalSQL` excluded via `SupportsBaselines`
+  and the latest-sample fallback removed; `GetMetricBaselines` and
+  detection scoped by database; period keys normalised to UTC.
 - #407: Missing metric data treated as resolution; introduced the
   `clearWhenAbsent` registry flag, the `probeName` field, the
   `absenceWindow` field and the window gate on clearing (which replaced

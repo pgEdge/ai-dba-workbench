@@ -305,15 +305,9 @@ func (d *Datastore) queryHistoricalMetricValuesWithDBAndSamples(ctx context.Cont
 // violations on metric_baselines.connection_id. See GitHub issue #56.
 func (d *Datastore) GetHistoricalMetricValues(ctx context.Context, metricName string, lookbackDays int) ([]HistoricalMetricValue, error) {
 	cfg, ok := metricRegistry[metricName]
-	if !ok {
-		// For metrics not explicitly handled, return an error
-		// This allows the caller to fall back to other baseline calculation methods
-		return nil, fmt.Errorf("historical data not implemented for metric %s", metricName)
-	}
-
-	if cfg.historicalSQL == "" {
-		// For metrics not explicitly handled, return an error
-		// This allows the caller to fall back to other baseline calculation methods
+	if !ok || cfg.historicalSQL == "" {
+		// Callers are expected to check SupportsBaselines first; the
+		// error is kept for anything that does not.
 		return nil, fmt.Errorf("historical data not implemented for metric %s", metricName)
 	}
 

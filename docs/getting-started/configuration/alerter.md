@@ -258,7 +258,9 @@ anomaly:
 
 Warmup suppressions are recorded at debug log level only; the
 detector does not write a candidate row or an alert when it
-skips a cold baseline. On the long-term test host, enable debug
+skips a cold baseline, and a fall-through from a cold hourly or
+daily row to a warm, less specific one is logged at the same
+level. On the long-term test host, enable debug
 logging in the alerter and inspect recent suppressions with
 `sudo journalctl -u ai-workbench-alerter.service --since 10m`.
 The log line names the connection, metric, period type, and
@@ -294,7 +296,16 @@ calculation for anomaly detection.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `refresh_interval_seconds` | integer | `3600` | Refresh interval |
-| `lookback_days` | integer | `7` | Historical lookback in days |
+| `lookback_days` | integer | `15` | Historical lookback in days |
+
+The lookback also caps how old a baseline's earliest sample can
+be, because each refresh reads only samples inside the window
+and rewrites `earliest_sample_at` from them. A warmup tier whose
+`min_span_hours` exceeds `lookback_days` multiplied by 24 can
+therefore never become warm, and the alerter logs a warning on
+each baseline cycle naming the tier. The default of 15 days
+covers the daily tier's 336 hour span with a day to spare and
+gives every weekday at least two occurrences in the window.
 
 ### Correlation (`correlation`)
 

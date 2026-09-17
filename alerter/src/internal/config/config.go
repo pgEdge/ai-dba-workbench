@@ -147,10 +147,59 @@ type ReevaluationConfig struct {
 	MaxPerCycle     int  `yaml:"max_per_cycle"`
 }
 
-// BaselineConfig holds baseline calculation settings
+// BaselineConfig holds baseline calculation settings.
+//
+// LookbackDays bounds every baseline's earliest_sample_at: the
+// historical queries only read samples inside the window, and the
+// calculator overwrites earliest_sample_at on each refresh, so no
+// baseline can ever report a span longer than the lookback. A warmup
+// tier whose MinSpanHours exceeds LookbackDays*24 is therefore
+// unreachable; see UnreachableWarmupPeriods. The default of 15 days
+// gives every weekday at least two occurrences and clears the daily
+// tier's default 336 hour span with a day to spare.
 type BaselineConfig struct {
 	RefreshIntervalSeconds int `yaml:"refresh_interval_seconds"`
 	LookbackDays           int `yaml:"lookback_days"`
+}
+
+// DefaultLookbackDays is the lookback applied when
+// baselines.lookback_days is unset or not positive.
+const DefaultLookbackDays = 15
+
+// EffectiveLookbackDays returns the lookback the baseline calculator
+// uses, substituting DefaultLookbackDays for a non-positive setting.
+func (c *Config) EffectiveLookbackDays() int {
+	if c.Baselines.LookbackDays <= 0 {
+		return DefaultLookbackDays
+	}
+	return c.Baselines.LookbackDays
+}
+
+// UnreachableWarmupPeriods lists the warmup period types ("all",
+// "hourly", "daily") whose min_span_hours exceeds the lookback window
+// in hours. A baseline row of such a type can never pass isBaselineWarm
+// because its earliest_sample_at is never older than the lookback, so
+// the selector silently falls through to the next tier. Callers log the
+// result rather than rejecting the configuration, because the shipped
+// example files once carried exactly this combination.
+func (c *Config) UnreachableWarmupPeriods() []string {
+	lookbackHours := c.EffectiveLookbackDays() * 24
+	w := c.Anomaly.Tier1.Warmup
+	tiers := []struct {
+		name string
+		cfg  PerPeriodWarmupConfig
+	}{
+		{"all", w.All},
+		{"hourly", w.Hourly},
+		{"daily", w.Daily},
+	}
+	var out []string
+	for _, t := range tiers {
+		if t.cfg.MinSpanHours > lookbackHours {
+			out = append(out, t.name)
+		}
+	}
+	return out
 }
 
 // CorrelationConfig holds correlation detection settings
@@ -353,7 +402,7 @@ func NewConfig() *Config {
 		},
 		Baselines: BaselineConfig{
 			RefreshIntervalSeconds: 3600,
-			LookbackDays:           7,
+			LookbackDays:           DefaultLookbackDays,
 		},
 		Correlation: CorrelationConfig{
 			WindowSeconds: 120,

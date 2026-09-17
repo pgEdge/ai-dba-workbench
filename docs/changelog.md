@@ -892,7 +892,14 @@ project adheres to
   and uses the first of those that passes its warmup gate; when none
   is warm, detection is suppressed for that value. Hour and weekday
   are derived in UTC both when baselines are written and when one is
-  selected. (#408)
+  selected. The default `baselines.lookback_days` rises from 7 to 15:
+  a baseline's span can never exceed the lookback, so at 7 days the
+  daily tier's 336 hour warmup span could never be met and the daily
+  step was silently skipped. The alerter now logs a warning on each
+  baseline cycle for any warmup tier whose `min_span_hours` exceeds
+  the lookback. Operators who set `lookback_days` explicitly should
+  raise it to at least 14, or shorten `warmup.daily.min_span_hours`
+  to match. (#408)
 
 - Fix anomaly detection being permanently disabled for the 13 of 31
   registry metrics that have no historical query. The alerter built a
@@ -912,7 +919,12 @@ project adheres to
   as `cache_hit_ratio`, `deadlocks_delta` and `temp_files_delta` are
   scored against their own database's baseline and deduplicated per
   database. Each metric's latest values are also fetched once per
-  rule rather than once per rule per connection. (#408)
+  rule rather than once per rule per connection. Active anomaly
+  alerts for these three metrics raised before the upgrade carry no
+  database name and so no longer match the per-database
+  deduplication; the first detection after upgrading may add a
+  second alert alongside such a row, which should be cleared by
+  hand as anomaly alerts are not resolved automatically. (#408)
 
 ### Removed
 

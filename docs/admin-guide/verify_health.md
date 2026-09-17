@@ -77,13 +77,13 @@ Main PID: 63620 (ai-dba-alerter)
 
 May 12 15:32:55 n1 ai-dba-alerter[63620]: [alerter] Baseline calculator started (interval: 1h0m0s)
 May 12 15:32:55 n1 ai-dba-alerter[63620]: [alerter] Alert cleaner started
-May 12 15:32:55 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 7 days)
+May 12 15:32:55 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 15 days)
 May 12 15:32:55 n1 ai-dba-alerter[63620]: [alerter] Baseline calculation complete
-May 12 16:32:55 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 7 days)
+May 12 16:32:55 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 15 days)
 May 12 16:32:55 n1 ai-dba-alerter[63620]: [alerter] Baseline calculation complete
-May 13 11:54:51 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 7 days)
+May 13 11:54:51 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 15 days)
 May 13 11:54:51 n1 ai-dba-alerter[63620]: [alerter] Baseline calculation complete
-May 13 12:54:51 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 7 days)
+May 13 12:54:51 n1 ai-dba-alerter[63620]: [alerter] Calculating baselines for 1 connections, 28 rules (lookback: 15 days)
 May 13 12:54:51 n1 ai-dba-alerter[63620]: [alerter] Baseline calculation complete
 ```
 

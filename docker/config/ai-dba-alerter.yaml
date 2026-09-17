@@ -63,7 +63,11 @@ anomaly:
         min_span_hours: 120
 
       # Daily baselines: each day-of-week bucket fills once
-      # per week, so 336 hours = two weeks of operation.
+      # per week, so 336 hours = two weeks of operation. A
+      # baseline's span can never exceed baselines.lookback_days
+      # (default 15), so keep min_span_hours at or under that
+      # many hours or the daily tier is never used; the alerter
+      # logs a warning on each baseline cycle when it is not.
       daily:
         # Default: 3
         min_samples: 3

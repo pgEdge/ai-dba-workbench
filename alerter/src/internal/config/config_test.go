@@ -48,6 +48,7 @@ func TestNewConfig(t *testing.T) {
 		{"anomaly tier2 enabled", cfg.Anomaly.Tier2.Enabled, true},
 		{"anomaly tier3 enabled", cfg.Anomaly.Tier3.Enabled, true},
 		{"baselines refresh interval", cfg.Baselines.RefreshIntervalSeconds, 3600},
+		{"baselines lookback days", cfg.Baselines.LookbackDays, DefaultLookbackDays},
 		{"correlation window", cfg.Correlation.WindowSeconds, 120},
 		{"llm embedding provider", cfg.LLM.EmbeddingProvider, "ollama"},
 		{"llm reasoning provider", cfg.LLM.ReasoningProvider, "ollama"},
@@ -766,6 +767,16 @@ func TestExampleConfigsParse(t *testing.T) {
 				t.Errorf("%s: MaxZScore = %v, want 100.0",
 					p, cfg.Anomaly.Tier1.MaxZScore)
 			}
+			// The walkthrough deliberately runs a one-day lookback
+			// (and shortens its warmup spans to match); the other
+			// files document the default.
+			if !strings.Contains(p, "walkthrough") && cfg.Baselines.LookbackDays != DefaultLookbackDays {
+				t.Errorf("%s: Baselines.LookbackDays = %d, want %d",
+					p, cfg.Baselines.LookbackDays, DefaultLookbackDays)
+			}
+			if got := cfg.UnreachableWarmupPeriods(); len(got) != 0 {
+				t.Errorf("%s: warmup tiers unreachable at its lookback: %v", p, got)
+			}
 			if cfg.Anomaly.Tier1.VarianceFloor.RelativePct != 0.05 {
 				t.Errorf("%s: VarianceFloor.RelativePct = %v, want 0.05",
 					p, cfg.Anomaly.Tier1.VarianceFloor.RelativePct)
@@ -786,17 +797,24 @@ func TestExampleConfigsParse(t *testing.T) {
 				t.Errorf("%s: Warmup.Hourly.MinSamples = %d, want 5",
 					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSamples)
 			}
-			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours != 120 {
-				t.Errorf("%s: Warmup.Hourly.MinSpanHours = %d, want 120",
-					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours)
-			}
 			if cfg.Anomaly.Tier1.Warmup.Daily.MinSamples != 3 {
 				t.Errorf("%s: Warmup.Daily.MinSamples = %d, want 3",
 					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSamples)
 			}
-			if cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours != 336 {
-				t.Errorf("%s: Warmup.Daily.MinSpanHours = %d, want 336",
-					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours)
+			// The walkthrough's one-day lookback cannot carry the
+			// default hourly and daily spans, so it shortens both to
+			// 24 hours; the reachability check above still applies.
+			wantHourlySpan, wantDailySpan := 120, 336
+			if strings.Contains(p, "walkthrough") {
+				wantHourlySpan, wantDailySpan = 24, 24
+			}
+			if cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours != wantHourlySpan {
+				t.Errorf("%s: Warmup.Hourly.MinSpanHours = %d, want %d",
+					p, cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours, wantHourlySpan)
+			}
+			if cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours != wantDailySpan {
+				t.Errorf("%s: Warmup.Daily.MinSpanHours = %d, want %d",
+					p, cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours, wantDailySpan)
 			}
 		})
 	}
@@ -1027,4 +1045,62 @@ func TestResolveServerSecret(t *testing.T) {
 			t.Errorf("error = %q, expected it to mention /etc/pgedge/ai-dba-alerter.secret", msg)
 		}
 	})
+}
+
+// TestEffectiveLookbackDays checks the default substitution for a
+// non-positive baselines.lookback_days.
+func TestEffectiveLookbackDays(t *testing.T) {
+	cases := []struct {
+		name string
+		set  int
+		want int
+	}{
+		{"zero uses default", 0, DefaultLookbackDays},
+		{"negative uses default", -3, DefaultLookbackDays},
+		{"positive is kept", 30, 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := NewConfig()
+			cfg.Baselines.LookbackDays = tc.set
+			if got := cfg.EffectiveLookbackDays(); got != tc.want {
+				t.Errorf("EffectiveLookbackDays() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnreachableWarmupPeriods checks that a warmup tier whose span is
+// longer than the lookback window is named, that a span equal to the
+// window is not (the calculator refreshes the row within a collection
+// interval of the boundary), and that a zero span is never reported.
+func TestUnreachableWarmupPeriods(t *testing.T) {
+	cases := []struct {
+		name     string
+		lookback int
+		all      int
+		hourly   int
+		daily    int
+		want     []string
+	}{
+		{"shipped defaults", DefaultLookbackDays, 24, 120, 336, nil},
+		{"the old 7-day lookback strands daily", 7, 24, 120, 336, []string{"daily"}},
+		{"span equal to the window is reachable", 14, 24, 120, 336, nil},
+		{"one hour over is not", 14, 24, 120, 337, []string{"daily"}},
+		{"several tiers in preference order", 1, 25, 120, 336, []string{"all", "hourly", "daily"}},
+		{"zero spans are never reported", 0, 0, 0, 0, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := NewConfig()
+			cfg.Baselines.LookbackDays = tc.lookback
+			cfg.Anomaly.Tier1.Warmup.All.MinSpanHours = tc.all
+			cfg.Anomaly.Tier1.Warmup.Hourly.MinSpanHours = tc.hourly
+			cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours = tc.daily
+			got := cfg.UnreachableWarmupPeriods()
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("UnreachableWarmupPeriods() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

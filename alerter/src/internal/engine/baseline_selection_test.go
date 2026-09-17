@@ -56,7 +56,15 @@ func TestBaselinePeriodKeys(t *testing.T) {
 }
 
 // TestSelectBaseline exercises the preference order and the per-candidate
-// warmth check of selectBaseline.
+// warmth check of selectBaseline against the shipped configuration.
+//
+// warmSince is derived from the shipped lookback rather than an arbitrary
+// old date: calculateBaselines only reads samples inside the lookback
+// window and overwrites earliest_sample_at on every refresh, so no real
+// row is ever older than LookbackDays. A test that used, say, a 30-day
+// earliest_sample_at would pass the daily tier's warmup gate against a
+// row the calculator cannot produce, which is exactly how the daily tier
+// shipped unreachable at a 7-day lookback (PR #489 review).
 func TestSelectBaseline(t *testing.T) {
 	// Fixed instant: Wednesday 14:00 UTC.
 	now := time.Date(2026, time.September, 16, 14, 0, 0, 0, time.UTC)
@@ -64,12 +72,12 @@ func TestSelectBaseline(t *testing.T) {
 	otherHour := (hour + 1) % 24
 	otherDay := (weekday + 1) % 7
 
-	cfg := config.WarmupConfig{
-		All:    config.PerPeriodWarmupConfig{MinSamples: 100, MinSpanHours: 24},
-		Hourly: config.PerPeriodWarmupConfig{MinSamples: 5, MinSpanHours: 120},
-		Daily:  config.PerPeriodWarmupConfig{MinSamples: 3, MinSpanHours: 336},
-	}
-	warmSince := now.Add(-30 * 24 * time.Hour)
+	shipped := config.NewConfig()
+	cfg := shipped.Anomaly.Tier1.Warmup
+	// The oldest sample a freshly refreshed baseline can carry: one
+	// collection interval inside the lookback window.
+	lookback := time.Duration(shipped.EffectiveLookbackDays()) * 24 * time.Hour
+	warmSince := now.Add(-lookback).Add(time.Minute)
 	coldSince := now.Add(-1 * time.Hour)
 
 	mk := func(period string, h, d *int, samples int64, earliest time.Time) *database.MetricBaseline {
@@ -107,10 +115,12 @@ func TestSelectBaseline(t *testing.T) {
 			[]*database.MetricBaseline{warmAll, warmDaily, warmHourly}, warmHourly, nil},
 		{"daily preferred over all",
 			[]*database.MetricBaseline{warmAll, warmDaily}, warmDaily, nil},
-		{"cold hourly falls through to warm daily",
-			[]*database.MetricBaseline{warmAll, warmDaily, coldHourly}, warmDaily, nil},
-		{"cold hourly and daily fall through to warm all",
-			[]*database.MetricBaseline{coldDaily, coldHourly, warmAll}, warmAll, nil},
+		{"cold hourly falls through to warm daily and is reported",
+			[]*database.MetricBaseline{warmAll, warmDaily, coldHourly}, warmDaily, coldHourly},
+		{"cold hourly and daily fall through to warm all, hourly reported",
+			[]*database.MetricBaseline{coldDaily, coldHourly, warmAll}, warmAll, coldHourly},
+		{"cold daily falls through to warm all and is reported",
+			[]*database.MetricBaseline{coldDaily, warmAll}, warmAll, coldDaily},
 		{"cold all does not block warm hourly",
 			[]*database.MetricBaseline{coldAll, warmHourly}, warmHourly, nil},
 		{"hourly for another hour is ignored",
@@ -140,12 +150,38 @@ func TestSelectBaseline(t *testing.T) {
 				t.Errorf("chosen = %s, want %s", describe(chosen), describe(tc.wantChosen))
 			}
 			if cold != tc.wantCold {
-				t.Errorf("fallbackCold = %s, want %s", describe(cold), describe(tc.wantCold))
-			}
-			if chosen != nil && cold != nil {
-				t.Error("a warm choice must not also report a cold fallback")
+				t.Errorf("skippedCold = %s, want %s", describe(cold), describe(tc.wantCold))
 			}
 		})
+	}
+}
+
+// TestShippedWarmupTiersReachable pins the relationship between the
+// shipped lookback and the three warmup spans: a baseline refreshed at
+// the shipped lookback, one collection interval inside the window, must
+// pass every tier's span check, otherwise that tier is dead
+// configuration. See PR #489.
+func TestShippedWarmupTiersReachable(t *testing.T) {
+	shipped := config.NewConfig()
+	if got := shipped.UnreachableWarmupPeriods(); len(got) != 0 {
+		t.Fatalf("shipped warmup tiers unreachable at the shipped lookback: %v", got)
+	}
+
+	now := time.Date(2026, time.September, 16, 14, 0, 0, 0, time.UTC)
+	hour, weekday := baselinePeriodKeys(now)
+	lookback := time.Duration(shipped.EffectiveLookbackDays()) * 24 * time.Hour
+	earliest := now.Add(-lookback).Add(time.Minute)
+	cfg := shipped.Anomaly.Tier1.Warmup
+
+	rows := []*database.MetricBaseline{
+		{PeriodType: "all", SampleCount: int64(cfg.All.MinSamples), EarliestSampleAt: earliest},
+		{PeriodType: "hourly", HourOfDay: &hour, SampleCount: int64(cfg.Hourly.MinSamples), EarliestSampleAt: earliest},
+		{PeriodType: "daily", DayOfWeek: &weekday, SampleCount: int64(cfg.Daily.MinSamples), EarliestSampleAt: earliest},
+	}
+	for _, row := range rows {
+		if !isBaselineWarm(*row, cfg, now) {
+			t.Errorf("%s row with earliest_sample_at at the shipped lookback is not warm", row.PeriodType)
+		}
 	}
 }
 

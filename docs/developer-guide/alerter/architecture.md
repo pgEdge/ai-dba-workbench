@@ -173,7 +173,7 @@ generates three types of baselines:
 - Daily baselines capture patterns for each UTC day of the week.
 
 The calculator uses a configurable lookback period, defaulting
-to 7 days, to gather historical data for baseline calculations.
+to 15 days, to gather historical data for baseline calculations.
 Baselines are written per connection and, for per-database
 metrics, per database. Metrics whose registry entry has no
 historical query are skipped, and any leftover baseline rows for

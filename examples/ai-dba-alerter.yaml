@@ -222,7 +222,11 @@ anomaly:
         min_span_hours: 120
 
       # Daily baselines: each day-of-week bucket fills once
-      # per week, so 336 hours = two weeks of operation.
+      # per week, so 336 hours = two weeks of operation. A
+      # baseline's span can never exceed baselines.lookback_days
+      # (below), so keep min_span_hours at or under that many
+      # hours or the daily tier is never used; the alerter logs
+      # a warning on each baseline cycle when it is not.
       daily:
         # Default: 3
         min_samples: 3
@@ -279,10 +283,15 @@ baselines:
   # Default: 3600 (1 hour)
   refresh_interval_seconds: 3600
 
-  # Number of days of historical data to use for baseline calculation
-  # Longer lookback periods produce more stable baselines
-  # Default: 7
-  lookback_days: 7
+  # Number of days of historical data to use for baseline calculation.
+  # Longer lookback periods produce more stable baselines but adapt
+  # more slowly to a changed workload. This also caps how old a
+  # baseline's earliest sample can be, so it must be at least
+  # anomaly.tier1.warmup.daily.min_span_hours / 24 (14 at the
+  # defaults) for the daily baselines ever to be used; 15 gives every
+  # weekday two occurrences with a day to spare.
+  # Default: 15
+  lookback_days: 15
 
 #=========================================================================
 # CORRELATION SETTINGS
@@ -616,7 +625,7 @@ notifications:
 #     embedding_model: voyage-3-lite
 # baselines:
 #   refresh_interval_seconds: 3600
-#   lookback_days: 7
+#   lookback_days: 15
 # correlation:
 #   window_seconds: 180
 # notifications:

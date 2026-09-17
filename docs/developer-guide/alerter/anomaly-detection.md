@@ -141,10 +141,25 @@ candidates in this order of preference:
 
 The first candidate that passes the warmup gate described below is
 used; a cold hourly row does not block a warm daily or `all` row,
-and a cold `all` row does not block a warm hourly one. When no
-candidate is warm, detection is suppressed for that value and a
-debug log line reports the period type, sample count and earliest
-sample time of the most preferred row that exists.
+and a cold `all` row does not block a warm hourly one. When a
+cold row is passed over in favour of a less specific warm one, a
+debug log line names both rows. When no candidate is warm,
+detection is suppressed for that value and a debug log line
+reports the period type, sample count and earliest sample time of
+the most preferred row that exists.
+
+Whether a tier can ever be selected depends on the baseline
+lookback as well as on its warmup thresholds. The historical
+queries read only samples inside `baselines.lookback_days`, and
+each refresh rewrites `earliest_sample_at` from those samples, so
+no baseline's span can exceed the lookback. A tier whose
+`min_span_hours` is longer than the lookback in hours is dead
+configuration: the selector skips it every time and falls
+through to the next tier. `calculateBaselines` calls
+`Config.UnreachableWarmupPeriods` on each cycle and logs a
+warning naming any such tier. The shipped defaults (a 15 day
+lookback against 24, 120 and 336 hour spans) leave every tier
+reachable, and `TestShippedWarmupTiersReachable` pins that.
 
 The current hour and weekday are taken in UTC, and the baseline
 calculator buckets samples by UTC hour and weekday when writing
@@ -423,9 +438,12 @@ Each baseline stores the following values:
 ### Lookback Period
 
 The baseline calculator uses a configurable lookback period to
-gather historical data. The default is 7 days. A longer lookback
+gather historical data. The default is 15 days, which gives every
+weekday at least two occurrences in the window and lets the daily
+tier's default 336 hour warmup span be reached. A longer lookback
 period provides more stable baselines but may not reflect recent
-changes in workload.
+changes in workload; a shorter one must be paired with shorter
+warmup spans, as described under Baseline Selection.
 
 ## Enabling and Disabling
 

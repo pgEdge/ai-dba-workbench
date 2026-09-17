@@ -855,7 +855,7 @@ that follow from that, all learned the hard way in #406 and #407:
   `calculateAllBaseline` persists the sum of that field as the
   baseline's `sample_count` and `anomaly.tier1.warmup.*.min_samples` is
   counted in samples: one row per hour would leave these baselines short
-  of the default `all` threshold of 100 at the shipped seven day
+  of the default `all` threshold of 100 at the shipped fifteen day
   lookback, and unable to warm at all at a lookback of four days or
   fewer. No counter delta entry reports a per-probe-interval count any
   more (#409); the per-interval derivations that remain are a ratio and
@@ -969,9 +969,29 @@ conventions from that change hold across both:
 - Selection is in Go. `selectBaseline` prefers the `hourly` row for the
   current hour, then the `daily` row for the current weekday, then
   `all`, and returns the first candidate that is warm; a cold candidate
-  falls through rather than blocking a warmer, less specific one. When
-  none is warm it returns the most preferred cold row so the caller can
-  log why detection was suppressed.
+  falls through rather than blocking a warmer, less specific one. Its
+  second result is the most preferred cold row that was passed over,
+  whether or not something was chosen, and `detectAnomalyForValue`
+  debug-logs it in both cases (suppression, or a fall-through to a
+  less specific tier).
+
+- A tier is only reachable if its `min_span_hours` is at most
+  `lookback_days * 24`. Every `historicalSQL` filters `collected_at >
+  NOW() - INTERVAL '1 day' * $1` and `UpsertMetricBaseline` rewrites
+  `earliest_sample_at` on every refresh, so a baseline's span never
+  exceeds the lookback. At the original 7-day default the daily tier's
+  336-hour span was unreachable and the documented three-step order was
+  silently two steps (PR #489 review). `DefaultLookbackDays` is now 15,
+  `Config.EffectiveLookbackDays` substitutes it for a non-positive
+  setting, and `Config.UnreachableWarmupPeriods` names any tier whose
+  span exceeds the window; `calculateBaselines` logs a `WARNING` for
+  each on every cycle. `TestShippedWarmupTiersReachable` and
+  `TestExampleConfigsParse` pin the shipped defaults and all three
+  example YAML files to a reachable configuration, and
+  `TestSelectBaseline` derives its warm `earliest_sample_at` from the
+  shipped lookback so it cannot pass against a row the calculator
+  cannot write. The walkthrough config keeps `lookback_days: 1` and
+  shortens its hourly and daily spans to 24 to match.
 
 - Hour and weekday keys come from `baselinePeriodKeys`, used both when
   hourly and daily rows are written and when `selectBaseline` matches

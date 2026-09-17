@@ -11,7 +11,11 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -967,12 +971,30 @@ func TestCalculateBaselinesErrorBranches(t *testing.T) {
 		}
 	}
 
+	// A zero lookback falls back to the default, and a daily span
+	// longer than that default is reported at normal log level rather
+	// than left to fail silently in selectBaseline.
 	cfg := engine.getConfig()
 	origLookback := cfg.Baselines.LookbackDays
+	origDailySpan := cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours
 	cfg.Baselines.LookbackDays = 0
-	defer func() { cfg.Baselines.LookbackDays = origLookback }()
+	cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours = config.DefaultLookbackDays*24 + 1
+	defer func() {
+		cfg.Baselines.LookbackDays = origLookback
+		cfg.Anomaly.Tier1.Warmup.Daily.MinSpanHours = origDailySpan
+	}()
 
-	engine.calculateBaselines(ctx)
+	output := captureStderr(t, func() {
+		engine.calculateBaselines(ctx)
+	})
+	want := fmt.Sprintf("WARNING: anomaly.tier1.warmup.daily.min_span_hours exceeds "+
+		"baselines.lookback_days (%d days)", config.DefaultLookbackDays)
+	if !strings.Contains(output, want) {
+		t.Errorf("expected unreachable daily tier warning %q in output:\n%s", want, output)
+	}
+	if strings.Contains(output, "warmup.hourly.min_span_hours exceeds") {
+		t.Errorf("hourly tier wrongly reported unreachable:\n%s", output)
+	}
 
 	baselines, err := engine.datastore.GetMetricBaselines(ctx, connID, "pg_settings.max_connections", nil)
 	if err != nil {

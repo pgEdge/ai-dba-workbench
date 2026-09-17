@@ -190,6 +190,13 @@ the metric still work. See the
 [Anomaly Detection](anomaly-detection.md) page for the list of
 built-in metrics that are excluded on this basis.
 
+The historical query must join `connections` as shown below.
+Metric rows can outlive the connection that produced them, and
+`metric_baselines.connection_id` references `connections(id)`, so
+a query that reads `metrics.*` alone would have the calculator
+write a baseline for a deleted connection and fail on the foreign
+key.
+
 In the following example, a historical query retrieves data for
 baseline calculations:
 
@@ -197,12 +204,13 @@ baseline calculations:
 "your_new_metric_name": {
     latestSQL: `...`,
     historicalSQL: `
-        SELECT connection_id, NULL::text AS database_name,
-            your_value::float, collected_at
-        FROM metrics.your_table
-        WHERE collected_at > NOW()
+        SELECT m.connection_id, NULL::text AS database_name,
+            m.your_value::float, m.collected_at
+        FROM metrics.your_table m
+        JOIN connections c ON c.id = m.connection_id
+        WHERE m.collected_at > NOW()
             - INTERVAL '1 day' * $1
-        ORDER BY connection_id, collected_at
+        ORDER BY m.connection_id, m.collected_at
     `,
     scan:           scanBasic,
     historicalScan: historicalScanBasic,

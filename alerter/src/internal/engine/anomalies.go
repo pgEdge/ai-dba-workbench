@@ -125,9 +125,10 @@ func baselineCandidates(
 // preference order is the hourly row for the current UTC hour, then the
 // daily row for the current UTC weekday, then the 'all' row; the first
 // candidate in that order that passes isBaselineWarm is returned as
-// chosen. When no candidate is warm, chosen is nil and fallbackCold is
-// the most preferred candidate that exists (nil if none), so the caller
-// can log why detection was suppressed.
+// chosen. skippedCold is the most preferred candidate that exists but
+// failed the gate, whether or not a later candidate was chosen, so the
+// caller can log both a suppressed detection and a fall-through to a
+// less specific baseline. It is nil when nothing was skipped.
 //
 // Hourly and daily rows are preferred over 'all' because a metric with a
 // diurnal or weekly cycle has a much tighter spread within one period
@@ -140,19 +141,19 @@ func selectBaseline(
 	baselines []*database.MetricBaseline,
 	now time.Time,
 	cfg config.WarmupConfig,
-) (chosen, fallbackCold *database.MetricBaseline) {
+) (chosen, skippedCold *database.MetricBaseline) {
 	for _, candidate := range baselineCandidates(baselines, now) {
 		if candidate == nil {
 			continue
 		}
 		if isBaselineWarm(*candidate, cfg, now) {
-			return candidate, nil
+			return candidate, skippedCold
 		}
-		if fallbackCold == nil {
-			fallbackCold = candidate
+		if skippedCold == nil {
+			skippedCold = candidate
 		}
 	}
-	return nil, fallbackCold
+	return nil, skippedCold
 }
 
 // detectAnomalies runs the tiered anomaly detection
@@ -288,6 +289,14 @@ func (e *Engine) detectAnomalyForValue(
 			)
 		}
 		return
+	}
+	if cold != nil {
+		e.debugLog(
+			"Using %s baseline: preferred %s baseline not warm "+
+				"(connection=%d metric=%s samples=%d earliest=%s)",
+			baseline.PeriodType, cold.PeriodType, connID, metricName,
+			cold.SampleCount, cold.EarliestSampleAt,
+		)
 	}
 
 	// Variance floor: never divide by a divisor smaller

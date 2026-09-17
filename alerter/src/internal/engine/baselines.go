@@ -39,11 +39,17 @@ func (e *Engine) calculateBaselines(ctx context.Context) {
 		return
 	}
 
-	// Get lookback days from config (default to 7 if not set)
 	cfg := e.getConfig()
-	lookbackDays := cfg.Baselines.LookbackDays
-	if lookbackDays <= 0 {
-		lookbackDays = 7
+	lookbackDays := cfg.EffectiveLookbackDays()
+
+	// A warmup tier whose span exceeds the lookback can never be
+	// selected, and selectBaseline would fall through to the next
+	// tier without a word (#408). Say so at normal log level, once per
+	// cycle, so the misconfiguration is visible without debug logging.
+	for _, period := range cfg.UnreachableWarmupPeriods() {
+		e.log("WARNING: anomaly.tier1.warmup.%s.min_span_hours exceeds "+
+			"baselines.lookback_days (%d days); %s baselines can never "+
+			"become warm and will always be skipped", period, lookbackDays, period)
 	}
 
 	// Minimum samples required to create a time-period baseline

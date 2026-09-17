@@ -13,8 +13,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"

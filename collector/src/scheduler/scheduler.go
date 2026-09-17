@@ -872,7 +872,7 @@ func (ps *ProbeScheduler) executeProbeForServerWide(ctx context.Context, probe p
 			logger.Errorf("Error executing probe %s on connection %s: query execution timed out after %d seconds",
 				config.Name, conn.Name, ps.config.GetMonitoredPoolMaxWaitSeconds())
 		} else {
-			logger.Debugf("Error executing probe %s on connection %s: %v",
+			logger.Errorf("Error executing probe %s on connection %s: %v",
 				config.Name, conn.Name, err)
 		}
 		return nil, false, "", extStatus

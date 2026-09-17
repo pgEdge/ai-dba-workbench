@@ -255,7 +255,13 @@ func TestGetDatabaseList_SkipsDatabasesWithoutConnectPrivilege(t *testing.T) {
 		return execErr
 	}
 
-	if err := exec(fmt.Sprintf("CREATE ROLE %s LOGIN", roleName)); err != nil {
+	// The role needs a password: CI's Postgres image authenticates TCP
+	// connections with scram-sha-256, so a password-less role cannot log
+	// in and the test would silently skip (trust-auth dev hosts ignore
+	// it). The value is a throwaway that never leaves this process.
+	rolePassword := fmt.Sprintf("t440-pw-%d", suffix)
+	if err := exec(fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s'",
+		roleName, rolePassword)); err != nil {
 		t.Skipf("create test role: %v", err)
 	}
 	t.Cleanup(func() {
@@ -287,8 +293,8 @@ func TestGetDatabaseList_SkipsDatabasesWithoutConnectPrivilege(t *testing.T) {
 	// Enumerate as the unprivileged role, which is what a monitoring
 	// user is in practice.
 	rolePool, err := pgxpool.New(ctx, fmt.Sprintf(
-		"host=%s port=%d user=%s sslmode=disable dbname=postgres",
-		f.host, f.port, roleName))
+		"host=%s port=%d user=%s password=%s sslmode=disable dbname=postgres",
+		f.host, f.port, roleName, rolePassword))
 	if err != nil {
 		t.Skipf("connect as the test role: %v", err)
 	}

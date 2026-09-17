@@ -642,13 +642,15 @@ func TestPgStatStatementsProbe_FeatureCacheIsPerDatabase(t *testing.T) {
 			t.Fatalf("Execute against %s: %v", firstDB, err)
 		}
 		metrics, err := p.Execute(ctx, connName, otherConn, pgVersion)
-		if err != nil {
-			t.Fatalf("Execute against %s (no extension): %v", secondDB, err)
+		if !errors.Is(err, ErrExtensionNotInstalled) {
+			t.Fatalf("Execute against %s (no extension) = (%d rows, %v); "+
+				"want ErrExtensionNotInstalled, so the first database's "+
+				"cached extension check must not have decided for it",
+				secondDB, len(metrics), err)
 		}
-		if len(metrics) != 0 {
-			t.Errorf("Execute against %s returned %d rows; the first "+
-				"database's cached extension check decided for it",
-				secondDB, len(metrics))
+		if metrics != nil {
+			t.Errorf("Execute against %s returned %d rows alongside "+
+				"ErrExtensionNotInstalled", secondDB, len(metrics))
 		}
 	})
 

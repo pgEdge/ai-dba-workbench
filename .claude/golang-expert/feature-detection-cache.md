@@ -59,12 +59,18 @@ call returns no error and a non-nil slice, empty or not, which is why
 `PgStatStatementsProbe.Execute` appends onto an empty slice rather
 than returning `ScanRowsToMaps` directly. `executeProbeForConnection`
 then records an installed-but-empty extension as available, and only a
-genuinely absent one as `extension '<name>' not installed` in
-`metrics.probe_availability`.
+genuinely absent one as `extension '<name>' not installed` in the
+unqualified `probe_availability` table.
 
 Probes that still return `(nil, nil)` when their extension is missing,
-the `system_stats` and Spock probes, produce no observation and fall
-through to the same "not installed" reason as before.
+the `system_stats`, Spock and `pg_stat_io` probes, produce no
+observation (`extensionUnknown`) and fall through to the same "not
+installed" reason as before, because the switch still tests
+`allMetrics == nil` for that case. The cost is that a probe whose
+`Execute` fails outright is also recorded as "not installed"; keying
+the case on `extensionAbsent` alone would instead record those
+`(nil, nil)` probes as available, so the fix is to have them return
+`ErrExtensionNotInstalled` first and tighten the switch afterwards.
 
 ## Database Enumeration
 

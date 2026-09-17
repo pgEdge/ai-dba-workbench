@@ -898,7 +898,7 @@ project adheres to
   step was silently skipped. The alerter now logs a warning on each
   baseline cycle for any warmup tier whose `min_span_hours` exceeds
   the lookback. Operators who set `lookback_days` explicitly should
-  raise it to at least 14, or shorten `warmup.daily.min_span_hours`
+  raise it to at least 15, or shorten `warmup.daily.min_span_hours`
   to match. (#408)
 
 - Fix anomaly detection being permanently disabled for the 13 of 31

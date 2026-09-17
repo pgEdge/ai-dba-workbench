@@ -402,7 +402,7 @@ func NewConfig() *Config {
 		},
 		Baselines: BaselineConfig{
 			RefreshIntervalSeconds: 3600,
-			LookbackDays:           15,
+			LookbackDays:           DefaultLookbackDays,
 		},
 		Correlation: CorrelationConfig{
 			WindowSeconds: 120,

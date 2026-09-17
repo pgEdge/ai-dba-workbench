@@ -35,6 +35,7 @@ import AdminAlertRules from './AdminAlertRules';
 import AdminEmailChannels from './AdminEmailChannels';
 import AdminSlackChannels from './AdminSlackChannels';
 import AdminMattermostChannels from './AdminMattermostChannels';
+import AdminTelegramChannels from './AdminTelegramChannels';
 import AdminWebhookChannels from './AdminWebhookChannels';
 import AdminMemories from './AdminMemories';
 import SlideTransition from '../shared/SlideTransition';
@@ -76,6 +77,7 @@ const NAV_SECTIONS: NavSection[] = [
             { id: 'email_channels', label: 'Email Channels', permission: 'manage_notification_channels', Component: AdminEmailChannels },
             { id: 'slack_channels', label: 'Slack Channels', permission: 'manage_notification_channels', Component: AdminSlackChannels },
             { id: 'mattermost_channels', label: 'Mattermost Channels', permission: 'manage_notification_channels', Component: AdminMattermostChannels },
+            { id: 'telegram_channels', label: 'Telegram Channels', permission: 'manage_notification_channels', Component: AdminTelegramChannels },
             { id: 'webhook_channels', label: 'Webhook Channels', permission: 'manage_notification_channels', Component: AdminWebhookChannels },
         ],
     },

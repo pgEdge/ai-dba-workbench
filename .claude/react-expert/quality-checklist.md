@@ -410,6 +410,46 @@ group mutations, or the server's "A group with this name already
 exists" message will be masked. Token names are intentionally not
 unique, so no duplicate handling belongs in the token dialog.
 
+## Messaging Channel Field Descriptors
+
+`AdminMessagingChannels.tsx` is shared by the Slack, Mattermost and
+Telegram admin panels. It renders no hardcoded credential field:
+each platform passes a `MessagingChannelConfig` whose `fields` are
+`MessagingChannelField` descriptors, defined with the pure helpers
+in `client/src/components/AdminPanel/messagingChannelFields.ts`.
+Add a platform by writing a new wrapper like
+`AdminTelegramChannels.tsx`; do not add per-platform branches to
+the shared panel.
+
+Each descriptor names the API request field (`key`), its form
+label, and how the API reports it back: `setFlag` for a secret the
+server redacts (issue #187) and only reports as configured, e.g.
+`webhook_url_set` or `telegram_bot_token_set`; `valueKey` for a
+non-secret the server echoes, e.g. `telegram_chat_id`. The
+resulting semantics are load-bearing and must not drift:
+
+- A `secret` field is masked (`type="password"`), is never
+  populated from the API when the edit dialog opens, and is
+  omitted from the PUT body while blank. Sending an empty string
+  would overwrite the stored secret with nothing.
+- A non-secret field is pre-populated from the response on edit and
+  is always sent, on both create and update.
+- `required` secrets are mandatory on create and on an edit where
+  the `setFlag` is false; they are optional once one is stored.
+  `required` non-secret fields are mandatory in both cases.
+  `findMissingRequiredField` is the single source of truth and
+  drives both the submit button's `disabled` state and the save
+  handler's guard.
+- `showInTable` adds a table column: a `setFlag` field renders a
+  Configured / Not configured chip, a `valueKey` field renders the
+  value. Slack and Mattermost deliberately opt out, so their table
+  keeps the five base columns.
+
+Tests for a new platform belong in a per-platform file (see
+`__tests__/AdminTelegramChannels.test.tsx`) and must assert that
+the secret is absent from the PUT body when left blank and that it
+never reaches the rendered document.
+
 ## Permission-Gated UI
 
 Hide actions a user cannot perform; do not render disabled

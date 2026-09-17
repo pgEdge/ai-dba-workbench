@@ -12118,7 +12118,14 @@
           },
           "channel_type": {
             "type": "string",
-            "description": "Channel type (email, slack, mattermost, webhook)"
+            "description": "Channel type",
+            "enum": [
+              "email",
+              "slack",
+              "mattermost",
+              "telegram",
+              "webhook"
+            ]
           },
           "created_at": {
             "type": "string",
@@ -12219,6 +12226,15 @@
             "type": "boolean",
             "description": "Whether an SMTP username is configured"
           },
+          "telegram_bot_token_set": {
+            "type": "boolean",
+            "description": "Whether a Telegram bot token is configured. The token itself is a bearer credential and is never returned."
+          },
+          "telegram_chat_id": {
+            "type": "string",
+            "description": "Telegram chat ID or @channelusername the channel posts to (telegram). Not a secret, so it is returned in clear.",
+            "nullable": true
+          },
           "template_alert_clear": {
             "type": "string",
             "description": "Template used when an alert clears; null means use the built-in default",
@@ -12258,7 +12274,14 @@
           },
           "channel_type": {
             "type": "string",
-            "description": "Channel type (email, slack, mattermost, webhook)"
+            "description": "Channel type",
+            "enum": [
+              "email",
+              "slack",
+              "mattermost",
+              "telegram",
+              "webhook"
+            ]
           },
           "description": {
             "type": "string",
@@ -12326,6 +12349,14 @@
           "smtp_username": {
             "type": "string",
             "description": "SMTP username (email). On PUT: omit to keep existing, empty string to clear, value to replace."
+          },
+          "telegram_bot_token": {
+            "type": "string",
+            "description": "Telegram bot token, in the form \u003cbot id\u003e:\u003ctoken\u003e (telegram). Required on POST for telegram channels and ignored on POST for every other channel type. On PUT: omit to keep existing, empty string to clear, value to replace. A PUT that changes channel_type to telegram revalidates the stored token. Never returned; the response exposes telegram_bot_token_set instead."
+          },
+          "telegram_chat_id": {
+            "type": "string",
+            "description": "Telegram chat ID or @channelusername (telegram). Required on POST for telegram channels and ignored on POST for every other channel type. On PUT: omit to keep existing, empty string to clear, value to replace."
           },
           "webhook_url": {
             "type": "string",

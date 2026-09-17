@@ -42,6 +42,9 @@ vi.mock('../AdminSlackChannels', () => ({
 vi.mock('../AdminMattermostChannels', () => ({
     default: () => <div data-testid="admin-mattermost-channels">Admin Mattermost Channels Component</div>,
 }));
+vi.mock('../AdminTelegramChannels', () => ({
+    default: () => <div data-testid="admin-telegram-channels">Admin Telegram Channels Component</div>,
+}));
 vi.mock('../AdminWebhookChannels', () => ({
     default: () => <div data-testid="admin-webhook-channels">Admin Webhook Channels Component</div>,
 }));
@@ -144,7 +147,24 @@ describe('AdminPanel', () => {
         expect(screen.getByText('Email Channels')).toBeInTheDocument();
         expect(screen.getByText('Slack Channels')).toBeInTheDocument();
         expect(screen.getByText('Mattermost Channels')).toBeInTheDocument();
+        expect(screen.getByText('Telegram Channels')).toBeInTheDocument();
         expect(screen.getByText('Webhook Channels')).toBeInTheDocument();
+    });
+
+    it('renders the Telegram channels panel when its nav item is clicked', async () => {
+        renderAdminPanel();
+
+        await waitFor(() => {
+            expect(screen.getByTestId('admin-users')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByText('Telegram Channels'));
+
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('admin-telegram-channels'),
+            ).toBeInTheDocument();
+        });
     });
 
     it('renders AI section when aiEnabled is true', () => {

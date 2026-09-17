@@ -36,6 +36,8 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
                smtp_host, smtp_port, smtp_username,
                smtp_password_encrypted AS smtp_password,
                smtp_use_tls, from_address, from_name,
+               telegram_bot_token_encrypted AS telegram_bot_token,
+               telegram_chat_id,
                template_alert_fire, template_alert_clear, template_reminder,
                reminder_enabled, reminder_interval_hours, is_estate_default,
                created_at, updated_at
@@ -47,7 +49,8 @@ func (d *Datastore) GetNotificationChannel(ctx context.Context, id int64) (*Noti
 		&channel.WebhookURL, &channel.EndpointURL, &channel.HTTPMethod, &channel.Headers,
 		&channel.AuthType, &channel.AuthCredentials, &channel.SMTPHost, &channel.SMTPPort,
 		&channel.SMTPUsername, &channel.SMTPPassword, &channel.SMTPUseTLS,
-		&channel.FromAddress, &channel.FromName, &channel.TemplateAlertFire,
+		&channel.FromAddress, &channel.FromName,
+		&channel.TelegramBotToken, &channel.TelegramChatID, &channel.TemplateAlertFire,
 		&channel.TemplateAlertClear, &channel.TemplateReminder, &channel.ReminderEnabled,
 		&channel.ReminderIntervalHours, &channel.IsEstateDefault, &channel.CreatedAt,
 		&channel.UpdatedAt)
@@ -72,7 +75,9 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
                nc.auth_type, nc.auth_credentials_encrypted AS auth_credentials,
                nc.smtp_host, nc.smtp_port, nc.smtp_username,
                nc.smtp_password_encrypted AS smtp_password,
-               nc.smtp_use_tls, nc.from_address, nc.from_name, nc.template_alert_fire,
+               nc.smtp_use_tls, nc.from_address, nc.from_name,
+               nc.telegram_bot_token_encrypted AS telegram_bot_token,
+               nc.telegram_chat_id, nc.template_alert_fire,
                nc.template_alert_clear, nc.template_reminder, nc.reminder_enabled,
                nc.reminder_interval_hours, nc.is_estate_default, nc.created_at, nc.updated_at
         FROM notification_channels nc
@@ -110,7 +115,8 @@ func (d *Datastore) GetNotificationChannelsForConnection(ctx context.Context, co
 			&channel.WebhookURL, &channel.EndpointURL, &channel.HTTPMethod, &channel.Headers,
 			&channel.AuthType, &channel.AuthCredentials, &channel.SMTPHost, &channel.SMTPPort,
 			&channel.SMTPUsername, &channel.SMTPPassword, &channel.SMTPUseTLS,
-			&channel.FromAddress, &channel.FromName, &channel.TemplateAlertFire,
+			&channel.FromAddress, &channel.FromName,
+			&channel.TelegramBotToken, &channel.TelegramChatID, &channel.TemplateAlertFire,
 			&channel.TemplateAlertClear, &channel.TemplateReminder, &channel.ReminderEnabled,
 			&channel.ReminderIntervalHours, &channel.IsEstateDefault, &channel.CreatedAt,
 			&channel.UpdatedAt)
@@ -268,7 +274,9 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
             nc.auth_type, nc.auth_credentials_encrypted AS auth_credentials,
             nc.smtp_host, nc.smtp_port, nc.smtp_username,
             nc.smtp_password_encrypted AS smtp_password,
-            nc.smtp_use_tls, nc.from_address, nc.from_name, nc.template_alert_fire,
+            nc.smtp_use_tls, nc.from_address, nc.from_name,
+            nc.telegram_bot_token_encrypted AS telegram_bot_token,
+            nc.telegram_chat_id, nc.template_alert_fire,
             nc.template_alert_clear, nc.template_reminder, nc.reminder_enabled,
             nc.reminder_interval_hours, nc.is_estate_default, nc.created_at, nc.updated_at,
             -- Reminder state fields (may be NULL for first reminder)
@@ -332,7 +340,8 @@ func (d *Datastore) GetDueReminders(ctx context.Context) ([]DueReminder, error) 
 			&channel.WebhookURL, &channel.EndpointURL, &channel.HTTPMethod, &channel.Headers,
 			&channel.AuthType, &channel.AuthCredentials, &channel.SMTPHost, &channel.SMTPPort,
 			&channel.SMTPUsername, &channel.SMTPPassword, &channel.SMTPUseTLS,
-			&channel.FromAddress, &channel.FromName, &channel.TemplateAlertFire,
+			&channel.FromAddress, &channel.FromName,
+			&channel.TelegramBotToken, &channel.TelegramChatID, &channel.TemplateAlertFire,
 			&channel.TemplateAlertClear, &channel.TemplateReminder, &channel.ReminderEnabled,
 			&channel.ReminderIntervalHours, &channel.IsEstateDefault, &channel.CreatedAt,
 			&channel.UpdatedAt,

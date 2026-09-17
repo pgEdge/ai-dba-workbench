@@ -26,17 +26,33 @@ vi.mock('../../../utils/apiClient', () => ({
 }));
 
 import AdminMessagingChannels from '../AdminMessagingChannels';
+import {
+    isFieldMandatory,
+    findMissingRequiredField,
+    type MessagingChannelField,
+} from '../messagingChannelFields';
+
+// A webhook-URL descriptor matches what AdminSlackChannels and
+// AdminMattermostChannels pass in production: one required secret
+// field whose configured-state is reported by `webhook_url_set`.
+const webhookUrlField = {
+    key: 'webhook_url',
+    label: 'Webhook URL',
+    setFlag: 'webhook_url_set',
+    secret: true,
+    required: true,
+};
 
 const slackConfig = {
     channelType: 'slack',
     platformName: 'Slack',
-    webhookUrlLabel: 'Webhook URL',
+    fields: [webhookUrlField],
 };
 
 const mattermostConfig = {
     channelType: 'mattermost',
     platformName: 'Mattermost',
-    webhookUrlLabel: 'Webhook URL',
+    fields: [webhookUrlField],
 };
 
 // API responses no longer include `webhook_url` (redacted by the
@@ -514,6 +530,41 @@ describe('AdminMessagingChannels', () => {
             });
         });
 
+        it('sends the enabled flag when it is toggled off in the dialog', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: slackChannels });
+            mockApiPut.mockResolvedValue({});
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminMessagingChannels config={slackConfig} />);
+
+            await waitFor(() => {
+                expect(screen.getByText('Engineering Slack')).toBeInTheDocument();
+            });
+
+            const editButtons = screen.getAllByRole('button', {
+                name: /edit channel/i,
+            });
+            await user.click(editButtons[0]);
+
+            const dialog = screen.getByRole('dialog');
+            // The dialog's own Enabled switch (the channel is enabled).
+            const enabledToggle = within(dialog).getByRole('checkbox', {
+                name: /Toggle channel enabled/i,
+            });
+            fireEvent.click(enabledToggle);
+
+            await user.click(
+                within(dialog).getByRole('button', { name: /Save/i }),
+            );
+
+            await waitFor(() => {
+                expect(mockApiPut).toHaveBeenCalledWith(
+                    '/api/v1/notification-channels/1',
+                    { enabled: false },
+                );
+            });
+        });
+
         it('updates is_estate_default and enabled when toggled in the dialog', async () => {
             mockApiGet.mockResolvedValue({ notification_channels: slackChannels });
             mockApiPut.mockResolvedValue({});
@@ -840,6 +891,34 @@ describe('AdminMessagingChannels', () => {
                 ).not.toBeInTheDocument();
             });
         });
+
+        it('closes the create dialog when Escape is pressed', async () => {
+            mockApiGet.mockResolvedValue({ notification_channels: [] });
+            const user = userEvent.setup({ delay: null });
+
+            renderWithTheme(<AdminMessagingChannels config={slackConfig} />);
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('No Slack channels configured.'),
+                ).toBeInTheDocument();
+            });
+
+            await user.click(screen.getByRole('button', { name: /Add Channel/i }));
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Create Slack channel'),
+                ).toBeInTheDocument();
+            });
+
+            fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+
+            await waitFor(() => {
+                expect(
+                    screen.queryByText('Create Slack channel'),
+                ).not.toBeInTheDocument();
+            });
+        });
     });
 
     describe('Alert dismissal', () => {
@@ -892,6 +971,203 @@ describe('AdminMessagingChannels', () => {
                     screen.queryByText(/Test notification sent successfully/i),
                 ).not.toBeInTheDocument();
             });
+        });
+    });
+});
+
+/**
+ * Field descriptors let one panel serve platforms whose credentials
+ * are not a single webhook URL. These tests use a two-field shape (a
+ * required secret plus an optional, non-secret value with its own
+ * table column) to exercise the generic paths.
+ */
+describe('AdminMessagingChannels - field descriptors', () => {
+    const secretField: MessagingChannelField = {
+        key: 'api_token',
+        label: 'API Token',
+        setFlag: 'api_token_set',
+        secret: true,
+        required: true,
+        showInTable: true,
+    };
+
+    const plainField: MessagingChannelField = {
+        key: 'room',
+        label: 'Room',
+        valueKey: 'room',
+        helperText: 'Room to post into.',
+        placeholder: 'general',
+        showInTable: true,
+    };
+
+    const multiFieldConfig = {
+        channelType: 'example',
+        platformName: 'Example',
+        fields: [secretField, plainField],
+    };
+
+    const exampleChannels = [
+        {
+            id: 7,
+            channel_type: 'example',
+            name: 'Example One',
+            description: 'First',
+            enabled: true,
+            is_estate_default: false,
+            api_token_set: true,
+            room: 'ops',
+        },
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockApiGet.mockResolvedValue({
+            notification_channels: exampleChannels,
+        });
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    describe('isFieldMandatory', () => {
+        it('never requires an optional field', () => {
+            expect(isFieldMandatory(plainField, null)).toBe(false);
+            expect(isFieldMandatory(plainField, { room: true })).toBe(false);
+        });
+
+        it('always requires a required non-secret field', () => {
+            const required = { ...plainField, required: true };
+            expect(isFieldMandatory(required, null)).toBe(true);
+            expect(isFieldMandatory(required, { room: true })).toBe(true);
+        });
+
+        it('requires a secret on create and only when unset on edit', () => {
+            expect(isFieldMandatory(secretField, null)).toBe(true);
+            expect(isFieldMandatory(secretField, { api_token: false })).toBe(
+                true,
+            );
+            expect(isFieldMandatory(secretField, { api_token: true })).toBe(
+                false,
+            );
+        });
+    });
+
+    describe('findMissingRequiredField', () => {
+        it('returns the first blank mandatory field', () => {
+            const found = findMissingRequiredField(
+                [secretField, { ...plainField, required: true }],
+                { api_token: 'set', room: '   ' },
+                null,
+            );
+            expect(found?.key).toBe('room');
+        });
+
+        it('treats an absent value as blank', () => {
+            const found = findMissingRequiredField([secretField], {}, null);
+            expect(found?.key).toBe('api_token');
+        });
+
+        it('returns undefined when every mandatory field is filled', () => {
+            const found = findMissingRequiredField(
+                [secretField, plainField],
+                { api_token: 'set', room: '' },
+                null,
+            );
+            expect(found).toBeUndefined();
+        });
+    });
+
+    it('renders a column per table field, masking only the secret', async () => {
+        renderWithTheme(<AdminMessagingChannels config={multiFieldConfig} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Example One')).toBeInTheDocument();
+        });
+
+        const row = screen.getByText('Example One').closest('tr');
+        expect(row).not.toBeNull();
+        expect(
+            within(row as HTMLElement).getByText('Configured'),
+        ).toBeInTheDocument();
+        expect(within(row as HTMLElement).getByText('ops')).toBeInTheDocument();
+    });
+
+    it('pre-fills non-secret fields on edit and always sends them', async () => {
+        mockApiPut.mockResolvedValue({});
+        const user = userEvent.setup({ delay: null });
+
+        renderWithTheme(<AdminMessagingChannels config={multiFieldConfig} />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Example One')).toBeInTheDocument();
+        });
+
+        await user.click(
+            screen.getAllByRole('button', { name: /edit channel/i })[0],
+        );
+
+        const dialog = screen.getByRole('dialog');
+        // Optional field: no required marker, value echoed from the API.
+        const roomInput = within(dialog).getByLabelText('Room');
+        expect(roomInput).toHaveValue('ops');
+        expect(
+            within(dialog).getByText('Room to post into.'),
+        ).toBeInTheDocument();
+
+        fireEvent.change(within(dialog).getByLabelText('Name *'), {
+            target: { value: 'Example Renamed' },
+        });
+        await user.click(within(dialog).getByRole('button', { name: /Save/i }));
+
+        await waitFor(() => {
+            expect(mockApiPut).toHaveBeenCalledWith(
+                '/api/v1/notification-channels/7',
+                { name: 'Example Renamed', room: 'ops' },
+            );
+        });
+    });
+
+    it('sends every field on create, including blank optional ones', async () => {
+        mockApiGet.mockResolvedValue({ notification_channels: [] });
+        mockApiPost.mockResolvedValue({ id: 8 });
+        const user = userEvent.setup({ delay: null });
+
+        renderWithTheme(<AdminMessagingChannels config={multiFieldConfig} />);
+
+        await waitFor(() => {
+            expect(
+                screen.getByText('No Example channels configured.'),
+            ).toBeInTheDocument();
+        });
+
+        await user.click(screen.getByRole('button', { name: /Add Channel/i }));
+        const dialog = screen.getByRole('dialog');
+
+        fireEvent.change(within(dialog).getByLabelText('Name *'), {
+            target: { value: 'Fresh' },
+        });
+        fireEvent.change(within(dialog).getByLabelText('API Token *'), {
+            target: { value: 'tok' },
+        });
+
+        await user.click(
+            within(dialog).getByRole('button', { name: /Create/i }),
+        );
+
+        await waitFor(() => {
+            expect(mockApiPost).toHaveBeenCalledWith(
+                '/api/v1/notification-channels',
+                {
+                    channel_type: 'example',
+                    name: 'Fresh',
+                    description: '',
+                    enabled: true,
+                    is_estate_default: false,
+                    api_token: 'tok',
+                    room: '',
+                },
+            );
         });
     });
 });

@@ -106,7 +106,8 @@ Alert Configuration:
 
 Notification Channels:
 - notification_channels: Configured channels. Columns: id, name, channel_type
-  (slack/mattermost/webhook/email), config (JSON), enabled, created_by
+  (slack/mattermost/telegram/webhook/email), config (JSON), enabled,
+  created_by
 - email_recipients: Email addresses for email channels. Columns: id, channel_id, email
 - connection_notification_channels: Links connections to channels. Columns:
   connection_id, channel_id

@@ -275,13 +275,17 @@ dimensions that model produces:
 |----------|-------|------------|
 | Ollama | `nomic-embed-text` | 768 |
 | OpenAI | `text-embedding-3-small` | 1536 |
-| Voyage | `voyage-3-lite` | 1024 |
+| Voyage | `voyage-3-lite` | 512 |
+| Gemini | `gemini-embedding-001` | 3072 |
 
 Any model name the chosen provider recognises can be configured in
 place of the default. The alerter keeps each embedding at the width the
 model produces and zero-pads it to the `halfvec(4000)` column when it
-is stored or used as a query vector; a model that produces more than
-4000 dimensions is rejected with an error rather than truncated.
+is stored or used as a query vector. A model that produces more than
+4000 dimensions is not truncated: the width check runs when the
+embedding is stored or searched, so the alerter logs an error for each
+candidate it processes with such a model, stores no embedding and
+passes the candidate through to tier 3.
 
 ### Reasoning Providers
 

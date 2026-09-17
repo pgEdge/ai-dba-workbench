@@ -16,9 +16,12 @@ package probes
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestPgStatWalProbe_NoStatWalView documents that the legacy
@@ -104,5 +107,49 @@ func TestStoreMetrics_BeginError(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed to begin transaction") {
 		t.Errorf("expected wrapped begin-transaction error, got %v",
 			err)
+	}
+}
+
+// inFailedSQLTxn is SQLSTATE 25P02, raised by any statement
+// issued on a connection whose transaction has already aborted.
+const inFailedSQLTxn = "25P02"
+
+// TestStoreMetrics_RollsBackFailedTransaction proves that the deferred
+// rollback in StoreMetrics actually fires on the INSERT failure path.
+// Before issue #424 the rollback was guarded by a shadowed error
+// variable that was never non-nil after Begin, so the aborted
+// transaction was left open on the pooled connection and the next
+// statement on that connection failed with SQLSTATE 25P02, "current
+// transaction is aborted". Reusing the same connection afterwards is
+// therefore the assertion: it succeeds only if the ROLLBACK was sent.
+func TestStoreMetrics_RollsBackFailedTransaction(t *testing.T) {
+	pool := requireIntegrationPool(t)
+	conn := acquireConn(t, pool)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	if err := EnsurePartition(ctx, conn, "pg_stat_activity",
+		now); err != nil {
+		t.Fatalf("EnsurePartition: %v", err)
+	}
+
+	if err := StoreMetrics(ctx, conn, "pg_stat_activity",
+		[]string{"definitely_no_such_column"},
+		[][]any{{int64(1)}}); err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+
+	// The connection must be back outside a transaction.
+	var one int
+	if err := conn.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == inFailedSQLTxn {
+			t.Fatalf("transaction left open after StoreMetrics "+
+				"failure: %v", err)
+		}
+		t.Fatalf("query after StoreMetrics failure: %v", err)
+	}
+	if one != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", one)
 	}
 }

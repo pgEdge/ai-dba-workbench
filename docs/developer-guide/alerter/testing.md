@@ -50,6 +50,7 @@ alerter/
 │           ├── manager.go        # Notification mgr
 │           ├── slack.go          # Slack notifier
 │           ├── mattermost.go     # Mattermost
+│           ├── telegram.go       # Telegram notifier
 │           ├── webhook.go        # Webhook notifier
 │           ├── email.go          # Email notifier
 │           └── template.go       # Templates

@@ -430,3 +430,170 @@ func TestReminderState(t *testing.T) {
 		t.Error("expected a cancel error from DeleteReminderStatesForAlert")
 	}
 }
+
+// =============================================================================
+// Telegram column mapping (issue #475)
+// =============================================================================
+
+// The three queries that hydrate a NotificationChannel scan positionally
+// into a hand-written argument list, and telegram_chat_id now sits
+// directly between telegram_bot_token_encrypted and template_alert_fire.
+// All three are nullable text, so a SELECT list and a scan list that
+// drift apart produce no type error at all: the alerter would simply
+// send every Telegram message to whatever landed in TelegramChatID. The
+// markers below are distinct per column so any such swap shows up as a
+// value mismatch rather than a silent pass.
+//
+// The bot token is deliberately stored as opaque ciphertext-looking
+// text. These queries alias telegram_bot_token_encrypted straight into
+// the struct field and perform no decryption, so the value must come
+// back byte for byte.
+const (
+	telegramTestBotToken      = "ENCRYPTED-BOT-TOKEN-MARKER"
+	telegramTestChatID        = "-1001234567890"
+	telegramTestFireTemplate  = "TEMPLATE-ALERT-FIRE-MARKER"
+	telegramTestClearTemplate = "TEMPLATE-ALERT-CLEAR-MARKER"
+)
+
+// insertTelegramTestChannel inserts a telegram channel whose adjacent
+// nullable text columns each carry a distinct marker, and returns its
+// id.
+func insertTelegramTestChannel(t *testing.T, pool *pgxpool.Pool, name string,
+	isEstateDefault bool) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO notification_channels (
+			owner_username, enabled, channel_type, name, http_method,
+			headers_json, smtp_port, smtp_use_tls,
+			telegram_bot_token_encrypted, telegram_chat_id,
+			template_alert_fire, template_alert_clear,
+			reminder_enabled, reminder_interval_hours, is_estate_default
+		) VALUES ('tester', TRUE, 'telegram', $1, 'POST', '{}', 587, TRUE,
+			$2, $3, $4, $5, TRUE, 1, $6)
+		RETURNING id
+	`, name, telegramTestBotToken, telegramTestChatID, telegramTestFireTemplate,
+		telegramTestClearTemplate, isEstateDefault).Scan(&id)
+	if err != nil {
+		t.Fatalf("insertTelegramTestChannel: %v", err)
+	}
+	return id
+}
+
+// assertTelegramChannelFields checks that every marker came back in the
+// field that owns it.
+func assertTelegramChannelFields(t *testing.T, query string, channel *NotificationChannel) {
+	t.Helper()
+	if channel == nil {
+		t.Fatalf("%s: channel is nil", query)
+	}
+	if channel.ChannelType != ChannelTypeTelegram {
+		t.Errorf("%s: ChannelType = %q, want telegram", query, channel.ChannelType)
+	}
+	for _, f := range []struct {
+		name string
+		got  *string
+		want string
+	}{
+		{"TelegramBotToken", channel.TelegramBotToken, telegramTestBotToken},
+		{"TelegramChatID", channel.TelegramChatID, telegramTestChatID},
+		{"TemplateAlertFire", channel.TemplateAlertFire, telegramTestFireTemplate},
+		{"TemplateAlertClear", channel.TemplateAlertClear, telegramTestClearTemplate},
+	} {
+		if f.got == nil {
+			t.Errorf("%s: %s = nil, want %q", query, f.name, f.want)
+			continue
+		}
+		if *f.got != f.want {
+			t.Errorf("%s: %s = %q, want %q", query, f.name, *f.got, f.want)
+		}
+	}
+}
+
+func TestGetNotificationChannel_TelegramFields(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	id := insertTelegramTestChannel(t, pool, "tg-single", true)
+
+	got, err := ds.GetNotificationChannel(ctx, id)
+	if err != nil {
+		t.Fatalf("GetNotificationChannel: %v", err)
+	}
+	assertTelegramChannelFields(t, "GetNotificationChannel", got)
+}
+
+func TestGetNotificationChannelsForConnection_TelegramFields(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "tg-conn")
+	insertTelegramTestChannel(t, pool, "tg-for-connection", true)
+
+	got, err := ds.GetNotificationChannelsForConnection(ctx, connID)
+	if err != nil {
+		t.Fatalf("GetNotificationChannelsForConnection: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(got))
+	}
+	assertTelegramChannelFields(t, "GetNotificationChannelsForConnection", got[0])
+}
+
+func TestGetDueReminders_TelegramFields(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "tg-reminder-conn")
+	insertTelegramTestChannel(t, pool, "tg-reminder", true)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO alerts (alert_type, connection_id, severity, title,
+			description, status, triggered_at)
+		VALUES ('threshold', $1, 'warning', 't', 'd', 'active',
+			NOW() - INTERVAL '2 hours')
+	`, connID); err != nil {
+		t.Fatal(err)
+	}
+
+	reminders, err := ds.GetDueReminders(ctx)
+	if err != nil {
+		t.Fatalf("GetDueReminders: %v", err)
+	}
+	if len(reminders) != 1 {
+		t.Fatalf("expected 1 due reminder, got %d", len(reminders))
+	}
+	assertTelegramChannelFields(t, "GetDueReminders", reminders[0].Channel)
+}
+
+// TestGetNotificationChannelsForConnection_ScanError covers the scan
+// failure branch, which no other test reaches. SMTPPort is a plain int,
+// so a NULL smtp_port column has nowhere to go and pgx reports a scan
+// error; the function must surface it rather than returning a partly
+// built channel list.
+func TestGetNotificationChannelsForConnection_ScanError(t *testing.T) {
+	ds, pool, cleanup := newFullTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	connID := insertTestConnection(t, pool, "scan-error-conn")
+	id := insertTestChannel(t, pool, "scan-error-channel", "slack", true)
+	if _, err := pool.Exec(ctx,
+		`UPDATE notification_channels SET smtp_port = NULL WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ds.GetNotificationChannelsForConnection(ctx, connID)
+	if err == nil {
+		t.Fatalf("expected a scan error, got %d channel(s)", len(got))
+	}
+	if !strings.Contains(err.Error(), "failed to scan notification channel") {
+		t.Errorf("error = %v, want it to report the scan failure", err)
+	}
+	if got != nil {
+		t.Errorf("channels = %+v, want nil on error", got)
+	}
+}

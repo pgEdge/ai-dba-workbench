@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -86,6 +87,14 @@ type NotificationChannelCreateRequest struct {
 	SMTPUseTLS   *bool   `json:"smtp_use_tls,omitempty"`
 	FromAddress  *string `json:"from_address,omitempty"`
 	FromName     *string `json:"from_name,omitempty"`
+
+	// Telegram fields. TelegramBotToken follows the same three-way
+	// pointer semantics as the other secrets (see updateChannel):
+	// omitted keeps the stored token, "" clears it, a value replaces
+	// it. TelegramChatID is not a secret but uses the same semantics
+	// so a fetch+edit round-trip behaves consistently.
+	TelegramBotToken *string `json:"telegram_bot_token,omitempty"`
+	TelegramChatID   *string `json:"telegram_chat_id,omitempty"`
 
 	// Templates
 	TemplateAlertFire  *string `json:"template_alert_fire,omitempty"`
@@ -257,7 +266,7 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 	// Validate channel type
 	if !database.ValidChannelTypes[req.ChannelType] {
 		RespondError(w, http.StatusBadRequest,
-			"Invalid channel_type: must be one of email, slack, mattermost, webhook")
+			"Invalid channel_type: must be one of email, slack, mattermost, telegram, webhook")
 		return
 	}
 
@@ -275,6 +284,16 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		}
 		if req.FromAddress == nil || *req.FromAddress == "" {
 			RespondError(w, http.StatusBadRequest, "from_address is required for email channels")
+			return
+		}
+	}
+
+	// Validate telegram-specific fields. Both the bot token and the
+	// chat ID are mandatory: the token authenticates the call and the
+	// chat ID addresses the destination, and neither has a default.
+	if req.ChannelType == string(database.ChannelTypeTelegram) {
+		if msg := validateTelegramFields(req.TelegramBotToken, req.TelegramChatID, true); msg != "" {
+			RespondError(w, http.StatusBadRequest, msg)
 			return
 		}
 	}
@@ -326,6 +345,20 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		headers = *req.Headers
 	}
 
+	// Only a telegram channel stores telegram fields. The validation
+	// above runs solely in the telegram branch, so assigning these
+	// unconditionally would let a POST for any other type park an
+	// unchecked bot token in the row; a later type change to telegram
+	// would then adopt a token that never passed the shape check, which
+	// is exactly the invariant the redactor in webhook_test_sender.go
+	// relies on. Dropping the fields keeps the stored row consistent
+	// with its declared type.
+	var telegramBotToken, telegramChatID *string
+	if req.ChannelType == string(database.ChannelTypeTelegram) {
+		telegramBotToken = req.TelegramBotToken
+		telegramChatID = req.TelegramChatID
+	}
+
 	channel := &database.NotificationChannel{
 		OwnerUsername:         &username,
 		Enabled:               enabled,
@@ -345,6 +378,8 @@ func (h *NotificationChannelHandler) createChannel(w http.ResponseWriter, r *htt
 		SMTPUseTLS:            smtpUseTLS,
 		FromAddress:           req.FromAddress,
 		FromName:              req.FromName,
+		TelegramBotToken:      telegramBotToken,
+		TelegramChatID:        telegramChatID,
 		TemplateAlertFire:     req.TemplateAlertFire,
 		TemplateAlertClear:    req.TemplateAlertClear,
 		TemplateReminder:      req.TemplateReminder,
@@ -399,7 +434,7 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 	if req.ChannelType != "" {
 		if !database.ValidChannelTypes[req.ChannelType] {
 			RespondError(w, http.StatusBadRequest,
-				"Invalid channel_type: must be one of email, slack, mattermost, webhook")
+				"Invalid channel_type: must be one of email, slack, mattermost, telegram, webhook")
 			return
 		}
 		channelType = req.ChannelType
@@ -431,14 +466,50 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 		}
 	}
 
+	// Validate telegram-specific fields against their EFFECTIVE values.
+	// A nil request pointer means the field was omitted, which keeps
+	// whatever is stored, so an edit that only renames the channel must
+	// not be read as clearing the bot token. An explicit empty string
+	// does clear it, and is then rejected here because a telegram
+	// channel without a token cannot deliver anything.
+	//
+	// The token is shape-checked in two cases: when the request supplies
+	// it, and when the request converts a channel of some other type
+	// into a telegram channel. The second case matters because a stored
+	// token on a non-telegram channel never passed the create-time
+	// check, and converting the channel is a deliberate act that has to
+	// leave behind a row satisfying the invariant. A PUT on a channel
+	// that is ALREADY telegram and omits the token keeps the storage
+	// exemption; see validateTelegramFields for why re-checking it
+	// would make a channel with an undecryptable token impossible to
+	// edit or even to disable.
+	if channelType == string(database.ChannelTypeTelegram) {
+		botToken := existing.TelegramBotToken
+		shapeCheckToken := req.TelegramBotToken != nil
+		if shapeCheckToken {
+			botToken = req.TelegramBotToken
+		} else if existing.ChannelType != database.ChannelTypeTelegram {
+			shapeCheckToken = true
+		}
+		chatID := existing.TelegramChatID
+		if req.TelegramChatID != nil {
+			chatID = req.TelegramChatID
+		}
+		if msg := validateTelegramFields(botToken, chatID, shapeCheckToken); msg != "" {
+			RespondError(w, http.StatusBadRequest, msg)
+			return
+		}
+	}
+
 	// Merge fields. Each `*string` request field uses three-way
 	// semantics: nil pointer means "field omitted - preserve the
 	// existing value", an explicit empty string means "clear the
 	// stored value", and a non-empty string means "replace". This
 	// matters most for the secret fields (webhook_url,
-	// auth_credentials, smtp_username, smtp_password) because the
-	// GET response no longer echoes them, so a UI fetch+edit
-	// round-trip must omit any field it does not want to change.
+	// auth_credentials, smtp_username, smtp_password and
+	// telegram_bot_token) because the GET response no longer echoes
+	// them, so a UI fetch+edit round-trip must omit any field it does
+	// not want to change.
 	if req.Description != nil {
 		existing.Description = req.Description
 	}
@@ -483,6 +554,12 @@ func (h *NotificationChannelHandler) updateChannel(w http.ResponseWriter, r *htt
 	}
 	if req.FromName != nil {
 		existing.FromName = req.FromName
+	}
+	if req.TelegramBotToken != nil {
+		existing.TelegramBotToken = req.TelegramBotToken
+	}
+	if req.TelegramChatID != nil {
+		existing.TelegramChatID = req.TelegramChatID
 	}
 	if req.TemplateAlertFire != nil {
 		existing.TemplateAlertFire = req.TemplateAlertFire
@@ -690,6 +767,88 @@ func (h *NotificationChannelHandler) deleteRecipient(w http.ResponseWriter, r *h
 	RespondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+// telegramBotTokenPattern matches the shape BotFather issues: a numeric
+// bot ID, a colon, then the token body.
+//
+// The check stays deliberately loose about length and alphabet.
+// Telegram publishes no stable contract for either and both have
+// changed over time, so pinning them here would reject valid tokens for
+// no security gain. The Bot API remains the authority on whether a
+// well-shaped token is a real one.
+//
+// What the body does exclude is every character that would either
+// change the meaning of the request path the token is interpolated into
+// - everything up to and including the space, which covers all
+// whitespace and control characters, plus DEL and the URL delimiters
+// '/', '?' and '#' - or surround a URL in an error or a log line: the
+// double quote, the apostrophe, the backquote, the angle brackets, the
+// closing paren, the closing square bracket, the comma and the
+// semicolon.
+//
+// That second group is not cosmetic. It is the other half of the
+// invariant isTelegramTokenTerminator documents in
+// webhook_test_sender.go: the redactor's terminator class must be a
+// subset of the characters excluded here, so that every character a
+// token may legally contain is swallowed into the redacted run instead
+// of ending it. The \x00-\x20 range is written to match that class
+// byte for byte rather than as \s, which would leave the other control
+// characters legal in a token and able to cut a redaction short.
+// Widening this pattern without narrowing that class reopens a
+// credential leak. Real BotFather tokens use only [A-Za-z0-9_-], so
+// nothing legitimate is turned away.
+var telegramBotTokenPattern = regexp.MustCompile(
+	"^\\d+:[^\\x00-\\x20\\x7f/?#\"'`<>)\\],;]+$")
+
+// telegramChatIDPattern matches the two forms the Bot API accepts for
+// chat_id: a decimal chat ID, which may be negative because supergroups
+// and channels use negative IDs, or an @channelusername.
+//
+// This is deliberately permissive too. Telegram's ID space is not fully
+// specified publicly and has widened more than once, and the username
+// grammar is documented only informally, so constraining lengths or
+// character classes any further risks rejecting chats that work. The aim
+// is to catch obvious rubbish - a pasted URL, a chat title, a bare '@' -
+// with a clear message and let the API decide the rest.
+var telegramChatIDPattern = regexp.MustCompile(`^(-?\d+|@[A-Za-z0-9_]+)$`)
+
+// validateTelegramFields checks the effective bot token and chat ID of a
+// telegram channel and returns a client-facing message describing the
+// first problem it finds, or "" when both are acceptable. Callers pass
+// the value that would be stored, so on update that is the request value
+// when supplied and the stored value when the field was omitted.
+//
+// shapeCheckToken says whether the token must also match
+// telegramBotTokenPattern, or only be present. Callers set it for a
+// token the request supplied, and for a stored token on a channel the
+// request is converting to telegram. They clear it for a stored token
+// on a channel that is already telegram, and that exemption is
+// deliberate. decryptNotificationSecret returns the raw stored value
+// when decryption fails - which is what happens when the server secret
+// has been rotated or lost - and that base64 ciphertext can never match
+// telegramBotTokenPattern. Shape-checking it would reject every
+// subsequent PUT on the channel, including the UI's enable/disable
+// toggle, which sends nothing but {"enabled": false}, and would leave
+// an operator who has lost the secret unable even to switch the broken
+// channel off.
+//
+// No message includes the submitted value: the bot token is a bearer
+// credential and error responses are quotable.
+func validateTelegramFields(botToken, chatID *string, shapeCheckToken bool) string {
+	if botToken == nil || *botToken == "" {
+		return "telegram_bot_token is required for telegram channels"
+	}
+	if shapeCheckToken && !telegramBotTokenPattern.MatchString(*botToken) {
+		return "telegram_bot_token must have the form <bot id>:<token>"
+	}
+	if chatID == nil || *chatID == "" {
+		return "telegram_chat_id is required for telegram channels"
+	}
+	if !telegramChatIDPattern.MatchString(*chatID) {
+		return "telegram_chat_id must be a numeric chat ID or an @channelusername"
+	}
+	return ""
+}
+
 // derefStr returns the dereferenced string or an empty string if the
 // pointer is nil.
 func derefStr(s *string) string {
@@ -807,6 +966,27 @@ func (h *NotificationChannelHandler) testChannel(w http.ResponseWriter, r *http.
 		if err := sendTestWebhook(*channel.WebhookURL, displayType); err != nil {
 			log.Printf("[ERROR] Failed to send test webhook: %v", err)
 			RespondError(w, http.StatusBadGateway, "Failed to send test webhook")
+			return
+		}
+
+	case database.ChannelTypeTelegram:
+		if channel.TelegramBotToken == nil || *channel.TelegramBotToken == "" {
+			RespondError(w, http.StatusBadRequest, "Telegram bot token is not configured for this channel")
+			return
+		}
+		if channel.TelegramChatID == nil || *channel.TelegramChatID == "" {
+			RespondError(w, http.StatusBadRequest, "Telegram chat ID is not configured for this channel")
+			return
+		}
+		// No hostValidator.ValidateHost call here, unlike the branches
+		// above. A telegram channel stores no URL: sendTestTelegram
+		// builds the destination from a constant Bot API host, so there
+		// is no operator-supplied host to validate. See the comment on
+		// sendTestTelegram.
+		if err := sendTestTelegram(*channel.TelegramBotToken, *channel.TelegramChatID); err != nil {
+			// sendTestTelegram never puts the bot token in its error.
+			log.Printf("[ERROR] Failed to send test Telegram message: %v", err)
+			RespondError(w, http.StatusBadGateway, "Failed to send test Telegram message")
 			return
 		}
 

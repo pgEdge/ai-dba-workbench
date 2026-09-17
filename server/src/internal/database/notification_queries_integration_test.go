@@ -11,8 +11,10 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,7 +55,7 @@ CREATE TABLE notification_channels (
     owner_username VARCHAR(255),
     owner_token VARCHAR(255),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'webhook', 'email')),
+    channel_type TEXT NOT NULL CHECK (channel_type IN ('slack', 'mattermost', 'telegram', 'webhook', 'email')),
     name TEXT NOT NULL,
     description TEXT,
     webhook_url_encrypted TEXT,
@@ -69,6 +71,8 @@ CREATE TABLE notification_channels (
     smtp_use_tls BOOLEAN DEFAULT TRUE,
     from_address TEXT,
     from_name TEXT,
+    telegram_bot_token_encrypted TEXT,
+    telegram_chat_id TEXT,
     template_alert_fire TEXT,
     template_alert_clear TEXT,
     template_reminder TEXT,
@@ -252,6 +256,28 @@ func makeEmailChannel(name string) *NotificationChannel {
 		FromName:      &fromName,
 	}
 }
+
+// makeTelegramChannel returns a telegram channel with both the bot
+// token and the chat ID populated so the encryption round-trip runs.
+func makeTelegramChannel(name string) *NotificationChannel {
+	owner := "dave"
+	token := telegramTestBotToken
+	chatID := "-1001234567890"
+	return &NotificationChannel{
+		OwnerUsername:    &owner,
+		Enabled:          true,
+		ChannelType:      ChannelTypeTelegram,
+		Name:             name,
+		HTTPMethod:       "POST",
+		TelegramBotToken: &token,
+		TelegramChatID:   &chatID,
+	}
+}
+
+// telegramTestBotToken is a syntactically valid, entirely fictitious
+// Bot API token. Tests assert it never escapes into JSON or into the
+// stored ciphertext.
+const telegramTestBotToken = "123456789:AAErq-leak-me-not-TEST-TOKEN"
 
 // TestNotificationChannelLifecycle exercises Create/Get/List/Update/
 // Delete in one ordered scenario. The test asserts that secret
@@ -820,5 +846,329 @@ func TestListNotificationChannelsRecipientLoadError(t *testing.T) {
 	}
 	if _, err := ds.GetNotificationChannel(ctx, email.ID); err == nil {
 		t.Error("expected recipient-load error from Get")
+	}
+}
+
+// TestTelegramChannelRoundTrip covers the datastore half of the
+// telegram channel: the bot token is encrypted at rest and decrypted on
+// read, the `*_set` flag tracks it, the chat ID travels in clear, and
+// an update that carries the loaded struct back does not drop either
+// column.
+func TestTelegramChannelRoundTrip(t *testing.T) {
+	ds, pool, _, cleanup := newNotifTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tg := makeTelegramChannel("telegram-1")
+	if err := ds.CreateNotificationChannel(ctx, tg); err != nil {
+		t.Fatalf("CreateNotificationChannel telegram: %v", err)
+	}
+	if tg.ID == 0 {
+		t.Fatal("telegram channel ID not populated")
+	}
+
+	// The token must be encrypted at rest: the raw column may not hold
+	// the plaintext.
+	var stored *string
+	if err := pool.QueryRow(ctx,
+		`SELECT telegram_bot_token_encrypted FROM notification_channels WHERE id = $1`,
+		tg.ID).Scan(&stored); err != nil {
+		t.Fatalf("read raw token column: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("telegram_bot_token_encrypted is NULL after create")
+	}
+	if *stored == telegramTestBotToken {
+		t.Error("bot token was stored in plaintext")
+	}
+
+	// ...and the chat ID must NOT be encrypted; it is an address.
+	var storedChat *string
+	if err := pool.QueryRow(ctx,
+		`SELECT telegram_chat_id FROM notification_channels WHERE id = $1`,
+		tg.ID).Scan(&storedChat); err != nil {
+		t.Fatalf("read raw chat id column: %v", err)
+	}
+	if storedChat == nil || *storedChat != "-1001234567890" {
+		t.Errorf("telegram_chat_id stored = %v, want -1001234567890", storedChat)
+	}
+
+	got, err := ds.GetNotificationChannel(ctx, tg.ID)
+	if err != nil {
+		t.Fatalf("GetNotificationChannel: %v", err)
+	}
+	if got.TelegramBotToken == nil || *got.TelegramBotToken != telegramTestBotToken {
+		t.Errorf("bot token did not round-trip: %v", got.TelegramBotToken)
+	}
+	if !got.TelegramBotTokenSet {
+		t.Error("TelegramBotTokenSet = false, want true")
+	}
+	if got.TelegramChatID == nil || *got.TelegramChatID != "-1001234567890" {
+		t.Errorf("chat ID did not round-trip: %v", got.TelegramChatID)
+	}
+
+	// The list path scans the same columns; a column added to one query
+	// but not the other fails only at run time, so assert both.
+	list, err := ds.ListNotificationChannels(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var listed *NotificationChannel
+	for _, c := range list {
+		if c.Name == "telegram-1" {
+			listed = c
+		}
+	}
+	if listed == nil {
+		t.Fatal("List missing telegram channel")
+	}
+	if listed.TelegramBotToken == nil || *listed.TelegramBotToken != telegramTestBotToken {
+		t.Errorf("List bot token mismatch: %v", listed.TelegramBotToken)
+	}
+	if !listed.TelegramBotTokenSet {
+		t.Error("List TelegramBotTokenSet = false, want true")
+	}
+
+	// Serializing the loaded channel must never expose the token.
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), telegramTestBotToken) {
+		t.Errorf("marshaled channel leaked the bot token: %s", encoded)
+	}
+	if strings.Contains(string(encoded), `"telegram_bot_token"`) {
+		t.Errorf("marshaled channel carries a telegram_bot_token key: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"telegram_chat_id":"-1001234567890"`) {
+		t.Errorf("marshaled channel is missing the chat ID: %s", encoded)
+	}
+
+	// Write the loaded struct straight back, as the update handler
+	// does. A missing column in the UPDATE would silently drop the
+	// token here.
+	got.TelegramChatID = strPtr("@workbench_alerts")
+	if err := ds.UpdateNotificationChannel(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	after, err := ds.GetNotificationChannel(ctx, tg.ID)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	if after.TelegramBotToken == nil || *after.TelegramBotToken != telegramTestBotToken {
+		t.Errorf("update dropped the bot token: %v", after.TelegramBotToken)
+	}
+	if after.TelegramChatID == nil || *after.TelegramChatID != "@workbench_alerts" {
+		t.Errorf("update did not change the chat ID: %v", after.TelegramChatID)
+	}
+
+	// Clearing the token flips the flag back.
+	after.TelegramBotToken = strPtr("")
+	if err := ds.UpdateNotificationChannel(ctx, after); err != nil {
+		t.Fatalf("Update clearing token: %v", err)
+	}
+	cleared, err := ds.GetNotificationChannel(ctx, tg.ID)
+	if err != nil {
+		t.Fatalf("Get after clear: %v", err)
+	}
+	if cleared.TelegramBotTokenSet {
+		t.Error("TelegramBotTokenSet = true after clearing the token")
+	}
+}
+
+// TestTelegramTokenEncryptionErrorOnCreate confirms that a datastore
+// without a server secret refuses to store a bot token rather than
+// writing it in the clear.
+func TestTelegramTokenEncryptionErrorOnCreate(t *testing.T) {
+	ds, _, _, cleanup := newNotifTestDatastore(t)
+	defer cleanup()
+
+	noSecret := NewTestDatastore(ds.pool)
+	err := noSecret.CreateNotificationChannel(context.Background(),
+		makeTelegramChannel("telegram-no-secret"))
+	if err == nil {
+		t.Fatal("expected an error creating a telegram channel without a server secret")
+	}
+	if !strings.Contains(err.Error(), "Telegram bot token") {
+		t.Errorf("error = %q, want it to name the Telegram bot token", err)
+	}
+	if strings.Contains(err.Error(), telegramTestBotToken) {
+		t.Errorf("error leaked the bot token: %v", err)
+	}
+}
+
+// TestTelegramTokenEncryptionErrorOnUpdate is the update-side twin of
+// TestTelegramTokenEncryptionErrorOnCreate.
+func TestTelegramTokenEncryptionErrorOnUpdate(t *testing.T) {
+	ds, _, _, cleanup := newNotifTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	tg := makeTelegramChannel("telegram-update-no-secret")
+	if err := ds.CreateNotificationChannel(ctx, tg); err != nil {
+		t.Fatalf("CreateNotificationChannel: %v", err)
+	}
+
+	noSecret := NewTestDatastore(ds.pool)
+	err := noSecret.UpdateNotificationChannel(ctx, tg)
+	if err == nil {
+		t.Fatal("expected an error updating a telegram channel without a server secret")
+	}
+	if !strings.Contains(err.Error(), "Telegram bot token") {
+		t.Errorf("error = %q, want it to name the Telegram bot token", err)
+	}
+}
+
+// TestEncryptionErrorsPerSecretField walks each remaining secret column
+// individually so every encrypt guard in CreateNotificationChannel and
+// UpdateNotificationChannel is exercised. The guards are ordered, so a
+// channel carrying two secrets would only ever reach the first of them.
+func TestEncryptionErrorsPerSecretField(t *testing.T) {
+	ds, pool, _, cleanup := newNotifTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	noSecret := NewTestDatastoreWithSecret(pool, "")
+
+	cases := []struct {
+		name    string
+		mutate  func(*NotificationChannel)
+		wantSub string
+	}{
+		{
+			name:    "auth credentials",
+			mutate:  func(c *NotificationChannel) { c.AuthCredentials = strPtr("tok-XYZ") },
+			wantSub: "auth credentials",
+		},
+		{
+			name:    "smtp password",
+			mutate:  func(c *NotificationChannel) { c.SMTPPassword = strPtr("smtp-pass") },
+			wantSub: "SMTP password",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+" on create", func(t *testing.T) {
+			owner := "erin"
+			ch := &NotificationChannel{
+				OwnerUsername: &owner,
+				Enabled:       true,
+				ChannelType:   ChannelTypeWebhook,
+				Name:          "enc-create-" + tc.name,
+				EndpointURL:   strPtr("https://example.com/hook"),
+				HTTPMethod:    "POST",
+			}
+			tc.mutate(ch)
+			err := noSecret.CreateNotificationChannel(ctx, ch)
+			if err == nil {
+				t.Fatal("expected an encryption error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %q, want it to name %q", err, tc.wantSub)
+			}
+		})
+
+		t.Run(tc.name+" on update", func(t *testing.T) {
+			owner := "erin"
+			ch := &NotificationChannel{
+				OwnerUsername: &owner,
+				Enabled:       true,
+				ChannelType:   ChannelTypeWebhook,
+				Name:          "enc-update-" + tc.name,
+				EndpointURL:   strPtr("https://example.com/hook"),
+				HTTPMethod:    "POST",
+			}
+			if err := ds.CreateNotificationChannel(ctx, ch); err != nil {
+				t.Fatalf("CreateNotificationChannel: %v", err)
+			}
+			tc.mutate(ch)
+			err := noSecret.UpdateNotificationChannel(ctx, ch)
+			if err == nil {
+				t.Fatal("expected an encryption error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %q, want it to name %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestScanNotificationChannelHeaderDecodeErrors covers the headers
+// unmarshal guard in both row scanners. Both scanners were extended with
+// the telegram columns, and headers_json is JSONB in production so it
+// cannot hold invalid JSON; the column is widened to TEXT and poisoned
+// to reach the guard.
+//
+// The poisoned SELECT must be the first one this datastore issues.
+// Changing a column type invalidates any plan Postgres has already
+// cached for a statement that reads it, and the resulting "cached plan
+// must not change result type" error would surface before the scan.
+//
+// Each test in this file recreates the schema from scratch, so the
+// damage done here does not escape the test.
+func TestScanNotificationChannelHeaderDecodeErrors(t *testing.T) {
+	ds, pool, _, cleanup := newNotifTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	web := makeWebhookChannel("scan-headers")
+	if err := ds.CreateNotificationChannel(ctx, web); err != nil {
+		t.Fatalf("CreateNotificationChannel: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE notification_channels ALTER COLUMN headers_json TYPE TEXT`); err != nil {
+		t.Fatalf("alter headers_json: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE notification_channels SET headers_json = 'not json'`); err != nil {
+		t.Fatalf("poison headers_json: %v", err)
+	}
+
+	_, err := ds.GetNotificationChannel(ctx, web.ID)
+	if err == nil {
+		t.Fatal("expected an error from Get with undecodable headers")
+	}
+	if !strings.Contains(err.Error(), "unmarshal headers") {
+		t.Errorf("Get error = %q, want the headers unmarshal failure", err)
+	}
+
+	_, err = ds.ListNotificationChannels(ctx)
+	if err == nil {
+		t.Fatal("expected an error from List with undecodable headers")
+	}
+	if !strings.Contains(err.Error(), "unmarshal headers") {
+		t.Errorf("List error = %q, want the headers unmarshal failure", err)
+	}
+}
+
+// TestScanNotificationChannelColumnTypeMismatch covers the Scan guard in
+// the multi-row scanner by making a column's type disagree with its scan
+// target. As above, the poisoned SELECT must be the first one this
+// datastore issues.
+func TestScanNotificationChannelColumnTypeMismatch(t *testing.T) {
+	ds, pool, _, cleanup := newNotifTestDatastore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `
+        INSERT INTO notification_channels (enabled, channel_type, name, smtp_port)
+        VALUES (true, 'slack', 'scan-mismatch', 587)`); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE notification_channels ALTER COLUMN smtp_port TYPE TEXT`); err != nil {
+		t.Fatalf("alter smtp_port: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE notification_channels SET smtp_port = 'not a number'`); err != nil {
+		t.Fatalf("poison smtp_port: %v", err)
+	}
+
+	if _, err := ds.ListNotificationChannels(ctx); err == nil {
+		t.Error("expected an error from List when a column type does not match")
 	}
 }

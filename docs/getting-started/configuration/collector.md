@@ -292,9 +292,12 @@ connection.
 - Default: `8`
 - Min: 1
 - Example: `max_concurrent_probes: 16`
-- Note: This limit applies to the collector as a whole, so peak memory
-  and connection demand no longer scale with the number of monitored
-  connections multiplied by the number of probes.
+- Note: This limit applies to the collector as a whole, so the memory
+  and connection demand of probes actually executing no longer scales
+  with the number of monitored connections multiplied by the number of
+  probes. The scheduler still keeps one goroutine per connection and
+  probe pair, so that smaller baseline does still grow with the number
+  of monitored connections.
 
 ### scheduler.startup_jitter_seconds
 

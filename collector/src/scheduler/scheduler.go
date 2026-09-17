@@ -112,12 +112,27 @@ func (ps *ProbeScheduler) acquireProbeSlot() bool {
 
 	select {
 	case ps.probeSlots <- struct{}{}:
-		return true
 	case <-ps.shutdownChan:
 		return false
 	case <-ps.ctx.Done():
 		return false
 	}
+
+	// A ready slot and a ready shutdown are chosen between at random, so
+	// recheck once the slot is held: starting an execution here would
+	// let CheckConnectionUpdated close a pool and block Stop on a
+	// borrowed connection, outside any timeout.
+	select {
+	case <-ps.shutdownChan:
+		ps.releaseProbeSlot()
+		return false
+	case <-ps.ctx.Done():
+		ps.releaseProbeSlot()
+		return false
+	default:
+	}
+
+	return true
 }
 
 // releaseProbeSlot returns a slot to the concurrency semaphore.

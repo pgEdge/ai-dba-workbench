@@ -62,9 +62,10 @@ type SchedulerConfig struct {
 	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
 
 	// StartupJitterSeconds bounds the random delay applied before the
-	// first execution of a probe that is past due (or has never run), so
-	// that a restart does not fire every probe at once. The delay is
-	// drawn from [0, min(probe interval, StartupJitterSeconds)). Zero
+	// first execution of a probe that is past due, has never run, or
+	// whose last collection time could not be determined, so that a
+	// restart does not fire every probe at once. The delay is drawn
+	// from [0, min(probe interval, StartupJitterSeconds)). Zero
 	// disables jitter.
 	StartupJitterSeconds int `yaml:"startup_jitter_seconds"`
 }

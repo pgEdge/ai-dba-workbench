@@ -443,6 +443,34 @@ func TestAcquireProbeSlot_ShutdownWins(t *testing.T) {
 		}
 	})
 
+	// A waiter can win the semaphore send at the same moment shutdown
+	// arrives, since select chooses at random between two ready cases.
+	// Whichever way it falls, the scheduler must not be left holding a
+	// slot it never uses. Repeated to give the race a chance to occur.
+	t.Run("slot released when shutdown races acquisition", func(t *testing.T) {
+		for i := 0; i < 200; i++ {
+			ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
+			if !ps.acquireProbeSlot() {
+				t.Fatal("first acquisition failed")
+			}
+
+			acquired := make(chan bool, 1)
+			go func() { acquired <- ps.acquireProbeSlot() }()
+
+			go close(ps.shutdownChan)
+			ps.releaseProbeSlot()
+
+			select {
+			case ok := <-acquired:
+				if !ok && len(ps.probeSlots) != 0 {
+					t.Fatalf("slot retained after a refused acquisition (iteration %d)", i)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("waiter never returned")
+			}
+		}
+	})
+
 	t.Run("queued waiter released by context cancel", func(t *testing.T) {
 		ps := NewProbeScheduler(nil, nil, testConfig{maxConcurrentProbes: 1}, "")
 		if !ps.acquireProbeSlot() {

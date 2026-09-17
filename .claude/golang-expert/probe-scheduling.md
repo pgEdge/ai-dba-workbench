@@ -22,10 +22,12 @@ window. `startup_jitter_seconds` defaults to 60; zero disables the
 jitter. The positive-delay path is deliberately left alone: the
 recorded last collection time already spreads those out.
 
-The jitter uses `math/rand/v2` with a `//nolint:gosec` on the draw
-itself, because the CI linter requires the directive on the reported
-line. This is scheduling de-clustering, not a security decision, and
-a cryptographic source would buy nothing.
+The jitter is drawn with `crypto/rand`, not `math/rand`: Codacy's
+Opengrep `math-random-used` rule fires on the latter in production
+code, and the draw happens once per probe at startup, so the stronger
+source costs nothing measurable. A failed draw falls back to half the
+window rather than to zero, since zero would put every probe back on
+the same starting line.
 
 ## Realign the ticker after the first execution
 

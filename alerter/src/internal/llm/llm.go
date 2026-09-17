@@ -22,9 +22,6 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/embedding"
 )
 
-// EmbeddingDimension is the standard dimension for embeddings (1536 for OpenAI/Voyage)
-const EmbeddingDimension = 1536
-
 // Common errors
 var (
 	ErrAPIKeyMissing   = errors.New("API key is required but not configured")
@@ -36,7 +33,9 @@ var (
 // EmbeddingProvider generates vector embeddings from text.
 type EmbeddingProvider interface {
 	// GenerateEmbedding generates a vector embedding for the given text.
-	// The returned embedding has EmbeddingDimension (1536) dimensions.
+	// The returned embedding keeps the model's native width; the
+	// datastore zero-pads it to the fixed halfvec column width and
+	// rejects a vector wider than embedding.MaxDimensions.
 	GenerateEmbedding(ctx context.Context, text string) ([]float32, error)
 
 	// ModelName returns the name of the embedding model being used.
@@ -71,24 +70,24 @@ Consider:
 
 // embeddingAdapter wraps pkg/embedding.Provider to implement the alerter's
 // EmbeddingProvider interface. It converts between float64 (pkg/embedding)
-// and float32 (alerter) and handles dimension normalization.
+// and float32 (alerter) and normalizes the vector to unit length.
 type embeddingAdapter struct {
 	provider embedding.Provider
 }
 
 // GenerateEmbedding generates a vector embedding for the given text.
 // It converts the float64 embedding from pkg/embedding to float32 and
-// normalizes the dimensions to EmbeddingDimension if needed.
+// normalizes it to unit length. The vector is returned at the model's
+// native width: it is deliberately not resized here, because truncating
+// a wide embedding silently degrades similarity search, and the
+// datastore's PadTo call is where a vector wider than the halfvec
+// column is rejected with an error.
 func (a *embeddingAdapter) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
 	emb64, err := a.provider.Embed(ctx, text)
 	if err != nil {
 		return nil, err
 	}
-	emb32 := vec.Float64ToFloat32(emb64)
-	if len(emb32) != EmbeddingDimension {
-		emb32 = vec.Resize(emb32, EmbeddingDimension)
-	}
-	return vec.Normalize(emb32), nil
+	return vec.Normalize(vec.Float64ToFloat32(emb64)), nil
 }
 
 // ModelName returns the name of the embedding model being used.

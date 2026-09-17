@@ -273,12 +273,15 @@ dimensions that model produces:
 
 | Provider | Default model | Dimensions |
 |----------|-------|------------|
-| Ollama | `nomic-embed-text` | 768 (resized to 1536) |
+| Ollama | `nomic-embed-text` | 768 |
 | OpenAI | `text-embedding-3-small` | 1536 |
-| Voyage | `voyage-3-lite` | 1024 (resized to 1536) |
+| Voyage | `voyage-3-lite` | 1024 |
 
 Any model name the chosen provider recognises can be configured in
-place of the default.
+place of the default. The alerter keeps each embedding at the width the
+model produces and zero-pads it to the `halfvec(4000)` column when it
+is stored or used as a query vector; a model that produces more than
+4000 dimensions is rejected with an error rather than truncated.
 
 ### Reasoning Providers
 

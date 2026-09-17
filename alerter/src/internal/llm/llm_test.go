@@ -45,62 +45,53 @@ func (f *fakeEmbedding) ProviderName() string {
 	return f.provider
 }
 
-func TestEmbeddingAdapter_GenerateEmbedding_RightDimension(t *testing.T) {
-	// Construct a 1536-dim vector that's already correct size.
-	vec := make([]float64, EmbeddingDimension)
-	for i := range vec {
-		vec[i] = 0.5
+// TestEmbeddingAdapter_GenerateEmbedding_KeepsNativeWidth checks that the
+// adapter returns the model's own width, neither padding a short vector
+// nor truncating a wide one, and normalizes the result to unit length.
+// Padding to the halfvec column width, and rejecting a vector that is
+// too wide for it, is the datastore's job via embedding.PadTo.
+func TestEmbeddingAdapter_GenerateEmbedding_KeepsNativeWidth(t *testing.T) {
+	tests := []struct {
+		name string
+		dim  int
+	}{
+		{name: "short", dim: 3},
+		{name: "openai small", dim: 1536},
+		{name: "wider than 1536", dim: 3072},
+		{name: "wider than the halfvec column", dim: embedding.MaxDimensions + 96},
 	}
-	fake := &fakeEmbedding{vec: vec, model: "m", provider: "p", dim: EmbeddingDimension}
-	a := &embeddingAdapter{provider: fake}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			in := make([]float64, tc.dim)
+			for i := range in {
+				in[i] = float64(i + 1)
+			}
+			fake := &fakeEmbedding{vec: in, model: "m", provider: "p", dim: tc.dim}
+			a := &embeddingAdapter{provider: fake}
 
-	got, err := a.GenerateEmbedding(context.Background(), "hello")
-	if err != nil {
-		t.Fatalf("GenerateEmbedding: %v", err)
-	}
-	if len(got) != EmbeddingDimension {
-		t.Fatalf("len = %d, want %d", len(got), EmbeddingDimension)
-	}
-	if fake.lastInput != "hello" {
-		t.Errorf("lastInput = %q, want hello", fake.lastInput)
-	}
-	// Should be normalized.
-	var sumSq float64
-	for _, v := range got {
-		sumSq += float64(v) * float64(v)
-	}
-	if math.Abs(math.Sqrt(sumSq)-1.0) > 1e-5 {
-		t.Errorf("not normalized: magnitude = %v", math.Sqrt(sumSq))
-	}
-}
-
-func TestEmbeddingAdapter_GenerateEmbedding_ResizesUp(t *testing.T) {
-	fake := &fakeEmbedding{vec: []float64{1, 2, 3}, model: "m", dim: 3}
-	a := &embeddingAdapter{provider: fake}
-
-	got, err := a.GenerateEmbedding(context.Background(), "x")
-	if err != nil {
-		t.Fatalf("GenerateEmbedding: %v", err)
-	}
-	if len(got) != EmbeddingDimension {
-		t.Errorf("len = %d, want %d", len(got), EmbeddingDimension)
-	}
-}
-
-func TestEmbeddingAdapter_GenerateEmbedding_ResizesDown(t *testing.T) {
-	big := make([]float64, EmbeddingDimension+10)
-	for i := range big {
-		big[i] = float64(i)
-	}
-	fake := &fakeEmbedding{vec: big, dim: len(big)}
-	a := &embeddingAdapter{provider: fake}
-
-	got, err := a.GenerateEmbedding(context.Background(), "x")
-	if err != nil {
-		t.Fatalf("GenerateEmbedding: %v", err)
-	}
-	if len(got) != EmbeddingDimension {
-		t.Errorf("len = %d, want %d", len(got), EmbeddingDimension)
+			got, err := a.GenerateEmbedding(context.Background(), "hello")
+			if err != nil {
+				t.Fatalf("GenerateEmbedding: %v", err)
+			}
+			if len(got) != tc.dim {
+				t.Fatalf("len = %d, want %d", len(got), tc.dim)
+			}
+			if fake.lastInput != "hello" {
+				t.Errorf("lastInput = %q, want hello", fake.lastInput)
+			}
+			// The last input component must survive: a truncating
+			// adapter would drop it.
+			if got[tc.dim-1] == 0 {
+				t.Errorf("last component is zero; vector was truncated")
+			}
+			var sumSq float64
+			for _, v := range got {
+				sumSq += float64(v) * float64(v)
+			}
+			if math.Abs(math.Sqrt(sumSq)-1.0) > 1e-5 {
+				t.Errorf("not normalized: magnitude = %v", math.Sqrt(sumSq))
+			}
+		})
 	}
 }
 
@@ -184,6 +175,31 @@ func TestNewEmbeddingProvider_VoyageMissingKey(t *testing.T) {
 	_, err := NewEmbeddingProvider(cfg)
 	if !errors.Is(err, ErrAPIKeyMissing) {
 		t.Errorf("err = %v, want ErrAPIKeyMissing", err)
+	}
+}
+
+func TestNewEmbeddingProvider_VoyageSuccess(t *testing.T) {
+	keyFile := t.TempDir() + "/voyage.key"
+	if err := os.WriteFile(keyFile, []byte("pa-test-key-12345678\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	cfg := config.NewConfig()
+	cfg.LLM.EmbeddingProvider = "voyage"
+	cfg.LLM.Voyage.APIKeyFile = keyFile
+	if err := cfg.LoadAPIKeys(); err != nil {
+		t.Fatalf("LoadAPIKeys: %v", err)
+	}
+
+	p, err := NewEmbeddingProvider(cfg)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if p == nil {
+		t.Fatal("provider nil")
+	}
+	if p.ModelName() != "voyage-3-lite" {
+		t.Errorf("model = %q, want voyage-3-lite", p.ModelName())
 	}
 }
 

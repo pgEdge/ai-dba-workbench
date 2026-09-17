@@ -894,7 +894,13 @@ project adheres to
   vLLM. The per-provider defaults still apply when the configuration
   leaves the model empty, and an embedding wider than 4000 dimensions
   is still rejected with a dimension error when it is stored or used
-  as a query vector. (#427)
+  as a query vector. The alerter previously cut every embedding to
+  1536 dimensions before that check could run, silently truncating
+  any wider model; it now keeps the model's native width, matching
+  the server. Anomaly embeddings stored before this change by a model
+  wider than 1536 dimensions remain at the truncated width, so their
+  similarity to new embeddings is lower than it would otherwise be
+  until they age out of the retention window. (#427)
 
 - Retire the `table_bloat_ratio` alert rule, which duplicated the
   `dead_tuple_ratio` rule with a different denominator and fired on

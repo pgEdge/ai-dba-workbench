@@ -270,7 +270,10 @@ func (e *Engine) processTier2And3(ctx context.Context) {
 		// Store embedding if we have one
 		if len(embedding) > 0 {
 			if err := e.datastore.StoreAnomalyEmbedding(ctx, candidate.ID, embedding, e.embeddingProvider.ModelName()); err != nil {
-				e.debugLog("Failed to store embedding for candidate %d: %v", candidate.ID, err)
+				// Logged at default verbosity: with no model allow-list
+				// this is where a model wider than the halfvec column
+				// first shows up, and the operator needs to see it.
+				e.log("ERROR: Failed to store embedding for candidate %d: %v", candidate.ID, err)
 			}
 		}
 
@@ -310,7 +313,7 @@ func (e *Engine) processTier2(ctx context.Context, candidate *database.AnomalyCa
 
 	similarAnomalies, err := e.datastore.FindSimilarAnomalies(ctx, embedding, candidate.ID, threshold, 10)
 	if err != nil {
-		e.debugLog("Failed to find similar anomalies: %v", err)
+		e.log("ERROR: Failed to find similar anomalies for candidate %d: %v", candidate.ID, err)
 		// On search failure, pass through to Tier 3
 		tier2Pass := true
 		candidate.Tier2Pass = &tier2Pass

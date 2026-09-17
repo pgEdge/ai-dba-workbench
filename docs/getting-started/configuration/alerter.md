@@ -310,12 +310,25 @@ across metrics.
 The `llm` section configures LLM providers for tier 3
 anomaly detection and embedding generation.
 
+Each provider section names its own embedding model, and the alerter
+accepts any model name the chosen provider recognises rather than
+checking the name against a fixed list. The defaults in the tables
+below apply when the configuration leaves the model empty, and an
+OpenAI-protocol-compatible local model server can supply embeddings
+under whatever model name that server uses.
+
 The configured embedding model must not produce vectors with more
 than 4000 dimensions. The alerter stores anomaly embeddings as
 `halfvec(4000)` and zero-pads each embedding to 4000 dimensions; 4000
 is pgvector's HNSW index limit for the `halfvec` type. The alerter
-rejects a model that exceeds 4000 dimensions with a clear error rather
-than truncating the vector. Storing embeddings as `halfvec` requires
+does not check the width of a model at startup: when the model turns
+out to be wider than 4000 dimensions, the alerter never truncates the
+vector, but instead logs an error naming the vector width and the
+limit for each anomaly candidate it processes, stores no embedding for
+the candidate, and passes the candidate straight to tier 3. Watch the
+alerter log after changing the embedding model, because the error
+first appears when the first anomaly candidate reaches tier 2, not
+when the alerter starts. Storing embeddings as `halfvec` requires
 pgvector `0.7.0` or newer; upgrading an existing installation against
 an older pgvector causes the embedding-column migration to fail.
 
@@ -391,8 +404,9 @@ provider.
 
 The `openai` provider works with any server that
 implements the OpenAI-compatible API. Set `base_url`
-to point at a local inference server. The API key is
-optional when using a custom base URL.
+to point at a local inference server and set
+`embedding_model` to the model that server provides.
+The API key is optional when using a custom base URL.
 
 The following local inference servers are compatible:
 

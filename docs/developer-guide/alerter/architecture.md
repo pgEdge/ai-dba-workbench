@@ -299,11 +299,16 @@ processing.
 ### Embedding Providers
 
 Embedding providers generate vector representations of anomaly
-context. The alerter supports the following providers:
+context. The alerter supports the following providers, shown with
+the model each one uses by default:
 
-- Ollama with models like `nomic-embed-text`.
+- Ollama with `nomic-embed-text`.
 - OpenAI with `text-embedding-3-small`.
 - Voyage with `voyage-3-lite`.
+
+Any model name the chosen provider recognises can be configured in
+place of the default, including a model served by an
+OpenAI-protocol-compatible local model server.
 
 ### Reasoning Providers
 

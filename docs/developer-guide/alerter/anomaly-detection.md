@@ -267,13 +267,25 @@ reasoning.
 
 ### Embedding Providers
 
-Configure the embedding provider in the `llm` section:
+Configure the embedding provider in the `llm` section. The following
+table shows the default embedding model for each provider and the
+dimensions that model produces:
 
-| Provider | Model | Dimensions |
+| Provider | Default model | Dimensions |
 |----------|-------|------------|
-| Ollama | `nomic-embed-text` | 768 (resized to 1536) |
+| Ollama | `nomic-embed-text` | 768 |
 | OpenAI | `text-embedding-3-small` | 1536 |
-| Voyage | `voyage-3-lite` | 1024 (resized to 1536) |
+| Voyage | `voyage-3-lite` | 512 |
+| Gemini | `gemini-embedding-001` | 3072 |
+
+Any model name the chosen provider recognises can be configured in
+place of the default. The alerter keeps each embedding at the width the
+model produces and zero-pads it to the `halfvec(4000)` column when it
+is stored or used as a query vector. A model that produces more than
+4000 dimensions is not truncated: the width check runs when the
+embedding is stored or searched, so the alerter logs an error for each
+candidate it processes with such a model, stores no embedding and
+passes the candidate through to tier 3.
 
 ### Reasoning Providers
 

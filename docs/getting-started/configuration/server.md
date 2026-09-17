@@ -372,11 +372,20 @@ protection for user-created database connections.
 ### Embedding (`embedding`)
 
 The `provider` option accepts `voyage`, `openai`, `gemini`, or
-`ollama`. The Gemini provider supports `gemini-embedding-001` (the
-default, 3072 dimensions), `gemini-embedding-2`, and
-`gemini-embedding-2-preview` (also 3072 dimensions). Model
-availability varies by Gemini API key tier; run ListModels to verify
-which embedding models a given key can access.
+`ollama`. The `model` option accepts any model name the chosen
+provider recognises; the server passes the name through rather than
+checking a fixed list, so a new provider model works as soon as the
+provider publishes the model. Leaving `model` empty selects the
+default model for the provider. Google publishes
+`gemini-embedding-001` (the default, 3072 dimensions),
+`gemini-embedding-2`, and `gemini-embedding-2-preview` (also 3072
+dimensions); model availability varies by Gemini API key tier, so run
+ListModels to verify which embedding models a given key can access.
+
+Because the model name is not restricted, an OpenAI-protocol-compatible
+local model server such as llama.cpp or vLLM can supply embeddings:
+set `provider` to `openai`, point `openai_base_url` at that server,
+and set `model` to the name the server provides.
 
 The configured `model` must not produce vectors with more than 4000
 dimensions. The server stores chat memory embeddings as `halfvec(4000)`
@@ -601,11 +610,12 @@ The built-in `database_path` default still points at the legacy
 `pgedge-ai-kb` packages, so the server reads the installed file.
 
 The `embedding_provider` option accepts `voyage`, `openai`, `gemini`,
-or `ollama`. The Gemini provider supports `gemini-embedding-001` (the
+or `ollama`, and `embedding_model` accepts any model name the chosen
+provider recognises. Google publishes `gemini-embedding-001` (the
 default, 3072 dimensions), `gemini-embedding-2`, and
-`gemini-embedding-2-preview` (also 3072 dimensions). Model
-availability varies by Gemini API key tier; run ListModels to verify
-which embedding models a given key can access.
+`gemini-embedding-2-preview` (also 3072 dimensions); model
+availability varies by Gemini API key tier, so run ListModels to
+verify which embedding models a given key can access.
 
 When Gemini provides the knowledgebase embeddings, the configured
 `embedding_model` must match the model that the KB Builder used to

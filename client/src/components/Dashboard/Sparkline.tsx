@@ -31,10 +31,20 @@ const Sparkline: React.FC<SparklineProps> = ({
         series: [{ name: 'value', data: data.map(d => d.value) }],
     }), [data]);
 
+    // A sparkline has no axes at all, so it must opt out of the
+    // contain-label layout pass: ECharts reserves room for axis labels
+    // based on `axisLabel.show`, and an axis's own `show: false` does not
+    // imply it. Without all three flags the labels stay invisible but
+    // still eat the plot area, collapsing short sparklines to an empty
+    // strip (issue #458). Do not "tidy away" any one of them.
     const echartsOverrides = useMemo(() => ({
-        grid: { top: 2, right: 2, bottom: 2, left: 2 },
-        xAxis: { show: false, boundaryGap: false },
-        yAxis: { show: false },
+        grid: { top: 2, right: 2, bottom: 2, left: 2, containLabel: false },
+        xAxis: {
+            show: false,
+            boundaryGap: false,
+            axisLabel: { show: false },
+        },
+        yAxis: { show: false, axisLabel: { show: false } },
     }), []);
 
     // Nothing to draw when there are no points, or when every bucket

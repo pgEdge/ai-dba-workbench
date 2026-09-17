@@ -339,6 +339,21 @@ LLM. The rules are as follows:
   and a read may still be served from the OS page cache, so a lower
   ratio does not by itself mean slow I/O.
 
+### Axis-free charts and the contain-label pass
+
+`buildGrid()` in `client/src/components/Chart/options/common.ts` sets
+`containLabel: true`, and `Chart` deep-merges `echartsOptions` over it
+key by key, so overriding the four inset values leaves `containLabel`
+in place. In ECharts 6 that layout pass reserves room for each axis's
+estimated label rect, and it keys off `axisLabel.show` alone: an axis's
+own `show: false` hides the labels but still reserves their space, which
+at small heights collapses the plot area to an empty strip (issue #458).
+A chart drawn without axes, such as `Dashboard/Sparkline.tsx`, must
+therefore set `grid.containLabel: false` *and* `axisLabel: { show: false }`
+on both axes; none of the three flags is redundant. Leave `buildGrid()`
+alone, since the tiles under `StatusPanel/PerformanceTiles/` rely on
+`containLabel: true` to fit their real axis labels.
+
 ## Dashboard Time Window
 
 Every dashboard request that has a time dimension takes its window

@@ -73,6 +73,18 @@ the condition holds, such as an inactive replication slot
 or a blocked session, still clear as soon as the metric
 goes quiet.
 
+A metric staleness alert follows the same principle. When
+a probe becomes unavailable, because a monitored server no
+longer offers the extension the probe needs, because the
+collector has lost the privileges the probe requires, or
+because the connection is failing, the alert stays active
+and its description changes to report that collection has
+stopped and why. The alert title does not change, so the
+alert remains recognisable in notification history. When
+an operator disables the probe, or stops monitoring the
+connection, the alerter clears the staleness alert,
+because both actions are deliberate.
+
 ### False Positive
 
 An operator can mark an alert as a false positive to

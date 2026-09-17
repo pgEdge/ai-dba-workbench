@@ -276,6 +276,21 @@ func (e *Engine) evaluateMetricStaleness(ctx context.Context) {
 			return
 		}
 
+		// Unavailable probes are in the snapshot for the alert cleaner's
+		// benefit, but they must not raise staleness alerts here. A probe
+		// whose extension is not installed, or that the server will never
+		// support, sits at is_available = FALSE indefinitely, and it is a
+		// perfectly normal steady state rather than a fault to report; if
+		// this loop evaluated those entries it would raise a permanent
+		// staleness alert for every such probe on every connection. Do
+		// not "fix" this skip: the alert cleaner, not the evaluator, is
+		// what issue #465 changed.
+		if !entry.IsAvailable {
+			e.debugLog("Skipping staleness check for probe %s on connection %d: probe is unavailable",
+				entry.ProbeName, entry.ConnectionID)
+			continue
+		}
+
 		// Check if there's a blackout active for this connection
 		connID := entry.ConnectionID
 		active, err := e.datastore.IsBlackoutActive(ctx, &connID, nil)

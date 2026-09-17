@@ -543,12 +543,15 @@ describe('SystemResourcesSection', () => {
             await waitFor(() => {
                 expect(mockUseMetrics).toHaveBeenCalled();
             });
-            const requested = mockUseMetrics.mock.calls
+            // The section re-renders as the disk mount selector settles,
+            // so the hook is called more than once per query; compare the
+            // distinct memory queries rather than the call count.
+            const requested = new Set(mockUseMetrics.mock.calls
                 .filter(([params]) => params?.probeName === 'pg_sys_memory_info')
-                .map(([params]) => params?.metrics ?? []);
-            expect(requested).toHaveLength(2);
+                .map(([params]) => (params?.metrics ?? []).join(',')));
+            expect(requested.size).toBe(2);
             requested.forEach(metrics => {
-                expect(metrics).toContain('available_memory');
+                expect(metrics.split(',')).toContain('available_memory');
             });
         });
 

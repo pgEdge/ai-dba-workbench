@@ -56,20 +56,67 @@ func (e *Engine) cleanResolvedAlerts(ctx context.Context) {
 // that. A failed read is remembered too: retrying it once per alert
 // would hammer a datastore that is already unwell, and every caller
 // treats the failure the same way, by leaving the alert active.
+//
+// The entries are measured against the datastore's NOW() at the moment
+// they were read, and a pass can take long enough for that to matter: a
+// probe 4m58s late when the snapshot loads is 5m08s late for an alert
+// judged ten seconds on, which is outside a five minute window rather
+// than inside it. Every judgement therefore adds the snapshot's age, so
+// the effective window stays the metric's own rather than the window
+// plus however long the pass has been running. See GitHub issue #407.
 type probeStalenessSnapshot struct {
 	entries []database.ProbeStaleness
 	err     error
 	loaded  bool
+
+	// readAt is taken before the datastore read so that the age errs
+	// towards treating a probe as later than it is, never earlier.
+	readAt time.Time
+
+	// now is the clock the snapshot ages by; nil means time.Now. Tests
+	// set it to move the judgement away from the read.
+	now func() time.Time
 }
 
 // get returns the pass's probe staleness entries, reading them through
 // the engine's datastore the first time it is called.
 func (s *probeStalenessSnapshot) get(ctx context.Context, e *Engine) ([]database.ProbeStaleness, error) {
 	if !s.loaded {
+		s.readAt = s.clock()
 		s.entries, s.err = e.datastore.GetProbeStalenessByConnection(ctx)
 		s.loaded = true
 	}
 	return s.entries, s.err
+}
+
+// age is how long ago the entries were read, and so how much later than
+// their SinceCollected every probe now is. An unloaded snapshot has no
+// age.
+func (s *probeStalenessSnapshot) age() time.Duration {
+	if !s.loaded {
+		return 0
+	}
+	return s.clock().Sub(s.readAt)
+}
+
+func (s *probeStalenessSnapshot) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// currentStalenessRatio brings a snapshot entry's ratio forward by the
+// snapshot's age, so that a staleness alert is judged against how late
+// the probe is now rather than how late it was when the pass began. A
+// non-positive interval cannot occur, because the staleness query
+// divides by it, but the frozen ratio is returned rather than dividing
+// by zero here.
+func currentStalenessRatio(entry database.ProbeStaleness, age time.Duration) float64 {
+	if entry.CollectionInterval <= 0 {
+		return entry.StalenessRatio
+	}
+	return (entry.SinceCollected + age).Seconds() / float64(entry.CollectionInterval)
 }
 
 // resolveExtensionGates maps the rule id of each active threshold alert
@@ -222,8 +269,9 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 		if entry.ConnectionID != alert.ConnectionID || entry.ProbeName != *alert.ProbeName {
 			continue
 		}
-		if !e.checkThreshold(entry.StalenessRatio, *alert.Operator, *alert.ThresholdValue) {
-			e.clearResolvedAlert(ctx, alert, entry.StalenessRatio)
+		ratio := currentStalenessRatio(entry, staleness.age())
+		if !e.checkThreshold(ratio, *alert.Operator, *alert.ThresholdValue) {
+			e.clearResolvedAlert(ctx, alert, ratio)
 		}
 		return
 	}
@@ -273,7 +321,8 @@ func (e *Engine) resolveAbsentMetric(ctx context.Context, alert *database.Alert,
 		}
 	}
 
-	switch classifyAbsentMetric(clears, probe, window, alert.ConnectionID, entries) {
+	switch classifyAbsentMetric(clears, probe, window, alert.ConnectionID, entries,
+		staleness.age()) {
 	case absentMetricClear:
 		e.clearResolvedAlert(ctx, alert, 0)
 	case absentMetricNotAbsenceDriven:
@@ -342,6 +391,12 @@ const (
 // the window stayed put, leaving the cleaner quiet exactly where
 // ordinary collection starts emptying the query.
 //
+// age is how long ago the entries were read. Their SinceCollected is
+// fixed at that moment, so the probe is age later than it says by the
+// time the alert is judged, and the comparison brings it forward before
+// deciding; otherwise a pass that ran on for ten seconds would clear on
+// a probe ten seconds outside its window.
+//
 // Failing safe in both directions is the point: a clearWhenAbsent metric
 // whose probe is demonstrably current clears as it always did, whilst an
 // unknown, stalled or disabled probe leaves the alert active. That is a
@@ -352,7 +407,7 @@ const (
 // means a genuinely inactive slot reported as fixed. See GitHub issue
 // #407.
 func classifyAbsentMetric(clearsWhenAbsent bool, probe string, window time.Duration,
-	connectionID int, entries []database.ProbeStaleness) absentMetricVerdict {
+	connectionID int, entries []database.ProbeStaleness, age time.Duration) absentMetricVerdict {
 	if !clearsWhenAbsent {
 		return absentMetricNotAbsenceDriven
 	}
@@ -366,7 +421,7 @@ func classifyAbsentMetric(clearsWhenAbsent bool, probe string, window time.Durat
 		if entry.ConnectionID != connectionID || entry.ProbeName != probe {
 			continue
 		}
-		if entry.SinceCollected <= window {
+		if entry.SinceCollected+age <= window {
 			return absentMetricClear
 		}
 		return absentMetricProbeNotReporting

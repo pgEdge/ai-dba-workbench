@@ -990,14 +990,15 @@ func TestMetricRegistryAbsenceWindowCoversProbeInterval(t *testing.T) {
 // TestSeededProbeIntervalsMatchCollector reads the collector's
 // probe_configs seed and checks every interval this package audits
 // against it, so a change to a probe's interval in the collector shows
-// up here rather than silently invalidating the window audit. The test
-// is skipped where the collector source is not present beside the
-// alerter, which is the only case in which the two are not checked out
-// together.
+// up here rather than silently invalidating the window audit. The
+// collector source is always checked out beside the alerter, so failing
+// to read it is a failure rather than a skip: a skip would turn green
+// for ever the moment the file moved and leave seededProbeIntervals
+// checked against nothing.
 func TestSeededProbeIntervalsMatchCollector(t *testing.T) {
 	source, err := os.ReadFile(collectorProbeSeedPath)
 	if err != nil {
-		t.Skipf("collector schema not readable beside the alerter: %v", err)
+		t.Fatalf("collector schema not readable beside the alerter: %v", err)
 	}
 
 	seeded := make(map[string]int)

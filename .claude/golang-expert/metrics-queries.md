@@ -749,7 +749,20 @@ map of seeded intervals is itself checked against the collector's
 `cleanResolvedAlerts` resolves the probe staleness snapshot at most once
 per pass, lazily, through `probeStalenessSnapshot`; both
 `checkStalenessAlertResolved` and `resolveAbsentMetric` read it from
-there rather than querying per alert.
+there rather than querying per alert. The entries are measured against
+the datastore's `NOW()` at the read, so a frozen `SinceCollected` or
+`StalenessRatio` understates how late the probe is for every alert
+judged after that, by however long the pass has run; a probe 4m58s late
+at the read is 5m08s late ten seconds on, outside a 5 minute window
+rather than inside it. The snapshot records `readAt` before the read and
+every judgement adds `age()` to the entry (`classifyAbsentMetric` takes
+the age as a parameter, `currentStalenessRatio` brings the ratio
+forward), so the effective window is the metric's own and not
+`absenceWindow + passDuration`. `TestClassifyAbsentMetric`,
+`TestCleaner_AbsentMetricJudgedAfterSnapshotAgesStaysActive` and
+`TestStalenessAlertJudgedAfterSnapshotAgesStaysActive` each advance the
+snapshot's clock between the read and the judgement, which is the case
+the happy path never reaches.
 
 Before the metric is queried, the cleaner applies the same
 `required_extension` gate the evaluator does. `cleanResolvedAlerts` calls
@@ -870,9 +883,10 @@ that follow from that, all learned the hard way in #406 and #407:
   both the evaluator and the cleaner read identically.
   `pg_replication_slots.inactive` and
   `pg_node_role.subscription_worker_down` each used a 5 minute window on
-  a 300 second probe and flapped on every late collection; `pg_stat_database.cache_hit_ratio` returned every delta row
-  in its window with no `ORDER BY`, so the evaluator (any row violating)
-  and the cleaner (first row) disagreed on the same data. The fix is
+  a 300 second probe and flapped on every late collection;
+  `pg_stat_database.cache_hit_ratio` returned every delta row in its
+  window with no `ORDER BY`, so the evaluator (any row violating) and the
+  cleaner (first row) disagreed on the same data. The fix is
   `DISTINCT ON (connection_id, database_name) ... ORDER BY collected_at
   DESC` over the deltas; `pg_stat_statements.slow_query_count` follows
   the per-identity shape described under "Cumulative Counter Deltas per

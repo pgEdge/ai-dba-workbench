@@ -580,3 +580,78 @@ func TestCleaner_AbsentMetricWithUnreadableProbesStaysActive(t *testing.T) {
 	}
 	assertNoClearQueued(t, capture)
 }
+
+// activeAlertByID fetches one active alert through the engine's datastore,
+// as cleanResolvedAlerts would.
+func activeAlertByID(t *testing.T, engine *Engine, alertID int64) *database.Alert {
+	t.Helper()
+	alerts, err := engine.datastore.GetActiveAlerts(context.Background())
+	if err != nil {
+		t.Fatalf("failed to read active alerts: %v", err)
+	}
+	for _, a := range alerts {
+		if a.ID == alertID {
+			return a
+		}
+	}
+	t.Fatalf("alert %d is not active", alertID)
+	return nil
+}
+
+// agedSnapshot returns a probe staleness snapshot whose clock jumps
+// forward by skew once it has been read, standing in for a cleanup pass
+// that runs on for that long between the read and the judgement.
+func agedSnapshot(skew time.Duration) *probeStalenessSnapshot {
+	s := &probeStalenessSnapshot{}
+	s.now = func() time.Time {
+		if s.loaded {
+			return time.Now().Add(skew)
+		}
+		return time.Now()
+	}
+	return s
+}
+
+// TestCleaner_AbsentMetricJudgedAfterSnapshotAgesStaysActive is the
+// second-round finding on #407: the slots probe last collected 14m55s
+// before the snapshot was read, inside its fifteen minute window, but the
+// alert is judged ten seconds later, when the probe is really 15m05s late
+// and the window has emptied. The frozen snapshot said "inside"; the aged
+// one must say "outside" and leave the critical alert active.
+func TestCleaner_AbsentMetricJudgedAfterSnapshotAgesStaysActive(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-aged-snapshot")
+	defer cleanup()
+
+	ctx := context.Background()
+	capture := installNotificationCapture(t, engine)
+	seedProbeReporting(t, pool, connID, "pg_replication_slots", "14 minutes 55 seconds")
+
+	alert := activeAlertByID(t, engine, alertID)
+	engine.checkAlertResolved(ctx, alert, nil, agedSnapshot(10*time.Second))
+
+	if status := alertStatus(t, pool, alertID); status != "active" {
+		t.Errorf("alert status judged 10s after a 14m55s snapshot = %q, want \"active\"",
+			status)
+	}
+	assertNoClearQueued(t, capture)
+}
+
+// TestCleaner_AbsentMetricJudgedAfterSnapshotAgesStillClears is the
+// control: the same ten second skew against a probe that collected 30
+// seconds ago is nowhere near the window's edge, so bringing the snapshot
+// forward must not stop a genuine recovery from clearing.
+func TestCleaner_AbsentMetricJudgedAfterSnapshotAgesStillClears(t *testing.T) {
+	engine, pool, connID, alertID, cleanup := slotInactiveEnv(t, "slot-absent-aged-fresh")
+	defer cleanup()
+
+	ctx := context.Background()
+	seedFreshProbe(t, pool, connID, "pg_replication_slots")
+
+	alert := activeAlertByID(t, engine, alertID)
+	engine.checkAlertResolved(ctx, alert, nil, agedSnapshot(10*time.Second))
+
+	if status := alertStatus(t, pool, alertID); status != "cleared" {
+		t.Errorf("alert status with a fresh probe and an aged snapshot = %q, want \"cleared\"",
+			status)
+	}
+}

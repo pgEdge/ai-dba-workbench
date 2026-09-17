@@ -105,6 +105,7 @@ func TestClassifyAbsentMetric(t *testing.T) {
 		probe            string
 		window           time.Duration
 		entries          []database.ProbeStaleness
+		age              time.Duration
 		want             absentMetricVerdict
 	}{
 		{
@@ -201,6 +202,37 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			want: absentMetricClear,
 		},
 		{
+			// The snapshot said 14m58s when it was read, but the pass
+			// has been running for ten seconds since, so the probe is
+			// really 15m08s late and outside the window. Judging the
+			// frozen figure would clear here, which is #407 in
+			// miniature.
+			name:             "probe was inside the window at the read but is outside it now",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:   connID,
+				ProbeName:      "pg_replication_slots",
+				SinceCollected: slotWindow - 2*time.Second,
+			}},
+			age:  10 * time.Second,
+			want: absentMetricProbeNotReporting,
+		},
+		{
+			name:             "probe is still inside the window after the pass has aged",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:   connID,
+				ProbeName:      "pg_replication_slots",
+				SinceCollected: slotWindow - 30*time.Second,
+			}},
+			age:  10 * time.Second,
+			want: absentMetricClear,
+		},
+		{
 			name:             "probe has stalled",
 			clearsWhenAbsent: true,
 			probe:            "pg_replication_slots",
@@ -237,11 +269,49 @@ func TestClassifyAbsentMetric(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := classifyAbsentMetric(tt.clearsWhenAbsent, tt.probe, tt.window,
-				connID, tt.entries)
+				connID, tt.entries, tt.age)
 			if got != tt.want {
-				t.Errorf("classifyAbsentMetric(%v, %q, %s) = %v, want %v",
-					tt.clearsWhenAbsent, tt.probe, tt.window, got, tt.want)
+				t.Errorf("classifyAbsentMetric(%v, %q, %s, age %s) = %v, want %v",
+					tt.clearsWhenAbsent, tt.probe, tt.window, tt.age, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestProbeStalenessSnapshotAge pins the snapshot's clock handling: an
+// unloaded snapshot has no age, a loaded one ages from the moment before
+// its read, and currentStalenessRatio brings a frozen ratio forward by
+// that age without dividing by a missing interval.
+func TestProbeStalenessSnapshotAge(t *testing.T) {
+	base := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	now := base
+	s := &probeStalenessSnapshot{now: func() time.Time { return now }}
+
+	if got := s.age(); got != 0 {
+		t.Errorf("age of an unloaded snapshot = %s, want 0", got)
+	}
+
+	s.loaded = true
+	s.readAt = base
+	now = base.Add(10 * time.Second)
+	if got := s.age(); got != 10*time.Second {
+		t.Errorf("age = %s, want 10s", got)
+	}
+
+	entry := database.ProbeStaleness{
+		CollectionInterval: 60,
+		StalenessRatio:     2.9,
+		SinceCollected:     174 * time.Second,
+	}
+	if got := currentStalenessRatio(entry, 10*time.Second); got < 3.06 || got > 3.07 {
+		t.Errorf("currentStalenessRatio = %v, want 184/60", got)
+	}
+	entry.CollectionInterval = 0
+	if got := currentStalenessRatio(entry, 10*time.Second); got != 2.9 {
+		t.Errorf("currentStalenessRatio with no interval = %v, want the frozen 2.9", got)
+	}
+
+	if (&probeStalenessSnapshot{}).clock().IsZero() {
+		t.Error("the default clock returned the zero time")
 	}
 }

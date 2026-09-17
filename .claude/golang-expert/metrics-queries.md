@@ -1080,6 +1080,24 @@ guard, not a nicety: `BuildMetricsQuery` derives the bucket width from
 the span, so an unbounded window turns one request into an arbitrarily
 large scan.
 
+That shared cap is calibrated for `/metrics/query`, where the bucket
+width absorbs a longer span; it is far too generous for an endpoint
+whose cost is linear in the window. `/metrics/top-queries` therefore
+applies its own `maxTopQueriesTimeSpan` of 30 days, in
+`checkTopQueriesTimeSpan` (`perf_summary_handlers.go`), immediately
+after `ResolveTimeWindow` returns and before any SQL is built, because
+the aggregation runs twice per request and the only backstop behind it
+is the datastore pool's `statement_timeout`
+(`database.DefaultDatastoreStatementTimeout`, 30 seconds unless the
+`database.statement_timeout` setting says otherwise), which the cap is
+meant to keep an ordinary request well inside. Thirty days is the
+longest preset in `ValidTimeRanges` and the window shape
+`idx_pg_stat_statements_identity_time` (collector migration 15) was
+benchmarked against, so raising it means re-measuring, in particular the
+`exclude_collector=true` path that cannot use the index-only scan. Add
+such a cap per endpoint rather than by tightening `MaxCustomTimeSpan`,
+which the other endpoints legitimately need at 366 days.
+
 The rules are shared, not metrics-only. `GET /api/v1/timeline/events`
 takes absolute `start_time` and `end_time` values; `resolveTimelineWindow`
 in `server/src/internal/api/timeline_handlers.go` parses them with
@@ -1092,8 +1110,9 @@ checks inline in a handler; the `api` package already depends on
 `metrics`, so there is no cycle.
 
 `GET /api/v1/metrics/query`, `GET /api/v1/metrics/connection-groups`,
-`GET /api/v1/metrics/performance-summary` and
-`GET /api/v1/metrics/query-stats` accept `time_range=custom` alongside
+`GET /api/v1/metrics/performance-summary`,
+`GET /api/v1/metrics/query-stats` and
+`GET /api/v1/metrics/top-queries` accept `time_range=custom` alongside
 `time_start` and `time_end`, resolve the window through
 `ResolveTimeWindow` and map any resolution error to `400`;
 `performance-summary` derives its bucket width from the resolved
@@ -1117,11 +1136,43 @@ PostgreSQL 18, which added B-tree skip scans, a predicate on
 `connection_id` and `queryid` alone falls back to a bitmap scan of
 `idx_pg_stat_statements_conn_time` over every row of the connection in
 the window. `/metrics/query` and `/metrics/latest` always carry the
-database name; `/metrics/top-queries` reads one snapshot by
-`collected_at` and does not need the object index; `/metrics/query-stats`
-takes an optional `database_name` parameter, which the drill-down always
-sends, and `buildQueryStatsSQL` binds it as an extra predicate so that
-the object index applies.
+database name; `/metrics/query-stats` takes an optional `database_name`
+parameter, which the drill-down always sends, and `buildQueryStatsSQL`
+binds it as an extra predicate so that the object index applies.
+`/metrics/top-queries` reads the identity index described below for the
+aggregation itself, and the object index for the per-row query-text
+lateral on its page statement.
+
+## The Three Indexes on metrics.pg_stat_statements (collector)
+
+The table carries its primary key plus three secondary indexes, and each
+one exists for a different access pattern. Do not add a fourth without
+measuring, and do not drop any of these:
+
+- `idx_pg_stat_statements_conn_time (connection_id, collected_at DESC)`
+  serves everything that wants the newest samples for a connection,
+  including the `latest` CTE that anchors the name lookups.
+- `idx_pg_stat_statements_object (connection_id, database_name, queryid,
+  collected_at DESC)` serves the per-statement drill-downs, which always
+  bind a database name, and the query-text lookup on the top-queries
+  page statement. It cannot be replaced by the identity index below:
+  that index puts `queryid` ahead of `database_name`, so it cannot
+  return one statement's samples in `collected_at` order.
+- `idx_pg_stat_statements_identity_time (connection_id, queryid, userid,
+  dbid, toplevel, collected_at, database_name) INCLUDE (calls,
+  total_exec_time, rows, shared_blks_hit, shared_blks_read,
+  min_exec_time, max_exec_time)` is migration #15, added for issue #387.
+  Its key order is exactly the `ORDER BY` of the `readings` CTE in
+  `buildTopQueriesSQL` (identity columns, then `collected_at`, then the
+  probing `database_name` as the tiebreaker), which serves both the
+  `DISTINCT ON` and the identity window, so the aggregation
+  reads the rows already sorted, with a Merge Append combining the
+  partitions; the INCLUDE list makes the scan index-only.
+
+The index costs roughly 17% of the table's size, about 39% on insert
+time and 56% on WAL volume for a collector-sized batch, measured on a
+2.6-million-row fixture. Both figures roughly double if the query text
+is added to the INCLUDE list, which is why it is not there.
 
 ## Cumulative Counter Deltas per Identity (server)
 
@@ -1140,6 +1191,64 @@ subtracted from the post-reset one. `queryStatsSQLTemplate` in
 counter-delta query over `metrics.pg_stat_statements` should follow the
 same shape.
 
+Since issue #387 `buildTopQueriesSQL` applies the same pattern to every
+`queryid` at once, with one refinement that the review of PR #481
+forced. `database_name` is **not** part of the identity there: the probe
+runs in every database with the extension and each run reads the same
+cluster-wide view, so one counter lands once per such database at the
+same `collected_at`, differing only in the probing `database_name`. Its
+`readings` CTE therefore keeps one copy per
+`(queryid, userid, dbid, toplevel, collected_at)` with `DISTINCT ON`
+(lowest `database_name` wins, for a stable choice), resolves each row's
+own database through `db_names`, and applies the optional
+`database_name` filter to that resolved name; `samples` then `LAG`s over
+`(queryid, userid, dbid, toplevel)`, `totals` drops the pairs whose
+call or time delta is negative, floors the row and block deltas at
+zero, sums per `queryid` and keeps only statements with calls in the
+window, and `latest_sample` supplies the OIDs, the resolved name and the
+two lifetime columns `min_exec_time` and `max_exec_time`, which cannot
+be differenced. `mean_exec_time` is derived as
+`SUM(delta_time) / SUM(delta_calls)`. A statement present in the
+snapshot but not executed in the window therefore does not appear at
+all, which is a deliberate behaviour change from the pre-#387 endpoint.
+
+Two consequences follow, each pinned by a test. Partitioning on
+`database_name` as well would count every call once per database with
+the extension (`TestTopQueries_OneCounterStoredUnderSeveralDatabases`,
+which stores one counter under two names and expects it summed once);
+and the database filter has to select which counters are summed rather
+than filter the summed row, because `totals` sums every `dbid` of a
+`queryid` (`TestTopQueries_DatabaseFilterSumsOneDatabase`, 1,200 calls
+in one database and 12 in another). `queryStatsSQLTemplate` still keys
+its identity on `database_name`; it is safe only because the drill-down
+always binds one database, and it should adopt the same shape if that
+ever changes.
+
+`totals` and `latest_sample` must stay `MATERIALIZED`. The planner
+cannot see through the `samples` CTE, estimates both at one row, and
+otherwise joins them with a nested loop that re-runs the `DISTINCT ON`
+once per statement; on a 24-hour window of 57,000 samples that cost five
+seconds instead of a quarter of one.
+
+The query text must stay out of `samples`. It is the widest column in
+the table, `samples` is read twice and so is spilled to a tuplestore,
+and carrying the text made each of the million-odd rows of a 30-day
+window about 270 bytes rather than about 85: the spill was 368 MB
+instead of 125 MB, and no index of a sensible size could cover the scan.
+The page statement resolves it instead with a lateral lookup outside the
+`LIMIT`, so it runs once per row returned, keyed on the raw
+`database_name` recorded on the sample rather than the name resolved
+through `db_names`. The join is `LEFT`, because the column is nullable.
+
+On a 2.6-million-row, 30-day fixture the identity index plus the
+narrower `samples` took the page statement from 11.5 s to 5.5 s and the
+count statement from 10.9 s to 5.0 s, with the external merge sort gone
+entirely; 7 days went from 2.0 s to 1.5 s and 24 hours from 296 ms to
+178 ms. One caveat: `exclude_collector=true` matches on the query text,
+which both forces a heap scan and collapses the row estimate, so that
+path still plans as it did before. Shortening the window is the remedy,
+not another index.
+
 ## Bounded Activity Lookups (server)
 
 `buildTopQueriesSQL` resolves `dbid` and `userid` OIDs to names through
@@ -1147,8 +1256,10 @@ same shape.
 `metrics.pg_stat_activity`, which has no index on `datid` or
 `usesysid`. Without a `collected_at` bound that sort covers every
 activity row in retention for the connection, and it runs twice per
-page (count and page statements). Both CTEs are therefore anchored to
-the latest `pg_stat_statements` snapshot and read only the preceding
+page (count and page statements). Both CTEs stay anchored to
+the latest `pg_stat_statements` snapshot rather than to the requested
+window, because they are a name lookup and not a measurement, and read
+only the preceding
 `nameLookupWindowSQL` (one hour) of activity samples; on a fixture of
 500,000 activity rows that took the page from 1.6 s and a 29 MB
 external sort to 8 ms in memory. Any new lookup over
@@ -1157,7 +1268,8 @@ external sort to 8 ms in memory. Any new lookup over
 The third CTE in the same statement, `last_client`, follows that rule:
 it takes `DISTINCT ON (query_id, datid, usesysid)` over the same window,
 ordered by `collected_at DESC`, and is `LEFT JOIN`ed on all three of
-`pss.queryid`, `pss.dbid` and `pss.userid` to fill the `client_addr`
+`latest_sample`'s `queryid`, `dbid` and `userid` (the identity of each
+statement's most recent sample in the window) to fill the `client_addr`
 (via `host(client_addr)`, the repo's convention for rendering `inet`),
 `client_hostname` and `client_observed_at` columns of `TopQueryRow`.
 

@@ -23,10 +23,18 @@ vi.mock('../../../../utils/apiClient', () => ({
 }));
 
 const mockPushOverlay = vi.fn();
+let mockTimeRange = '1h';
+let mockCustomStart: string | undefined;
+let mockCustomEnd: string | undefined;
 vi.mock('../../../../contexts/useDashboard', () => ({
     useDashboard: () => ({
         refreshTrigger: 0,
         pushOverlay: mockPushOverlay,
+        timeRange: {
+            range: mockTimeRange,
+            customStart: mockCustomStart,
+            customEnd: mockCustomEnd,
+        },
     }),
 }));
 
@@ -151,6 +159,177 @@ describe('TopQueriesSection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(localStorage.getItem).mockReturnValue(null);
+        mockTimeRange = '1h';
+        mockCustomStart = undefined;
+        mockCustomEnd = undefined;
+    });
+
+    describe('time window', () => {
+        it.each(['1h', '6h', '24h', '7d', '30d'])(
+            'sends the %s preset as time_range',
+            async (range) => {
+                mockTimeRange = range;
+                setupFetch({ rows: makeRows(1) });
+
+                renderSection();
+
+                await waitFor(() => {
+                    expect(topQueryUrls()).not.toHaveLength(0);
+                });
+                const params = new URLSearchParams(
+                    lastTopQueryUrl().split('?')[1],
+                );
+                expect(params.get('time_range')).toBe(range);
+                expect(params.get('time_start')).toBeNull();
+                expect(params.get('time_end')).toBeNull();
+            });
+
+        it('sends both bounds for a custom range', async () => {
+            mockTimeRange = 'custom';
+            mockCustomStart = '2026-09-01T00:00:00Z';
+            mockCustomEnd = '2026-09-02T00:00:00Z';
+            setupFetch({ rows: makeRows(1) });
+
+            renderSection();
+
+            await waitFor(() => {
+                expect(topQueryUrls()).not.toHaveLength(0);
+            });
+            const params = new URLSearchParams(
+                lastTopQueryUrl().split('?')[1],
+            );
+            expect(params.get('time_range')).toBe('custom');
+            expect(params.get('time_start'))
+                .toBe('2026-09-01T00:00:00Z');
+            expect(params.get('time_end'))
+                .toBe('2026-09-02T00:00:00Z');
+        });
+
+        it('makes no request whilst a custom range lacks a bound',
+            async () => {
+                mockTimeRange = 'custom';
+                mockCustomEnd = '2026-09-02T00:00:00Z';
+                setupFetch({ rows: makeRows(1) });
+
+                renderSection();
+
+                await waitFor(() => {
+                    expect(mockApiFetch).toHaveBeenCalled();
+                });
+                expect(topQueryUrls()).toHaveLength(0);
+            });
+
+        it('returns to the first page when the range changes', async () => {
+            mockTimeRange = '30d';
+            setupFetch({
+                pages: {
+                    '0': makeRows(20, 'a'),
+                    '20': makeRows(20, 'b'),
+                },
+                totalCount: '45',
+            });
+
+            const { rerender } = renderSection();
+
+            await waitFor(() => {
+                expect(
+                    screen.getByText('Showing 1–20 of 45'),
+                ).toBeInTheDocument();
+            });
+
+            fireEvent.click(
+                screen.getByRole('button', { name: 'Next page of queries' }),
+            );
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('20');
+            });
+
+            mockTimeRange = '1h';
+            rerender(
+                <TopQueriesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(paramOf(lastTopQueryUrl(), 'time_range')).toBe('1h');
+            });
+            expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+        });
+
+        it('returns to the first page when a custom bound narrows',
+            async () => {
+                mockTimeRange = 'custom';
+                mockCustomStart = '2026-09-01T00:00:00Z';
+                mockCustomEnd = '2026-09-30T00:00:00Z';
+                setupFetch({
+                    pages: {
+                        '0': makeRows(20, 'a'),
+                        '20': makeRows(20, 'b'),
+                    },
+                    totalCount: '45',
+                });
+
+                const { rerender } = renderSection();
+
+                await waitFor(() => {
+                    expect(
+                        screen.getByText('Showing 1–20 of 45'),
+                    ).toBeInTheDocument();
+                });
+
+                fireEvent.click(
+                    screen.getByRole('button', {
+                        name: 'Next page of queries',
+                    }),
+                );
+
+                await waitFor(() => {
+                    expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('20');
+                });
+
+                mockCustomEnd = '2026-09-02T00:00:00Z';
+                rerender(
+                    <TopQueriesSection
+                        connectionId={1}
+                        connectionName="Test Server"
+                    />,
+                );
+
+                await waitFor(() => {
+                    expect(paramOf(lastTopQueryUrl(), 'time_end'))
+                        .toBe('2026-09-02T00:00:00Z');
+                });
+                expect(paramOf(lastTopQueryUrl(), 'offset')).toBe('0');
+            });
+
+        it('refetches when the selected range changes', async () => {
+            setupFetch({ rows: makeRows(1) });
+
+            const { rerender } = renderSection();
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(1);
+            });
+
+            mockTimeRange = '7d';
+            rerender(
+                <TopQueriesSection
+                    connectionId={1}
+                    connectionName="Test Server"
+                />,
+            );
+
+            await waitFor(() => {
+                expect(topQueryUrls()).toHaveLength(2);
+            });
+            const params = new URLSearchParams(
+                lastTopQueryUrl().split('?')[1],
+            );
+            expect(params.get('time_range')).toBe('7d');
+        });
     });
 
     it('renders "Top Queries" section title', async () => {

@@ -113,6 +113,7 @@ database:
   pool_max_conns: 4
   pool_min_conns: 0
   pool_max_conn_idle_time: "30m"
+  statement_timeout: "30s"
 
 #=====================================================
 # EMBEDDING GENERATION
@@ -411,6 +412,20 @@ protection for user-created database connections.
 | `pool_max_conns` | int | `4` | Max pool connections |
 | `pool_min_conns` | int | `0` | Min pool connections |
 | `pool_max_conn_idle_time` | string | `30m` | Max idle time |
+| `statement_timeout` | string | `30s` | Server-side statement timeout |
+
+The `statement_timeout` option bounds how long a single statement may
+run on a datastore pool connection before PostgreSQL cancels it. The
+server already cancels its own queries once the request that asked for
+them has given up, but that cancellation is a request sent over the
+same connection, so a lost cancel, or a backend that is not at a point
+where it can be interrupted, leaves the query running and holding one
+of the few pool connections; the server-side timeout is what actually
+frees the connection. The default of `30s` matches the longest deadline
+the server grants a datastore query, so it rejects nothing that would
+otherwise have completed. The value accepts any Go duration string,
+such as `45s` or `1m30s`; `0` disables the timeout, which is not
+recommended because a single runaway query can then starve the pool.
 
 ### Embedding (`embedding`)
 

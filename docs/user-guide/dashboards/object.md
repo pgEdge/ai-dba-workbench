@@ -39,21 +39,39 @@ across the selected time range.
 
 ## Query Detail
 
-The query detail view displays the following metrics:
+The query detail view displays the following tiles:
 
-- Total execution time across every recorded call.
-- Mean execution time over the lifetime of the query,
-  shown as "Mean Time (All Time)".
-- Average execution time over the selected time range,
-  labelled with that range as "Avg Time (Last 24h)", or as
-  "Avg Time (Custom Range)" when a custom window is active.
-  The tile shows "Unavailable" when the statistics request
-  fails, so that a broken request looks different from a
-  query that ran no calls in the period.
-- Minimum and maximum execution time over the lifetime
-  of the query.
-- Total rows returned and rows per call.
-- The total call count.
+- The Total Calls tile counts the calls the query made
+  within the selected time range.
+- The Total Time tile sums the execution time of those
+  calls.
+- The Mean Time tile divides that total time by that call
+  count, so the figure also covers the selected range.
+- The Min Time (All Time) and Max Time (All Time) tiles
+  report the fastest and slowest single execution over the
+  lifetime of the query.
+- The Avg Rows/Call tile divides the rows returned within
+  the range by the calls made within the range.
+
+PostgreSQL reports `pg_stat_statements` counters
+cumulatively, so the Workbench derives a windowed figure
+by subtracting consecutive collected samples. That
+subtraction works for a counter that only ever grows, such
+as the call count or the total execution time, but it
+cannot recover the extremes: the minimum and the maximum
+of a window are not the difference between two lifetime
+extremes. The two lifetime tiles carry the "All Time"
+qualifier for that reason, and a maximum far above the
+mean is expected rather than a fault, because one slow
+execution at any point in the life of the query sets that
+figure permanently.
+
+A query that made no calls within the selected range drops
+out of the results, whether the range comes from a preset
+or from a custom window. Narrowing the range whilst the
+overlay is open therefore leaves every tile showing a dash
+rather than a zero, and widening the range again restores
+the figures.
 
 The Calls Over Time chart plots the calls per second
 across the selected time range.

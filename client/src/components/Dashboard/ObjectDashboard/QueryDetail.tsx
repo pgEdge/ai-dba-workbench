@@ -29,10 +29,6 @@ import { apiFetch } from '../../../utils/apiClient';
 import { useDashboard } from '../../../contexts/useDashboard';
 import { useMetrics } from '../../../hooks/useMetrics';
 import { useQueryOverview } from '../../../hooks/useQueryOverview';
-import {
-    useQueryStats,
-    type QueryStatsParams,
-} from '../../../hooks/useQueryStats';
 import { logger } from '../../../utils/logger';
 import {
     SERVER_INFO_LABEL_BASE_SX,
@@ -184,6 +180,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 }) => {
     const { user } = useAuth();
     const { timeRange, refreshTrigger, currentOverlay } = useDashboard();
+    const selectedRange = timeRange.range;
+    const customStart = timeRange.customStart;
+    const customEnd = timeRange.customEnd;
     const { aiEnabled } = useAICapabilities();
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
@@ -199,6 +198,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
     const [insightsCollapsed, setInsightsCollapsed] =
         useState<boolean>(false);
     const isMountedRef = useRef<boolean>(true);
+    // Each fetch takes a sequence number so that a response from an
+    // earlier request is dropped once a later one has started. The
+    // effect cleanup alone cannot do this: it clears isMountedRef, but
+    // the next run sets it straight back, so a slow 30d response could
+    // still land after a quick 1h one and overwrite it.
+    const requestIdRef = useRef<number>(0);
     const initialLoadDoneRef = useRef<boolean>(false);
 
     // AI query overview (brief plain-text summary)
@@ -225,15 +230,35 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 
     const connectionName = currentOverlay?.connectionName;
 
+    // Qualifier for the tiles that follow the time range selector, so
+    // that they read as windowed beside the lifetime min and max.
+    const windowLabel = selectedRange === 'custom'
+        ? 'Custom Range'
+        : `Last ${selectedRange}`;
+
     // objectName may be queryid or query text
     const fetchQueryData = useCallback(async (): Promise<void> => {
         if (!user) { return; }
+
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (selectedRange === 'custom' && (!customStart || !customEnd)) {
+            return;
+        }
 
         const params = new URLSearchParams({
             connection_id: connectionId.toString(),
             queryid: objectName,
             limit: '1',
+            time_range: selectedRange,
         });
+        if (selectedRange === 'custom' && customStart && customEnd) {
+            params.set('time_start', customStart);
+            params.set('time_end', customEnd);
+        }
 
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
@@ -241,6 +266,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             setLoading(true);
         }
         setError(null);
+
+        const requestId = ++requestIdRef.current;
+        // A response is only applied if the component is still mounted
+        // and no newer request has been started since.
+        const isCurrent = (): boolean =>
+            isMountedRef.current && requestIdRef.current === requestId;
 
         try {
             const response = await apiFetch(url);
@@ -256,8 +287,9 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 );
             }
 
-            if (isMountedRef.current) {
-                const result = await response.json() as QueryDetailData[];
+            const result = await response.json() as QueryDetailData[];
+
+            if (isCurrent()) {
                 setQueryData(
                     result.length > 0 ? result[0] : null
                 );
@@ -265,7 +297,7 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
             }
         } catch (err) {
             logger.error('Error fetching query detail:', err);
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setError(
                     (err as Error).message
                     || 'Failed to fetch query data'
@@ -273,11 +305,14 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 setQueryData(null);
             }
         } finally {
-            if (isMountedRef.current) {
+            if (isCurrent()) {
                 setLoading(false);
             }
         }
-    }, [user, connectionId, objectName]);
+    }, [
+        user, connectionId, objectName,
+        selectedRange, customStart, customEnd,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;
@@ -343,40 +378,6 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
 
     const execTimeChart = useMetrics(execTimeChartParams);
     const callsChart = useMetrics(callsChartParams);
-
-    // Period-scoped statistics for the selected time range; these sit
-    // alongside the lifetime pg_stat_statements totals above.
-    const queryStatsParams = useMemo(
-        (): QueryStatsParams | null => {
-            if (!queryData?.queryid) { return null; }
-            return {
-                connectionId,
-                queryId: queryData.queryid,
-                databaseName,
-                timeRange: timeRange.range,
-            };
-        },
-        [connectionId, databaseName, timeRange.range, queryData?.queryid]
-    );
-
-    const {
-        stats: periodStats,
-        loading: periodStatsLoading,
-        error: periodStatsError,
-    } = useQueryStats(queryStatsParams);
-
-    // The period average tile distinguishes a failed request from a
-    // pending one and from a period with no data; an error wins over
-    // a pending refetch so a failure is never masked by a spinner.
-    const periodAvgLabel = timeRange.range === 'custom'
-        ? 'Avg Time (Custom Range)'
-        : `Avg Time (Last ${timeRange.range})`;
-    const periodAvgValue = periodStatsError
-        ? 'Unavailable'
-        : periodStatsLoading && !periodStats
-            ? 'Loading...'
-            : formatTime(periodStats?.avg_exec_time ?? null);
-    const periodAvgStatus = periodStatsError ? 'critical' : undefined;
 
     const execTimeChartData = useMemo(
         () => buildChartData(
@@ -771,15 +772,26 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                 title="Query Statistics"
                 defaultExpanded
             >
+                {/*
+                  * Calls, total time and mean time are aggregated
+                  * over the selected range by the top-queries
+                  * endpoint, which only returns a statement that was
+                  * executed in the window, so a window with no data
+                  * leaves every tile showing a dash rather than a
+                  * misleading zero. Min and max cannot be
+                  * delta-aggregated, so pg_stat_statements reports
+                  * them for the life of the statement; the labels
+                  * say which window each tile covers.
+                  */}
                 <Box sx={KPI_GRID_SX}>
                     <KpiTile
-                        label="Total Calls"
+                        label={`Total Calls (${windowLabel})`}
                         value={queryData
                             ? formatNumber(queryData.calls)
                             : '--'}
                     />
                     <KpiTile
-                        label="Total Time"
+                        label={`Total Time (${windowLabel})`}
                         value={queryData
                             ? formatTime(
                                 queryData.total_exec_time
@@ -787,17 +799,12 @@ const QueryDetail: React.FC<ObjectDetailProps> = ({
                             : '--'}
                     />
                     <KpiTile
-                        label="Mean Time (All Time)"
+                        label={`Mean Time (${windowLabel})`}
                         value={queryData
                             ? formatTime(
                                 queryData.mean_exec_time
                             )
                             : '--'}
-                    />
-                    <KpiTile
-                        label={periodAvgLabel}
-                        value={periodAvgValue}
-                        status={periodAvgStatus}
                     />
                     <KpiTile
                         label="Min Time (All Time)"

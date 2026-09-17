@@ -339,6 +339,95 @@ LLM. The rules are as follows:
   and a read may still be served from the OS page cache, so a lower
   ratio does not by itself mean slow I/O.
 
+## Dashboard Time Window
+
+Every dashboard request that has a time dimension takes its window
+from `useDashboard().timeRange`, a `TimeRangeState` of `range` plus
+an optional `customStart` and `customEnd`. There is no shared helper
+yet, so each call site repeats the same two-part pattern that
+`useMetrics` (`client/src/hooks/useMetrics.ts`) establishes:
+
+- Always send `time_range`, and send `time_start` and `time_end`
+  only when the range is `custom` and both bounds are present; the
+  server accepts the bounds for no other range.
+
+- Skip the request entirely whilst a custom range has only one
+  bound, leaving the existing data and error state alone. A
+  half-specified custom window is a transient state the user passes
+  through in the picker, and sending it earns a 400 and a visible
+  error for no benefit. `useMetrics`, `useServerCacheHit`,
+  `useConnectionGroups`, `useQueryStats`, `TopQueriesSection` and
+  `QueryDetail` all do this.
+
+- Put `range`, `customStart` and `customEnd` in the fetch callback's
+  dependency list, so that moving the selector refetches.
+
+- Guard the fetch against out-of-order responses with a request
+  sequence number, as `TopQueriesSection` and `QueryDetail` do: take
+  `++requestIdRef.current` at the start of each fetch and apply the
+  response only when the ref still holds that number (and the
+  component is still mounted). An `isMountedRef` cleared in the
+  effect cleanup is not enough on its own, because the next effect
+  run sets it straight back to `true`, so a slow `30d` response can
+  land after a quick `1h` one and overwrite it.
+
+- Where the view is paged, treat the window as a filter that changes
+  the size of the result set and reset the offset when it moves, or
+  narrowing the window strands the user on a page that no longer
+  exists. `TopQueriesSection` resets during render off a tracked
+  previous value, the same way it handles a connection change, so
+  that the next fetch cannot run with a stale offset; an effect would
+  let one windowed request go out first. Key the tracked value on the
+  bounds as well as the range, because a custom window can be
+  narrowed without `range` ever leaving `custom`.
+
+`/api/v1/metrics/top-queries` is windowed, and both of its callers
+pass the selected range: `TopQueriesSection` for the leaderboard and
+`QueryDetail` for the header statistics behind the overlay a row
+opens. The overlay takes the range from context rather than from the
+overlay payload, so nothing has to be threaded through `pushOverlay`.
+
+The windowed response aggregates `calls`, `rows`, `total_exec_time`
+and the block counters as sums of non-negative deltas, and derives
+`mean_exec_time` from those sums, but `min_exec_time` and
+`max_exec_time` cannot be delta-aggregated and remain lifetime
+`pg_stat_statements` values. The two `QueryDetail` tiles that show
+them are therefore labelled `Min Time (All Time)` and `Max Time
+(All Time)`, whilst `Total Calls` and `Total Time` carry the
+selected window in their labels, `(Last 1h)` and so on, or `(Custom
+Range)`, so that they cannot be read as lifetime figures beside the
+min and max. The mean tile is plain `Mean Time` because it is the
+ratio of the two windowed totals. Any new tile reading a windowed
+endpoint must say in its label which of the two it is.
+
+`QueryDetail` used to carry a second average tile, `Avg Time (Last
+1h)` or `Avg Time (Custom Range)`, fed by `useQueryStats`. Once
+`mean_exec_time` became windowed the two tiles computed the same
+figure over the same window from the same delta pairs, so the
+`useQueryStats` tile was dropped and with it a second round trip on
+every overlay open. `useQueryStats` and
+`/api/v1/metrics/query-stats` both remain for API consumers, but
+`QueryDetail` no longer calls the hook and nothing else in the
+client does either; check that before assuming the hook is live.
+
+The dropped tile distinguished a failed request, a pending one and a
+genuine zero, because `avg_exec_time` is nullable. `mean_exec_time`
+is a plain `float64`, so that distinction could not survive as such,
+but it does not need to: the top-queries SQL ends its `totals` CTE
+with `HAVING SUM(delta_calls) > 0`, so a statement that was not
+executed in the window falls out of the result entirely, the
+response is empty, `queryData` is `null`, and `Mean Time` renders
+`--` exactly as `Total Calls` and `Total Time` do. A failed or
+pending fetch is handled once for the whole component, as the error
+message or the spinner. Keep any future windowed tile on that same
+footing rather than reintroducing per-tile state.
+
+Five summary-tile call sites still hardcode `time_range=24h`
+(`usePerformanceSummary`, `useDatabaseCacheHit`,
+`DatabaseSummariesSection`, `KpiTilesSection` and
+`ComparativeChartsSection`); that is deliberate for now and is being
+reviewed separately, so do not sweep them into an unrelated change.
+
 ## TypeScript Standards
 
 `client/package.json` depends on `@mui/material` at `^5.14.20`. The

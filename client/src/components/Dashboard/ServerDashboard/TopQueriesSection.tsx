@@ -235,7 +235,10 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     connectionName,
 }) => {
     const { user } = useAuth();
-    const { refreshTrigger, pushOverlay } = useDashboard();
+    const { refreshTrigger, pushOverlay, timeRange } = useDashboard();
+    const selectedRange = timeRange.range;
+    const customStart = timeRange.customStart;
+    const customEnd = timeRange.customEnd;
     const theme = useTheme();
 
     const [queries, setQueries] = useState<TopQueryRow[]>([]);
@@ -272,6 +275,22 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         setTotalCount(null);
     }
 
+    // The selected window is a filter like any other here, and
+    // narrowing it shrinks the result set, so a stale offset would
+    // strand the user on an empty page. Reset paging during render for
+    // the same reason the connection change does, and key on the
+    // bounds as well as the range, because a custom window can be
+    // narrowed without the range ever leaving 'custom'.
+    const windowKey =
+        `${selectedRange}|${customStart ?? ''}|${customEnd ?? ''}`;
+    const [renderedWindowKey, setRenderedWindowKey] =
+        useState<string>(windowKey);
+    if (renderedWindowKey !== windowKey) {
+        setRenderedWindowKey(windowKey);
+        setPage(0);
+        setTotalCount(null);
+    }
+
     // The database list drives the filter control only, so it tracks
     // the connection rather than the dashboard refresh cycle.
     const { databases } = useDatabaseSummaries(connectionId);
@@ -288,13 +307,27 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
 
+        /*
+         * A custom range without both bounds is a transient state the
+         * server rejects with a 400, so skip the request entirely and
+         * leave whatever data and error state is already in place.
+         */
+        if (selectedRange === 'custom' && (!customStart || !customEnd)) {
+            return;
+        }
+
         const params = new URLSearchParams({
             connection_id: connectionId.toString(),
             limit: pageSize.toString(),
             offset: (page * pageSize).toString(),
             order_by: 'total_exec_time',
             order: 'desc',
+            time_range: selectedRange,
         });
+        if (selectedRange === 'custom' && customStart && customEnd) {
+            params.set('time_start', customStart);
+            params.set('time_end', customEnd);
+        }
         if (hideCollectorQueries) {
             params.set('exclude_collector', 'true');
         }
@@ -362,7 +395,10 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                 setLoading(false);
             }
         }
-    }, [connectionId, hideCollectorQueries, page, pageSize, databaseFilter]);
+    }, [
+        connectionId, hideCollectorQueries, page, pageSize, databaseFilter,
+        selectedRange, customStart, customEnd,
+    ]);
 
     useEffect(() => {
         initialLoadDoneRef.current = false;

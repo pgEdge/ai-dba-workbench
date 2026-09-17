@@ -1268,6 +1268,45 @@ const (
 	defaultTopQueryOrder   = "desc"
 )
 
+// maxTopQueriesTimeSpan caps the window this endpoint will aggregate
+// over. It is deliberately tighter than metrics.MaxCustomTimeSpan, which
+// stays at 366 days for /metrics/query, where the bucket width is derived
+// from the span and so the work stays bounded however long the window is.
+// Nothing damps the cost here: the aggregation is linear in the window and
+// the whole CTE runs twice per request, once for the count and once for the
+// page, against a datastore pool with only a handful of connections. The
+// pool's statement_timeout (database.DefaultDatastoreStatementTimeout,
+// 30 seconds unless configured) is the backstop that stops a runaway
+// statement holding a connection indefinitely; this cap is what keeps an
+// ordinary request well inside it, so that an unbounded window is not a
+// cheap authenticated denial of service.
+//
+// Thirty days is the largest preset in metrics.ValidTimeRanges, so it is
+// the longest window the web client can ask for, and it is the shape
+// idx_pg_stat_statements_identity_time (collector migration 15) was
+// benchmarked against. Anyone raising this figure needs to re-measure the
+// aggregation at the new span, including the exclude_collector=true case,
+// which cannot use the index-only scan and so carries the query text
+// through a sort.
+const maxTopQueriesTimeSpan = 30 * 24 * time.Hour
+
+// topQueriesTimeSpanError is the 400 message returned when a custom window
+// exceeds maxTopQueriesTimeSpan. The wording follows the span error from
+// metrics.ResolveCustomWindow so that the two read alike.
+const topQueriesTimeSpanError = "invalid time range: span must not exceed 30 days"
+
+// checkTopQueriesTimeSpan reports whether an already-resolved window is
+// short enough for this endpoint to aggregate. It is applied per endpoint,
+// immediately after metrics.ResolveTimeWindow returns, rather than by
+// tightening the shared constant, because the other endpoints that resolve
+// a custom window legitimately need the full 366 days.
+func checkTopQueriesTimeSpan(window metrics.TimeWindow) error {
+	if window.End.Sub(window.Start) > maxTopQueriesTimeSpan {
+		return errors.New(topQueriesTimeSpanError)
+	}
+	return nil
+}
+
 // safeTopQueryOrdering maps an already-resolved ORDER BY column and
 // direction on to a pair that is safe to interpolate into SQL,
 // substituting the defaults for anything not produced by the
@@ -1312,15 +1351,16 @@ func isAllowedLiteral(whitelist map[string]string, v string) bool {
 // The only values interpolated into the statement text are orderCol and
 // orderDir, which callers must resolve through validTopQueryOrderColumns and
 // validTopQueryOrderDirections respectively, plus the generated placeholder
-// positions. Every caller-supplied value (connID, queryID, databaseName,
-// limit, offset) is bound as a parameter and appears in the returned
-// argument slices, never in the SQL.
+// positions. Every caller-supplied value (connID, the window bounds,
+// queryID, databaseName, limit, offset) is bound as a parameter and appears
+// in the returned argument slices, never in the SQL.
 //
 // filterArgs serves the count statement; pageArgs is filterArgs followed by
 // the limit and offset, so the two statements share identical placeholder
 // numbering for the filters.
 func buildTopQueriesSQL(
 	connID int,
+	window metrics.TimeWindow,
 	queryID *int64,
 	databaseName string,
 	excludeCollector bool,
@@ -1329,10 +1369,15 @@ func buildTopQueriesSQL(
 ) (countSQL, pageSQL string, filterArgs, pageArgs []any) {
 	orderCol, orderDir = safeTopQueryOrdering(orderCol, orderDir)
 
-	// Optional queryid filter, applied inside the CTE. The identifier is
-	// bound as a bigint rather than compared through a text cast so that
-	// the queryid index remains usable; the handler has already rejected
-	// anything that does not parse as a 64-bit integer.
+	// The connection and the window bounds are always present, so they take
+	// the first three placeholders and every optional clause numbers itself
+	// from there.
+	filterArgs = []any{connID, window.Start, window.End}
+
+	// Optional queryid filter, applied inside the sample scan. The
+	// identifier is bound as a bigint rather than compared through a text
+	// cast so that the queryid index remains usable; the handler has
+	// already rejected anything that does not parse as a 64-bit integer.
 	// The same predicate is applied inside last_client as well, against
 	// that CTE's unaliased query_id column and bound to the same
 	// placeholder, so the drill-down (which always passes a queryid) sorts
@@ -1341,7 +1386,6 @@ func buildTopQueriesSQL(
 	// extra parameter is bound.
 	queryIDClause := ""
 	lastClientQueryIDClause := ""
-	filterArgs = []any{connID}
 	if queryID != nil {
 		queryIDPos := len(filterArgs) + 1
 		queryIDClause = fmt.Sprintf(
@@ -1359,19 +1403,24 @@ func buildTopQueriesSQL(
 		excludeCollectorClause = excludeWorkbenchQueriesClause
 	}
 
-	// The database filter is applied to the outer select so that it matches
-	// the resolved database name (the COALESCE below), not the raw
-	// pss.database_name column.
+	// The database filter is applied inside the sample scan, against the
+	// name resolved through db_names (falling back to the raw
+	// pss.database_name column when the OID was never observed), so that a
+	// filtered request aggregates only the counters of that database. It
+	// cannot be applied after totals: pg_stat_statements keeps a separate
+	// counter per dbid for one queryid, totals sums them, and a filter on
+	// the summed row would report every database's calls under the one
+	// that was asked for.
 	databaseClause := ""
 	if databaseName != "" {
 		databaseClause = fmt.Sprintf(
-			"WHERE database_name = $%d", len(filterArgs)+1)
+			"AND COALESCE(dn.datname, pss.database_name) = $%d",
+			len(filterArgs)+1)
 		filterArgs = append(filterArgs, databaseName)
 	}
 
 	// latest is the most recent pg_stat_statements snapshot for the
-	// connection; deduped reads exactly that snapshot, and the three
-	// activity lookups below are anchored to it.
+	// connection; the three activity lookups below are anchored to it.
 	//
 	// db_names and user_names resolve the OIDs recorded in
 	// pg_stat_statements to human-readable names using what
@@ -1401,7 +1450,8 @@ func buildTopQueriesSQL(
 	// be shown a client that only ever connected to another. DISTINCT ON
 	// runs over the same tuple the join matches on, so last_client holds
 	// at most one row per tuple and the LEFT JOIN still cannot fan deduped
-	// out.
+	// out. The join hangs off latest_sample, which carries the dbid and
+	// userid of each statement's most recent sample in the window.
 	//
 	// A NULL client_addr means the backend arrived over a Unix-domain
 	// socket rather than that the client is unknown, so it is reported as
@@ -1423,6 +1473,94 @@ func buildTopQueriesSQL(
 	// query_id IS NOT NULL may be worth profiling later; note that
 	// metrics.pg_stat_activity is a partitioned parent, and a partitioned
 	// parent cannot take CREATE INDEX CONCURRENTLY in a single statement.
+	// All three lookups stay anchored to the latest snapshot rather than
+	// to the requested window: they are name lookups, not measurements,
+	// and keeping them where they are preserves the performance guard.
+	//
+	// readings, samples, totals and latest_sample turn the cumulative
+	// counters into figures for the requested window, on exactly the same
+	// principle as queryStatsSQLTemplate but for every queryid at once
+	// rather than one. pg_stat_statements exposes lifetime counters, so the
+	// value for a period is the sum of the differences between consecutive
+	// samples and not the reading of any single one. A single collection
+	// can hold several rows for the same queryid, because the view is keyed
+	// on (userid, dbid, queryid, toplevel) and each of those identities is
+	// an independent counter that can be reset on its own; the LAG is
+	// therefore partitioned by (queryid, userid, dbid, toplevel) and the
+	// deltas are summed afterwards. Summing first and differencing second
+	// would let a reset in one identity hide behind growth in its siblings:
+	// the summed delta stays positive, the guard in totals never fires, and
+	// the pre-reset total is silently subtracted from the post-reset one.
+	//
+	// database_name is deliberately not part of that identity. The probe
+	// runs in every database that has the extension installed, and each run
+	// reads the same cluster-wide view, so one counter lands in the table
+	// once per such database at the same collected_at, differing only in
+	// the database_name the probe connected through. Those copies are the
+	// same counter, not sibling identities: partitioning on database_name
+	// as well would difference each copy separately and the sums would then
+	// count every call once per database with the extension. readings
+	// keeps one copy per (queryid, userid, dbid, toplevel, collected_at),
+	// choosing the lowest database_name so that the choice is stable, and
+	// the LAG runs over that. It also resolves the statement's own database
+	// through db_names, which is what the optional database filter matches.
+	//
+	// A sample pair whose call or time delta is negative is discarded,
+	// because a negative delta means the counters were reset by
+	// pg_stat_reset(), by a server restart or by the statement being
+	// evicted and re-entered, and the pre-reset totals cannot be compared
+	// with the post-reset ones. Dropping only the offending pair costs a
+	// single interval for that identity rather than poisoning the whole
+	// range, which matches the reset handling in
+	// metrics.BuildDerivedMetricsQuery. The row and block counters reset at
+	// the same moment as the call counter, so their deltas are additionally
+	// floored at zero rather than gating the pair, which keeps a surviving
+	// pair's calls and time intact. The first sample of each identity in
+	// the window has no predecessor, so its deltas are NULL and the
+	// comparison in totals drops it.
+	//
+	// The HAVING clause is what makes this a leaderboard for the window:
+	// a statement that was collected but not executed in the window has a
+	// summed call delta of zero and falls out of the result entirely.
+	//
+	// min_exec_time and max_exec_time are lifetime extremes that cannot be
+	// differenced, so they are read from the latest sample in the window
+	// alongside the identifying OIDs and the resolved database name; the
+	// trailing dbid and userid in that ORDER BY only break ties between
+	// identities collected at the same instant, so the choice is stable.
+	// Ordering by either of them therefore
+	// sorts a windowed list on a lifetime value; that is a known wart, kept
+	// because dropping the order keys would be a breaking API change.
+	//
+	// The query text is deliberately not carried through the aggregation.
+	// It is by far the widest column in the table, and a window over
+	// 30 days of five-minute samples reads on the order of a million rows,
+	// so projecting it made every one of those rows about 270 bytes wide
+	// rather than about 85. That is what the samples CTE has to spill to
+	// temporary files, since it is read twice, and it also puts the text
+	// out of reach of any index of sensible size. Resolving it once per
+	// returned row instead, in the page statement below, cut a 30-day page
+	// from 11.5 to 5.8 seconds on a 2.6-million-row fixture: the samples
+	// spill fell from 368MB to 125MB and the scan became an index-only
+	// scan over idx_pg_stat_statements_identity_time, whose key order
+	// (connection_id, queryid, userid, dbid, toplevel, collected_at,
+	// database_name) is the ORDER BY of readings and so serves both the
+	// DISTINCT ON and the identity window without a sort. Note that the
+	// exclude_collector filter matches on the
+	// query text and therefore still forces a heap scan when it is
+	// requested; that path plans exactly as it did before.
+	//
+	// totals and latest_sample are declared MATERIALIZED deliberately.
+	// Neither the planner nor the statistics can see through the samples
+	// CTE, so both come out estimated at a single row; left inlined, the
+	// join between them plans as a nested loop that re-evaluates the
+	// DISTINCT ON over every sample in the window once per statement. On a
+	// 24-hour window of 57,000 samples that turned a 0.25-second statement
+	// into a 5-second one. Materializing costs one pass each and makes the
+	// cost proportional to the window rather than to the window times the
+	// number of distinct statements. samples itself is referenced twice, so
+	// PostgreSQL materializes it without being asked, and readings is
+	// referenced once and inlined.
 	cte := fmt.Sprintf(`
         WITH latest AS (
             SELECT MAX(collected_at) AS collected_at
@@ -1462,31 +1600,93 @@ func buildTopQueriesSQL(
               %s
             ORDER BY query_id, datid, usesysid, collected_at DESC
         ),
-        deduped AS (
-            SELECT DISTINCT ON (pss.queryid)
-                pss.queryid::text,
+        readings AS (
+            SELECT DISTINCT ON (pss.queryid, pss.userid, pss.dbid,
+                                pss.toplevel, pss.collected_at)
+                pss.queryid, pss.userid, pss.dbid, pss.toplevel,
+                pss.collected_at,
+                pss.database_name AS sample_database_name,
                 COALESCE(dn.datname, pss.database_name) AS database_name,
-                COALESCE(un.usename, '') AS username,
-                pss.query, pss.calls, pss.total_exec_time,
-                pss.mean_exec_time, pss.min_exec_time, pss.max_exec_time,
-                pss.rows,
+                pss.calls, pss.total_exec_time, pss.rows,
                 pss.shared_blks_hit, pss.shared_blks_read,
-                lc.client_addr, lc.client_hostname,
-                lc.collected_at AS client_observed_at
+                pss.min_exec_time, pss.max_exec_time
             FROM metrics.pg_stat_statements pss
             LEFT JOIN db_names dn ON pss.dbid = dn.datid
-            LEFT JOIN user_names un ON pss.userid = un.usesysid
-            LEFT JOIN last_client lc
-                ON pss.queryid = lc.query_id
-               AND pss.dbid = lc.datid
-               AND pss.userid = lc.usesysid
             WHERE pss.connection_id = $1
-              AND pss.collected_at = (SELECT collected_at FROM latest)
+              AND pss.collected_at >= $2
+              AND pss.collected_at <= $3
               %s
               %s
-            ORDER BY pss.queryid
+              %s
+            ORDER BY pss.queryid, pss.userid, pss.dbid, pss.toplevel,
+                     pss.collected_at, pss.database_name
+        ),
+        samples AS (
+            SELECT
+                r.queryid, r.collected_at,
+                r.database_name, r.sample_database_name, r.dbid, r.userid,
+                r.min_exec_time, r.max_exec_time,
+                r.calls - LAG(r.calls) OVER identity AS delta_calls,
+                r.total_exec_time
+                    - LAG(r.total_exec_time) OVER identity AS delta_time,
+                r.rows - LAG(r.rows) OVER identity AS delta_rows,
+                r.shared_blks_hit
+                    - LAG(r.shared_blks_hit) OVER identity AS delta_hit,
+                r.shared_blks_read
+                    - LAG(r.shared_blks_read) OVER identity AS delta_read
+            FROM readings r
+            WINDOW identity AS (
+                PARTITION BY r.queryid, r.userid, r.dbid, r.toplevel
+                ORDER BY r.collected_at
+            )
+        ),
+        totals AS MATERIALIZED (
+            SELECT
+                queryid,
+                SUM(delta_calls)::bigint AS calls,
+                SUM(delta_time) AS total_exec_time,
+                SUM(GREATEST(delta_rows, 0))::bigint AS rows,
+                SUM(GREATEST(delta_hit, 0))::bigint AS shared_blks_hit,
+                SUM(GREATEST(delta_read, 0))::bigint AS shared_blks_read
+            FROM samples
+            WHERE delta_calls >= 0
+              AND delta_time >= 0
+            GROUP BY queryid
+            HAVING SUM(delta_calls) > 0
+        ),
+        latest_sample AS MATERIALIZED (
+            SELECT DISTINCT ON (queryid)
+                queryid, database_name, sample_database_name, dbid, userid,
+                min_exec_time, max_exec_time
+            FROM samples
+            ORDER BY queryid, collected_at DESC, dbid, userid
+        ),
+        deduped AS (
+            SELECT
+                t.queryid::text,
+                t.queryid AS sample_queryid,
+                ls.sample_database_name,
+                ls.database_name,
+                COALESCE(un.usename, '') AS username,
+                t.calls, t.total_exec_time,
+                CASE WHEN t.calls > 0
+                     THEN t.total_exec_time / t.calls
+                     ELSE 0 END AS mean_exec_time,
+                ls.min_exec_time, ls.max_exec_time,
+                t.rows,
+                t.shared_blks_hit, t.shared_blks_read,
+                lc.client_addr, lc.client_hostname,
+                lc.collected_at AS client_observed_at
+            FROM totals t
+            JOIN latest_sample ls ON ls.queryid = t.queryid
+            LEFT JOIN user_names un ON ls.userid = un.usesysid
+            LEFT JOIN last_client lc
+                ON ls.queryid = lc.query_id
+               AND ls.dbid = lc.datid
+               AND ls.userid = lc.usesysid
         )`, nameLookupWindowSQL, nameLookupWindowSQL, nameLookupWindowSQL,
-		lastClientQueryIDClause, queryIDClause, excludeCollectorClause)
+		lastClientQueryIDClause, queryIDClause, excludeCollectorClause,
+		databaseClause)
 
 	// The total is obtained with a separate COUNT(*) over the same CTE
 	// rather than a COUNT(*) OVER () window on the page query. A window
@@ -1494,7 +1694,7 @@ func buildTopQueriesSQL(
 	// unavailable whenever the requested offset runs past the end of the
 	// result set, which is exactly the case a paging client needs the total
 	// for.
-	countSQL = cte + "\n        SELECT COUNT(*) FROM deduped " + databaseClause
+	countSQL = cte + "\n        SELECT COUNT(*) FROM deduped"
 
 	pageArgs = make([]any, 0, len(filterArgs)+2)
 	pageArgs = append(pageArgs, filterArgs...)
@@ -1505,16 +1705,47 @@ func buildTopQueriesSQL(
 	// order rather than a partial one. Without it, rows tying on the
 	// selected column could come back in any order, and successive pages of
 	// the same result set could then repeat a row or skip one entirely. The
-	// CTE dedupes with DISTINCT ON (pss.queryid), so queryid is unique
-	// across the result set and is therefore sufficient on its own; the
-	// cast in the CTE keeps the output column named queryid, which is what
-	// this clause resolves against.
+	// totals CTE groups by queryid, so queryid is unique across the result
+	// set and is therefore sufficient on its own; the cast in the CTE keeps
+	// the output column named queryid, which is what this clause resolves
+	// against.
+	//
+	// The query text is joined on afterwards rather than carried through
+	// the aggregation, for the reason given above the CTE. The lateral runs
+	// once per row of the page, never once per statement in the window,
+	// because it sits outside the LIMIT, and each run is a single-row index
+	// lookup on idx_pg_stat_statements_object, whose leading columns
+	// (connection_id, database_name, queryid) are exactly the equalities
+	// below and whose trailing collected_at DESC supplies the ordering. The
+	// join is LEFT so that a statement whose text was never captured, which
+	// the collector records as NULL, still appears on the page with an
+	// empty query; sample_queryid and sample_database_name carry the raw
+	// values the lookup needs, since the projected database_name may have
+	// been resolved to a different name through db_names.
 	pageSQL = fmt.Sprintf(`%s
-        SELECT * FROM deduped
-        %s
-        ORDER BY %s %s, queryid
-        LIMIT $%d OFFSET $%d
-    `, cte, databaseClause, orderCol, orderDir, limitPos, limitPos+1)
+        SELECT
+            page.queryid, page.database_name, page.username, qtext.query,
+            page.calls, page.total_exec_time, page.mean_exec_time,
+            page.min_exec_time, page.max_exec_time, page.rows,
+            page.shared_blks_hit, page.shared_blks_read,
+            page.client_addr, page.client_hostname, page.client_observed_at
+        FROM (
+            SELECT * FROM deduped
+            ORDER BY %s %s, queryid
+            LIMIT $%d OFFSET $%d
+        ) page
+        LEFT JOIN LATERAL (
+            SELECT pss.query
+            FROM metrics.pg_stat_statements pss
+            WHERE pss.connection_id = $1
+              AND pss.database_name = page.sample_database_name
+              AND pss.queryid = page.sample_queryid
+              AND pss.collected_at >= $2
+              AND pss.collected_at <= $3
+            ORDER BY pss.collected_at DESC
+            LIMIT 1
+        ) qtext ON TRUE
+    `, cte, orderCol, orderDir, limitPos, limitPos+1)
 
 	return countSQL, pageSQL, filterArgs, pageArgs
 }
@@ -1618,6 +1849,32 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	// parameter, never interpolated into the SQL text.
 	databaseName := ParseQueryString(r, "database_name")
 
+	// Parse time_range (default "1h"). A time_range of "custom" resolves
+	// against the explicit time_start and time_end timestamps, exactly as
+	// /metrics/query-stats and performance-summary do; ResolveTimeWindow is
+	// the single source of truth for what counts as a valid window, so its
+	// error message is returned verbatim. The figures reported for the
+	// window are summed counter deltas, so a statement that was collected
+	// but not executed inside it does not appear at all.
+	timeRange := ParseQueryString(r, "time_range")
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+	window, err := metrics.ResolveTimeWindow(timeRange,
+		ParseQueryString(r, "time_start"),
+		ParseQueryString(r, "time_end"))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The shared 366-day cap is far too generous for an aggregation whose
+	// cost is linear in the window; see maxTopQueriesTimeSpan. Presets are
+	// unaffected, because the longest of them is exactly 30 days.
+	if err := checkTopQueriesTimeSpan(window); err != nil {
+		RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1634,21 +1891,19 @@ func (h *PerfSummaryHandler) handleTopQueries(
 	defer rollback.Tx(ctx, tx) //nolint:errcheck // no-op after commit
 
 	countQuery, query, filterArgs, pageArgs := buildTopQueriesSQL(
-		connID, queryID, databaseName, excludeCollector, orderCol, orderDir,
-		limit, offset)
+		connID, window, queryID, databaseName, excludeCollector, orderCol,
+		orderDir, limit, offset)
 
 	var totalCount int64
 	if err := tx.QueryRow(ctx, countQuery, filterArgs...).Scan(
 		&totalCount); err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		respondEmptyTopQueries(w)
+		respondTopQueriesError(w, connID, err)
 		return
 	}
 
 	rows, err := tx.Query(ctx, query, pageArgs...)
 	if err != nil {
-		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
-		respondEmptyTopQueries(w)
+		respondTopQueriesError(w, connID, err)
 		return
 	}
 	defer rows.Close()
@@ -1705,12 +1960,31 @@ const headerTotalCount = "X-Total-Count"
 const nameLookupWindowSQL = "1 hour"
 
 // respondEmptyTopQueries returns the empty top-queries result used when the
-// underlying metrics tables are missing or the query fails. The endpoint
-// treats missing metrics data as "no rows" rather than an error, so the
-// total count is reported as zero.
+// underlying metrics tables are missing. The endpoint treats an absent
+// metrics schema as "no rows" rather than an error, so the total count is
+// reported as zero.
 func respondEmptyTopQueries(w http.ResponseWriter) {
 	w.Header().Set(headerTotalCount, "0")
 	RespondJSON(w, http.StatusOK, []TopQueryRow{})
+}
+
+// respondTopQueriesError turns a failure from either half of the
+// top-queries aggregation into a response. Only a missing metrics schema
+// is reported as an empty result, matching handleQueryStats: a workbench
+// whose collector has never run should render an empty panel rather than a
+// failure. Every other failure, and a statement timeout on this windowed
+// aggregation is a realistic one, is reported as a 500 and logged at
+// [ERROR], so that an operator can see a timeout storm instead of reading
+// it as a quiet stretch with no query activity.
+func respondTopQueriesError(w http.ResponseWriter, connID int, err error) {
+	if isUndefinedTableError(err) {
+		log.Printf("[DEBUG] No top queries data for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+		respondEmptyTopQueries(w)
+		return
+	}
+	log.Printf("[ERROR] Failed to query top queries for connection %d: %s", connID, logging.SanitizeForLog(err.Error())) //nolint:gosec // G706: connID is an integer and err is sanitized via logging.SanitizeForLog
+	RespondError(w, http.StatusInternalServerError,
+		"Failed to query top queries")
 }
 
 // queryStatsSQLTemplate computes the period-scoped statistics for a single

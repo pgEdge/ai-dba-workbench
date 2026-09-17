@@ -462,6 +462,50 @@ project adheres to
   files would simply drift again. Behavior is otherwise unchanged.
   (#423)
 
+- Scope the top queries leaderboard and the query detail overlay to
+  the dashboard time range. The
+  `GET /api/v1/metrics/top-queries` endpoint had no time dimension
+  and always reported the latest collected sample; it now accepts
+  `time_range`, defaulting to `1h`, along with `time_start` and
+  `time_end` for a custom window, resolved by the same code as
+  `GET /api/v1/metrics/query` so that the rejection messages match
+  every other windowed endpoint. Because `pg_stat_statements`
+  reports its counters cumulatively, the endpoint sums the
+  differences between consecutive samples in the window rather than
+  reading one sample: `calls`, `total_exec_time`, `rows`,
+  `shared_blks_hit` and `shared_blks_read` now cover the window,
+  `mean_exec_time` is derived from those sums, and a sample pair
+  whose counters went backwards is discarded as a
+  `pg_stat_statements_reset()`. The `min_exec_time` and
+  `max_exec_time` fields stay lifetime figures, because a window
+  extreme cannot be recovered by differencing two lifetime extremes,
+  so ordering on either one sorts a windowed list on a lifetime
+  figure. A statement that ran no calls inside the window is left
+  out of the response altogether, which is a change in what the
+  existing presets return and not only in what a custom window
+  returns. On the client, both the leaderboard and the overlay
+  follow the dashboard selector, including a custom window, and
+  changing the range returns the leaderboard to its first page,
+  since a shorter window usually matches fewer rows. The overlay's
+  "Mean Time (All Time)" tile is now labelled "Mean Time", whilst
+  "Min Time (All Time)" and "Max Time (All Time)" keep their labels
+  and their lifetime figures. (#387)
+
+- Add `idx_pg_stat_statements_identity_time` to
+  `metrics.pg_stat_statements` through collector schema migration
+  15. The index keys the statement identity that the
+  `pg_stat_statements` counters are cumulative within, followed by
+  `collected_at` and the probing database name, and includes every
+  counter the windowed
+  aggregation reads, so the top queries query runs as an index-only
+  scan in the order it needs instead of sorting a whole window of
+  samples to disk. The index is not free: it costs roughly 17% more
+  storage on that table and about 56% more write-ahead log volume on
+  the collector's writes. Creating it builds an index on every
+  attached partition and blocks the collector's inserts whilst it
+  runs, which took about 15 seconds for 2.6 million rows on the test
+  fixture. (#387)
+
 ### Fixed
 
 - Fix the `pg_stat_statements` collector probe discarding the block
@@ -1159,6 +1203,16 @@ project adheres to
   constructors directly, passing the same host-validation settings the
   removed helper supplied, so test behaviour is unchanged.
 
+- Remove the period-scoped average execution time tile from the query
+  detail overlay, which was labelled "Avg Time (Last 24h)" or "Avg
+  Time (Custom Range)" according to the selected range. Now that
+  `GET /api/v1/metrics/top-queries` derives `mean_exec_time` over the
+  selected window, the Mean Time tile reports the same figure from
+  the same delta pairs, so the overlay showed one number twice and
+  paid for a second request on every open. The
+  `GET /api/v1/metrics/query-stats` endpoint that fed the tile
+  remains available to API consumers. (#387)
+
 ### Security
 
 - Stop following HTTP redirects when the alerter delivers a
@@ -1184,6 +1238,20 @@ project adheres to
   redirects, so delivery now matches it. Where an endpoint relies on a
   redirect, configure its final URL in the channel; email channels are
   unaffected, because they deliver over SMTP. (#475)
+
+- Set a server-side `statement_timeout` on the server's datastore
+  connection pool, defaulting to 30 seconds and configurable with the
+  new `database.statement_timeout` option. The pool previously relied
+  entirely on the handlers cancelling their own queries, which is a
+  request sent over the connection: if it is lost, or the backend is
+  not at an interruptible point, the query keeps running and keeps
+  holding one of the pool's connections, and with `pool_max_conns`
+  defaulting to 4 a handful of those starve the whole API. The default
+  matches the longest deadline any handler grants a datastore query, so
+  nothing that completed before now fails; the collector owns the
+  schema migrations, including the partitioned-index build that can run
+  for much longer than this, and they run on the collector's own pool,
+  which is unaffected. (#387)
 
 - Ignore a blank password when updating a database connection, so an
   empty or whitespace-only password can no longer overwrite the stored

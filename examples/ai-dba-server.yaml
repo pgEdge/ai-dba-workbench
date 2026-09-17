@@ -254,6 +254,14 @@ database:
   # Default: 30m
   pool_max_conn_idle_time: "30m"
 
+  # Server-side timeout for a single statement on a pool connection.
+  # PostgreSQL cancels the statement itself when it is exceeded, which
+  # releases the pool connection even if the server's own cancel
+  # request never arrives. Accepts any Go duration string; 0 disables
+  # the timeout, which is not recommended.
+  # Default: 30s
+  statement_timeout: "30s"
+
 #=========================================================================
 # EMBEDDING GENERATION
 #=========================================================================

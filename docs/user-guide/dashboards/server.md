@@ -175,6 +175,15 @@ consumption. The section displays execution time, call
 count, rows returned, and source database for the most
 active queries.
 
+The section follows the dashboard time range selector, so
+the figures describe the activity inside the selected
+window rather than the lifetime totals of each statement.
+A query that ran no calls inside the window does not
+appear, and changing the range returns the section to its
+first page. The [object dashboard](object.md) page explains
+how the Workbench derives a windowed figure from the
+cumulative `pg_stat_statements` counters.
+
 The Database column resolves each query's source
 database from the `dbid` field in
 `pg_stat_statements` using `pg_stat_activity`.

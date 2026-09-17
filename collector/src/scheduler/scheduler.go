@@ -17,9 +17,10 @@ import (
 	"github.com/pgedge/ai-workbench/pkg/sqlmarker"
 
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -141,10 +142,17 @@ func (ps *ProbeScheduler) initialStartupJitter(interval time.Duration) time.Dura
 	if window <= 0 {
 		return 0
 	}
-	// math/rand is deliberate: this jitter de-clusters probe startup and
-	// carries no security weight, so a cryptographic source would buy
-	// nothing.
-	return time.Duration(rand.Int64N(int64(window))) //nolint:gosec // G404: scheduling jitter, not security
+	// The draw happens once per probe at startup, so a cryptographic
+	// source costs nothing measurable here and spares every reader of
+	// this function from having to decide whether a weak one matters.
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(window)))
+	if err != nil {
+		// A failed draw must not put every probe back on the same
+		// starting line, so fall back to the middle of the window.
+		logger.Errorf("Warning: failed to draw startup jitter, using half the window: %v", err)
+		return window / 2
+	}
+	return time.Duration(n.Int64())
 }
 
 // restartTicker stops, drains and restarts a ticker so that a tick

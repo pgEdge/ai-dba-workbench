@@ -372,8 +372,8 @@ const PROVIDER_ERROR_MESSAGE =
 const NO_SIGN_IN_METHOD_MESSAGE =
     'No sign-in method is available: local login is disabled and no ' +
     'identity provider is enabled, so nobody can sign in. Set ' +
-    'auth.local.enabled or auth.oidc.enabled to true in the server ' +
-    'configuration and restart the server.';
+    'http.auth.local.enabled or http.auth.oidc.enabled to true in the ' +
+    'server configuration and restart the server.';
 
 /*
  * The label to write on the federated sign-in button when the operator

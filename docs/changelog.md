@@ -304,6 +304,16 @@ project adheres to
   therefore be minted from a service account or an ordinary
   user, not from an administrator. (#261)
 
+- Serve `GET /api/v1/capabilities` without authentication. The
+  endpoint previously required a session or API token, although
+  the login screen has to read it before either exists in order
+  to learn which sign-in methods to offer, so it now joins the
+  public paths alongside login, logout and the health check. It
+  reports the AI feature flag, the iteration limit and the new
+  `auth` block, which carries only `local_enabled`,
+  `oidc_enabled` and the button label; the provider issuer,
+  client secret and claim mapping are never included. (#261)
+
 - Log sessions out when the authentication database cannot be
   read. A session whose user record failed to load previously
   produced a context carrying the username with no user ID

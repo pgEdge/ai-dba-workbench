@@ -168,7 +168,9 @@ describe('Login Component', () => {
 
             const alert = await screen.findByTestId('login-no-methods');
             expect(alert).toHaveTextContent(/no sign-in method is available/i);
-            expect(alert).toHaveTextContent(/auth\.local\.enabled or auth\.oidc\.enabled/);
+            expect(alert).toHaveTextContent(
+                /http\.auth\.local\.enabled or http\.auth\.oidc\.enabled/,
+            );
             expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
             expect(screen.queryByTestId('login-oidc-button')).not.toBeInTheDocument();
             expect(screen.queryByText(/contact your administrator/i)).not.toBeInTheDocument();

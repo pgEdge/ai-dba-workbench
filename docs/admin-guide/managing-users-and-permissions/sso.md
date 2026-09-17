@@ -168,9 +168,15 @@ so a request refused before that point, one with no login state cookie
 or a mismatched state, costs nothing. Behind a proxy, every request
 carries the proxy's address unless `http.trusted_proxies` names it, so
 the limit collapses to a single allowance shared by the whole
-deployment, which any party holding a valid login state can spend
-deliberately to deny everyone else a login. On a deployment where local
-login is switched off, that is the only way in.
+deployment. An anonymous caller can spend that allowance: the start
+endpoint needs no credentials and is not itself rate limited, so one
+`GET` to it mints a login state that replays against the callback for
+the ten minute lifetime of the state plus a minute of clock skew, and a
+handful of such requests deny everyone else a login until the window
+passes. Setting `http.trusted_proxies` is what stops the allowance being
+shared across every client, because the limit then applies to the
+caller's own address. On a deployment where local login is switched
+off, that is the only way in.
 
 The same list decides how far the server believes the
 `X-Forwarded-Proto` header. Every cookie the server sets carries the

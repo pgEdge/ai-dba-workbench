@@ -1142,6 +1142,9 @@
           "404": {
             "description": "OIDC login is not enabled"
           },
+          "405": {
+            "description": "Method not allowed; the Allow header names GET"
+          },
           "429": {
             "description": "Too many callback requests from this address",
             "content": {
@@ -1176,6 +1179,9 @@
         "responses": {
           "302": {
             "description": "Redirect to the identity provider, or to \"/\" with login_error set when OIDC login is not enabled"
+          },
+          "405": {
+            "description": "Method not allowed; the Allow header names GET"
           },
           "500": {
             "description": "Failed to create or seal the login state",

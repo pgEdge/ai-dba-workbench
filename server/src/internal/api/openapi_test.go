@@ -319,12 +319,14 @@ func TestOpenAPIOIDCPathOperationsMatchHandlers(t *testing.T) {
 			// screen with login_error set, since the public
 			// capabilities endpoint already reports oidc_enabled and
 			// the 404 only stranded the user on an error page.
-			wantStatuses:    []string{"302", "500"},
+			// Both handlers answer anything but GET with 405 and an
+			// Allow: GET header, so the spec documents that too.
+			wantStatuses:    []string{"302", "405", "500"},
 			wantQueryParams: []string{"return"},
 		},
 		{
 			path:            "/auth/oidc/callback",
-			wantStatuses:    []string{"302", "400", "404", "429"},
+			wantStatuses:    []string{"302", "400", "404", "405", "429"},
 			wantQueryParams: []string{"code", "state", "error"},
 		},
 	}

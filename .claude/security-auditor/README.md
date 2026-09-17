@@ -86,11 +86,17 @@ moved.
   to be: the flag itself is public, reported as `local_enabled` by the
   capabilities endpoint.
 - Only a local account may have a password written to it, enforced by
-  `assertPasswordWritableLocked` at the store boundary and called from
-  both `UpdateUser` and `UpdateUserAtomic`. Without it a hash written
-  onto a federated account lies dormant until
-  `UnlinkFederatedIdentity` with `-restore-password` returns
-  `auth_source` to local and makes it live. `updateUser` in
+  `writePasswordHashLocked` in `server/src/internal/auth/store.go`, the
+  single path through which `UpdateUser` and `UpdateUserAtomic` write a
+  hash. The rule is a condition on the `UPDATE` itself
+  (`AND auth_source = 'local'`) followed by a `RowsAffected` check, not
+  a check made beforehand, so the CLI linking the account in another
+  process during the bcrypt computation cannot slip a hash onto a
+  federated account; when no row matches, the store looks up
+  `auth_source` only then to tell a missing user (no error) from a
+  refused write. Without it a hash written onto a federated account
+  lies dormant until `UnlinkFederatedIdentity` with `-restore-password`
+  returns `auth_source` to local and makes it live. `updateUser` in
   `api/rbac_user_handlers.go` checks the same condition first and
   answers 400, because that endpoint applies the password, enabled and
   superuser changes in one transaction and a late refusal would silently

@@ -275,9 +275,12 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)
 	// #nosec G124 -- Secure is intentionally conditional on
-	// isSecureRequest so local HTTP development still works;
-	// in production behind TLS (direct or via a trusted proxy
-	// supplying X-Forwarded-Proto) the flag evaluates to true.
+	// isSecureRequest so local HTTP development still works; it
+	// is true when TLS is enabled or the request itself arrived
+	// over TLS, and otherwise whenever a trusted proxy list is
+	// configured and X-Forwarded-Proto says https, from any
+	// address (see requestIsSecure, and the note there on why a
+	// forged header only costs the forger their own cookie).
 	// HttpOnly and SameSite are unconditional. The clear-cookie
 	// flags must mirror the set-cookie flags above so browsers
 	// match and overwrite the original cookie on logout.

@@ -202,6 +202,22 @@ func (h *RBACHandler) updateUser(w http.ResponseWriter, r *http.Request, userID 
 			RespondError(w, http.StatusBadRequest, capitalizeFirst(err.Error()))
 			return
 		}
+
+		// The store refuses a password write to an account whose identity
+		// is managed elsewhere, and this endpoint sends the password,
+		// enabled and superuser changes as one transaction. Catching it
+		// here matters for more than the error message: an administrator
+		// who fills in the password field whilst also unticking "enabled"
+		// on a federated user would otherwise have the whole transaction
+		// rolled back behind a generic failure, and could reasonably
+		// believe they had disabled the account when they had not.
+		if user.AuthSource != "" && user.AuthSource != auth.AuthSourceLocal {
+			RespondError(w, http.StatusBadRequest,
+				"This account signs in through an identity provider, so it cannot be "+
+					"given a password. Remove the password and apply the other changes, "+
+					"or unlink the account first.")
+			return
+		}
 	}
 
 	// Validate the email format when a non-empty email is supplied.

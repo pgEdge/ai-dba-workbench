@@ -585,3 +585,28 @@ func TestHasTokenScope(t *testing.T) {
 		t.Error("Expected scope after adding MCP privileges")
 	}
 }
+
+// TestTokenScopeInScope pins the in-memory rule to the one the database
+// lookup IsConnectionInTokenScope applies: no connection rows restrict
+// nothing, an explicit row admits that connection, and a ConnectionIDAll
+// row admits every connection.
+func TestTokenScopeInScope(t *testing.T) {
+	cases := map[string]struct {
+		scope TokenScope
+		conn  int
+		want  bool
+	}{
+		"no connection rows":  {TokenScope{}, 7, true},
+		"explicit match":      {TokenScope{Connections: []ScopedConnection{{ConnectionID: 7}}}, 7, true},
+		"explicit non-match":  {TokenScope{Connections: []ScopedConnection{{ConnectionID: 8}}}, 7, false},
+		"wildcard row":        {TokenScope{Connections: []ScopedConnection{{ConnectionID: ConnectionIDAll}}}, 7, true},
+		"wildcard among rows": {TokenScope{Connections: []ScopedConnection{{ConnectionID: 8}, {ConnectionID: ConnectionIDAll}}}, 7, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.scope.InScope(tc.conn); got != tc.want {
+				t.Errorf("InScope(%d) = %v, want %v", tc.conn, got, tc.want)
+			}
+		})
+	}
+}

@@ -66,7 +66,15 @@ const (
 	DefaultSessionExpiry = 24 * time.Hour
 
 	// Schema version for migrations
-	schemaVersion = 3
+	schemaVersion = 4
+)
+
+// Authentication sources recorded in users.auth_source. A local account
+// authenticates with a password held in this store; every other value means
+// the identity is established elsewhere and the password path is refused.
+const (
+	AuthSourceLocal = "local"
+	AuthSourceOIDC  = "oidc"
 )
 
 // AuthStore manages users and tokens in SQLite
@@ -125,6 +133,8 @@ type StoredUser struct {
 	FailedAttempts   int
 	IsSuperuser      bool
 	IsServiceAccount bool
+	AuthSource       string
+	ExternalSubject  string
 }
 
 // StoredToken represents a token in the database
@@ -453,6 +463,38 @@ func (s *AuthStore) migrateV2ToV3() error {
 	return nil
 }
 
+// migrateV3ToV4 records the origin of each account's identity so that
+// federated accounts can be refused at the password endpoint. Existing rows
+// predate federation and are therefore local.
+func (s *AuthStore) migrateV3ToV4() error {
+	statements := []string{
+		"ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT 'local'",
+		// The CHECK keeps the empty string out of the column, which is
+		// neither a subject nor an absent one: the link path reads it as
+		// "not linked" and the unlink path reads it as "linked", so the
+		// two would disagree about the same row. Nothing writes it
+		// today, and the constraint is what keeps that true.
+		"ALTER TABLE users ADD COLUMN external_subject TEXT " +
+			"CHECK (external_subject IS NULL OR external_subject <> '')",
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
+			ON users(external_subject) WHERE external_subject IS NOT NULL`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.Exec(stmt); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migrating auth schema to v4: %w", err)
+		}
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clearing schema version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 4); err != nil {
+		return fmt.Errorf("recording schema version 4: %w", err)
+	}
+	return nil
+}
+
 // initSchema creates the database tables if they don't exist
 func (s *AuthStore) initSchema() error {
 	// Check current schema version
@@ -476,6 +518,12 @@ func (s *AuthStore) initSchema() error {
 		}
 		currentVersion = 3
 	}
+	if currentVersion == 3 {
+		if err := s.migrateV3ToV4(); err != nil {
+			return err
+		}
+		currentVersion = 4
+	}
 
 	if currentVersion < schemaVersion {
 		schema := `
@@ -497,9 +545,16 @@ func (s *AuthStore) initSchema() error {
         is_superuser BOOLEAN DEFAULT FALSE,
         display_name TEXT DEFAULT '',
         email TEXT DEFAULT '',
-        is_service_account BOOLEAN DEFAULT FALSE
+        is_service_account BOOLEAN DEFAULT FALSE,
+        auth_source TEXT NOT NULL DEFAULT 'local',
+        -- Never the empty string: it is neither a subject nor the absence
+        -- of one, and the link and unlink paths would read it differently.
+        external_subject TEXT
+            CHECK (external_subject IS NULL OR external_subject <> '')
     );
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
+        ON users(external_subject) WHERE external_subject IS NOT NULL;
 
     -- Tokens table
     CREATE TABLE IF NOT EXISTS tokens (
@@ -829,9 +884,11 @@ func scanUser(row scannable) (*StoredUser, error) {
 	var user StoredUser
 	var displayName sql.NullString
 	var email sql.NullString
+	var externalSubject sql.NullString
 	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt,
 		&user.LastLogin, &user.Enabled, &user.Annotation, &displayName, &email,
-		&user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount)
+		&user.FailedAttempts, &user.IsSuperuser, &user.IsServiceAccount,
+		&user.AuthSource, &externalSubject)
 	if err != nil {
 		return nil, err
 	}
@@ -840,6 +897,9 @@ func scanUser(row scannable) (*StoredUser, error) {
 	}
 	if email.Valid {
 		user.Email = email.String
+	}
+	if externalSubject.Valid {
+		user.ExternalSubject = externalSubject.String
 	}
 	return &user, nil
 }
@@ -879,7 +939,7 @@ func (s *AuthStore) GetUser(username string) (*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject
          FROM users WHERE username = ?`,
 		username,
 	)
@@ -900,7 +960,7 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject
          FROM users WHERE id = ?`,
 		id,
 	)
@@ -913,6 +973,63 @@ func (s *AuthStore) GetUserByID(id int64) (*StoredUser, error) {
 	}
 
 	return user, nil
+}
+
+// writePasswordHashLocked stores a new password hash, refusing the write
+// to an account whose identity is not managed by this store. Without the
+// refusal a chosen hash can be written onto a federated account, where it
+// lies dormant until UnlinkFederatedIdentity with -restore-password puts
+// auth_source back to local and makes it live. The invariant that only a
+// local account has a usable password already governs AuthenticateUser,
+// so it belongs at the store boundary rather than in each caller.
+//
+// The auth_source condition is on the UPDATE itself, not on a SELECT that
+// ran beforehand, which is the technique LinkFederatedIdentity uses. The
+// alternative, checking first and writing afterwards, leaves a window
+// spanning the bcrypt computation at cost 12, which is hundreds of
+// milliseconds, during which the CLI in another process sharing auth.db
+// can link the account; the hash would then land on a federated account
+// after all. s.mu does not help, because the CLI is another process.
+//
+// A missing user is not an error here: the update matches no row, which
+// is the behavior callers already rely on. A reason for a refused write
+// is therefore looked up only after the write has matched nothing.
+//
+// s.mu must be held by the caller.
+func (s *AuthStore) writePasswordHashLocked(exec sqlExecer, username string, hash []byte) error {
+	result, err := exec.Exec(
+		"UPDATE users SET password_hash = ? WHERE username = ? AND auth_source = ?",
+		string(hash), username, AuthSourceLocal)
+	if err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to confirm the password update for %s: %w", username, err)
+	}
+	if affected > 0 {
+		return nil
+	}
+
+	// Nothing matched: either there is no such user, which callers treat
+	// as no change rather than an error, or the account is not local.
+	var authSource string
+	err = exec.QueryRow("SELECT auth_source FROM users WHERE username = ?", username).Scan(&authSource)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check authentication source: %w", err)
+	}
+	return fmt.Errorf("cannot set a password for %s: identity is managed by %s", username, authSource)
+}
+
+// sqlExecer is the slice of *sql.DB and *sql.Tx that writePasswordHashLocked
+// needs, so the same guarded write serves both the plain and the
+// transactional update paths.
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // UpdateUser updates a user's password, annotation, display name, and/or email
@@ -931,9 +1048,8 @@ func (s *AuthStore) UpdateUser(username, newPassword, newAnnotation, newDisplayN
 		if err != nil {
 			return fmt.Errorf("failed to hash password: %w", err)
 		}
-		_, err = s.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
-		if err != nil {
-			return fmt.Errorf("failed to update password: %w", err)
+		if err := s.writePasswordHashLocked(s.db, username, hash); err != nil {
+			return err
 		}
 	}
 
@@ -993,9 +1109,8 @@ func (s *AuthStore) UpdateUserAtomic(username string, update UserUpdate) error {
 			err = fmt.Errorf("failed to hash password: %w", hashErr)
 			return err
 		}
-		_, execErr := tx.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
-		if execErr != nil {
-			err = fmt.Errorf("failed to update password: %w", execErr)
+		if writeErr := s.writePasswordHashLocked(tx, username, hash); writeErr != nil {
+			err = writeErr
 			return err
 		}
 	}
@@ -1270,7 +1385,7 @@ func (s *AuthStore) ListUsers() ([]*StoredUser, error) {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account
+		`SELECT id, username, password_hash, created_at, last_login, enabled, annotation, display_name, email, failed_attempts, is_superuser, is_service_account, auth_source, external_subject
          FROM users ORDER BY username`,
 	)
 	if err != nil {
@@ -1314,9 +1429,9 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 
 	var user StoredUser
 	err := s.db.QueryRow(
-		`SELECT id, username, password_hash, enabled, failed_attempts, is_service_account FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, enabled, failed_attempts, is_service_account, auth_source FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts, &user.IsServiceAccount)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Enabled, &user.FailedAttempts, &user.IsServiceAccount, &user.AuthSource)
 
 	if err == sql.ErrNoRows {
 		// Perform a dummy bcrypt comparison to ensure consistent response
@@ -1332,9 +1447,24 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 		return "", time.Time{}, fmt.Errorf("authentication error: %w", err)
 	}
 
-	// Service accounts cannot authenticate with password
-	if user.IsServiceAccount {
-		log.Printf("[AUTH] Authentication failed for user %s: service account cannot use password login", username)
+	// Service accounts cannot authenticate with password, and federated
+	// accounts authenticate via their identity provider rather than a
+	// password held in this store. Both are rejected with the same
+	// opaque error the other failure paths use, so the endpoint does not
+	// disclose which accounts are service accounts or federated, and both
+	// burn a dummy bcrypt comparison before returning so that this path
+	// takes the same time as the real password check below and the
+	// ErrNoRows path above; without it, a federated or service-account
+	// username would return measurably faster and be enumerable via
+	// timing.
+	if user.IsServiceAccount || user.AuthSource != AuthSourceLocal {
+		if user.IsServiceAccount {
+			log.Printf("[AUTH] Authentication failed for user %s: service account cannot use password login", username)
+		} else {
+			log.Printf("[AUTH] Authentication failed for user %s: identity is managed by %s", username, user.AuthSource)
+		}
+		//nolint:errcheck // Result is intentionally ignored
+		bcrypt.CompareHashAndPassword(s.dummyHash, []byte(password))
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
@@ -1363,64 +1493,7 @@ func (s *AuthStore) AuthenticateUser(username, password string) (string, time.Ti
 		return "", time.Time{}, fmt.Errorf("invalid username or password")
 	}
 
-	// Generate session token
-	tokenBytes := make([]byte, sessionTokenBytes)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", time.Time{}, fmt.Errorf("failed to generate session token: %w", err)
-	}
-	token := base64.URLEncoding.EncodeToString(tokenBytes)
-
-	// Set expiration
-	expiration := time.Now().Add(DefaultSessionExpiry)
-
-	// Enforce per-user session limit by evicting the oldest session when
-	// the user has reached maxSessionsPerUser active sessions.
-	type sessionEntry struct {
-		key       string
-		expiresAt time.Time
-	}
-	var userSessions []sessionEntry
-	s.sessions.Range(func(key, value any) bool {
-		session, ok := value.(*SessionInfo)
-		if !ok || session.Username != username {
-			return true
-		}
-		keyStr, ok := key.(string)
-		if !ok {
-			return true
-		}
-		userSessions = append(userSessions, sessionEntry{
-			key:       keyStr,
-			expiresAt: session.ExpiresAt,
-		})
-		return true
-	})
-	if len(userSessions) >= maxSessionsPerUser {
-		// Find and evict the oldest session
-		oldest := userSessions[0]
-		for _, entry := range userSessions[1:] {
-			if entry.expiresAt.Before(oldest.expiresAt) {
-				oldest = entry
-			}
-		}
-		s.sessions.Delete(oldest.key)
-	}
-
-	// Store session in memory using hashed token to prevent timing attacks
-	// The hash operation is constant-time with respect to the token content,
-	// preventing attackers from inferring valid tokens via response timing
-	tokenHash := GetTokenHashByRawToken(token)
-	s.sessions.Store(tokenHash, &SessionInfo{
-		Username:  username,
-		ExpiresAt: expiration,
-	})
-
-	// Update last login and reset failed attempts (best effort, non-critical)
-	now := time.Now()
-	//nolint:errcheck // Best effort update, login already succeeded
-	s.db.Exec("UPDATE users SET last_login = ?, failed_attempts = 0 WHERE id = ?", now, user.ID)
-
-	return token, expiration, nil
+	return s.createSessionForUserLocked(user.Username, user.ID)
 }
 
 // ValidateSessionToken checks if a session token is valid.
@@ -1444,9 +1517,23 @@ func (s *AuthStore) ValidateSessionToken(token string) (string, error) {
 		return "", fmt.Errorf("invalid session token")
 	}
 
-	// Verify user is still enabled
+	// Verify user is still enabled. The session is dropped on either
+	// failure below, so that a caller whose privileges cannot be verified
+	// is refused; the two are logged differently, because an account that
+	// has gone is expected and a database that cannot be read is an
+	// incident, and the latter also carries ErrAuthStoreUnavailable.
 	user, err := s.GetUser(session.Username)
-	if err != nil || user == nil {
+	if err != nil {
+		//nolint:gosec // G706: both values passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Session validation failed for user %s: the authentication database could not be read: %s",
+			logging.SanitizeForLog(session.Username), logging.SanitizeForLog(err.Error()))
+		s.sessions.Delete(tokenHash)
+		return "", fmt.Errorf("invalid session token: %w", ErrAuthStoreUnavailable)
+	}
+	if user == nil {
+		//nolint:gosec // G706: username passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Session validation failed for user %s: account no longer exists",
+			logging.SanitizeForLog(session.Username))
 		s.sessions.Delete(tokenHash)
 		return "", fmt.Errorf("invalid session token")
 	}
@@ -1467,8 +1554,11 @@ func (s *AuthStore) InvalidateSession(token string) {
 }
 
 // InvalidateUserSessions removes all active sessions for a given username.
-// This is called after a password change to ensure that compromised sessions
-// cannot persist after credential rotation.
+// It is called after every change to how an account authenticates: a password
+// change, a lockout, a disable or delete, and the linking or unlinking of a
+// federated identity. A session outlives all of those on its own, because
+// ValidateSessionToken re-reads only enabled, so nothing but this stops a
+// session minted under the old credential from running to its expiry.
 func (s *AuthStore) InvalidateUserSessions(username string) {
 	count := 0
 	s.sessions.Range(func(key, value any) bool {
@@ -1480,7 +1570,7 @@ func (s *AuthStore) InvalidateUserSessions(username string) {
 		return true
 	})
 	if count > 0 {
-		log.Printf("[AUTH] Invalidated %d active session(s) for user %s due to password change", count, username)
+		log.Printf("[AUTH] Invalidated %d active session(s) for user %s due to a credential change", count, username)
 	}
 }
 
@@ -1695,7 +1785,15 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 		return nil, fmt.Errorf("invalid token")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("token validation error: %w", err)
+		// A database failure is not a bad token. It is logged, because
+		// every caller answers 401 either way and a run of refused
+		// requests needs something to correlate with, and it carries
+		// ErrAuthStoreUnavailable so that AuthenticateRequest can tell
+		// the two apart.
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Token validation failed: the authentication database could not be read: %s",
+			logging.SanitizeForLog(err.Error()))
+		return nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
 	}
 	if annotation.Valid {
 		token.Annotation = annotation.String
@@ -1709,9 +1807,17 @@ func (s *AuthStore) ValidateToken(rawToken string) (*StoredToken, error) {
 		return nil, fmt.Errorf("token has expired")
 	}
 
-	// Verify the owning user is still enabled
+	// Verify the owning user is still enabled. An owner row that cannot
+	// be read is a database failure, reported and logged as such; an
+	// owner that is missing or disabled is a refused token.
 	var enabled bool
 	err = s.db.QueryRow("SELECT enabled FROM users WHERE id = ?", token.OwnerID).Scan(&enabled)
+	if err != nil && err != sql.ErrNoRows {
+		//nolint:gosec // G706: error text passed through logging.SanitizeForLog
+		log.Printf("[AUTH] Token validation failed: the token owner could not be read: %s",
+			logging.SanitizeForLog(err.Error()))
+		return nil, fmt.Errorf("token validation error: %w: %w", ErrAuthStoreUnavailable, err)
+	}
 	if err != nil || !enabled {
 		return nil, fmt.Errorf("token owner is disabled")
 	}

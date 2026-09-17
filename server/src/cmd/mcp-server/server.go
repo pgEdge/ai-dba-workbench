@@ -12,12 +12,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/pgedge/ai-workbench/pkg/crypto"
 	"github.com/pgedge/ai-workbench/pkg/fileutil"
 	"github.com/pgedge/ai-workbench/server/internal/auth"
 	"github.com/pgedge/ai-workbench/server/internal/config"
@@ -25,6 +28,7 @@ import (
 	"github.com/pgedge/ai-workbench/server/internal/database"
 	"github.com/pgedge/ai-workbench/server/internal/llmproxy"
 	"github.com/pgedge/ai-workbench/server/internal/mcp"
+	"github.com/pgedge/ai-workbench/server/internal/oidc"
 	"github.com/pgedge/ai-workbench/server/internal/overview"
 	"github.com/pgedge/ai-workbench/server/internal/prompts"
 	"github.com/pgedge/ai-workbench/server/internal/resources"
@@ -55,6 +59,12 @@ type Server struct {
 	dataDir       string
 	debug         bool
 	aiEnabled     bool
+
+	// oidcProvider is nil whenever federated login is switched off. When
+	// it is non-nil, oidcStateKey holds the 32-byte key the login state
+	// cookie is sealed with.
+	oidcProvider *oidc.Provider
+	oidcStateKey []byte
 
 	// handlerClosers holds cleanup functions for background resources
 	// created while wiring HTTP handlers. SetupHandlers runs on the
@@ -148,6 +158,10 @@ func NewServer(sc *ServerConfig) (*Server, error) {
 
 	serverSecret, err := s.loadServerSecret(sc.ExecPath)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.initOIDC(serverSecret); err != nil {
 		return nil, err
 	}
 
@@ -288,6 +302,113 @@ func (s *Server) loadServerSecret(execPath string) (string, error) {
 
 	fmt.Fprintf(os.Stderr, "Server secret: loaded from %s\n", secretPath)
 	return serverSecret, nil
+}
+
+// oidcStateKeySalt is the fixed PBKDF2 salt separating the OIDC login
+// state key from every other key derived from the same server secret,
+// most importantly the one that encrypts stored database passwords. It
+// is a constant rather than a random value because the key has to be
+// reproducible across restarts and across two servers sharing one
+// secret; the salt is not a secret, the server secret is. Never reuse a
+// salt from another subsystem here, and never change this string: doing
+// so invalidates every login in flight at that moment.
+const oidcStateKeySalt = "pgedge-ai-workbench/oidc-login-state/v1"
+
+// oidcDiscoveryTimeout bounds OpenID Connect discovery at start-up.
+// go-oidc issues that request through http.DefaultClient, which has no
+// timeout, so without this an identity provider that accepts the
+// connection and then says nothing would hang start-up forever, which
+// looks exactly like a hung server rather than a misconfigured provider.
+const oidcDiscoveryTimeout = 15 * time.Second
+
+// initOIDC performs OpenID Connect discovery and derives the login state
+// key, when federated login is enabled. It does nothing at all when it
+// is not, leaving s.oidcProvider nil, which is what makes the endpoints
+// answer 404.
+//
+// A discovery failure is fatal, deliberately and in the same spirit as
+// an unusable TLS certificate: if the provider cannot be reached at
+// start-up then nobody can log in through it, and a server that starts
+// anyway serves a login page whose button silently does not work.
+func (s *Server) initOIDC(serverSecret string) error {
+	if s.cfg == nil || !s.cfg.HTTP.Auth.OIDC.IsEnabled() {
+		return nil
+	}
+
+	stateKey := crypto.DeriveKey(serverSecret, []byte(oidcStateKeySalt))
+	if len(stateKey) == 0 {
+		return fmt.Errorf("cannot derive the OIDC login state key: the server secret is empty")
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, oidcDiscoveryTimeout)
+	defer cancel()
+
+	provider, err := oidc.NewProvider(ctx, s.cfg.HTTP.Auth.OIDC)
+	if err != nil {
+		return fmt.Errorf("failed to initialize OIDC login: %w", err)
+	}
+
+	s.oidcProvider = provider
+	s.oidcStateKey = stateKey
+
+	fmt.Fprintf(os.Stderr, "OIDC login: ENABLED (issuer: %s)\n", s.cfg.HTTP.Auth.OIDC.Issuer)
+	logOIDCStartupWarnings(os.Stderr, s.cfg)
+
+	return nil
+}
+
+// logOIDCStartupWarnings prints the start-up notices for a configuration
+// with federated login enabled. Each of them names a consequence of the
+// configuration that is correct as far as validation can tell but that
+// an operator may not have intended, and nothing later in the life of
+// the process will say any of it.
+func logOIDCStartupWarnings(w io.Writer, cfg *config.Config) {
+	oidcCfg := cfg.HTTP.Auth.OIDC
+
+	// redirect_url is validated for shape, not pinned to this server's
+	// own origin, because the server cannot know the address the browser
+	// reaches it at. It is the address the identity provider delivers
+	// every authorization code to, so a typo here starts cleanly and
+	// sends every code to the wrong host; naming the host at start-up
+	// is what catches the typo. PKCE means a leaked code cannot be
+	// redeemed without the verifier, so the failure is broken login,
+	// not account takeover.
+	if redirect, err := url.Parse(oidcCfg.RedirectURL); err == nil && redirect.Host != "" {
+		fmt.Fprintf(w,
+			"OIDC login: the identity provider will deliver authorization codes to %s\n"+
+				"           (http.auth.oidc.redirect_url); confirm that this is the address the\n"+
+				"           browser reaches this server at.\n", redirect.Host)
+	}
+
+	// Without a trusted proxy list, every request behind a reverse proxy
+	// arrives with that proxy's address, so the callback's rate limit
+	// has one key for the whole deployment rather than one per client:
+	// it stops nothing an attacker does and can be spent deliberately to
+	// deny everyone else a login. The same list decides whether the OIDC
+	// state cookie may use the "__Host-" name prefix, so without it the
+	// cookie is written under its plain name.
+	if len(cfg.HTTP.TrustedProxies) == 0 {
+		fmt.Fprintf(w,
+			"WARNING: http.trusted_proxies is empty, so per-client rate limiting of the OIDC\n"+
+				"         callback is inoperative behind a reverse proxy: every request shares one\n"+
+				"         allowance, and the login state cookie cannot use the __Host- prefix.\n"+
+				"         Set http.trusted_proxies to the reverse proxy's address.\n")
+	}
+
+	// superuser_group hands the Workbench superuser flag to whoever can
+	// add a member to one provider group, and superuser bypasses every
+	// group grant and every API token connection scope (the pre-existing
+	// short-circuit issue #482 tracks). Revocation takes effect at the
+	// person's next login and not before, so a live session or an
+	// existing token keeps full privilege until then.
+	if oidcCfg.SuperuserGroup != "" {
+		fmt.Fprintf(w,
+			"WARNING: http.auth.oidc.superuser_group is set (%q): every member of that identity\n"+
+				"         provider group holds Workbench superuser, which bypasses all group grants\n"+
+				"         and all API token connection scopes. Removal at the provider takes effect\n"+
+				"         at the member's next login; disable the account to revoke it sooner.\n",
+			oidcCfg.SuperuserGroup)
+	}
 }
 
 // initDatastore initializes the datastore connection
@@ -502,6 +623,9 @@ func (s *Server) Run(flags *Flags, configPath string) error {
 		OverviewHub:  s.overviewHub,
 		ToolProvider: s.toolProvider,
 		AIEnabled:    s.aiEnabled,
+
+		OIDCProvider: s.oidcProvider,
+		OIDCStateKey: s.oidcStateKey,
 
 		RegisterCloser: s.registerHandlerCloser,
 	}

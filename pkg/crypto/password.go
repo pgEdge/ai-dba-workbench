@@ -50,6 +50,30 @@ func deriveKey(serverSecret string, salt []byte) []byte {
 	)
 }
 
+// DeriveKey derives a 32-byte AES-256 key from serverSecret and salt,
+// using the same PBKDF2-HMAC-SHA256 parameters EncryptPassword uses. It
+// is exported so that other subsystems can derive their own independent
+// key from the single secret the operator already manages, rather than
+// asking for a second secret to be created, distributed and rotated.
+//
+// The salt is the whole of the separation between those keys: two
+// callers passing different fixed salts get keys that cannot be
+// substituted for one another, so a key used to seal an OIDC login state
+// cookie can never decrypt a stored database password. Callers must
+// therefore pass a fixed salt unique to their own use, never a random
+// one and never a salt borrowed from another subsystem.
+//
+// serverSecret must not be empty: a key derived from nothing but the
+// public salt is no secret at all. Both that case and an empty salt
+// return nil, which the caller must treat as a failure rather than as a
+// usable key.
+func DeriveKey(serverSecret string, salt []byte) []byte {
+	if serverSecret == "" || len(salt) == 0 {
+		return nil
+	}
+	return deriveKey(serverSecret, salt)
+}
+
 // EncryptPassword encrypts a password using AES-256-GCM with a random salt.
 // The key is derived from the server secret and a cryptographically random salt.
 // The salt is prepended to the ciphertext for storage.

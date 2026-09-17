@@ -10,6 +10,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -22,31 +23,37 @@ const SessionCookieName = "session_token"
 
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
-	authStore         *auth.AuthStore
-	rateLimiter       *auth.RateLimiter // Tracks failed login attempts per IP
-	totalRateLimiter  *auth.RateLimiter // Tracks total login requests per IP (20/min)
-	ipExtractor       *auth.IPExtractor
-	tlsEnabled        bool // Whether the server itself has TLS enabled
-	trustProxyHeaders bool // Whether to trust X-Forwarded-Proto for secure detection
+	authStore        *auth.AuthStore
+	rateLimiter      *auth.RateLimiter // Tracks failed login attempts per IP
+	totalRateLimiter *auth.RateLimiter // Tracks total login requests per IP (20/min)
+	ipExtractor      *auth.IPExtractor
+	tlsEnabled       bool // Whether the server itself has TLS enabled
+	// localEnabled is the effective value of http.auth.local.enabled.
+	// When false the operator has switched username and password login
+	// off, and handleLogin refuses every request regardless of whether
+	// the credentials would otherwise verify. The check lives here
+	// rather than in AuthStore.AuthenticateUser so that the store keeps
+	// its single meaning of "does this password verify".
+	localEnabled bool
 }
 
 // NewAuthHandler creates a new authentication handler.
 // The ipExtractor parameter is optional; if nil, RemoteAddr will be used directly.
 // The tlsEnabled parameter indicates whether the server itself has TLS enabled.
 // When behind a reverse proxy that terminates TLS, set tlsEnabled to false but ensure
-// the proxy passes X-Forwarded-Proto header, which will be used to auto-detect HTTPS.
-func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor, tlsEnabled bool) *AuthHandler {
-	// If an IP extractor is configured, it means we're behind a trusted proxy,
-	// so we should also trust X-Forwarded-Proto for secure cookie detection.
-	trustProxyHeaders := ipExtractor != nil
-
+// the proxy passes X-Forwarded-Proto header, which will be used to auto-detect HTTPS;
+// that header is honored only on a request the ipExtractor's trusted proxy list
+// actually covers, which is decided per request rather than once here.
+// The localEnabled parameter carries the effective value of
+// http.auth.local.enabled; pass false to refuse password login outright.
+func NewAuthHandler(authStore *auth.AuthStore, rateLimiter *auth.RateLimiter, ipExtractor *auth.IPExtractor, tlsEnabled, localEnabled bool) *AuthHandler {
 	return &AuthHandler{
-		authStore:         authStore,
-		rateLimiter:       rateLimiter,
-		totalRateLimiter:  auth.NewRateLimiter(1, 20), // 20 total login requests per minute per IP
-		ipExtractor:       ipExtractor,
-		tlsEnabled:        tlsEnabled,
-		trustProxyHeaders: trustProxyHeaders,
+		authStore:        authStore,
+		rateLimiter:      rateLimiter,
+		totalRateLimiter: auth.NewRateLimiter(1, 20), // 20 total login requests per minute per IP
+		ipExtractor:      ipExtractor,
+		tlsEnabled:       tlsEnabled,
+		localEnabled:     localEnabled,
 	}
 }
 
@@ -62,32 +69,13 @@ func (h *AuthHandler) Close() {
 	}
 }
 
-// isSecureRequest determines if a request came over a secure (HTTPS) connection.
-// It checks multiple indicators:
-// 1. If the server has TLS enabled directly
-// 2. If the request URL scheme is HTTPS
-// 3. If trusted proxy headers indicate HTTPS (X-Forwarded-Proto)
-// This ensures cookies are marked Secure when appropriate, even behind reverse proxies.
+// isSecureRequest determines if a request came over a secure (HTTPS)
+// connection, so that cookies are marked Secure when appropriate, even
+// behind a reverse proxy. The rule itself lives in requestIsSecure,
+// which the OIDC handler shares: the X-Forwarded-Proto trust decision
+// must exist in exactly one place.
 func (h *AuthHandler) isSecureRequest(r *http.Request) bool {
-	// Server has TLS enabled directly
-	if h.tlsEnabled {
-		return true
-	}
-
-	// Check the request TLS state (set by Go's http server when TLS is used)
-	if r.TLS != nil {
-		return true
-	}
-
-	// Check X-Forwarded-Proto header if we trust proxy headers
-	if h.trustProxyHeaders {
-		proto := r.Header.Get("X-Forwarded-Proto")
-		if proto == "https" {
-			return true
-		}
-	}
-
-	return false
+	return requestIsSecure(r, h.tlsEnabled, h.ipExtractor)
 }
 
 // LoginRequest is the request body for the login endpoint
@@ -112,6 +100,45 @@ func (h *AuthHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/logout", h.handleLogout)
 }
 
+// respondLoginFailed writes the single opaque login failure response.
+// Every path that declines a login - a bad password, a disabled account,
+// a federated account, or local login being switched off entirely -
+// answers with exactly these bytes, so that none of them says anything
+// about the credential that was presented or about whether the account
+// exists.
+func respondLoginFailed(w http.ResponseWriter) {
+	RespondError(w, http.StatusUnauthorized,
+		"Authentication failed: invalid username or password")
+}
+
+// applyLoginRateLimits consults both login rate limiters and charges the
+// total-request limiter for this attempt. It reports whether the request
+// may proceed; when it returns false it has already written the
+// too-many-requests response.
+func (h *AuthHandler) applyLoginRateLimits(w http.ResponseWriter, ipAddress string) bool {
+	// Check total request rate limit before checking failed-attempt limiter.
+	// This prevents enumeration attacks that succeed on every attempt.
+	if h.totalRateLimiter != nil && ipAddress != "" {
+		if !h.totalRateLimiter.IsAllowed(ipAddress) {
+			RespondError(w, http.StatusTooManyRequests,
+				"Too many login requests, please try again later")
+			return false
+		}
+		h.totalRateLimiter.RecordFailedAttempt(ipAddress)
+	}
+
+	// Check rate limit if rate limiter is configured
+	if h.rateLimiter != nil && ipAddress != "" {
+		if !h.rateLimiter.IsAllowed(ipAddress) {
+			RespondError(w, http.StatusTooManyRequests,
+				"Too many failed authentication attempts, please try again later")
+			return false
+		}
+	}
+
+	return true
+}
+
 // handleLogin handles POST /api/v1/auth/login
 func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -123,6 +150,35 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Check if auth store is available
 	if h.authStore == nil {
 		RespondError(w, http.StatusServiceUnavailable, "User authentication is not configured")
+		return
+	}
+
+	// Local login disabled: refuse before the body is read. The body,
+	// status and headers are the wrong-password answer exactly, and the
+	// rate limiters are consulted and charged exactly as they are on
+	// that path below, so the refusal says no more about any particular
+	// credential, or about whether an account exists, than a failed
+	// password attempt does. The real reason goes to the server log.
+	//
+	// It is deliberately NOT a claim that the two are indistinguishable:
+	// this path never reaches AuthenticateUser, so it skips the bcrypt
+	// comparison and answers far faster, and a malformed or incomplete
+	// body is answered 401 here where it would be answered 400 below.
+	// Neither matters, because the flag is not a secret - the public
+	// capabilities endpoint publishes local_enabled so the login screen
+	// can decide whether to draw the password form - and the thing worth
+	// protecting is which credentials are valid, not whether the
+	// operator has switched local login off.
+	if !h.localEnabled {
+		ipAddress := h.extractIPFromRequest(r)
+		if !h.applyLoginRateLimits(w, ipAddress) {
+			return
+		}
+		if h.rateLimiter != nil && ipAddress != "" {
+			h.rateLimiter.RecordFailedAttempt(ipAddress)
+		}
+		log.Printf("[AUTH] Login request refused: local password login is disabled (http.auth.local.enabled=false)")
+		respondLoginFailed(w)
 		return
 	}
 
@@ -147,24 +203,8 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Uses the IPExtractor which only trusts X-Forwarded-For from configured trusted proxies
 	ipAddress := h.extractIPFromRequest(r)
 
-	// Check total request rate limit before checking failed-attempt limiter.
-	// This prevents enumeration attacks that succeed on every attempt.
-	if h.totalRateLimiter != nil && ipAddress != "" {
-		if !h.totalRateLimiter.IsAllowed(ipAddress) {
-			RespondError(w, http.StatusTooManyRequests,
-				"Too many login requests, please try again later")
-			return
-		}
-		h.totalRateLimiter.RecordFailedAttempt(ipAddress)
-	}
-
-	// Check rate limit if rate limiter is configured
-	if h.rateLimiter != nil && ipAddress != "" {
-		if !h.rateLimiter.IsAllowed(ipAddress) {
-			RespondError(w, http.StatusTooManyRequests,
-				"Too many failed authentication attempts, please try again later")
-			return
-		}
+	if !h.applyLoginRateLimits(w, ipAddress) {
+		return
 	}
 
 	// Authenticate user
@@ -174,8 +214,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if h.rateLimiter != nil && ipAddress != "" {
 			h.rateLimiter.RecordFailedAttempt(ipAddress)
 		}
-		RespondError(w, http.StatusUnauthorized,
-			"Authentication failed: invalid username or password")
+		respondLoginFailed(w)
 		return
 	}
 
@@ -186,13 +225,16 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Set httpOnly cookie for secure session management.
 	// This prevents XSS attacks from accessing the session token.
-	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)
 	// #nosec G124 -- Secure is intentionally conditional on
-	// isSecureRequest so local HTTP development still works;
-	// in production behind TLS (direct or via a trusted proxy
-	// supplying X-Forwarded-Proto) the flag evaluates to true.
-	// HttpOnly and SameSite are unconditional.
+	// isSecureRequest so local HTTP development still works. It
+	// evaluates to true when this server terminates TLS, when Go
+	// reports the connection as TLS, or when any request carries
+	// X-Forwarded-Proto: https and an IP extractor exists, which
+	// SetupHandlers makes true on every deployment; the proxy does
+	// not have to be on http.trusted_proxies for this, because a
+	// forged header can only cost the forger their own cookie (see
+	// requestIsSecure). HttpOnly and SameSite are unconditional.
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
@@ -233,9 +275,12 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Auto-detect if this is a secure request (HTTPS or behind TLS-terminating proxy)
 	secureCookie := h.isSecureRequest(r)
 	// #nosec G124 -- Secure is intentionally conditional on
-	// isSecureRequest so local HTTP development still works;
-	// in production behind TLS (direct or via a trusted proxy
-	// supplying X-Forwarded-Proto) the flag evaluates to true.
+	// isSecureRequest so local HTTP development still works; it
+	// is true when TLS is enabled or the request itself arrived
+	// over TLS, and otherwise whenever a trusted proxy list is
+	// configured and X-Forwarded-Proto says https, from any
+	// address (see requestIsSecure, and the note there on why a
+	// forged header only costs the forger their own cookie).
 	// HttpOnly and SameSite are unconditional. The clear-cookie
 	// flags must mirror the set-cookie flags above so browsers
 	// match and overwrite the original cookie on logout.

@@ -11,6 +11,8 @@ moved.
 | Location | Why it matters |
 |----------|----------------|
 | `server/src/internal/auth/` | Users, groups, tokens, permissions and the RBAC checker, backed by SQLite |
+| `server/src/internal/auth/federation.go` | Federated identity: linking, provisioning, group reconciliation and unlinking |
+| `server/src/internal/oidc/` | OIDC discovery, the authorisation request, ID-token verification, claim extraction and the sealed login-state cookie |
 | `server/src/internal/api/` | HTTP handlers; every mutating handler carries an authorisation gate (see `../golang-expert/rbac-patterns.md`) |
 | `server/src/internal/tools/` | MCP tools, including ones that execute SQL against monitored databases |
 | `server/src/internal/database/` | Datastore queries; identifier interpolation is allow-listed and quoted |
@@ -62,6 +64,62 @@ moved.
   reserved for resources that genuinely do not exist. Judge any
   enumeration concern against that convention rather than assuming a
   404-for-everything model.
+- An API token's connection scope is a third constraint, intersected
+  with both of the above. `CanAccessConnection` and
+  `VisibleConnectionIDs` in `server/src/internal/auth/access.go` apply
+  it on every path, ownership and sharing included, and it can only
+  lower an access level, never raise one.
+- `IsConnectionInTokenScope` treats a token with no scope rows as
+  unrestricted, so an unscoped token inherits its owner's access in
+  full.
+- Token scope does not constrain a superuser: the superuser bypass
+  returns before any scope check. That is deliberate, not an oversight.
+- `http.auth.local.enabled` is enforced in exactly one place:
+  `handleLogin` in `api/auth_handlers.go`, which refuses before the body
+  is parsed when the flag is false. `AuthStore.AuthenticateUser`
+  deliberately knows nothing about the flag, keeping its single meaning
+  of "does this password verify"; `handleLogin` is its only caller
+  outside the store, which is what makes one enforcement point
+  sufficient. The refusal answers with the same body, status and headers
+  as a wrong password, so it discloses nothing further about a
+  credential, but it is not indistinguishable from one and does not need
+  to be: the flag itself is public, reported as `local_enabled` by the
+  capabilities endpoint.
+- Only a local account may have a password written to it, enforced by
+  `writePasswordHashLocked` in `server/src/internal/auth/store.go`, the
+  single path through which `UpdateUser` and `UpdateUserAtomic` write a
+  hash. The rule is a condition on the `UPDATE` itself
+  (`AND auth_source = 'local'`) followed by a `RowsAffected` check, not
+  a check made beforehand, so the CLI linking the account in another
+  process during the bcrypt computation cannot slip a hash onto a
+  federated account; when no row matches, the store looks up
+  `auth_source` only then to tell a missing user (no error) from a
+  refused write. Without it a hash written onto a federated account
+  lies dormant until `UnlinkFederatedIdentity` with `-restore-password`
+  returns `auth_source` to local and makes it live. `updateUser` in
+  `api/rbac_user_handlers.go` checks the same condition first and
+  answers 400, because that endpoint applies the password, enabled and
+  superuser changes in one transaction and a late refusal would silently
+  roll back the others.
+- Every setting in the `http.auth` section is read once at start-up and
+  held for the life of the process. A reload changes none of them:
+  handlers keep by-value copies and `ReloadableConfig.Reload` only swaps
+  the pointer, so `logRestartRequiredSettings` reports each one as
+  requiring a restart. Advice that assumes an authentication setting can
+  be tightened by SIGHUP is wrong.
+- A federated account is matched on the pair `(issuer, subject)` and
+  NEVER on username. `ExternalSubjectKey` in `auth/federation.go`
+  builds the key and `ResolveFederatedUser` looks the account up by it
+  alone, so an identity provider that reissues a username cannot hand
+  one person another person's account. Any change that reintroduces a
+  username lookup on the login path is a privilege-escalation bug, and
+  this is the single most important invariant in the federated surface.
+- `pkg/crypto`'s `EncryptGCM` and `DecryptGCM` accept any key length
+  `aes.NewCipher` will take (16, 24 or 32 bytes), despite doc comments
+  promising AES-256 and exactly 32 bytes. A short key therefore
+  downgrades the cipher silently rather than failing, so every caller
+  must check the length itself; `internal/oidc/state.go` does, in
+  `SealState` and `OpenState`, against its own `keySize` constant.
 
 ## Reporting
 

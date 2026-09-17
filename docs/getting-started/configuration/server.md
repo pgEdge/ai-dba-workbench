@@ -73,11 +73,20 @@ http:
 
   # Authentication Configuration
   auth:
-    enabled: true
-    max_failed_attempts_before_lockout: 0
+    max_failed_attempts_before_lockout: 10
     max_user_token_days: 0
     rate_limit_window_minutes: 15
     rate_limit_max_attempts: 10
+    # Local username and password login
+    local:
+      enabled: true
+    # Federated (OpenID Connect) login
+    # oidc:
+    #   enabled: true
+    #   issuer: "https://idp.example.com"
+    #   client_id: "pgedge-workbench"
+    #   client_secret_file: "/etc/pgedge/oidc-client-secret.txt"
+    #   redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
 
 #=====================================================
 # CONNECTION SECURITY
@@ -305,10 +314,43 @@ builtins:
 | `tls.chain_file` | string | | Certificate chain |
 | `trusted_proxies` | list | `[]` | Trusted proxy CIDRs |
 | `cors_origin` | string | `""` | Allowed CORS origin |
-| `auth.max_failed_attempts_before_lockout` | int | `0` | Lock after N failures |
+| `hsts_enabled` | bool | `false` | Send the Strict-Transport-Security header |
+| `auth.max_failed_attempts_before_lockout` | int | `10` | Lock after N failures |
 | `auth.max_user_token_days` | int | `0` | Max token lifetime |
 | `auth.rate_limit_window_minutes` | int | `15` | Rate limit window |
 | `auth.rate_limit_max_attempts` | int | `10` | Max attempts per window |
+| `auth.local.enabled` | bool | `true` | Enable username and password login |
+| `auth.oidc.enabled` | bool | `false` | Enable federated login |
+| `auth.oidc.issuer` | string | | Identity provider issuer URL |
+| `auth.oidc.client_id` | string | | OAuth 2.0 client identifier |
+| `auth.oidc.client_secret` | string | | Inline client secret |
+| `auth.oidc.client_secret_file` | string | | File holding the client secret |
+| `auth.oidc.redirect_url` | string | | Callback URL registered at the provider |
+| `auth.oidc.scopes` | list | `[openid, email, profile]` | Scopes requested at the provider |
+| `auth.oidc.username_claim` | string | `email` | Claim used as the username |
+| `auth.oidc.display_name_claim` | string | `name` | Claim used as the display name |
+| `auth.oidc.groups_claim` | string | `groups` | Claim carrying group membership |
+| `auth.oidc.button_label` | string | `Sign in with your identity provider` | Federated login button label |
+| `auth.oidc.provision_users` | bool | `false` | Create an account on first login |
+| `auth.oidc.allowed_email_domains` | list | `[]` | Permitted verified email domains |
+| `auth.oidc.superuser_group` | string | | Provider group granting superuser |
+| `auth.oidc.group_map` | map | `{}` | Provider group to Workbench group map |
+
+#### Authentication (`auth`)
+
+The `auth` section governs both login methods. Local
+username and password login is on unless
+`auth.local.enabled` is set to `false`, and federated
+login is off unless `auth.oidc.enabled` is set to
+`true`. The server refuses to start when neither
+method is available.
+
+Every `auth.oidc.*` option is ignored while federated
+login is disabled. The
+[Single Sign-On guide](../../admin-guide/managing-users-and-permissions/sso.md)
+describes each option in full, along with registering
+the Workbench at an identity provider and mapping
+provider groups onto Workbench groups.
 
 #### CORS Origin (`cors_origin`)
 
@@ -340,7 +382,8 @@ http:
   address: ":8443"
   cors_origin: "https://workbench.example.com"
   auth:
-    enabled: true
+    local:
+      enabled: true
 ```
 
 ### Connection Security (`connection_security`)
@@ -797,7 +840,8 @@ http:
   tls:
     enabled: false
   auth:
-    enabled: true
+    local:
+      enabled: true
 connection_security:
   allow_internal_networks: true
 database:
@@ -829,7 +873,8 @@ http:
     - "172.16.0.0/12"
   cors_origin: "https://workbench.example.com"
   auth:
-    enabled: true
+    local:
+      enabled: true
     max_failed_attempts_before_lockout: 5
     max_user_token_days: 90
 connection_security:

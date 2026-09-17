@@ -90,10 +90,6 @@ http:
   #   ai-dba-server list-tokens
   #
   auth:
-    # Enable authentication (strongly recommended for production)
-    # Default: true
-    enabled: true
-
     # Account lockout after N failed login attempts (0 = disabled)
     # Default: 10
     max_failed_attempts_before_lockout: 10
@@ -110,6 +106,72 @@ http:
     # Maximum failed attempts per IP in the time window
     # Default: 10
     rate_limit_max_attempts: 10
+
+    # Local username/password login. At least one of local.enabled and
+    # oidc.enabled must allow logging in, or the server refuses to start.
+    local:
+      # Default: true. Set to false only once OIDC is fully configured
+      # and enabled below, otherwise nobody can log in.
+      enabled: true
+
+    # OpenID Connect federated login. Disabled by default; uncomment and
+    # fill in the fields below to enable it alongside, or instead of,
+    # local login.
+    # oidc:
+    #   enabled: true
+    #
+    #   # The identity provider's issuer URL. Must use https://.
+    #   issuer: "https://idp.example.com"
+    #
+    #   # OAuth 2.0 client ID registered with the identity provider.
+    #   client_id: "workbench"
+    #
+    #   # Client secret, either inline or via a file (client_secret_file
+    #   # takes the file's contents when client_secret is empty; a
+    #   # file-sourced secret is never written back to this file).
+    #   client_secret: ""
+    #   # client_secret_file: /etc/pgedge/oidc-client-secret.txt
+    #
+    #   # Must match a redirect URI registered with the identity provider.
+    #   redirect_url: "https://workbench.example.com/api/v1/auth/oidc/callback"
+    #
+    #   # OAuth 2.0 scopes to request.
+    #   # Default: [openid, email, profile]
+    #   scopes: ["openid", "email", "profile"]
+    #
+    #   # Claim used as the Workbench username.
+    #   # Default: email
+    #   username_claim: "email"
+    #
+    #   # Claim used as the user's display name.
+    #   # Default: name
+    #   display_name_claim: "name"
+    #
+    #   # Claim carrying the user's group memberships.
+    #   # Default: groups
+    #   groups_claim: "groups"
+    #
+    #   # Label shown on the login page's OIDC button.
+    #   # Default: "Sign in with your identity provider"
+    #   button_label: "Sign in with your identity provider"
+    #
+    #   # Automatically create a Workbench account for a new OIDC user on
+    #   # first login.
+    #   # Default: false
+    #   provision_users: false
+    #
+    #   # Restrict login to users whose email domain is in this list.
+    #   # Empty means no domain restriction.
+    #   # allowed_email_domains:
+    #   #   - "example.com"
+    #
+    #   # Membership of this OIDC group (as named in groups_claim) grants
+    #   # the Workbench superuser role.
+    #   # superuser_group: "workbench-admins"
+    #
+    #   # Maps identity-provider group names to Workbench RBAC group names.
+    #   # group_map:
+    #   #   idp-group-name: workbench-group-name
 
 #=========================================================================
 # CONNECTION SECURITY
@@ -526,13 +588,11 @@ builtins:
 #
 
 #-------------------------------------------------------------------------
-# Development Configuration (local development, no TLS, no auth)
+# Development Configuration (local development, no TLS)
 #-------------------------------------------------------------------------
 # http:
 #   address: ":8080"
 #   tls:
-#     enabled: false
-#   auth:
 #     enabled: false
 # database:
 #   host: "localhost"
@@ -559,7 +619,6 @@ builtins:
 #     key_file: "/etc/ai-workbench/certs/server-key.pem"
 #   cors_origin: "https://workbench.example.com"
 #   auth:
-#     enabled: true
 #     max_failed_attempts_before_lockout: 5
 #     max_user_token_days: 90
 # database:

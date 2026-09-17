@@ -179,6 +179,27 @@ describe('AdminUsers', () => {
             expect(screen.getByText('Service Account')).toBeInTheDocument();
         });
 
+        it('isolates identity-provider display names and emails', async () => {
+            installListMocks({
+                users: [
+                    {
+                        ...mockUsers[0],
+                        // U+202E RIGHT-TO-LEFT OVERRIDE: the server
+                        // permits the Unicode format category in a
+                        // display name, so the client must isolate it.
+                        display_name: 'Alice‮',
+                        email: 'alice‮@example.com',
+                    },
+                ],
+            });
+            renderWithTheme(<AdminUsers />);
+
+            const name = await screen.findByText('Alice‮');
+            expect(name.tagName).toBe('BDI');
+            expect(screen.getByText('alice‮@example.com').tagName)
+                .toBe('BDI');
+        });
+
         it('renders the empty state when no users are returned', async () => {
             installListMocks({ users: [] });
             renderWithTheme(<AdminUsers />);

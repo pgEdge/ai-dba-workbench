@@ -12,6 +12,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 )
 
@@ -128,6 +129,25 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 		fmt.Fprintf(os.Stderr, "  WARNING: http.tls.key_file changed - requires restart\n")
 	}
 
+	// OIDC changes require restart: the provider is constructed once at
+	// startup from these settings, so a running server and a reloaded
+	// configuration would otherwise silently disagree.
+	if old.HTTP.Auth.OIDC.IsEnabled() != newConfig.HTTP.Auth.OIDC.IsEnabled() {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.enabled changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.Issuer != newConfig.HTTP.Auth.OIDC.Issuer {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.issuer changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.ClientID != newConfig.HTTP.Auth.OIDC.ClientID {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.client_id changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.EffectiveClientSecret() != newConfig.HTTP.Auth.OIDC.EffectiveClientSecret() {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.client_secret changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.RedirectURL != newConfig.HTTP.Auth.OIDC.RedirectURL {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.redirect_url changed - requires restart\n")
+	}
+
 	// LLM/embedding provider changes are logged (may work but connections need reset)
 	if old.LLM.Provider != newConfig.LLM.Provider {
 		fmt.Fprintf(os.Stderr, "  NOTE: llm.provider changed to %s\n", newConfig.LLM.Provider)
@@ -137,6 +157,50 @@ func (rc *ReloadableConfig) logRestartRequiredSettings(newConfig *Config) {
 	}
 	if old.Embedding.Provider != newConfig.Embedding.Provider {
 		fmt.Fprintf(os.Stderr, "  NOTE: embedding.provider changed to %s\n", newConfig.Embedding.Provider)
+	}
+
+	// The remaining OIDC settings also require a restart, for a less
+	// obvious reason than issuer/client id/secret/redirect. They decide
+	// how an already-constructed provider's response is interpreted, so
+	// they could in principle be applied live, but they are not:
+	// NewOIDCHandler takes the OIDC configuration by value and keeps its
+	// own copy, and Reload only swaps the pointer inside this wrapper, so
+	// the running handler goes on reading the settings it started with.
+	// The capabilities payload is frozen in the same way, being built
+	// once at startup. Reporting these as merely "changed" told an
+	// operator narrowing allowed_email_domains or dropping a compromised
+	// group from group_map that their containment had landed, when
+	// nothing had changed at all, so they are reported as what they are.
+	if old.HTTP.Auth.OIDC.UsernameClaim != newConfig.HTTP.Auth.OIDC.UsernameClaim {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.username_claim changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.DisplayNameClaim != newConfig.HTTP.Auth.OIDC.DisplayNameClaim {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.display_name_claim changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.GroupsClaim != newConfig.HTTP.Auth.OIDC.GroupsClaim {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.groups_claim changed - requires restart\n")
+	}
+	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.Scopes, newConfig.HTTP.Auth.OIDC.Scopes) {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.scopes changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.ProvisionUsersEnabled() != newConfig.HTTP.Auth.OIDC.ProvisionUsersEnabled() {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.provision_users changed - requires restart\n")
+	}
+	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.AllowedEmailDomains, newConfig.HTTP.Auth.OIDC.AllowedEmailDomains) {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.allowed_email_domains changed - requires restart\n")
+	}
+	if old.HTTP.Auth.OIDC.SuperuserGroup != newConfig.HTTP.Auth.OIDC.SuperuserGroup {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.superuser_group changed - requires restart\n")
+	}
+	if !reflect.DeepEqual(old.HTTP.Auth.OIDC.GroupMap, newConfig.HTTP.Auth.OIDC.GroupMap) {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.oidc.group_map changed - requires restart\n")
+	}
+
+	// Local password login is captured by the login handler at startup in
+	// exactly the same way, so switching it off by reload alone leaves
+	// every password live.
+	if old.HTTP.Auth.LocalEnabled() != newConfig.HTTP.Auth.LocalEnabled() {
+		fmt.Fprintf(os.Stderr, "  WARNING: http.auth.local.enabled changed - requires restart\n")
 	}
 }
 

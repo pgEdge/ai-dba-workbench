@@ -55,6 +55,7 @@ pool:
 
 scheduler:
   max_concurrent_probes: 8
+  max_concurrent_probes_per_connection: 2
   startup_jitter_seconds: 60
 ```
 
@@ -299,6 +300,26 @@ connection.
   probe pair, so that smaller baseline does still grow with the number
   of monitored connections.
 
+### scheduler.max_concurrent_probes_per_connection
+
+The `max_concurrent_probes_per_connection` option specifies the
+maximum number of the `max_concurrent_probes` slots that any single
+monitored connection may hold at the same time.
+
+- Type: integer
+- Default: `2`
+- Min: 1
+- Example: `max_concurrent_probes_per_connection: 3`
+- Note: The collector clamps a value greater than
+  `max_concurrent_probes` to `max_concurrent_probes`, because a
+  ceiling above the global cap can never take effect.
+- Note: A probe holds its slot for as long as the execution runs, up
+  to `pool.monitored_max_wait_seconds`, so a monitored server that
+  accepts connections but answers slowly drives every one of its
+  probes to that timeout. This ceiling stops such a server occupying
+  the whole global budget and queueing the probes of healthy
+  connections behind it.
+
 ### scheduler.startup_jitter_seconds
 
 The `startup_jitter_seconds` option specifies the upper bound, in
@@ -495,6 +516,8 @@ The collector validates the following ranges:
 - Pool `max_idle_seconds` values must be 0 or greater.
 - Pool `max_wait_seconds` values must be greater than 0.
 - `scheduler.max_concurrent_probes` must be greater than 0.
+- `scheduler.max_concurrent_probes_per_connection` must be greater
+  than 0.
 - `scheduler.startup_jitter_seconds` must be 0 or greater.
 
 ## Tuning Guidelines
@@ -522,13 +545,30 @@ connections.
 
 Lower `max_concurrent_probes` when the collector runs under a tight
 memory limit, because each probe execution holds its result set in
-memory for the duration of the run. The two scheduler settings work
-together: the concurrency cap bounds the peak, and
-`startup_jitter_seconds` spreads the restart burst that would
-otherwise reach the cap immediately and leave the remaining probes
-queued behind it. A deployment limited to a few hundred megabytes of
-memory typically pairs a `max_concurrent_probes` value of 4 with a
-`startup_jitter_seconds` value of 60 or more.
+memory for the duration of the run. The three scheduler settings work
+together: the concurrency cap bounds the peak,
+`max_concurrent_probes_per_connection` bounds what one monitored
+connection may take of that peak, and `startup_jitter_seconds` spreads
+the restart burst that would otherwise reach the cap immediately and
+leave the remaining probes queued behind it. A deployment limited to a
+few hundred megabytes of memory typically pairs a
+`max_concurrent_probes` value of 4 with a `startup_jitter_seconds`
+value of 60 or more.
+
+A memory budget alone does not size `max_concurrent_probes`, because a
+probe holds its slot until the execution finishes or reaches
+`pool.monitored_max_wait_seconds`. A monitored server that accepts
+connections but answers slowly therefore drives every one of its
+probes to that timeout, and the slots it demands are the sum of
+`monitored_max_wait_seconds / interval` over its enabled probes. With
+the default 120-second timeout and the 34 seeded probes, whose
+intervals run from 30 seconds to 3600 seconds, one such server demands
+roughly 17.7 slots against a default cap of 8. Set
+`max_concurrent_probes` above that total for the slowest servers you
+expect to monitor, and keep `max_concurrent_probes_per_connection` at
+a small fraction of the cap, so that a single slow server cannot
+consume the whole budget and stretch the 30-second probes of healthy
+connections into minutes.
 
 The cap interacts with `max_connections_per_server` as well, since a
 probe holds a monitored connection while it runs. Setting
@@ -586,6 +626,7 @@ pool:
 
 scheduler:
   max_concurrent_probes: 8
+  max_concurrent_probes_per_connection: 2
   startup_jitter_seconds: 60
 
 secret_file: /var/secrets/collector.secret

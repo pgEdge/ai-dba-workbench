@@ -421,7 +421,11 @@ goroutine per connection. These goroutines are
 short-lived and last only for the duration of probe
 execution. With 10 monitored servers, the system
 can produce up to 340 concurrent goroutines during
-probe execution.
+probe execution, although only
+`scheduler.max_concurrent_probes` of those goroutines
+execute a probe at a time, and no more than
+`scheduler.max_concurrent_probes_per_connection` of
+them for any one connection; the rest wait for a slot.
 
 ### Global Probe Concurrency Limit
 
@@ -434,6 +438,26 @@ monitored connections. A goroutine waiting for a
 slot abandons the wait when the scheduler shuts
 down, so a backlog of queued probes cannot delay
 `Stop`.
+
+Each monitored connection also holds a permit from
+its own counting semaphore, sized from
+`scheduler.max_concurrent_probes_per_connection` and
+defaulting to 2 permits, which caps how many of the
+global slots that connection may hold at once. The
+ceiling matters because a probe holds its slot until
+the execution finishes or reaches
+`pool.monitored_max_wait_seconds`: a server that
+accepts connections but answers slowly demands the
+sum of `monitored_max_wait_seconds / interval` over
+its enabled probes, roughly 17.7 slots of the default
+8 for the seeded probe set, and would otherwise queue
+the probes of healthy connections behind its own. The
+scheduler clamps a configured ceiling greater than
+`scheduler.max_concurrent_probes` to that cap, since
+a higher ceiling can never bind, and it takes the
+per-connection permit before the global slot, so that
+no goroutine waits for a permit whilst holding a
+slot.
 
 ### Connection Pool Limits
 

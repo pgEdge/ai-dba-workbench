@@ -790,7 +790,15 @@ project adheres to
   growing with the number of monitored connections multiplied by
   their probes; the scheduler still runs one goroutine per
   connection and probe pair, so that baseline continues to scale
-  with the number of monitored connections. (#441)
+  with the number of monitored connections. A probe holds its slot
+  until the execution finishes or reaches
+  `pool.monitored_max_wait_seconds`, so the new
+  `scheduler.max_concurrent_probes_per_connection` setting (2 by
+  default, and clamped to `scheduler.max_concurrent_probes`) caps how
+  many of those slots a single monitored connection may hold at once;
+  without the ceiling, one server that accepts connections but answers
+  slowly demands more slots than the cap provides and queues the
+  probes of healthy connections behind its own. (#441)
 
 ### Removed
 

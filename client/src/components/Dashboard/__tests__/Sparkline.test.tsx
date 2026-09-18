@@ -17,7 +17,10 @@ import type { MetricDataPoint } from '../types';
 // Mocks
 // ---------------------------------------------------------------------------
 
-// Mock the Chart component to avoid echarts complexity in tests
+// Mock the Chart component to avoid echarts complexity in tests.
+// The echarts overrides are exposed through `data-echarts-options`: the
+// grid and axis values the sparkline sets are plain JSON-serialisable
+// data, so the tests can assert on them directly.
 vi.mock('../../Chart', () => ({
     Chart: (props: Record<string, unknown>) => (
         <div
@@ -39,9 +42,24 @@ vi.mock('../../Chart', () => ({
                 (props.data as { series: { data: unknown[] }[] })
                     .series[0].data,
             )}
+            data-echarts-options={JSON.stringify(props.echartsOptions)}
         />
     ),
 }));
+
+interface SparklineEchartsOptions {
+    grid?: { containLabel?: boolean };
+    xAxis?: { show?: boolean };
+    yAxis?: { show?: boolean };
+}
+
+const readEchartsOptions = (
+    element: HTMLElement,
+): SparklineEchartsOptions => {
+    const serialised = element.getAttribute('data-echarts-options');
+
+    return JSON.parse(serialised ?? '{}') as SparklineEchartsOptions;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,6 +197,33 @@ describe('Sparkline', () => {
 
         expect(getByTestId('chart-mock'))
             .toHaveAttribute('data-values', '[null,5,null,7]');
+    });
+
+    /*
+     * Issue #458: `buildGrid()` turns the contain-label layout pass on
+     * and `Chart` deep-merges over it key by key, so the sparkline has
+     * to switch it off explicitly or the pass reserves the plot area
+     * for axis labels it never draws. What that costs on the canvas is
+     * measured in `Sparkline.render.test.tsx`; this is the cheap guard
+     * on the option itself.
+     */
+    it('opts the grid out of the contain-label layout pass', () => {
+        const data = createDataPoints(5);
+        const { getByTestId } = render(<Sparkline data={data} />);
+
+        const options = readEchartsOptions(getByTestId('chart-mock'));
+
+        expect(options.grid?.containLabel).toBe(false);
+    });
+
+    it('hides both axes', () => {
+        const data = createDataPoints(5);
+        const { getByTestId } = render(<Sparkline data={data} />);
+
+        const options = readEchartsOptions(getByTestId('chart-mock'));
+
+        expect(options.xAxis?.show).toBe(false);
+        expect(options.yAxis?.show).toBe(false);
     });
 
     it('renders nothing when every point is a null gap', () => {

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo, memo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import {
     Box,
     Typography,
@@ -25,6 +25,11 @@ import {
 import { getEventConfig, formatFullTime } from './utils';
 import { EVENT_TYPE_CONFIG } from './config';
 import { EventDetails } from './EventDetailComponents';
+import type {
+    CollapsibleEventCardProps,
+    EventDetailPanelProps,
+    SingleEventCardProps,
+} from './types';
 import {
     getCollapsibleCardSx,
     getCollapsibleHeaderHoverSx,
@@ -46,7 +51,7 @@ import {
 /**
  * Single Event Card in the detail popover
  */
-const SingleEventCard = memo(({ event, isCompact = false }) => {
+const SingleEventCard = memo(({ event, isCompact = false }: SingleEventCardProps) => {
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
     const config = getEventConfig(event, theme.palette);
@@ -100,7 +105,9 @@ const SingleEventCard = memo(({ event, isCompact = false }) => {
                                 sx={serverDisabledSx}
                             >
                                 {' \u00b7 '}{event.server_name}
-                                {event.details?.database_name && ` / ${event.details.database_name}`}
+                                {event.details?.database_name
+                                    ? ` / ${String(event.details.database_name)}`
+                                    : null}
                             </Typography>
                         )}
                     </Typography>
@@ -135,7 +142,7 @@ SingleEventCard.displayName = 'SingleEventCard';
 /**
  * CollapsibleEventCard - A single event card that can be expanded/collapsed
  */
-const CollapsibleEventCard = memo(({ event, defaultExpanded = true }) => {
+const CollapsibleEventCard = memo(({ event, defaultExpanded = true }: CollapsibleEventCardProps) => {
     const [expanded, setExpanded] = useState(defaultExpanded);
     const theme = useTheme();
     const isDark = theme.palette.mode === 'dark';
@@ -178,7 +185,9 @@ const CollapsibleEventCard = memo(({ event, defaultExpanded = true }) => {
                                 sx={serverDisabledSx}
                             >
                                 {' \u00b7 '}{event.server_name}
-                                {event.details?.database_name && ` / ${event.details.database_name}`}
+                                {event.details?.database_name
+                                    ? ` / ${String(event.details.database_name)}`
+                                    : null}
                             </Typography>
                         )}
                     </Typography>
@@ -218,7 +227,7 @@ CollapsibleEventCard.displayName = 'CollapsibleEventCard';
 /**
  * EventDetailPanel - Shows detailed information about an event or cluster in an inline panel
  */
-const EventDetailPanel = memo(({ events, onClose }) => {
+const EventDetailPanel = memo(({ events, onClose }: EventDetailPanelProps) => {
     const theme = useTheme();
 
     const isCluster = events && events.length > 1;
@@ -226,7 +235,7 @@ const EventDetailPanel = memo(({ events, onClose }) => {
     // Count events by type for cluster header
     const typeCounts = useMemo(() => {
         if (!isCluster || !events) {return null;}
-        const counts = {};
+        const counts: Record<string, number> = {};
         events.forEach(e => {
             const typeConfig = EVENT_TYPE_CONFIG[e.event_type];
             const label = typeConfig?.label || e.event_type;

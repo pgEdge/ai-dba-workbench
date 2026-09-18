@@ -26,14 +26,24 @@ export interface RoleConfig {
     darkColor: string;
 }
 
-export type ServerRole =
-    | 'binary_primary'
-    | 'binary_standby'
-    | 'binary_cascading'
-    | 'spock_node'
-    | 'standalone'
-    | 'logical_publisher'
-    | 'logical_subscriber';
+/** Every server role the navigator knows how to render. */
+export const SERVER_ROLES = [
+    'binary_primary',
+    'binary_standby',
+    'binary_cascading',
+    'spock_node',
+    'standalone',
+    'logical_publisher',
+    'logical_subscriber',
+] as const;
+
+export type ServerRole = (typeof SERVER_ROLES)[number];
+
+/**
+ * Narrow an arbitrary role string to a known ServerRole.
+ */
+export const isServerRole = (role: string | null | undefined): role is ServerRole =>
+    role != null && (SERVER_ROLES as readonly string[]).includes(role);
 
 export type ClusterType = 'spock' | 'binary' | 'logical' | 'default';
 

@@ -43,6 +43,7 @@ import ServerAnalysisDialog from '../ServerAnalysisDialog';
 import { hasCachedServerAnalysis } from '../../hooks/useServerAnalysis';
 import { useRetryingFetch } from '../../hooks/useRetryingFetch';
 import type { ServerSelection, ClusterSelection } from '../../types/selection';
+import type { ClusterServer } from '../../contexts/ClusterDataContext';
 import AlertOverrideEditDialog from '../AlertOverrideEditDialog';
 import BlackoutManagementDialog from '../BlackoutManagementDialog';
 import AIOverview from '../AIOverview';
@@ -71,7 +72,20 @@ import {
     PANEL_ROOT_SX,
     METRICS_GRID_SX,
 } from './styles';
-import type { StatusPanelProps } from './types';
+import type { ApiAlert, StatusPanelProps, TransformedAlert } from './types';
+
+/**
+ * Read a server-like record's active alert count. The cluster server
+ * records carry an index signature, so the field arrives as `unknown`
+ * and has to be narrowed before it can be compared numerically.
+ */
+const getActiveAlertCount = (server: unknown): number => {
+    if (typeof server === 'object' && server !== null && 'active_alert_count' in server) {
+        const count = (server as { active_alert_count: unknown }).active_alert_count;
+        return typeof count === 'number' ? count : 0;
+    }
+    return 0;
+};
 
 /**
  * DashboardOverlayContent - Renders the appropriate dashboard
@@ -120,21 +134,21 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     const { user, hasPermission } = useAuth();
     const { aiEnabled } = useAICapabilities();
     const { lastRefresh } = useClusterData();
-    const [alerts, setAlerts] = useState([]);
+    const [alerts, setAlerts] = useState<TransformedAlert[]>([]);
     const [loading, setLoading] = useState(false);
     const initialLoadDoneRef = React.useRef(false);
     // Tracks mount state so a late fetch resolution never calls setState
     // on an unmounted component. Set false in an unmount cleanup below.
     const isMountedRef = useRef(true);
-    const localAnalysisRef = React.useRef<Map<number, string>>(new Map());
+    const localAnalysisRef = React.useRef<Map<number | string, string>>(new Map());
     const [blackoutMgmtOpen, setBlackoutMgmtOpen] = useState(false);
     const [ackDialogOpen, setAckDialogOpen] = useState(false);
-    const [selectedAlertForAck, setSelectedAlertForAck] = useState(null);
-    const [selectedAlertsForGroupAck, setSelectedAlertsForGroupAck] = useState(null);
+    const [selectedAlertForAck, setSelectedAlertForAck] = useState<TransformedAlert | null>(null);
+    const [selectedAlertsForGroupAck, setSelectedAlertsForGroupAck] = useState<TransformedAlert[] | null>(null);
     const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
-    const [analysisAlert, setAnalysisAlert] = useState(null);
+    const [analysisAlert, setAnalysisAlert] = useState<TransformedAlert | null>(null);
     const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
-    const [overrideAlert, setOverrideAlert] = useState(null);
+    const [overrideAlert, setOverrideAlert] = useState<TransformedAlert | null>(null);
     const [serverAnalysisOpen, setServerAnalysisOpen] = useState(false);
     // Tracks IDs currently being unacknowledged so the UI can disable
     // the button and ignore duplicate clicks.
@@ -149,6 +163,8 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     // place, so a minimal MUI Snackbar+Alert is rendered here.
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const { clearOverlays } = useDashboard();
+    // Estate selections carry no id, so read it only where it exists.
+    const selectionId = selection && 'id' in selection ? selection.id : undefined;
     // fetchAlertsData guards on user/selection internally and reports
     // success in those cases, so no separate enabled gate is needed
     // here; passing lastRefresh as the reset key lets a manual refresh
@@ -160,7 +176,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     // Clear dashboard overlay stack when the selection changes
     useEffect(() => {
         clearOverlays();
-    }, [selection?.type, selection?.id, clearOverlays]);
+    }, [selection?.type, selectionId, clearOverlays]);
 
     // Track mount state so late fetch resolutions can bail out before
     // calling setState on an unmounted component.
@@ -193,7 +209,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
         if (selection.type === 'server') {
             const isOffline = selection.status === 'offline';
-            const hasAlerts = selection.active_alert_count > 0;
+            const hasAlerts = getActiveAlertCount(selection) > 0;
             const effectiveStatus = isOffline ? 'offline' : (hasAlerts ? 'warning' : 'online');
 
             return {
@@ -205,8 +221,8 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         if (selection.type === 'cluster') {
             const servers = selection.servers || [];
             const offline = servers.filter(s => s.status === 'offline').length;
-            const warning = servers.filter(s => s.status !== 'offline' && s.active_alert_count > 0).length;
-            const online = servers.filter(s => s.status !== 'offline' && !s.active_alert_count).length;
+            const warning = servers.filter(s => s.status !== 'offline' && getActiveAlertCount(s) > 0).length;
+            const online = servers.filter(s => s.status !== 'offline' && !getActiveAlertCount(s)).length;
 
             return {
                 status: offline === servers.length ? 'offline' : (warning > 0 || offline > 0 ? 'warning' : 'online'),
@@ -220,7 +236,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         }
 
         if (selection.type === 'estate') {
-            const allServers = [];
+            const allServers: ClusterServer[] = [];
             selection.groups?.forEach(group => {
                 group.clusters?.forEach(cluster => {
                     allServers.push(...collectServers(cluster.servers || []));
@@ -228,8 +244,8 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             });
 
             const offline = allServers.filter(s => s.status === 'offline').length;
-            const warning = allServers.filter(s => s.status !== 'offline' && s.active_alert_count > 0).length;
-            const online = allServers.filter(s => s.status !== 'offline' && !s.active_alert_count).length;
+            const warning = allServers.filter(s => s.status !== 'offline' && getActiveAlertCount(s) > 0).length;
+            const online = allServers.filter(s => s.status !== 'offline' && !getActiveAlertCount(s)).length;
 
             return {
                 status: offline === allServers.length && allServers.length > 0 ? 'offline' : (warning > 0 || offline > 0 ? 'warning' : 'online'),
@@ -248,11 +264,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     }, [selection]);
 
     // Format relative time from a date
-    const formatRelativeTime = (date) => {
+    const formatRelativeTime = (date: string | undefined) => {
         if (!date) {return '';}
         const now = new Date();
         const then = new Date(date);
-        const diffMs = now - then;
+        const diffMs = now.getTime() - then.getTime();
         const diffSecs = Math.floor(diffMs / 1000);
         const diffMins = Math.floor(diffSecs / 60);
         const diffHours = Math.floor(diffMins / 60);
@@ -266,7 +282,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     };
 
     // Transform API alerts to component format
-    const transformAlerts = useCallback((apiAlerts) => {
+    const transformAlerts = useCallback((apiAlerts: ApiAlert[]): TransformedAlert[] => {
         return apiAlerts.map(alert => ({
             id: alert.id,
             severity: alert.severity?.toLowerCase() || 'info',
@@ -304,21 +320,21 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     }, []);
 
     // Handle opening ack dialog
-    const handleAcknowledge = (alert) => {
+    const handleAcknowledge = (alert: TransformedAlert) => {
         setSelectedAlertsForGroupAck(null);
         setSelectedAlertForAck(alert);
         setAckDialogOpen(true);
     };
 
     // Handle opening group ack dialog
-    const handleAcknowledgeGroup = (alerts) => {
+    const handleAcknowledgeGroup = (alerts: TransformedAlert[]) => {
         setSelectedAlertForAck(null);
         setSelectedAlertsForGroupAck(alerts);
         setAckDialogOpen(true);
     };
 
     // Handle opening analysis dialog
-    const handleAnalyze = (alert) => {
+    const handleAnalyze = (alert: TransformedAlert) => {
         setAnalysisAlert(alert);
         setAnalysisDialogOpen(true);
     };
@@ -332,7 +348,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     }, []);
 
     // Handle opening override edit dialog
-    const handleEditOverride = (alert) => {
+    const handleEditOverride = (alert: TransformedAlert) => {
         setOverrideAlert(alert);
         setOverrideDialogOpen(true);
     };
@@ -359,7 +375,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         : false;
 
     // Handle confirming acknowledgment
-    const handleAckConfirm = async (alertId, message, falsePositive = false) => {
+    const handleAckConfirm = async (
+        alertId: number | string,
+        message: string,
+        falsePositive = false,
+    ) => {
         if (!user || !alertId) {return;}
 
         try {
@@ -380,7 +400,11 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     };
 
     // Handle confirming group acknowledgment
-    const handleAckConfirmMultiple = async (alertIds, message, falsePositive = false) => {
+    const handleAckConfirmMultiple = async (
+        alertIds: (number | string)[],
+        message: string,
+        falsePositive = false,
+    ) => {
         if (!user || !alertIds?.length) {return;}
 
         try {
@@ -433,7 +457,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             }
             // For estate, fetch all alerts (no connection filter, no limit)
 
-            const data = await apiGet<{ alerts?: unknown[] }>(url);
+            const data = await apiGet<{ alerts?: ApiAlert[] }>(url);
             const transformedAlerts = transformAlerts(data.alerts || []);
             // Merge locally-cached AI analyses that the server
             // may not have persisted yet, then prune entries
@@ -491,7 +515,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     // user-visible error message is surfaced via the local Snackbar.
     // Concurrent clicks on the same alert are ignored while a request
     // is in flight.
-    const handleUnacknowledge = useCallback(async (alertId) => {
+    const handleUnacknowledge = useCallback(async (alertId: number | string) => {
         if (!user || !alertId) {return;}
         // Synchronous guard: block rapid duplicate clicks that fire
         // before React has re-rendered with the updated state.
@@ -502,14 +526,9 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
         // so we can roll back on failure. React strict mode may invoke
         // this updater twice; both invocations observe the same `prev`
         // snapshot so `previousAlert` stays consistent either way.
-        let previousAlert = null;
+        let previousAlert: TransformedAlert | null = null;
         setAlerts(prev => {
-            // Local cast narrows `never[]` (from untyped useState([]))
-            // to a shape with an `id` field so .find() returns a usable
-            // result instead of `never`, which would otherwise trip
-            // @typescript-eslint/no-confusing-void-expression.
-            const list = prev as unknown as { id: unknown }[];
-            const found = list.find(a => a.id === alertId);
+            const found = prev.find(a => a.id === alertId);
             if (!found) {
                 // Nothing to optimistically update; leave state alone.
                 return prev;
@@ -573,7 +592,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
     // Reset initial load state when selection changes
     useEffect(() => {
         initialLoadDoneRef.current = false;
-    }, [selection?.type, selection?.id]);
+    }, [selection?.type, selectionId]);
 
     // Fetch alerts on selection change or cluster data refresh.
     // Routes through the retry controller so a transient failure
@@ -783,7 +802,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             <AcknowledgeDialog
                 open={ackDialogOpen}
                 alert={selectedAlertForAck}
-                alerts={selectedAlertsForGroupAck}
+                alerts={selectedAlertsForGroupAck ?? undefined}
                 onClose={() => {
                     setAckDialogOpen(false);
                     setSelectedAlertForAck(null);

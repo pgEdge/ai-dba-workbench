@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
     createConversation,
     updateConversation,
@@ -22,6 +22,19 @@ import type { ConversationDetail } from '../chatTypes';
 // Test helpers
 // ---------------------------------------------------------------------------
 
+/*
+ * The chat modules read only `ok`, `json()` and `text()` from the fetch
+ * result, so the stubs below are partial `Response` objects. Widening
+ * happens once, here, rather than at every call site.
+ */
+function stubResponse(parts: {
+    ok: boolean;
+    json: () => Promise<unknown>;
+    text: () => Promise<string>;
+}): Response {
+    return parts as unknown as Response;
+}
+
 /**
  * Create a mock fetch function that returns the specified response.
  */
@@ -29,12 +42,12 @@ function createMockFetch(
     ok: boolean,
     data?: object,
     text?: string,
-): FetchFunction {
-    return vi.fn().mockResolvedValue({
+): Mock<FetchFunction> {
+    return vi.fn<FetchFunction>().mockResolvedValue(stubResponse({
         ok,
         json: vi.fn().mockResolvedValue(data ?? {}),
         text: vi.fn().mockResolvedValue(text ?? ''),
-    });
+    }));
 }
 
 /**

@@ -430,12 +430,25 @@ reviewed separately, so do not sweep them into an unrelated change.
 
 ## TypeScript Standards
 
+Two ambient declaration files sit at the root of `client/src/`.
+`vite-env.d.ts` references `vite/client`, which is what makes asset
+imports such as `import logoLight from '../assets/images/logo-light.png'`
+typecheck; `react-syntax-highlighter.d.ts` declares the slice of
+`react-syntax-highlighter` and its Prism style module that the client
+uses, because the package ships no types and no `@types` package is
+installed. Extend the latter rather than casting at each import site
+if a new part of that library is needed.
+
 `client/package.json` depends on `@mui/material` at `^5.14.20`. The
-committed lockfile resolves that to `5.18.0`, where `slotProps` works
-and a handful of components already use it (`ConnectionLostOverlay.tsx`,
-`ClusterFields.tsx` and `TopQueriesSection.tsx`), but the declared
-minimum of `5.14.20` does not guarantee `slotProps` on `TextField`, so
-do not spread it further unless the minimum is raised. The convention
+committed lockfile resolves that to `5.18.0`, where `slotProps` is
+accepted by some components but not all: `Dialog`
+(`ConnectionLostOverlay.tsx`) and `FormControlLabel`
+(`TopQueriesSection.tsx`) take it, whereas `TextField` gained it only
+in MUI v6, so in v5 it is both ignored at runtime and rejected at
+compile time. Use `InputProps` (or `inputProps`) on `TextField`, as
+`ClusterFields.tsx` now does for its read-only replication type
+field, and do not spread `slotProps` further unless the declared
+minimum is raised to v6. The convention
 for native `<input>` attributes (`maxLength`, `min`, `max`,
 `aria-label`, `autoComplete` when not already a top-level prop) is
 `inputProps` on `TextField`, used across some twenty files (for

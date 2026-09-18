@@ -22,6 +22,7 @@ import type { Theme } from '@mui/material/styles';
 import { alpha } from '@mui/material';
 import { getFriendlyTitle } from '../../utils/friendlyNames';
 import { MONO_CAPTION_SX } from '../../theme';
+import type { TransformedAlert } from './types';
 
 // Re-export so existing imports from this module continue to work
 export { getFriendlyTitle } from '../../utils/friendlyNames';
@@ -33,7 +34,9 @@ export { getFriendlyTitle } from '../../utils/friendlyNames';
  * alert display; reactivated alerts will have the two timestamps
  * diverge, freshly-triggered alerts will not.
  */
-export const hasDistinctLastUpdated = (alert) => {
+export const hasDistinctLastUpdated = (
+    alert: TransformedAlert | null | undefined,
+): boolean => {
     if (!alert?.lastUpdated || !alert?.triggeredAt) {
         return false;
     }
@@ -49,7 +52,9 @@ export const hasDistinctLastUpdated = (alert) => {
 };
 
 // Format threshold info for display
-export const formatThresholdInfo = (alert) => {
+export const formatThresholdInfo = (
+    alert: TransformedAlert,
+): string | null => {
     if (alert.alertType !== 'threshold' || !alert.metricValue || !alert.thresholdValue) {
         return null;
     }
@@ -284,7 +289,7 @@ export const getStatusColors = (theme: Theme) => ({
     unknown: theme.palette.grey[500],
 });
 
-export const getSeverityColors = (theme: Theme) => ({
+export const getSeverityColors = (theme: Theme): Record<string, string> => ({
     critical: theme.palette.error.main,
     warning: theme.palette.warning.main,
     info: theme.palette.info.main,
@@ -301,8 +306,10 @@ export const getAlertTypeColor = (theme: Theme, alertType: string) => {
  * The grouping key combines title and severity (e.g. "High CPU::critical")
  * so alerts of different severities appear as separate groups.
  */
-export const groupAlertsByTitleAndSeverity = (alerts) => {
-    return alerts.reduce((groups, alert) => {
+export const groupAlertsByTitleAndSeverity = (
+    alerts: TransformedAlert[],
+): Record<string, TransformedAlert[]> => {
+    return alerts.reduce<Record<string, TransformedAlert[]>>((groups, alert) => {
         const title = getFriendlyTitle(alert.title);
         const key = `${title}::${alert.severity || 'info'}`;
         if (!groups[key]) {

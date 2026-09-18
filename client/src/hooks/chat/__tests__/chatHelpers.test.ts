@@ -128,6 +128,27 @@ describe('chatHelpers', () => {
             expect(result).toBe(4);
         });
 
+        it('ignores content blocks that carry no text', () => {
+            const msgs: APIMessage[] = [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'tool_use',
+                            id: 'tool123',
+                            name: 'query_database',
+                            input: { query: 'SELECT 1' },
+                        },
+                    ],
+                },
+            ];
+            // Per-message overhead: 4 tokens
+            // A tool_use block has no 'text', so nothing is counted
+            // Total: 4
+            const result = estimateTokenCount(msgs);
+            expect(result).toBe(4);
+        });
+
         it('handles tool result content', () => {
             const msgs: APIMessage[] = [
                 {
@@ -136,16 +157,16 @@ describe('chatHelpers', () => {
                         {
                             type: 'tool_result',
                             tool_use_id: 'tool123',
-                            content: 'Result data',
+                            text: 'Result data',
                         },
                     ],
                 },
             ];
             // Per-message overhead: 4 tokens
-            // tool_result block has 'content' not 'text', so not counted
-            // Total: 4
+            // 'Result data' is 11 characters: ceil(11/4) = 3 tokens
+            // Total: 7
             const result = estimateTokenCount(msgs);
-            expect(result).toBe(4);
+            expect(result).toBe(7);
         });
     });
 
@@ -236,7 +257,7 @@ describe('chatHelpers', () => {
                     role: 'assistant',
                     content: 'Processing...',
                     timestamp: '2024-01-01T00:00:00Z',
-                    activity: 'Analyzing data',
+                    activity: [{ name: 'query_database', status: 'running' }],
                 },
             ];
 
@@ -247,8 +268,13 @@ describe('chatHelpers', () => {
 
         it('preserves content block arrays', () => {
             const contentBlocks = [
-                { type: 'text', text: 'Hello' },
-                { type: 'tool_use', id: 'tool1', name: 'test', input: {} },
+                { type: 'text' as const, text: 'Hello' },
+                {
+                    type: 'tool_use' as const,
+                    id: 'tool1',
+                    name: 'test',
+                    input: {},
+                },
             ];
             const chatMessages: ChatMessageData[] = [
                 {

@@ -28,25 +28,44 @@ vi.mock('../../../../contexts/useClusterData', () => ({
 import { useAuth } from '../../../../contexts/useAuth';
 import { apiFetch } from '../../../../utils/apiClient';
 import { useClusterData } from '../../../../contexts/useClusterData';
+import type { AuthContextValue, User } from '../../../../contexts/AuthContext';
+import type { ClusterDataContextValue } from '../../../../contexts/ClusterDataContext';
 
 const mockUseAuth = vi.mocked(useAuth);
 const mockApiFetch = vi.mocked(apiFetch);
 const mockUseClusterData = vi.mocked(useClusterData);
 
+// The hook only reads `user` and `lastRefresh`, but the mocked
+// context hooks must still return the full context shape.
+const authValue = (user: User | null): AuthContextValue => ({
+    user,
+    loading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    forceLogout: vi.fn(),
+    adminPermissions: [],
+    hasPermission: vi.fn(() => false),
+    hasAnyAdminAccess: false,
+});
+
+const clusterDataValue = (lastRefresh: Date | null): ClusterDataContextValue => ({
+    clusterData: [],
+    loading: false,
+    error: null,
+    lastRefresh,
+    autoRefreshEnabled: false,
+    setAutoRefreshEnabled: vi.fn(),
+    fetchClusterData: vi.fn(),
+});
+
 describe('useDatabaseCacheHit', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockUseAuth.mockReturnValue({
-            user: { id: 1, username: 'testuser', role: 'admin' },
-            login: vi.fn(),
-            logout: vi.fn(),
-            isLoading: false,
-        });
-        mockUseClusterData.mockReturnValue({
-            lastRefresh: null,
-            triggerRefresh: vi.fn(),
-            clearRefresh: vi.fn(),
-        });
+        mockUseAuth.mockReturnValue(authValue({
+            authenticated: true,
+            username: 'testuser',
+        }));
+        mockUseClusterData.mockReturnValue(clusterDataValue(null));
     });
 
     afterEach(() => {
@@ -63,12 +82,7 @@ describe('useDatabaseCacheHit', () => {
     });
 
     it('returns empty array when user is not logged in', async () => {
-        mockUseAuth.mockReturnValue({
-            user: null,
-            login: vi.fn(),
-            logout: vi.fn(),
-            isLoading: false,
-        });
+        mockUseAuth.mockReturnValue(authValue(null));
 
         const { result } = renderHook(() => useDatabaseCacheHit(123));
 
@@ -319,11 +333,7 @@ describe('useDatabaseCacheHit', () => {
         expect(mockApiFetch).toHaveBeenCalledTimes(1);
 
         // Simulate refresh trigger
-        mockUseClusterData.mockReturnValue({
-            lastRefresh: new Date(),
-            triggerRefresh: vi.fn(),
-            clearRefresh: vi.fn(),
-        });
+        mockUseClusterData.mockReturnValue(clusterDataValue(new Date()));
 
         rerender();
 
@@ -430,11 +440,7 @@ describe('useDatabaseCacheHit', () => {
         });
 
         // Trigger refetch
-        mockUseClusterData.mockReturnValue({
-            lastRefresh: new Date(),
-            triggerRefresh: vi.fn(),
-            clearRefresh: vi.fn(),
-        });
+        mockUseClusterData.mockReturnValue(clusterDataValue(new Date()));
 
         rerender();
 

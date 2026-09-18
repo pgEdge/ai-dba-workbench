@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { copyToClipboard } from '../clipboard';
 
 // Hold the original clipboard descriptor so we can restore it after each test.
@@ -82,7 +82,7 @@ describe('copyToClipboard', () => {
     // -- execCommand fallback path ------------------------------------------
 
     describe('when the Clipboard API is unavailable', () => {
-        let execCommandMock: ReturnType<typeof vi.fn>;
+        let execCommandMock: Mock<typeof document.execCommand>;
         let appendChildSpy: ReturnType<typeof vi.fn>;
         let removeChildSpy: ReturnType<typeof vi.fn>;
 
@@ -92,7 +92,8 @@ describe('copyToClipboard', () => {
 
             // jsdom does not provide document.execCommand; define it so
             // we can spy on it in the fallback tests.
-            execCommandMock = vi.fn().mockReturnValue(true);
+            execCommandMock = vi.fn<typeof document.execCommand>()
+                .mockReturnValue(true);
             document.execCommand = execCommandMock;
 
             appendChildSpy = vi.spyOn(

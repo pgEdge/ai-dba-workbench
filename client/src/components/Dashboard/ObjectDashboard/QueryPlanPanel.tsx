@@ -162,7 +162,6 @@ const QueryPlanPanel: React.FC<QueryPlanPanelProps> = ({
                     <Tabs
                         value={tabIndex}
                         onChange={handleTabChange}
-                        size="small"
                         sx={{ minHeight: 36, mb: 1 }}
                     >
                         <Tab

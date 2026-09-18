@@ -30,7 +30,7 @@ const chipBaseSx = {
     },
 };
 
-interface RolePillProps {
+export interface RolePillProps {
     role: ServerRole;
     isDark: boolean;
 }

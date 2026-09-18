@@ -15,7 +15,7 @@ import { getClusterTypeColors } from './constants';
 import { getClusterType } from './utils';
 import type { Cluster } from './utils';
 
-interface ClusterContainerProps {
+export interface ClusterContainerProps {
     children: React.ReactNode;
     cluster: Cluster;
     isDark: boolean;

@@ -28,7 +28,7 @@ import {
 } from '@mui/icons-material';
 import { useTheme, type Theme } from '@mui/material/styles';
 import InlineEditText from '../InlineEditText';
-import { getRoleConfigs } from './constants';
+import { getRoleConfigs, isServerRole } from './constants';
 import type { ClusterType } from './constants';
 import { getEffectiveRole } from './utils';
 import type { Server } from './utils';
@@ -149,17 +149,17 @@ const getActionButtonsSx = (theme: Theme) => ({
  * Supports recursive rendering for replication topology with cascading standbys
  * Memoized to prevent unnecessary re-renders during data refresh
  */
-interface ExtendedServer extends Server {
+export interface ExtendedServer extends Server {
     owner_username?: string;
     primary_role?: string | null;
 }
 
-interface UserInfo {
+export interface UserInfo {
     isSuperuser?: boolean;
     username?: string;
 }
 
-interface ServerItemProps {
+export interface ServerItemProps {
     server: ExtendedServer;
     isSelected: boolean;
     onSelect: (server: ExtendedServer) => void;
@@ -207,9 +207,10 @@ const ServerItem = memo<ServerItemProps>(({
 
     // User can edit if they're superuser or the owner
     const canEditServer = user?.isSuperuser || server.owner_username === user?.username;
-    const hasChildren = server.children?.length > 0 || server.is_expandable;
+    const hasChildren = (server.children?.length ?? 0) > 0 || server.is_expandable;
     const isExpanded = expandedServers?.has(server.id);
-    const serverRole = server.primary_role || server.role;
+    const serverRole = server.primary_role || server.role || '';
+    const childServers = server.children ?? [];
     const effectiveRole = getEffectiveRole(serverRole, clusterType);
 
     const handleToggle = (e: React.MouseEvent) => {
@@ -319,7 +320,7 @@ const ServerItem = memo<ServerItemProps>(({
                             sx={getInitializingChipSx(theme)}
                         />
                     </Box>
-                ) : effectiveRole && ROLE_CONFIGS[effectiveRole] ? (
+                ) : isServerRole(effectiveRole) && ROLE_CONFIGS[effectiveRole] ? (
                     <Box sx={{ ...trailingSx, display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         {server.membership_source === 'manual' && (
                             <Tooltip title="Manually assigned" arrow>
@@ -358,10 +359,10 @@ const ServerItem = memo<ServerItemProps>(({
                 )}
             </Box>
             {/* Render child servers recursively */}
-            {hasChildren && server.children?.length > 0 && (
+            {hasChildren && childServers.length > 0 && (
                 <Collapse in={isExpanded} timeout="auto">
                     <Box sx={childrenContainerSx}>
-                        {server.children.map((childServer, index) => (
+                        {childServers.map((childServer, index) => (
                             <ServerItem
                                 key={childServer.id}
                                 server={childServer}
@@ -372,7 +373,7 @@ const ServerItem = memo<ServerItemProps>(({
                                 expandedServers={expandedServers}
                                 onToggleServer={onToggleServer}
                                 selectedServerId={selectedServerId}
-                                isLast={index === server.children.length - 1}
+                                isLast={index === childServers.length - 1}
                                 showTreeLines={showTreeLines}
                                 clusterType={clusterType}
                                 user={user}

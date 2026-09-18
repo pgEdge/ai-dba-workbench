@@ -8,6 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
+import { vi } from 'vitest';
 import '@testing-library/jest-dom';
 import { configure as configureDom } from '@testing-library/dom';
 import { act } from '@testing-library/react';

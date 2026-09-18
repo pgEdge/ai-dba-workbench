@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useState, useMemo } from 'react';
+import type React from 'react';
+import { useState, useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -53,11 +54,15 @@ import {
     ALERT_ACK_TEXT_SX,
     ALERT_LAST_UPDATED_SX,
 } from '../../theme';
+import type {
+    GroupedAlertInstanceProps,
+    GroupedAlertItemProps,
+} from './types';
 
 /**
  * GroupedAlertInstance - A single instance row within a grouped alert panel
  */
-const GroupedAlertInstance = ({
+const GroupedAlertInstance: React.FC<GroupedAlertInstanceProps> = ({
     alert,
     showServer,
     onAcknowledge,
@@ -289,7 +294,7 @@ const GroupedAlertInstance = ({
 /**
  * GroupedAlertItem - Display a group of alerts with the same title in a single panel
  */
-const GroupedAlertItem = ({
+const GroupedAlertItem: React.FC<GroupedAlertItemProps> = ({
     title,
     alerts,
     showServer = false,

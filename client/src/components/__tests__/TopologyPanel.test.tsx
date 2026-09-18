@@ -12,7 +12,7 @@ import { screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import renderWithTheme from '../../test/renderWithTheme';
 import TopologyPanel from '../TopologyPanel';
-import { apiGet, apiPost, apiPut, apiDelete } from '../../utils/apiClient';
+import { apiGet, apiPost, apiDelete } from '../../utils/apiClient';
 import type {
     NodeRelationship,
     ClusterServerInfo,
@@ -37,7 +37,6 @@ vi.mock('../Dashboard/ClusterDashboard/topology/TopologyDiagram', () => ({
 
 const mockApiGet = apiGet as Mock;
 const mockApiPost = apiPost as Mock;
-const mockApiPut = apiPut as Mock;
 const mockApiDelete = apiDelete as Mock;
 
 const createMockServer = (

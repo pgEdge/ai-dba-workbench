@@ -8,7 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
-import React, { useMemo } from 'react';
+import type React from 'react';
+import { useMemo } from 'react';
 import {
     Box,
     Typography,
@@ -48,11 +49,12 @@ import {
     SEVERITY_CHIP_BASE_SX,
     ALERT_TYPE_CHIP_BASE_SX,
 } from '../../theme';
+import type { AlertItemProps } from './types';
 
 /**
  * AlertItem - Compact alert entry with severity indicator and ack functionality
  */
-const AlertItem = ({
+const AlertItem: React.FC<AlertItemProps> = ({
     alert,
     showServer = false,
     onAcknowledge,

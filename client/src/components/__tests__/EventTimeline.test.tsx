@@ -8,10 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
-import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import EventTimeline from '../EventTimeline';
+import type { ClusterSelection, ServerSelection } from '../../types/selection';
 import * as useTimelineEventsModule from '../../hooks/useTimelineEvents';
 
 // Mock the useTimelineEvents hook
@@ -20,17 +20,29 @@ vi.mock('../../hooks/useTimelineEvents', () => ({
 }));
 
 describe('EventTimeline Component', () => {
-    const mockServerSelection = {
+    const mockServerSelection: ServerSelection = {
         type: 'server',
         id: 1,
         name: 'Production Server',
-        serverIds: [1],
+        status: 'online',
+        description: 'Primary production server',
+        host: 'server-1.example.com',
+        port: 5432,
+        role: 'primary',
+        version: '18.0',
+        database: 'postgres',
+        username: 'postgres',
+        os: 'Linux',
+        platform: 'x86_64',
     };
 
-    const mockClusterSelection = {
+    const mockClusterSelection: ClusterSelection = {
         type: 'cluster',
         id: 'cluster-1',
         name: 'Production Cluster',
+        status: 'online',
+        description: 'Production cluster',
+        servers: [],
         serverIds: [1, 2, 3],
     };
 
@@ -448,9 +460,11 @@ describe('EventTimeline Component', () => {
                     });
 
                     // Click close button to close the panel
-                    const closeButton = document.querySelector('[data-testid="CloseIcon"]');
+                    const closeButton = document
+                        .querySelector('[data-testid="CloseIcon"]')
+                        ?.closest('button');
                     if (closeButton) {
-                        fireEvent.click(closeButton.closest('button'));
+                        fireEvent.click(closeButton);
 
                         await waitFor(() => {
                             expect(screen.queryByText('Event Details')).not.toBeInTheDocument();

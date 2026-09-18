@@ -8,6 +8,8 @@
  *-------------------------------------------------------------------------
  */
 
+import type { EChartsOption } from 'echarts';
+
 import type { ChartData } from '../types';
 import {
     buildTooltip,
@@ -28,7 +30,7 @@ export function buildBarOptions(
         showLegend?: boolean;
         showTooltip?: boolean;
     }
-): object {
+): EChartsOption {
     const series = data.series.map((s) => ({
         type: 'bar' as const,
         name: s.name,

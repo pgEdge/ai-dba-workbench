@@ -13,6 +13,19 @@ import { renderHook, act } from '@testing-library/react';
 import { useMenu } from '../useMenu';
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/*
+ * `useMenu.handleOpen` reads nothing but `currentTarget`, and React's
+ * synthetic mouse event cannot be constructed outside the renderer, so
+ * the tests pass a minimal stand-in widened through `unknown`. Keeping
+ * the cast in one helper means the tests themselves stay type-clean.
+ */
+const menuEvent = (element: HTMLElement): React.MouseEvent<HTMLElement> =>
+    ({ currentTarget: element }) as unknown as React.MouseEvent<HTMLElement>;
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -30,9 +43,7 @@ describe('useMenu', () => {
         const { result } = renderHook(() => useMenu());
 
         const mockElement = document.createElement('button');
-        const mockEvent = {
-            currentTarget: mockElement,
-        } as React.MouseEvent<HTMLElement>;
+        const mockEvent = menuEvent(mockElement);
 
         act(() => {
             result.current.handleOpen(mockEvent);
@@ -46,9 +57,7 @@ describe('useMenu', () => {
         const { result } = renderHook(() => useMenu());
 
         const mockElement = document.createElement('button');
-        const mockEvent = {
-            currentTarget: mockElement,
-        } as React.MouseEvent<HTMLElement>;
+        const mockEvent = menuEvent(mockElement);
 
         act(() => {
             result.current.handleOpen(mockEvent);
@@ -72,9 +81,7 @@ describe('useMenu', () => {
 
         // First open
         act(() => {
-            result.current.handleOpen({
-                currentTarget: mockElement1,
-            } as React.MouseEvent<HTMLElement>);
+            result.current.handleOpen(menuEvent(mockElement1));
         });
         expect(result.current.anchorEl).toBe(mockElement1);
         expect(result.current.open).toBe(true);
@@ -87,9 +94,7 @@ describe('useMenu', () => {
 
         // Second open with different element
         act(() => {
-            result.current.handleOpen({
-                currentTarget: mockElement2,
-            } as React.MouseEvent<HTMLElement>);
+            result.current.handleOpen(menuEvent(mockElement2));
         });
         expect(result.current.anchorEl).toBe(mockElement2);
         expect(result.current.open).toBe(true);
@@ -102,17 +107,13 @@ describe('useMenu', () => {
         const mockElement2 = document.createElement('span');
 
         act(() => {
-            result.current.handleOpen({
-                currentTarget: mockElement1,
-            } as React.MouseEvent<HTMLElement>);
+            result.current.handleOpen(menuEvent(mockElement1));
         });
 
         expect(result.current.anchorEl).toBe(mockElement1);
 
         act(() => {
-            result.current.handleOpen({
-                currentTarget: mockElement2,
-            } as React.MouseEvent<HTMLElement>);
+            result.current.handleOpen(menuEvent(mockElement2));
         });
 
         expect(result.current.anchorEl).toBe(mockElement2);

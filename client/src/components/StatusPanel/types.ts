@@ -12,13 +12,47 @@
  * Shared types for StatusPanel sub-components
  */
 
+import type React from 'react';
 import type { Selection } from '../../types/selection';
 
 export interface StatusPanelProps {
     selection: Selection | null;
 }
 
-export interface TransformedAlert {
+/**
+ * Raw alert record as returned by `GET /api/v1/alerts`, before it is
+ * mapped into the camelCase `TransformedAlert` shape the display
+ * components consume.
+ */
+export interface ApiAlert {
+    id: number;
+    severity?: string;
+    title: string;
+    description?: string;
+    triggered_at?: string;
+    last_updated?: string;
+    server_name?: string;
+    connection_id?: number;
+    database_name?: string;
+    object_name?: string;
+    alert_type?: string;
+    rule_id?: number;
+    metric_value?: number | string;
+    metric_unit?: string;
+    threshold_value?: number | string;
+    operator?: string;
+    acknowledged_at?: string;
+    acknowledged_by?: string;
+    ack_message?: string;
+    false_positive?: boolean;
+    ai_analysis?: string;
+    ai_analysis_metric_value?: number | string;
+}
+
+// Declared as a type alias rather than an interface so that it carries
+// an implicit index signature and can be passed to components (such as
+// AlertAnalysisDialog) that accept a `Record<string, unknown>` alert.
+export type TransformedAlert = {
     id: number | string;
     severity: string;
     title: string;
@@ -49,7 +83,7 @@ export interface TransformedAlert {
     falsePositive?: boolean;
     aiAnalysis?: string;
     aiAnalysisMetricValue?: number | string;
-}
+};
 
 export interface AlertItemProps {
     alert: TransformedAlert;
@@ -106,6 +140,15 @@ export interface AlertsSectionProps {
     onAnalyze?: (alert: TransformedAlert) => void;
     onEditOverride?: (alert: TransformedAlert) => void;
     onAcknowledgeGroup?: (alerts: TransformedAlert[]) => void;
+}
+
+export interface MetricCardProps {
+    label: string;
+    value: React.ReactNode;
+    trend?: 'up' | 'down';
+    trendValue?: React.ReactNode;
+    icon?: React.ElementType;
+    color?: string;
 }
 
 export interface SelectionHeaderProps {

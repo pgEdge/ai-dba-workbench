@@ -49,8 +49,8 @@ vi.mock('../../Chart', () => ({
 
 interface SparklineEchartsOptions {
     grid?: { containLabel?: boolean };
-    xAxis?: { show?: boolean; axisLabel?: { show?: boolean } };
-    yAxis?: { show?: boolean; axisLabel?: { show?: boolean } };
+    xAxis?: { show?: boolean };
+    yAxis?: { show?: boolean };
 }
 
 const readEchartsOptions = (
@@ -199,12 +199,14 @@ describe('Sparkline', () => {
             .toHaveAttribute('data-values', '[null,5,null,7]');
     });
 
-    // Regression tests for issue #458: at small heights the sparkline
-    // rendered an empty canvas because ECharts' contain-label pass
-    // reserved space for axis labels that were never drawn. These
-    // assertions are not redundant with one another: `containLabel`
-    // governs the layout pass, and an axis's `show: false` does not
-    // imply `axisLabel.show: false` for that pass, so both are needed.
+    /*
+     * Issue #458: `buildGrid()` turns the contain-label layout pass on
+     * and `Chart` deep-merges over it key by key, so the sparkline has
+     * to switch it off explicitly or the pass reserves the plot area
+     * for axis labels it never draws. What that costs on the canvas is
+     * measured in `Sparkline.render.test.tsx`; this is the cheap guard
+     * on the option itself.
+     */
     it('opts the grid out of the contain-label layout pass', () => {
         const data = createDataPoints(5);
         const { getByTestId } = render(<Sparkline data={data} />);
@@ -214,16 +216,14 @@ describe('Sparkline', () => {
         expect(options.grid?.containLabel).toBe(false);
     });
 
-    it('hides the axis labels on both axes', () => {
+    it('hides both axes', () => {
         const data = createDataPoints(5);
         const { getByTestId } = render(<Sparkline data={data} />);
 
         const options = readEchartsOptions(getByTestId('chart-mock'));
 
         expect(options.xAxis?.show).toBe(false);
-        expect(options.xAxis?.axisLabel?.show).toBe(false);
         expect(options.yAxis?.show).toBe(false);
-        expect(options.yAxis?.axisLabel?.show).toBe(false);
     });
 
     it('renders nothing when every point is a null gap', () => {

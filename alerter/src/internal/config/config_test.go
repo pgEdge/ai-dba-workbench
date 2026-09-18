@@ -54,7 +54,7 @@ func TestNewConfig(t *testing.T) {
 		{"llm reasoning provider", cfg.LLM.ReasoningProvider, "ollama"},
 		{"llm max tokens", cfg.LLM.MaxTokens, DefaultLLMMaxTokens},
 		{"gemini embedding model", cfg.LLM.Gemini.EmbeddingModel, "gemini-embedding-001"},
-		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-2.5-flash"},
+		{"gemini reasoning model", cfg.LLM.Gemini.ReasoningModel, "gemini-3.6-flash"},
 	}
 
 	for _, tt := range tests {

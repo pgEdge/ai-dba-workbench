@@ -28,7 +28,7 @@ import (
 var defaultReasoningModels = map[string]string{
 	"openai":    "gpt-4o-mini",
 	"anthropic": "claude-3-5-haiku-20241022",
-	"gemini":    "gemini-2.5-flash",
+	"gemini":    "gemini-3.6-flash",
 	"ollama":    "llama3.2",
 }
 

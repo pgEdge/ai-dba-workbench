@@ -428,7 +428,7 @@ func NewConfig() *Config {
 			},
 			Gemini: GeminiConfig{
 				EmbeddingModel: "gemini-embedding-001",
-				ReasoningModel: "gemini-2.5-flash",
+				ReasoningModel: "gemini-3.6-flash",
 			},
 		},
 	}

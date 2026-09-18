@@ -438,8 +438,8 @@ llm:
     # Model to use for reasoning/classification
     # Model availability varies by Gemini API key tier; run
     # ListModels to verify which models a given key can access.
-    # Default: gemini-2.5-flash
-    reasoning_model: gemini-2.5-flash
+    # Default: gemini-3.6-flash
+    reasoning_model: gemini-3.6-flash
 
   #-------------------------------------------------------------------------
   # Voyage Settings (for embeddings only)

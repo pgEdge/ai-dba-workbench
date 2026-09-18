@@ -231,6 +231,23 @@ type ProbeStaleness struct {
 	// is whether the probe collected inside the window a metric's query
 	// reads. See GitHub issue #407.
 	SinceCollected time.Duration
+
+	// IsAvailable is the probe's availability flag, carried here rather
+	// than filtered out by the query, because the four reasons a probe
+	// can drop out of the staleness view are not interchangeable: a probe
+	// the operator disabled, or a connection they stopped monitoring, is
+	// deliberate and lets a staleness alert clear, whereas availability
+	// going false is a fault and must not. Callers therefore branch on
+	// this rather than reading absence as a single signal. See GitHub
+	// issue #465.
+	IsAvailable bool
+
+	// UnavailableReason is whatever the collector recorded alongside
+	// is_available = FALSE, such as a missing extension or a permissions
+	// failure, and is nil whilst the probe is available. It is reported
+	// to the operator in the alert description, so that an alert held
+	// open by an unavailable probe says why collection stopped.
+	UnavailableReason *string
 }
 
 // AnomalyEmbedding represents a stored embedding for an anomaly candidate

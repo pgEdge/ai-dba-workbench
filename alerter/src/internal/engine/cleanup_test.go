@@ -85,17 +85,17 @@ func TestClassifyAbsentMetric(t *testing.T) {
 	const slotWindow = 15 * time.Minute
 
 	fresh := []database.ProbeStaleness{
-		{ConnectionID: connID, ProbeName: "pg_replication_slots",
+		{ConnectionID: connID, ProbeName: "pg_replication_slots", IsAvailable: true,
 			SinceCollected: 4 * time.Minute},
-		{ConnectionID: connID, ProbeName: "pg_stat_activity",
+		{ConnectionID: connID, ProbeName: "pg_stat_activity", IsAvailable: true,
 			SinceCollected: 1 * time.Minute},
 	}
 	stale := []database.ProbeStaleness{
-		{ConnectionID: connID, ProbeName: "pg_replication_slots",
+		{ConnectionID: connID, ProbeName: "pg_replication_slots", IsAvailable: true,
 			SinceCollected: 40 * time.Minute},
 	}
 	otherConnection := []database.ProbeStaleness{
-		{ConnectionID: connID + 1, ProbeName: "pg_replication_slots",
+		{ConnectionID: connID + 1, ProbeName: "pg_replication_slots", IsAvailable: true,
 			SinceCollected: 30 * time.Second},
 	}
 
@@ -146,8 +146,8 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			probe:            "pg_replication_slots",
 			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
-				ConnectionID:   connID,
-				ProbeName:      "pg_replication_slots",
+				ConnectionID: connID,
+				ProbeName:    "pg_replication_slots", IsAvailable: true,
 				SinceCollected: slotWindow,
 			}},
 			want: absentMetricClear,
@@ -158,8 +158,8 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			probe:            "pg_replication_slots",
 			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
-				ConnectionID:   connID,
-				ProbeName:      "pg_replication_slots",
+				ConnectionID: connID,
+				ProbeName:    "pg_replication_slots", IsAvailable: true,
 				SinceCollected: slotWindow + time.Second,
 			}},
 			want: absentMetricProbeNotReporting,
@@ -175,8 +175,8 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			probe:            "pg_replication_slots",
 			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
-				ConnectionID:       connID,
-				ProbeName:          "pg_replication_slots",
+				ConnectionID: connID,
+				ProbeName:    "pg_replication_slots", IsAvailable: true,
 				CollectionInterval: 3600,
 				StalenessRatio:     0.5,
 				SinceCollected:     30 * time.Minute,
@@ -193,8 +193,8 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			probe:            "pg_replication_slots",
 			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
-				ConnectionID:       connID,
-				ProbeName:          "pg_replication_slots",
+				ConnectionID: connID,
+				ProbeName:    "pg_replication_slots", IsAvailable: true,
 				CollectionInterval: 10,
 				StalenessRatio:     12.0,
 				SinceCollected:     2 * time.Minute,
@@ -212,8 +212,8 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			probe:            "pg_replication_slots",
 			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
-				ConnectionID:   connID,
-				ProbeName:      "pg_replication_slots",
+				ConnectionID: connID,
+				ProbeName:    "pg_replication_slots", IsAvailable: true,
 				SinceCollected: slotWindow - 2*time.Second,
 			}},
 			age:  10 * time.Second,
@@ -225,12 +225,46 @@ func TestClassifyAbsentMetric(t *testing.T) {
 			probe:            "pg_replication_slots",
 			window:           slotWindow,
 			entries: []database.ProbeStaleness{{
-				ConnectionID:   connID,
-				ProbeName:      "pg_replication_slots",
+				ConnectionID: connID,
+				ProbeName:    "pg_replication_slots", IsAvailable: true,
 				SinceCollected: slotWindow - 30*time.Second,
 			}},
 			age:  10 * time.Second,
 			want: absentMetricClear,
+		},
+		{
+			// Issue #465 keeps unavailable probes in the staleness
+			// view so the staleness alert cleaner can tell a fault
+			// from operator action, which means this gate now sees
+			// rows it never used to. An unavailable probe has stopped
+			// collecting whatever its last collection says, so a
+			// last_collected still inside the window must not clear
+			// the alert, exactly as it did not when the query
+			// filtered the row out altogether.
+			name:             "probe is unavailable but collected inside the window",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:   connID,
+				ProbeName:      "pg_replication_slots",
+				IsAvailable:    false,
+				SinceCollected: 1 * time.Minute,
+			}},
+			want: absentMetricProbeNotReporting,
+		},
+		{
+			name:             "probe is unavailable and outside the window",
+			clearsWhenAbsent: true,
+			probe:            "pg_replication_slots",
+			window:           slotWindow,
+			entries: []database.ProbeStaleness{{
+				ConnectionID:   connID,
+				ProbeName:      "pg_replication_slots",
+				IsAvailable:    false,
+				SinceCollected: 40 * time.Minute,
+			}},
+			want: absentMetricProbeNotReporting,
 		},
 		{
 			name:             "probe has stalled",

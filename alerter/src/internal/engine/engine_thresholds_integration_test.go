@@ -169,6 +169,7 @@ CREATE TABLE probe_availability (
     probe_name TEXT NOT NULL,
     is_available BOOLEAN NOT NULL DEFAULT TRUE,
     last_collected TIMESTAMPTZ,
+    unavailable_reason TEXT,
     PRIMARY KEY (connection_id, probe_name)
 );
 

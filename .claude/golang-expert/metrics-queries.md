@@ -761,22 +761,43 @@ extension is absent and firing on it would pin a permanent staleness
 alert to every such probe; `classifyAbsentMetric` returns
 `absentMetricProbeNotReporting` for them whatever their `SinceCollected`,
 preserving the issue #407 gate exactly; and
-`checkStalenessAlertResolved` holds the alert active, logs at operator
-level naming the probe, connection and `unavailable_reason`, and rewrites
-only the alert's description through `Datastore.UpdateAlertDescription`,
+`checkStalenessAlertResolved` holds the alert active and rewrites only
+the alert's description through `Datastore.UpdateAlertDescription`,
 leaving the title alone so the alert reads as the same one across
-notification history. The rewrite is skipped when the text already
-matches, since the cleaner runs every cycle and would otherwise bump
-`last_updated` forever. Absence from the view now means only deliberate
-operator action (probe disabled, connection unmonitored, row gone) and
-still clears, but at operator level rather than debug.
+notification history. Both the rewrite and the operator-level line
+naming the probe, connection and `unavailable_reason` are skipped when
+the text already matches, since the cleaner runs every cycle and would
+otherwise bump `last_updated` and log a line every thirty seconds; an
+operator gets one line when collection stops and another only if the
+reason changes. Absence from the view now means only deliberate operator
+action (probe disabled, connection unmonitored, row gone) and still
+clears, but at operator level rather than debug.
 `UpdateConnectionAlertDescription` delegates to
 `UpdateAlertDescription`; the SQL is unchanged.
+
+The hold is undone when the probe collects again, because otherwise the
+clear notification and the stored history would announce the resolution
+in the words of the hold. Every held description opens with
+`unavailableProbeDescriptionPrefix` ("Collection has stopped: "), which
+is the only record that the cleaner wrote it, and
+`restoreStalenessAlertDescription` replaces a description carrying that
+prefix with the evaluator's own wording before the threshold is checked
+and the alert possibly cleared. The wording comes from
+`stalenessAlertDescription` and `stalenessMinutes` in `thresholds.go`,
+shared with `evaluateMetricStaleness` so the two cannot drift, and is
+rebuilt from `Alert.MetricValue`, the ratio the alert was raised or last
+updated on, falling back to the current ratio when the alert carries no
+value. A description the evaluator wrote is left alone, so the write
+happens once on recovery rather than on every pass.
+
 `TestStalenessAlertHeldWhenProbeGoesUnavailable`,
-`TestStalenessEvaluatorSkipsUnavailableProbes` and
-`TestStalenessAlertClearLoggedAtNormalLevel`
+`TestStalenessEvaluatorSkipsUnavailableProbes`,
+`TestStalenessAlertClearLoggedAtNormalLevel`,
+`TestStalenessAlertHeldLoggedOnce`,
+`TestStalenessAlertDescriptionRestoredWhenProbeRecovers` and
+`TestStalenessAlertDescriptionRestoreFailureKeepsAlert`
 (`alerter/src/internal/engine/staleness_unavailable_probe_integration_test.go`)
-pin the three behaviours.
+pin these behaviours.
 
 `cleanResolvedAlerts` resolves the probe staleness snapshot at most once
 per pass, lazily, through `probeStalenessSnapshot`; both

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pgedge/ai-workbench/alerter/internal/database"
@@ -267,7 +268,9 @@ func (e *Engine) checkAlertResolved(ctx context.Context, alert *database.Alert,
 // alerter has gone blind, exactly as the condition alert it was watching
 // went quiet. Such an alert is held open and its description rewritten to
 // say why, whilst its title stays as it was so that it reads as the same
-// alert across notification history. See GitHub issue #465.
+// alert across notification history; the description is put back once the
+// probe collects again, so that the alert does not go on to clear in the
+// words of the hold. See GitHub issue #465.
 func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *database.Alert,
 	staleness *probeStalenessSnapshot) {
 	entries, err := staleness.get(ctx, e)
@@ -285,6 +288,14 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 			return
 		}
 		ratio := currentStalenessRatio(entry, staleness.age())
+
+		// The probe is collecting again, so a description written whilst
+		// it was unavailable is now wrong, and wrong in the text the
+		// clear notification and the stored alert history would carry.
+		// Put the staleness wording back before deciding whether the
+		// alert clears.
+		e.restoreStalenessAlertDescription(ctx, alert, entry, ratio)
+
 		if !e.checkThreshold(ratio, *alert.Operator, *alert.ThresholdValue) {
 			e.clearResolvedAlert(ctx, alert, ratio)
 		}
@@ -307,22 +318,30 @@ func (e *Engine) checkStalenessAlertResolved(ctx context.Context, alert *databas
 // alert's description so an operator reading the alert learns that
 // collection has stopped rather than that the probe is merely late.
 //
-// The rewrite is conditional because a cleanup pass runs on every cycle:
+// Both the rewrite and the line announcing it are conditional on the
+// text actually changing, because a cleanup pass runs on every cycle:
 // writing the same text again would bump last_updated for as long as the
-// probe stayed unavailable, for no new information. A failure to write it
-// is logged and otherwise ignored, since the alert staying active matters
-// more than its wording.
+// probe stayed unavailable, and logging it again would put a line in the
+// operator's log every thirty seconds, in both cases for no new
+// information. The operator therefore gets one line when collection
+// stops and another only if the reason changes, in the same spirit as
+// resolveAbsentMetric, which reports each verdict once per pass rather
+// than once per probe. A failure to write the description is logged and
+// otherwise ignored, since the alert staying active matters more than
+// its wording; the next pass retries it, because alert.Description is
+// only advanced once the write has succeeded.
 func (e *Engine) holdStalenessAlertForUnavailableProbe(ctx context.Context,
 	alert *database.Alert, entry database.ProbeStaleness) {
 	reason := unavailableProbeReason(entry)
-
-	e.log("Probe %s on connection %d is unavailable (%s); leaving staleness alert %d active",
-		entry.ProbeName, alert.ConnectionID, reason, alert.ID)
 
 	description := unavailableProbeDescription(entry, reason)
 	if description == alert.Description {
 		return
 	}
+
+	e.log("Probe %s on connection %d is unavailable (%s); leaving staleness alert %d active",
+		entry.ProbeName, alert.ConnectionID, reason, alert.ID)
+
 	if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
 		e.log("ERROR: Failed to update description of alert %d: %v", alert.ID, err)
 		return
@@ -340,17 +359,66 @@ func unavailableProbeReason(entry database.ProbeStaleness) string {
 	return "no reason recorded"
 }
 
+// unavailableProbeDescriptionPrefix opens every description the cleaner
+// writes for a held alert, and is how the cleaner later tells its own
+// wording apart: the alert row carries no record of what it said when it
+// was raised, so the prefix is what distinguishes a description this code
+// wrote from the evaluator's own.
+const unavailableProbeDescriptionPrefix = "Collection has stopped: "
+
 // unavailableProbeDescription is the text a held staleness alert carries
 // whilst its probe is unavailable. It is deterministic, with nothing in it
 // that moves between passes, so that the idempotence check above compares
 // like with like.
 func unavailableProbeDescription(entry database.ProbeStaleness, reason string) string {
 	return fmt.Sprintf(
-		"Collection has stopped: the %s probe on %s is no longer available (%s). "+
+		unavailableProbeDescriptionPrefix+
+			"the %s probe on %s is no longer available (%s). "+
 			"Metrics from this probe are neither arriving nor being evaluated, so "+
 			"conditions it reports on cannot be seen. This alert stays active until "+
 			"the probe collects again, or until the probe or connection is disabled.",
 		entry.ProbeName, entry.ConnectionName, reason)
+}
+
+// restoreStalenessAlertDescription undoes the hold once the probe is
+// collecting again. Without it the alert would keep the wording of the
+// hold for the rest of its life, so the clear notification and the stored
+// history would both announce the resolution in the words "Collection has
+// stopped ... This alert stays active until the probe collects again",
+// which is precisely untrue at that point.
+//
+// Only a description the cleaner itself wrote is replaced, matched on
+// its prefix, so an alert the evaluator worded is left alone and the write
+// happens once on recovery rather than on every pass. The replacement is
+// the evaluator's own wording, rebuilt from the ratio recorded on the
+// alert, which is the measurement the alert was raised or last updated on
+// and so reproduces the text the evaluator would have written; the current
+// ratio stands in if the alert carries no value. A failed write leaves the
+// held text in place and is retried next pass, as the hold's own write is.
+func (e *Engine) restoreStalenessAlertDescription(ctx context.Context,
+	alert *database.Alert, entry database.ProbeStaleness, ratio float64) {
+	if !strings.HasPrefix(alert.Description, unavailableProbeDescriptionPrefix) {
+		return
+	}
+	if alert.MetricValue != nil {
+		ratio = *alert.MetricValue
+	}
+
+	description := stalenessAlertDescription(entry.ProbeName, entry.ConnectionName,
+		stalenessMinutes(entry.CollectionInterval, ratio),
+		stalenessMinutes(entry.CollectionInterval, *alert.ThresholdValue))
+	if description == alert.Description {
+		return
+	}
+
+	e.log("Probe %s on connection %d is collecting again; restoring the description of staleness alert %d",
+		entry.ProbeName, alert.ConnectionID, alert.ID)
+
+	if err := e.datastore.UpdateAlertDescription(ctx, alert.ID, description); err != nil {
+		e.log("ERROR: Failed to restore description of alert %d: %v", alert.ID, err)
+		return
+	}
+	alert.Description = description
 }
 
 // resolveAbsentMetric decides what to do with an active alert whose metric

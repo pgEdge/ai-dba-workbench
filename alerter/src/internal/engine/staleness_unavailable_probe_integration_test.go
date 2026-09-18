@@ -38,6 +38,12 @@ const (
         FROM alerts
         WHERE id = $1
     `
+
+	probeAvailableUpdateSQL = `
+        UPDATE probe_availability
+           SET is_available = TRUE, unavailable_reason = NULL
+         WHERE connection_id = $1 AND probe_name = $2
+    `
 )
 
 // markProbeUnavailable flips a seeded probe's availability and records a
@@ -76,6 +82,22 @@ func readAlertNarrative(t *testing.T, pool *pgxpool.Pool, alertID int64) alertNa
 		t.Fatalf("failed to read alert %d: %v", alertID, err)
 	}
 	return got
+}
+
+// markProbeAvailable puts a probe's availability back, imitating a
+// collector that has regained the extension, the privileges or the
+// connection it lost.
+func markProbeAvailable(t *testing.T, pool *pgxpool.Pool, connID int, probe string) {
+	t.Helper()
+
+	tag, err := pool.Exec(context.Background(), probeAvailableUpdateSQL, connID, probe)
+	if err != nil {
+		t.Fatalf("failed to mark probe %s available: %v", probe, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("marking probe %s available affected %d rows, want 1",
+			probe, tag.RowsAffected())
+	}
 }
 
 // TestStalenessAlertHeldWhenProbeGoesUnavailable is the regression test
@@ -314,6 +336,192 @@ func TestUnavailableProbeNarrative(t *testing.T) {
 				t.Error("unavailableProbeDescription is not deterministic")
 			}
 		})
+	}
+}
+
+// TestStalenessAlertDescriptionRestoredWhenProbeRecovers covers the other
+// end of the hold. Whilst the probe is unavailable the alert reads
+// "Collection has stopped ... This alert stays active until the probe
+// collects again", which stops being true the moment the probe collects;
+// leaving it in place would have the clear notification, and the alert
+// history behind it, announce the resolution in those words. The cleaner
+// therefore puts the evaluator's wording back as soon as the probe is
+// available again, and the alert clears carrying that.
+func TestStalenessAlertDescriptionRestoredWhenProbeRecovers(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	capture := installStalenessNotificationCapture(t, engine)
+	ruleID := seedStalenessRule(t, pool)
+	connID := insertTestConnection(t, pool, "staleness-recovery")
+	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
+
+	engine.evaluateThresholds(ctx)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 {
+		t.Fatalf("alert rows = %d, want 1", len(alerts))
+	}
+	alertID := alerts[0].id
+	raised := readAlertNarrative(t, pool, alertID)
+
+	markProbeUnavailable(t, pool, connID, "pg_stat_activity", "extension missing")
+	engine.cleanResolvedAlerts(ctx)
+
+	held := readAlertNarrative(t, pool, alertID)
+	if !strings.Contains(held.description, "Collection has stopped") {
+		t.Fatalf("alert description = %q, want the held wording before recovery",
+			held.description)
+	}
+
+	// The probe collects again but is still outside the threshold, so the
+	// alert stays active and only its wording changes back.
+	markProbeAvailable(t, pool, connID, "pg_stat_activity")
+	engine.cleanResolvedAlerts(ctx)
+
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "active" {
+		t.Fatalf("alerts = %+v, want one still-active alert whilst the probe is stale",
+			alerts)
+	}
+	restored := readAlertNarrative(t, pool, alertID)
+	if strings.Contains(restored.description, "Collection has stopped") {
+		t.Errorf("alert description = %q, want the held wording gone once the probe "+
+			"is collecting again", restored.description)
+	}
+	if restored.description != raised.description {
+		t.Errorf("alert description = %q, want the wording it was raised with, %q",
+			restored.description, raised.description)
+	}
+	if restored.title != raised.title {
+		t.Errorf("alert title = %q, want it unchanged at %q", restored.title, raised.title)
+	}
+
+	// A further pass with nothing to change must not rewrite the
+	// description again, for the same reason the hold does not.
+	engine.cleanResolvedAlerts(ctx)
+	again := readAlertNarrative(t, pool, alertID)
+	if again.lastUpdated == nil || restored.lastUpdated == nil {
+		t.Fatalf("last_updated = %v then %v, want both set",
+			restored.lastUpdated, again.lastUpdated)
+	}
+	if !again.lastUpdated.Equal(*restored.lastUpdated) {
+		t.Errorf("last_updated moved from %s to %s on a pass that changed nothing",
+			restored.lastUpdated, again.lastUpdated)
+	}
+
+	// The probe catches up, the alert clears, and the text it clears with
+	// is the staleness wording rather than the hold's.
+	if _, err := pool.Exec(ctx, stalenessProbeAvailabilityRefreshSQL, connID,
+		"pg_stat_activity"); err != nil {
+		t.Fatalf("failed to refresh probe availability: %v", err)
+	}
+	engine.cleanResolvedAlerts(ctx)
+
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "cleared" {
+		t.Fatalf("alerts = %+v, want one cleared alert", alerts)
+	}
+	cleared := readAlertNarrative(t, pool, alertID)
+	if strings.Contains(cleared.description, "Collection has stopped") {
+		t.Errorf("cleared alert description = %q, want it not to resolve in the "+
+			"words of the hold", cleared.description)
+	}
+	if counts := capture.drain(t); counts[database.NotificationTypeAlertClear] != 1 {
+		t.Errorf("clear notifications = %d, want 1 once the probe has caught up",
+			counts[database.NotificationTypeAlertClear])
+	}
+}
+
+// TestStalenessAlertDescriptionRestoreFailureKeepsAlert covers the failed
+// write on the restore path: the alert must still be judged on its
+// staleness, so a probe that has caught up clears even though its wording
+// could not be put back.
+func TestStalenessAlertDescriptionRestoreFailureKeepsAlert(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	installStalenessNotificationCapture(t, engine)
+	ruleID := seedStalenessRule(t, pool)
+	connID := insertTestConnection(t, pool, "staleness-restore-failure")
+	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
+
+	engine.evaluateThresholds(ctx)
+	alerts := readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 {
+		t.Fatalf("alert rows = %d, want 1", len(alerts))
+	}
+
+	markProbeUnavailable(t, pool, connID, "pg_stat_activity", "connection refused")
+	engine.cleanResolvedAlerts(ctx)
+	markProbeAvailable(t, pool, connID, "pg_stat_activity")
+
+	if _, err := pool.Exec(ctx, createRejectAlertUpdatesFuncSQL); err != nil {
+		t.Fatalf("failed to create the rejecting trigger function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, createRejectAlertUpdatesTriggerSQL); err != nil {
+		t.Fatalf("failed to install the rejecting trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), dropRejectAlertUpdatesSQL); err != nil {
+			t.Logf("failed to drop the rejecting trigger: %v", err)
+		}
+	})
+
+	engine.cleanResolvedAlerts(ctx)
+
+	alerts = readStalenessAlertsForRule(t, pool, ruleID)
+	if len(alerts) != 1 || alerts[0].status != "active" {
+		t.Errorf("alerts = %+v, want one active alert after a failed restore", alerts)
+	}
+	held := readAlertNarrative(t, pool, alerts[0].id)
+	if !strings.Contains(held.description, "Collection has stopped") {
+		t.Errorf("alert description = %q, want the held wording left in place when "+
+			"the restore could not be written", held.description)
+	}
+}
+
+// TestStalenessAlertHeldLoggedOnce pins the log guard: the cleaner runs
+// every cycle, so announcing the hold on each of them would put 2,880
+// lines a day in an operator's log for one held alert. The line is
+// emitted when the description changes and not otherwise.
+func TestStalenessAlertHeldLoggedOnce(t *testing.T) {
+	engine, _, pool, cleanup := newEngineSpockTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	installStalenessNotificationCapture(t, engine)
+	ruleID := seedStalenessRule(t, pool)
+	connID := insertTestConnection(t, pool, "staleness-log-once")
+	seedStaleProbe(t, pool, connID, "pg_stat_activity", "30 minutes")
+
+	engine.evaluateThresholds(ctx)
+	if alerts := readStalenessAlertsForRule(t, pool, ruleID); len(alerts) != 1 {
+		t.Fatalf("alert rows = %d, want 1", len(alerts))
+	}
+	markProbeUnavailable(t, pool, connID, "pg_stat_activity", "extension missing")
+
+	if engine.debug {
+		t.Fatal("the test engine has debug logging on, which would make the assertion meaningless")
+	}
+
+	first := captureEngineStderr(t, func() { engine.cleanResolvedAlerts(ctx) })
+	if !strings.Contains(first, "is unavailable (extension missing)") {
+		t.Errorf("engine log = %q, want the hold reported once", first)
+	}
+
+	second := captureEngineStderr(t, func() { engine.cleanResolvedAlerts(ctx) })
+	if strings.Contains(second, "is unavailable") {
+		t.Errorf("engine log = %q, want nothing logged on a pass that changed nothing",
+			second)
+	}
+
+	// A changed reason is new information, so it is reported again.
+	markProbeUnavailable(t, pool, connID, "pg_stat_activity", "permission denied")
+	third := captureEngineStderr(t, func() { engine.cleanResolvedAlerts(ctx) })
+	if !strings.Contains(third, "is unavailable (permission denied)") {
+		t.Errorf("engine log = %q, want the changed reason reported", third)
 	}
 }
 

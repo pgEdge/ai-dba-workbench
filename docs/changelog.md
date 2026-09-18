@@ -1171,20 +1171,28 @@ project adheres to
   attached to a connection that is no longer monitored, or has never
   collected, and it treated absence from that view as proof that
   nothing was left to be stale about, so a probe that went unavailable
-  (a monitored server losing an extension, the collector losing its
-  privileges, or a connection error) cleared the `metric_staleness`
-  alert silently at debug log level. A probe that has gone unavailable
-  now keeps its staleness alert active, and the alert's description is
-  rewritten to say that collection has stopped and to give the recorded
-  reason; the title is unchanged, so the alert stays recognisable in
-  notification history. A probe that is absent because an operator
-  disabled it, or because its connection is no longer monitored, still
-  clears the alert, since both are deliberate actions. Both outcomes
-  are now logged at the normal log level rather than at debug level.
-  The staleness evaluator is unchanged and still skips unavailable
-  probes, because an unavailable probe is a normal steady state for a
-  server without the extension a probe needs, and raising a new alert
-  for one would leave a permanent alert on every such probe. (#465)
+  (a monitored server losing an extension, or a probe run timing out)
+  cleared the `metric_staleness` alert silently at debug log level. A
+  probe that has gone unavailable now keeps any staleness alert that
+  has already fired for it, and the alert's description is rewritten
+  to say that collection has stopped and to give the recorded reason;
+  the title is unchanged, so the alert stays recognisable in
+  notification history. The rewritten description reverts to the
+  evaluator's own wording once the probe collects again, so the clear
+  notification and the stored alert history no longer announce the
+  resolution in the words "Collection has stopped ...". The line
+  reporting the hold is logged once, when the decision or the recorded
+  reason changes, rather than on each 30 second cleanup cycle. A probe
+  that is absent because an operator disabled it, or because its
+  connection is no longer monitored, still clears the alert, since
+  both are deliberate actions, and both outcomes are now logged at the
+  normal log level rather than at debug level. The staleness evaluator
+  is unchanged and still skips unavailable probes, because an
+  unavailable probe is a normal steady state for a server without the
+  extension a probe needs, and raising a new alert for one would leave
+  a permanent alert on every such probe; a probe that goes unavailable
+  before its staleness alert has fired therefore still raises no
+  alert, which is tracked in issue #512. (#465)
 
 ### Removed
 

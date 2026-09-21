@@ -18,7 +18,9 @@ Before implementing or advising, consult `.claude/react-expert/`:
 - `typography-guidelines.md` - Font sizes, weights and typography rules
 
 When a change alters code that one of these files describes, update the
-file in the same change; delete any entry that no longer matches the code.
+file in the same change, and delete any entry that no longer matches the
+code: a stale entry is worse than none, because it sends the next task down
+a path the code no longer supports.
 
 ## Implementation Standards
 

@@ -146,14 +146,14 @@ Include the following copyright header at the top of
 every source file:
 
 ```go
-/*-------------------------------------------------------
+/*-------------------------------------------------------------------------
  *
  * pgEdge AI DBA Workbench
  *
  * Copyright (c) 2025 - 2026, pgEdge, Inc.
  * This software is released under The PostgreSQL License
  *
- *-------------------------------------------------------
+ *-------------------------------------------------------------------------
  */
 ```
 

@@ -6,6 +6,39 @@ allowed-tools: Bash(playwright-cli:*)
 
 # Browser Automation with playwright-cli
 
+Validate UI changes visually here after completing them; a browser session
+catches rendering and navigation issues that unit tests miss.
+
+## Installation
+
+The `playwright-cli` binary comes from the `@playwright/cli` npm package and
+provides the standalone CLI this skill uses; install it globally, and the
+binary lands at `/usr/bin/playwright-cli`:
+
+```bash
+sudo npm install -g @playwright/cli
+```
+
+A Chrome or Chromium binary at `/opt/google/chrome/chrome` is also required.
+The CLI's bundled installer fetches the upstream `.deb` and puts it there:
+
+```bash
+playwright-cli install-browser chrome
+```
+
+Do not use `npx playwright install` or `npm install playwright` for this
+purpose; the project `CLAUDE.md` forbids those commands because they pull in
+the test-runner library and the MCP shim rather than the standalone CLI.
+
+Confirm the installation with a short smoke test; the first command writes a
+snapshot YAML file under the gitignored `.playwright-cli/` directory at the
+repository root:
+
+```bash
+playwright-cli open https://example.com
+playwright-cli close
+```
+
 ## Quick start
 
 ```bash

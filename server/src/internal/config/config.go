@@ -78,12 +78,14 @@ type ToolsConfig struct {
 	GenerateEmbedding   *bool `yaml:"generate_embedding"`   // Generate text embeddings (default: true)
 	SearchKnowledgebase *bool `yaml:"search_knowledgebase"` // Search knowledgebase (default: true)
 	CountRows           *bool `yaml:"count_rows"`           // Count table rows (default: true)
+	TestQuery           *bool `yaml:"test_query"`           // Validate SQL without executing it (default: true)
 	ListProbes          *bool `yaml:"list_probes"`          // List available metrics probes (default: true)
 	DescribeProbe       *bool `yaml:"describe_probe"`       // Describe metrics in a probe (default: true)
 	QueryMetrics        *bool `yaml:"query_metrics"`        // Query collected metrics (default: true)
 	ListConnections     *bool `yaml:"list_connections"`     // List available connections (default: true)
 	GetAlertHistory     *bool `yaml:"get_alert_history"`    // Query historic alerts (default: true)
 	GetAlertRules       *bool `yaml:"get_alert_rules"`      // Query alert rules and thresholds (default: true)
+	GetBlackouts        *bool `yaml:"get_blackouts"`        // Query alert blackout windows and schedules (default: true)
 	GetMetricBaselines  *bool `yaml:"get_metric_baselines"` // Query metric baselines for anomaly context (default: true)
 	QueryDatastore      *bool `yaml:"query_datastore"`      // Execute read-only SQL against the datastore (default: true)
 	GetTimelineEvents   *bool `yaml:"get_timeline_events"`  // Query the incident-investigation timeline (default: true)
@@ -122,6 +124,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.SearchKnowledgebase == nil || *c.SearchKnowledgebase
 	case "count_rows":
 		return c.CountRows == nil || *c.CountRows
+	case "test_query":
+		return c.TestQuery == nil || *c.TestQuery
 	case "list_probes":
 		return c.ListProbes == nil || *c.ListProbes
 	case "describe_probe":
@@ -134,6 +138,8 @@ func (c *ToolsConfig) IsToolEnabled(toolName string) bool {
 		return c.GetAlertHistory == nil || *c.GetAlertHistory
 	case "get_alert_rules":
 		return c.GetAlertRules == nil || *c.GetAlertRules
+	case "get_blackouts":
+		return c.GetBlackouts == nil || *c.GetBlackouts
 	case "get_metric_baselines":
 		return c.GetMetricBaselines == nil || *c.GetMetricBaselines
 	case "query_datastore":
@@ -1165,6 +1171,9 @@ func mergeConfig(dest, src *Config) {
 	if src.Builtins.Tools.CountRows != nil {
 		dest.Builtins.Tools.CountRows = src.Builtins.Tools.CountRows
 	}
+	if src.Builtins.Tools.TestQuery != nil {
+		dest.Builtins.Tools.TestQuery = src.Builtins.Tools.TestQuery
+	}
 	if src.Builtins.Tools.ListProbes != nil {
 		dest.Builtins.Tools.ListProbes = src.Builtins.Tools.ListProbes
 	}
@@ -1173,6 +1182,27 @@ func mergeConfig(dest, src *Config) {
 	}
 	if src.Builtins.Tools.QueryMetrics != nil {
 		dest.Builtins.Tools.QueryMetrics = src.Builtins.Tools.QueryMetrics
+	}
+	if src.Builtins.Tools.ListConnections != nil {
+		dest.Builtins.Tools.ListConnections = src.Builtins.Tools.ListConnections
+	}
+	if src.Builtins.Tools.GetAlertHistory != nil {
+		dest.Builtins.Tools.GetAlertHistory = src.Builtins.Tools.GetAlertHistory
+	}
+	if src.Builtins.Tools.GetAlertRules != nil {
+		dest.Builtins.Tools.GetAlertRules = src.Builtins.Tools.GetAlertRules
+	}
+	if src.Builtins.Tools.GetBlackouts != nil {
+		dest.Builtins.Tools.GetBlackouts = src.Builtins.Tools.GetBlackouts
+	}
+	if src.Builtins.Tools.GetMetricBaselines != nil {
+		dest.Builtins.Tools.GetMetricBaselines = src.Builtins.Tools.GetMetricBaselines
+	}
+	if src.Builtins.Tools.QueryDatastore != nil {
+		dest.Builtins.Tools.QueryDatastore = src.Builtins.Tools.QueryDatastore
+	}
+	if src.Builtins.Tools.GetTimelineEvents != nil {
+		dest.Builtins.Tools.GetTimelineEvents = src.Builtins.Tools.GetTimelineEvents
 	}
 	if src.Builtins.Tools.StoreMemory != nil {
 		dest.Builtins.Tools.StoreMemory = src.Builtins.Tools.StoreMemory

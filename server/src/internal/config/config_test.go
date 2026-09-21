@@ -2532,3 +2532,94 @@ func TestLoadConfigSecretFileUnreadable(t *testing.T) {
 		t.Error("expected an unreadable config file to be reported")
 	}
 }
+
+// TestMergeConfigMergesEveryToolsField is the structural guard against a
+// tool being added to ToolsConfig without a matching merge block in
+// mergeConfig, which is how six tools (including query_datastore) came to
+// be silently unconfigurable. It walks ToolsConfig by reflection, sets
+// every *bool on the source to false, and requires mergeConfig to carry
+// all of them across, naming any field that did not make the trip.
+func TestMergeConfigMergesEveryToolsField(t *testing.T) {
+	src := &Config{}
+	srcTools := reflect.ValueOf(&src.Builtins.Tools).Elem()
+	toolsType := srcTools.Type()
+
+	boolPtrType := reflect.TypeOf((*bool)(nil))
+	for i := 0; i < toolsType.NumField(); i++ {
+		if toolsType.Field(i).Type != boolPtrType {
+			t.Fatalf("ToolsConfig.%s is %s, expected *bool; extend this test to cover it",
+				toolsType.Field(i).Name, toolsType.Field(i).Type)
+		}
+		srcTools.Field(i).Set(reflect.ValueOf(boolPtr(false)))
+	}
+
+	dest := &Config{}
+	mergeConfig(dest, src)
+
+	destTools := reflect.ValueOf(&dest.Builtins.Tools).Elem()
+	var unmerged []string
+	for i := 0; i < toolsType.NumField(); i++ {
+		name := toolsType.Field(i).Name
+		got, ok := destTools.Field(i).Interface().(*bool)
+		if !ok || got == nil {
+			unmerged = append(unmerged, name+" (nil)")
+			continue
+		}
+		if *got {
+			unmerged = append(unmerged, name+" (true)")
+		}
+	}
+	if len(unmerged) > 0 {
+		t.Fatalf("mergeConfig did not merge these ToolsConfig fields: %s; "+
+			"add a merge block for each in mergeConfig", strings.Join(unmerged, ", "))
+	}
+}
+
+// TestToolsConfig_IsToolEnabledHonoursEveryField is the companion guard to
+// TestMergeConfigMergesEveryToolsField: every *bool on ToolsConfig must
+// have an IsToolEnabled case keyed on its yaml tag, so that a newly added
+// tool cannot fall through to the default-true branch and stay enabled
+// however the administrator configures it.
+func TestToolsConfig_IsToolEnabledHonoursEveryField(t *testing.T) {
+	toolsType := reflect.TypeOf(ToolsConfig{})
+	for i := 0; i < toolsType.NumField(); i++ {
+		field := toolsType.Field(i)
+		toolName := strings.Split(field.Tag.Get("yaml"), ",")[0]
+		if toolName == "" {
+			t.Fatalf("ToolsConfig.%s has no yaml tag", field.Name)
+		}
+
+		t.Run(toolName, func(t *testing.T) {
+			var cfg ToolsConfig
+			if !cfg.IsToolEnabled(toolName) {
+				t.Fatalf("IsToolEnabled(%q) = false with no value set, want true", toolName)
+			}
+
+			value := reflect.ValueOf(&cfg).Elem().Field(i)
+			value.Set(reflect.ValueOf(boolPtr(false)))
+			if cfg.IsToolEnabled(toolName) {
+				t.Fatalf("IsToolEnabled(%q) = true with %s set to false; "+
+					"add a case for %q to IsToolEnabled", toolName, field.Name, toolName)
+			}
+
+			value.Set(reflect.ValueOf(boolPtr(true)))
+			if !cfg.IsToolEnabled(toolName) {
+				t.Fatalf("IsToolEnabled(%q) = false with %s set to true", toolName, field.Name)
+			}
+		})
+	}
+}
+
+// TestToolsConfig_IsToolEnabledBlackoutsAndTestQuery pins the two tools
+// this change added fields for, both of which the documentation and the
+// example configuration already advertised as switchable whilst
+// IsToolEnabled had no case for either.
+func TestToolsConfig_IsToolEnabledBlackoutsAndTestQuery(t *testing.T) {
+	cfg := ToolsConfig{GetBlackouts: boolPtr(false), TestQuery: boolPtr(false)}
+	if cfg.IsToolEnabled("get_blackouts") {
+		t.Error("IsToolEnabled(\"get_blackouts\") = true, want false")
+	}
+	if cfg.IsToolEnabled("test_query") {
+		t.Error("IsToolEnabled(\"test_query\") = true, want false")
+	}
+}

@@ -81,11 +81,17 @@ const toErrorMessage = (err: unknown): string => (
  * Callers that want the data to follow the dashboard refresh cycle
  * pass the dashboard `refreshTrigger` as `refreshKey`; callers that
  * only need the list to track the selected connection can omit it.
+ *
+ * Passing `enabled` as false suppresses the request entirely, for a
+ * caller that renders the data conditionally and would otherwise pay
+ * for a fetch it never reads. The returned state stays at its empty
+ * defaults whilst disabled.
  */
 export const useDatabaseSummaries = (
     connectionId: number,
     refreshKey = 0,
     timeRange = '24h',
+    enabled = true,
 ): UseDatabaseSummariesResult => {
     const { user } = useAuth();
 
@@ -158,14 +164,14 @@ export const useDatabaseSummaries = (
     useEffect(() => {
         isMountedRef.current = true;
 
-        if (isLoggedIn) {
+        if (isLoggedIn && enabled) {
             fetchData();
         }
 
         return () => {
             isMountedRef.current = false;
         };
-    }, [isLoggedIn, fetchData, refreshKey]);
+    }, [isLoggedIn, enabled, fetchData, refreshKey]);
 
     return { databases, loading, error };
 };

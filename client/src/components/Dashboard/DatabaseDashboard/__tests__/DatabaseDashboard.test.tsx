@@ -51,6 +51,23 @@ vi.mock('../TableLeaderboardSection', () => ({
     ),
 }));
 
+vi.mock('../../TopQueriesSection', () => ({
+    default: ({ connectionId, connectionName, databaseName }: {
+        connectionId: number;
+        connectionName?: string;
+        databaseName?: string;
+    }) => (
+        <div
+            data-testid="top-queries-section"
+            data-connection-id={connectionId}
+            data-connection-name={connectionName}
+            data-database-name={databaseName}
+        >
+            Top Queries Content
+        </div>
+    ),
+}));
+
 vi.mock('../IndexLeaderboardSection', () => ({
     default: ({ connectionId, databaseName }: {
         connectionId: number;
@@ -149,6 +166,7 @@ describe('DatabaseDashboard', () => {
 
         expect(screen.getByTestId('performance-section')).toBeInTheDocument();
         expect(screen.getByTestId('table-leaderboard-section')).toBeInTheDocument();
+        expect(screen.getByTestId('top-queries-section')).toBeInTheDocument();
         expect(screen.getByTestId('index-leaderboard-section')).toBeInTheDocument();
         expect(screen.getByTestId('vacuum-status-section')).toBeInTheDocument();
     });
@@ -177,6 +195,15 @@ describe('DatabaseDashboard', () => {
             'analytics',
         );
 
+        expect(screen.getByTestId('top-queries-section')).toHaveAttribute(
+            'data-connection-id',
+            '5',
+        );
+        expect(screen.getByTestId('top-queries-section')).toHaveAttribute(
+            'data-database-name',
+            'analytics',
+        );
+
         expect(screen.getByTestId('index-leaderboard-section')).toHaveAttribute(
             'data-connection-id',
             '5',
@@ -193,6 +220,32 @@ describe('DatabaseDashboard', () => {
         expect(screen.getByTestId('vacuum-status-section')).toHaveAttribute(
             'data-database-name',
             'analytics',
+        );
+    });
+
+    it('renders Top Queries between the table and index leaderboards', () => {
+        const { container } = renderDatabaseDashboard();
+
+        const testIds = Array.from(
+            container.querySelectorAll('[data-testid]'),
+        ).map(el => el.getAttribute('data-testid'));
+
+        expect(testIds).toEqual([
+            'time-range-selector',
+            'performance-section',
+            'table-leaderboard-section',
+            'top-queries-section',
+            'index-leaderboard-section',
+            'vacuum-status-section',
+        ]);
+    });
+
+    it('passes the connection name through to Top Queries', () => {
+        renderDatabaseDashboard({ connectionName: 'Production Server' });
+
+        expect(screen.getByTestId('top-queries-section')).toHaveAttribute(
+            'data-connection-name',
+            'Production Server',
         );
     });
 

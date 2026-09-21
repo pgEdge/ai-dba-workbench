@@ -27,18 +27,18 @@ import {
     ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
-import { useAuth } from '../../../contexts/useAuth';
-import { apiFetch } from '../../../utils/apiClient';
-import { useDashboard } from '../../../contexts/useDashboard';
-import { useDatabaseSummaries } from '../../../hooks/useDatabaseSummaries';
-import CollapsibleSection from '../CollapsibleSection';
-import { formatTime, formatNumber } from '../../../utils/formatters';
+import { useAuth } from '../../contexts/useAuth';
+import { apiFetch } from '../../utils/apiClient';
+import { useDashboard } from '../../contexts/useDashboard';
+import { useDatabaseSummaries } from '../../hooks/useDatabaseSummaries';
+import CollapsibleSection from './CollapsibleSection';
+import { formatTime, formatNumber } from '../../utils/formatters';
 import {
     DASHBOARD_CONTROL_TEXT_SX,
     DASHBOARD_TAB_CHIP_TEXT_SX,
-} from '../../../theme/tokens';
-import type { ServerSectionProps, TopQueryRow } from './types';
-import { logger } from '../../../utils/logger';
+} from '../../theme/tokens';
+import type { TopQueriesSectionProps, TopQueryRow } from './types';
+import { logger } from '../../utils/logger';
 
 /** Maximum characters to display before truncating a query */
 const MAX_QUERY_LENGTH = 80;
@@ -52,16 +52,31 @@ const DEFAULT_PAGE_SIZE = 20;
 /** Sentinel value used by the database filter for "no filter" */
 const ALL_DATABASES = '';
 
+/**
+ * Window the database list is fetched over. The list is only used to
+ * populate the filter control, so the value matters only in that a
+ * database with no activity in the window is not offered.
+ */
+const DATABASE_LIST_TIME_RANGE = '24h';
+
 /** Table container styles */
 const TABLE_CONTAINER_SX = {
     overflowX: 'auto' as const,
     mb: 2,
 };
 
+/**
+ * Column widths with and without the leading Database column. The
+ * column is dropped when the section is pinned to one database, where
+ * every row would repeat the same name.
+ */
+const GRID_COLUMNS_WITH_DATABASE = '0.8fr 2fr 0.7fr 1fr 1fr 0.7fr';
+const GRID_COLUMNS_WITHOUT_DATABASE = '2fr 0.7fr 1fr 1fr 0.7fr';
+
 /** Table header row */
 const TABLE_HEADER_SX = {
     display: 'grid',
-    gridTemplateColumns: '0.8fr 2fr 0.7fr 1fr 1fr 0.7fr',
+    gridTemplateColumns: GRID_COLUMNS_WITH_DATABASE,
     gap: 1,
     px: 1.5,
     py: 1,
@@ -81,7 +96,7 @@ const HEADER_CELL_SX = {
 /** Table row */
 const TABLE_ROW_SX = {
     display: 'grid',
-    gridTemplateColumns: '0.8fr 2fr 0.7fr 1fr 1fr 0.7fr',
+    gridTemplateColumns: GRID_COLUMNS_WITH_DATABASE,
     gap: 1,
     px: 1.5,
     py: 1,
@@ -101,6 +116,15 @@ const TABLE_ROW_SX = {
 const QUERY_CELL_SX = {
     fontSize: '0.875rem',
     fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    color: 'text.primary',
+};
+
+/** Database name cell */
+const DATABASE_CELL_SX = {
+    fontSize: '0.875rem',
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -229,10 +253,16 @@ const readTotalCount = (headers?: Headers): number | null => {
  * from pg_stat_statements, sorted by total execution time. Results
  * are paged server-side and can be filtered to a single database.
  * Each row is clickable to drill down into query detail via overlay.
+ *
+ * Passing `databaseName` pins the section to that one database, which
+ * is how the database dashboard uses it: the filter control and the
+ * Database column are both dropped, and the database is sent to the
+ * server as the `database_name` filter on every request.
  */
-const TopQueriesSection: React.FC<ServerSectionProps> = ({
+const TopQueriesSection: React.FC<TopQueriesSectionProps> = ({
     connectionId,
     connectionName,
+    databaseName,
 }) => {
     const { user } = useAuth();
     const { refreshTrigger, pushOverlay, timeRange } = useDashboard();
@@ -248,6 +278,12 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     const [page, setPage] = useState<number>(0);
     const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
     const [databaseFilter, setDatabaseFilter] = useState<string>(ALL_DATABASES);
+    // The database the requests are actually filtered by: the pinned
+    // one when the caller supplied it, otherwise whatever the filter
+    // control is set to.
+    const scopedDatabase = databaseName ?? ALL_DATABASES;
+    const isScoped = scopedDatabase !== ALL_DATABASES;
+    const effectiveDatabase = isScoped ? scopedDatabase : databaseFilter;
     const [totalCount, setTotalCount] = useState<number | null>(null);
     const isMountedRef = useRef<boolean>(true);
     // Identifies the most recently started request. isMountedRef alone
@@ -291,9 +327,22 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         setTotalCount(null);
     }
 
+    // Switching the pinned database narrows the result set exactly as
+    // the filter control would, so paging resets for the same reason.
+    const [renderedScope, setRenderedScope] =
+        useState<string>(scopedDatabase);
+    if (renderedScope !== scopedDatabase) {
+        setRenderedScope(scopedDatabase);
+        setPage(0);
+        setTotalCount(null);
+    }
+
     // The database list drives the filter control only, so it tracks
-    // the connection rather than the dashboard refresh cycle.
-    const { databases } = useDatabaseSummaries(connectionId);
+    // the connection rather than the dashboard refresh cycle, and it
+    // is not fetched at all when the section is pinned to one
+    // database and the control is therefore never rendered.
+    const { databases } = useDatabaseSummaries(
+        connectionId, 0, DATABASE_LIST_TIME_RANGE, !isScoped);
 
     const databaseNames = useMemo(
         () => databases.map(db => db.database_name).filter(Boolean),
@@ -301,8 +350,9 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
     );
 
     // A single-database connection gains nothing from a filter, so the
-    // control only appears once there is a genuine choice to make.
-    const showDatabaseFilter = databaseNames.length > 1;
+    // control only appears once there is a genuine choice to make, and
+    // never when the caller has already pinned the database.
+    const showDatabaseFilter = !isScoped && databaseNames.length > 1;
 
     const fetchData = useCallback(async (): Promise<void> => {
         if (!userRef.current) { return; }
@@ -331,8 +381,8 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         if (hideCollectorQueries) {
             params.set('exclude_collector', 'true');
         }
-        if (databaseFilter !== ALL_DATABASES) {
-            params.set('database_name', databaseFilter);
+        if (effectiveDatabase !== ALL_DATABASES) {
+            params.set('database_name', effectiveDatabase);
         }
         const url = `/api/v1/metrics/top-queries?${params.toString()}`;
 
@@ -396,8 +446,8 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
             }
         }
     }, [
-        connectionId, hideCollectorQueries, page, pageSize, databaseFilter,
-        selectedRange, customStart, customEnd,
+        connectionId, hideCollectorQueries, page, pageSize,
+        effectiveDatabase, selectedRange, customStart, customEnd,
     ]);
 
     useEffect(() => {
@@ -457,10 +507,20 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         setPage(prev => prev + 1);
     }, []);
 
+    const gridColumns = isScoped
+        ? GRID_COLUMNS_WITHOUT_DATABASE
+        : GRID_COLUMNS_WITH_DATABASE;
+
     const headerRowSx = useMemo(() => ({
         ...TABLE_HEADER_SX,
+        gridTemplateColumns: gridColumns,
         borderColor: theme.palette.divider,
-    }), [theme.palette.divider]);
+    }), [gridColumns, theme.palette.divider]);
+
+    const bodyRowSx = useMemo(() => ({
+        ...TABLE_ROW_SX,
+        gridTemplateColumns: gridColumns,
+    }), [gridColumns]);
 
     const firstRowNumber = page * pageSize + 1;
     const lastRowNumber = page * pageSize + queries.length;
@@ -473,7 +533,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
         ? `Showing ${firstRowNumber}–${lastRowNumber}`
         : `Showing ${firstRowNumber}–${lastRowNumber} of ${totalCount}`;
 
-    const isFiltered = databaseFilter !== ALL_DATABASES;
+    const isFiltered = effectiveDatabase !== ALL_DATABASES;
     const showPager = !error && (queries.length > 0 || hasPreviousPage);
 
     return (
@@ -552,7 +612,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                     sx={{ textAlign: 'center', py: 3 }}
                 >
                     {isFiltered
-                        ? `No query statistics available for ${databaseFilter}.`
+                        ? `No query statistics available for ${effectiveDatabase}.`
                         : 'No query statistics available. '
                             + 'Is the pg_stat_statements extension installed?'}
                 </Typography>
@@ -561,9 +621,11 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
             {queries.length > 0 && (
                 <Box sx={TABLE_CONTAINER_SX}>
                     <Box sx={headerRowSx}>
-                        <Typography sx={HEADER_CELL_SX}>
-                            Database
-                        </Typography>
+                        {!isScoped && (
+                            <Typography sx={HEADER_CELL_SX}>
+                                Database
+                            </Typography>
+                        )}
                         <Typography sx={HEADER_CELL_SX}>
                             Query
                         </Typography>
@@ -596,7 +658,7 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                     {queries.map((query, index) => (
                         <Box
                             key={query.queryid || index}
-                            sx={TABLE_ROW_SX}
+                            sx={bodyRowSx}
                             onClick={() => { handleQueryClick(query); }}
                             tabIndex={0}
                             role="button"
@@ -608,18 +670,14 @@ const TopQueriesSection: React.FC<ServerSectionProps> = ({
                                 }
                             }}
                         >
-                            <Typography
-                                sx={{
-                                    fontSize: '0.875rem',
-                                    whiteSpace: 'nowrap' as const,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    color: 'text.primary',
-                                }}
-                                title={query.database_name}
-                            >
-                                {query.database_name}
-                            </Typography>
+                            {!isScoped && (
+                                <Typography
+                                    sx={DATABASE_CELL_SX}
+                                    title={query.database_name}
+                                >
+                                    {query.database_name}
+                                </Typography>
+                            )}
                             <Typography
                                 sx={QUERY_CELL_SX}
                                 title={query.query}

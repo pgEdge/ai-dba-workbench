@@ -16,7 +16,7 @@ import PostgresOverviewSection from './PostgresOverviewSection';
 import WalReplicationSection from './WalReplicationSection';
 import DatabaseSummariesSection from './DatabaseSummariesSection';
 import ConnectionsSection from './ConnectionsSection';
-import TopQueriesSection from './TopQueriesSection';
+import TopQueriesSection from '../TopQueriesSection';
 import type { ServerSelection } from '../../../types/selection';
 
 /**

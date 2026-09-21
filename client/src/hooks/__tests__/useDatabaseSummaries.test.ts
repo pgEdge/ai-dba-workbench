@@ -204,6 +204,30 @@ describe('useDatabaseSummaries', () => {
             .toEqual(['two-db']);
     });
 
+    it('does not fetch whilst disabled, and fetches once enabled',
+        async () => {
+            mockApiFetch.mockResolvedValue(okResponse({
+                databases: [{ database_name: 'analytics' }],
+            }));
+
+            const { result, rerender } = renderHook(
+                ({ on }: { on: boolean }) =>
+                    useDatabaseSummaries(1, 0, '24h', on),
+                { initialProps: { on: false } },
+            );
+
+            expect(mockApiFetch).not.toHaveBeenCalled();
+            expect(result.current.databases).toEqual([]);
+            expect(result.current.loading).toBe(false);
+
+            rerender({ on: true });
+
+            await waitFor(() => {
+                expect(result.current.databases.map(d => d.database_name))
+                    .toEqual(['analytics']);
+            });
+        });
+
     it('refetches when the refresh key changes', async () => {
         mockApiFetch.mockResolvedValue(okResponse({ databases: [] }));
 

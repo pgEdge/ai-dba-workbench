@@ -121,13 +121,16 @@ func isNilDatastore(ds DatastoreSharingLookup) bool {
 // intersect against, so the only safe answer for a narrowed token is
 // no.
 func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
-	// Nil store - treat as superuser (full access)
-	if rc.authStore == nil {
-		return true
-	}
-
+	// The context flag is read first, so that a checker built without
+	// an auth store, which treats everything else as unrestricted,
+	// cannot admit an unauthenticated caller to a superuser gate.
 	if !IsSuperuserFromContext(ctx) {
 		return false
+	}
+
+	// Nil store - no scope to consult, so the flag stands alone.
+	if rc.authStore == nil {
+		return true
 	}
 
 	return rc.tokenCarriesSuperuser(ctx)
@@ -268,8 +271,20 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 		return false
 	}
 
-	// If the privilege is public, grant access without group membership check
+	// A public privilege needs no group membership, but it is still
+	// only reachable through a token that was issued for it: a token
+	// whose MCP scope names specific items must not reach every public
+	// tool in the installation (issue #482). An unscoped or
+	// wildcard-scoped token, and a session, are unaffected.
 	if isPublic {
+		if tokenID := GetTokenIDFromContext(ctx); tokenID > 0 {
+			inScope, scopeErr := rc.authStore.IsMCPItemInTokenScope(
+				tokenID, identifier)
+			if scopeErr != nil {
+				return false
+			}
+			return inScope
+		}
 		return true
 	}
 
@@ -430,7 +445,26 @@ func applyTokenCeiling(tokenLevel, userLevel string) string {
 	if tokenLevel == AccessLevelRead || userLevel == AccessLevelRead {
 		return AccessLevelRead
 	}
+
+	// Only the three known levels may reach read_write. A level this
+	// code does not understand, on either side, is treated as read
+	// rather than passed through, so that a stray value in the store
+	// cannot widen access.
+	if !knownAccessLevel(tokenLevel) || !knownAccessLevel(userLevel) {
+		return AccessLevelRead
+	}
 	return userLevel
+}
+
+// knownAccessLevel reports whether a stored access level is one this
+// code understands.
+func knownAccessLevel(level string) bool {
+	switch level {
+	case AccessLevelNone, AccessLevelRead, AccessLevelReadWrite:
+		return true
+	default:
+		return false
+	}
 }
 
 // scopeHasConnectionWildcard reports whether a token's connection scope
@@ -491,7 +525,11 @@ func (rc *RBACChecker) applySuperuserTokenScope(
 		// Nothing can be claimed about a scope that could not be read,
 		// so the error travels with the result and the privilege maps
 		// are left empty rather than filled in optimistically.
+		// Superuser status goes with them: every check in this file
+		// denies on an unreadable scope, and a report that still said
+		// "superuser, no limits" would contradict all of them.
 		result.TokenScopeError = err
+		result.IsSuperuser = false
 		return
 	}
 	if scope == nil {
@@ -540,6 +578,13 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 	// Nil store - return empty (no restrictions means full access)
 	if rc.authStore == nil {
 		result.IsSuperuser = true
+		return result
+	}
+
+	// An API token context carrying no token id cannot have its scope
+	// applied, so nothing may be reported for it: without this, such a
+	// caller was handed its owner's full group privileges unscoped.
+	if tokenContextIncomplete(ctx) {
 		return result
 	}
 

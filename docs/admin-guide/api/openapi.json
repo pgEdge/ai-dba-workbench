@@ -9183,7 +9183,7 @@
       },
       "put": {
         "summary": "Set token scope",
-        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions",
+        "description": "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. A token may not change its own scope, so a request whose target is the caller's own acting token is refused.",
         "operationId": "setTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -9235,7 +9235,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission, and refuses a change to the caller's own token",
             "content": {
               "application/json": {
                 "schema": {
@@ -9253,7 +9253,7 @@
       },
       "delete": {
         "summary": "Clear token scope",
-        "description": "Removes all scope restrictions from a token",
+        "description": "Removes all scope restrictions from a token. A token may not change its own scope, so a request whose target is the caller's own acting token is refused.",
         "operationId": "clearTokenScope",
         "tags": [
           "RBAC Tokens"
@@ -9284,7 +9284,7 @@
             }
           },
           "403": {
-            "description": "Requires manage_token_scopes permission",
+            "description": "Requires manage_token_scopes permission, and refuses a change to the caller's own token",
             "content": {
               "application/json": {
                 "schema": {

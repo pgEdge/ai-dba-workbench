@@ -313,7 +313,40 @@ func (h *RBACHandler) getTokenScope(w http.ResponseWriter, r *http.Request, toke
 	})
 }
 
+// refuseSelfScopeMutation refuses a scope change whose target is the
+// caller's own acting token, reporting true when the request has been
+// answered and must go no further.
+//
+// Without this, a token scoped to exactly manage_token_scopes could
+// widen or clear its own scope and so escape every other scope gate:
+// the permission it legitimately holds would let it rewrite the very
+// record that bounds it. A session caller has no token id, so it is
+// unaffected, and a token may still manage other tokens' scopes.
+//
+// This is the narrow fix only. A token may still widen a *different*
+// token's scope beyond its own, superuser-owned tokens may still be
+// created without superuser rights, and permission strings written
+// into a scope are not validated against a known set; those are
+// tracked separately as a policy question about who may issue what.
+func (h *RBACHandler) refuseSelfScopeMutation(w http.ResponseWriter,
+	r *http.Request, tokenID int64) bool {
+
+	actingTokenID := auth.GetTokenIDFromContext(r.Context())
+	if actingTokenID <= 0 || actingTokenID != tokenID {
+		return false
+	}
+
+	const reason = "Permission denied: a token may not change its own scope"
+	h.recordDenial(r, reason)
+	RespondError(w, http.StatusForbidden, reason)
+	return true
+}
+
 func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
+	if h.refuseSelfScopeMutation(w, r, tokenID) {
+		return
+	}
+
 	var req struct {
 		Connections      []auth.ScopedConnection `json:"connections"`
 		MCPPrivileges    []string                `json:"mcp_privileges"`
@@ -351,6 +384,10 @@ func (h *RBACHandler) setTokenScope(w http.ResponseWriter, r *http.Request, toke
 }
 
 func (h *RBACHandler) clearTokenScope(w http.ResponseWriter, r *http.Request, tokenID int64) {
+	if h.refuseSelfScopeMutation(w, r, tokenID) {
+		return
+	}
+
 	if err := h.actorStore(r).ClearTokenScope(tokenID); err != nil {
 		log.Printf("[ERROR] Failed to clear token scope for token %d: %v", tokenID, err)
 		RespondError(w, http.StatusInternalServerError, "Failed to clear token scope")

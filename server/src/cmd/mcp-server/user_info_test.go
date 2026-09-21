@@ -189,3 +189,38 @@ func TestCreateUserInfoHandler_AdminPermissions(t *testing.T) {
 		t.Errorf("admin_permissions = %v, want [%s]", perms, auth.PermManageUsers)
 	}
 }
+
+// TestCreateUserInfoHandler_ScopedSuperuserAPIToken checks that the
+// reported flag is the one a superuser-only gate would apply: a
+// superuser's token whose admin scope names specific permissions is
+// refused by those gates, so the client must not be told it holds
+// superuser status and offered, say, the audit page.
+func TestCreateUserInfoHandler_ScopedSuperuserAPIToken(t *testing.T) {
+	store := newUserInfoTestStore(t)
+
+	if err := store.CreateUser("root-scoped", "Testpass1234", "", "", ""); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	if err := store.SetUserSuperuser("root-scoped", true); err != nil {
+		t.Fatalf("failed to set superuser: %v", err)
+	}
+	rawToken, token, err := store.CreateToken("root-scoped", "scoped token", nil)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+	if err := store.SetTokenAdminScope(token.ID,
+		[]string{auth.PermManageUsers}); err != nil {
+		t.Fatalf("failed to set admin scope: %v", err)
+	}
+
+	body := callUserInfo(t, store, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+rawToken)
+	})
+	if body["authenticated"] != true {
+		t.Fatalf("authenticated = %v, want true", body["authenticated"])
+	}
+	if body["is_superuser"] != false {
+		t.Errorf("is_superuser = %v, want false for a narrowed admin scope",
+			body["is_superuser"])
+	}
+}

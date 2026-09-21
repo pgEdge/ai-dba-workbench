@@ -4518,7 +4518,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 			},
 			Put: &OpenAPIOperation{
 				Summary:     "Set token scope",
-				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions",
+				Description: "Sets scope restrictions for a token including connections, MCP privileges, and admin permissions. A token may not change its own scope, so a request whose target is the caller's own acting token is refused.",
 				OperationID: "setTokenScope",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4528,12 +4528,12 @@ func buildPaths() map[string]OpenAPIPathItem {
 					"204": {Description: "Scope updated"},
 					"400": jsonResponse("ErrorResponse", "Invalid request"),
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, and refuses a change to the caller's own token"),
 				},
 			},
 			Delete: &OpenAPIOperation{
 				Summary:     "Clear token scope",
-				Description: "Removes all scope restrictions from a token",
+				Description: "Removes all scope restrictions from a token. A token may not change its own scope, so a request whose target is the caller's own acting token is refused.",
 				OperationID: "clearTokenScope",
 				Tags:        []string{"RBAC Tokens"},
 				Security:    bearerAuth,
@@ -4541,7 +4541,7 @@ func buildPaths() map[string]OpenAPIPathItem {
 				Responses: map[string]OpenAPIResponse{
 					"204": {Description: "Scope cleared"},
 					"401": jsonResponse("ErrorResponse", "Unauthorized"),
-					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission"),
+					"403": jsonResponse("ErrorResponse", "Requires manage_token_scopes permission, and refuses a change to the caller's own token"),
 				},
 			},
 		},

@@ -740,8 +740,10 @@ func TestGetEffectivePrivilegesSuperuserReportsScopeLookupError(t *testing.T) {
 	f.dropScopeTable(t, "token_mcp_scope")
 
 	privs := f.checker.GetEffectivePrivileges(f.tokenCtx())
-	if !privs.IsSuperuser {
-		t.Fatal("Expected superuser status to survive an MCP scope failure")
+	// Every check in access.go denies on an unreadable scope, so the
+	// report must not claim unrestricted superuser rights either.
+	if privs.IsSuperuser {
+		t.Error("Expected an unreadable scope to withdraw superuser status")
 	}
 	if privs.TokenScopeError == nil {
 		t.Error("Expected the scope failure to be reported")

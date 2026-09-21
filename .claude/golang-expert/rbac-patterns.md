@@ -336,11 +336,32 @@ The apparent inconsistency, `IsSuperuser` false whilst
 `HasAdminPermission` allows the scoped permission, is deliberate and
 is documented on `IsSuperuser`; do not "fix" it.
 
+A public MCP privilege is bounded the same way. `IsPrivilegePublic`
+removes the need for a group grant, not the token's scope, so
+`CanAccessMCPItem` intersects the public path with the MCP scope as
+well: a token scoped to one tool cannot call every public tool, which
+was issue `#482`. The listing paths follow from that. Neither
+`ListForContext` in `internal/tools/context_aware_provider.go` nor the
+one in `internal/resources/context_aware_registry.go` short-circuits on
+`IsSuperuser` any more, because that flag comes from the admin scope
+and says nothing about tools; every caller goes through the per-item
+filter, which already admits sessions, unscoped tokens, wildcard scopes
+and a nil auth store, and `rbacExemptTools` is still applied.
+
+A token also may not rewrite the scope that bounds it:
+`refuseSelfScopeMutation` in `internal/api/rbac_token_handlers.go`
+refuses a PUT or DELETE on the acting token's own scope, since
+`manage_token_scopes` would otherwise be enough to widen the token's
+own record and undo every gate above. Managing another token's scope is
+unaffected, and the remaining policy gaps are noted at the guard.
+
 Everything fails closed: a scope lookup error denies (or, in
-`VisibleConnectionIDs`, is an error rather than "everything"), and an
+`VisibleConnectionIDs`, is an error rather than "everything"), an
 API-token context carrying no token id (`tokenContextIncomplete`)
-denies. Session callers carry no token id and are unaffected
-throughout.
+denies in `GetEffectivePrivileges` as in its five siblings, an
+unreadable scope withdraws `IsSuperuser` from the report as well, and
+`applyTokenCeiling` treats an access level it does not recognise as
+read. Session callers carry no token id and are unaffected throughout.
 
 `GetEffectivePrivileges` reports what the checks will actually allow:
 `applySuperuserTokenScope` fills `TokenScope`, `TokenScopeError` and

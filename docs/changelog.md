@@ -605,6 +605,21 @@ project adheres to
   lower, accurate rates where they previously showed a spike or a
   gap. (#469)
 
+- Fix the stale migration list in the collector's Schema Management
+  developer guide, which enumerated migrations 1 to 5 with descriptions
+  that no longer matched the code, then jumped to a migration 15 and
+  listed a migration 22 and 23 that do not exist. Migration 1 has been
+  the consolidated baseline that creates the whole schema since the
+  migrations were squashed, not the "create schema_version table" step
+  the page described. The enumeration has been replaced with a
+  description of the migration mechanism and a pointer to
+  `registerMigrations()` in `collector/src/database/schema.go`, which is
+  the authoritative list, so the page no longer goes stale each time a
+  migration is added. The code samples on the page have also been
+  corrected to the `func(pgx.Tx) error` signature the `Up` function
+  actually takes, in place of the `*sql.DB` of an earlier
+  implementation. (#479)
+
 - Fix the `pg_stat_statements` collector probe discarding the block
   timing columns on every modern server. The probe chose its query
   shape by looking for the version-specific columns in

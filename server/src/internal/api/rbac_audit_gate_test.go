@@ -64,7 +64,10 @@ func mustCreateScopedToken(t *testing.T, store *auth.AuthStore,
 
 // TestRBACHandlerAuditRejectsScopedToken checks that a superuser's
 // token whose admin scope was narrowed cannot read the audit log, and
-// that the refusal is itself audited.
+// that the refusal is itself audited. The refusal now comes from
+// requireSuperuser, because a narrowed admin scope withdraws the
+// token's superuser status outright; the audit endpoint no longer
+// carries a gate of its own.
 func TestRBACHandlerAuditRejectsScopedToken(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -76,8 +79,8 @@ func TestRBACHandlerAuditRejectsScopedToken(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "token admin scope") {
-		t.Errorf("Expected a scope message, got %q", body)
+	if body := rec.Body.String(); !strings.Contains(body, "superuser privileges") {
+		t.Errorf("Expected a superuser refusal, got %q", body)
 	}
 
 	events, _, err := store.ListAuditEvents(auth.AuditFilter{
@@ -129,9 +132,9 @@ func TestRBACHandlerAuditAllowsSessionSuperuser(t *testing.T) {
 
 // TestRBACHandlerAuditTokenWithoutIDIsRefused covers an API-token
 // request that carries no acting token id. Its admin scope cannot be
-// checked, so the request is refused rather than passed through on the
-// superuser decision alone: a route mounted without createAuthWrapper
-// must fail here, not be waved on.
+// checked, so its superuser status cannot be confirmed and the request
+// is refused: a route mounted without createAuthWrapper must fail
+// here, not be waved on.
 func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 	handler, store, cleanup := createTestRBACHandler(t)
 	defer cleanup()
@@ -140,7 +143,7 @@ func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "could not be identified") {
+	if !strings.Contains(rec.Body.String(), "superuser privileges") {
 		t.Errorf("Expected the refusal to say why, got %s", rec.Body.String())
 	}
 

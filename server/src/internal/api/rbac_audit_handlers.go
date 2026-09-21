@@ -37,11 +37,10 @@ func (h *RBACHandler) handleAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// requireSuperuser also rejects a superuser's API token whose admin
+	// scope has been narrowed, so the audit log needs no gate of its
+	// own: see auth.RBACChecker.IsSuperuser and issue #471.
 	if !h.requireSuperuser(w, r) {
-		return
-	}
-
-	if !h.requireUnscopedTokenForAudit(w, r) {
 		return
 	}
 
@@ -155,74 +154,6 @@ func capAuditFilterValue(value string) string {
 		return value
 	}
 	return string(runes[:auditFilterValueMax-3]) + "..."
-}
-
-// auditScopeDenied is the message returned to a token whose admin
-// scope does not reach the audit log.
-const auditScopeDenied = "Permission denied: token admin scope does not " +
-	"include audit access"
-
-// auditTokenUnidentified is the message returned to a request that
-// authenticated as an API token but reached the handler without the
-// token's id, so that its admin scope could not be checked.
-const auditTokenUnidentified = "Permission denied: the acting token could " +
-	"not be identified, so its admin scope could not be checked"
-
-// requireUnscopedTokenForAudit refuses a request made with an API token
-// whose admin scope has been narrowed. A superuser's token inherits
-// superuser rights, so requireSuperuser alone would let a token created
-// for one narrow job read the whole installation's audit log; a scope
-// that names specific permissions is an explicit statement that the
-// token is not a general-purpose stand-in for its owner, and the audit
-// log is not one of the permissions it can name. A token with no admin
-// scope at all, or one holding the "*" wildcard, is unrestricted by
-// design and passes.
-//
-// A scope lookup that fails is treated as a refusal rather than a pass,
-// so that a database error cannot widen access, and so is a context
-// that claims API-token authentication but carries no token id: a scope
-// that cannot be looked up cannot be shown to include the audit log.
-// Every authenticated path sets the id today, so that branch is
-// unreachable; it exists for the path a later change mounts without
-// createAuthWrapper, which must be refused rather than blessed.
-func (h *RBACHandler) requireUnscopedTokenForAudit(w http.ResponseWriter,
-	r *http.Request) bool {
-
-	if !auth.IsAPITokenFromContext(r.Context()) {
-		return true
-	}
-
-	tokenID := auth.GetTokenIDFromContext(r.Context())
-	if tokenID == 0 {
-		h.recordDenial(r, auditTokenUnidentified)
-		RespondError(w, http.StatusForbidden, auditTokenUnidentified)
-		return false
-	}
-
-	scope, err := h.authStore.GetTokenAdminScope(tokenID)
-	if err != nil {
-		// The underlying error can name internal SQL, so it is logged
-		// rather than returned to the caller.
-		log.Printf("[ERROR] Failed to read admin scope for token %d: %v",
-			tokenID, err)
-		h.recordDenial(r, auditScopeDenied)
-		RespondError(w, http.StatusForbidden, auditScopeDenied)
-		return false
-	}
-
-	if len(scope) == 0 {
-		return true
-	}
-	for _, permission := range scope {
-		if permission == auth.AdminPermissionWildcard {
-			return true
-		}
-	}
-
-	h.recordDenial(r, auditScopeDenied)
-	RespondError(w, http.StatusForbidden, auditScopeDenied)
-
-	return false
 }
 
 // parseAuditFilter converts the query string into an auth.AuditFilter.

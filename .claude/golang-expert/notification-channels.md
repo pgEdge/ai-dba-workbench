@@ -18,6 +18,12 @@ columns behind them are created by the consolidated migration #1 in
 change to that `CREATE TABLE notification_channels` block, so fresh
 installs are correct, and a numbered migration, so existing ones are.
 
+That rule governs `notification_channels`, a plain, non-partitioned
+configuration table, and not every table in the schema. The
+partitioned `metrics.*` tables follow the opposite convention, where
+the migration is the only place the column appears: see
+`partitioning.md`.
+
 Slack, Mattermost and the generic webhook all share
 `sendWebhookNotification` in `webhook_sender.go`: one stored URL, one
 `RenderJSON` call that produces the whole request body, one POST.

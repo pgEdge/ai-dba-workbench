@@ -209,8 +209,8 @@ collection does not clear the alert.
 
 ### Replication Slot WAL Retention Warning
 
-This rule alerts when a replication slot retains at least as
-much WAL as the warning threshold allows.
+This rule alerts when a replication slot's retained WAL
+reaches the warning threshold.
 
 | Property | Value |
 |----------|-------|
@@ -225,11 +225,10 @@ exhaustion. Investigate the subscriber connection or
 consider dropping unused slots.
 
 The rule evaluates the maximum retained WAL across all
-slots on a server, so the alert fires when any single slot
-retains at least as much WAL as the threshold names. The
-alerter reads only samples collected in the last 15 minutes,
-so the rule does not fire on stale data after a collector
-stops.
+slots on a server, so the alert fires when any single
+slot's retained WAL reaches the threshold. The alerter
+reads only samples collected in the last 15 minutes, so the
+rule does not fire on stale data after a collector stops.
 
 ### Critical Replication Slot WAL Retention
 

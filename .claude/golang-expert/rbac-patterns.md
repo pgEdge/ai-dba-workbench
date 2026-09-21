@@ -302,6 +302,66 @@ above. When you add a gate, add at minimum:
 The denial test plus the gate body (5 statements) covers the new
 lines; the admin-allowed test covers the not-taken branch.
 
+## A Superuser's Token Is Bounded By Its Scope
+
+Since GitHub issue `#471`, a superuser's API token no longer carries
+its owner's superuser status unconditionally: each check in
+`server/src/internal/auth/access.go` intersects the owner's superuser
+rights with the acting token's scope for the surface being reached.
+A superuser holds everything, so the intersection is simply the scope
+itself, and a token scoped to one permission, one connection or one
+tool may still use exactly that.
+
+Two shapes, and the difference matters:
+
+- A check that names the thing being reached
+  (`HasAdminPermission`, `CanAccessConnection`, `CanAccessMCPItem`,
+  `VisibleConnectionIDs`, `GetEffectivePrivileges`) reads the raw
+  context flag `auth.IsSuperuserFromContext` and consults the scope of
+  its own kind. The named thing is allowed when it is in scope, when
+  the token has no scope of that kind, or when the scope holds the
+  wildcard, and no group grant on the owning account is needed.
+  Crucially, a narrowed scope of one kind must never narrow another
+  kind: an admin-scoped token still reaches every connection and tool.
+- A blanket gate, which names nothing and would hand over everything
+  at once, goes through `RBACChecker.IsSuperuser`. That returns false
+  when the token's admin scope has been narrowed, meaning it names
+  specific permissions rather than being empty or holding `*`, because
+  there is nothing to intersect against. `requireSuperuser` in
+  `internal/api/rbac_handlers.go` and the registry filters in
+  `internal/resources/context_aware_registry.go` and
+  `internal/tools/context_aware_provider.go` use this.
+
+The apparent inconsistency, `IsSuperuser` false whilst
+`HasAdminPermission` allows the scoped permission, is deliberate and
+is documented on `IsSuperuser`; do not "fix" it.
+
+Everything fails closed: a scope lookup error denies (or, in
+`VisibleConnectionIDs`, is an error rather than "everything"), and an
+API-token context carrying no token id (`tokenContextIncomplete`)
+denies. Session callers carry no token id and are unaffected
+throughout.
+
+`GetEffectivePrivileges` reports what the checks will actually allow:
+`applySuperuserTokenScope` fills `TokenScope`, `TokenScopeError` and
+the connection, MCP and admin maps from the token's scope, instead of
+returning empty maps that every consumer reads as unrestricted. A kind
+the token does not scope, or scopes with a wildcard, leaves its map
+empty.
+
+The audit endpoint needs no gate of its own: `requireUnscopedTokenForAudit`
+was retired in the same change because `requireSuperuser` refuses
+exactly the tokens it refused. `auth.IsSuperuserFromContext` itself is
+unchanged and remains the raw context accessor, reported as such by
+`cmd/mcp-server/handlers.go`.
+
+The rules are pinned by
+`server/src/internal/auth/access_superuser_scope_test.go` at the
+checker level and by
+`server/src/internal/api/rbac_issue471_test.go` plus
+`server/src/internal/api/rbac_audit_gate_test.go` at the HTTP
+boundary.
+
 ## Denial Auditing in the RBAC Management Handlers
 
 The `/api/v1/rbac/*` handlers do not inline the gate. They call the
@@ -343,7 +403,7 @@ the username, user or token id and client IP that
 request context. The token id is `auth.TokenIDContextKey`, the same
 key `RBACChecker` reads to enforce token scope; there is deliberately
 no attribution-only key, so a token is named in the log exactly when
-its scope is enforced, and `requireUnscopedTokenForAudit` refuses an
+its scope is enforced, and `RBACChecker.IsSuperuser` refuses an
 API-token context that carries no id rather than passing it. The
 composition is pinned by
 `server/src/internal/api/rbac_token_scope_regression_test.go`.

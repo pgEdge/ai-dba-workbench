@@ -99,15 +99,74 @@ func isNilDatastore(ds DatastoreSharingLookup) bool {
 	}
 }
 
-// IsSuperuser checks if the current context has superuser privileges
-// Superusers bypass all privilege checks
+// IsSuperuser reports whether the current context may pass a blanket
+// superuser gate, one that names no particular permission and so
+// grants everything at once, such as requireSuperuser on the audit
+// endpoint.
+//
+// A superuser's API token is not automatically a stand-in for its
+// owner. A token whose admin scope has been narrowed, meaning it names
+// specific permissions rather than being empty or holding the "*"
+// wildcard, is an explicit statement that the token was issued for one
+// job, so it cannot pass a gate that would hand it every job: see
+// issue #471, where such a token could read the whole installation's
+// audit log. Session callers carry no token and are unaffected.
+//
+// This is deliberately stricter than the permission-by-permission
+// checks in this file, and the difference is not an inconsistency to
+// be tidied away. HasAdminPermission, CanAccessConnection and
+// CanAccessMCPItem each name the thing being reached, so they can
+// intersect the owner's superuser rights with the token's scope and
+// still allow what the scope names; a blanket gate names nothing to
+// intersect against, so the only safe answer for a narrowed token is
+// no.
 func (rc *RBACChecker) IsSuperuser(ctx context.Context) bool {
 	// Nil store - treat as superuser (full access)
 	if rc.authStore == nil {
 		return true
 	}
 
-	return IsSuperuserFromContext(ctx)
+	if !IsSuperuserFromContext(ctx) {
+		return false
+	}
+
+	return rc.tokenCarriesSuperuser(ctx)
+}
+
+// tokenCarriesSuperuser reports whether the acting API token, if there
+// is one, leaves its owner's superuser status intact.
+//
+// It fails closed in two cases. A context that claims API-token
+// authentication but carries no token id cannot have its scope read at
+// all, and a scope lookup that fails says nothing about what the token
+// may do; in neither case may the caller be handed superuser rights,
+// because a lost id or a database error must never widen access.
+func (rc *RBACChecker) tokenCarriesSuperuser(ctx context.Context) bool {
+	if tokenContextIncomplete(ctx) {
+		return false
+	}
+
+	tokenID := GetTokenIDFromContext(ctx)
+	if tokenID <= 0 {
+		// Session caller: no token, so no scope to narrow.
+		return true
+	}
+
+	scope, err := rc.authStore.GetTokenAdminScope(tokenID)
+	if err != nil {
+		return false
+	}
+	if len(scope) == 0 {
+		// No admin scope at all is unrestricted by design.
+		return true
+	}
+	for _, permission := range scope {
+		if permission == AdminPermissionWildcard {
+			return true
+		}
+	}
+
+	return false
 }
 
 // tokenContextIncomplete reports whether the context claims API-token
@@ -177,8 +236,23 @@ func (rc *RBACChecker) CanAccessMCPItem(ctx context.Context, identifier string) 
 		return false
 	}
 
-	// Superuser bypass
+	// Superuser bypass, intersected with the token's MCP scope. The
+	// raw context flag is read here rather than IsSuperuser, because
+	// this branch names the item being reached and so can intersect:
+	// a superuser holds every MCP privilege, and intersecting that
+	// with the token's MCP scope yields the scope itself. An admin
+	// scope, which restricts a different surface, must not silently
+	// withdraw the tools the token was issued for.
 	if IsSuperuserFromContext(ctx) {
+		if tokenID := GetTokenIDFromContext(ctx); tokenID > 0 {
+			inScope, scopeErr := rc.authStore.IsMCPItemInTokenScope(tokenID, identifier)
+			if scopeErr != nil {
+				// A scope that cannot be read cannot be shown to
+				// include this item, so deny rather than assume.
+				return false
+			}
+			return inScope
+		}
 		return true
 	}
 
@@ -248,9 +322,15 @@ func (rc *RBACChecker) CanAccessConnection(ctx context.Context, connectionID int
 		return false, AccessLevelNone
 	}
 
-	// Superuser bypass
+	// Superuser bypass, intersected with the token's connection scope:
+	// applyConnectionTokenScope returns the level unchanged for a
+	// session caller and confines a scoped token to its own
+	// connections, at the level the scope records. The raw context
+	// flag is read here rather than IsSuperuser for the reason given
+	// on CanAccessMCPItem: this branch names the connection, so it
+	// intersects rather than refusing outright.
 	if IsSuperuserFromContext(ctx) {
-		return true, AccessLevelReadWrite
+		return rc.applyConnectionTokenScope(ctx, connectionID, AccessLevelReadWrite)
 	}
 
 	// Check if the connection is restricted (assigned to any group)
@@ -353,6 +433,101 @@ func applyTokenCeiling(tokenLevel, userLevel string) string {
 	return userLevel
 }
 
+// scopeHasConnectionWildcard reports whether a token's connection scope
+// holds the ConnectionIDAll wildcard row, which admits every
+// connection and so restricts nothing.
+func scopeHasConnectionWildcard(scope *TokenScope) bool {
+	for _, sc := range scope.Connections {
+		if sc.ConnectionID == ConnectionIDAll {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeHasMCPWildcard reports whether a token's MCP scope holds the
+// wildcard sentinel, which admits every MCP privilege.
+func scopeHasMCPWildcard(scope *TokenScope) bool {
+	for _, privID := range scope.MCPPrivileges {
+		if privID == MCPPrivilegeIDWildcard {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeHasAdminWildcard reports whether a token's admin scope holds the
+// "*" wildcard, which admits every admin permission.
+func scopeHasAdminWildcard(scope *TokenScope) bool {
+	for _, permission := range scope.AdminPermissions {
+		if permission == AdminPermissionWildcard {
+			return true
+		}
+	}
+	return false
+}
+
+// applySuperuserTokenScope records a superuser token's own scope in the
+// effective privileges.
+//
+// The superuser path used to return empty maps, which every consumer
+// reads as "unrestricted", so a client holding a scoped token was told
+// it could do anything. Each scope kind is reported on its own
+// surface, matching what the checks in this file will actually allow:
+// the connection, MCP and admin scopes each narrow their own map, and
+// a kind the token does not scope, or scopes with a wildcard, leaves
+// its map empty, which is the unchanged "superuser, no limits"
+// answer.
+func (rc *RBACChecker) applySuperuserTokenScope(
+	ctx context.Context, result *EffectivePrivileges,
+) {
+	tokenID := GetTokenIDFromContext(ctx)
+	if tokenID <= 0 {
+		return
+	}
+
+	scope, err := rc.authStore.GetTokenScope(tokenID)
+	if err != nil {
+		// Nothing can be claimed about a scope that could not be read,
+		// so the error travels with the result and the privilege maps
+		// are left empty rather than filled in optimistically.
+		result.TokenScopeError = err
+		return
+	}
+	if scope == nil {
+		return
+	}
+	result.TokenScope = scope
+
+	if len(scope.Connections) > 0 && !scopeHasConnectionWildcard(scope) {
+		for _, sc := range scope.Connections {
+			// The stored access level is constrained to read or
+			// read_write, and a superuser's own ceiling is read_write,
+			// so the scope's level is the effective one.
+			result.ConnectionPrivileges[sc.ConnectionID] = sc.AccessLevel
+		}
+	}
+
+	if len(scope.MCPPrivileges) > 0 && !scopeHasMCPWildcard(scope) {
+		for _, privID := range scope.MCPPrivileges {
+			priv, privErr := rc.authStore.GetMCPPrivilegeByID(privID)
+			if privErr == nil && priv != nil {
+				result.MCPPrivileges[priv.Identifier] = true
+			}
+		}
+	}
+
+	if len(scope.AdminPermissions) > 0 && !scopeHasAdminWildcard(scope) {
+		// The owner holds every admin permission, so the scope is the
+		// intersection, and it is reported here even though a narrowed
+		// admin scope also sets IsSuperuser false: HasAdminPermission
+		// will allow exactly these, and the report must say so.
+		for _, permission := range scope.AdminPermissions {
+			result.AdminPermissions[permission] = true
+		}
+	}
+}
+
 // GetEffectivePrivileges returns all effective privileges for the current context
 // This computes the full set of accessible items and connections
 func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePrivileges {
@@ -368,9 +543,15 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 		return result
 	}
 
-	// Check superuser status
-	result.IsSuperuser = IsSuperuserFromContext(ctx)
-	if result.IsSuperuser {
+	// A superuser's privileges come from its own rights intersected
+	// with its token's scope, not from group membership, so the
+	// superuser path reports the scope rather than an unqualified "no
+	// limits". IsSuperuser in the result answers the narrower
+	// question of whether a blanket superuser gate would admit the
+	// caller, which a narrowed admin scope withdraws.
+	if IsSuperuserFromContext(ctx) {
+		result.IsSuperuser = rc.IsSuperuser(ctx)
+		rc.applySuperuserTokenScope(ctx, result)
 		return result
 	}
 
@@ -410,11 +591,10 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 			// If token has connection scope, filter connection privileges
 			if len(scope.Connections) > 0 {
 				// Check for wildcard connection (connection_id = 0)
-				hasWildcard := false
+				hasWildcard := scopeHasConnectionWildcard(scope)
 				wildcardLevel := AccessLevelNone
 				for _, sc := range scope.Connections {
 					if sc.ConnectionID == ConnectionIDAll {
-						hasWildcard = true
 						wildcardLevel = sc.AccessLevel
 						break
 					}
@@ -459,15 +639,7 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 			// If token has MCP scope, filter MCP privileges
 			if len(scope.MCPPrivileges) > 0 {
 				// Check for wildcard sentinel (privilege_identifier_id = 0)
-				hasWildcard := false
-				for _, privID := range scope.MCPPrivileges {
-					if privID == MCPPrivilegeIDWildcard {
-						hasWildcard = true
-						break
-					}
-				}
-
-				if !hasWildcard {
+				if !scopeHasMCPWildcard(scope) {
 					scopedMCPPrivs := make(map[string]bool)
 					for _, privID := range scope.MCPPrivileges {
 						priv, err := rc.authStore.GetMCPPrivilegeByID(privID)
@@ -486,15 +658,7 @@ func (rc *RBACChecker) GetEffectivePrivileges(ctx context.Context) *EffectivePri
 			// If token has admin scope, filter admin permissions
 			if len(scope.AdminPermissions) > 0 {
 				// Check for wildcard ("*")
-				hasWildcard := false
-				for _, perm := range scope.AdminPermissions {
-					if perm == AdminPermissionWildcard {
-						hasWildcard = true
-						break
-					}
-				}
-
-				if !hasWildcard {
+				if !scopeHasAdminWildcard(scope) {
 					scopedAdminPerms := make(map[string]bool)
 					for _, perm := range scope.AdminPermissions {
 						// Check if user has this permission (specific or via wildcard "*")
@@ -529,6 +693,44 @@ type ConnectionVisibilityInfo struct {
 	OwnerUsername string
 }
 
+// superuserVisibleConnectionIDs resolves visibility for a superuser
+// caller. A session sees every connection, as it always has, and so
+// does a token with no connection scope or one holding the
+// ConnectionIDAll wildcard. A token narrowed to specific connections
+// sees exactly those, because the scope names the connections the
+// token was issued for and enumerating the rest would disclose them.
+//
+// A scope that cannot be read is an error rather than a silent
+// "everything", for the same reason CanAccessConnection denies on a
+// failed lookup: a database failure must not widen access.
+func (rc *RBACChecker) superuserVisibleConnectionIDs(
+	ctx context.Context,
+) (ids []int, allConnections bool, err error) {
+	tokenID := GetTokenIDFromContext(ctx)
+	if tokenID <= 0 {
+		return nil, true, nil
+	}
+
+	scope, err := rc.authStore.GetTokenScope(tokenID)
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"token %d: connection scope could not be read: %w", tokenID, err)
+	}
+	if scope == nil || len(scope.Connections) == 0 ||
+		scopeHasConnectionWildcard(scope) {
+		return nil, true, nil
+	}
+
+	// token_connection_scope is unique on (token_id, connection_id), so
+	// the rows need no deduplication here.
+	ids = make([]int, 0, len(scope.Connections))
+	for _, sc := range scope.Connections {
+		ids = append(ids, sc.ConnectionID)
+	}
+
+	return ids, false, nil
+}
+
 // VisibleConnectionIDs returns the set of connection IDs the caller may
 // see.
 //
@@ -557,9 +759,13 @@ func (rc *RBACChecker) VisibleConnectionIDs(ctx context.Context, lister Connecti
 		return nil, false, nil
 	}
 
-	// Superuser bypass.
+	// Superuser bypass, intersected with the acting token's connection
+	// scope so that a token issued for one connection does not
+	// enumerate every connection in the installation. As elsewhere on
+	// the connection surface, the raw context flag is read and the
+	// intersection is with the connection scope alone.
 	if IsSuperuserFromContext(ctx) {
-		return nil, true, nil
+		return rc.superuserVisibleConnectionIDs(ctx)
 	}
 
 	privs := rc.GetEffectivePrivileges(ctx)
@@ -656,9 +862,26 @@ func (rc *RBACChecker) HasAdminPermission(ctx context.Context, permission string
 		return false
 	}
 
-	// Superuser bypass
+	// Superuser bypass, intersected with the token's admin scope. A
+	// superuser holds every admin permission, so the intersection is
+	// the scope itself: a token scoped to one permission may exercise
+	// that permission, and nothing else, without its owner needing a
+	// group grant of its own. IsAdminPermissionInTokenScope also
+	// reports true for a token with no admin scope and for one holding
+	// the wildcard, which are unrestricted by design. A scope that
+	// cannot be read denies, because a database error must not widen
+	// access.
 	if IsSuperuserFromContext(ctx) {
-		return true
+		tokenID := GetTokenIDFromContext(ctx)
+		if tokenID <= 0 {
+			return true
+		}
+		inScope, scopeErr := rc.authStore.IsAdminPermissionInTokenScope(
+			tokenID, permission)
+		if scopeErr != nil {
+			return false
+		}
+		return inScope
 	}
 
 	// Get user ID from context

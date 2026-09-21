@@ -154,7 +154,17 @@ func buildSecuritySchemes() map[string]*OpenAPISecurityScheme {
 			Type:         "http",
 			Scheme:       "bearer",
 			BearerFormat: "JWT",
-			Description:  "Session token obtained from /auth/login",
+			Description: "Session token obtained from /auth/login, or an " +
+				"API token. Every request an API token makes is confined " +
+				"to the token's connection, MCP and admin scopes, even " +
+				"when its owner is a superuser, so a superuser-owned " +
+				"token can receive 403 where its owner's session would " +
+				"succeed. A token whose admin scope names specific " +
+				"permissions may exercise those permissions, but cannot " +
+				"pass a gate that requires superuser status outright, " +
+				"such as the audit log. A token with no scope of a given " +
+				"kind, or one holding the * wildcard, is unrestricted on " +
+				"that surface.",
 		},
 	}
 }

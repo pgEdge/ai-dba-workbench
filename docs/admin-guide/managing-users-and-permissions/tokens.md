@@ -10,8 +10,9 @@ The Workbench uses two kinds of tokens:
   or regular users. A service account may only authenticate with a token.
 
 A token's scope restricts it to a subset of the owning user's permissions. A
-token without scope restrictions inherits the full access of the owner. The
-system supports three scope types:
+token without scope restrictions inherits the full access of the owner. A
+token that a superuser owns is restricted by its scope in the same way as
+any other token. The system supports three scope types:
 
 - *Connection scope* limits the token to specific database connections with a
   per-connection access level of `read` or `read_write`. A token scope can
@@ -33,7 +34,8 @@ that type:
   holds.
 
 The effective access for a scoped token equals the intersection of the owner's
-group-level access and the token scope.
+access and the token scope. A superuser holds every privilege, so the
+intersection for a superuser's token is the token scope itself.
 
 !!! note
 

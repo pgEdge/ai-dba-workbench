@@ -45,7 +45,8 @@ CREATE TABLE metrics.pg_stat_database (
     blks_hit       bigint      NOT NULL DEFAULT 0,
     blks_read      bigint      NOT NULL DEFAULT 0,
     xact_commit    bigint      NOT NULL DEFAULT 0,
-    xact_rollback  bigint      NOT NULL DEFAULT 0
+    xact_rollback  bigint      NOT NULL DEFAULT 0,
+    stats_reset    timestamptz
 );
 
 CREATE TABLE metrics.pg_stat_all_tables (

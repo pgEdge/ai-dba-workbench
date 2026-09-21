@@ -70,11 +70,13 @@ extend both.
 ## Per-Entity Counter Deltas (server)
 
 The same rule applies to the api package, and
-`queryCacheHit` and `queryDatabaseCacheHitTimeSeries` in
+`queryCacheHit`, `queryDatabaseCacheHitTimeSeries` and
+`queryTransactions` in
 `server/src/internal/api/perf_summary_handlers.go` are its reference
-implementations (issue #401). `metrics.pg_stat_database` stores one row
-per database per sample, so a cumulative counter such as `blks_hit` must
-be differenced per database before anything is summed: a `deltas` CTE
+implementations (issues #401 and #469). `metrics.pg_stat_database`
+stores one row per database per sample, so a cumulative counter such as
+`blks_hit` must be differenced per database before anything is summed:
+a `deltas` CTE
 takes `blks_hit - LAG(blks_hit) OVER (PARTITION BY datname ORDER BY
 collected_at)`, a `valid_deltas` CTE drops rows where either delta is
 NULL (the database's first sample in the window) or negative (a stats
@@ -91,6 +93,22 @@ discarded. The per-database tests in `perf_summary_cache_hit_test.go`
 last one is the only case where filtering per row and filtering per
 bucket differ.
 
+`queryTransactions` follows the same shape with two additions of its
+own (issue #469). It also discards an interval whose `stats_reset`
+`IS DISTINCT FROM` that database's previous sample, because a reset that
+overshoots the old value inside one sample interval yields a positive
+delta the negative-delta guard cannot see; `IS DISTINCT FROM` rather
+than `<>` so a NULL-on-both-sides pair stays valid, matching
+`ResetColumnFor` in `internal/metrics/query.go`. And because it reports
+a rate, elapsed time has to come from the distinct sample timestamps
+(a `sample_elapsed` CTE over `SELECT DISTINCT collected_at`, LAG over
+that, joined back to the bucket) rather than from a value carried on
+every per-database row, which summing would multiply by the number of
+databases and divide `commits_per_sec` down accordingly. The gap-bound
+rejection of a long collection outage is deliberately not here; it needs
+the probe interval and belongs to #402. The cases are pinned in
+`perf_summary_transactions_test.go`.
+
 Two consequences for callers. A bucket whose deltas are all valid but
 sum to zero block accesses is emitted with a NULL ratio rather than 0%,
 so the JSON `current`, `time_series[].value` and
@@ -101,8 +119,8 @@ so the JSON `current`, `time_series[].value` and
 of a 1h range but the last 12 hours of a 30d range; say so in any
 comment or documentation that describes it.
 
-`queryTransactions` in the same file, `BuildDerivedMetricsQuery` in
-`internal/metrics/query.go` and the alerter's `queryStatsSQL` still
+`BuildDerivedMetricsQuery` in `internal/metrics/query.go` and the
+alerter's `queryStatsSQL` still
 difference an aggregated value; #449 is reworking
 `BuildDerivedMetricsQuery` to partition by entity, so do not patch it
 piecemeal. Until then the web client must not derive a server-wide

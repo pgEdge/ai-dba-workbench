@@ -2097,7 +2097,7 @@ http:
 }
 
 // TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables checks that an
-// explicit zero is honoured as a deliberate request to disable account
+// explicit zero is taken as a deliberate request to disable account
 // lockout rather than being treated as an omitted key.
 func TestMaxFailedAttemptsBeforeLockoutYAMLZeroDisables(t *testing.T) {
 	tmpDir := t.TempDir()

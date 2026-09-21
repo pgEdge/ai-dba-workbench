@@ -209,8 +209,8 @@ collection does not clear the alert.
 
 ### Replication Slot WAL Retention Warning
 
-This rule alerts when a replication slot retains more WAL
-than the warning threshold allows.
+This rule alerts when a replication slot retains at least as
+much WAL as the warning threshold allows.
 
 | Property | Value |
 |----------|-------|
@@ -226,9 +226,10 @@ consider dropping unused slots.
 
 The rule evaluates the maximum retained WAL across all
 slots on a server, so the alert fires when any single slot
-retains more WAL than the threshold permits. The alerter
-reads only samples collected in the last 15 minutes, so the
-rule does not fire on stale data after a collector stops.
+retains at least as much WAL as the threshold names. The
+alerter reads only samples collected in the last 15 minutes,
+so the rule does not fire on stale data after a collector
+stops.
 
 ### Critical Replication Slot WAL Retention
 
@@ -625,16 +626,17 @@ rule needs no entry in the metric registry and no
 PostgreSQL extension.
 
 The alert clears once the probe collects again and the
-ratio falls back below the threshold, and it also clears
-when an operator disables the probe or stops monitoring the
-connection, because both are deliberate changes rather than
-faults. A probe that has become unavailable is the
-exception: the alert stays active, and its description
-changes to report that collection has stopped and why,
-until the probe collects again. The alerter never raises
-this alert for a probe that is already unavailable, since
-an unavailable probe is the normal steady state on a server
-that lacks the extension the probe reads.
+ratio falls back to the threshold or below, and it also
+clears when an operator disables the probe or stops
+monitoring the connection, because both are deliberate
+changes rather than faults. A probe that has become
+unavailable is the exception: the alert stays active, and
+its description changes to report that collection has
+stopped and why, until the probe collects again. The
+alerter never raises this alert for a probe that is already
+unavailable, since an unavailable probe is the normal
+steady state on a server that lacks the extension the probe
+reads.
 
 ## Customizing Rules
 

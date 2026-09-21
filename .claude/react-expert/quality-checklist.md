@@ -339,6 +339,47 @@ LLM. The rules are as follows:
   and a read may still be served from the OS page cache, so a lower
   ratio does not by itself mean slow I/O.
 
+### Axis-free charts and the contain-label pass
+
+`buildGrid()` in `client/src/components/Chart/options/common.ts` sets
+`containLabel: true`, and `Chart` deep-merges `echartsOptions` over it
+key by key, so overriding the four inset values leaves `containLabel`
+in place. That layout pass reserves room for each axis's estimated
+label rect whether or not the axis is shown, which at sparkline heights
+leaves no plot area at all: measured on echarts 6.1.0 in Chrome, a
+275x30 sparkline has a grid rect of 235.8 x -6.1 with `containLabel:
+true` against 271 x 26 with it off, and a twelve-point series paints
+708 of 8250 canvas pixels in a 3px band rather than 7220 in a 27px one
+(issue #458). A chart drawn without axes, such as
+`Dashboard/Sparkline.tsx`, must therefore set `grid.containLabel:
+false`. Setting `axisLabel: { show: false }` as well is redundant:
+`containLabel: false` skips the pass outright, and the two grid rects
+are identical with and without the axis-label overrides. Leave
+`buildGrid()` alone, since the tiles under
+`StatusPanel/PerformanceTiles/` rely on `containLabel: true` to fit
+their real axis labels.
+
+### Line series with no drawable segment
+
+ECharts draws a line series as segments between neighbouring values, so
+a series with no adjacent pair of values has no geometry: a single
+point, or points separated by null gaps, paint nothing whatsoever with
+markers off (0 of 8250 pixels on a 275x30 canvas, echarts 6.1.0). This
+is the ordinary state of a newly registered server, whose first
+collections leave one point in `time_series`, so any sparkline or small
+chart must handle it. `Dashboard/Sparkline.tsx` counts adjacent pairs
+and passes `showMarkers` to `Chart` when there are none, which puts a
+circle on each observation; the marker fallback turns itself off again
+as soon as the series can be joined up.
+
+Assertions on the props handed to a mocked `Chart` cannot catch either
+of these, since both charts receive perfectly reasonable options and
+draw nothing. `Dashboard/__tests__/Sparkline.render.test.tsx` mocks
+only the `echarts-for-react` wrapper and runs the fully merged option
+object through ECharts' own server-side SVG renderer, then measures the
+subpaths that were actually emitted; use that pattern for any bug where
+the question is what landed on the canvas.
+
 ## Dashboard Time Window
 
 Every dashboard request that has a time dimension takes its window

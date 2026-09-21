@@ -11,15 +11,85 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pgedge/ai-workbench/server/internal/auth"
+	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
+
+// createTestRBACHandlerWithDir is createTestRBACHandler with the data
+// directory exposed, so that a test can reach into the auth database
+// and break one table on purpose.
+func createTestRBACHandlerWithDir(t *testing.T) (*RBACHandler, *auth.AuthStore,
+	string, func()) {
+
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "rbac-audit-gate-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	store, err := auth.NewAuthStore(dir, 0, 0)
+	if err != nil {
+		os.RemoveAll(dir)
+		t.Fatalf("Failed to create auth store: %v", err)
+	}
+	store.SetBcryptCostForTesting(t, bcrypt.MinCost)
+
+	handler := NewRBACHandler(store, auth.NewRBACChecker(store))
+	cleanup := func() {
+		store.Close()
+		os.RemoveAll(dir)
+	}
+
+	return handler, store, dir, cleanup
+}
+
+// dropAuthTable drops one table from the auth database behind the
+// running store, so that exactly one lookup fails whilst every other
+// query keeps working. Closing the whole store would deny for any
+// reason at all, which would not test the branch under examination.
+func dropAuthTable(t *testing.T, dataDir, table string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "auth.db"))
+	if err != nil {
+		t.Fatalf("Failed to open the auth database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("DROP TABLE " + table); err != nil {
+		t.Fatalf("Failed to drop %s: %v", table, err)
+	}
+}
+
+// singleDenialEvent returns the one recorded audit.read denial,
+// failing the test when there is not exactly one.
+func singleDenialEvent(t *testing.T, store *auth.AuthStore) auth.AuditEvent {
+	t.Helper()
+
+	events, _, err := store.ListAuditEvents(auth.AuditFilter{
+		Action:  "audit.read",
+		Outcome: string(auth.OutcomeDenied),
+	})
+	if err != nil {
+		t.Fatalf("ListAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("Expected one denial event, got %d", len(events))
+	}
+	return events[0]
+}
 
 // withSuperuserToken presents the request as a superuser authenticated
 // by the given API token.
@@ -83,15 +153,23 @@ func TestRBACHandlerAuditRejectsScopedToken(t *testing.T) {
 		t.Errorf("Expected a superuser refusal, got %q", body)
 	}
 
-	events, _, err := store.ListAuditEvents(auth.AuditFilter{
-		Action:  "audit.read",
-		Outcome: string(auth.OutcomeDenied),
-	})
-	if err != nil {
-		t.Fatalf("ListAuditEvents failed: %v", err)
+	// requireSuperuser emits the same sentence for every refusal, so
+	// the branch is identified by what was recorded and by what the
+	// same token can still do: the audit event names the acting token,
+	// meaning it was identified and its scope was read, and the
+	// permission its scope names is still allowed, meaning this is the
+	// blanket gate refusing rather than the token being cut off.
+	event := singleDenialEvent(t, store)
+	if event.ActorType != auth.ActorToken || event.ActorID == nil ||
+		*event.ActorID != tokenID {
+		t.Errorf("Expected the denial to name token %d, got %s/%v", tokenID,
+			event.ActorType, event.ActorID)
 	}
-	if len(events) != 1 {
-		t.Fatalf("Expected one denial event, got %d", len(events))
+
+	req := withSuperuserToken(
+		httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil), tokenID)
+	if !handler.rbacChecker.HasAdminPermission(req.Context(), auth.PermManageUsers) {
+		t.Error("Expected the scoped permission to remain allowed")
 	}
 }
 
@@ -147,15 +225,16 @@ func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 		t.Errorf("Expected the refusal to say why, got %s", rec.Body.String())
 	}
 
-	events, _, err := store.ListAuditEvents(auth.AuditFilter{
-		Action: "audit.read", Outcome: string(auth.OutcomeDenied),
-	})
-	if err != nil {
-		t.Fatalf("ListAuditEvents failed: %v", err)
+	// This branch is told apart from a scope refusal by the actor: no
+	// token id survived into the context, so nothing could be
+	// identified and the denial is recorded against no token at all.
+	event := singleDenialEvent(t, store)
+	if event.ActorID != nil {
+		t.Errorf("Expected the denial to name no acting token, got %v",
+			*event.ActorID)
 	}
-	if len(events) != 1 {
-		t.Fatalf("Expected the refusal to be recorded once, got %d rows",
-			len(events))
+	if event.ActorType == auth.ActorToken {
+		t.Error("Expected an unidentified caller not to be recorded as a token")
 	}
 }
 
@@ -163,16 +242,35 @@ func TestRBACHandlerAuditTokenWithoutIDIsRefused(t *testing.T) {
 // lookup which errors refuses the request rather than letting it
 // through.
 func TestRBACHandlerAuditScopeLookupFailureDenies(t *testing.T) {
-	handler, store, cleanup := createTestRBACHandler(t)
+	handler, store, dir, cleanup := createTestRBACHandlerWithDir(t)
 	defer cleanup()
 
 	tokenID := mustCreateScopedToken(t, store, "svc-broken",
 		[]string{auth.PermManageUsers})
-	store.Close()
+
+	// Only the admin scope lookup is broken; the rest of the store
+	// keeps working, so a 403 here can only have come from the failed
+	// lookup, and the denial is still recorded.
+	dropAuthTable(t, dir, "token_admin_scope")
 
 	rec := auditTokenRequest(handler, tokenID)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("Expected 403 when the scope cannot be read, got %d", rec.Code)
+	}
+
+	event := singleDenialEvent(t, store)
+	if event.ActorID == nil || *event.ActorID != tokenID {
+		t.Errorf("Expected the denial to name token %d, got %v", tokenID,
+			event.ActorID)
+	}
+
+	// Unlike a narrowed scope, an unreadable one denies the named
+	// permission too, which is what separates this branch from the
+	// refusal in TestRBACHandlerAuditRejectsScopedToken.
+	req := withSuperuserToken(
+		httptest.NewRequest(http.MethodGet, "/api/v1/rbac/users", nil), tokenID)
+	if handler.rbacChecker.HasAdminPermission(req.Context(), auth.PermManageUsers) {
+		t.Error("Expected an unreadable scope to deny the permission as well")
 	}
 }
 

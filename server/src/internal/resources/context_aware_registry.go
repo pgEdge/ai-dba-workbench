@@ -125,10 +125,14 @@ func (r *ContextAwareRegistry) List() []mcp.Resource {
 func (r *ContextAwareRegistry) ListForContext(ctx context.Context) []mcp.Resource {
 	allResources := r.List()
 
-	// If auth is disabled or user is superuser, return all resources
-	if r.rbacChecker.IsSuperuser(ctx) {
-		return allResources
-	}
+	// Every caller goes through the per-resource filter, superuser or
+	// not. The old superuser short-circuit read the admin scope, which
+	// says nothing about resources, so a token narrowed on its MCP
+	// scope alone still listed every resource in the installation and
+	// was then refused on read (issue #482). CanAccessMCPItem already
+	// returns true for a session, an unscoped token, a wildcard scope
+	// and a disabled auth store, which is everything the short-circuit
+	// used to cover.
 
 	// Filter resources based on user's privileges
 	var filtered []mcp.Resource

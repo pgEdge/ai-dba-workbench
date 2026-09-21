@@ -347,25 +347,28 @@ that the run resolves to the loopback server you intend.
 #### Keeping or Skipping Databases
 
 Two further variables control what the run does with the database. In
-the following example, the variable keeps the generated database after
-the tests finish, which helps when a migration test fails and the
-resulting schema needs inspection:
+the following example, `TEST_AI_WORKBENCH_KEEP_DB` keeps the generated
+database after the tests finish, which helps when a migration test fails
+and the resulting schema needs inspection:
 
 ```bash
 export TEST_AI_WORKBENCH_KEEP_DB=1
 ```
 
-The variable also accepts the value `true`. In the following example,
-the variable skips the database tests altogether:
+`TEST_AI_WORKBENCH_KEEP_DB` also accepts the value `true`. In the
+following example, `SKIP_DB_TESTS` skips the database tests altogether:
 
 ```bash
 export SKIP_DB_TESTS=1
 ```
 
-Teardown drops the generated database only when the run reaches teardown
-and `TEST_AI_WORKBENCH_KEEP_DB` is unset, so an interrupted run leaves a
-database behind. Leftover `ai_workbench_test_*` databases on a server
-come from those runs and are safe to drop.
+Leftover `ai_workbench_test_*` databases on a server come from runs that
+did not drop theirs, which happens whenever
+`TEST_AI_WORKBENCH_KEEP_DB` is set, whenever the run is interrupted
+before it reaches teardown, and whenever teardown itself fails, either
+because it cannot open its administrative connection or because
+`DROP DATABASE` returns an error. They are safe to drop once you have
+confirmed that no test run or other client is still connected to them.
 
 #### Confirming the Tests Ran
 
